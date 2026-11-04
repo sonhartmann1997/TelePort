@@ -1,0 +1,12 @@
+# Ignore AI Studio chat attachments & large archives from Cloudflare Workers Asset upload (25 MiB limit)
+aistudio
+aistudio/**
+assets/aistudio
+assets/aistudio/**
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.bak
