@@ -1738,23 +1738,48 @@
     let tmdbId = activeContext.tmdbId || null;
     let imdbId = activeContext.imdbId || null;
     let mediaType = activeContext.mediaType || "movie";
+    let explicitMovUrlHit = false;
+    let explicitTvUrlHit = false;
     for (const ent of entities) {
       if (ent.url) {
         const movMatch = ent.url.match(/themoviedb\.org\/movie\/(\d+)/i);
         const tvMatch  = ent.url.match(/themoviedb\.org\/tv\/(\d+)/i);
         const imMatch  = ent.url.match(/imdb\.com\/title\/(tt\d+)/i);
-        if (movMatch) { tmdbId = parseInt(movMatch[1], 10); mediaType = "movie"; }
-        if (tvMatch)  { tmdbId = parseInt(tvMatch[1], 10);  mediaType = "tv"; }
+        if (movMatch) { tmdbId = parseInt(movMatch[1], 10); mediaType = "movie"; explicitMovUrlHit = true; }
+        if (tvMatch)  { tmdbId = parseInt(tvMatch[1], 10);  mediaType = "tv"; explicitTvUrlHit = true; }
         if (imMatch)  { imdbId = imMatch[1]; }
       }
     }
 
     const inlineExplicitTitle = text.match(/(?:Titel|Title):\s*([^\n]+)/i)?.[1]?.trim() || null;
+    const inlineExplicitYear  = text.match(/(?:Erscheinungsjahr|Jahr|Release):\s*(\d{4})/i)?.[1] || null;
+    const EARLY_PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]]/i;
+    const EARLY_EXPLICIT_SERIES_MARKER = /(?:^|[\s._\-(🔸🔶#])(?:S\d{1,2}[\s._-]*E\d{1,3}|E\d{1,3}[\s._-]*S\d{1,2}|\d{1,2}x\d{2,3}|Staffel\s*\d{1,2}|Season\s*\d{1,2}|Folge\s*\d{1,3}|Episode\s*\d{1,3}|Ep\.?\s*\d{1,3})\b/i;
+    const hasOwnParenYear = Boolean(
+      inlineExplicitYear ||
+      EARLY_PAREN_YEAR_REGEX.test(text.replace(FULL_DATE_REGEX, " ")) ||
+      EARLY_PAREN_YEAR_REGEX.test(fileName.replace(FULL_DATE_REGEX, " "))
+    );
+    const hasOwnSeriesMarkerInMsg = Boolean(
+      explicitTvUrlHit ||
+      EARLY_EXPLICIT_SERIES_MARKER.test(text) ||
+      EARLY_EXPLICIT_SERIES_MARKER.test(fileName)
+    );
+    // Eiserne Weichen-Regel: Jahreszahl in Klammern (z.B. "Iron Man 3 (2013)") OHNE Serien-Marker ist zu 100% ein Film!
+    // Verhindert, dass ein vorangegangener Serien-Kontext (activeContext) einen darauffolgenden Spielfilm mit Jahreszahl zur Serie macht.
+    if (hasOwnParenYear && !hasOwnSeriesMarkerInMsg) {
+      mediaType = "movie";
+      if (activeContext.mediaType === "tv" && !explicitMovUrlHit) {
+        tmdbId = null;
+        imdbId = null;
+      }
+    }
 
     // activeContext.title nur heranziehen, wenn ein TMDb/IMDb-Steckbrief vorliegt, der Dateiname generisch ist oder der Titel übereinstimmt
     const usePreContextTitle = Boolean(
       !inlineExplicitTitle &&
       !ownSeriesNameInMsg &&
+      !(hasOwnParenYear && !hasOwnSeriesMarkerInMsg && activeContext.mediaType === "tv") &&
       activeContext.title &&
       (
         activeContext.tmdbId ||
@@ -1767,7 +1792,7 @@
 
     const explicitTitle = inlineExplicitTitle || (usePreContextTitle ? activeContext.title : null);
     const originalTitle = text.match(/Originaltitel:\s*([^\n]+)/i)?.[1]?.trim() || (usePreContextTitle ? activeContext.originalTitle : null);
-    const explicitYear  = text.match(/(?:Erscheinungsjahr|Jahr|Release):\s*(\d{4})/i)?.[1] || (usePreContextTitle ? activeContext.year : null);
+    const explicitYear  = inlineExplicitYear || (usePreContextTitle ? activeContext.year : null);
 
     // Regel 2 / Fall 15: 60-Zeichen-Abschneidung bei file_name umgehen -> line1 hat Vorrang
     let sourceUsed = "file_name";
@@ -1824,6 +1849,16 @@
                      || fileName.match(/^(.+?)[_\s.\-·‧]+(?:Staffel[_\s.]*(\d{1,2})[_\s.\-·‧]+)?(?:Folge|Episode)[_\s.]*(\d{1,3})\b[_\s.\-·‧:]*(.*)$/i);
     const leadingFolgeOnly = (primarySource.match(/^(?:Folge|Episode)[_\s.]*(\d{1,3})\b(.*)$/i)
                            || fileName.match(/^(?:Folge|Episode)[_\s.]*(\d{1,3})\b(.*)$/i));
+
+    // Datum vor Jahres-Extraktion entfernen, damit (21.07.2012) oder (01.12.2018) niemals als Jahr 2012/2018 erkannt wird (Fall 17)
+    // Wichtig ("Wonder Woman 1984 (2020)" & "Iron Man 3 (2013)"-Fix): Zuerst nach einer eingeklammerten Jahreszahl (YYYY) suchen!
+    const PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]]/i;
+    const dateSafePrimary = ` ${primarySource.replace(FULL_DATE_REGEX, " ")} `;
+    const dateSafeFile = ` ${fileName.replace(FULL_DATE_REGEX, " ")} `;
+    const dateSafeLine1 = ` ${line1.replace(FULL_DATE_REGEX, " ")} `;
+    const parenYearMatch = dateSafePrimary.match(PAREN_YEAR_REGEX) || dateSafeLine1.match(PAREN_YEAR_REGEX) || dateSafeFile.match(PAREN_YEAR_REGEX);
+    const yearMatch = parenYearMatch || dateSafePrimary.match(YEAR_REGEX) || dateSafeLine1.match(YEAR_REGEX) || dateSafeFile.match(YEAR_REGEX);
+    const hasAnyYearInMsg = Boolean(explicitYear || parenYearMatch || yearMatch || hasOwnParenYear);
 
     if (hashStaffelMatch) {
       mediaType = "tv";
@@ -1940,12 +1975,17 @@
       }
     } else if (
       activeContext.seriesHeader &&
-      (!durationSec || durationSec <= 4200) &&
+      durationSec &&
+      durationSec > 0 &&
+      durationSec < 4200 &&
+      !hasAnyYearInMsg &&
+      !YEAR_REGEX.test(` ${primarySource} `) &&
       !YEAR_REGEX.test(` ${line1} `) &&
       !YEAR_REGEX.test(` ${fileName} `)
     ) {
-      // Regel 4 & Regel 8: Laufzeit-Weiche (< 70 Min. mit aktivem Serien-Header UND ohne Jahreszahl in Klammern)
-      // Schützt Spielfilm-Fortsetzungen wie "The Cell 2 (2009)" (> 4200 Sek. + Jahreszahl)
+      // Regel 4 & Regel 8: Strenge "Endziffer = Episode"-Weiche:
+      // Greift NUR, wenn: (1) KEINE Jahreszahl (YYYY) im Namen steht, (2) duration_seconds < 4200 (< 70 Min.) ist,
+      // UND (3) prevContext.seriesHeader aktiv ist (direkt davor derselbe Serienname als Header/Folge lief).
       const cleanedLine = cleanMediaTitle(line1 || fileName);
       const headerLow = activeContext.seriesHeader.toLowerCase();
       const lineLow = cleanedLine.toLowerCase();
@@ -1976,35 +2016,46 @@
       }
     }
 
-    // Eingebettete Folgennummer + Episodentitel ODER einfache Endziffern (Black Box 1 bis 4) bei Videos <= 4200s ohne Jahreszahl ("The Cell 2 (2009)" & "James Bond 007" bleiben geschützt)
-    const MOVIE_FRANCHISE_GUARD = /^(?:saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|the\s+fast\s+and\s+the\s+furious|transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle)\b/i;
+    // Eingebettete Folgennummer + Episodentitel ODER einfache Endziffern:
+    // Greift für Endziffern ausschließlich unter den 3 eisernen Bedingungen:
+    // 1. KEINE Jahreszahl (YYYY) im Namen, 2. durationSec < 4200 (< 70 Min.), 3. activeContext.seriesHeader ist aktiv & passt zum Titel!
+    const MOVIE_FRANCHISE_GUARD = /^(?:saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|the\s+fast\s+and\s+the\s+furious|transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle|avengers|captain\s+america|thor|guardians\s+of\s+the\s+galaxy|deadpool|x[\s-]*men|matrix|john\s+wick|equalizer|expendables|rambo|rocky|creed|alien|predator|terminator|robocop|die\s+hard|stirb\s+langsam|lethal\s+weapon|beverly\s+hills\s+cop|bad\s+boys|men\s+in\s+black|ghostbusters|back\s+to\s+the\s+future|zurück\s+in\s+die\s+zukunft|lord\s+of\s+the\s+rings|herr\s+der\s+ringe|hobbit|narnia|twilight|hunger\s+games|tribute\s+von\s+panem|maze\s+runner|divergent|resident\s+evil|silent\s+hill|conjuring|purge|quiet\s+place|hangover|oceans|now\s+you\s+see\s+me|unfassbaren|hotel\s+transsilvanien|ice\s+age|madagascar|ich\s+einfach\s+unverbesserlich|minions|toy\s+story|cars|kung\s+fu\s+panda|drachenzähmen)\b/i;
     if (
       mediaType !== "tv" &&
       !tmdbId &&
-      (!durationSec || durationSec <= 4200) &&
+      !hasAnyYearInMsg &&
+      durationSec &&
+      durationSec > 0 &&
+      durationSec < 4200 &&
+      activeContext.seriesHeader &&
       !YEAR_REGEX.test(` ${primarySource} `) &&
       !YEAR_REGEX.test(` ${fileName} `)
     ) {
       const cleanedCand = cleanMediaTitle(primarySource.replace(YEAR_REGEX, " "));
+      const normHeader = normalizeCompareString(activeContext.seriesHeader);
       const midEp = cleanedCand.match(/^(.{3,}?)\s+(?<!\d)0?([1-9]\d?)\s+([A-ZÄÖÜa-zäöü].{3,})$/);
       if (midEp && !/^(?:Teil|Part|CD)\s*\d+/i.test(midEp[3]) && !/\b007\b/.test(cleanedCand) && !MOVIE_FRANCHISE_GUARD.test(midEp[1].trim())) {
+        const candBaseNorm = normalizeCompareString(midEp[1]);
+        const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
         const epNumVal = parseInt(midEp[2], 10);
-        if (epNumVal >= 1 && epNumVal <= 99) {
+        if (headerMatches && epNumVal >= 1 && epNumVal <= 99) {
           mediaType = "tv";
-          seriesTitle = cleanMediaTitle(midEp[1]);
+          seriesTitle = activeContext.seriesHeader || cleanMediaTitle(midEp[1]);
           season = inlineStaffelNum || 1;
           episode = epNumVal;
           episodeTitle = cleanMediaTitle(midEp[3]);
           hasExplicitEpisodeMarker = true;
         }
       } else {
-        // Einfache Endziffern bei kurzen Episoden-Videos < 4200s ohne Jahreszahl (z. B. "Black Box 1" bis "Black Box 4")
+        // Einfache Endziffern NUR wenn activeContext.seriesHeader aktiv ist, durationSec < 4200 und KEINE Jahreszahl vorhanden ist
         const tailEpMatch = cleanedCand.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\s._\-]{2,}?)\s+0*([1-9]\d?)$/);
         if (tailEpMatch && !/\b(?:Teil|Part|CD|Disc|DVD|4K|3D|007)\s*$/i.test(tailEpMatch[1]) && !MOVIE_FRANCHISE_GUARD.test(tailEpMatch[1].trim())) {
+          const candBaseNorm = normalizeCompareString(tailEpMatch[1]);
+          const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
           const epNumVal = parseInt(tailEpMatch[2], 10);
-          if (epNumVal >= 1 && epNumVal <= 30 && (durationSec && durationSec <= 4200)) {
+          if (headerMatches && epNumVal >= 1 && epNumVal <= 30) {
             mediaType = "tv";
-            seriesTitle = cleanMediaTitle(tailEpMatch[1]);
+            seriesTitle = activeContext.seriesHeader || cleanMediaTitle(tailEpMatch[1]);
             season = inlineStaffelNum || 1;
             episode = epNumVal;
             hasExplicitEpisodeMarker = true;
@@ -2013,8 +2064,13 @@
       }
     }
 
-    // Regel 4 ("The Cell 2"-Fix): Ein Video OHNE expliziten Episoden-Marker darf bei duration > 4200 Sek. niemals als TV-Episode gelten
-    if (mediaType === "tv" && !hasExplicitEpisodeMarker && !tmdbId && durationSec && durationSec > 4200) {
+    // Eiserne Weichen-Regel ("Iron Man 3 (2013)" & "The Cell 2 (2009)"-Fix):
+    // 1. Wenn eine Jahreszahl in Klammern (YYYY) steht UND kein expliziter Serien-Marker (S01E01, 1x01, Staffel, Folge, Episode) vorliegt -> ZU 100% FILM!
+    // 2. Ein Video OHNE expliziten Episoden-Marker darf bei duration >= 4200 Sek. niemals als TV-Episode gelten!
+    if (
+      (( Boolean(parenYearMatch) || hasOwnParenYear ) && !hasExplicitEpisodeMarker && !explicitTvUrlHit) ||
+      (mediaType === "tv" && !hasExplicitEpisodeMarker && !tmdbId && durationSec && durationSec >= 4200)
+    ) {
       mediaType = "movie";
       season = null;
       episode = null;
@@ -2023,14 +2079,6 @@
       episodeTitle = "";
     }
 
-    // Datum vor Jahres-Extraktion entfernen, damit (21.07.2012) oder (01.12.2018) niemals als Jahr 2012/2018 erkannt wird (Fall 17)
-    // Wichtig ("Wonder Woman 1984 (2020)"-Fix): Zuerst nach einer eingeklammerten Jahreszahl (YYYY) suchen, damit Titelzahlen wie 1984 erhalten bleiben!
-    const PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]]/i;
-    const dateSafePrimary = ` ${primarySource.replace(FULL_DATE_REGEX, " ")} `;
-    const dateSafeFile = ` ${fileName.replace(FULL_DATE_REGEX, " ")} `;
-    const dateSafeLine1 = ` ${line1.replace(FULL_DATE_REGEX, " ")} `;
-    const parenYearMatch = dateSafePrimary.match(PAREN_YEAR_REGEX) || dateSafeLine1.match(PAREN_YEAR_REGEX) || dateSafeFile.match(PAREN_YEAR_REGEX);
-    const yearMatch = parenYearMatch || dateSafePrimary.match(YEAR_REGEX) || dateSafeLine1.match(YEAR_REGEX) || dateSafeFile.match(YEAR_REGEX);
     let year = explicitYear ? parseInt(explicitYear, 10) : (yearMatch ? parseInt(yearMatch[1], 10) : null);
     if (!year && mediaType === "tv" && activeContext.year && activeContext.seriesHeader && seriesTitle &&
         normalizeCompareString(seriesTitle).slice(0, 6) === normalizeCompareString(activeContext.seriesHeader).slice(0, 6)) {
@@ -4250,6 +4298,22 @@
           }
         }
       }
+    }
+
+    // Automatische Bereinigung: Komplett leere Serien (0 gültige Episoden mit verknüpfter Videodatei) aus allen Listen filtern
+    const validFilteredList = list.filter(item => {
+      if (!item) return false;
+      if (item.contentType === "series") {
+        const validEps = (item.episodes || []).filter(ep =>
+          Boolean(ep && (ep.fileId || ep.file_id || ep.telegram_file_id || ep.message_id || ep.versions?.length))
+        );
+        return validEps.length > 0;
+      }
+      return true;
+    });
+    if (validFilteredList.length !== list.length) {
+      list = validFilteredList;
+      changed = true;
     }
 
     if (changed && chatId && chatId !== "guest") {
@@ -7362,10 +7426,10 @@
         await db.prepare("DELETE FROM movie_files WHERE movie_id NOT IN (SELECT tmdb_id FROM movies)").run().catch(() => null);
       }
 
-      // Bereinige verwaiste Geister-Serien & -Filme ohne einzige geloggte Videodatei (z.B. 夢で見たあの子のために (2023) aus früheren Browse-/Kandidaten-Abfragen)
+      // Bereinige verwaiste Geister-Serien & -Filme ohne einzige geloggte Videodatei (z.B. 夢で見たあの子のために (2023) oder reine Serien-Header ohne Episoden-Video)
       const [delOrphanSeries, delOrphanMovies] = await Promise.all([
-        db.prepare("DELETE FROM series WHERE tmdb_id NOT IN (SELECT DISTINCT series_id FROM episode_files)").run().catch(() => ({ meta: { changes: 0 } })),
-        db.prepare("DELETE FROM movies WHERE tmdb_id NOT IN (SELECT DISTINCT movie_id FROM movie_files)").run().catch(() => ({ meta: { changes: 0 } }))
+        db.prepare("DELETE FROM series WHERE tmdb_id NOT IN (SELECT DISTINCT series_id FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '')").run().catch(() => ({ meta: { changes: 0 } })),
+        db.prepare("DELETE FROM movies WHERE tmdb_id NOT IN (SELECT DISTINCT movie_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '')").run().catch(() => ({ meta: { changes: 0 } }))
       ]);
       const orphanSeriesCount = Number(delOrphanSeries?.meta?.changes || 0);
       const orphanMoviesCount = Number(delOrphanMovies?.meta?.changes || 0);
@@ -7378,12 +7442,66 @@
       }
     } catch (e) {}
 
+    // Zusätzlich Memory-Fallback von leeren Serien ohne gültige Episoden-Dateien bereinigen
+    await cleanupEmptySeriesInD1AndMemory(env);
+
     return {
       ok: true,
       removedBrokenRows,
       removedDuplicateRows,
       upgradedChannelRows
     };
+  }
+
+  // Automatische Bereinigung (Cleanup): Löscht alle Serien aus D1 & Memory-Fallback, die 0 gültige Episoden mit verknüpfter Videodatei haben
+  async function cleanupEmptySeriesInD1AndMemory(env) {
+    let removedSeriesCount = 0;
+    const db = await ensureD1Schema(env);
+    if (db) {
+      try {
+        const delRes = await db.prepare(
+          "DELETE FROM series WHERE tmdb_id NOT IN (SELECT DISTINCT series_id FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '')"
+        ).run().catch(() => ({ meta: { changes: 0 } }));
+        removedSeriesCount += Number(delRes?.meta?.changes || 0);
+        if (removedSeriesCount > 0) {
+          await Promise.all([
+            db.prepare("DELETE FROM series_seasons WHERE series_id NOT IN (SELECT tmdb_id FROM series)").run().catch(() => null),
+            db.prepare("DELETE FROM series_episodes WHERE series_id NOT IN (SELECT tmdb_id FROM series)").run().catch(() => null)
+          ]);
+        }
+      } catch (e) {}
+    }
+
+    // Memory-Fallback prüfen: Serien ohne gültige Episoden-Dateien entfernen
+    const validSeriesIdsInMem = new Set();
+    for (const [k, v] of memoryFallback.entries()) {
+      if (k.startsWith("d1_ep_files_") && Array.isArray(v)) {
+        const hasValidFile = v.some(ep => Boolean(ep && (ep.telegram_file_id || ep.fileId || ep.file_id || ep.message_id)));
+        if (hasValidFile) {
+          const parts = k.split("_");
+          const sid = Number(parts[3]);
+          if (sid) validSeriesIdsInMem.add(sid);
+        }
+      }
+    }
+    for (const [k, v] of Array.from(memoryFallback.entries())) {
+      if ((k.startsWith("d1_catalog_series_") || k.startsWith("d1_series_")) && v && v.id) {
+        const sid = Number(v.id);
+        if (sid && !validSeriesIdsInMem.has(sid)) {
+          // Prüfe falls DB aktiv ist, ob dort Episoden liegen
+          let hasDbEps = false;
+          if (db) {
+            const row = await db.prepare("SELECT 1 AS ok FROM episode_files WHERE series_id = ?1 AND telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 1").bind(sid).first().catch(() => null);
+            hasDbEps = Boolean(row?.ok);
+          }
+          if (!hasDbEps) {
+            memoryFallback.delete(k);
+            removedSeriesCount++;
+          }
+        }
+      }
+    }
+    return removedSeriesCount;
   }
 
   // 1-Klick Komplett-Reset: Löscht alle Filme, Serien, Episoden, Datei-Links, Caches & Playlisten
@@ -9309,31 +9427,56 @@
       tmdbHit = await cachedFetchJson(buildUrl(`/${type}/${parsedItem.tmdbId}?language=de-DE`));
     }
 
-    // 2. Suche mit Titel + Jahr (inkl. cleanMovieQuery-Variante für Filmreihen & römische Zahlen wie "Star Trek VIII - Der Aufstand")
+    // Hilfsfunktion: Sortiert TMDb-Ergebnisse bei gleichem/ähnlichem Titel immer nach der kleinsten Jahres-Abweichung
+    const pickBestHitBySmallestYearDiff = (resultsList) => {
+      if (!Array.isArray(resultsList) || resultsList.length === 0) return null;
+      if (!parsedItem.year) return resultsList[0];
+      const targetY = Number(parsedItem.year);
+      const normQ = normalizeCompareString(queryTitle);
+      return [...resultsList].sort((a, b) => {
+        const aTitle = normalizeCompareString(a.title || a.name || "");
+        const bTitle = normalizeCompareString(b.title || b.name || "");
+        const aOrig  = normalizeCompareString(a.original_title || a.original_name || "");
+        const bOrig  = normalizeCompareString(b.original_title || b.original_name || "");
+        const aExact = (aTitle === normQ || aOrig === normQ) ? 1 : 0;
+        const bExact = (bTitle === normQ || bOrig === normQ) ? 1 : 0;
+        if (aExact !== bExact) return bExact - aExact;
+        const aDate = String(a.release_date || a.first_air_date || "");
+        const bDate = String(b.release_date || b.first_air_date || "");
+        const aYear = aDate ? parseInt(aDate.slice(0, 4), 10) : 9999;
+        const bYear = bDate ? parseInt(bDate.slice(0, 4), 10) : 9999;
+        const aDiff = Math.abs(aYear - targetY);
+        const bDiff = Math.abs(bYear - targetY);
+        if (aDiff !== bDiff) return aDiff - bDiff;
+        return Number(b.popularity || 0) - Number(a.popularity || 0);
+      })[0];
+    };
+
+    // 2. Suche mit Titel + Jahr (bei mediaType === "movie" ausschließlich unter /search/movie mit &primary_release_year=${parsedItem.year})
     if (!tmdbHit && parsedItem.year && queryTitle) {
       const res = await cachedFetchJson(
         buildUrl(`/search/${type}?query=${encodeURIComponent(queryTitle)}&${yearParam}=${parsedItem.year}&language=de-DE`)
       );
-      if (res?.results?.length > 0) tmdbHit = res.results[0];
+      if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
       if (!tmdbHit && cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
         const resClean = await cachedFetchJson(
           buildUrl(`/search/${type}?query=${encodeURIComponent(cleanedMovieQ)}&${yearParam}=${parsedItem.year}&language=de-DE`)
         );
-        if (resClean?.results?.length > 0) tmdbHit = resClean.results[0];
+        if (resClean?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(resClean.results);
       }
     }
 
-    // 3. Suche OHNE Jahr (falls Jahreszahl im Post falsch war, z.B. "Pirates of the Caribbean 3 (2011)" oder "Star Trek VIII - Der Aufstand")
+    // 3. Suche OHNE Jahr (falls Jahreszahl im Post leicht abwich, sortiert nach kleinster Jahres-Abweichung!)
     if (!tmdbHit && queryTitle) {
       const res = await cachedFetchJson(
         buildUrl(`/search/${type}?query=${encodeURIComponent(queryTitle)}&language=de-DE`)
       );
-      if (res?.results?.length > 0) tmdbHit = res.results[0];
+      if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
       if (!tmdbHit && cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
         const resClean = await cachedFetchJson(
           buildUrl(`/search/${type}?query=${encodeURIComponent(cleanedMovieQ)}&language=de-DE`)
         );
-        if (resClean?.results?.length > 0) tmdbHit = resClean.results[0];
+        if (resClean?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(resClean.results);
       }
     }
 
@@ -9344,7 +9487,7 @@
         const res = await cachedFetchJson(
           buildUrl(`/search/${type}?query=${encodeURIComponent(mainTitle)}&language=de-DE`)
         );
-        if (res?.results?.length > 0) tmdbHit = res.results[0];
+        if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
       }
     }
 
@@ -9357,24 +9500,24 @@
       };
     }
 
-    // 5. Plausibilitäts- & Konflikt-Prüfung (Jahr im Post vs. echtes TMDb-Jahr + Teil-Nummer)
+    // 5. Harte Sperre gegen falsche Jahrzehnte (Jahr im Post vs. echtes TMDb-Jahr > 2 Jahre Abweichung blockieren + Teil-Nummer prüfen)
     const releaseDate = tmdbHit.release_date || tmdbHit.first_air_date || "";
     const tmdbYear    = releaseDate ? parseInt(releaseDate.slice(0, 4), 10) : null;
     const yearDiff    = (parsedItem.year && tmdbYear) ? Math.abs(Number(parsedItem.year) - tmdbYear) : 0;
 
-    // Prüfen, ob am Ende des gesuchten Titels eine Fortsetzungs-Zahl steht (z.B. "Pirates of the Caribbean 3"),
+    // Prüfen, ob am Ende des gesuchten Titels eine Fortsetzungs-Zahl steht (z.B. "Iron Man 3", "Pirates of the Caribbean 3"),
     // die im gefundenen TMDb-Titel fehlt
     const trailingNumMatch = queryTitle.match(/\b([2-9])\s*$/);
     const seqNum = trailingNumMatch ? trailingNumMatch[1] : null;
     const tmdbTitlesCombined = `${tmdbHit.title || ""} ${tmdbHit.original_title || ""} ${tmdbHit.name || ""} ${tmdbHit.original_name || ""}`.toLowerCase();
     const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && yearDiff >= 1);
 
-    if (yearDiff >= 2 || sequelMismatch) {
+    if (yearDiff > 2 || yearDiff >= 2 || sequelMismatch) {
       return {
         status: "?",
         tmdbMatch: tmdbHit,
         contextError: true,
-        errorReason: `Kontext-Konflikt: Post nennt "${queryTitle} (${parsedItem.year || "o.J."})", aber TMDb-Treffer "${tmdbHit.title || tmdbHit.name}" ist von ${tmdbYear || "unbekannt"}.`
+        errorReason: `Jahres-/Kontext-Sperre: Post nennt "${queryTitle} (${parsedItem.year || "o.J."})", aber TMDb-Treffer "${tmdbHit.title || tmdbHit.name}" ist von ${tmdbYear || "unbekannt"} (Abweichung: ${yearDiff} Jahre).`
       };
     }
 
@@ -16546,20 +16689,37 @@
     if (parsed.year && candYear) {
       const diff = Math.abs(Number(parsed.year) - candYear);
       // Spezial-Schutz für Serien-Episoden mit Ausstrahlungsjahr im Dateinamen (z. B. "Maxe Baumann · 03 Max auf Reisen (DDR 1978)" bis "(DDR 1982)" bei Serienstart 1976):
-      // Wenn es eine Serie ist, der Serientitel übereinstimmt (score >= 88) und parsed.year >= candYear (innerhalb von 20 Jahren Laufzeit), ist es KEIN Jahres-Konflikt!
-      if ((candidateTypeCode === "s" || parsed.isSeries) && score >= 88 && Number(parsed.year) >= candYear && (Number(parsed.year) - candYear) <= 20) {
+      // Wenn es explizit eine Serie ist, der Serientitel übereinstimmt (score >= 88) und parsed.year >= candYear (innerhalb von 20 Jahren Laufzeit), ist es KEIN Jahres-Konflikt!
+      const isOngoingSeriesEp = Boolean(
+        parsed.isSeries &&
+        parsed.hasExplicitEpisodePattern &&
+        candidateTypeCode === "s" &&
+        score >= 88 &&
+        Number(parsed.year) >= candYear &&
+        (Number(parsed.year) - candYear) <= 20
+      );
+      if (isOngoingSeriesEp) {
         score += 6;
-      } else if (diff === 0) score += 10;
-      else if (diff === 1) score += 4;
-      else if (score >= 92 && diff <= 5) {
-        // Exakter Titel-Treffer bei leicht abweichendem Upload-Jahr (z.B. "E.T. (1986)" [1982], "Humanoid (2016)" [2014], "Fluch der Karibik 3 (2011)" [2007])
-        score += 0;
-      } else if (diff === 2) score -= 5;
-      else score -= 20;
+      } else if (diff === 0) {
+        score += 10;
+      } else if (diff === 1) {
+        score += 4;
+      } else if (diff === 2) {
+        score -= 5;
+      } else {
+        // HARTE SPERRE GEGEN FALSCHE JAHRZEHNTE (Math.abs(tmdbYear - parsed.year) > 2, z.B. 2013 vs. 1994):
+        // Ein Treffer mit > 2 Jahren Abweichung darf NIEMALS automatisch als "ok" (>= 74) durchgewunken werden!
+        score = Math.min(score - 28, 55);
+      }
     } else if (!parsed.year) {
       // Ohne Jahresangabe im Dateinamen leichter Bonus für populäre Haupttreffer, aber Deckelung bei unsicheren Teil-Treffern
       if (Number(candidate.vote_count || 0) > 150 && score >= 82) score += 3;
       if (score < 88) score = Math.min(score, 75);
+    }
+
+    // Wenn ein Eintrag als Film mit Jahreszahl erkannt wurde (!parsed.isSeries && parsed.year), blockiere TV-Serien-Kandidaten strikt
+    if (!parsed.isSeries && parsed.year && candidateTypeCode === "s") {
+      score = Math.min(score - 35, 40);
     }
 
     if (parsed.hasExplicitEpisodePattern && candidateTypeCode === "m") {
@@ -16694,8 +16854,15 @@
       if (c > bestPrimaryConf) bestPrimaryConf = c;
     }
 
-    // Automatischer Movie <-> TV Fallback, falls primäre Kategorie keinen oder nur schwachen Treffer liefert
-    if (!forceTypeCode && (rawPool.length === 0 || bestPrimaryConf < 76) && searchTitle) {
+    // Eiserne Sperre: Wenn mediaType === "movie" (!parsed.isSeries) UND parsed.year vorhanden ist (z.B. "Iron Man 3 (2013)"),
+    // darf NIEMALS unter /search/tv gesucht werden!
+    const strictMovieWithYearLock = Boolean(
+      forceTypeCode === "m" ||
+      (primaryType === "m" && parsed?.year && !parsed?.isSeries && !parsed?.hasExplicitEpisodePattern)
+    );
+
+    // Automatischer Movie <-> TV Fallback, falls primäre Kategorie keinen oder nur schwachen Treffer liefert (NICHT bei strictMovieWithYearLock!)
+    if (!forceTypeCode && !strictMovieWithYearLock && (rawPool.length === 0 || bestPrimaryConf < 76) && searchTitle) {
       const secHits = await runTmdbQuery(secondaryType, searchTitle, parsed.year);
       if (parsed.year && secHits === 0) {
         await runTmdbQuery(secondaryType, searchTitle, null);
@@ -16719,7 +16886,7 @@
       if (splitMain && splitMain.length >= 2 && splitMain.toLowerCase() !== searchTitle.toLowerCase() && !shorterCandidates.includes(splitMain)) {
         shorterCandidates.push(splitMain);
       }
-      // Wichtig: Niemals eine Fortsetzungs-Ziffer (2-9, z.B. "Pirates of the Caribbean 3") am Ende blind abschneiden!
+      // Wichtig: Niemals eine Fortsetzungs-Ziffer (2-9, z.B. "Iron Man 3", "Pirates of the Caribbean 3") am Ende blind abschneiden!
       if (words.length >= 2 && !lastWordIsSequelNum) {
         const dropLastWord = words.slice(0, -1).join(" ").trim();
         if (dropLastWord.length >= 3 && !shorterCandidates.includes(dropLastWord)) {
@@ -16736,7 +16903,7 @@
         const beforeLen = rawPool.length;
         await runTmdbQuery(primaryType, shorterTitle, parsed.year || null);
         if (parsed.year && rawPool.length === beforeLen) await runTmdbQuery(primaryType, shorterTitle, null);
-        if (!forceTypeCode && rawPool.length === beforeLen) await runTmdbQuery(secondaryType, shorterTitle, parsed.year || null);
+        if (!forceTypeCode && !strictMovieWithYearLock && rawPool.length === beforeLen) await runTmdbQuery(secondaryType, shorterTitle, parsed.year || null);
         for (let k = beforeLen; k < rawPool.length; k++) {
           rawPool[k]._baseTitleForConf = shorterTitle;
         }
@@ -16745,10 +16912,12 @@
     }
 
     // Stufe 5: Angehängte Episodennummer am Titelende (z. B. "Generation Kill 1" -> Serien-Suche für "Generation Kill", Folge 1)
-    // Wichtig: NIEMALS bei Film-Fortsetzungen mit Jahreszahl (ohne S01E01) oder bekannten Filmreihen (Saw 3, Spider-Man 2, Ninja Turtles 3, Iron Man 3, James Bond 007) ausführen!
-    const MOVIE_SEQUEL_SERIES_BLOCKLIST = /^(?:saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle)\b/i;
+    // Wichtig: NIEMALS bei Film-Fortsetzungen mit Jahreszahl (ohne S01E01) oder ohne aktiven Serien-Kontext ausführen!
+    const MOVIE_SEQUEL_SERIES_BLOCKLIST = /^(?:saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle|avengers|captain\s+america|thor|guardians\s+of\s+the\s+galaxy|deadpool|x[\s-]*men|matrix|john\s+wick|equalizer|expendables|rambo|rocky|creed|alien|predator|terminator|robocop|die\s+hard|stirb\s+langsam|lethal\s+weapon|beverly\s+hills\s+cop|bad\s+boys|men\s+in\s+black|ghostbusters|back\s+to\s+the\s+future|zurück\s+in\s+die\s+zukunft|lord\s+of\s+the\s+rings|herr\s+der\s+ringe|hobbit|narnia|twilight|hunger\s+games|tribute\s+von\s+panem|maze\s+runner|divergent|resident\s+evil|silent\s+hill|conjuring|purge|quiet\s+place|hangover|oceans|now\s+you\s+see\s+me|unfassbaren|hotel\s+transsilvanien|ice\s+age|madagascar|ich\s+einfach\s+unverbesserlich|minions|toy\s+story|cars|kung\s+fu\s+panda|drachenzähmen)\b/i;
     const isLikelyMovieSequel = Boolean(
-      (parsed?.year && !parsed?.hasExplicitEpisodePattern && !parsed?.isSeries) ||
+      strictMovieWithYearLock ||
+      parsed?.year ||
+      (!parsed?.isSeries && !parsed?.hasExplicitEpisodePattern) ||
       bestPrimaryConf >= 78 ||
       MOVIE_SEQUEL_SERIES_BLOCKLIST.test(String(searchTitle || "").trim())
     );
@@ -16758,7 +16927,7 @@
       : null;
     const trailingBaseTitle = trailingEpMatch ? trailingEpMatch[1].trim() : null;
     const trailingEpNum = trailingEpMatch ? parseInt(trailingEpMatch[2], 10) : null;
-    if (trailingBaseTitle && trailingEpNum >= 1 && trailingEpNum <= 99 && forceTypeCode !== "m" && !MOVIE_SEQUEL_SERIES_BLOCKLIST.test(trailingBaseTitle)) {
+    if (trailingBaseTitle && trailingEpNum >= 1 && trailingEpNum <= 99 && forceTypeCode !== "m" && !strictMovieWithYearLock && !MOVIE_SEQUEL_SERIES_BLOCKLIST.test(trailingBaseTitle)) {
       const endpoint = "tv";
       const yearParam = parsed?.year ? `&first_air_date_year=${parsed.year}` : "";
       const tvUrl = `https://api.themoviedb.org/3/search/${endpoint}?query=${encodeURIComponent(trailingBaseTitle)}${yearParam}&language=de-DE&page=1`;
@@ -16875,15 +17044,17 @@
     }
 
     // Erweiterte 8-API Fallback-Kaskade (OMDb -> Apple iTunes DE -> TVMaze -> AniList -> Jikan -> Wikidata -> MediaWiki), wenn TMDb leer oder unsicher (< 78%)
+    // Wenn strictMovieWithYearLock aktiv ist, darf auch die Fallback-Kaskade ausschließlich nach Filmen ("m") suchen
     const currentBest = Array.from(dedupedMap.values()).reduce((m, x) => Math.max(m, x.confidence || 0), 0);
     if (dedupedMap.size === 0 || currentBest < 78) {
-      const fbHit = await fetchMultiApiFallbackCascade(env, parsed, forceTypeCode);
-      if (fbHit && fbHit.id) {
+      const fbForceType = strictMovieWithYearLock ? "m" : forceTypeCode;
+      const fbHit = await fetchMultiApiFallbackCascade(env, parsed, fbForceType);
+      if (fbHit && fbHit.id && (!strictMovieWithYearLock || fbHit.typeCode !== "s")) {
         // Brücke: Wenn Wikipedia/Wikidata/TVMaze die korrekte Schreibweise mit Satzzeichen liefert (z. B. "Axel! will's wissen" statt "Axel will's wissen"),
         // direkt mit diesem kanonischen Titel erneut bei TMDb anfragen, um die offizielle TMDb-Serie samt Episoden zu erhalten!
         if (Number(fbHit.id) >= 8000000 && fbHit.title && fbHit.title.toLowerCase() !== searchTitle.toLowerCase() && env.TMDB_BEARER_TOKEN) {
-          const bridgeTc = fbHit.typeCode === "s" ? "s" : primaryType;
-          const bridgeHits = await runTmdbQuery(bridgeTc, fbHit.title, null);
+          const bridgeTc = strictMovieWithYearLock ? "m" : (fbHit.typeCode === "s" ? "s" : primaryType);
+          const bridgeHits = await runTmdbQuery(bridgeTc, fbHit.title, parsed.year || null);
           if (bridgeHits > 0) {
             for (const bItem of rawPool.slice(-6)) {
               if (!bItem || !bItem.id) continue;
@@ -16934,6 +17105,15 @@
 
     const sortedCandidates = Array.from(dedupedMap.values())
       .sort((a, b) => {
+        // Bei vorhandenem Jahr und gleichem/ähnlichem Titel (Confidence-Differenz <= 8) immer nach kleinster Jahres-Abweichung sortieren!
+        if (parsed?.year && Math.abs(b.confidence - a.confidence) <= 8) {
+          const targetY = Number(parsed.year);
+          const aY = /^\d{4}$/.test(String(a.year || "")) ? parseInt(String(a.year), 10) : 9999;
+          const bY = /^\d{4}$/.test(String(b.year || "")) ? parseInt(String(b.year), 10) : 9999;
+          const aDiff = Math.abs(aY - targetY);
+          const bDiff = Math.abs(bY - targetY);
+          if (aDiff !== bDiff) return aDiff - bDiff;
+        }
         if (b.confidence !== a.confidence) return b.confidence - a.confidence;
         if (a.inferredEpisode && !b.inferredEpisode) return -1;
         if (b.inferredEpisode && !a.inferredEpisode) return 1;
@@ -17150,15 +17330,42 @@
       const preExistingSeries = targetId ? await getSeriesFromD1(env, targetId) : null;
       let seriesDetails = targetId ? (preExistingSeries || await fetchSeriesDetails(env, targetId)) : null;
 
+      // KEIN DB-EINTRAG OHNE ECHTES VIDEO:
+      // Eine Serie darf erst in dem Moment in D1 (`series` / `series_seasons`) angelegt werden, wenn mindestens
+      // eine gültige Videodatei (`fileId` mit Video) erfolgreich einer Episode zugeordnet wurde!
+      const hasValidSeriesVideoFile = Boolean(
+        effectiveFileMeta &&
+        effectiveFileMeta.fileId &&
+        scoreTelegramFileIdValidity(effectiveFileMeta.fileId) > 0
+      );
+
       // Falls eine synthetische Fallback-ID (>= 8000000, z. B. MediaWiki / Wikidata / TVMaze / AniList) bestätigt oder zugewiesen wurde,
-      // aber noch nicht in D1 liegt, direkt über candidateMeta oder Fallback-Kaskade rekonstruieren und speichern!
+      // zunächst im RAM-Cache aufbauen und erst nach gültiger Video-Zuordnung in D1 persistieren!
       if (!seriesDetails && options?.candidateMeta && options.candidateMeta.title && Number(targetId) >= 8000000) {
         metadataSource = options.candidateMeta.source || "Fallback";
-        seriesDetails = await saveFallbackHitToD1AndCache(env, {
-          ...options.candidateMeta,
-          id: Number(targetId),
-          typeCode: "s"
-        });
+        const fb = { ...options.candidateMeta, id: Number(targetId), typeCode: "s" };
+        seriesDetails = {
+          id: Number(fb.id),
+          title: fb.title || "Unbekannt",
+          releaseDate: fb.releaseDate || (fb.year && fb.year !== "k.A." ? `${fb.year}-01-01` : "Keine Angabe"),
+          fsk: "FSK Keine Angabe",
+          statusText: fb.statusText || "Unbekannt",
+          vote_average: Number(fb.vote_average || 0),
+          runtime: fb.runtime || "Keine Angabe",
+          country: fb.country || "k.A.",
+          genres: fb.genres || "Serie",
+          directors: fb.directors || "Keine Angabe",
+          casts: fb.casts || "Keine Angabe",
+          overview: fb.overview || "Keine Beschreibung verfügbar.",
+          poster_path: null,
+          external_poster_url: fb.poster || fb.external_poster_url || "",
+          backdrop_path: null,
+          numberOfSeasons: 1,
+          numberOfEpisodes: 0,
+          seasons: [{ season_number: 1, name: "Staffel 1", episode_count: 0, air_date: "" }],
+          sourceFallback: fb.source || "Fallback"
+        };
+        setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
       }
 
       if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
@@ -17167,7 +17374,28 @@
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : Number(fbHit.id);
           bestConfidence = Math.max(bestConfidence, fbHit.confidence || 76);
           metadataSource = fbHit.source || "Fallback";
-          seriesDetails = await saveFallbackHitToD1AndCache(env, { ...fbHit, id: targetId, typeCode: "s" });
+          seriesDetails = {
+            id: Number(targetId),
+            title: fbHit.title || "Unbekannt",
+            releaseDate: fbHit.releaseDate || (fbHit.year && fbHit.year !== "k.A." ? `${fbHit.year}-01-01` : "Keine Angabe"),
+            fsk: "FSK Keine Angabe",
+            statusText: fbHit.statusText || "Unbekannt",
+            vote_average: Number(fbHit.vote_average || 0),
+            runtime: fbHit.runtime || "Keine Angabe",
+            country: fbHit.country || "k.A.",
+            genres: fbHit.genres || "Serie",
+            directors: fbHit.directors || "Keine Angabe",
+            casts: fbHit.casts || "Keine Angabe",
+            overview: fbHit.overview || "Keine Beschreibung verfügbar.",
+            poster_path: null,
+            external_poster_url: fbHit.poster || fbHit.external_poster_url || "",
+            backdrop_path: null,
+            numberOfSeasons: 1,
+            numberOfEpisodes: 0,
+            seasons: [{ season_number: 1, name: "Staffel 1", episode_count: 0, air_date: "" }],
+            sourceFallback: fbHit.source || "Fallback"
+          };
+          setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
         }
       }
 
@@ -17199,7 +17427,6 @@
             sourceFallback: "TVMaze"
           };
           setCachedTmdb(`tv_${targetId}`, seriesDetails);
-          await saveSeriesToD1(env, seriesDetails);
         }
       }
 
@@ -17219,14 +17446,9 @@
         };
         memoryFallback.set(normSeriesCacheKey, cachePayload);
         memoryFallback.set(`series_res_${normalizeCompareString(searchTitle)}_any`, cachePayload);
-        if (!preExistingSeries) {
+        if (!preExistingSeries && hasValidSeriesVideoFile) {
           await saveEntityToD1(env, normSeriesCacheKey, "series_res", cachePayload);
         }
-      }
-
-      // Sicherstellen, dass jede importierte Serie auch bei L1-Cache-Hit garantiert in der D1 `series` Tabelle steht
-      if (!preExistingSeries) {
-        await saveSeriesToD1(env, seriesDetails);
       }
 
       const seasonNum = parsed.season || 1;
@@ -17269,7 +17491,7 @@
 
               const groupSavedKey = `d1_group_seasons_saved_${seriesDetails.id}_${resolvedVer.versionInfo.groupId || "alt"}`;
               const alreadySavedGroupSeasons = Boolean(memoryFallback.get(groupSavedKey));
-              if (!alreadySavedGroupSeasons) {
+              if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
                 await saveSeriesToD1(env, seriesDetails);
               }
 
@@ -17295,14 +17517,16 @@
                     }))
                   };
                   setCachedTmdb(`tv_season_${seriesDetails.id}_${gNum}`, normalizedSeasonObj);
-                  if (!alreadySavedGroupSeasons) {
+                  if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
                     await saveSeasonToD1(env, seriesDetails.id, gNum, normalizedSeasonObj);
                   }
                   if (gNum === Number(seasonNum)) {
                     seasonData = normalizedSeasonObj;
                   }
                 }
-                memoryFallback.set(groupSavedKey, true);
+                if (hasValidSeriesVideoFile || preExistingSeries) {
+                  memoryFallback.set(groupSavedKey, true);
+                }
               }
             }
           }
@@ -17346,7 +17570,8 @@
       existingStreamsSet.add(curStreamSig);
       memoryFallback.set(memStreamKey, existingStreamsSet);
 
-      if (effectiveFileMeta && effectiveFileMeta.fileId) {
+      let savedAtLeastOneEpisodeVideo = false;
+      if (hasValidSeriesVideoFile) {
         // Speichere Einzelfolgen sowie Doppelfolgen (z. B. ALF S01E16-E17) sauber in D1
         const activeSeasonMaxEps = Number(versionInfo?.seasonEpisodeCount || seasonData?.seasonEpisodeCount || 0);
         for (let curEp = epNum; curEp <= epEndNum; curEp++) {
@@ -17375,13 +17600,22 @@
           });
           if (saveEpRes && typeof saveEpRes === "object") {
             if (saveEpRes.skippedPrerelease) ingestStatus = "skipped_prerelease";
-            else if (saveEpRes.replacedPrereleaseCount > 0) ingestStatus = "replaced_prerelease";
+            else {
+              savedAtLeastOneEpisodeVideo = true;
+              if (saveEpRes.replacedPrereleaseCount > 0) ingestStatus = "replaced_prerelease";
+            }
+          } else if (saveEpRes) {
+            savedAtLeastOneEpisodeVideo = true;
           }
         }
       }
 
       if (!seriesDetails.poster_path && !seriesDetails.external_poster_url && candidates[0]?.poster) {
         seriesDetails.external_poster_url = candidates[0].poster;
+      }
+
+      // Erst JETZT (wenn mindestens ein gültiges Episoden-Video gespeichert wurde oder die Serie bereits mit Episoden existiert) in D1 `series` schreiben!
+      if (savedAtLeastOneEpisodeVideo || preExistingSeries) {
         await saveSeriesToD1(env, seriesDetails);
       }
 
@@ -17399,7 +17633,8 @@
       const seqNum = trailingSeqMatch ? trailingSeqMatch[1] : null;
       const tmdbTitlesCombined = normalizeTitleForConfidence(`${seriesDetails.title || ""} ${seriesDetails.originalTitle || seriesDetails.original_name || ""}`);
       const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && yearDiff >= 1 && bestConfidence < 88);
-      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && ((yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
+      // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2), immer als Konflikt markieren!
+      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
       const errorReason = contextError
         ? `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${seriesDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`
         : null;
@@ -17524,7 +17759,9 @@
       const seqNum = trailingSeqMatch ? trailingSeqMatch[1] : null;
       const tmdbTitlesCombined = normalizeTitleForConfidence(`${movieDetails.title || ""} ${movieDetails.originalTitle || movieDetails.original_title || ""}`);
       const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && !(seqNum === "7" && tmdbTitlesCombined.includes("3d")) && yearDiff >= 1 && bestConfidence < 88);
-      const contextError = Boolean(!explicitTmdbId && ((yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
+      // Harte Sperre gegen falsche Jahrzehnte: Wenn parsed.year angegeben ist und der beste TMDb-Treffer > 2 Jahre abweicht (wie 2013 vs. 1994),
+      // darf dieser Treffer NIEMALS automatisch als "ok" übernommen werden!
+      const contextError = Boolean(!explicitTmdbId && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
       const errorReason = contextError
         ? `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${movieDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`
         : null;
@@ -18456,6 +18693,11 @@
       } catch (plErr) {
         console.error("[Import Batch Playlist Sync Warning]:", plErr);
       }
+    }
+
+    // Automatische DB-Bereinigung am Ende jedes Imports: Entfernt alle Serien mit 0 gültigen Episoden-Videos
+    if (!partialBatch) {
+      await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
     }
 
     return {
@@ -36277,6 +36519,7 @@
           if (playlistChatId === "bot_vip") {
             await ensureBotVipDefaultPlaylist(env);
           }
+          await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
             listAllUsersFromD1(env),
             listAllMediaFromD1(env, mediaType),
