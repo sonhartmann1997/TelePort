@@ -4,13 +4,17 @@ import { build } from 'esbuild';
 
 const rootDir = process.cwd();
 const workerPath = path.join(rootDir, 'worker.js');
-const publicDir = path.join(rootDir, 'public');
-const publicWorkerPath = path.join(publicDir, 'worker.js');
+const publicWorkerPath = path.join(rootDir, 'public', 'worker.js');
 
-async function verifyAndSyncWorker() {
+async function verifyWorker() {
   if (!fs.existsSync(workerPath)) {
     console.error('[Pre-Build Check] Fehler: worker.js nicht im Projekt-Root gefunden.');
     process.exit(1);
+  }
+
+  // Entferne evtl. doppelte Kopie in public/worker.js, damit GitHub-Sync schlank bleibt
+  if (fs.existsSync(publicWorkerPath)) {
+    fs.rmSync(publicWorkerPath, { force: true });
   }
 
   const result = await build({
@@ -27,16 +31,12 @@ async function verifyAndSyncWorker() {
     process.exit(1);
   }
 
-  if (fs.existsSync(publicDir)) {
-    fs.copyFileSync(workerPath, publicWorkerPath);
-  }
-
   console.log(
-    `[Pre-Build Check] worker.js erfolgreich mit esbuild (ESM) geprüft (${result.warnings.length} Warnungen) und nach public/worker.js synchronisiert.`
+    `[Pre-Build Check] worker.js erfolgreich mit esbuild (ESM) geprüft (${result.warnings.length} Warnungen).`
   );
 }
 
-verifyAndSyncWorker().catch((err) => {
+verifyWorker().catch((err) => {
   console.error('[Pre-Build Check] Validierung fehlgeschlagen:', err);
   process.exit(1);
 });
