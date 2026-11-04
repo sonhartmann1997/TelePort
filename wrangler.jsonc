@@ -6,6 +6,9 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    "WEBHOOK_URL": "https://teleport.sonhartmann-1997.workers.dev/"
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

@@ -65,6 +65,7 @@ export default function App() {
 
   // Environment variables
   const [envVars, setEnvVars] = useState<WorkerEnvVar[]>([
+    { key: 'WEBHOOK_URL', value: 'https://teleport.sonhartmann-1997.workers.dev/', isSecret: false },
     { key: 'ENVIRONMENT', value: 'production', isSecret: false },
     { key: 'ADMIN_IDS', value: '100998877', isSecret: false },
   ]);

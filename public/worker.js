@@ -1308,7 +1308,7 @@
   const ROMAN_NUMERALS = {
     " i ": " 1 ", " ii ": " 2 ", " iii ": " 3 ", " iv ": " 4 ", " v ": " 5 ",
     " vi ": " 6 ", " vii ": " 7 ", " viii ": " 8 ", " ix ": " 9 ", " x ": " 10 ",
-    " - viii -": " - 8 -", " viii ": " 8 "
+    " - viii -": " - 8 -"
   };
 
   function cleanMovieQuery(rawTitle) {
@@ -4231,7 +4231,7 @@
   }
 
   async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {
-    const list = Array.isArray(rawItems) ? rawItems : await getSavedList(env, chatId);
+    let list = Array.isArray(rawItems) ? rawItems : await getSavedList(env, chatId);
     if (!Array.isArray(list) || list.length === 0) return [];
     let changed = false;
     const epMap = await getAllSeriesEpisodesMapFromD1(env);
@@ -12051,9 +12051,10 @@
       ]
     ];
 
-    if (env.WEBAPP_URL) {
+    const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    if (effectiveWebAppBase) {
       inline_keyboard.unshift([
-        { text: "🍿 Netflix Mini-App öffnen", web_app: { url: `${String(env.WEBAPP_URL).replace(/\/$/, "")}?chatId=${chatId}` } }
+        { text: "🍿 Netflix Mini-App öffnen", web_app: { url: `${effectiveWebAppBase}?chatId=${chatId}` } }
       ]);
     }
 
@@ -12901,9 +12902,10 @@
       ]);
     }
 
-    if (env.WEBAPP_URL) {
+    const effectiveColWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    if (effectiveColWebAppBase) {
       inline_keyboard.push([
-        { text: "🍿 Reihe in Mini-App öffnen", web_app: { url: `${String(env.WEBAPP_URL).replace(/\/$/, "")}?openCol=${collectionId}` } }
+        { text: "🍿 Reihe in Mini-App öffnen", web_app: { url: `${effectiveColWebAppBase}?openCol=${collectionId}` } }
       ]);
     }
 
@@ -13036,9 +13038,10 @@
       ]);
     }
 
-    if (env.WEBAPP_URL) {
+    const effectiveUniWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    if (effectiveUniWebAppBase) {
       inline_keyboard.push([
-        { text: "🌌 Universum in Mini-App öffnen", web_app: { url: `${String(env.WEBAPP_URL).replace(/\/$/, "")}?openUni=${universeId}` } }
+        { text: "🌌 Universum in Mini-App öffnen", web_app: { url: `${effectiveUniWebAppBase}?openUni=${universeId}` } }
       ]);
     }
 
@@ -13109,9 +13112,10 @@
       ]
     ];
 
-    if (env.WEBAPP_URL) {
+    const effectivePerWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    if (effectivePerWebAppBase) {
       inline_keyboard.push([
-        { text: "🍿 Person in Mini-App öffnen", web_app: { url: `${String(env.WEBAPP_URL).replace(/\/$/, "")}?openPerson=${personId}` } }
+        { text: "🍿 Person in Mini-App öffnen", web_app: { url: `${effectivePerWebAppBase}?openPerson=${personId}` } }
       ]);
     }
 
@@ -38676,7 +38680,8 @@
         }
         const botUsername = meJson.result.username || "";
         const firstName = meJson.result.first_name || "CustomBot";
-        const webhookUrl = `${url.origin}/api/telegram/custom-webhook?botToken=${encodeURIComponent(botToken)}`;
+        const baseWebhookOrigin = String(env.WEBHOOK_URL || url.origin).replace(/\/$/, "");
+        const webhookUrl = `${baseWebhookOrigin}/api/telegram/custom-webhook?botToken=${encodeURIComponent(botToken)}`;
         let webhookRegistered = false;
         if (body.registerWebhook) {
           try {
@@ -39343,20 +39348,48 @@
         }
 
         if (request.method === "GET") {
+          const configuredWebhookBase = String(env.WEBHOOK_URL || url.origin).replace(/\/$/, "");
+          if ((url.pathname === "/setwebhook" || url.searchParams.get("setwebhook") === "1") && env.TELEGRAM_BOT_TOKEN) {
+            const targetWebhookUrl = `${configuredWebhookBase}/`;
+            const whPayload = {
+              url: targetWebhookUrl,
+              allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+            };
+            if (env.TELEGRAM_WEBHOOK_SECRET) {
+              whPayload.secret_token = String(env.TELEGRAM_WEBHOOK_SECRET);
+            }
+            const whRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(whPayload)
+            });
+            const whJson = await whRes.json().catch(() => ({}));
+            return new Response(JSON.stringify({
+              ok: Boolean(whJson?.ok),
+              webhookUrl: targetWebhookUrl,
+              telegramResponse: whJson
+            }, null, 2), {
+              status: 200,
+              headers: { "Content-Type": "application/json; charset=utf-8" }
+            });
+          }
+
           return new Response(JSON.stringify({
             status: "online",
             service: "Telegram Movie & Series Bot + Netflix Mini-App (Cloudflare Worker v3.6.0)",
-            miniAppUrl: `${url.origin}/app`,
-            studioUrl: `${url.origin}/studio`,
-            customBotWebhookEndpoint: `${url.origin}/api/telegram/custom-webhook`,
+            webhookUrl: `${configuredWebhookBase}/`,
+            miniAppUrl: `${configuredWebhookBase}/app`,
+            studioUrl: `${configuredWebhookBase}/studio`,
+            customBotWebhookEndpoint: `${configuredWebhookBase}/api/telegram/custom-webhook`,
             timestamp: new Date().toISOString(),
             configuredSecrets: {
               TELEGRAM_BOT_TOKEN: !!env.TELEGRAM_BOT_TOKEN,
               TMDB_BEARER_TOKEN: !!env.TMDB_BEARER_TOKEN,
+              WEBHOOK_URL: env.WEBHOOK_URL || `${configuredWebhookBase}/`,
               MOVIE_SAVED: !!env.MOVIE_SAVED,
               D1_DB: !!(env.DB || env.MOVIE_DB),
             },
-            help: "Sende Telegram Webhook Updates per POST an diese URL oder öffne / bzw. /app für die Netflix Mini-App."
+            help: "Sende Telegram Webhook Updates per POST an diese URL, rufe ?setwebhook=1 auf oder öffne / bzw. /app für die Netflix Mini-App."
           }, null, 2), {
             status: 200,
             headers: { "Content-Type": "application/json; charset=utf-8" },
