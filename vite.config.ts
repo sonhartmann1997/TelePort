@@ -5,6 +5,40 @@ import path from 'path';
 import {defineConfig, Plugin} from 'vite';
 
 const rootDir = import.meta.dirname || path.resolve();
+const modulesDir = path.resolve(rootDir, 'worker-modules');
+const workerFile = path.resolve(rootDir, 'worker.js');
+
+const WORKER_REPO_STUB = `// Auto-assembled from ./worker-modules/*.js during 'vite build' (bun run build / npm run build)
+// See ./worker-modules/ for the 9 modular departments.
+export default {
+  async fetch() {
+    return new Response("Run 'bun run build' or 'npm run build' before deploying.", { status: 200 });
+  }
+};
+`;
+
+function assembleWorkerFromModulesSync(): string | null {
+  if (!fs.existsSync(modulesDir)) return null;
+  const files = fs
+    .readdirSync(modulesDir)
+    .filter((f) => f.endsWith('.js'))
+    .sort();
+  if (files.length === 0) return null;
+  let combined =
+    files
+      .map((f) => fs.readFileSync(path.join(modulesDir, f), 'utf8').trimEnd())
+      .join('\n\n') + '\n';
+
+  combined = combined
+    .replace('" - viii -": " - 8 -", " viii ": " 8 "', '" - viii -": " - 8 -"')
+    .replace(
+      'async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {\n    const list =',
+      'async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {\n    let list ='
+    )
+    .replace('list = validFilteredList;\n      changed = true;', 'changed = true;');
+
+  return combined;
+}
 
 function cleanAiStudioAttachments(baseDir: string) {
   const aiStudioDir = path.join(baseDir, 'assets', 'aistudio');
@@ -17,14 +51,32 @@ function cloudflareStudioPlugin(): Plugin {
   return {
     name: 'cloudflare-studio-plugin',
     buildStart() {
-      // Keep public/ free of large chat attachments so GitHub sync stays fast & lightweight
       cleanAiStudioAttachments(path.resolve(rootDir, 'public'));
+      const assembled = assembleWorkerFromModulesSync();
+      if (assembled) {
+        // On Cloudflare Workers Builds (DISABLE_HMR !== 'true'), write full assembled worker.js for npx wrangler deploy!
+        if (process.env.DISABLE_HMR !== 'true') {
+          fs.writeFileSync(workerFile, assembled, 'utf8');
+          console.log(
+            `[Cloudflare Assembler] Assembled worker-modules -> worker.js (${(Buffer.byteLength(assembled) / 1024).toFixed(1)} KB)`
+          );
+        } else {
+          // Inside AI Studio VFS, keep worker.js as a tiny <1KB stub so GitHub Sync never hits the 2MB single-file limit
+          fs.writeFileSync(workerFile, WORKER_REPO_STUB, 'utf8');
+        }
+      }
     },
     configureServer(server) {
       cleanAiStudioAttachments(path.resolve(rootDir, 'public'));
       server.middlewares.use((req, res, next) => {
         if (req.url && req.url.split('?')[0] === '/worker.js') {
-          const workerFile = path.resolve(rootDir, 'worker.js');
+          const assembled = assembleWorkerFromModulesSync();
+          if (assembled) {
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store');
+            res.end(assembled);
+            return;
+          }
           if (fs.existsSync(workerFile)) {
             res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
             res.setHeader('Cache-Control', 'no-store');
@@ -37,6 +89,14 @@ function cloudflareStudioPlugin(): Plugin {
     },
     closeBundle() {
       const distDir = path.resolve(rootDir, 'dist');
+      if (process.env.DISABLE_HMR === 'true') {
+        // Keep AI Studio VFS clean of /dist so GitHub Sync only uploads source files (< 400 KB each)
+        if (fs.existsSync(distDir)) {
+          fs.rmSync(distDir, {recursive: true, force: true});
+        }
+        fs.writeFileSync(workerFile, WORKER_REPO_STUB, 'utf8');
+        return;
+      }
       if (!fs.existsSync(distDir)) {
         fs.mkdirSync(distDir, {recursive: true});
       }

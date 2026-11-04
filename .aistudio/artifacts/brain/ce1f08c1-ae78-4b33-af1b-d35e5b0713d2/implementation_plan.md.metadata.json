@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan für den automatisierten Cloudflare Workers GitHub-Build-Workflow inkl. Pre-Build esbuild-Validierung, automatischer Worker-Synchronisation und produktiven D1/KV/Webhook-Bindings.",
-  "updatedAt": "2026-11-04T10:27:56.762458895Z",
+  "summary": "Implementierungsplan zur Aufteilung von worker.js in 9 schlanke Abteilungs-Module (je 100–350 KB) im Git-Repository mit automatischem Zusammenbau während vite build auf Cloudflare, um das 2-MB-Einzeldatei-Limit der GitHub-Sync-API zu umgehen.",
+  "updatedAt": "2026-11-04T10:50:39.187783077Z",
   "requestFeedback": true,
   "userFacing": true
 }

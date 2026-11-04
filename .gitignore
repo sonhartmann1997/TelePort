@@ -2,7 +2,6 @@ node_modules/
 dist/
 build/
 coverage/
-worker-modules/
 public/assets/aistudio/
 dist/assets/aistudio/
 public/worker.js
