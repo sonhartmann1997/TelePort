@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan zur Aufteilung von worker.js in 9 schlanke Abteilungs-Module (je 100–350 KB) im Git-Repository mit automatischem Zusammenbau während vite build auf Cloudflare, um das 2-MB-Einzeldatei-Limit der GitHub-Sync-API zu umgehen.",
-  "updatedAt": "2026-11-04T10:50:39.187783077Z",
+  "summary": "Architektur- und Umsetzungsplan zur Reparatur der Serien-Erkennungsweiche (Film-vor-Serie-Fallback für Nummerntitel wie Black Box 1, Spuk im Hochhaus 1..7, Pippi Langstrumpf 1..21), Subrequest-Budget-Schutz ohne 0%-Konflikte und automatische D1-Serien-Deduplizierung inkl. TMDb-Poster-Heilung.",
+  "updatedAt": "2026-11-04T11:22:17.870051691Z",
   "requestFeedback": true,
   "userFacing": true
 }

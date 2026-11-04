@@ -1041,88 +1041,79 @@
       }
     } else if (
       activeContext.seriesHeader &&
-      durationSec &&
-      durationSec > 0 &&
-      durationSec < 4200 &&
-      !hasAnyYearInMsg &&
-      !YEAR_REGEX.test(` ${primarySource} `) &&
-      !YEAR_REGEX.test(` ${line1} `) &&
-      !YEAR_REGEX.test(` ${fileName} `)
+      (!durationSec || durationSec < 4200)
     ) {
-      // Regel 4 & Regel 8: Strenge "Endziffer = Episode"-Weiche:
-      // Greift NUR, wenn: (1) KEINE Jahreszahl (YYYY) im Namen steht, (2) duration_seconds < 4200 (< 70 Min.) ist,
-      // UND (3) prevContext.seriesHeader aktiv ist (direkt davor derselbe Serienname als Header/Folge lief).
-      const cleanedLine = cleanMediaTitle(line1 || fileName);
+      // Regel 4 & Regel 8: "Endziffer / Mittelziffer = Episode"-Weiche bei aktivem Serien-Header:
+      // Greift auch dann, wenn im Header oder Dateinamen ein Erscheinungsjahr (z. B. 1982 bei Spuk im Hochhaus oder 2023 bei Black Box) steht!
+      const cleanedLine = cleanMediaTitle((line1 || fileName || primarySource).replace(YEAR_REGEX, " "));
       const headerLow = activeContext.seriesHeader.toLowerCase();
       const lineLow = cleanedLine.toLowerCase();
-      if (lineLow.startsWith(headerLow.slice(0, 6))) {
+      const normHeader = normalizeCompareString(activeContext.seriesHeader);
+      const normLine = normalizeCompareString(cleanedLine);
+      if (lineLow.startsWith(headerLow.slice(0, 6)) || (normHeader && normLine.startsWith(normHeader.slice(0, 6)))) {
         const rem = cleanedLine.slice(activeContext.seriesHeader.length).trim();
-        const numMatch = rem.match(/^[-–·‧:\s]*(\d{1,3})\b\s*(.*)$/);
+        const numMatch = rem.match(/^[-–·‧:\s]*0*([1-9]\d?)\b\s*(.*)$/);
         if (numMatch) {
           mediaType = "tv";
           seriesTitle = activeContext.seriesHeader;
-          season = inlineStaffelNum || 1;
+          season = inlineStaffelNum || activeContext.season || 1;
           episode = parseInt(numMatch[1], 10);
           episodeTitle = cleanMediaTitle(numMatch[2]);
+          hasExplicitEpisodeMarker = true;
           sourceUsed = "runtime_series_switch";
         }
       } else {
         // Auch wenn Wortstellung im Dateinamen gedreht ist (z. B. ID 106-110 "Gormenghast - Das Schloß im Nebel" -> "Das Schloss im Nebel - Die Legende von Gormenghast 1")
-        const trailingNum = cleanedLine.match(/^(.{3,}?)\s+0*(\d{1,2})$/);
+        const trailingNum = cleanedLine.match(/^(.{3,}?)\s+0*([1-9]\d?)$/);
         if (trailingNum) {
           const headerWords = headerLow.split(/[^a-zäöüß0-9]+/).filter(w => w.length >= 4);
           if (headerWords.some(w => lineLow.includes(w))) {
             mediaType = "tv";
             seriesTitle = activeContext.seriesHeader;
-            season = inlineStaffelNum || 1;
+            season = inlineStaffelNum || activeContext.season || 1;
             episode = parseInt(trailingNum[2], 10);
+            hasExplicitEpisodeMarker = true;
             sourceUsed = "runtime_series_switch";
           }
         }
       }
     }
 
-    // Eingebettete Folgennummer + Episodentitel ODER einfache Endziffern:
-    // Greift für Endziffern ausschließlich unter den 3 eisernen Bedingungen:
-    // 1. KEINE Jahreszahl (YYYY) im Namen, 2. durationSec < 4200 (< 70 Min.), 3. activeContext.seriesHeader ist aktiv & passt zum Titel!
+    // Eingebettete Folgennummer + Episodentitel (z.B. "Pippi Langstrumpf 1 Pippi zieht in die Villa Kunterbunt", "Zur See 1 Die Bewährung")
+    // ODER einfache Endziffern (z.B. "Black Box 1", "Spuk im Hochhaus 1", "Spuk unterm Riesenrad 1"):
     const MOVIE_FRANCHISE_GUARD = /^(?:saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|the\s+fast\s+and\s+the\s+furious|transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle|avengers|captain\s+america|thor|guardians\s+of\s+the\s+galaxy|deadpool|x[\s-]*men|matrix|john\s+wick|equalizer|expendables|rambo|rocky|creed|alien|predator|terminator|robocop|die\s+hard|stirb\s+langsam|lethal\s+weapon|beverly\s+hills\s+cop|bad\s+boys|men\s+in\s+black|ghostbusters|back\s+to\s+the\s+future|zurück\s+in\s+die\s+zukunft|lord\s+of\s+the\s+rings|herr\s+der\s+ringe|hobbit|narnia|twilight|hunger\s+games|tribute\s+von\s+panem|maze\s+runner|divergent|resident\s+evil|silent\s+hill|conjuring|purge|quiet\s+place|hangover|oceans|now\s+you\s+see\s+me|unfassbaren|hotel\s+transsilvanien|ice\s+age|madagascar|ich\s+einfach\s+unverbesserlich|minions|toy\s+story|cars|kung\s+fu\s+panda|drachenzähmen)\b/i;
     if (
       mediaType !== "tv" &&
       !tmdbId &&
-      !hasAnyYearInMsg &&
-      durationSec &&
-      durationSec > 0 &&
-      durationSec < 4200 &&
-      activeContext.seriesHeader &&
-      !YEAR_REGEX.test(` ${primarySource} `) &&
-      !YEAR_REGEX.test(` ${fileName} `)
+      (!durationSec || durationSec < 4200)
     ) {
       const cleanedCand = cleanMediaTitle(primarySource.replace(YEAR_REGEX, " "));
-      const normHeader = normalizeCompareString(activeContext.seriesHeader);
+      const normHeader = activeContext.seriesHeader ? normalizeCompareString(activeContext.seriesHeader) : "";
       const midEp = cleanedCand.match(/^(.{3,}?)\s+(?<!\d)0?([1-9]\d?)\s+([A-ZÄÖÜa-zäöü].{3,})$/);
-      if (midEp && !/^(?:Teil|Part|CD)\s*\d+/i.test(midEp[3]) && !/\b007\b/.test(cleanedCand) && !MOVIE_FRANCHISE_GUARD.test(midEp[1].trim())) {
+      if (midEp && !/^(?:Teil|Part|CD|Disc|DVD|bd|4k|uhd|1080p|720p)\b/i.test(midEp[3]) && !/\b007\b/.test(cleanedCand) && !MOVIE_FRANCHISE_GUARD.test(midEp[1].trim())) {
         const candBaseNorm = normalizeCompareString(midEp[1]);
-        const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
+        const headerMatches = !normHeader || Boolean(candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
         const epNumVal = parseInt(midEp[2], 10);
-        if (headerMatches && epNumVal >= 1 && epNumVal <= 99) {
+        if ((headerMatches || !hasOwnParenYear) && epNumVal >= 1 && epNumVal <= 99) {
           mediaType = "tv";
-          seriesTitle = activeContext.seriesHeader || cleanMediaTitle(midEp[1]);
-          season = inlineStaffelNum || 1;
+          seriesTitle = (headerMatches && activeContext.seriesHeader) ? activeContext.seriesHeader : cleanMediaTitle(midEp[1]);
+          season = inlineStaffelNum || activeContext.season || 1;
           episode = epNumVal;
           episodeTitle = cleanMediaTitle(midEp[3]);
           hasExplicitEpisodeMarker = true;
         }
       } else {
-        // Einfache Endziffern NUR wenn activeContext.seriesHeader aktiv ist, durationSec < 4200 und KEINE Jahreszahl vorhanden ist
+        // Einfache Endziffern (z. B. "Black Box 1", "Spuk im Hochhaus 1", "Spuk unterm Riesenrad 1"):
+        // Wenn kein eigenes Jahr in Klammern (YYYY) im Roh-Dateinamen steht und kein gesperrtes Film-Franchise vorliegt
         const tailEpMatch = cleanedCand.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\s._\-]{2,}?)\s+0*([1-9]\d?)$/);
         if (tailEpMatch && !/\b(?:Teil|Part|CD|Disc|DVD|4K|3D|007)\s*$/i.test(tailEpMatch[1]) && !MOVIE_FRANCHISE_GUARD.test(tailEpMatch[1].trim())) {
           const candBaseNorm = normalizeCompareString(tailEpMatch[1]);
           const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
           const epNumVal = parseInt(tailEpMatch[2], 10);
-          if (headerMatches && epNumVal >= 1 && epNumVal <= 30) {
+          if ((headerMatches || !hasOwnParenYear) && epNumVal >= 1 && epNumVal <= 30) {
             mediaType = "tv";
-            seriesTitle = activeContext.seriesHeader || cleanMediaTitle(tailEpMatch[1]);
-            season = inlineStaffelNum || 1;
+            seriesTitle = (headerMatches && activeContext.seriesHeader) ? activeContext.seriesHeader : cleanMediaTitle(tailEpMatch[1]);
+            season = inlineStaffelNum || activeContext.season || 1;
             episode = epNumVal;
             hasExplicitEpisodeMarker = true;
           }
@@ -1131,10 +1122,10 @@
     }
 
     // Eiserne Weichen-Regel ("Iron Man 3 (2013)" & "The Cell 2 (2009)"-Fix):
-    // 1. Wenn eine Jahreszahl in Klammern (YYYY) steht UND kein expliziter Serien-Marker (S01E01, 1x01, Staffel, Folge, Episode) vorliegt -> ZU 100% FILM!
+    // 1. Wenn eine EIGENE Jahreszahl in Klammern (YYYY) im Post steht UND kein expliziter Serien-Marker vorliegt -> FILM!
     // 2. Ein Video OHNE expliziten Episoden-Marker darf bei duration >= 4200 Sek. niemals als TV-Episode gelten!
     if (
-      (( Boolean(parenYearMatch) || hasOwnParenYear ) && !hasExplicitEpisodeMarker && !explicitTvUrlHit) ||
+      (hasOwnParenYear && !hasExplicitEpisodeMarker && !explicitTvUrlHit) ||
       (mediaType === "tv" && !hasExplicitEpisodeMarker && !tmdbId && durationSec && durationSec >= 4200)
     ) {
       mediaType = "movie";
@@ -1753,15 +1744,42 @@
     return fallbackUrl;
   }
 
-  // --- Fetch mit Timeout ---
+  // --- Fetch mit Timeout + universeller TMDb v3 (api_key) & v4 (Bearer JWT) Auth-Normalisierung ---
   async function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      if (String(url).includes("api.themoviedb.org")) {
+      let targetUrl = String(url || "");
+      let effectiveOptions = { ...options };
+      if (targetUrl.includes("api.themoviedb.org")) {
         trackStat("tmdbCalls");
+        const hdrs = { ...(options?.headers || {}) };
+        let rawToken = String(hdrs.Authorization || hdrs.authorization || "")
+          .replace(/^Bearer\s+/i, "")
+          .replace(/^["']+|["']+$/g, "")
+          .trim();
+        if (!rawToken || rawToken === "undefined" || rawToken === "null") {
+          const activeEnv = typeof globalThis !== "undefined" ? globalThis._activeWorkerEnv : null;
+          rawToken = String(
+            activeEnv?.TMDB_BEARER_TOKEN ||
+            activeEnv?.TMDB_API_KEY ||
+            activeEnv?.TMDB_KEY ||
+            ""
+          ).replace(/^Bearer\s+/i, "").replace(/^["']+|["']+$/g, "").trim();
+        }
+        if (rawToken && /^[a-f0-9]{32}$/i.test(rawToken)) {
+          // 32-stelliger TMDb v3 API-Key erkannt -> als ?api_key=... Query-Parameter übergeben und ungültigen Bearer-Header entfernen
+          delete hdrs.Authorization;
+          delete hdrs.authorization;
+          if (!targetUrl.includes("api_key=")) {
+            targetUrl += (targetUrl.includes("?") ? "&" : "?") + `api_key=${encodeURIComponent(rawToken)}`;
+          }
+        } else if (rawToken && rawToken !== "undefined" && rawToken !== "null") {
+          hdrs.Authorization = `Bearer ${rawToken}`;
+        }
+        effectiveOptions.headers = hdrs;
       }
-      const res = await fetch(url, { ...options, signal: controller.signal });
+      const res = await fetch(targetUrl, { ...effectiveOptions, signal: controller.signal });
       clearTimeout(id);
       return res;
     } catch (err) {

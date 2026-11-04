@@ -4,12 +4,27 @@
             episode = parseInt(epOnly[1], 10) || 1;
             if (typeof epOnly.index === "number" && epOnly.index > 1) cutIdx = Math.min(cutIdx, epOnly.index);
           } else if (durationSec <= 0 || durationSec <= 4200) {
-            // Fall Black Box 1 bis 4: Kurze Videos (<= 4200s) mit Endziffer (1..24) ohne Jahreszahl in Klammern
-            const strippedTrailingQual = withoutExt.replace(/\\b(?:1080p|720p|2160p|480p|4k|uhd|x264|x265|h264|h265|hevc|ger|deu|german|deutsch|web-dl|webrip|bluray|hd|mp4|mkv|avi)\\b/gi, " ").trim();
-            const trailingNumMatch = strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|1\\d|2[0-4])\\s*$/);
-            if (trailingNumMatch && !/\\b(?:19\\d{2}|20[0-2]\\d)\\b/.test(strippedTrailingQual) && !/\\b(?:part|teil|cd|disc|dvd)\\b/i.test(strippedTrailingQual)) {
+            // Fall Black Box 1 bis 6, Spuk im Hochhaus 1..7 & Pippi Langstrumpf 1 Pippi zieht...:
+            const strippedTrailingQual = withoutExt
+              .replace(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/gi, " ")
+              .replace(/\\b(?:1080p|720p|2160p|480p|4k|uhd|x264|x265|h264|h265|hevc|ger|deu|german|deutsch|web-dl|webrip|bluray|hd|mp4|mkv|avi)\\b/gi, " ")
+              .replace(/\\s+/g, " ")
+              .trim();
+            const franchiseGuardRe = /^(?:iron man|thor|avengers|matrix|john wick|shrek|toy story|cars|fast|furious|hangover|rambo|rocky|creed|mad max|spider man|batman|superman|deadpool|guardians|men in black|rush hour|bad boys|oceans|expendables|transporter|taken|equalizer|punisher|blade|underworld|resident evil|alien|predator|terminator|jurassic|indiana jones|star wars|harry potter|herr der ringe|hobbit|fluch der karibik|mission impossible|james bond|bourne|twilight|tribute von panem|maze runner|divergent|pitch perfect|step up|scary movie|american pie|final destination|saw|scream|conjuring|insidious|paranormal|purge|halloween|freitag der|nightmare|hellraiser|chucky|annabelle|nun|sinister|troll|ip man|ong bak|raid|undisputed|goal|hooligans|manta|fack ju|ostwind|bibi|conni|schule der magischen|vorstadtkrokodile|wilde kerle|fünf freunde|tkkg|drei fragezeichen)\\b/i;
+            const midNumMatch = strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|[1-9]\\d)\\s+([A-Za-zÄÖÜäöüß].{3,})$/);
+            const trailingNumMatch = !midNumMatch ? strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|1\\d|2[0-9]|30)\\s*$/) : null;
+            if (midNumMatch && !/^(?:part|teil|cd|disc|dvd)\\b/i.test(midNumMatch[3])) {
+              const candBase = cleanClientMediaTitle(midNumMatch[1]);
+              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase)) {
+                isSeries = true;
+                season = 1;
+                episode = parseInt(midNumMatch[2], 10) || 1;
+                episodeTitle = cleanClientMediaTitle(midNumMatch[3]);
+                explicitTitle = candBase;
+              }
+            } else if (trailingNumMatch && !/\\b(?:part|teil|cd|disc|dvd)\\b/i.test(strippedTrailingQual)) {
               const candBase = cleanClientMediaTitle(trailingNumMatch[1]);
-              if (candBase && candBase.length >= 3 && !/^(?:iron man|thor|avengers|matrix|john wick|shrek|toy story|cars|fast|furious|hangover|rambo|rocky|creed|mad max|spider man|batman|superman|deadpool|guardians|men in black|rush hour|bad boys|oceans|expendables|transporter|taken|equalizer|punisher|blade|underworld|resident evil|alien|predator|terminator|jurassic|indiana jones|star wars|harry potter|herr der ringe|hobbit|fluch der karibik|mission impossible|james bond|bourne|twilight|tribute von panem|maze runner|divergent|pitch perfect|step up|scary movie|american pie|final destination|saw|scream|conjuring|insidious|paranormal|purge|halloween|freitag der|nightmare|hellraiser|chucky|annabelle|nun|sinister|troll|ip man|ong bak|raid|undisputed|goal|hooligans|manta|fack ju|ostwind|bibi|conni|schule der magischen|vorstadtkrokodile|wilde kerle|fünf freunde|tkkg|drei fragezeichen)$/i.test(candBase)) {
+              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase)) {
                 isSeries = true;
                 season = 1;
                 episode = parseInt(trailingNumMatch[2], 10) || 1;
@@ -666,14 +681,25 @@
 
             // Schutzregel ("The Rookie S01E11" / "E01S01 Frontier 2016"):
             // Wenn die Datei oder Caption bereits einen EIGENEN Seriennamen mitbringt, darf dieser NIEMALS vom effectivePre der vorherigen Serie überschrieben werden!
+            // WICHTIG: Wenn ownExplicitSeriesTitle mit effectivePre.seriesHeader beginnt (z.B. "Spuk im Hochhaus 1" bei Header "Spuk im Hochhaus" oder "Black Box 1" bei Header "Black Box"),
+            // ist es DIESELBE Serie (Episode N) und der Vorab-Kontext (inkl. Jahr 1982 / 2023) MUSS erhalten bleiben!
             const fileCleanOwn = !isGenericFile ? cleanClientMediaTitle(( normFileName || "" ).replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "")) : "";
             const textCleanOwn = cleanFirstLine ? cleanClientMediaTitle(firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "").replace(/\\bStaffel\\s*\\d+.*/i, "")) : "";
             const ownExplicitSeriesTitle = (textCleanOwn && textCleanOwn.length >= 2) ? textCleanOwn : ((fileCleanOwn && fileCleanOwn.length >= 2) ? fileCleanOwn : "");
 
-            if (ownExplicitSeriesTitle && effectivePre.seriesHeader && ownExplicitSeriesTitle.toLowerCase() !== effectivePre.seriesHeader.toLowerCase()) {
-              // Neue Serie im Dateinamen/Text erkannt -> alten Kontext verwerfen!
+            const normOwnSeries = normalizeClientCompareTitle(ownExplicitSeriesTitle);
+            const normHeaderSeries = effectivePre.seriesHeader ? normalizeClientCompareTitle(effectivePre.seriesHeader) : "";
+            const isSameSeriesWithEpSuffix = Boolean(
+              normOwnSeries &&
+              normHeaderSeries &&
+              (normOwnSeries === normHeaderSeries || normOwnSeries.startsWith(normHeaderSeries + " ") || normOwnSeries.startsWith(normHeaderSeries))
+            );
+
+            if (ownExplicitSeriesTitle && effectivePre.seriesHeader && !isSameSeriesWithEpSuffix) {
+              // Stripping einer evtl. angehängten Episodennummer ("Spuk unterm Riesenrad 1" -> "Spuk unterm Riesenrad") für den neuen Serien-Header
+              const strippedNewHeader = cleanClientMediaTitle(ownExplicitSeriesTitle.replace(/\\s+0*([1-9]\\d?)(?:\\s+.+)?$/, "")) || ownExplicitSeriesTitle;
               effectivePre = { lastMessageId: currentMsgId };
-              rollingPreContext = { seriesHeader: ownExplicitSeriesTitle, isSeriesHeader: true, lastMessageId: currentMsgId };
+              rollingPreContext = { seriesHeader: strippedNewHeader, isSeriesHeader: true, lastMessageId: currentMsgId };
             }
 
             let baseCandidate = "";
