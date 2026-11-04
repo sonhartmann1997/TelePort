@@ -1,46 +1,88 @@
-# Umsetzungsplan: Untertitel-Bindung, Vorabversion-Auto-Ersatz, Serien-Lücken-Finder & Diagnose-Log-Fix
+# Automatisierter Cloudflare Workers GitHub-Build & Pre-Build-Validierung
 
-## 1. Übersicht & Zielsetzung
-Dieses Update erweitert das System um vier eng verzahnte Module für den Medien-Import, die Qualitätsverwaltung und das Admin-Dashboard:
-1. **Untertitel-Bindung (`.srt`, `.sub`, `.vtt`, `.ass`)**: Untertiteldateien im Kanal oder JSON-Export werden nicht mehr als Junk verworfen, sondern intelligent an die zugehörige Videodatei (in der Regel die unmittelbar darüberliegende Videonachricht oder per Dateinamen-Abgleich) gekoppelt. Beim Abrufen eines Streams werden gebundene Untertitel automatisch mitgesendet und zusätzlich über einen eigenen Untertitel-Button bereitgestellt.
-2. **Automatischer Ersatz von Vorabversionen (`#vorabversion`, `TS`, `CAM`, `MD` / Mic-Dub)**: Schlechte Vorab-Releases werden nur als Notfall-Platzhalter vorgehalten. Sobald beim Import eine reguläre Version für denselben Film bzw. dieselbe Serienfolge eintrifft, werden vorhandene Vorab-/TS-/MD-/CAM-Einträge automatisch aus der Datenbank gelöscht und durch die saubere Version ersetzt. Ist bereits eine saubere Version vorhanden, wird eine nachträglich gesendete Vorabversion beim Import automatisch übersprungen.
-3. **Serien-Lücken-Finder (Übersicht fehlender Folgen)**: Ein neues Analyse-Werkzeug im Admin-Dashboard deckt fehlende Episoden in importierten Serien auf. Interne Staffellücken (z. B. Folge 1 und 2 fehlen, während Folge 3 bereits vorhanden ist) werden mit höchster Priorität hervorgehoben, ergänzt durch den Abgleich bis zum offiziellen Staffelende.
-4. **Diagnose-Log-Reparatur & Synchronisation**: Behebt den Bug, durch den der Reiter „Diagnose-Log“ neben „Prüfen & Korrigieren“ nicht angeklickt werden konnte, und synchronisiert die Zählerstände beider Diagnose-Log-Einstiegspunkte in Echtzeit.
+Dieser Plan sichert das automatische Deployment über GitHub-Sync zu Cloudflare Workers Builds ab, indem vor jedem Build eine strikte `esbuild`-Syntax- und Bundle-Prüfung (exakt analog zu Wrangler) ausgeführt, der Worker-Quellcode automatisch synchronisiert und die produktiven Cloudflare-Bindings (`DB`, `MOVIE_SAVED`, `WEBHOOK_URL`) fest verdrahtet werden.
+
+## User Review & Critical Decisions
+
+> [!IMPORTANT]
+> Alle Entscheidungen aus den Rückfragen wurden übernommen. Sobald du auf **Proceed** klickst, wird die Pre-Build-Pipeline scharfgeschaltet und der finale Build erzeugt, sodass dein nächster GitHub-Push bei Cloudflare ohne `const`- oder Duplicate-Key-Fehler durchläuft.
+
+- **Bestätigte Entscheidung 1 (Deployment-Pfad)**: Automatischer Deploy via GitHub-Sync mit Cloudflare Workers Builds (`bun run build` gefolgt von `npx wrangler deploy`).
+- **Bestätigte Entscheidung 2 (Pre-Build-Absicherung)**: Automatische `esbuild`-Syntax- und Bundle-Prüfung sowie Synchronisation des Worker-Skripts vor jedem `npm run build` / `bun run build`.
 
 ---
 
-## 2. Funktionale & Technische Architektur
+## 1. Overview & Core Concept
 
-### Modul 1: Untertitel-Erkennung, Bindung & Auslieferung
-- **Erkennung statt Blockade**:
-  - Dateien mit den Endungen `.srt`, `.sub`, `.vtt`, `.ass` und `.ssa` werden aus der Liste blockierter Junk-Endungen herausgenommen und als `SUBTITLE_ATTACHMENT` klassifiziert.
-  - Sprachkürzel im Dateinamen oder Begleittext (z. B. `de`, `ger`, `en`, `eng`, `forced`) werden automatisch als Untertitelsprache erkannt.
-- **Automatische Bindung an das zugehörige Video**:
-  - **Beim JSON-Import**: Trifft der Parser auf eine Untertitel-Nachricht, prüft er zuerst, ob eine explizite Antwort-Referenz (`reply_to_message_id`) auf ein Video existiert, andernfalls bindet er die Untertiteldatei an den unmittelbar zuvor erfassten Video-Kandidaten (Nachricht darüber), sofern die Nachrichten-ID-Distanz gering ist oder der bereinigte Titel übereinstimmt.
-  - **Beim Live-Bot-Empfang**: Geht eine Untertiteldatei im Kanal oder Chat ein, wird sie an das zuletzt im selben Kanal/Chat empfangene Video (bzw. die per Reply referenzierte Videonachricht) in der Datenbank gekoppelt.
-- **Datenbank-Erweiterung & Auslieferung**:
-  - Die Tabellen für Film- und Episodendateien speichern gebundene Untertitel (`subtitles_json` mit Datei-Referenz, Dateiname und Sprachlabel) sowie das Tag `💬 Untertitel`.
-  - **Automatischer Mitversand + Separater Button**: Wird ein Film oder eine Folge im Bot oder über die Mini App gestartet, sendet der Bot automatisch das Video und direkt im Anschluss die verknüpfte(n) Untertiteldatei(en). Zusätzlich erscheint im Detail-Modal und unter der Bot-Karte ein dedizierter Button `💬 Untertitel senden (.srt)`, um die Untertiteldatei jederzeit separat abzurufen.
+- **What It Does**: Verbindet die lokale Studio-Vorschau, die generierten statischen Assets und den Cloudflare-Edge-Worker in einer einzigen, reproduzierbaren Build-Pipeline. Vor jedem Frontend-Build prüft `esbuild` das gesamte Worker-Skript im ESM-Bundle-Modus auf Konstanten-Zuweisungen, doppelte Objektschlüssel und Syntaxfehler.
+- **Target Audience / Persona**: Entwickler und Administratoren des Telegram Movie & Series Bots + der STREAMFLIX Mini-App, die Änderungen direkt über GitHub an Cloudflare Workers ausrollen.
+- **Key Value**: Verhindert fehlgeschlagene Cloudflare-Deploys durch frühzeitige Bundle-Validierung und garantiert, dass Studio-Download, Vorschau-Sandbox und produktiver Cloudflare Worker immer denselben geprüften Stand verwenden.
 
-### Modul 2: Automatische Bereinigung von `#vorabversion`, `TS`, `CAM` & `MD` beim Import
-- **Prerelease-/Low-Quality-Detektor**:
-  - Erkennt zuverlässig Marker für minderwertige Vorabfassungen in Text und Dateiname: `#vorabversion`, `vorabversion`, `telesync`, `ts`, `hdts`, `cam`, `hdcam`, `camrip`, `micdub`, `mic dub`, `md`, `line dubbed`, `screener`, `workprint`.
-  - Markiert entsprechende Streams mit dem Versions-Hinweis `⚠️ Vorabversion / TS / MD`.
-- **Ersatz-Logik beim Import**:
-  - **Fall A (Gute Version trifft auf bestehende Vorabversion)**: Wird eine reguläre Version (`1080p`, `720p`, `4K`, `WEB-DL`, `BluRay` etc. ohne Vorab-/TS-/MD-Marker) importiert, löscht die Speicherroutine automatisch alle für diesen Film bzw. diese Serienfolge vorhandenen Vorab-/TS-/MD-/CAM-Datensätze aus der Datenbank und speichert nur die saubere Version.
-  - **Fall B (Vorabversion trifft auf bestehende gute Version)**: Existiert in der Datenbank bereits mindestens eine reguläre, saubere Version für den Film oder die Folge, wird eine eingehende Vorab-/TS-/MD-Datei nicht mehr als Stream angelegt, sondern im Diagnose-Log sauber als `SKIPPED_PRERELEASE (Gute Version bereits vorhanden)` dokumentiert.
-  - **Fall C (Notfall-Speicherung)**: Existiert noch gar keine Version des Titels, wird die Vorabversion regulär mit dem sichtbaren Hinweis `⚠️ Vorabversion` gespeichert, bis später ein Upgrade importiert wird.
+---
 
-### Modul 3: Serien-Lücken-Finder im Admin-Dashboard
-- **Zweistufige Lücken-Analyse pro Serie & Staffel**:
-  - **Priorität 1 – Interne Staffellücken (Kritisch)**: Prüft innerhalb jeder vorhandenen Staffel von Folge `1` bis zur höchsten hochgeladenen Folge (`maxUploadedEp`), welche Episoden dazwischen fehlen (z. B. Folge 1 und 2 fehlen, Folge 3 ist vorhanden; oder Folge 4 fehlt zwischen Folge 1–3 und 5–8). Diese Lücken werden rot/amber als **„Interne Lücke“** markiert.
-  - **Priorität 2 – Fehlende Folgen am Staffelende**: Vergleicht die hochgeladenen Folgen zusätzlich mit der offiziellen Episodenanzahl der Staffel, um noch ausstehende Folgen bis zum Staffelfinale separat als **„Offenes Staffelende“** auszuweisen.
-- **Dashboard-Oberfläche (`🧩 Serien-Lücken`)**:
-  - Übersichtliche Filterung nach: *„Nur interne Lücken (Priorität)“*, *„Alle unvollständigen Staffeln“* und Textsuche nach Serienname.
-  - Kompakte Staffel-Zeitleiste mit visuellen Episoden-Badges (Vorhanden = Grün, Interne Lücke = Rot hervorgehoben, Fehlend am Ende = Grau/Amber) sowie 1-Klick-Kopierfunktion für eine kompakte Lücken-Liste (ideal zum schnellen Nachladen fehlender Folgen).
+## 2. User Experience & Visual Design
 
-### Modul 4: Reparatur & Synchronisierung des Diagnose-Logs
-- **Klickbarkeit des Sub-Tabs wiederherstellen**:
-  - Die Tab-Umschaltfunktion im Import-Cockpit akzeptiert nun explizit den Wert `diaglog`, sodass der Button `🛠️ Diagnose-Log` direkt neben `🛠️ Prüfen & Korrigieren` sofort die Diagnose-Ansicht öffnet.
-- **Einheitlicher Echtzeit-Zähler**:
-  - Sowohl der obere Admin-Reiter als auch der Sub-Tab im Import-Bereich greifen auf dieselbe zentrale Zähler-Aktualisierung zu (Kombination aus gespeicherten Server-Logs und aktuellen Browser-Vorab-Logs ohne doppelte Zählung). Dadurch zeigen beide Stellen jederzeit exakt dieselbe Zahl an.
+- **Key User Flows**:
+  1. Änderungen am Worker oder im Studio werden automatisch durch die Pre-Build-Prüfung validiert.
+  2. Im Reiter **Deploy & Einrichtungs-Anleitung** sind die produktiven Bindings (`WEBHOOK_URL`, `DB`, `MOVIE_SAVED`) bereits fertig voreingestellt und als `wrangler.toml` / `wrangler.jsonc` abrufbar.
+  3. Nach dem Synchronisieren zu GitHub führt Cloudflare Workers Builds `bun run build` und `npx wrangler deploy` in einem Durchlauf fehlerfrei aus.
+- **Visual Identity & Theme**:
+  - *Aesthetic Direction*: Immersion im Netflix-inspirierten Dark-Mode (`#141414` / `#090c14`) mit klaren Status-Indikatoren im Studio-Header.
+  - *Color Palette & Mood*: Tiefschwarze Oberflächen (`--background: #090c14`), markante Signal-Akzente in Netflix-Rot (`#E50914`) und Cloudflare-Amber (`#F59E0B`).
+  - *Typography & Hierarchy*: Klare Sans-Serif-Hierarchie für UI-Elemente kombiniert mit präziser Monospace-Darstellung für Wrangler-Konfigurationen, Logs und Anker-Navigation.
+  - *Component Styling & Layout*: Aufgeräumtes Multi-Tab-Studio mit dynamischem Code-Splitting (`React.lazy`) für schnelle Ladezeiten.
+- **Interactive Feedback & Motion**: Sofortige Status-Rückmeldung beim Kopieren oder Herunterladen des geprüften Worker-Skripts sowie beim Testen der Telegram-Webhook-Endpunkte.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Entscheidung 1: Pre-Build `esbuild` Dry-Run & Auto-Sync im Build-Skript**
+  - *Chosen Approach*: Integration eines Pre-Build-Schritts in das Build-Kommando, der den Worker vor dem Vite-Build mit `esbuild --bundle --format=esm` prüft und in das statische Asset-Verzeichnis synchronisiert.
+  - *Why*: Wrangler nutzt intern exakt `esbuild` im ESM-Modus. Dadurch werden Fehler wie `Cannot assign to "list" because it is a constant` oder `Duplicate key " viii "` bereits beim Bauen erkannt und behoben, bevor ein Commit entsteht.
+  - *Alternatives Considered*: Reine Prüfung über `node --check` (erkennt zwar Syntaxfehler, aber keine `const`-Neuzuweisungen oder doppelte Objekt-Keys, die erst der `esbuild`-Bundler von Wrangler meldet).
+- **Entscheidung 2: Feste Verdrahtung von D1, KV und Webhook-URL in der Wrangler-Konfiguration**
+  - *Chosen Approach*: Hinterlegen von `WEBHOOK_URL = "https://teleport.sonhartmann-1997.workers.dev/"`, der D1-Datenbank (`DB`: `5a29a16f-663f-4392-85b8-461a15753829`) und des KV-Namespaces (`MOVIE_SAVED`: `12475ed9f06b4899bc2930d1a7de0ba9`) direkt in der Wrangler-Konfiguration.
+  - *Why*: Damit verbindet `npx wrangler deploy` in der Cloudflare-Build-Pipeline alle Datenbanken, KV-Speicher und die Webhook-Domain vollautomatisch ohne manuelle Nacharbeit im Cloudflare-Dashboard.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+- **Architecture & Component Diagram**:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                     GitHub Sync & Cloudflare Build                       │
+│                                                                          │
+│  ┌──────────────────────┐    ┌──────────────────────┐    ┌────────────┐  │
+│  │ 1. Pre-Build Check   │───▶│ 2. Vite Asset Build  │───▶│ 3. Wrangler│  │
+│  │ esbuild ESM Dry-Run  │    │ Code-Split Studio &  │    │   Deploy   │  │
+│  │ + Worker Asset Sync  │    │ Mini-App Bundle      │    │ Edge Push  │  │
+│  └──────────────────────┘    └──────────────────────┘    └─────┬──────┘  │
+└────────────────────────────────────────────────────────────────┼─────────┘
+                                                                 │
+                                                                 ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                Cloudflare Edge Runtime (teleport Worker)                 │
+│                                                                          │
+│  ┌──────────────────────┐    ┌──────────────────────┐    ┌────────────┐  │
+│  │   @ANCHOR: PARSER    │    │   @ANCHOR: TMDB      │    │ @ANCHOR:   │  │
+│  │ Sequel-Schutz (YYYY) │───▶│ Strict Movie Lock &  │───▶│ D1_MOVIES  │  │
+│  │ + 3-Stufen-Regel     │    │ >2 Jahre Sperre      │    │ 0-Ep Clean │  │
+│  └──────────────────────┘    └──────────────────────┘    └─────┬──────┘  │
+│                                                                │         │
+│  ┌──────────────────────┐    ┌──────────────────────┐          │         │
+│  │ KV: MOVIE_SAVED      │◀──▶│ D1: DB (teleport-db) │◀─────────┘         │
+│  │ (12475ed9f06b4899…)  │    │ (5a29a16f-663f-4392…)│                    │
+│  └──────────────────────┘    └──────────────────────┘                    │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Data Model & State**:
+  - **D1 (`DB`)**: Speichert `movies`, `movie_files`, `series`, `series_seasons`, `series_episodes` und `episode_files`. Serien werden erst angelegt, wenn mindestens eine reale Videodatei (`telegram_file_id`) vorliegt; verwaiste Serien mit 0 Episoden-Videos werden beim Import-Abschluss und beim Dashboard-Abruf automatisch bereinigt.
+  - **KV (`MOVIE_SAVED`)**: Hält Benutzereinstellungen, Filterprofile, Merklisten und den Aktivitäts-Log-Puffer.
+  - **Environment (`vars`)**: `WEBHOOK_URL` (`https://teleport.sonhartmann-1997.workers.dev/`) steuert die Telegram-Mini-App-Buttons (`web_app`), den `/setwebhook`-Endpunkt und die Status-Ausgabe.
+- **Interactive Component & State Mapping**:
+  - **Pre-Build Validator**: Führt vor jedem Build den `esbuild`-Check durch, synchronisiert das geprüfte Worker-Skript für den Studio-Download und bricht bei Fehlern sofort mit klarem Zeilenhinweis ab.
+  - **Deploy & Setup View**: Zeigt die fertige Wrangler-Konfiguration inklusive `DB`, `MOVIE_SAVED` und `WEBHOOK_URL` zur direkten Übernahme oder als ZIP-Export an.

@@ -1,6 +1,6 @@
 {
-  "summary": "Architektur- und Umsetzungsplan für 4 Kern-Erweiterungen: (1) Automatische Untertitel-Bindung (.srt/.sub/.vtt/.ass) an das vorangehende Video inkl. automatischem Mitversand & separatem Untertitel-Button, (2) Automatischer Ersatz von Vorabversionen, TS, CAM und Mic-Dub (MD) beim Import einer regulären Version, (3) Serien-Lücken-Finder mit Fokus auf interne Staffellücken (z.B. Folge 1+2 fehlt, Folge 3 vorhanden), (4) Reparatur & Synchronisierung des Diagnose-Logs im Admin-Dashboard.",
-  "updatedAt": "2026-11-03T13:55:05.671834468Z",
+  "summary": "Implementierungsplan für den automatisierten Cloudflare Workers GitHub-Build-Workflow inkl. Pre-Build esbuild-Validierung, automatischer Worker-Synchronisation und produktiven D1/KV/Webhook-Bindings.",
+  "updatedAt": "2026-11-04T10:27:56.762458895Z",
   "requestFeedback": true,
   "userFacing": true
 }
