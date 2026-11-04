@@ -17,6 +17,32 @@ async function verifyWorker() {
     fs.rmSync(publicWorkerPath, { force: true });
   }
 
+  // Automatische Selbstheilung für bekannte Wrangler/esbuild Fallstricke
+  let code = fs.readFileSync(workerPath, 'utf8');
+  let patched = false;
+
+  if (code.includes('" - viii -": " - 8 -", " viii ": " 8 "')) {
+    code = code.replace('" - viii -": " - 8 -", " viii ": " 8 "', '" - viii -": " - 8 -"');
+    patched = true;
+  }
+  if (
+    code.includes('async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {\n    const list =') ||
+    code.includes('list = validFilteredList;')
+  ) {
+    code = code
+      .replace(
+        'async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {\n    const list =',
+        'async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {\n    let list ='
+      )
+      .replace('list = validFilteredList;\n      changed = true;', 'changed = true;');
+    patched = true;
+  }
+
+  if (patched) {
+    fs.writeFileSync(workerPath, code, 'utf8');
+    console.log('[Pre-Build Check] worker.js automatisch für Wrangler/esbuild bereinigt.');
+  }
+
   const result = await build({
     entryPoints: [workerPath],
     bundle: true,
