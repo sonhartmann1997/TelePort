@@ -1,7 +1,13 @@
 node_modules/
 build/
-dist/
 coverage/
+worker-modules/
+public/assets/aistudio/
+dist/assets/aistudio/
+dist/worker.js
+*.zip
+*.tar.gz
+*.rar
 .DS_Store
 *.log
 .env*

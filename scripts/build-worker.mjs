@@ -171,5 +171,7 @@ for (const dept of WORKER_DEPARTMENTS) {
 
 const merged = chunks.join('\n\n') + '\n';
 fs.writeFileSync(workerPath, merged, 'utf8');
-fs.writeFileSync(publicWorkerPath, merged, 'utf8');
-console.log(`[build-worker] Split & synced ${WORKER_DEPARTMENTS.length} departments (${(Buffer.byteLength(merged) / 1024).toFixed(1)} KB)`);
+if (mode !== '--split' && fs.existsSync(modulesDir)) {
+  fs.rmSync(modulesDir, { recursive: true, force: true });
+}
+console.log(`[build-worker] Synced ${WORKER_DEPARTMENTS.length} departments -> worker.js (${(Buffer.byteLength(merged) / 1024).toFixed(1)} KB)`);

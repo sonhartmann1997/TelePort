@@ -6,53 +6,57 @@ import {defineConfig, Plugin} from 'vite';
 
 const rootDir = import.meta.dirname || path.resolve();
 
-function cloudflareAssetsSanitizerPlugin(): Plugin {
+function cleanAiStudioAttachments(baseDir: string) {
+  const aiStudioDir = path.join(baseDir, 'assets', 'aistudio');
+  if (fs.existsSync(aiStudioDir)) {
+    fs.rmSync(aiStudioDir, {recursive: true, force: true});
+  }
+}
+
+function cloudflareStudioPlugin(): Plugin {
   return {
-    name: 'cloudflare-assets-sanitizer',
-    closeBundle() {
-      const distDir = path.resolve(rootDir, 'dist');
-      if (!fs.existsSync(distDir)) return;
-
-      // 1. Remove AI Studio chat attachment directory from dist if present
-      const aiStudioAssetsDir = path.join(distDir, 'assets', 'aistudio');
-      if (fs.existsSync(aiStudioAssetsDir)) {
-        fs.rmSync(aiStudioAssetsDir, {recursive: true, force: true});
-      }
-
-      // 2. Remove any .zip / .rar / .tar.gz or file > 24 MiB (Cloudflare Workers 25 MiB limit)
-      const MAX_CF_ASSET_BYTES = 24 * 1024 * 1024;
-      const walkAndClean = (dir: string) => {
-        for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            if (entry.name === 'aistudio') {
-              fs.rmSync(fullPath, {recursive: true, force: true});
-            } else {
-              walkAndClean(fullPath);
-            }
-          } else {
-            const lower = entry.name.toLowerCase();
-            const stat = fs.statSync(fullPath);
-            if (
-              lower.endsWith('.zip') ||
-              lower.endsWith('.rar') ||
-              lower.endsWith('.7z') ||
-              lower.endsWith('.tar.gz') ||
-              stat.size > MAX_CF_ASSET_BYTES
-            ) {
-              fs.rmSync(fullPath, {force: true});
-            }
+    name: 'cloudflare-studio-plugin',
+    buildStart() {
+      // Keep public/ free of large chat attachments so GitHub sync stays fast & lightweight
+      cleanAiStudioAttachments(path.resolve(rootDir, 'public'));
+    },
+    configureServer(server) {
+      cleanAiStudioAttachments(path.resolve(rootDir, 'public'));
+      server.middlewares.use((req, res, next) => {
+        if (req.url && req.url.split('?')[0] === '/worker.js') {
+          const workerFile = path.resolve(rootDir, 'worker.js');
+          if (fs.existsSync(workerFile)) {
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store');
+            fs.createReadStream(workerFile).pipe(res);
+            return;
           }
         }
-      };
-      walkAndClean(distDir);
+        next();
+      });
+    },
+    closeBundle() {
+      const distDir = path.resolve(rootDir, 'dist');
+      if (!fs.existsSync(distDir)) {
+        fs.mkdirSync(distDir, {recursive: true});
+      }
+      cleanAiStudioAttachments(distDir);
+      const distWorkerCopy = path.join(distDir, 'worker.js');
+      if (fs.existsSync(distWorkerCopy)) {
+        fs.rmSync(distWorkerCopy, {force: true});
+      }
+      fs.writeFileSync(
+        path.join(distDir, '.assetsignore'),
+        'aistudio\naistudio/**\nassets/aistudio\nassets/aistudio/**\n*.zip\n*.rar\n*.tar.gz\n',
+        'utf8'
+      );
     },
   };
 }
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), cloudflareAssetsSanitizerPlugin()],
+    plugins: [react(), tailwindcss(), cloudflareStudioPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(rootDir, '.'),
@@ -93,4 +97,3 @@ export default defineConfig(() => {
     },
   };
 });
-
