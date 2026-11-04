@@ -4312,14 +4312,13 @@
       return true;
     });
     if (validFilteredList.length !== list.length) {
-      list = validFilteredList;
       changed = true;
     }
 
     if (changed && chatId && chatId !== "guest") {
-      await saveRawList(env, chatId, list);
+      await saveRawList(env, chatId, validFilteredList);
     }
-    return list;
+    return validFilteredList;
   }
 
   async function syncD1CatalogIntoBotVipPlaylist(env, targetFolderId = null, options = {}) {

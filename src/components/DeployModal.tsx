@@ -31,10 +31,10 @@ export const DeployModal: React.FC<DeployModalProps> = ({
   isStandaloneTab = false,
 }) => {
   const [hasKv, setHasKv] = useState(true);
-  const [kvBinding, setKvBinding] = useState('MY_KV');
-  const [kvId, setKvId] = useState('xxxxxxxxx_my_kv_namespace_id');
+  const [kvBinding, setKvBinding] = useState('MOVIE_SAVED');
+  const [kvId, setKvId] = useState('12475ed9f06b4899bc2930d1a7de0ba9');
   const [nodejsCompat, setNodejsCompat] = useState(true);
-  const [compatibilityDate, setCompatibilityDate] = useState('2026-10-01');
+  const [compatibilityDate, setCompatibilityDate] = useState('2026-11-03');
 
   const [copiedToml, setCopiedToml] = useState(false);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
