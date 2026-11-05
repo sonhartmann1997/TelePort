@@ -408,7 +408,7 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
           deliveryMode: 'system',
           method: `importBatch (Chunk ${chunk.chunkIndex}/${chunk.totalChunks})`,
           title: `${chunk.fileName} (${chunk.entries.length} Videos)`,
-          mediaType: 'unknown',
+          mediaType: 'movie',
           targetChatId: playlistName,
           durationMs: Date.now() - startMs,
           summary,

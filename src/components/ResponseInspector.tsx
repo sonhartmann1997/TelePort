@@ -632,7 +632,7 @@ export const ResponseInspector: React.FC<ResponseInspectorProps> = ({
 
               <span className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-mono text-slate-400 bg-slate-800/70 rounded border border-slate-700/60">
                 <HardDrive className="w-3 h-3 text-sky-400" />
-                {response.sizeBytes} B
+                {(response as any).sizeBytes ?? (response.body ? response.body.length : 0)} B
               </span>
             </div>
           )}
@@ -1903,12 +1903,12 @@ export const ResponseInspector: React.FC<ResponseInspectorProps> = ({
                         }`}
                       >
                         <span className="text-[10px] text-slate-400 shrink-0 select-none">
-                          {log.timestamp}
+                          {(log as any).timestamp || ''}
                         </span>
                         <span className="uppercase text-[10px] font-bold px-1.5 py-0.2 rounded bg-black/30 shrink-0">
                           {log.level}
                         </span>
-                        <pre className="whitespace-pre-wrap break-all flex-1">{log.message}</pre>
+                        <pre className="whitespace-pre-wrap break-all flex-1">{(log as any).message || (log as any).args?.join(' ') || ''}</pre>
                       </div>
                     );
                   })

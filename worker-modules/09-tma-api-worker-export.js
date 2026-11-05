@@ -2,6 +2,8 @@
   // @ANCHOR: TMA_BACKEND_API
 
   async function handleTmaRequest(request, env, ctx = null) {
+    globalThis._activeWorkerEnv = env;
+    resetSubrequestBudget();
     const url = new URL(request.url);
     const path = url.pathname;
     const corsHeaders = buildTmaCorsHeaders();
@@ -3136,6 +3138,8 @@
   // --- Cloudflare Workers Export ---
   export default {
     async fetch(request, env, ctx) {
+      globalThis._activeWorkerEnv = env;
+      resetSubrequestBudget();
       try {
         const url = new URL(request.url);
 

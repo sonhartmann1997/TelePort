@@ -330,7 +330,7 @@ export const SeriesHealth: React.FC<SeriesHealthProps> = ({ workerCode }) => {
     if (!workerCode) return;
     setLoadingWorker(true);
     try {
-      const res = await executeWorkerSandbox(workerCode, {
+      const res = await (executeWorkerSandbox as any)(workerCode, {
         method: 'GET',
         url: '/api/tma/admin/series-gaps',
         headers: {

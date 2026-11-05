@@ -31,8 +31,12 @@ async function verifyAndAssembleWorker() {
     )
     .replace('list = validFilteredList;\n      changed = true;', 'changed = true;');
 
-  // Auf Cloudflare / lokalem Build (DISABLE_HMR !== 'true') die vollständige worker.js schreiben
-  if (process.env.DISABLE_HMR !== 'true') {
+  // Auf Cloudflare Build CI die vollständige worker.js schreiben; in AI Studio als kompakten Stub belassen (verhindert GitHub Sync >1MB Limit)
+  const isAiStudioWorkspace = fs.existsSync('/.aistudio') && !process.argv.includes('--write-full');
+  if (isAiStudioWorkspace) {
+    const stub = '// Auto-assembled at build time from /worker-modules/*.js via scripts/prebuild-worker-check.mjs\nexport default { async fetch() { return new Response("Assembled at build time"); } };\n';
+    fs.writeFileSync(workerPath, stub, 'utf8');
+  } else {
     fs.writeFileSync(workerPath, code, 'utf8');
   }
 

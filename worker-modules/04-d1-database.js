@@ -1973,11 +1973,16 @@
     // Zusätzlich Memory-Fallback von leeren Serien ohne gültige Episoden-Dateien bereinigen
     await cleanupEmptySeriesInD1AndMemory(env);
 
+    const seriesHealRes = await healAndDeduplicateSeriesInD1(env, true).catch(() => ({ mergedDuplicates: 0, healedPosters: 0, upgradedSynthetic: 0 }));
+
     return {
       ok: true,
       removedBrokenRows,
       removedDuplicateRows,
-      upgradedChannelRows
+      upgradedChannelRows,
+      mergedSeriesDuplicates: seriesHealRes.mergedDuplicates || 0,
+      healedSeriesPosters: seriesHealRes.healedPosters || 0,
+      upgradedSyntheticSeries: seriesHealRes.upgradedSynthetic || 0
     };
   }
 
@@ -2031,6 +2036,228 @@
     }
     return removedSeriesCount;
   }
+
+  // Automatische Serien-Konsolidierung & Poster-Reparatur in D1:
+  // 1. Führt doppelte Serien-Einträge mit gleichem Titel (z.B. "Generation Kill" mit synthetischer + echter TMDb-ID) zusammen
+  // 2. Ersetzt synthetische Fallback-IDs (>= 8000000) oder Fehl-Jahrgänge (z.B. "Black Box" 2014 -> 2023) durch offizielle TMDb-Serien
+  // 3. Lädt fehlende Serien-Poster (z.B. "Spuk von draußen", "Axel! will's wissen", "Zur See") aus TMDb-Staffeln/Images, TVMaze, iTunes & OMDb nach
+  async function healAndDeduplicateSeriesInD1(env, forceRun = false) {
+    const now = Date.now();
+    const lastHealTs = Number(memoryFallback.get("last_series_heal_ts") || 0);
+    if (!forceRun && lastHealTs > 0 && (now - lastHealTs) < 180000) {
+      return { mergedDuplicates: 0, healedPosters: 0, upgradedSynthetic: 0, cached: true };
+    }
+    memoryFallback.set("last_series_heal_ts", now);
+
+    let mergedDuplicates = 0;
+    let healedPosters = 0;
+    let upgradedSynthetic = 0;
+    const db = await ensureD1Schema(env);
+    if (!db) return { mergedDuplicates, healedPosters, upgradedSynthetic };
+
+    const migrateSeriesIdInD1 = async (oldSid, newSid) => {
+      if (!oldSid || !newSid || Number(oldSid) === Number(newSid)) return false;
+      try {
+        const oldEps = await db.prepare("SELECT * FROM episode_files WHERE series_id = ?1").bind(Number(oldSid)).all().catch(() => ({ results: [] }));
+        for (const ep of (oldEps?.results || [])) {
+          await db.prepare(`
+            INSERT INTO episode_files (series_id, season_number, episode_number, quality, telegram_file_id, file_size, caption, message_id, channel_id, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(series_id, season_number, episode_number, quality) DO UPDATE SET
+              telegram_file_id = CASE WHEN excluded.telegram_file_id != '' THEN excluded.telegram_file_id ELSE episode_files.telegram_file_id END,
+              message_id = COALESCE(excluded.message_id, episode_files.message_id),
+              channel_id = CASE WHEN excluded.channel_id != '' THEN excluded.channel_id ELSE episode_files.channel_id END,
+              updated_at = excluded.updated_at
+          `).bind(
+            Number(newSid),
+            Number(ep.season_number || 1),
+            Number(ep.episode_number || 1),
+            ep.quality || "1080p",
+            ep.telegram_file_id || "",
+            Number(ep.file_size || 0),
+            ep.caption || "",
+            ep.message_id || null,
+            ep.channel_id || "",
+            now
+          ).run().catch(() => null);
+        }
+        await db.batch([
+          db.prepare("DELETE FROM episode_files WHERE series_id = ?1").bind(Number(oldSid)),
+          db.prepare("DELETE FROM series_episodes WHERE series_id = ?1").bind(Number(oldSid)),
+          db.prepare("DELETE FROM series_seasons WHERE series_id = ?1").bind(Number(oldSid)),
+          db.prepare("DELETE FROM series WHERE tmdb_id = ?1").bind(Number(oldSid))
+        ]).catch(() => null);
+        memoryFallback.delete(`d1_series_${oldSid}`);
+        memoryFallback.delete(`d1_catalog_series_${oldSid}`);
+        tmdbCache.delete(`tv_${oldSid}`);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    try {
+      const allSeriesRes = await db.prepare(
+        "SELECT tmdb_id, title, release_date, release_year, vote_average, poster_path, backdrop_path, details_json FROM series"
+      ).all().catch(() => ({ results: [] }));
+      const seriesRows = Array.isArray(allSeriesRes?.results) ? allSeriesRes.results : [];
+      if (!seriesRows.length) return { mergedDuplicates, healedPosters, upgradedSynthetic };
+
+      // Schritt 1: Doppelte Serien mit gleichem normalisiertem Titel zusammenführen (z.B. "Generation Kill")
+      const byNormTitle = new Map();
+      for (const row of seriesRows) {
+        const norm = normalizeCompareString(String(row.title || "").replace(/\s+\d{1,2}$/, "").trim());
+        if (!norm) continue;
+        if (!byNormTitle.has(norm)) byNormTitle.set(norm, []);
+        byNormTitle.get(norm).push(row);
+      }
+
+      const deletedSeriesIds = new Set();
+      for (const [, group] of byNormTitle.entries()) {
+        if (group.length <= 1) continue;
+        group.sort((a, b) => {
+          const aOfficial = Number(a.tmdb_id) > 0 && Number(a.tmdb_id) < 8000000 ? 1 : 0;
+          const bOfficial = Number(b.tmdb_id) > 0 && Number(b.tmdb_id) < 8000000 ? 1 : 0;
+          if (aOfficial !== bOfficial) return bOfficial - aOfficial;
+          const aHasPoster = a.poster_path ? 1 : 0;
+          const bHasPoster = b.poster_path ? 1 : 0;
+          if (aHasPoster !== bHasPoster) return bHasPoster - aHasPoster;
+          return Number(b.vote_average || 0) - Number(a.vote_average || 0);
+        });
+        const winner = group[0];
+        for (let i = 1; i < group.length; i++) {
+          const loser = group[i];
+          const ok = await migrateSeriesIdInD1(Number(loser.tmdb_id), Number(winner.tmdb_id));
+          if (ok) {
+            deletedSeriesIds.add(Number(loser.tmdb_id));
+            mergedDuplicates++;
+          }
+        }
+      }
+
+      // Schritt 2: Synthetische Serien (>= 8000000), falsche Jahrgänge (Black Box 2014 -> 2023) & fehlende Poster reparieren
+      let apiHealsUsed = 0;
+      const maxApiHeals = forceRun ? 10 : 5;
+      for (const row of seriesRows) {
+        const sid = Number(row.tmdb_id);
+        if (!sid || deletedSeriesIds.has(sid)) continue;
+        if (apiHealsUsed >= maxApiHeals || !hasSubrequestBudget(25)) break;
+
+        let parsedDetails = {};
+        try { parsedDetails = JSON.parse(row.details_json || "{}"); } catch (e) {}
+        const rawTitle = String(row.title || parsedDetails.title || "").trim();
+        const cleanLookupTitle = rawTitle.replace(/\s+\d{1,2}$/, "").trim() || rawTitle;
+        const normTitle = normalizeCompareString(cleanLookupTitle);
+        const rowYear = Number(row.release_year || String(row.release_date || "").slice(0, 4) || 0) || null;
+        const isWrongBlackBox2014 = normTitle === "blackbox" && rowYear === 2014;
+        const isSyntheticId = sid >= 8000000;
+        const hasAnyPoster = Boolean(
+          (row.poster_path && String(row.poster_path).trim()) ||
+          (parsedDetails.poster_path && String(parsedDetails.poster_path).trim()) ||
+          (parsedDetails.external_poster_url && String(parsedDetails.external_poster_url).trim())
+        );
+
+        if (isSyntheticId || isWrongBlackBox2014) {
+          apiHealsUsed++;
+          try {
+            let bestTv = null;
+            for (const lang of ["de-DE", "en-US", ""]) {
+              const langParam = lang ? `&language=${lang}` : "";
+              const res = await fetchWithTimeout(
+                `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(cleanLookupTitle)}&include_adult=false${langParam}`,
+                { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
+                3500
+              );
+              if (res.ok) {
+                const data = await res.json();
+                const tvResults = Array.isArray(data.results) ? data.results : [];
+                if (tvResults.length > 0) {
+                  if (isWrongBlackBox2014) {
+                    bestTv = tvResults.find(r => Number((r.first_air_date || "").slice(0, 4)) >= 2020 && r.poster_path) ||
+                             tvResults.find(r => Number((r.first_air_date || "").slice(0, 4)) >= 2020) ||
+                             tvResults.find(r => r.id !== sid && r.poster_path) || null;
+                  } else {
+                    bestTv = tvResults.find(r => normalizeCompareString(r.name || r.original_name || "") === normTitle && r.poster_path) ||
+                             tvResults.find(r => normalizeCompareString(r.name || r.original_name || "") === normTitle) ||
+                             tvResults[0];
+                  }
+                  if (bestTv && Number(bestTv.id) && Number(bestTv.id) !== sid) break;
+                }
+              }
+            }
+            if (bestTv && Number(bestTv.id) && Number(bestTv.id) !== sid) {
+              const newSid = Number(bestTv.id);
+              const fullDetails = await fetchSeriesDetails(env, newSid);
+              if (fullDetails) {
+                await saveSeriesToD1(env, fullDetails);
+                await migrateSeriesIdInD1(sid, newSid);
+                deletedSeriesIds.add(sid);
+                upgradedSynthetic++;
+                continue;
+              }
+            }
+          } catch (e) {}
+        }
+
+        if (!hasAnyPoster) {
+          apiHealsUsed++;
+          try {
+            let foundPosterPath = null;
+            let foundExternalPoster = "";
+            if (sid > 0 && sid < 8000000) {
+              tmdbCache.delete(`tv_${sid}`);
+              memoryFallback.delete(`d1_series_${sid}`);
+              const imgRes = await fetchWithTimeout(
+                `https://api.themoviedb.org/3/tv/${sid}?append_to_response=images&include_image_language=de,en,fr,es,it,ru,cs,pl,null&language=de-DE`,
+                { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
+                3500
+              );
+              if (imgRes.ok) {
+                const imgData = await imgRes.json();
+                foundPosterPath = imgData.poster_path ||
+                  imgData.images?.posters?.[0]?.file_path ||
+                  (imgData.seasons || []).find(s => s && s.poster_path)?.poster_path ||
+                  imgData.backdrop_path ||
+                  imgData.images?.backdrops?.[0]?.file_path ||
+                  null;
+              }
+            }
+            if (!foundPosterPath) {
+              const tvm = await fetchTvMazeSeriesFallback(cleanLookupTitle, rowYear);
+              if (tvm?.imageOriginal) foundExternalPoster = tvm.imageOriginal;
+            }
+            if (!foundPosterPath && !foundExternalPoster) {
+              const itunes = await fetchItunesFallback(env, cleanLookupTitle, rowYear, "s");
+              if (itunes?.external_poster_url) foundExternalPoster = itunes.external_poster_url;
+            }
+            if (!foundPosterPath && !foundExternalPoster) {
+              const omdb = await fetchOmdbFallback(env, cleanLookupTitle, rowYear, "s");
+              if (omdb?.external_poster_url) foundExternalPoster = omdb.external_poster_url;
+            }
+            if (foundPosterPath || foundExternalPoster) {
+              const updatedDetails = {
+                ...parsedDetails,
+                id: sid,
+                title: cleanLookupTitle || row.title,
+                poster_path: foundPosterPath || parsedDetails.poster_path || null,
+                external_poster_url: foundExternalPoster || parsedDetails.external_poster_url || ""
+              };
+              await db.prepare(
+                "UPDATE series SET poster_path = COALESCE(?2, poster_path), details_json = ?3, updated_at = ?4 WHERE tmdb_id = ?1"
+              ).bind(sid, foundPosterPath, JSON.stringify(updatedDetails), now).run().catch(() => null);
+              memoryFallback.set(`d1_series_${sid}`, updatedDetails);
+              memoryFallback.set(`d1_catalog_series_${sid}`, updatedDetails);
+              tmdbCache.set(`tv_${sid}`, { data: updatedDetails, expires: now + TMDB_CACHE_TTL_MS });
+              healedPosters++;
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
+    return { mergedDuplicates, healedPosters, upgradedSynthetic };
+  }
+
 
   // 1-Klick Komplett-Reset: Löscht alle Filme, Serien, Episoden, Datei-Links, Caches & Playlisten
   // (Benutzerkonten, VIP-Status und Admin-Rechte in 'users' bleiben unberührt!)

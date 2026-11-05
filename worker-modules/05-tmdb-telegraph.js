@@ -1837,10 +1837,17 @@
       if (!posterPath && Array.isArray(data.images?.posters) && data.images.posters.length > 0) {
         posterPath = data.images.posters[0].file_path;
       }
+      if (!posterPath && Array.isArray(data.seasons)) {
+        const seasonWithPoster = data.seasons.find(s => s && s.poster_path);
+        if (seasonWithPoster) posterPath = seasonWithPoster.poster_path;
+      }
 
       let backdropPath = data.backdrop_path;
       if (!backdropPath && Array.isArray(data.images?.backdrops) && data.images.backdrops.length > 0) {
         backdropPath = data.images.backdrops[0].file_path;
+      }
+      if (!posterPath && backdropPath) {
+        posterPath = backdropPath;
       }
 
       let fsk = "FSK Keine Angabe";
@@ -1873,12 +1880,13 @@
         } catch (e) {}
       }
 
-      // TVMaze API Fallback zuschalten, wenn Beschreibung, Laufzeit, Status oder Staffelinfos bei TMDB fehlen
+      // TVMaze, iTunes & OMDb API Fallback zuschalten, wenn Poster, Beschreibung, Laufzeit, Status oder Staffelinfos bei TMDB fehlen
       let tvMazeData = null;
-      const needsTvMazeFallback = !overview || !data.episode_run_time?.[0] || statusText === "Unbekannt" || !(data.seasons && data.seasons.length > 0);
+      let fallbackExternalPoster = "";
+      const lookupTitle = data.original_name || data.name || "";
+      const lookupYear = (data.first_air_date || "").slice(0, 4);
+      const needsTvMazeFallback = !posterPath || !overview || !data.episode_run_time?.[0] || statusText === "Unbekannt" || !(data.seasons && data.seasons.length > 0);
       if (needsTvMazeFallback) {
-        const lookupTitle = data.original_name || data.name || "";
-        const lookupYear = (data.first_air_date || "").slice(0, 4);
         tvMazeData = await fetchTvMazeSeriesFallback(lookupTitle, lookupYear);
         if (!tvMazeData && data.name && data.name !== lookupTitle) {
           tvMazeData = await fetchTvMazeSeriesFallback(data.name, lookupYear);
@@ -1891,6 +1899,17 @@
           if (statusText === "Unbekannt" && tvMazeData.statusText) {
             statusText = tvMazeData.statusText;
           }
+          if (!posterPath && tvMazeData.imageOriginal) {
+            fallbackExternalPoster = tvMazeData.imageOriginal;
+          }
+        }
+      }
+      if (!posterPath && !fallbackExternalPoster && hasSubrequestBudget(15)) {
+        const itunes = await fetchItunesFallback(env, data.name || lookupTitle, lookupYear, "s").catch(() => null);
+        if (itunes?.external_poster_url) fallbackExternalPoster = itunes.external_poster_url;
+        if (!fallbackExternalPoster) {
+          const omdb = await fetchOmdbFallback(env, data.name || lookupTitle, lookupYear, "s").catch(() => null);
+          if (omdb?.external_poster_url) fallbackExternalPoster = omdb.external_poster_url;
         }
       }
 
@@ -1963,7 +1982,7 @@
         allProviders,
         providerIds,
         poster_path: posterPath,
-        external_poster_url: !posterPath && tvMazeData?.imageOriginal ? tvMazeData.imageOriginal : "",
+        external_poster_url: !posterPath ? fallbackExternalPoster : "",
         backdrop_path: backdropPath,
         vote_average: data.vote_average || tvMazeData?.vote_average || 0,
         title: data.name || tvMazeData?.title || "Unbekannt",
@@ -2531,6 +2550,9 @@
     const db = await ensureD1Schema(env);
     const isMovie = typeCode === "m";
     try {
+      if (!isMovie && db) {
+        await healAndDeduplicateSeriesInD1(env, false).catch(() => null);
+      }
       let rows = [];
       if (db) {
         const rowsRes = isMovie

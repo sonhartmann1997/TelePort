@@ -2139,7 +2139,8 @@ export async function validateTelegramChannelClient(
   kvNamespace?: KVStoreAdapter | null
 ): Promise<TelegramChannelValidationResult> {
   const startMs = Date.now();
-  const cfg = customConfig || loadTelegramIntegrationConfig(kvNamespace);
+  const kvRef = kvNamespace ?? undefined;
+  const cfg = customConfig || loadTelegramIntegrationConfig(kvRef);
   const parsed = parseTelegramChannelOrLinkClient(rawChannelInput);
   const sampleMessageId =
     explicitSampleMessageId && explicitSampleMessageId > 0
@@ -2259,7 +2260,7 @@ export async function validateTelegramChannelClient(
       let dryRunMessage = '';
 
       const targetChatForTest =
-        cfg.defaultChatId || cfg.groupChatId || resolvedChatId;
+        cfg.defaultChatId || cfg.sourceGroupId || resolvedChatId;
       if (sampleMessageId && sampleMessageId > 0 && targetChatForTest) {
         dryRunTested = true;
         const copyRes = await fetch(`https://api.telegram.org/bot${token}/copyMessage`, {
@@ -2292,14 +2293,14 @@ export async function validateTelegramChannelClient(
         }
       }
 
-      saveTelegramIntegrationConfig({ sourceGroupId: resolvedChatId }, kvNamespace);
+      saveTelegramIntegrationConfig({ sourceGroupId: resolvedChatId }, kvRef);
       const summary = `✅ "${resolvedChat.title || resolvedChatId}" (${resolvedChat.type}) · Bot-Status: ${botStatus.toUpperCase()}${
         dryRunTested ? ` · Dry-Run: ${dryRunMessage}` : ''
       }`;
 
       appendTelegramActivityLog(
         {
-          eventType: 'token_webhook',
+          eventType: 'webhook',
           status: isMemberOrAdmin && !hasProtectedContent ? 'success' : 'error',
           deliveryMode: 'group',
           method: 'validateTelegramChannel',
@@ -2308,7 +2309,7 @@ export async function validateTelegramChannelClient(
           durationMs: Date.now() - startMs,
           summary,
         },
-        kvNamespace
+        kvRef
       );
 
       return {
@@ -2341,10 +2342,10 @@ export async function validateTelegramChannelClient(
     : 'Keine Message-ID im Link angegeben (nur Chat-Status geprüft)';
   const summary = `✅ Kanal "${parsed.channelId}" (channel/supergroup) · Bot-Status: ADMINISTRATOR · Zugriff auf Nachrichten aktiv · ${dryRunMessage}`;
 
-  saveTelegramIntegrationConfig({ sourceGroupId: parsed.channelId }, kvNamespace);
+  saveTelegramIntegrationConfig({ sourceGroupId: parsed.channelId }, kvRef);
   appendTelegramActivityLog(
     {
-      eventType: 'token_webhook',
+      eventType: 'webhook',
       status: 'success',
       deliveryMode: 'group',
       method: 'validateTelegramChannel (Dry-Run)',
@@ -2353,7 +2354,7 @@ export async function validateTelegramChannelClient(
       durationMs: Date.now() - startMs + 42,
       summary,
     },
-    kvNamespace
+    kvRef
   );
 
   return {

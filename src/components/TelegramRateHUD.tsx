@@ -243,7 +243,7 @@ export const TelegramRateHUD: React.FC<TelegramRateHUDProps> = ({
               <div className="p-2 rounded bg-rose-950/50 border border-rose-500/40 flex items-center justify-between gap-2 text-[11px] text-rose-200">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <Clock className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span className="truncate">{snap.gauges.floodWait429.lastReason}</span>
+                  <span className="truncate">{(snap.gauges.floodWait429 as any).lastReason || 'Telegram 429 Flood-Wait active'}</span>
                 </div>
                 <span className="font-mono font-bold text-rose-300 whitespace-nowrap shrink-0">
                   {retryAfterSec}s remaining
