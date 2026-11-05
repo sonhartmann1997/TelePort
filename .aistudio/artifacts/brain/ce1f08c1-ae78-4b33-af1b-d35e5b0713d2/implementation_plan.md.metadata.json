@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan für das professionelle Redesign der Detailansicht (Netflix / Apple TV+ Vorbild): (1) Edle einzeilige Typografie-Metadaten & Genres mit Trennpunkten statt bunter Pill-Boxen, (2) Einzeilige Aktionsleiste mit ruhigen Hauptaktionen links und kompakten Glas-Icons/Menü für Admin & Meldung rechts, (3) Wegfall des doppelten Rahmens und des zweizeiligen Hilfetexts sowie direkte Integration des Versandziels in die Staffel-/Stream-Kopfzeile, und (4) Moderne Episoden-Zeilen mit weißem Titel, aufgeräumtem Stream-Button und dezenten Ghost-Icons.",
-  "updatedAt": "2026-11-05T11:20:29.090911618Z",
+  "summary": "Erweiterter Implementierungsplan:\n1. Übernahme des bestätigten Detailansicht- & Mehrteiler-Plans (CD 1..N Release-Box mit nebeneinanderliegenden CD-Buttons, korrekte aufsteigende Sortierung CD 1 -> CD 5, Ausblenden von Quellgruppe/Sprach-Duplikaten in das Admin-Menü).\n2. Behebung der 7 Serien-/Film-Logikfehler aus den Screenshots (Deep Blue Sea 3 -> Deep Blue S01E03) und dem 1.200-Einträge-Import-Log (Size: MB -> Size 12, +18 -> Serie 18 Again, Mad Max 4 / Sector 4 -> Folge 4, Little Britain USA ohne 'von', Geisterjäger Umlaut-Bug bei \\bger\\b, Creed ||| Römische Zahlen, Trailer/Coming-Soon Filter).",
+  "updatedAt": "2026-11-05T12:00:46.905915154Z",
   "requestFeedback": true,
   "userFacing": true
 }

@@ -1226,6 +1226,35 @@
     return { channelId: raw, sampleMessageId: null, username: "" };
   }
 
+  function normalizeStreamPartLabel(rawPart, rawFilename = "") {
+    const pStr = String(rawPart || "").trim();
+    if (!pStr && !rawFilename) return null;
+    if (/^RAR/i.test(pStr)) return pStr.toUpperCase();
+    const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*([1-9]\d?)$/i);
+    if (m) return `CD ${parseInt(m[1], 10)}`;
+    if (!pStr && rawFilename) {
+      const fnSplit = String(rawFilename).match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
+      if (fnSplit) return `CD ${parseInt(fnSplit[1], 10)}`;
+    }
+    return pStr || null;
+  }
+
+  function extractStreamPartNumber(partLabel) {
+    if (!partLabel) return 0;
+    const m = String(partLabel).match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function cleanStreamTagsWithoutRedundantPart(rawTags = "") {
+    if (!rawTags) return "";
+    return String(rawTags)
+      .split(/\s*[·•|]\s*/)
+      .map(t => t.trim())
+      .filter(t => t && !/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*\d+$/i.test(t))
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .join(" · ");
+  }
+
   function sortAndDedupeStreamFiles(filesList) {
     if (!Array.isArray(filesList) || filesList.length === 0) return [];
     const prepared = [];
@@ -1235,13 +1264,15 @@
       const validity = scoreTelegramFileIdValidity(normalizedFid);
       const msgId = extractExportMessageIdFromFileId(normalizedFid);
       const normalizedSize = parseHumanFileSizeToBytes(raw.file_size);
+      const normalizedPart = normalizeStreamPartLabel(raw.part, raw.raw_filename || raw.rawFilename || "");
+      const cleanedTags = cleanStreamTagsWithoutRedundantPart(raw.tags ? String(raw.tags) : "");
       prepared.push({
         ...raw,
         telegram_file_id: normalizedFid,
         quality: String(raw.quality || "1080p"),
         codec: String(raw.codec || "x264"),
-        part: raw.part ? String(raw.part) : null,
-        tags: raw.tags ? String(raw.tags) : "",
+        part: normalizedPart,
+        tags: cleanedTags,
         file_size: normalizedSize,
         _validity: validity,
         _msgId: msgId
@@ -1293,6 +1324,17 @@
     return deduped.sort((a, b) => {
       const qDiff = rankQualityLabel(b.quality) - rankQualityLabel(a.quality);
       if (qDiff !== 0) return qDiff;
+      const aHasPart = Boolean(a.part);
+      const bHasPart = Boolean(b.part);
+      if (aHasPart && bHasPart) {
+        const pNumDiff = extractStreamPartNumber(a.part) - extractStreamPartNumber(b.part);
+        if (pNumDiff !== 0) return pNumDiff;
+        const pStrDiff = String(a.part || "").localeCompare(String(b.part || ""), undefined, { numeric: true });
+        if (pStrDiff !== 0) return pStrDiff;
+      } else if (aHasPart !== bHasPart) {
+        // Mehrteiler einer Qualitätsstufe zusammenhalten
+        return aHasPart ? -1 : 1;
+      }
       const sDiff = Number(b.file_size || 0) - Number(a.file_size || 0);
       if (sDiff !== 0) return sDiff;
       return String(a.part || "").localeCompare(String(b.part || ""), undefined, { numeric: true });
@@ -1334,6 +1376,7 @@
             if (!v || !(v.file_id || v.telegram_file_id)) continue;
             const fid = String(v.file_id || v.telegram_file_id);
             const vLabel = extractEpisodeVersionLabel(v);
+            const normPart = normalizeStreamPartLabel(v.part, v.raw_filename || v.rawFilename || "");
             const key = `${vLabel}|${String(v.quality || "1080p").toUpperCase()}|${fid}`;
             const parsedSubs = Array.isArray(v.subtitles) ? v.subtitles : (() => { try { return JSON.parse(v.subtitles_json || "[]"); } catch (_) { return []; } })();
             versionMap.set(key, {
@@ -1342,9 +1385,9 @@
               telegram_file_id: fid,
               quality: String(v.quality || "1080p"),
               codec: String(v.codec || "x264"),
-              part: v.part || null,
+              part: normPart,
               file_size: Number(v.file_size || 0),
-              tags: normalizeCompactVersionTags(v.tags || vLabel),
+              tags: cleanStreamTagsWithoutRedundantPart(normalizeCompactVersionTags(v.tags || vLabel)),
               subtitles: Array.isArray(parsedSubs) ? parsedSubs : []
             });
           }
@@ -1355,6 +1398,7 @@
       if (!f || !f.telegram_file_id) continue;
       const fid = String(f.telegram_file_id);
       const vLabel = extractEpisodeVersionLabel(f);
+      const normPart = normalizeStreamPartLabel(f.part, f.raw_filename || f.rawFilename || "");
       const key = `${vLabel}|${String(f.quality || "1080p").toUpperCase()}|${fid}`;
       const parsedSubs = Array.isArray(f.subtitles) ? f.subtitles : (() => { try { return JSON.parse(f.subtitles_json || "[]"); } catch (_) { return []; } })();
       versionMap.set(key, {
@@ -1363,9 +1407,9 @@
         telegram_file_id: fid,
         quality: String(f.quality || "1080p"),
         codec: String(f.codec || "x264"),
-        part: f.part || null,
+        part: normPart,
         file_size: Number(f.file_size || 0),
-        tags: normalizeCompactVersionTags(f.tags || vLabel),
+        tags: cleanStreamTagsWithoutRedundantPart(normalizeCompactVersionTags(f.tags || vLabel)),
         subtitles: Array.isArray(parsedSubs) ? parsedSubs : []
       });
     }
@@ -1408,6 +1452,8 @@
   function enrichStreamFileRowMeta(row) {
     if (!row || typeof row !== "object") return row;
     const vLabel = extractEpisodeVersionLabel(row);
+    const normPart = normalizeStreamPartLabel(row.part, row.raw_filename || row.rawFilename || "");
+    const cleanTags = cleanStreamTagsWithoutRedundantPart(row.tags || "");
     let subs = [];
     if (Array.isArray(row.subtitles)) {
       subs = row.subtitles;
@@ -1419,6 +1465,8 @@
     }
     return {
       ...row,
+      part: normPart,
+      tags: cleanTags,
       version_label: vLabel,
       versionLabel: vLabel,
       raw_filename: row.raw_filename || row.rawFilename || "",

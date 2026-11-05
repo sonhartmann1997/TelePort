@@ -2534,6 +2534,83 @@
         padding-bottom: 8px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.07);
       }
+      /* Kompakte Release-Box für mehrteilige Filme (CD 1 bis CD N nebeneinander) */
+      .release-box-card {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+        padding: 11px 13px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        transition: border-color 0.16s ease, background 0.16s ease;
+      }
+      .release-box-card:hover {
+        border-color: rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.045);
+      }
+      .release-box-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding-bottom: 7px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .release-cd-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        align-items: center;
+      }
+      .cd-part-chip-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .btn-cd-part {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 8px;
+        background: rgba(229, 9, 20, 0.14);
+        border: 1px solid rgba(229, 9, 20, 0.45);
+        color: #ffffff;
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 800;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        font-variant-numeric: tabular-nums;
+      }
+      .btn-cd-part:hover,
+      .btn-cd-part.spatial-focus {
+        background: var(--red);
+        border-color: #ffffff;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.38);
+      }
+      .btn-cd-part .cd-size-sub {
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.78);
+      }
+      body[data-theme="light"] .release-box-card {
+        background: #f8fafc;
+        border-color: #cbd5e1;
+      }
+      body[data-theme="light"] .release-box-header {
+        border-bottom-color: #e2e8f0;
+      }
+      body[data-theme="light"] .btn-cd-part {
+        background: #fee2e2;
+        border-color: #ef4444;
+        color: #7f1d1d;
+      }
+      body[data-theme="light"] .btn-cd-part .cd-size-sub {
+        color: #991b1b;
+      }
       body[data-theme="light"] .btn-action-glass {
         background: #f1f5f9;
         border-color: #cbd5e1;
