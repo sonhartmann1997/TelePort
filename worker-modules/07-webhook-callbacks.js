@@ -198,8 +198,15 @@
         score = Math.min(score - 28, 55);
       }
     } else if (!parsed.year) {
-      // Ohne Jahresangabe im Dateinamen leichter Bonus für populäre Haupttreffer, aber Deckelung bei unsicheren Teil-Treffern
-      if (Number(candidate.vote_count || 0) > 150 && score >= 82) score += 3;
+      // Ohne Jahresangabe im Dateinamen: Deutschsprachige Produktionen (DE/AT/CH/XG) bei exakter Namensgleichheit bevorzugen,
+      // sowie leichter Bonus für populäre Haupttreffer, aber Deckelung bei unsicheren Teil-Treffern
+      const isDach = String(candidate.original_language || "").toLowerCase() === "de" ||
+        (Array.isArray(candidate.origin_country) && candidate.origin_country.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim())));
+      if (isDach && score >= 95) {
+        score = Math.min(99, score + 3);
+      } else if (Number(candidate.vote_count || 0) > 150 && score >= 82) {
+        score += 3;
+      }
       if (score < 88) score = Math.min(score, 75);
     }
 
@@ -508,6 +515,8 @@
       const baseConf = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsedForConf, item, item._typeCode);
       const conf = Math.min(99, baseConf + Number(item._confidenceBoost || 0));
       const existing = dedupedMap.get(key);
+      const isDachOrigin = String(item.original_language || "").toLowerCase() === "de" ||
+        (Array.isArray(item.origin_country) && item.origin_country.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim())));
       if (!existing || conf > existing.confidence) {
         const rawDate = String(item.release_date || item.first_air_date || "");
         dedupedMap.set(key, {
@@ -519,7 +528,9 @@
           year: (rawDate.split("-")[0]) || "k.A.",
           poster: item.poster_path ? `https://image.tmdb.org/t/p/w185${item.poster_path}` : "",
           voteAverage: Number(item.vote_average || 0).toFixed(1),
+          voteCount: Number(item.vote_count || 0),
           popularity: Number(item.popularity || 0),
+          isDachOrigin,
           confidence: conf,
           inferredSeason: item._inferredEpisode ? (item._inferredSeason || 1) : (existing?.inferredSeason || null),
           inferredEpisode: item._inferredEpisode || existing?.inferredEpisode || null,
@@ -611,6 +622,18 @@
           const aDiff = Math.abs(aY - targetY);
           const bDiff = Math.abs(bY - targetY);
           if (aDiff !== bDiff) return aDiff - bDiff;
+        }
+        // Ohne Jahresangabe bei exakter Namensgleichheit: Deutschsprachige Produktionen (DE/AT/CH/XG) bevorzugen,
+        // sofern der fremdsprachige Kandidat kein internationaler Mainstream-Hit (voteCount >= 150 oder popularity >= 25) ist!
+        if (!parsed?.year && a.confidence >= 94 && b.confidence >= 94 && Math.abs(b.confidence - a.confidence) <= 4) {
+          const aDach = Boolean(a.isDachOrigin);
+          const bDach = Boolean(b.isDachOrigin);
+          if (aDach !== bDach) {
+            const nonDach = aDach ? b : a;
+            const dach = aDach ? a : b;
+            const nonDachIsGlobalHit = (Number(nonDach.voteCount || 0) >= 150 || Number(nonDach.popularity || 0) >= 25) && Number(dach.voteCount || 0) < 30;
+            if (!nonDachIsGlobalHit) return aDach ? -1 : 1;
+          }
         }
         if (b.confidence !== a.confidence) return b.confidence - a.confidence;
         if (a.inferredEpisode && !b.inferredEpisode) return -1;

@@ -193,7 +193,7 @@
         }
       }
 
-      function deduplicateAndClassifyClientEntries(rawCandidates) {
+      async function deduplicateAndClassifyClientEntries(rawCandidates, statusEl = null) {
         const entries = [];
         const seenExactKeys = new Set();
         const seenFileIds = new Set();
@@ -203,8 +203,19 @@
         let detectedMoviesCount = 0;
         let detectedSeriesCount = 0;
         const previewSamples = [];
+        const totalRaw = rawCandidates.length;
 
-        for (let i = 0; i < rawCandidates.length; i++) {
+        for (let i = 0; i < totalRaw; i++) {
+          if (i > 0 && i % 400 === 0) {
+            if (statusEl) {
+              const pct = Math.min(100, Math.round((i / totalRaw) * 100));
+              statusEl.textContent =
+                "⏳ Gruppiere & prüfe Duplikate: " +
+                i.toLocaleString("de-DE") + " / " + totalRaw.toLocaleString("de-DE") +
+                " (" + pct + "%)...";
+            }
+            await new Promise(r => setTimeout(r, 0));
+          }
           const item = rawCandidates[i];
           if (!item) continue;
           const rawStr = typeof item === "string"
@@ -464,7 +475,7 @@
         return ctx;
       }
 
-      function detectAndParseClientBackupJson(parsedJson, fileName = "result.json", fileSizeBytes = 0, repairMeta = null) {
+      async function detectAndParseClientBackupJson(parsedJson, fileName = "result.json", fileSizeBytes = 0, repairMeta = null, statusEl = null) {
         let tgMessages = null;
         let backupChatName = "";
         let backupChatId = "";
@@ -488,6 +499,7 @@
         }
 
         if (Array.isArray(tgMessages)) {
+          await new Promise(r => setTimeout(r, 0));
           // 1. Chronologische Sortierung vor dem Loop erzwingen (Id aufsteigend)
           tgMessages.sort((a, b) => Number(a?.id || a?.message_id || 0) - Number(b?.id || b?.message_id || 0));
 
@@ -496,8 +508,19 @@
           const metaPrefixRegex = /^(?:Qualität|Quality|Genre|Gener|Studio|FSK|Jahr|Erscheinungsjahr|Produktionsland|Release|Released|Bewertung|Rating|IMDb|TMDB|Audio|Sprache|Language|Untertitel|Subtitles|Dauer|Laufzeit|Länge|Laenge|Runtime|Regie|Director|Darsteller|Actors|Cast|Handlung|Inhalt|Beschreibung|Plot|Info|Größe|Groesse|Dateigröße|Size|Format|Codec|Quelle|Source|Link|Download|Stream|Kanal|Channel|Preis|Free|Kostenlos)\\s*[:\\-]/i;
 
           let rollingPreContext = {};
+          const totalMsgs = tgMessages.length;
 
-          for (let i = 0; i < tgMessages.length; i++) {
+          for (let i = 0; i < totalMsgs; i++) {
+            if (i > 0 && i % 400 === 0) {
+              if (statusEl) {
+                const pct = Math.min(100, Math.round((i / totalMsgs) * 100));
+                statusEl.textContent =
+                  "⏳ Lese & analysiere Nachricht " +
+                  i.toLocaleString("de-DE") + " / " + totalMsgs.toLocaleString("de-DE") +
+                  " (" + pct + "% • " + rawCandidates.length.toLocaleString("de-DE") + " Videos gefunden)...";
+              }
+              await new Promise(r => setTimeout(r, 0));
+            }
             const msg = tgMessages[i];
             if (!msg || (msg.type && msg.type !== "message")) continue;
             const currentMsgId = Number(msg.id || msg.message_id || 0);
@@ -820,7 +843,7 @@
             }
           }
 
-          const classified = deduplicateAndClassifyClientEntries(rawCandidates);
+          const classified = await deduplicateAndClassifyClientEntries(rawCandidates, statusEl);
           if (typeof appendClientDiagnosticLogs === "function" && clientPreLogs.length > 0) {
             appendClientDiagnosticLogs(clientPreLogs);
           }
@@ -849,7 +872,7 @@
                 ? parsedJson.movies
                 : [parsedJson];
 
-        const classified = deduplicateAndClassifyClientEntries(rawList);
+        const classified = await deduplicateAndClassifyClientEntries(rawList, statusEl);
 
         return {
           fileName,
@@ -963,13 +986,13 @@
         }
 
         const syntheticParsed = { id: backupChatId || undefined, name: backupChatName, messages: extractedMessages };
-        const info = detectAndParseClientBackupJson(syntheticParsed, file.name, file.size, {
+        const info = await detectAndParseClientBackupJson(syntheticParsed, file.name, file.size, {
           repaired: true,
           repairNotes: [
             "2 MB Stream-Slicer für Großdatei (" + (totalBytes / (1024 * 1024)).toFixed(1) + " MB): " +
             rawMsgCount.toLocaleString("de-DE") + " Roh-Nachrichten gescannt, inkl. 2-Nachrichten-Kontext über jedem Video"
           ]
-        });
+        }, statusEl);
         info.rawMessageCount = rawMsgCount;
         return info;
       }
@@ -1340,16 +1363,18 @@
           statusEl.textContent = "⏳ Lese & analysiere " + file.name + " (" + sizeMb.toFixed(2) + " MB)...";
         }
         try {
+          await new Promise(r => setTimeout(r, 10));
           let info = null;
           if (sizeMb > 15) {
             info = await streamParseLargeClientBackupFile(file, statusEl);
           } else {
             const text = await file.text();
+            await new Promise(r => setTimeout(r, 0));
             const repairRes = repairAndParseClientBackupJson(text);
             if (!repairRes.ok || !repairRes.parsed) {
               info = await streamParseLargeClientBackupFile(file, statusEl);
             } else {
-              info = detectAndParseClientBackupJson(repairRes.parsed, file.name, file.size, repairRes);
+              info = await detectAndParseClientBackupJson(repairRes.parsed, file.name, file.size, repairRes, statusEl);
             }
           }
 
@@ -1990,7 +2015,72 @@
         '</div>';
       }
 
+      function openAdminTabDirectClient(tabName = "backup") {
+        state.adminTab = tabName || "backup";
+        loadAdminPanelView(false);
+      }
+
+      function updateFloatingImportStatusBarDom() {
+        try {
+          let widgetEl = document.getElementById("floatingImportStatusWidget");
+          const j = backupImportJob;
+          const total = Array.isArray(j?.entries) ? j.entries.length : 0;
+          const done = Number(j?.cursor || 0);
+          const hasActiveOrPausedJob = Boolean(
+            state.isAuthenticated &&
+            state.authUser?.isAdmin &&
+            total > 0 &&
+            (j.running || (done > 0 && done < total))
+          );
+
+          if (!hasActiveOrPausedJob || state.currentView === "admin") {
+            if (widgetEl) widgetEl.style.display = "none";
+            return;
+          }
+
+          if (!widgetEl && document.body) {
+            widgetEl = document.createElement("div");
+            widgetEl.id = "floatingImportStatusWidget";
+            widgetEl.style.cssText =
+              "position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:9500;" +
+              "width:min(94vw,680px);background:rgba(15,23,42,0.96);border:1px solid rgba(56,189,248,0.55);" +
+              "border-radius:12px;padding:9px 12px;box-shadow:0 12px 32px rgba(0,0,0,0.8);backdrop-filter:blur(10px);";
+            document.body.appendChild(widgetEl);
+          }
+          if (!widgetEl) return;
+
+          const pct = total > 0 ? ((done / total) * 100).toFixed(1) : "0.0";
+          const issuesCount = Number(j.failedCount || 0) + Number(j.uncertainCount || 0);
+          widgetEl.style.display = "block";
+          widgetEl.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc">' +
+                '<span style="font-weight:900;color:' + (j.running ? '#38bdf8' : '#fbbf24') + '">' +
+                  (j.running ? '⚡ Backup-Import läuft:' : '⏸️ Import pausiert:') +
+                '</span>' +
+                '<b>' + done.toLocaleString("de-DE") + ' / ' + total.toLocaleString("de-DE") + ' (' + pct + '%)</b>' +
+                '<span style="color:#34d399;font-size:11.5px">🎬 ' + Number(j.moviesSaved || 0).toLocaleString("de-DE") + '</span>' +
+                '<span style="color:#38bdf8;font-size:11.5px">📺 ' + Number(j.seriesSaved || 0).toLocaleString("de-DE") + '</span>' +
+                (issuesCount > 0 ? ('<span style="color:#fbbf24;font-size:11.5px">⚠️ ' + issuesCount + '</span>') : '') +
+              '</div>' +
+              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                (j.running
+                  ? '<button type="button" class="btn amber" style="padding:4px 9px;font-size:11px" onclick="pauseBackupImport()">⏸️ Pause</button>'
+                  : '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="startOrResumeBackupImport()">▶️ Weiter</button>') +
+                '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
+                '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
+              '</div>' +
+            '</div>' +
+            '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px">' +
+              '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
+            '</div>';
+        } catch (e) {}
+      }
+
+      setInterval(updateFloatingImportStatusBarDom, 600);
+
       function renderBackupImportBoxDom() {
+        updateFloatingImportStatusBarDom();
         const mount = document.getElementById("backupImportLiveMount");
         if (!mount) return;
         const j = backupImportJob;
@@ -2659,6 +2749,14 @@
         };
 
         while (backupImportJob.running && !backupImportJob.paused && backupImportJob.cursor < backupImportJob.entries.length) {
+          // Wenn der Admin gerade aktiv eine Übersicht lädt, kurz warten, damit es keinen HTTP 503 Konflikt gibt
+          let waitGuard = 0;
+          while (window._adminPriorityRequestInFlight && waitGuard < 25) {
+            await new Promise(res => setTimeout(res, 150));
+            waitGuard++;
+          }
+          if (!backupImportJob.running || backupImportJob.paused) break;
+
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
           const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
           const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
@@ -3168,32 +3266,90 @@
         loadAdminPanelView();
       }
 
-      async function loadAdminPanelView() {
+      async function loadAdminPanelView(forceNetworkRefresh = false) {
         if (!state.isAuthenticated || !state.authUser?.isAdmin) {
           showHudToast("⛔ Zugriff verweigert: Nur für autorisierte Administratoren.");
           return;
         }
+        const wasAlreadyInAdmin = state.currentView === "admin";
         state.currentView = "admin";
+        updateFloatingImportStatusBarDom();
         if (!state.adminPlaylistTargetChatId) state.adminPlaylistTargetChatId = String(chatId);
-        setBusyState(true, "👑 Lade Admin-Dashboard, User, VIP-Playlisten & Mediendatenbank...");
+
+        const hasActiveOrPausedImport = Boolean(
+          Array.isArray(backupImportJob?.entries) &&
+          backupImportJob.entries.length > 0 &&
+          (backupImportJob.running || (backupImportJob.cursor > 0 && backupImportJob.cursor < backupImportJob.entries.length))
+        );
+        if (!wasAlreadyInAdmin && hasActiveOrPausedImport && state.adminTab !== "diaglog") {
+          state.adminTab = "backup";
+        }
+        if (!state.adminTab) {
+          state.adminTab = hasActiveOrPausedImport ? "backup" : "users";
+        }
+
+        // Sofort-Zugang ohne Netzwerk-Blockade: Wenn der Import läuft oder Backup/Logs geöffnet werden und ein Cache vorliegt,
+        // niemals durch /admin/overview blockieren oder ein HTTP 503 riskieren!
+        const canUseInstantCache = Boolean(
+          !forceNetworkRefresh &&
+          (backupImportJob.running || ((state.adminTab === "backup" || state.adminTab === "diaglog") && window._lastAdminOverviewCache))
+        );
+
+        let r = null;
         try {
-          const r = await apiFetchJson(
-            API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
-            "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
-            "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "")
-          );
-          if (!r || !r.ok) {
-            showHudToast("⚠️ " + (r?.error || "Admin-Daten konnten nicht geladen werden."));
-            return;
+          if (canUseInstantCache) {
+            r = window._lastAdminOverviewCache || {
+              ok: true,
+              users: [],
+              media: [],
+              playlists: [],
+              reports: window._adminReportsCache || [],
+              _instantLocalMode: true
+            };
+          } else {
+            window._adminPriorityRequestInFlight = true;
+            setBusyState(true, "👑 Lade Admin-Dashboard, User, VIP-Playlisten & Mediendatenbank...");
+            try {
+              r = await apiFetchJson(
+                API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
+                "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
+                "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "")
+              );
+              if (r && r.ok) {
+                window._lastAdminOverviewCache = r;
+              }
+            } catch (netErr) {
+              r = null;
+            } finally {
+              window._adminPriorityRequestInFlight = false;
+            }
           }
+
+          if (!r || !r.ok) {
+            // Niemals das Öffnen des Admin-Panels abbrechen! Stattdessen sofort mit Cache/Fallback-Daten öffnen,
+            // damit Backup-Import (Pause/Stopp) und Diagnose-Logs zu 100% erreichbar bleiben!
+            r = window._lastAdminOverviewCache || {
+              ok: true,
+              users: [],
+              media: [],
+              playlists: [],
+              reports: window._adminReportsCache || [],
+              _fallbackOn503: true
+            };
+            if (!wasAlreadyInAdmin && state.adminTab !== "diaglog") {
+              state.adminTab = "backup";
+            }
+            showHudToast("⚡ Admin-Panel im Direkt-Modus geöffnet (Import-Steuerung & Logs sofort bereit)");
+          }
+
           const users = r.users || [];
           const mediaList = r.media || [];
           const qStats = r.queueStats || { pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 };
           const adminPlaylists = r.playlists || [];
           const seriesGaps = r.seriesGaps || { totalSeriesChecked: 0, seriesWithGapsCount: 0, seriesWithInternalGapsCount: 0, totalMissingInternal: 0, totalMissingTrailing: 0, totalPrereleaseOnly: 0, items: [] };
-          const allReports = Array.isArray(r.reports) ? r.reports : [];
+          const allReports = Array.isArray(r.reports) ? r.reports : (window._adminReportsCache || []);
           window._adminReportsCache = allReports;
-          if (!clientDiagnosticLogState.loadedFromD1Once) {
+          if (!clientDiagnosticLogState.loadedFromD1Once && !backupImportJob.running) {
             clientDiagnosticLogState.loadedFromD1Once = true;
             syncDiagnosticLogsFromD1Client(true);
           }
@@ -3374,6 +3530,7 @@
                 '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 Backup-Import (100k+)</button>' +
                 '<button class="btn ' + (state.adminTab === 'diaglog' ? 'active' : '') + '" onclick="state.adminTab=\\'diaglog\\';loadAdminPanelView()">🛠️ Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')</button>' +
                 '<button class="btn ' + (state.adminTab === 'crud' ? 'active' : '') + '" onclick="state.adminTab=\\'crud\\';loadAdminPanelView()">🎬 Film/Serien CRUD (' + mediaList.length + ')</button>' +
+                '<button class="btn" onclick="loadAdminPanelView(true)" title="Admin-Übersicht frisch vom Server laden">🔄 Übersicht</button>' +
                 '<button class="btn" onclick="adminRunD1DedupeFilesClient()" title="Entfernt alle doppelten oder defekten Stream-Buttons in D1">🧹 Doppelte Buttons bereinigen</button>' +
                 '<button class="btn red" onclick="adminRunCompleteMediaResetClient()" title="Löscht alle Filme, Serien, Episoden & Playlisten für einen sauberen Neustart">🧨 Komplett-Reset</button>' +
                 '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' +

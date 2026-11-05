@@ -843,11 +843,18 @@
       tmdbHit = await cachedFetchJson(buildUrl(`/${type}/${parsedItem.tmdbId}?language=de-DE`));
     }
 
-    // Hilfsfunktion: Sortiert TMDb-Ergebnisse bei gleichem/ähnlichem Titel immer nach der kleinsten Jahres-Abweichung
+    // Hilfsfunktion: Erkennt deutschsprachige Produktionen (DACH + DDR/XG)
+    const isCandidateDach = (item) => {
+      if (!item || typeof item !== "object") return false;
+      if (String(item.original_language || "").toLowerCase() === "de") return true;
+      const countries = Array.isArray(item.origin_country) ? item.origin_country : [];
+      return countries.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim()));
+    };
+
+    // Hilfsfunktion: Sortiert TMDb-Ergebnisse bei gleichem/ähnlichem Titel nach kleinster Jahres-Abweichung bzw. DACH-Herkunft (ohne Jahr)
     const pickBestHitBySmallestYearDiff = (resultsList) => {
       if (!Array.isArray(resultsList) || resultsList.length === 0) return null;
-      if (!parsedItem.year) return resultsList[0];
-      const targetY = Number(parsedItem.year);
+      const targetY = parsedItem.year ? Number(parsedItem.year) : null;
       const normQ = normalizeCompareString(queryTitle);
       return [...resultsList].sort((a, b) => {
         const aTitle = normalizeCompareString(a.title || a.name || "");
@@ -857,13 +864,24 @@
         const aExact = (aTitle === normQ || aOrig === normQ) ? 1 : 0;
         const bExact = (bTitle === normQ || bOrig === normQ) ? 1 : 0;
         if (aExact !== bExact) return bExact - aExact;
-        const aDate = String(a.release_date || a.first_air_date || "");
-        const bDate = String(b.release_date || b.first_air_date || "");
-        const aYear = aDate ? parseInt(aDate.slice(0, 4), 10) : 9999;
-        const bYear = bDate ? parseInt(bDate.slice(0, 4), 10) : 9999;
-        const aDiff = Math.abs(aYear - targetY);
-        const bDiff = Math.abs(bYear - targetY);
-        if (aDiff !== bDiff) return aDiff - bDiff;
+        if (targetY) {
+          const aDate = String(a.release_date || a.first_air_date || "");
+          const bDate = String(b.release_date || b.first_air_date || "");
+          const aYear = aDate ? parseInt(aDate.slice(0, 4), 10) : 9999;
+          const bYear = bDate ? parseInt(bDate.slice(0, 4), 10) : 9999;
+          const aDiff = Math.abs(aYear - targetY);
+          const bDiff = Math.abs(bYear - targetY);
+          if (aDiff !== bDiff) return aDiff - bDiff;
+        } else if (aExact && bExact) {
+          const aDach = isCandidateDach(a);
+          const bDach = isCandidateDach(b);
+          if (aDach !== bDach) {
+            const nonDach = aDach ? b : a;
+            const dach = aDach ? a : b;
+            const nonDachIsGlobalHit = (Number(nonDach.vote_count || 0) >= 150 || Number(nonDach.popularity || 0) >= 25) && Number(dach.vote_count || 0) < 30;
+            if (!nonDachIsGlobalHit) return aDach ? -1 : 1;
+          }
+        }
         return Number(b.popularity || 0) - Number(a.popularity || 0);
       })[0];
     };
@@ -963,6 +981,13 @@
       if (directHit && directHit.id) return { ...directHit, _resolvedType: type, _stage: "stage1_id" };
     }
 
+    const isDachItem = (item) => {
+      if (!item || typeof item !== "object") return false;
+      if (String(item.original_language || "").toLowerCase() === "de") return true;
+      const countries = Array.isArray(item.origin_country) ? item.origin_country : [];
+      return countries.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim()));
+    };
+
     const searchTmdbStage = async (qStr, includeYear = true, searchType = type) => {
       if (!qStr || qStr.length < 1) return null;
       const params = new URLSearchParams({
@@ -975,9 +1000,29 @@
         params.set(yp, String(parsedItem.year));
       }
       const data = await cachedExternalFetchJson(`${baseUrl}/search/${searchType}?${params.toString()}`, { headers });
-      return Array.isArray(data?.results) && data.results.length > 0
-        ? { ...data.results[0], _resolvedType: searchType, _allResults: data.results.slice(0, 6) }
-        : null;
+      if (!Array.isArray(data?.results) || data.results.length === 0) return null;
+      const normQ = normalizeCompareString(qStr);
+      const sortedResults = [...data.results].sort((a, b) => {
+        const aTitle = normalizeCompareString(a.title || a.name || "");
+        const bTitle = normalizeCompareString(b.title || b.name || "");
+        const aOrig  = normalizeCompareString(a.original_title || a.original_name || "");
+        const bOrig  = normalizeCompareString(b.original_title || b.original_name || "");
+        const aExact = (aTitle === normQ || aOrig === normQ) ? 1 : 0;
+        const bExact = (bTitle === normQ || bOrig === normQ) ? 1 : 0;
+        if (aExact !== bExact) return bExact - aExact;
+        if (!parsedItem.year && aExact && bExact) {
+          const aDach = isDachItem(a);
+          const bDach = isDachItem(b);
+          if (aDach !== bDach) {
+            const nonDach = aDach ? b : a;
+            const dach = aDach ? a : b;
+            const nonDachIsGlobalHit = (Number(nonDach.vote_count || 0) >= 150 || Number(nonDach.popularity || 0) >= 25) && Number(dach.vote_count || 0) < 30;
+            if (!nonDachIsGlobalHit) return aDach ? -1 : 1;
+          }
+        }
+        return Number(b.popularity || 0) - Number(a.popularity || 0);
+      });
+      return { ...sortedResults[0], _resolvedType: searchType, _allResults: sortedResults.slice(0, 6) };
     };
 
     // STUFE 2: Suche mit Titel + Jahr

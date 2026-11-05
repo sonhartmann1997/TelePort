@@ -1,6 +1,6 @@
 {
-  "summary": "Erweiterter Implementierungsplan:\n1. Übernahme des bestätigten Detailansicht- & Mehrteiler-Plans (CD 1..N Release-Box mit nebeneinanderliegenden CD-Buttons, korrekte aufsteigende Sortierung CD 1 -> CD 5, Ausblenden von Quellgruppe/Sprach-Duplikaten in das Admin-Menü).\n2. Behebung der 7 Serien-/Film-Logikfehler aus den Screenshots (Deep Blue Sea 3 -> Deep Blue S01E03) und dem 1.200-Einträge-Import-Log (Size: MB -> Size 12, +18 -> Serie 18 Again, Mad Max 4 / Sector 4 -> Folge 4, Little Britain USA ohne 'von', Geisterjäger Umlaut-Bug bei \\bger\\b, Creed ||| Römische Zahlen, Trailer/Coming-Soon Filter).",
-  "updatedAt": "2026-11-05T12:00:46.905915154Z",
+  "summary": "Implementierungsplan für ruckelfreies JSON-Einlesen (Chunked Async Parsing), blockierungsfreien Sofort-Zugang zum Admin-Panel während laufender Imports (inkl. Fallback-Cache bei HTTP 503) und eine schwebende Mini-Statusleiste auf anderen Seiten.",
+  "updatedAt": "2026-11-05T13:30:58.750101314Z",
   "requestFeedback": true,
   "userFacing": true
 }
