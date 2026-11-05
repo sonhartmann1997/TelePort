@@ -2338,50 +2338,232 @@
         box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.45), 0 12px 28px rgba(0,0,0,0.75);
       }
       /* Aufgeräumte Detail-Modal Nutzer-Aktionsleiste & eigene kompakte Admin-Leiste */
-      .modal-user-actions-bar {
+      .modal-actions-row {
         display: flex;
-        gap: 6px;
+        gap: 8px;
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 8px;
+        padding-bottom: 12px;
+        margin-bottom: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       }
-      .modal-admin-toolbar {
+      .modal-actions-primary {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .modal-actions-tools {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .btn-action-glass {
+        background: rgba(255, 255, 255, 0.07);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        color: #f8fafc;
+        font-weight: 700;
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: calc(12px * var(--scale-text));
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.15s ease;
+        text-decoration: none;
+      }
+      .btn-action-glass:hover,
+      .btn-action-glass.spatial-focus {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.32);
+        color: #ffffff;
+      }
+      .btn-action-glass.saved,
+      .btn-action-glass.green {
+        background: rgba(16, 185, 129, 0.16);
+        border-color: rgba(16, 185, 129, 0.45);
+        color: #6ee7b7;
+      }
+      .btn-tool-quiet {
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        color: #94a3b8;
+        font-weight: 600;
+        padding: 5px 9px;
+        border-radius: 7px;
+        font-size: calc(11.5px * var(--scale-text));
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        transition: all 0.14s ease;
+      }
+      .btn-tool-quiet:hover,
+      .btn-tool-quiet.spatial-focus {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.24);
+        color: #f8fafc;
+      }
+      /* Edle einzeilige Metadaten- & Genre-Leisten im Detail-Header (Apple TV+ / Netflix Stil) */
+      .modal-meta-inline {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 7px;
+        font-size: calc(12.5px * var(--scale-text));
+        font-weight: 600;
+        color: #cbd5e1;
+        line-height: 1.4;
+      }
+      .modal-meta-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .modal-meta-item.clickable {
+        cursor: pointer;
+        transition: color 0.14s ease;
+      }
+      .modal-meta-item.clickable:hover,
+      .modal-meta-item.clickable.spatial-focus {
+        color: #ffffff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .modal-meta-rating {
+        color: #fbbf24;
+        font-weight: 800;
+      }
+      .modal-meta-fsk {
+        padding: 1px 6px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        color: #e2e8f0;
+        letter-spacing: 0.2px;
+      }
+      .modal-meta-dot {
+        color: rgba(148, 163, 184, 0.55);
+        font-weight: 900;
+        user-select: none;
+      }
+      .modal-genre-inline {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        font-size: calc(12px * var(--scale-text));
+        color: #94a3b8;
+      }
+      .modal-genre-link {
+        color: #e2e8f0;
+        font-weight: 600;
+        cursor: pointer;
+        transition: color 0.14s ease;
+      }
+      .modal-genre-link:hover,
+      .modal-genre-link.spatial-focus {
+        color: #ffffff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      /* Kompakter integrierter Versandziel-Umschalter (in Staffel-Zeile oder Film-Header) */
+      .delivery-inline-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .delivery-inline-pills {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 3px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        flex-wrap: wrap;
+      }
+      .delivery-inline-label {
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        color: #94a3b8;
+        padding: 0 6px 0 5px;
+        white-space: nowrap;
+      }
+      .delivery-pill-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: #94a3b8;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.14s ease;
+        white-space: nowrap;
+      }
+      .delivery-pill-btn:hover {
+        color: #f8fafc;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .delivery-pill-btn.active {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.22);
+        color: #ffffff;
+      }
+      .delivery-config-drawer {
+        padding: 10px 12px;
+        border-radius: 9px;
+        background: rgba(15, 23, 42, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        margin-top: 4px;
+        margin-bottom: 6px;
+      }
+      .season-toolbar-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
         flex-wrap: wrap;
-        padding: 6px 10px;
         margin-bottom: 10px;
-        border-radius: 9px;
-        background: rgba(139, 92, 246, 0.08);
-        border: 1px solid rgba(139, 92, 246, 0.28);
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
       }
-      .modal-admin-toolbar-label {
-        font-size: calc(11px * var(--scale-text));
-        font-weight: 800;
-        color: #c4b5fd;
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-      }
-      body[data-theme="light"] .modal-admin-toolbar {
-        background: #f5f3ff;
-        border-color: #c4b5fd;
-      }
-      body[data-theme="light"] .modal-admin-toolbar-label {
-        color: #5b21b6;
-      }
-      .delivery-compact-bar {
-        padding: 6px 10px;
-        margin-bottom: 8px;
-        border-radius: 8px;
-        background: rgba(15, 23, 42, 0.65);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-      }
-      body[data-theme="light"] .delivery-compact-bar {
+      body[data-theme="light"] .btn-action-glass {
         background: #f1f5f9;
+        border-color: #cbd5e1;
+        color: #0f172a;
+      }
+      body[data-theme="light"] .btn-action-glass:hover {
+        background: #e2e8f0;
+      }
+      body[data-theme="light"] .btn-tool-quiet {
+        background: #f8fafc;
+        border-color: #cbd5e1;
+        color: #475569;
+      }
+      body[data-theme="light"] .btn-tool-quiet:hover {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      body[data-theme="light"] .delivery-inline-pills {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+      }
+      body[data-theme="light"] .delivery-pill-btn {
+        color: #475569;
+      }
+      body[data-theme="light"] .delivery-pill-btn.active {
+        background: #0f172a;
+        color: #ffffff;
+      }
+      body[data-theme="light"] .delivery-config-drawer {
+        background: #f8fafc;
         border-color: #cbd5e1;
       }
       .card-body { padding: 7px 8px; display: flex; flex-direction: column; flex: 1; justify-content: space-between; gap: 4px; }
@@ -2741,9 +2923,10 @@
         padding: 4px 7px !important;
         font-size: calc(11px * var(--scale-text)) !important;
         border-radius: 6px;
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.14);
-        color: #cbd5e1;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.1);
+        color: #94a3b8;
+        transition: all 0.14s ease;
       }
       .ep-icon-btn:hover {
         background: rgba(255,255,255,0.14);
@@ -2802,11 +2985,153 @@
         text-transform: uppercase;
         letter-spacing: 0.4px;
       }
-      .ep-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: rgba(255,255,255,0.04); border-radius: 8px; margin-bottom: 6px; gap: 8px; border: 1px solid rgba(255,255,255,0.08); flex-wrap: wrap; }
-      .ep-row.ep-watched { border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.07); }
-      .ep-row.ep-next-up { border-color: rgba(245, 158, 11, 0.55); background: rgba(245, 158, 11, 0.08); }
-      .ep-title { font-size: calc(12.5px * var(--scale-text)); font-weight: 600; color: #60a5fa; cursor: pointer; flex: 1; min-width: 170px; border-radius: 6px; padding: 2px 4px; transition: background 0.14s, color 0.14s; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-      .ep-title.spatial-focus, .ep-title:hover { background: rgba(96, 165, 250, 0.16); color: #fff; outline: 2px solid #60a5fa; }
+      /* Edle Episoden-Zeilen (Apple TV+ / Netflix Stil) */
+      .ep-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 9px 12px;
+        background: rgba(255, 255, 255, 0.025);
+        border-radius: 9px;
+        margin-bottom: 6px;
+        gap: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.065);
+        flex-wrap: wrap;
+        transition: background 0.14s ease, border-color 0.14s ease;
+      }
+      .ep-row:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.14);
+      }
+      .ep-row.ep-watched { border-color: rgba(16, 185, 129, 0.42); background: rgba(16, 185, 129, 0.06); }
+      .ep-row.ep-next-up { border-color: rgba(245, 158, 11, 0.5); background: rgba(245, 158, 11, 0.07); }
+      .ep-title {
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 600;
+        color: #f1f5f9;
+        cursor: pointer;
+        flex: 1;
+        min-width: 180px;
+        border-radius: 6px;
+        padding: 2px 4px;
+        transition: color 0.14s ease;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        flex-wrap: wrap;
+      }
+      .ep-title.spatial-focus,
+      .ep-title:hover {
+        color: #ffffff;
+      }
+      .ep-title:hover .ep-name-text,
+      .ep-title.spatial-focus .ep-name-text {
+        text-decoration: underline;
+        text-decoration-color: rgba(255, 255, 255, 0.45);
+        text-underline-offset: 3px;
+      }
+      .ep-code-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px 7px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #94a3b8;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.3px;
+        flex-shrink: 0;
+      }
+      .ep-name-text {
+        color: #f8fafc;
+        font-weight: 600;
+        line-height: 1.35;
+      }
+      .btn-stream-clean {
+        background: rgba(229, 9, 20, 0.14);
+        border: 1px solid rgba(229, 9, 20, 0.42);
+        color: #fecaca;
+        font-weight: 700;
+        padding: 5px 10px;
+        border-radius: 7px;
+        font-size: calc(11px * var(--scale-text));
+        font-variant-numeric: tabular-nums;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        transition: all 0.14s ease;
+      }
+      .btn-stream-clean:hover,
+      .btn-stream-clean.spatial-focus {
+        background: #e50914;
+        border-color: #ff4d4d;
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(229, 9, 20, 0.35);
+      }
+      .btn-stream-clean.prerelease {
+        background: rgba(245, 158, 11, 0.15);
+        border-color: rgba(245, 158, 11, 0.45);
+        color: #fde68a;
+      }
+      .btn-stream-clean.prerelease:hover {
+        background: #d97706;
+        border-color: #fbbf24;
+        color: #ffffff;
+      }
+      .ep-ghost-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: #94a3b8;
+        padding: 4px 7px;
+        border-radius: 6px;
+        font-size: calc(11.5px * var(--scale-text));
+        cursor: pointer;
+        opacity: 0.5;
+        transition: opacity 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .ep-row:hover .ep-ghost-btn,
+      .ep-row:focus-within .ep-ghost-btn,
+      .ep-ghost-btn:hover,
+      .ep-ghost-btn.spatial-focus {
+        opacity: 0.92;
+      }
+      .ep-ghost-btn:hover,
+      .ep-ghost-btn.spatial-focus {
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.09);
+        border-color: rgba(255, 255, 255, 0.18);
+        color: #ffffff;
+      }
+      .ep-ghost-btn.saved {
+        opacity: 1;
+        background: rgba(16, 185, 129, 0.16);
+        border-color: rgba(16, 185, 129, 0.42);
+        color: #6ee7b7;
+      }
+      body[data-theme="light"] .ep-name-text {
+        color: #0f172a;
+      }
+      body[data-theme="light"] .ep-code-badge {
+        background: #e2e8f0;
+        border-color: #cbd5e1;
+        color: #334155;
+      }
+      body[data-theme="light"] .btn-stream-clean {
+        background: #fee2e2;
+        border-color: #fca5a5;
+        color: #991b1b;
+      }
+      body[data-theme="light"] .btn-stream-clean:hover {
+        background: #e50914;
+        color: #ffffff;
+      }
       .stream-meta-pill {
         display: inline-flex;
         align-items: center;

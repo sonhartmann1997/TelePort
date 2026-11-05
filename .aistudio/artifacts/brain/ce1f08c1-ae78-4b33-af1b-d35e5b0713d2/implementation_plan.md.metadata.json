@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan (Phase 2) für die bestätigten UX- und Design-Optimierungen: (1) Aufgeräumte Poster-Karten im Katalog (nur Lesezeichen & VIP-Punkt dauerhaft, Schnell-Buttons erst bei Hover/Fokus), (2) Neu strukturierte Detail-Modal-Aktionsleiste mit separater kompakter Admin-Leiste sowie einzeiligem, aufklappbarem Versandziel-Wähler, und (3) Umschaltbare Merklisten-Ansicht zwischen Poster-Grid und kompakter Listen-Ansicht bei 100 % Funktionserhalt.",
-  "updatedAt": "2026-11-05T11:01:50.832392901Z",
+  "summary": "Implementierungsplan für das professionelle Redesign der Detailansicht (Netflix / Apple TV+ Vorbild): (1) Edle einzeilige Typografie-Metadaten & Genres mit Trennpunkten statt bunter Pill-Boxen, (2) Einzeilige Aktionsleiste mit ruhigen Hauptaktionen links und kompakten Glas-Icons/Menü für Admin & Meldung rechts, (3) Wegfall des doppelten Rahmens und des zweizeiligen Hilfetexts sowie direkte Integration des Versandziels in die Staffel-/Stream-Kopfzeile, und (4) Moderne Episoden-Zeilen mit weißem Titel, aufgeräumtem Stream-Button und dezenten Ghost-Icons.",
+  "updatedAt": "2026-11-05T11:20:29.090911618Z",
   "requestFeedback": true,
   "userFacing": true
 }

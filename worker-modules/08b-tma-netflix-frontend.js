@@ -1888,9 +1888,15 @@
           const ytSearchUrl = 'https://www.youtube.com/results?search_query=' + ytSearchQuery;
 
           // Klickbare Genres & bereinigte, deduplizierte Streaming-Anbieter
-          const clickableGenresHtml = (d.genres && d.genres !== "Keine Angabe" ? d.genres.split(",").map(g => g.trim()).filter(Boolean) : []).map(gName =>
-            '<span class="f-pill inc" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + genreEmoji(gName) + ' ' + esc(gName) + '</span>'
+          const genresListClean = (d.genres && d.genres !== "Keine Angabe")
+            ? d.genres.split(",").map(g => g.trim()).filter(Boolean)
+            : [];
+          const clickableGenresHtml = genresListClean.map(gName =>
+            '<span class="f-pill inc" tabindex="0" onclick="filterByCategoryFromModal(\\'' + 'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + genreEmoji(gName) + ' ' + esc(gName) + '</span>'
           ).join(" ");
+          const heroInlineGenresHtml = genresListClean.map(gName =>
+            '<span class="modal-genre-link" tabindex="0" onclick="filterByCategoryFromModal(\\'' + 'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>'
+          ).join('<span class="modal-meta-dot">·</span>');
 
           const directorsArr = Array.isArray(d.directorsList) && d.directorsList.length > 0
             ? d.directorsList
@@ -1929,6 +1935,20 @@
           const prevAdj = getAdjacentDetailItem(-1);
           const nextAdj = getAdjacentDetailItem(1);
           const hasCreditsOrStudios = Boolean(clickableDirectorsHtml || clickableCastHtml || clickableStudiosHtml || clickableYearInDetailsHtml);
+
+          // Edle einzeilige Metadaten-Elemente mit Trennpunkten (Apple TV+ / Netflix Stil)
+          const cleanStatusLabel = (type === 's' && d.statusText && d.statusText !== 'Unbekannt')
+            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\s*/, '').trim()
+            : '';
+          const heroMetaParts = [
+            (d.vote && d.vote !== '0.0') ? ('<span class="modal-meta-item modal-meta-rating">★ ' + esc(d.vote) + '</span>') : '',
+            hasValidFsk ? ('<span class="modal-meta-item modal-meta-fsk clickable" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : '',
+            (d.runtime && d.runtime !== 'Keine Angabe') ? ('<span class="modal-meta-item">' + esc(d.runtime) + '</span>') : '',
+            (d.country && d.country !== 'k.A.' && d.country !== 'Keine Angabe') ? ('<span class="modal-meta-item clickable" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + ' suchen">' + esc(d.country) + '</span>') : '',
+            (type === 's' && d.numberOfSeasons) ? ('<span class="modal-meta-item">' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? ' Staffel' : ' Staffeln') + ' (' + Number(d.numberOfEpisodes || 0) + ' Flg.)</span>') : '',
+            cleanStatusLabel ? ('<span class="modal-meta-item">' + esc(cleanStatusLabel) + '</span>') : ''
+          ].filter(Boolean);
+          const heroMetaInlineHtml = heroMetaParts.join('<span class="modal-meta-dot">·</span>');
 
           // Prüfen, ob mehrteilige Film-Teile (z.B. CD1 & CD2 / Part 1 & Part 2) vorliegen
           const multiPartFiles = (vipAllowed && Array.isArray(d.files))
@@ -1971,24 +1991,17 @@
                     : '<div class="flix-poster-card" style="display:flex;align-items:center;justify-content:center;font-size:32px">' + (type === 's' ? '📺' : '🎬') + '</div>') +
                   '<div class="flix-meta-col">' +
                     '<div class="flix-title-row">' +
-                      '<h2 style="font-size:22px;font-weight:900;color:#ffffff;margin:0;line-height:1.2;text-shadow:0 2px 14px rgba(0,0,0,0.95)">' +
+                      '<h2 style="font-size:24px;font-weight:900;color:#ffffff;margin:0;line-height:1.18;letter-spacing:-0.01em;text-shadow:0 2px 14px rgba(0,0,0,0.95)">' +
                         '<span style="cursor:pointer;color:#ffffff" onclick="runSearch(false,\\'' + esc(d.title) + '\\')" title="Antippen, um nach diesem Titel zu suchen">' + esc(d.title) + '</span>' +
-                        (hasValidYear ? ' <span style="color:#cbd5e1;font-weight:700;font-size:17px">(' + esc(d.year) + ')</span>' : '') +
+                        (hasValidYear ? ' <span style="color:#94a3b8;font-weight:600;font-size:17px">(' + esc(d.year) + ')</span>' : '') +
                       '</h2>' +
                     '</div>' +
 
-                    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-                      (d.vote && d.vote !== '0.0' ? '<span class="f-pill neutral">⭐ ' + esc(d.vote) + '</span>' : '') +
-                      (hasValidFsk ? '<span class="f-pill neutral" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">🔞 ' + esc(fskFilterTarget) + '</span>' : '') +
-                      (d.runtime && d.runtime !== 'Keine Angabe' ? '<span class="f-pill neutral">⏳ ' + esc(d.runtime) + '</span>' : '') +
-                      (d.country && d.country !== 'k.A.' && d.country !== 'Keine Angabe' ? '<span class="f-pill neutral" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')">🌍 ' + esc(d.country) + '</span>' : '') +
-                      (type === 's' && d.numberOfSeasons ? '<span class="f-pill neutral">📚 ' + Number(d.numberOfSeasons) + ' St. / ' + Number(d.numberOfEpisodes || 0) + ' Flg.</span>' : '') +
-                      (type === 's' && d.statusText && d.statusText !== 'Unbekannt' ? '<span class="f-pill neutral">' + esc(d.statusText) + '</span>' : '') +
-                    '</div>' +
+                    (heroMetaInlineHtml ? '<div class="modal-meta-inline">' + heroMetaInlineHtml + '</div>' : '') +
 
-                    (clickableGenresHtml ? '<div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableGenresHtml + '</div>' : '') +
+                    (heroInlineGenresHtml ? '<div class="modal-genre-inline">' + heroInlineGenresHtml + '</div>' : '') +
 
-                    '<p style="font-size:12.5px;line-height:1.5;color:#e2e8f0;margin:2px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden" title="Vollständige Beschreibung im Reiter Details">' +
+                    '<p style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden" title="Vollständige Beschreibung im Reiter Details">' +
                       esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') +
                     '</p>' +
                   '</div>' +
@@ -2009,33 +2022,24 @@
               '</div>' +
 
               '<div class="modal-body">' +
-                /* 1. Primäre Nutzer-Aktionsleiste (Merkliste, Ähnliche Titel, Fehler melden, Mehr) */
-                '<div class="modal-user-actions-bar">' +
-                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                /* Vereinte, ruhige Aktionsleiste: Links Hauptaktionen, rechts dezente Admin- & Melde-Werkzeuge */
+                '<div class="modal-actions-row">' +
+                  '<div class="modal-actions-primary">' +
                     ((d.providerButtons && d.providerButtons.length > 0) ? (
                       d.providerButtons.map(pb =>
-                        '<a class="btn" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(229,9,20,0.22)') + ';border-color:' + esc(pb.border || '#e50914') + ';font-weight:800;color:#fff">' + esc(pb.buttonText) + '</a>'
+                        '<a class="btn-action-glass" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(229,9,20,0.22)') + ';border-color:' + esc(pb.border || '#e50914') + ';color:#fff">' + esc(pb.buttonText) + '</a>'
                       ).join("")
                     ) : '') +
-                    '<button id="modalWishlistBtn" class="btn ' + (d.isSaved ? 'green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
-                    '<button class="btn" onclick="loadSimilarInTma(\\''+type+'\\','+d.id+')">✨ Ähnliche Titel</button>' +
+                    '<button id="modalWishlistBtn" class="btn-action-glass ' + (d.isSaved ? 'saved green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
+                    '<button class="btn-action-glass" onclick="loadSimilarInTma(\\''+type+'\\','+d.id+')">✨ Ähnliche Titel</button>' +
                   '</div>' +
-                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-                    (canReportMedia ? '<button type="button" class="btn" style="border-color:rgba(245,158,11,0.4);color:#fbbf24" onclick="openMediaReportModal({typeCode:\\''+type+'\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',versionLabel:\\''+esc(primaryVersionBadgeText || 'Originalfassung')+'\\'})" title="Falschen Titel, falsche Staffel/Folge oder defektes Video melden">⚠️ Fehler melden</button>' : '') +
-                    '<button type="button" id="modalMoreActionsBtn" class="btn" onclick="toggleModalMoreActions()">⋯ Mehr ▾</button>' +
+                  '<div class="modal-actions-tools">' +
+                    (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalPosterPicker(\\''+type+'\\','+d.id+')" title="Original-Cover von TMDb (EN/DE), Apple iTunes DE, OMDb oder eigene Bild-URL wählen">🖼️ Cover</button>' : '') +
+                    (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalRemapBox(\\''+type+'\\','+d.id+')" title="Falsch zugeordneten Film/Serie inkl. Original-Dateiname & Telegram-Link neu zuordnen">🔄 Zuordnen</button>' : '') +
+                    (canReportMedia ? '<button type="button" class="btn-tool-quiet" onclick="openMediaReportModal({typeCode:\\''+type+'\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',versionLabel:\\''+esc(primaryVersionBadgeText || 'Originalfassung')+'\\'})" title="Falschen Titel, falsche Staffel/Folge oder defektes Video melden">⚠️ Melden</button>' : '') +
+                    '<button type="button" id="modalMoreActionsBtn" class="btn-tool-quiet" onclick="toggleModalMoreActions()" title="Teilen, Telegraph-Guide, Original-Poster & TMDb">⋯ Mehr ▾</button>' +
                   '</div>' +
                 '</div>' +
-
-                /* 2. Eigene kompakte Admin-Leiste für Cover-Wahl & Titel-Neuzuordnung (Remap) */
-                (isAdminUser ? (
-                  '<div class="modal-admin-toolbar">' +
-                    '<span class="modal-admin-toolbar-label">👑 Admin-Werkzeuge</span>' +
-                    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-                      '<button type="button" class="btn purple" style="padding:4px 10px;font-size:11px" onclick="toggleModalPosterPicker(\\''+type+'\\','+d.id+')" title="Original-Cover von TMDb (EN/DE), Apple iTunes DE, OMDb oder eigene Bild-URL wählen">🖼️ Cover ändern</button>' +
-                      '<button type="button" class="btn blue" style="padding:4px 10px;font-size:11px" onclick="toggleModalRemapBox(\\''+type+'\\','+d.id+')" title="Falsch zugeordneten Film/Serie inkl. Original-Dateiname & Telegram-Link neu zuordnen">🔄 Neu zuordnen</button>' +
-                    '</div>' +
-                  '</div>'
-                ) : '') +
 
                 '<div id="modalPosterPickerBox" style="display:none;margin:10px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.92);border:1px solid rgba(168,85,247,0.45)"></div>' +
                 '<div id="modalRemapMediaBox" style="display:none;margin:10px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.92);border:1px solid rgba(56,189,248,0.45)"></div>' +
@@ -2055,53 +2059,53 @@
 
                 /* TAB 1: STAFFELN & EPISODEN (bzw. STREAMS & DATEIEN bei Filmen) */
                 '<div id="flixTabPanel_streams" style="display:' + (initialTab === 'streams' ? 'block' : 'none') + '">' +
-                  ((vipAllowed && ((d.files && d.files.length > 0) || type === 's')) ? (
-                    '<div class="modal-sub-box" style="margin:6px 0 10px;padding:10px;background:var(--card);border-radius:10px;border:1px solid rgba(229,9,20,0.4)">' +
-                      buildModalDeliveryTargetSelectorHtml() +
-                      ((d.files && d.files.length > 0) ? (
-                        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0">' +
-                          '<div style="font-size:12.5px;font-weight:800;color:var(--text)">🌟 VIP-Streams & Versionen (' + esc(d.title) + ' • ' + d.files.length + '):</div>' +
+                  ((vipAllowed && type === 'm' && d.files && d.files.length > 0) ? (
+                    '<div>' +
+                      '<div class="season-toolbar-row">' +
+                        '<div style="font-size:12.5px;font-weight:800;color:var(--text)">🎬 Verfügbare Streams (' + d.files.length + ')</div>' +
+                        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+                          buildModalDeliveryTargetSelectorHtml() +
                           (hasMultipleParts ? (
-                            '<button class="btn amber" onclick="sendAllMoviePartsToTelegram()" title="Alle Teile (z.B. CD1 & CD2) nacheinander an das gewählte Ziel senden">' +
-                              '📦 Alle ' + multiPartFiles.length + ' Teile nacheinander senden' +
+                            '<button class="btn-action-glass" style="padding:4px 10px;font-size:11px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllMoviePartsToTelegram()" title="Alle Teile (z.B. CD1 & CD2) nacheinander an das gewählte Ziel senden">' +
+                              '📦 Alle ' + multiPartFiles.length + ' Teile senden' +
                             '</button>'
                           ) : '') +
                         '</div>' +
-                        '<div style="display:flex;flex-direction:column;gap:6px">' +
-                          d.files.map((f, fIdx) => {
-                            const sizeLabel = formatFileSizeClient(f.file_size);
-                            const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
-                            const tagsLabel = isRarFile ? "📦 RAR-Archiv" : String(f.tags || f.versionLabel || f.version_label || "").trim();
-                            const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsLabel);
-                            const partLabel = String(f.part || "").trim();
-                            const isExportRef = String(f.telegram_file_id || "").startsWith("tg_export_");
-                            const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
-                            return '<div class="ep-row" style="margin-bottom:0;' + (isPrereleaseTag ? 'border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.06);' : '') + '">' +
-                              '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-                                '<span class="btn ' + (isRarFile || isPrereleaseTag ? 'amber' : 'red') + '" style="padding:2px 7px;font-size:11px;pointer-events:none">' + esc(isRarFile ? '📦 RAR' : (f.quality || '1080p')) + '</span>' +
-                                '<span class="stream-meta-pill">' + esc(f.codec || 'x264') + (partLabel ? ' • ' + esc(partLabel) : '') + '</span>' +
-                                (sizeLabel ? '<span class="stream-meta-pill size" title="Dateigröße">📦 ' + esc(sizeLabel) + '</span>' : '') +
-                                (tagsLabel ? '<span class="stream-meta-pill tags" title="Schnittfassung / Kategorie">🏷️ ' + esc(tagsLabel) + '</span>' : '') +
-                                (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399" title="Wird beim Video-Versand automatisch mitgesendet">💬 ' + subsList.length + ' UT</span>' : '') +
-                                (isExportRef ? '<span class="stream-meta-pill" style="border-color:rgba(56,189,248,0.45);color:#38bdf8" title="Wird automatisch per copyMessage aus der Quellgruppe aufgelöst & File-ID gespeichert">🔗 Quellgruppe (Auto-Copy)</span>' : '') +
-                              '</div>' +
-                              '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                                '<button class="btn ' + (isRarFile ? 'amber' : 'red') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR an Bot senden' : ('📥 ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
-                                (subsList.length > 0 ? '<button type="button" class="btn blue" style="padding:5px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title) + '\\',{seriesId:null})" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 Untertitel (' + subsList.length + ')</button>' : '') +
-                                (isAdminUser ? '<button type="button" class="btn ep-icon-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',telegramFileId:\\''+esc(f.telegram_file_id)+'\\',versionLabel:\\''+esc(tagsLabel || 'Originalfassung')+'\\',quality:\\''+esc(f.quality || '1080p')+'\\',rawFilename:\\''+esc(f.raw_filename || '')+'\\',messageLink:\\''+esc(f.message_link || '')+'\\'})" title="Datei-Version ändern oder mit anderem TMDb-Titel/Folge verknüpfen">✏️</button>' : '') +
-                                (canReportMedia ? '<button type="button" class="btn ep-icon-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',telegramFileId:\\''+esc(f.telegram_file_id)+'\\',versionLabel:\\''+esc(tagsLabel || 'Originalfassung')+'\\'})" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
-                              '</div>' +
-                            '</div>';
-                          }).join("") +
-                        '</div>'
-                      ) : '') +
+                      '</div>' +
+                      '<div style="display:flex;flex-direction:column;gap:6px">' +
+                        d.files.map((f) => {
+                          const sizeLabel = formatFileSizeClient(f.file_size);
+                          const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+                          const tagsLabel = isRarFile ? "📦 RAR-Archiv" : String(f.tags || f.versionLabel || f.version_label || "").trim();
+                          const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsLabel);
+                          const partLabel = String(f.part || "").trim();
+                          const isExportRef = String(f.telegram_file_id || "").startsWith("tg_export_");
+                          const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
+                          return '<div class="ep-row" style="margin-bottom:0;' + (isPrereleaseTag ? 'border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.06);' : '') + '">' +
+                            '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">' +
+                              '<span class="ep-code-badge">' + esc(isRarFile ? 'RAR' : (f.quality || '1080p')) + '</span>' +
+                              '<span class="ep-name-text">' + esc(f.codec || 'x264') + (partLabel ? ' · ' + esc(partLabel) : '') + '</span>' +
+                              (sizeLabel ? '<span class="stream-meta-pill size" title="Dateigröße">' + esc(sizeLabel) + '</span>' : '') +
+                              (tagsLabel ? '<span class="stream-meta-pill tags" title="Schnittfassung / Kategorie">' + esc(tagsLabel) + '</span>' : '') +
+                              (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399" title="Wird beim Video-Versand automatisch mitgesendet">💬 ' + subsList.length + ' UT</span>' : '') +
+                              (isExportRef ? '<span class="stream-meta-pill" style="border-color:rgba(56,189,248,0.45);color:#38bdf8" title="Wird automatisch per copyMessage aus der Quellgruppe aufgelöst & File-ID gespeichert">🔗 Auto-Copy</span>' : '') +
+                            '</div>' +
+                            '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                              '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
+                              (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title) + '\\',{seriesId:null})" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
+                              (isAdminUser ? '<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',telegramFileId:\\''+esc(f.telegram_file_id)+'\\',versionLabel:\\''+esc(tagsLabel || 'Originalfassung')+'\\',quality:\\''+esc(f.quality || '1080p')+'\\',rawFilename:\\''+esc(f.raw_filename || '')+'\\',messageLink:\\''+esc(f.message_link || '')+'\\'})" title="Datei-Version ändern oder mit anderem TMDb-Titel/Folge verknüpfen">✏️</button>' : '') +
+                              (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',telegramFileId:\\''+esc(f.telegram_file_id)+'\\',versionLabel:\\''+esc(tagsLabel || 'Originalfassung')+'\\'})" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
+                            '</div>' +
+                          '</div>';
+                        }).join("") +
+                      '</div>' +
                     '</div>'
                   ) : (!vipAllowed && type === 'm' ? (
                     '<div class="panel-box" style="margin:6px 0;text-align:center;color:#94a3b8;font-size:12.5px">' +
                       '🔒 Direkt-Streams & Downloads sind exklusiv für freigeschaltete <b>VIP-Mitglieder</b> sichtbar. Nutze die Tabs oben für <b>Versionen</b> & <b>Details / Trailer</b>.' +
                     '</div>'
                   ) : '')) +
-                  (type === 's' ? '<div id="seasonBox" style="margin-top:8px">Lade Episoden...</div>' : '') +
+                  (type === 's' ? '<div id="seasonBox" style="margin-top:4px">Lade Episoden...</div>' : '') +
                 '</div>' +
 
                 /* TAB 2: VERSIONEN (Übersicht aller Schnittfassungen, Episode-Groups & Dateien) */
@@ -2562,40 +2566,37 @@
         const mode = prefs.targetMode || "dm";
         const showConfigInputs = modalDeliveryConfigExpanded || (mode === "group" && !prefs.targetGroupChatId) || (mode === "custom_bot" && !prefs.customBotToken);
         const activeModeSummary = mode === "group"
-          ? ("👥 Eigene Gruppe" + (prefs.targetGroupChatId ? (" (" + esc(prefs.targetGroupChatId) + ")") : " (ID fehlt)"))
+          ? ("Eigene Gruppe" + (prefs.targetGroupChatId ? (" (" + esc(prefs.targetGroupChatId) + ")") : " (ID fehlt)"))
           : mode === "custom_bot"
-            ? ("🤖 Eigener Bot" + (prefs.customBotUsername ? (" (@" + esc(prefs.customBotUsername) + ")") : ""))
-            : "💬 Bot-Privatchat (DM)";
-        return '<div id="modalDeliveryTargetMount" class="delivery-compact-bar">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
-            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px">' +
-              '<span style="font-weight:700;color:var(--text-muted)">📤 Versandziel:</span>' +
-              '<strong style="color:var(--text-main)">' + activeModeSummary + '</strong>' +
-            '</div>' +
-            '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' +
-              '<button type="button" class="btn ' + (mode === 'dm' ? 'active' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="switchModalDeliveryModeClient(\\'dm\\')">💬 Privat</button>' +
-              '<button type="button" class="btn ' + (mode === 'group' ? 'active' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="switchModalDeliveryModeClient(\\'group\\')">👥 Gruppe</button>' +
-              '<button type="button" class="btn ' + (mode === 'custom_bot' ? 'active' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')">🤖 Bot</button>' +
-              '<button type="button" class="btn" style="padding:3px 8px;font-size:10.5px" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️ ' + (showConfigInputs ? 'Schließen ▴' : 'Konfig ▾') + '</button>' +
-            '</div>' +
+            ? ("Eigener Bot" + (prefs.customBotUsername ? (" (@" + esc(prefs.customBotUsername) + ")") : ""))
+            : "Bot-Privatchat (DM)";
+        return '<div id="modalDeliveryTargetMount" class="delivery-inline-wrap">' +
+          '<div class="delivery-inline-pills" title="Aktives Versandziel: ' + activeModeSummary + '">' +
+            '<span class="delivery-inline-label">📤 Ziel:</span>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'dm' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'dm\\')" title="An privaten Bot-Chat senden">💬 Privat</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'group' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'group\\')" title="In eigene Telegram-Gruppe senden">👥 Gruppe</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'custom_bot' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')" title="Über eigenen Bot senden">🤖 Bot</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️</button>' +
           '</div>' +
           (showConfigInputs ? (
-            '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.1);display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:6px">' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">👥 Ziel-Gruppen Chat-ID (Tipp: <code>/id</code> in Gruppe):</div>' +
-                '<input id="modalDelivGroupIdInp" value="' + esc(prefs.targetGroupChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="z.B. -1001987654321" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
-              '</div>' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">🧵 Topic / Thread-ID (optional):</div>' +
-                '<input id="modalDelivTopicIdInp" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
-              '</div>' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">📦 Quellgruppen-ID (für result.json Auto-Copy):</div>' +
-                '<input id="modalDelivSourceGroupInp" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
-              '</div>' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
-                '<input id="modalDelivBotTokenInp" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+            '<div class="delivery-config-drawer">' +
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (<code>/id</code>):</div>' +
+                  '<input id="modalDelivGroupIdInp" value="' + esc(prefs.targetGroupChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="z.B. -1001987654321" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">🧵 Topic / Thread-ID (optional):</div>' +
+                  '<input id="modalDelivTopicIdInp" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">📦 Quellgruppen-ID (Auto-Copy):</div>' +
+                  '<input id="modalDelivSourceGroupInp" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">🤖 Eigenes Bot-Token (optional):</div>' +
+                  '<input id="modalDelivBotTokenInp" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
               '</div>' +
             '</div>'
           ) : '') +
@@ -3269,28 +3270,30 @@
           const isProgSeason = prog && Number(prog.season) === Number(n);
           const rawCnt = vipAllowed ? Number(sCounts[n] || sCounts[String(n)] || 0) : 0;
           const vipEpCnt = (n === seasonNum && maxAllowedEpisodes > 0) ? Math.min(rawCnt, maxAllowedEpisodes) : rawCnt;
-          const vipBadgeTxt = vipEpCnt > 0 ? (' 🌟' + vipEpCnt) : '';
-          return '<button class="btn '+(n===seasonNum?'red':'')+'" onclick="loadSeason('+seriesId+','+n+',true)">Staffel '+n+vipBadgeTxt+(isProgSeason ? ' 👁️' : '')+'</button>';
+          const vipBadgeTxt = vipEpCnt > 0 ? (' · ' + vipEpCnt) : '';
+          return '<button class="btn '+(n===seasonNum?'red':'')+'" style="padding:5px 11px;font-size:12px" onclick="loadSeason('+seriesId+','+n+',true)">Staffel '+n+vipBadgeTxt+(isProgSeason ? ' 👁️' : '')+'</button>';
         }).join(" ");
 
         const progressBannerHtml = prog ? (
-          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.35);font-size:11.5px">' +
-            '<span>👁️ <b>Serien-Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);font-size:11.5px">' +
+            '<span>👁️ <b>Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
             (Number(prog.season) !== Number(seasonNum) ? '<button class="btn green" style="padding:3px 8px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>' : '') +
           '</div>'
         ) : '';
 
         box.innerHTML =
-          '<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">' +
-            '<div style="display:flex;gap:6px;flex-wrap:wrap">' + sBtns + '</div>' +
-            ((vipAllowed && seasonStreamableCount > 0) ? (
-              '<button class="btn amber" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' nacheinander an deinen Telegram-Chat senden">' +
-                '📦 Ganze Staffel ' + seasonNum + ' senden (' + seasonStreamableCount + ' Flg.)' +
-              '</button>'
-            ) : '') +
+          '<div class="season-toolbar-row">' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' + sBtns + '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+              (vipAllowed ? buildModalDeliveryTargetSelectorHtml() : '') +
+              ((vipAllowed && seasonStreamableCount > 0) ? (
+                '<button class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' nacheinander an dein gewähltes Ziel senden">' +
+                  '📦 Staffel ' + seasonNum + ' senden (' + seasonStreamableCount + ')' +
+                '</button>'
+              ) : '') +
+            '</div>' +
           '</div>' +
           progressBannerHtml +
-          '<div style="font-size:11.5px;color:#aaa;margin-bottom:6px">💡 Tippe auf den Episodentitel für den Telegraph-Guide' + (vipAllowed ? ' oder wähle rechts die VIP-Version (inkl. Versions-Switcher bei mehreren Schnittfassungen) zum Streamen/Downloaden:' : ':') + '</div>' +
           episodes.map(ep => {
             const epCode = 'S'+String(seasonNum).padStart(2,'0')+'E'+String(ep.episode_number).padStart(2,'0');
             const isLastWatched = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(prog.episode) === Number(ep.episode_number));
@@ -3299,7 +3302,7 @@
             const progBadgeHtml = isLastWatched
               ? '<span class="ep-progress-badge">👁️ Zuletzt</span>'
               : isNextEpisode
-                ? '<span class="ep-progress-badge next">▶️ Nächste</span>'
+                ? '<span class="ep-progress-badge next">▶ Nächste</span>'
                 : '';
 
             // Episoden-Streams & Versions-Switcher strikt NUR für VIP-Mitglieder!
@@ -3329,19 +3332,19 @@
                 const activeSizeStr = formatFileSizeClient(activeVer.file_size);
                 const activeLabel = activeVer.versionLabel || "Originalfassung";
                 const activeSubs = Array.isArray(activeVer.subtitles) ? activeVer.subtitles : [];
-                const activeBtnMeta = [activeVer.quality || '1080p', activeVer.codec || '', activeSizeStr ? ('• ' + activeSizeStr) : '', '• ' + activeLabel].filter(Boolean).join(' ');
+                const activeBtnMeta = [activeVer.quality || '1080p', activeVer.codec || '', activeSizeStr ? ('· ' + activeSizeStr) : '', '· ' + activeLabel].filter(Boolean).join(' ');
 
                 const switcherTabsHtml =
-                  '<div class="version-switcher" style="display:inline-flex;gap:4px;align-items:center;background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,0.14)">' +
+                  '<div class="version-switcher" style="display:inline-flex;gap:3px;align-items:center;background:rgba(255,255,255,0.04);padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">' +
                     epVersions.map((v, vIdx) => {
                       const isSel = vIdx === activeIdx;
                       const vLbl = v.versionLabel || "Originalfassung";
-                      return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="padding:2px 7px;font-size:10.5px;border-radius:4px;' + (isSel ? '' : 'background:transparent;border-color:transparent;color:#bbb;') + '" onclick="selectEpisodeVersion(' + seriesId + ',' + seasonNum + ',' + ep.episode_number + ',' + vIdx + ')">' + esc(vLbl) + '</button>';
+                      return '<button type="button" class="delivery-pill-btn ' + (isSel ? 'active' : '') + '" style="padding:2px 7px;font-size:10.5px" onclick="selectEpisodeVersion(' + seriesId + ',' + seasonNum + ',' + ep.episode_number + ',' + vIdx + ')">' + esc(vLbl) + '</button>';
                     }).join('') +
                   '</div>';
 
-                const playBtnHtml = '<button class="btn red" style="padding:4px 8px;font-size:11px;font-variant-numeric:tabular-nums" onclick="requestTelegramStream(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(activeVer.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(activeSizeStr)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶️ ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + 💬 UT' : '') + '</button>' +
-                  (activeSubs.length > 0 ? ' <button type="button" class="btn blue" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
+                const playBtnHtml = '<button class="btn-stream-clean" onclick="requestTelegramStream(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(activeVer.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(activeSizeStr)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶ ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                  (activeSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
 
                 filesBtns = switcherTabsHtml + " " + playBtnHtml;
               } else if (Array.isArray(ep.files)) {
@@ -3362,9 +3365,9 @@
                     .filter((v, i, arr) => arr.indexOf(v) === i)
                     .join(" · ");
                   const isPrereleaseEp = tagsStr.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsStr);
-                  const btnMeta = [f.quality || '1080p', f.codec || '', sizeStr ? ('• ' + sizeStr) : '', tagsStr ? ('• ' + tagsStr) : ''].filter(Boolean).join(' ');
-                  return '<button class="btn ' + (isPrereleaseEp ? 'amber' : 'red') + '" style="padding:4px 8px;font-size:11px;font-variant-numeric:tabular-nums" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sizeStr)+'\\',tags:\\''+esc(tagsStr)+'\\'})">▶️ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + 💬 UT' : '') + '</button>' +
-                    (fSubs.length > 0 ? ' <button type="button" class="btn blue" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + fSubs.length + ')</button>' : '');
+                  const btnMeta = [f.quality || '1080p', f.codec || '', sizeStr ? ('· ' + sizeStr) : '', tagsStr ? ('· ' + tagsStr) : ''].filter(Boolean).join(' ');
+                  return '<button class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sizeStr)+'\\',tags:\\''+esc(tagsStr)+'\\'})">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                    (fSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + fSubs.length + ')</button>' : '');
                 }).join(" ");
               }
             }
@@ -3377,23 +3380,24 @@
             const hasStreamFile = Boolean(Array.isArray(ep.files) && ep.files.length > 0);
 
             const adminEditBtnHtml = (isAdminUser && hasStreamFile)
-              ? ('<button type="button" class="btn ep-icon-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\',quality:\\'' + esc(activeQualStr) + '\\'})" title="Folge korrigieren (Staffel/Folge anpassen, Schnittfassung wechseln oder mit neuer TMDb-ID verknüpfen)">✏️</button>')
+              ? ('<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\',quality:\\'' + esc(activeQualStr) + '\\'})" title="Folge korrigieren (Staffel/Folge anpassen, Schnittfassung wechseln oder mit neuer TMDb-ID verknüpfen)">✏️</button>')
               : '';
 
             const reportBtnHtml = canReportMedia
-              ? ('<button type="button" class="btn ep-icon-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\'})" title="Fehler für ' + epCode + ' melden">⚠️</button>')
+              ? ('<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\'})" title="Fehler für ' + epCode + ' melden">⚠️</button>')
               : '';
 
             return '<div class="' + rowCls + '">' +
-              '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')">' +
-                '<span>' + epCode + ' – ' + esc(ep.name) + '</span>' +
+              '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')" title="Antippen für Episoden-Beschreibung & Telegraph-Guide">' +
+                '<span class="ep-code-badge">' + epCode + '</span>' +
+                '<span class="ep-name-text">' + esc(ep.name) + '</span>' +
                 progBadgeHtml +
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                 filesBtns +
                 adminEditBtnHtml +
                 reportBtnHtml +
-                '<button class="btn '+(ep.isSaved?'green':'')+'" onclick="toggleEpisodeSave('+seriesId+','+seasonNum+','+ep.episode_number+')">'+(ep.isSaved?'✅ Gespeichert':'💾')+'</button>' +
+                '<button class="ep-ghost-btn '+(ep.isSaved?'saved':'')+'" onclick="toggleEpisodeSave('+seriesId+','+seasonNum+','+ep.episode_number+')" title="'+(ep.isSaved?'Folge aus Merkliste entfernen':'Folge auf Merkliste speichern')+'">'+(ep.isSaved?'✓':'🔖')+'</button>' +
               '</div>' +
             '</div>';
           }).join("");

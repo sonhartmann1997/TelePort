@@ -1,94 +1,107 @@
-# UX- & Streaming-UI Ausbau (Runde 2): Aufgeräumte Poster-Karten, Kompaktes Detail-Modal & Visuelle Merkliste
+# Professionelles Redesign der Detailansicht (Apple TV+ / Netflix Standard)
 
-Dieses Update verfeinert die zentralen Nutzer-Berührungspunkte der Streaming-Oberfläche (Katalog-Karten, Detail-Ansicht und persönliche Merkliste), damit Film- und Serien-Cover wieder im Mittelpunkt stehen und alle Werkzeuge für Nutzer, VIPs und Administratoren klar gegliedert und sofort erreichbar sind.
+Dieses Update verwandelt das Detail-Modal von einer unruhigen „Baukasten-Ansicht“ mit bunten Kästchen und doppelten Rahmen in eine ruhige, hochwertige Streaming-Detailseite nach dem Vorbild von Apple TV+ und Netflix – bei 100 % Erhalt aller Funktionen für Nutzer, VIPs und Administratoren.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Alle Entscheidungen basieren direkt auf deiner Auswahl aus den Rückfragen. Es gehen **keinerlei Funktionen** verloren – sämtliche Schnell-Aktionen, Admin-Werkzeuge und Merklisten-Optionen bleiben vollständig erhalten.
+> Alle vier Gestaltungsentscheidungen setzen exakt deine Auswahl aus den Rückfragen um. Sämtliche Klick-Funktionen (Filterung nach FSK/Land/Genre/Jahr, Telegraph-Episodenguide, Versions-Switcher, Admin-Cover/Remap/Folgen-Korrektur, Einzel- & Staffel-Versand) bleiben vollständig erhalten.
 
-- **Bestätigte Entscheidung 1 (Poster-Karten im Hauptkatalog)**: Auf den Cover-Bildern sind dauerhaft nur das Lesezeichen (`🔖` / `✓`) und der dezente grüne VIP-Punkt sichtbar (plus Top-10-Rang im Trending-Modus). Die Zusatz-Buttons (`ℹ️ Details` und `▶ Trailer`) erscheinen sanft erst bei Maus-Hover oder Tastatur-/TV-Fokus, damit die Poster auf Smartphones und kleineren Bildschirmen nicht mehr verdeckt werden.
-- **Bestätigte Entscheidung 2 (Detail-Modal Aktionsleiste & Admin-Leiste)**: Die Aktionsbuttons unterhalb der Tabs werden in zwei saubere Ebenen getrennt:
-  1. **Primäre Nutzer-Leiste**: *Merkliste*, *Ähnliche Titel*, Streaming-Anbieter-Links, *Fehler melden* (für VIP/Admin) und *Mehr ▾* (Teilen, Bot-Link, Telegraph, Original-Poster/Szenenbild).
-  2. **Eigene kompakte Admin-Leiste** (nur für eingeloggte Administratoren sichtbar): Dezente, klar abgegrenzte Werkzeugzeile für *🖼️ Cover ändern* und *🔄 Titel/Serie neu zuordnen (Remap)*.
-- **Bestätigte Entscheidung 3 (Kompaktes Versandziel im Detail-Modal)**: Die Box *„Versandziel (Privat-Chat / Gruppe / Eigener Bot)“* oberhalb der Streams und Episoden startet standardmäßig als schlanke, einzeilige Status-Leiste (z. B. `📤 Versandziel: Privat-Chat (Bot-DM) • Ändern ▾`) und klappt die Konfigurationsfelder erst bei Klick auf.
-- **Bestätigte Entscheidung 4 (Merkliste mit Poster-Grid & Listen-Umschalter)**: In der Merkliste wird ein Ansicht-Umschalter (`🖼️ Poster-Grid` | `📋 Kompakt-Liste`) ergänzt. Nutzer können ihre gespeicherten Filme, Serien und Playlisten wahlweise als visuelles Poster-Raster (wie im Hauptkatalog) oder als detaillierte Liste mit aufklappbaren Serien-Folgen durchsuchen.
+- **Bestätigte Entscheidung 1 (Edle Metadaten- & Genre-Zeile statt Pill-Boxen)**: Die 9 grauen und grünen Kästchen unter dem Titel weichen einer klaren, einzeiligen Typografie-Leiste mit feinen Trennpunkten (`★ 7.6  ·  FSK 16  ·  45 Min.  ·  Südkorea  ·  1 Staffel (8 Folgen)  ·  Beendet`) sowie einer dezenten zweiten Zeile für die klickbaren Genres (`Drama  ·  Sci-Fi & Fantasy  ·  Mystery`).
+- **Bestätigte Entscheidung 2 (Einzeilige Aktionsleiste ohne Regenbogen-Farben)**:
+  - **Links (Hauptaktionen)**: Streaming-Anbieter-Button (als einziger farbiger Primär-Akzent) sowie *Merkliste* und *Ähnliche Titel* im ruhigen, einheitlichen Glas-Design.
+  - **Rechts (Kompakte Werkzeug- & Admin-Icons)**: Dezente, einfarbige Glas-Buttons für *🖼️ Cover*, *🔄 Zuordnen*, *⚠️ Melden* und *⋯ Mehr*, sodass kein mehrzeiliger bunter Button-Umbruch mehr entsteht.
+- **Bestätigte Entscheidung 3 (Kein doppelter Rahmen & kein Hilfetext über den Episoden)**: Die doppelt umrandete rote/blaue Box (*„Wohin soll die Datei gesendet werden?“*) und der lange zweizeilige Erklärtext über den Folgen entfallen komplett. Die Versandziel-Auswahl (`📤 Privat-Chat ▾` + `⚙️`) sitzt platzsparend direkt in der Staffel- bzw. Stream-Kopfzeile.
+- **Bestätigte Entscheidung 4 (Edle Episoden-Zeilen)**:
+  - **Links**: Kompaktes Episoden-Badge (`E01` in `tabular-nums`) + klarer **weißer Episodentitel** (statt grellem Hellblau).
+  - **Rechts**: Aufgeräumter Stream-Button (`▶ 720p · 303 MB · DE`) und dezente Ghost-Icons (`✏️`, `⚠️`, `🔖`), die im Ruhezustand zurückhaltend sind und erst bei Hover/Fokus voll hervortreten.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **Was wird verbessert**:
-  1. **Freier Blick auf alle Film- & Serien-Poster**: Keine überladenen Button-Stapel mehr auf kleinen Cover-Karten, während Hover/Fokus am Desktop/Smart-TV weiterhin direkten Zugriff auf Instant-Trailer und Details bietet.
-  2. **Sofortige Orientierung im Detail-Modal**: Durch die Trennung von Nutzer-Aktionen und Admin-Werkzeugen sowie das einklappbare Versandziel rücken Episodenliste und Stream-Buttons deutlich weiter nach oben in den sichtbaren Bereich.
-  3. **Visuelles Stöbern in der eigenen Merkliste**: Gespeicherte Titel und eigene Playlisten lassen sich jetzt wahlweise als echtes Streaming-Poster-Grid oder als kompakte Verwaltungsliste darstellen.
-- **Zielgruppe**: Reguläre Nutzer, VIP-Streaming-Mitglieder und Administratoren auf Smartphone (Telegram Mini App), Desktop und Smart-TV.
-- **Mehrwert**: Deutlich ruhigeres, hochwertiges Erscheinungsbild mit kürzeren Klickwegen und besserer Übersicht auf allen Bildschirmgrößen.
+- **Was das Redesign löst**:
+  1. **Ruhe im Kopfbereich**: Das Auge erfasst sofort Titel, Bewertung, FSK, Laufzeit und Handlung, ohne von 9 verschiedenfarbigen Rahmen-Pills abgelenkt zu werden.
+  2. **Klare Aktions-Hierarchie**: Statt 7 konkurrierender Signalfarben gibt es pro Bereich genau einen visuellen Anker.
+  3. **Mehr Platz für Episoden & Streams**: Durch den Wegfall der verschachtelten Versandziel-Boxen und des Erklärtexts rücken die Episoden um rund 140 Pixel nach oben.
+  4. **Professionelle Episoden-Liste**: Jede Folge liest sich ruhig und aufgeräumt wie in einer nativen Smart-TV- oder Apple-TV-App.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Wichtige Nutzer-Abläufe (User Flows)**:
-  1. **Stöbern im Katalog**: Der Nutzer sieht im Grid die vollständigen Film- und Serienposter mit Titel, Bewertung und Jahr. Ein Tipp auf `🔖` speichert den Titel sofort; ein Tipp auf das Poster öffnet das Detail-Modal; bei Hover/Fokus blenden sich `ℹ️ Details` und `▶ Trailer` sanft ein.
-  2. **Streamen & Verwalten im Detail-Modal**: Direkt unter den Tabs (*Staffeln & Episoden / Streams*, *Versionen*, *Details & Trailer*) befindet sich die aufgeräumte Nutzer-Aktionsleiste. Darunter erscheint für Admins eine kompakte Admin-Toolbar. Im Stream-Tab zeigt eine einzeilige Status-Bar das aktuelle Telegram-Versandziel und lässt sich bei Bedarf mit einem Klick aufklappen.
-  3. **Merkliste nutzen**: Über den neuen Umschalter oben rechts in der Filterleiste der Merkliste wechselt der Nutzer verzögerungsfrei zwischen der **Poster-Grid-Ansicht** (große Cover, Schnell-Löschen-Button, Folgen-Badge bei Serien) und der **Listen-Ansicht** (kompakte Zeilen mit aufklappbarem Episoden-Drawer).
-- **Visuelle Identität & Theme**:
-  - *Ästhetische Richtung*: Modernes, ruhiges Streaming-Interface (Obsidian & Glas) mit strikter 60-30-10 Farbverteilung.
-  - *Farbpalette & Kontraste*: Dunkle Tiefenebenen (`--bg: #0b0d13`, `--surface: #12151e`, `--card: #181c28`), feine `1px`-Rahmen (`rgba(255, 255, 255, 0.08)`) und gezielte Akzentfarben nur für aktive Zustände und primäre Aktionen (`--accent: #e50914`, VIP-Smaragd `#10b981`, Admin-Violett `#8b5cf6`).
-  - *Typografie & Zahlen*: Klare Hierarchie mit `tabular-nums` für Bewertungen, Jahreszahlen, Episoden-Codes (`S01E01`) und Dateigrößen.
-- **Interaktives Feedback & Motion**:
-  - Sanfte `opacity`- und `transform`-Übergänge (`160ms cubic-bezier(0.16, 1, 0.3, 1)`) für die Hover-/Fokus-Buttons auf den Poster-Karten.
-  - Persistente Speicherung der gewählten Merklisten-Ansicht (`grid` vs. `list`) in `localStorage`, damit die bevorzugte Ansicht beim nächsten Öffnen erhalten bleibt.
+- **Visueller Aufbau des neuen Detail-Modals**:
+  1. **Cinematic Hero Header**:
+     - Oben links dezentes Medien-Tag (`SERIE` / `FILM`) + Versions-Hinweis; oben rechts dezente Glas-Buttons für `◀` / `▶` / `✕`.
+     - Unten links das scharfe Poster mit sanftem Schatten; rechts daneben der große Titel mit Jahreszahl, darunter die **einzeilige Metadaten-Zeile mit `·`-Trennpunkten**, die **klickbare Genre-Textzeile** und der kompakte Handlungs-Teaser.
+  2. **Navigationstabs**:
+     - Klare Unterstreichungs-Tabs (*Staffeln & Episoden*, *Versionen*, *Details & Trailer*).
+  3. **Einzeilige Aktions- & Werkzeugleiste**:
+     - Links: Primärer Anbieter-Button (falls vorhanden) + ruhige Glas-Buttons für *Merkliste* und *Ähnliche Titel*.
+     - Rechts: Kompakte, einheitliche Werkzeug-Gruppe (`🖼️ Cover`, `🔄 Remap`, `⚠️ Melden`, `⋯ Mehr ▾`).
+  4. **Integrierte Staffel- & Versandziel-Kopfzeile**:
+     - Links die Staffel-Tabs (`Staffel 1 · 8`), rechts daneben der kompakte Versandziel-Umschalter (`📤 Privat`, `👥 Gruppe`, `🤖 Bot`, `⚙️`) und der Staffel-Sammelversand (`📦 Ganze Staffel`).
+  5. **Edle Episoden-Zeilen (`.ep-row`)**:
+     - Ruhige dunkle Oberfläche (`rgba(255, 255, 255, 0.025)`) mit feiner `1px`-Trennlinie.
+     - Links: `S01E01`-Badge in Monospace + weißer Episodentitel.
+     - Rechts: Eleganter Stream-Button + dezente Ghost-Icons (`✏️`, `⚠️`, `🔖`), die erst bei Zeilen-Hover/Fokus hervortreten.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Entscheidung 1: Hover-/Fokus-Steuerung auf Poster-Karten statt dauerhafter Überlagerung**
-  - *Gewählter Ansatz*: Dauerhaft nur `🔖` (oben rechts) und VIP-Punkt/Rang (oben links); `ℹ️ Details` und `▶ Trailer` erscheinen bei `:hover` und `:focus-within`.
-  - *Warum*: Auf Smartphones führt ein Tipp auf die Karte ohnehin direkt ins Detail-Modal (inkl. Trailer), während auf Desktop und Smart-TV der Hover- bzw. D-Pad-Fokus die Schnell-Buttons sofort einblendet.
-- **Entscheidung 2: Eigene kompakte Admin-Leiste im Detail-Modal**
-  - *Gewählter Ansatz*: Eine dezente zweite Zeile mit feinem Rahmen und Label `👑 Admin-Werkzeuge:` für *🖼️ Cover ändern* und *🔄 Neu zuordnen*.
-  - *Warum*: Verhindert, dass die primäre Aktionsleiste umbricht, und gruppiert administrative Eingriffe logisch an einem festen Platz.
-- **Entscheidung 3: Einzeilige Versandziel-Kompaktleiste als Standard**
-  - *Gewählter Ansatz*: Standardmäßig eingeklappte Zusammenfassung des aktiven Versandziels (Bot-DM, Gruppe oder eigener Bot) mit direktem Button `⚙️ Ziel ändern ▾`.
-  - *Warum*: Da das Versandziel meist einmal eingestellt wird, spart die eingeklappte Darstellung im Detail-Modal rund 120 Pixel vertikale Höhe für Episoden und Streams.
+- **Entscheidung 1: Unboxed Typografie mit Trennpunkten statt Pill-Kapseln**
+  - *Gewählter Ansatz*: `.modal-meta-inline` und `.modal-genre-inline` mit `·`-Separatoren; klickbare Elemente (FSK, Land, Genres) erhalten einen feinen Hover-Effekt statt einer farbigen Box.
+  - *Warum*: Entspricht exakt dem Industriestandard führender Streaming-Plattformen und beseitigt die „Tag-Wolke“ im Kopfbereich.
+- **Entscheidung 2: Direkte Integration des Versandziels in die Staffel-/Stream-Zeile**
+  - *Gewählter Ansatz*: Einzeilige, flache Steuerleiste ohne verschachtelte `modal-sub-box`-Rahmen; das Konfigurations-Panel für Gruppen-ID / Bot-Token klappt nur bei Klick auf `⚙️` direkt darunter auf.
+  - *Warum*: Verhindert „Box-in-Box“-Rahmen und spart wertvollen vertikalen Platz.
+- **Entscheidung 3: Ghost-Action-Icons in den Episoden-Zeilen**
+  - *Gewählter Ansatz*: `✏️`, `⚠️` und `🔖` sitzen rechts neben dem Stream-Button ohne schweren Kastenrahmen (`opacity: 0.55`) und leuchten bei Hover/Fokus der Zeile voll auf.
+  - *Warum*: Reduziert bei einer Staffel mit 10–24 Folgen rund 30–70 überflüssige Button-Rahmen im Sichtfeld, während jede Funktion mit einem Klick erreichbar bleibt.
 
 ---
 
 ## 4. Technical Architecture & Data Strategy
 
-### Architektur- & Komponenten-Diagramm
+### Layout- & Komponenten-Hierarchie im Detail-Modal
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    Streaming & TMA Frontend State                       │
-│  state.wlViewMode ('grid' | 'list')  •  modalDeliveryConfigExpanded     │
-└───────────────┬─────────────────────────────┬───────────────────────────┘
-                │                             │
-                ▼                             ▼
-┌───────────────────────────────┐ ┌───────────────────────────────────────┐
-│   Katalog & Merklisten-View   │ │       Detail-Modal (openDetails)      │
-├───────────────────────────────┤ ├───────────────────────────────────────┤
-│ • Poster-Karten:              │ │ • Primäre Nutzer-Aktionsleiste        │
-│   - Dauerhaft: 🔖 + VIP-Dot   │ │   (Merkliste, Ähnliche, Melden, Mehr) │
-│   - Hover/Fokus: ℹ️ + ▶       │ │ • Separate kompakte Admin-Leiste      │
-│ • Merklisten-Umschalter:      │ │   (👑 Cover ändern, Neu zuordnen)     │
-│   - 📋 Listen-Ansicht (Drawer)│ │ • Kompakter Versandziel-Header        │
-│   - 🖼️ Poster-Grid-Ansicht    │ │   (Einzeilig + Aufklapp-Konfigurator) │
-└───────────────────────────────┘ └───────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                         Detail-Modal (.modal)                             │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 1. HERO HEADER (.modal-hero-banner)                                       │
+│    ┌──────────┐  The Silent Sea (2021)                                    │
+│    │  POSTER  │  ★ 7.6 · FSK 16 · 45 Min. · Südkorea · 1 St. (8 Flg.)     │
+│    │  (2:3)   │  Drama · Sci-Fi & Fantasy · Mystery                       │
+│    └──────────┘  Während einer gefährlichen 24-Stunden-Mission...         │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 2. TABS (.flix-tabs-bar)                                                  │
+│    [ Staffeln & Episoden ]    [ Versionen (1) ]    [ Details & Trailer ]  │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 3. AKTIONEN (.modal-actions-row)                                          │
+│    Links:  [ ▶ In Netflix öffnen ] [ 🔖 Merkliste ] [ ✨ Ähnliche ]        │
+│    Rechts: [ 🖼️ Cover ] [ 🔄 Zuordnen ] [ ⚠️ ] [ ⋯ Mehr ▾ ]               │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 4. STAFFEL- & VERSAND-LEISTE (.season-toolbar-row)                        │
+│    Links:  [ Staffel 1 (8) ]                                              │
+│    Rechts: 📤 [Privat|Gruppe|Bot|⚙️]  [ 📦 Staffel senden (8) ]           │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 5. EPISODEN-LISTE (.ep-row)                                               │
+│    [E01]  Die Forschungsstation auf dem Mond   [ ▶ 720p · 303 MB ] ✏️ ⚠️ 🔖 │
+│    [E02]  Drei Lager                           [ ▶ 720p · 532 MB ] ✏️ ⚠️ 🔖 │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Interaktive Zustands- & Event-Zuordnung
 
-1. **Poster-Karten CSS & Interaktion**:
-   - `.card-quick-info` und `.card-quick-trailer` erhalten standardmäßig `opacity: 0; pointer-events: none; transform: translateY(4px)` und wechseln bei `.card:hover`, `.card:focus-within` sowie `.card.spatial-focus` auf `opacity: 1; pointer-events: auto; transform: translateY(0)`.
-   - `.card-quick-save` (`🔖` / `✓`) und `.card-vip-dot` bleiben permanent sichtbar.
-2. **Detail-Modal Aktions- & Admin-Leiste (`openDetails`)**:
-   - Trennung der bisherigen Button-Reihe in `.modal-user-actions-bar` und (falls `isAdminUser === true`) `.modal-admin-toolbar`.
-   - `buildModalDeliveryTargetSelectorHtml()` rendert im eingeklappten Zustand (`modalDeliveryConfigExpanded === false`) eine schlanke Status-Zeile mit aktivem Ziel-Badge und Toggle-Button; nur bei `modalDeliveryConfigExpanded === true` (oder wenn im Gruppen-Modus noch keine Gruppen-ID hinterlegt ist) wird das volle Konfigurations-Panel ausgeklappt.
-3. **Merklisten-Ansicht (`setWishlistViewMode`, `renderWishlistListItemsMountOnly`)**:
-   - Neuer State `state.wlViewMode = localStorage.getItem("tma_wl_view_mode") || "grid"` (bzw. `"list"`).
-   - Umschalter-Buttons `🖼️ Poster-Grid` und `📋 Liste` in der Schnellfilter-Leiste der Merkliste.
-   - Im Modus `grid` werden die gefilterten Merklisten-Einträge als `.carousel`-Poster-Karten (inkl. Folgen-Zähler-Badge bei Serien, Qualitäts-Info und `🗑️`-Schnelllösch-Button) gerendert; im Modus `list` bleibt die bisherige Listen-Ansicht inklusive ausklappbarem Episoden-Drawer unverändert verfügbar.
+1. **Hero-Metadaten & Genres (`openDetails`)**:
+   - Aufbau eines Arrays aus Bewertung (`★ 7.6`), FSK (`FSK 16` mit `filterByCategoryFromModal('fsk', ...)`), Laufzeit, Land (mit `runSearch`), Staffel-/Folgenanzahl und Status, verbunden durch `<span class="modal-meta-dot">·</span>`.
+   - Genres werden als `<button class="modal-genre-link">` mit `·`-Trennpunkten gerendert und lösen weiterhin die Genre-Filterung aus.
+2. **Aktionsleiste & Admin-Tools (`openDetails`)**:
+   - Alle sekundären und administrativen Buttons nutzen dezente Glas-Klassen (`.btn-glass-quiet` / `.btn-icon-quiet`), sodass nur der primäre Anbieter-/Stream-Button farbig hervortritt.
+3. **Integrierte Versandziel-Steuerung (`buildModalDeliveryTargetSelectorHtml` & `loadSeason`)**:
+   - Für Serien wird der kompakte Versandziel-Umschalter direkt in die Staffel-Kopfzeile (`#seasonBox`) eingebunden; für Filme steht er als schlanke Kopfzeile über den Film-Dateien – komplett ohne verschachtelte rote Außenbox.
+4. **Episoden-Zeilen (`loadSeason`) & Sofort-Reload im Simulator**:
+   - `.ep-row` trennt `S01E01` in ein kompaktes Monospace-Badge (`.ep-code-badge`) und den weißen Titel (`.ep-name-text`).
+   - Zudem wird der Reload-Button im Simulator so erweitert, dass er `/worker.js` frisch lädt, damit alle Änderungen sofort ohne Browser-Hard-Refresh sichtbar sind.

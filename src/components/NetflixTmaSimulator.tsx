@@ -185,8 +185,29 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     [viewportPreset]
   );
 
-  const loadMiniApp = useCallback(async () => {
-    if (!workerCode || workerCode.trim().length < 50) return;
+  const [activeWorkerCode, setActiveWorkerCode] = useState<string>(workerCode);
+
+  useEffect(() => {
+    setActiveWorkerCode(workerCode);
+  }, [workerCode]);
+
+  const loadMiniApp = useCallback(async (fetchFreshBundle = false) => {
+    let codeToRun = activeWorkerCode || workerCode;
+    if (fetchFreshBundle) {
+      try {
+        const freshRes = await fetch(`/worker.js?v=${Date.now()}`, { cache: 'no-store' });
+        if (freshRes.ok) {
+          const freshTxt = await freshRes.text();
+          if (freshTxt && freshTxt.trim().length > 100) {
+            codeToRun = freshTxt;
+            setActiveWorkerCode(freshTxt);
+          }
+        }
+      } catch {
+        // Fallback to existing workerCode prop
+      }
+    }
+    if (!codeToRun || codeToRun.trim().length < 50) return;
     setIsLoading(true);
     try {
       const envMap = buildEnvMap();
@@ -205,7 +226,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
           tlsVersion: 'TLSv1.3',
         },
       };
-      const res = await executeWorkerSandbox(workerCode, req, envMap, kvNamespace);
+      const res = await executeWorkerSandbox(codeToRun, req, envMap, kvNamespace);
       if (onAppendLogs && res.logs.length > 0) {
         onAppendLogs(res.logs);
       }
@@ -224,10 +245,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [workerCode, buildEnvMap, kvNamespace, onAppendLogs, buildInjectedMiniAppHtml, authPersona]);
+  }, [activeWorkerCode, workerCode, buildEnvMap, kvNamespace, onAppendLogs, buildInjectedMiniAppHtml, authPersona]);
 
   useEffect(() => {
-    loadMiniApp();
+    loadMiniApp(false);
   }, [loadMiniApp]);
 
   // Listen for fetch requests coming from inside the simulated STREAMFLIX iframe
@@ -292,7 +313,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         },
       };
 
-      const res = await executeWorkerSandbox(workerCode, reqData, envMap, kvNamespace);
+      const res = await executeWorkerSandbox(activeWorkerCode || workerCode, reqData, envMap, kvNamespace);
       if (onAppendLogs && res.logs.length > 0) {
         onAppendLogs(res.logs);
       }
@@ -313,7 +334,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [workerCode, buildEnvMap, kvNamespace, onAppendLogs]);
+  }, [activeWorkerCode, workerCode, buildEnvMap, kvNamespace, onAppendLogs]);
 
   return (
     <div
@@ -412,7 +433,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
           </div>
 
           <button
-            onClick={loadMiniApp}
+            onClick={() => loadMiniApp(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 border border-white/[0.08] transition-colors text-[11px] font-medium cursor-pointer"
           >
             <RotateCcw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
