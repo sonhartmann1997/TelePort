@@ -1,85 +1,94 @@
-# Intelligente Serien-Weiche („Kein Film → Serie“) & D1-Serien-Heilung
+# UX- & Streaming-UI Ausbau (Runde 2): Aufgeräumte Poster-Karten, Kompaktes Detail-Modal & Visuelle Merkliste
 
-Dieses Update behebt die fehlerhafte Zuordnung nummerierter Serienfolgen (`Black Box 1`, `Spuk im Hochhaus 1..7`, `Spuk unterm Riesenrad 1..7`, `Pippi Langstrumpf 1..21`), verhindert `0% CONFLICT_?`-Abbrüche bei Cloudflare-Subrequest-Pausen (`Squid Game S01E01/E02`, `Axel! will's wissen S01E01/E02`) und führt bestehende doppelte oder posterlose Serien-Karten (`Generation Kill`, `Black Box`, `Spuk von draußen`, `Zur See`, `Axel! will's wissen`) automatisch in der D1-Datenbank zusammen.
+Dieses Update verfeinert die zentralen Nutzer-Berührungspunkte der Streaming-Oberfläche (Katalog-Karten, Detail-Ansicht und persönliche Merkliste), damit Film- und Serien-Cover wieder im Mittelpunkt stehen und alle Werkzeuge für Nutzer, VIPs und Administratoren klar gegliedert und sofort erreichbar sind.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Alle Architekturentscheidungen wurden gemäß deinen Vorgaben festgelegt:
+> Alle Entscheidungen basieren direkt auf deiner Auswahl aus den Rückfragen. Es gehen **keinerlei Funktionen** verloren – sämtliche Schnell-Aktionen, Admin-Werkzeuge und Merklisten-Optionen bleiben vollständig erhalten.
 
-- **Confirmed Decision 1 (Automatischer Serien-Fallback für Nummerntitel)**: Jeder Titel mit Endziffer (`Black Box 1`, `Spuk im Hochhaus 1`) oder Mittelziffer + Folgentitel (`Pippi Langstrumpf 1 Pippi zieht in die Villa Kunterbunt`), der keinen sicheren TMDb-Filmtreffer (`Confidence >= 78%`) erzielt und kein gesperrtes Film-Franchise mit Jahreszahl ist, wird automatisch in `Serientitel` + `Staffel 1, Episode N` zerlegt und über die TMDb-TV-API (inkl. Fallbacks) aufgelöst.
-- **Confirmed Decision 2 (D1-Serien-Zusammenführung & Poster-Nachladung)**: Bereits importierte Serien mit Duplikaten (`Generation Kill`), synthetischen Fallback-IDs (`8xxxxxx`/`9xxxxxx`) oder fehlenden Postern (`Spuk von draußen`, `Axel! will's wissen`, `Zur See`, `Black Box`) werden direkt in der D1-Datenbank zusammengeführt und mit offiziellen TMDb-Serien-IDs sowie Postern aktualisiert.
+- **Bestätigte Entscheidung 1 (Poster-Karten im Hauptkatalog)**: Auf den Cover-Bildern sind dauerhaft nur das Lesezeichen (`🔖` / `✓`) und der dezente grüne VIP-Punkt sichtbar (plus Top-10-Rang im Trending-Modus). Die Zusatz-Buttons (`ℹ️ Details` und `▶ Trailer`) erscheinen sanft erst bei Maus-Hover oder Tastatur-/TV-Fokus, damit die Poster auf Smartphones und kleineren Bildschirmen nicht mehr verdeckt werden.
+- **Bestätigte Entscheidung 2 (Detail-Modal Aktionsleiste & Admin-Leiste)**: Die Aktionsbuttons unterhalb der Tabs werden in zwei saubere Ebenen getrennt:
+  1. **Primäre Nutzer-Leiste**: *Merkliste*, *Ähnliche Titel*, Streaming-Anbieter-Links, *Fehler melden* (für VIP/Admin) und *Mehr ▾* (Teilen, Bot-Link, Telegraph, Original-Poster/Szenenbild).
+  2. **Eigene kompakte Admin-Leiste** (nur für eingeloggte Administratoren sichtbar): Dezente, klar abgegrenzte Werkzeugzeile für *🖼️ Cover ändern* und *🔄 Titel/Serie neu zuordnen (Remap)*.
+- **Bestätigte Entscheidung 3 (Kompaktes Versandziel im Detail-Modal)**: Die Box *„Versandziel (Privat-Chat / Gruppe / Eigener Bot)“* oberhalb der Streams und Episoden startet standardmäßig als schlanke, einzeilige Status-Leiste (z. B. `📤 Versandziel: Privat-Chat (Bot-DM) • Ändern ▾`) und klappt die Konfigurationsfelder erst bei Klick auf.
+- **Bestätigte Entscheidung 4 (Merkliste mit Poster-Grid & Listen-Umschalter)**: In der Merkliste wird ein Ansicht-Umschalter (`🖼️ Poster-Grid` | `📋 Kompakt-Liste`) ergänzt. Nutzer können ihre gespeicherten Filme, Serien und Playlisten wahlweise als visuelles Poster-Raster (wie im Hauptkatalog) oder als detaillierte Liste mit aufklappbaren Serien-Folgen durchsuchen.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **Was das Update leistet**:
-  1. **„Kein Film → Serie“-Erkennungsweiche (`@ANCHOR: PARSER_SWITCH` & `@ANCHOR: TMDB_FETCH`)**: Wenn ein Dateiname oder Backup-Eintrag wie `Black Box 1` zunächst keinen eindeutigen Film auf TMDb findet, erkennt der Worker zwingend, dass die `1` für `Episode 1` einer Serie steht, bereinigt den Suchtitel auf `Black Box` und ordnet die Datei sauber `Black Box – S01E01` zu.
-  2. **Erhalt des bereinigten Serientitels zwischen Client & Server**: Wenn der Client-Parser oder Pre-Context bereits `isSeries: true`, `episode: N` und den bereinigten Serientitel (`Spuk im Hochhaus` statt `Spuk im Hochhaus 1`) ermittelt hat, überschreibt der Server-Parser diesen Titel nicht mehr mit dem rohen Dateinamen.
-  3. **Verlustfreie Subrequest-Pause ohne `0% CONFLICT_?`**: Das Cloudflare-Subrequest-Budget wird bei jedem HTTP-Request sauber zurückgesetzt (`resetSubrequestBudget()`), und Batch-Importe pausieren vor dem 40-Subrequest-Limit, ohne das laufende Episoden-Paar (`S01E01/E02`) als `0%`-Konflikt abzubrechen.
-  4. **Automatische D1-Serien-Heilung & Deduplizierung (`@ANCHOR: D1_MOVIES`)**: Doppelte Serien-Karten (gleicher Titel unter verschiedenen IDs wie `Generation Kill`) werden samt ihrer `episode_files` zusammengeführt; fehlende Poster und echte TMDb-TV-Metadaten werden automatisch nachgeladen.
+- **Was wird verbessert**:
+  1. **Freier Blick auf alle Film- & Serien-Poster**: Keine überladenen Button-Stapel mehr auf kleinen Cover-Karten, während Hover/Fokus am Desktop/Smart-TV weiterhin direkten Zugriff auf Instant-Trailer und Details bietet.
+  2. **Sofortige Orientierung im Detail-Modal**: Durch die Trennung von Nutzer-Aktionen und Admin-Werkzeugen sowie das einklappbare Versandziel rücken Episodenliste und Stream-Buttons deutlich weiter nach oben in den sichtbaren Bereich.
+  3. **Visuelles Stöbern in der eigenen Merkliste**: Gespeicherte Titel und eigene Playlisten lassen sich jetzt wahlweise als echtes Streaming-Poster-Grid oder als kompakte Verwaltungsliste darstellen.
+- **Zielgruppe**: Reguläre Nutzer, VIP-Streaming-Mitglieder und Administratoren auf Smartphone (Telegram Mini App), Desktop und Smart-TV.
+- **Mehrwert**: Deutlich ruhigeres, hochwertiges Erscheinungsbild mit kürzeren Klickwegen und besserer Übersicht auf allen Bildschirmgrößen.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Key User Flows**:
-  - **Serien-Tab in der Netflix-TMA**: Beim Öffnen des Reiters `Serien` (`Trending • Nur VIP-Streams`) führt das Backend automatisch eine schnelle D1-Konsolidierung durch: Doppelte Karten (`Generation Kill`) verschwinden sofort, alle Episoden sind unter einer einzigen Serien-Karte vereint, und fehlende Poster (`Spuk von draußen`, `Axel! will's wissen`, `Zur See`, `Black Box`) werden über TMDb/TVMaze/OMDb nachgeladen.
-  - **JSON-Backup-Import**: Nummerierte Serien ohne `S01E01`-Präfix (`Black Box 1..6`, `Spuk im Hochhaus 1..7`, `Spuk unterm Riesenrad 1..7`, `Pippi Langstrumpf 1..21`) laufen ohne `CONFLICT_?` direkt als `OK` mit sauberem TMDb-Serientitel und Episodennummer durch.
-- **Visual Identity & Theme**:
-  - Unverändertes Netflix-Dark-Design (`#141414`, `#E50914` Akzent) mit lückenlosen Poster-Karten, korrekten Erscheinungsjahren und Bewertungs-Badges.
+- **Wichtige Nutzer-Abläufe (User Flows)**:
+  1. **Stöbern im Katalog**: Der Nutzer sieht im Grid die vollständigen Film- und Serienposter mit Titel, Bewertung und Jahr. Ein Tipp auf `🔖` speichert den Titel sofort; ein Tipp auf das Poster öffnet das Detail-Modal; bei Hover/Fokus blenden sich `ℹ️ Details` und `▶ Trailer` sanft ein.
+  2. **Streamen & Verwalten im Detail-Modal**: Direkt unter den Tabs (*Staffeln & Episoden / Streams*, *Versionen*, *Details & Trailer*) befindet sich die aufgeräumte Nutzer-Aktionsleiste. Darunter erscheint für Admins eine kompakte Admin-Toolbar. Im Stream-Tab zeigt eine einzeilige Status-Bar das aktuelle Telegram-Versandziel und lässt sich bei Bedarf mit einem Klick aufklappen.
+  3. **Merkliste nutzen**: Über den neuen Umschalter oben rechts in der Filterleiste der Merkliste wechselt der Nutzer verzögerungsfrei zwischen der **Poster-Grid-Ansicht** (große Cover, Schnell-Löschen-Button, Folgen-Badge bei Serien) und der **Listen-Ansicht** (kompakte Zeilen mit aufklappbarem Episoden-Drawer).
+- **Visuelle Identität & Theme**:
+  - *Ästhetische Richtung*: Modernes, ruhiges Streaming-Interface (Obsidian & Glas) mit strikter 60-30-10 Farbverteilung.
+  - *Farbpalette & Kontraste*: Dunkle Tiefenebenen (`--bg: #0b0d13`, `--surface: #12151e`, `--card: #181c28`), feine `1px`-Rahmen (`rgba(255, 255, 255, 0.08)`) und gezielte Akzentfarben nur für aktive Zustände und primäre Aktionen (`--accent: #e50914`, VIP-Smaragd `#10b981`, Admin-Violett `#8b5cf6`).
+  - *Typografie & Zahlen*: Klare Hierarchie mit `tabular-nums` für Bewertungen, Jahreszahlen, Episoden-Codes (`S01E01`) und Dateigrößen.
+- **Interaktives Feedback & Motion**:
+  - Sanfte `opacity`- und `transform`-Übergänge (`160ms cubic-bezier(0.16, 1, 0.3, 1)`) für die Hover-/Fokus-Buttons auf den Poster-Karten.
+  - Persistente Speicherung der gewählten Merklisten-Ansicht (`grid` vs. `list`) in `localStorage`, damit die bevorzugte Ansicht beim nächsten Öffnen erhalten bleibt.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Zweistufige Film-vor-Serie-Auflösung für Nummerntitel (`Titel N` & `Titel N Episodentitel`)**
-  - *Chosen Approach*:
-    - Hat ein Titel das Muster `<Basis> <1..99>` (z. B. `Black Box 1`, `Spuk im Hochhaus 1`) oder `<Basis> <1..99> <Folgentitel>` (z. B. `Pippi Langstrumpf 1 Pippi zieht in die Villa Kunterbunt`), wird geprüft, ob für den vollen Namen ein hochkonfidenter Film-Treffer (`>= 78%`, exakt passender Titel/Jahr) existiert.
-    - Falls **kein** solcher Film-Treffer existiert (oder der Eintrag bereits durch Nachbarfolgen `2, 3...` als Serie markiert ist), wird zwingend der Basis-Titel (`Black Box`, `Spuk im Hochhaus`, `Pippi Langstrumpf`) als **TV-Serie (`typeCode = "s"`, `season = 1`, `episode = N`)** gesucht und sämtliche Serien-Kandidaten erhalten den Serien-Confidence-Bonus.
-  - *Why*: Echte Film-Fortsetzungen (`Iron Man 3 (2013)`, `Saw II`) erzielen auf TMDb sofort `> 85%` Film-Confidence oder stehen auf der Franchise-Blockliste; Serien wie `Black Box 1` oder `Spuk im Hochhaus 1` haben keinen Film-Treffer und werden so zu 100 % treffsicher als Serie `S01E01` erkannt.
-
-- **Decision 2: Universelle TMDb-Authentifizierung (v3 `api_key` & v4 `Bearer`) + Subrequest-Budget-Reset pro Request**
-  - *Chosen Approach*:
-    - `resetSubrequestBudget()` wird zu Beginn jedes API-/TMA-Requests aufgerufen, damit ein Cloudflare-Worker-Isolate nicht nach mehreren API-Aufrufen dauerhaft bei `currentInvocationSubrequests >= 42` blockiert.
-    - Ein zentraler Helper unterstützt automatisch sowohl TMDb v4 JWTs (`eyJ...` per `Authorization: Bearer`) als auch 32-stellige TMDb v3 Hex-Keys (`?api_key=...`), egal in welcher Secret-Variable (`TMDB_BEARER_TOKEN` oder `TMDB_API_KEY`) sie liegen.
-    - Vor jedem Paar im Batch-Import wird geprüft, ob mindestens 12 Subrequests im aktuellen Request-Budget frei sind; falls während eines Paares das Limit erreicht wird, wird das Paar nicht als `0% CONFLICT_?` gespeichert, sondern exakt ab diesem Index per `SUBREQUEST_PAUSE` im nächsten Batch wiederholt.
-
-- **Decision 3: Automatische D1-Serien-Deduplizierung & Poster-Heilung**
-  - *Chosen Approach*:
-    - Serien in D1 mit identischem normalisiertem Titel (z. B. zwei Einträge für `Generation Kill` mit verschiedenen IDs) werden automatisch auf die primäre TMDb-ID (mit Poster und `< 8000000` bevorzugt) zusammengeführt (`UPDATE episode_files SET series_id = ...`, `DELETE FROM series WHERE tmdb_id = ...`).
-    - Falls `Black Box (2014)` fälschlicherweise mit Film-Metadaten oder ohne Serien-Poster in `series` lag, oder Serien wie `Spuk von draußen`, `Axel! will's wissen` und `Zur See` unter einer Fallback-ID (`8xxxxxx`/`9xxxxxx`) ohne Poster gespeichert wurden, löst die Heilungs-Routine die offizielle TMDb-TV-ID samt Poster auf und aktualisiert die verknüpften Episoden in D1.
+- **Entscheidung 1: Hover-/Fokus-Steuerung auf Poster-Karten statt dauerhafter Überlagerung**
+  - *Gewählter Ansatz*: Dauerhaft nur `🔖` (oben rechts) und VIP-Punkt/Rang (oben links); `ℹ️ Details` und `▶ Trailer` erscheinen bei `:hover` und `:focus-within`.
+  - *Warum*: Auf Smartphones führt ein Tipp auf die Karte ohnehin direkt ins Detail-Modal (inkl. Trailer), während auf Desktop und Smart-TV der Hover- bzw. D-Pad-Fokus die Schnell-Buttons sofort einblendet.
+- **Entscheidung 2: Eigene kompakte Admin-Leiste im Detail-Modal**
+  - *Gewählter Ansatz*: Eine dezente zweite Zeile mit feinem Rahmen und Label `👑 Admin-Werkzeuge:` für *🖼️ Cover ändern* und *🔄 Neu zuordnen*.
+  - *Warum*: Verhindert, dass die primäre Aktionsleiste umbricht, und gruppiert administrative Eingriffe logisch an einem festen Platz.
+- **Entscheidung 3: Einzeilige Versandziel-Kompaktleiste als Standard**
+  - *Gewählter Ansatz*: Standardmäßig eingeklappte Zusammenfassung des aktiven Versandziels (Bot-DM, Gruppe oder eigener Bot) mit direktem Button `⚙️ Ziel ändern ▾`.
+  - *Warum*: Da das Versandziel meist einmal eingestellt wird, spart die eingeklappte Darstellung im Detail-Modal rund 120 Pixel vertikale Höhe für Episoden und Streams.
 
 ---
 
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+## 4. Technical Architecture & Data Strategy
+
+### Architektur- & Komponenten-Diagramm
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                   Eingehender Eintrag (Bot / JSON-Import)                  │
-│   "Black Box 1" | "Spuk im Hochhaus 1" | "Pippi Langstrumpf 1 Pippi..."    │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 1. Parser & Pre-Context (@ANCHOR: PARSER_SWITCH)                           │
-│ - Bewahrt bereits vom Client erkannte cleanTitle ("Spuk im Hochhaus")      │
-│ - Erkennt Mittelziffer + Folgentitel ("Pippi Langstrumpf 1 <Folgentitel>") │
-│ - Erkennt Endziffer ("Black Box 1" -> baseTitle: "Black Box", ep: 1)       │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 2. TMDb Kandidaten-Weiche (@ANCHOR: TMDB_FETCH)                            │
-│ - Prüft: Gibt es einen sicheren Film-Treffer (>= 78%) für "Black Box 1"?   │
-│ - NEIN -> Zwingender Serien-Fallback (Stufe 5 / 5B):                       │
-│   Suche "/search/tv?query=Black Box" -> Treffer: Serie S01E01              │
-│ - Bei Subrequest-Limit: Sauberer Rollback auf SUBREQUEST_PAUSE statt 0%    │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 3. D1 Serien-Konsolidierung & Poster-Heilung (@ANCHOR: D1_MOVIES)          │
-│ - Führt doppelte Serien-Zeilen ("Generation Kill") in D1 zusammen          │
-│ - Migriert synthetische IDs (8xxxxxx/9xxxxxx) auf echte TMDb-TV-IDs        │
-│ - Lädt fehlende Serien-Poster (DE -> EN -> Original -> TVMaze) nach        │
-└────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Streaming & TMA Frontend State                       │
+│  state.wlViewMode ('grid' | 'list')  •  modalDeliveryConfigExpanded     │
+└───────────────┬─────────────────────────────┬───────────────────────────┘
+                │                             │
+                ▼                             ▼
+┌───────────────────────────────┐ ┌───────────────────────────────────────┐
+│   Katalog & Merklisten-View   │ │       Detail-Modal (openDetails)      │
+├───────────────────────────────┤ ├───────────────────────────────────────┤
+│ • Poster-Karten:              │ │ • Primäre Nutzer-Aktionsleiste        │
+│   - Dauerhaft: 🔖 + VIP-Dot   │ │   (Merkliste, Ähnliche, Melden, Mehr) │
+│   - Hover/Fokus: ℹ️ + ▶       │ │ • Separate kompakte Admin-Leiste      │
+│ • Merklisten-Umschalter:      │ │   (👑 Cover ändern, Neu zuordnen)     │
+│   - 📋 Listen-Ansicht (Drawer)│ │ • Kompakter Versandziel-Header        │
+│   - 🖼️ Poster-Grid-Ansicht    │ │   (Einzeilig + Aufklapp-Konfigurator) │
+└───────────────────────────────┘ └───────────────────────────────────────┘
 ```
+
+### Interaktive Zustands- & Event-Zuordnung
+
+1. **Poster-Karten CSS & Interaktion**:
+   - `.card-quick-info` und `.card-quick-trailer` erhalten standardmäßig `opacity: 0; pointer-events: none; transform: translateY(4px)` und wechseln bei `.card:hover`, `.card:focus-within` sowie `.card.spatial-focus` auf `opacity: 1; pointer-events: auto; transform: translateY(0)`.
+   - `.card-quick-save` (`🔖` / `✓`) und `.card-vip-dot` bleiben permanent sichtbar.
+2. **Detail-Modal Aktions- & Admin-Leiste (`openDetails`)**:
+   - Trennung der bisherigen Button-Reihe in `.modal-user-actions-bar` und (falls `isAdminUser === true`) `.modal-admin-toolbar`.
+   - `buildModalDeliveryTargetSelectorHtml()` rendert im eingeklappten Zustand (`modalDeliveryConfigExpanded === false`) eine schlanke Status-Zeile mit aktivem Ziel-Badge und Toggle-Button; nur bei `modalDeliveryConfigExpanded === true` (oder wenn im Gruppen-Modus noch keine Gruppen-ID hinterlegt ist) wird das volle Konfigurations-Panel ausgeklappt.
+3. **Merklisten-Ansicht (`setWishlistViewMode`, `renderWishlistListItemsMountOnly`)**:
+   - Neuer State `state.wlViewMode = localStorage.getItem("tma_wl_view_mode") || "grid"` (bzw. `"list"`).
+   - Umschalter-Buttons `🖼️ Poster-Grid` und `📋 Liste` in der Schnellfilter-Leiste der Merkliste.
+   - Im Modus `grid` werden die gefilterten Merklisten-Einträge als `.carousel`-Poster-Karten (inkl. Folgen-Zähler-Badge bei Serien, Qualitäts-Info und `🗑️`-Schnelllösch-Button) gerendert; im Modus `list` bleibt die bisherige Listen-Ansicht inklusive ausklappbarem Episoden-Drawer unverändert verfügbar.

@@ -31,10 +31,12 @@
       }
 
       function onSearchScopeChange(newScope) {
-        state.searchScope = newScope || "all";
+        const selEl = document.getElementById("searchScopeSelect");
+        const resolvedScope = newScope || (selEl && selEl.value) || "all";
+        state.searchScope = resolvedScope;
         const inp = document.getElementById("searchInput");
         if (inp && inp.value.trim()) {
-          runSearch(false);
+          runSearch(false, inp.value.trim(), state.searchScope);
         } else if (state.isSearchMode && state.searchQuery) {
           runSearch(false, state.searchQuery, state.searchScope);
         }
@@ -43,12 +45,12 @@
       function toggleSearchDetectedEntities() {
         state.searchEntitiesExpanded = !state.searchEntitiesExpanded;
         const box = document.getElementById("searchDetectedEntitiesBody");
-        const iconEl = document.getElementById("searchDetectedEntitiesChevron");
+        const iconEl = document.getElementById("searchDetectedEntitiesToggleIcon") || document.getElementById("searchDetectedEntitiesChevron");
         if (box) {
           box.style.display = state.searchEntitiesExpanded ? "flex" : "none";
         }
         if (iconEl) {
-          iconEl.textContent = state.searchEntitiesExpanded ? "Einklappen ▴" : "Ausklappen ▾";
+          iconEl.textContent = state.searchEntitiesExpanded ? "Ausblenden ▴" : "Anzeigen ▾";
         }
       }
 
@@ -1063,7 +1065,7 @@
         const curScope = state.searchScope || 'all';
         const modeOrScopeHtml = state.isSearchMode
           ? (
-            '<select id="searchScopeSelect" class="mode-filter-select active-mode" onchange="onSearchScopeChange()" title="Suchbereich einschränken">' +
+            '<select id="searchScopeSelect" class="mode-filter-select active-mode" onchange="onSearchScopeChange(this.value)" title="Suchbereich einschränken">' +
               '<option value="all"' + (curScope === 'all' ? ' selected' : '') + '>⚡ Bereich: Alles</option>' +
               '<option value="movie"' + (curScope === 'movie' ? ' selected' : '') + '>🎬 Nur Filme</option>' +
               '<option value="series"' + (curScope === 'series' ? ' selected' : '') + '>📺 Nur Serien</option>' +
@@ -1396,7 +1398,6 @@
               const cardKey = tc + "_" + it.id;
               const isCardSaved = savedKeysSet.has(cardKey);
               const rankHtml = (showTop10Ranks && idx < 10) ? ('<span class="card-rank-badge">#' + (idx + 1) + '</span>') : '';
-              const typeBadgeHtml = isMixedMediaView ? ('<span class="card-type-badge">' + badgeTxt + '</span>') : '';
               // Dezenter grüner VIP-Punkt auf dem Cover (Details im Modal)
               const vipQualityHtml = (vipAllowed && it.vipQuality)
                 ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(it.vipQuality) + '"></span>')
@@ -1406,11 +1407,11 @@
               const itemPosterSafe = esc(it.poster_path || it.external_poster_url || it.poster || '');
               const yrStr = esc((it.release_date || it.first_air_date || '').slice(0, 4) || '–');
               const ratStr = it.vote_average ? it.vote_average.toFixed(1) : '–';
+              const subRightTxt = isMixedMediaView ? ((tc === 's' ? '📺 ' : '🎬 ') + yrStr) : yrStr;
               return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')">' +
                 '<div class="card-poster-wrap">' +
                   '<div class="card-top-left-stack">' +
                     rankHtml +
-                    typeBadgeHtml +
                     vipQualityHtml +
                   '</div>' +
                   '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="In Merkliste speichern oder entfernen (Tipp oder Karte gedrückt halten)">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
@@ -1420,7 +1421,7 @@
                 '</div>' +
                 '<div class="card-body">' +
                   '<div class="card-title">' + itemTitleSafe + '</div>' +
-                  '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + yrStr + '</span></div>' +
+                  '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
                 '</div>' +
               '</div>';
             }).join("") + paginationBarHtml : (
@@ -1579,15 +1580,19 @@
             box.innerHTML = '<div style="font-size:12px;color:#94a3b8;margin-top:8px">Keine ähnlichen Titel mit den aktuellen Filtern gefunden.</div>';
             return;
           }
-          box.innerHTML = '<div class="modal-sub-box" style="margin-top:10px;padding:10px;background:var(--card);border-radius:8px;border:1px solid rgba(148,163,184,0.22)">' +
+          box.innerHTML = '<div class="modal-sub-box" style="margin-top:10px;padding:12px;background:var(--card);border-radius:10px;border:1px solid rgba(255,255,255,0.08)">' +
             '<div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:8px">✨ Ähnliche Empfehlungen (' + items.length + '):</div>' +
-            '<div class="carousel" style="grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px">' +
+            '<div class="carousel" style="grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:8px">' +
               items.slice(0, 8).map(it => {
                 const tc = it.media_type === 'tv' ? 's' : type;
-                const simPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '');
+                const itemTitle = it.title || it.name || 'Titel';
+                const fbSvg = buildPosterFallbackSvg(itemTitle, tc === 's');
+                const simPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '') || fbSvg;
                 return '<div class="card" tabindex="0" onclick="openDetails(\\''+tc+'\\','+it.id+',false)">' +
-                  '<img src="' + (simPoster ? esc(simPoster) : 'https://via.placeholder.com/300x450?text=Poster') + '" loading="lazy" draggable="false" oncontextmenu="return false;" />' +
-                  '<div class="card-body"><div class="card-title">' + esc(it.title || it.name) + '</div><div class="card-sub"><span>⭐ ' + (it.vote_average ? it.vote_average.toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
+                  '<div class="card-poster-wrap">' +
+                    '<img src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" loading="lazy" draggable="false" oncontextmenu="return false;" onerror="this.onerror=null;this.src=\\'' + fbSvg + '\\'" />' +
+                  '</div>' +
+                  '<div class="card-body"><div class="card-title">' + esc(itemTitle) + '</div><div class="card-sub"><span>⭐ ' + (it.vote_average ? Number(it.vote_average).toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
                 '</div>';
               }).join("") +
             '</div>' +
@@ -2004,20 +2009,33 @@
               '</div>' +
 
               '<div class="modal-body">' +
-                /* Schnell-Aktionsleiste direkt sichtbar (Merkliste, Ähnliche Titel, Fehler melden für VIP/Admin, Admin-Tools, Mehr) */
-                '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">' +
-                  ((d.providerButtons && d.providerButtons.length > 0) ? (
-                    d.providerButtons.map(pb =>
-                      '<a class="btn" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(229,9,20,0.22)') + ';border-color:' + esc(pb.border || '#e50914') + ';font-weight:800;color:#fff">' + esc(pb.buttonText) + '</a>'
-                    ).join("")
-                  ) : '') +
-                  '<button id="modalWishlistBtn" class="btn ' + (d.isSaved ? 'green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
-                  '<button class="btn amber" onclick="loadSimilarInTma(\\''+type+'\\','+d.id+')">✨ Ähnliche Titel</button>' +
-                  (canReportMedia ? '<button type="button" class="btn" style="border-color:rgba(245,158,11,0.5);color:#fbbf24" onclick="openMediaReportModal({typeCode:\\''+type+'\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',versionLabel:\\''+esc(primaryVersionBadgeText || 'Originalfassung')+'\\'})" title="Falschen Titel, falsche Staffel/Folge oder defektes Video melden">⚠️ Fehler melden</button>' : '') +
-                  (isAdminUser ? '<button type="button" class="btn purple" onclick="toggleModalPosterPicker(\\''+type+'\\','+d.id+')" title="Original-Cover von TMDb (EN/DE), Apple iTunes DE, OMDb oder eigene Bild-URL wählen">🖼️ Cover ändern</button>' : '') +
-                  (isAdminUser ? '<button type="button" class="btn blue" onclick="toggleModalRemapBox(\\''+type+'\\','+d.id+')" title="Falsch zugeordneten Film/Serie inkl. Original-Dateiname & Telegram-Link neu zuordnen">🔄 Neu zuordnen</button>' : '') +
-                  '<button type="button" id="modalMoreActionsBtn" class="btn" onclick="toggleModalMoreActions()">⋯ Mehr ▾</button>' +
+                /* 1. Primäre Nutzer-Aktionsleiste (Merkliste, Ähnliche Titel, Fehler melden, Mehr) */
+                '<div class="modal-user-actions-bar">' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    ((d.providerButtons && d.providerButtons.length > 0) ? (
+                      d.providerButtons.map(pb =>
+                        '<a class="btn" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(229,9,20,0.22)') + ';border-color:' + esc(pb.border || '#e50914') + ';font-weight:800;color:#fff">' + esc(pb.buttonText) + '</a>'
+                      ).join("")
+                    ) : '') +
+                    '<button id="modalWishlistBtn" class="btn ' + (d.isSaved ? 'green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
+                    '<button class="btn" onclick="loadSimilarInTma(\\''+type+'\\','+d.id+')">✨ Ähnliche Titel</button>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    (canReportMedia ? '<button type="button" class="btn" style="border-color:rgba(245,158,11,0.4);color:#fbbf24" onclick="openMediaReportModal({typeCode:\\''+type+'\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',versionLabel:\\''+esc(primaryVersionBadgeText || 'Originalfassung')+'\\'})" title="Falschen Titel, falsche Staffel/Folge oder defektes Video melden">⚠️ Fehler melden</button>' : '') +
+                    '<button type="button" id="modalMoreActionsBtn" class="btn" onclick="toggleModalMoreActions()">⋯ Mehr ▾</button>' +
+                  '</div>' +
                 '</div>' +
+
+                /* 2. Eigene kompakte Admin-Leiste für Cover-Wahl & Titel-Neuzuordnung (Remap) */
+                (isAdminUser ? (
+                  '<div class="modal-admin-toolbar">' +
+                    '<span class="modal-admin-toolbar-label">👑 Admin-Werkzeuge</span>' +
+                    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                      '<button type="button" class="btn purple" style="padding:4px 10px;font-size:11px" onclick="toggleModalPosterPicker(\\''+type+'\\','+d.id+')" title="Original-Cover von TMDb (EN/DE), Apple iTunes DE, OMDb oder eigene Bild-URL wählen">🖼️ Cover ändern</button>' +
+                      '<button type="button" class="btn blue" style="padding:4px 10px;font-size:11px" onclick="toggleModalRemapBox(\\''+type+'\\','+d.id+')" title="Falsch zugeordneten Film/Serie inkl. Original-Dateiname & Telegram-Link neu zuordnen">🔄 Neu zuordnen</button>' +
+                    '</div>' +
+                  '</div>'
+                ) : '') +
 
                 '<div id="modalPosterPickerBox" style="display:none;margin:10px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.92);border:1px solid rgba(168,85,247,0.45)"></div>' +
                 '<div id="modalRemapMediaBox" style="display:none;margin:10px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.92);border:1px solid rgba(56,189,248,0.45)"></div>' +
@@ -2543,14 +2561,22 @@
         const prefs = getDeliveryPreferencesClient();
         const mode = prefs.targetMode || "dm";
         const showConfigInputs = modalDeliveryConfigExpanded || (mode === "group" && !prefs.targetGroupChatId) || (mode === "custom_bot" && !prefs.customBotToken);
-        return '<div id="modalDeliveryTargetMount" style="padding:8px 10px;margin-bottom:8px;border-radius:8px;background:rgba(15,23,42,0.75);border:1px solid rgba(56,189,248,0.35)">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">' +
-            '<span style="font-size:11.5px;font-weight:800;color:#38bdf8">📤 Wohin soll die Datei gesendet werden?</span>' +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-              '<button type="button" class="btn ' + (mode === 'dm' ? 'blue' : '') + '" style="padding:3px 8px;font-size:11px" onclick="switchModalDeliveryModeClient(\\'dm\\')">💬 Bot-Privatchat</button>' +
-              '<button type="button" class="btn ' + (mode === 'group' ? 'blue' : '') + '" style="padding:3px 8px;font-size:11px" onclick="switchModalDeliveryModeClient(\\'group\\')">👥 Eigene Gruppe</button>' +
-              '<button type="button" class="btn ' + (mode === 'custom_bot' ? 'purple' : '') + '" style="padding:3px 8px;font-size:11px" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')">🤖 Eigener Bot</button>' +
-              '<button type="button" class="btn" style="padding:3px 7px;font-size:11px" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️ ' + (showConfigInputs ? '▴' : '▾') + '</button>' +
+        const activeModeSummary = mode === "group"
+          ? ("👥 Eigene Gruppe" + (prefs.targetGroupChatId ? (" (" + esc(prefs.targetGroupChatId) + ")") : " (ID fehlt)"))
+          : mode === "custom_bot"
+            ? ("🤖 Eigener Bot" + (prefs.customBotUsername ? (" (@" + esc(prefs.customBotUsername) + ")") : ""))
+            : "💬 Bot-Privatchat (DM)";
+        return '<div id="modalDeliveryTargetMount" class="delivery-compact-bar">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px">' +
+              '<span style="font-weight:700;color:var(--text-muted)">📤 Versandziel:</span>' +
+              '<strong style="color:var(--text-main)">' + activeModeSummary + '</strong>' +
+            '</div>' +
+            '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' +
+              '<button type="button" class="btn ' + (mode === 'dm' ? 'active' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="switchModalDeliveryModeClient(\\'dm\\')">💬 Privat</button>' +
+              '<button type="button" class="btn ' + (mode === 'group' ? 'active' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="switchModalDeliveryModeClient(\\'group\\')">👥 Gruppe</button>' +
+              '<button type="button" class="btn ' + (mode === 'custom_bot' ? 'active' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')">🤖 Bot</button>' +
+              '<button type="button" class="btn" style="padding:3px 8px;font-size:10.5px" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️ ' + (showConfigInputs ? 'Schließen ▴' : 'Konfig ▾') + '</button>' +
             '</div>' +
           '</div>' +
           (showConfigInputs ? (
@@ -3967,6 +3993,12 @@
         return sorted;
       }
 
+      function setWishlistViewMode(nextMode) {
+        state.wlViewMode = nextMode === "list" ? "list" : "grid";
+        try { localStorage.setItem("tma_wl_view_mode", state.wlViewMode); } catch (e) {}
+        renderWishlistViewDomOnly();
+      }
+
       function renderWishlistListItemsMountOnly() {
         const mount = document.getElementById("wishlistItemsMount");
         const countEl = document.getElementById("wishlistCountSpan");
@@ -3975,9 +4007,47 @@
         const filteredItems = getFilteredAndSortedWishlistItems();
         if (countEl) countEl.textContent = String(filteredItems.length);
         if (filteredItems.length === 0) {
-          mount.innerHTML = '<div class="panel-box" style="color:#aaa;font-size:12.5px">Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</div>';
+          mount.innerHTML = '<div class="panel-box" style="color:var(--text-muted);font-size:12.5px">Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</div>';
           return;
         }
+
+        const isGridMode = state.wlViewMode !== "list";
+        if (isGridMode) {
+          mount.innerHTML = '<div class="carousel">' + filteredItems.map(it => {
+            const isEp = it.contentType === 'episode';
+            const isSer = it.contentType === 'series' || isEp;
+            const tc = isSer ? 's' : 'm';
+            const targetId = Number(isEp ? it.seriesId : it.tmdbId) || 0;
+            const cardKey = tc + "_" + targetId;
+            const itemTitleSafe = esc(it.title || 'Titel');
+            const resolvedCardPoster = resolvePosterUrlClient(it.poster, 'w342', '');
+            const itemPosterSafe = esc(it.poster || '');
+            const yrStr = esc((it.year && it.year !== 'K. A.') ? String(it.year).slice(0, 4) : '–');
+            const epsList = Array.isArray(it.episodes) ? it.episodes : [];
+            const plObj = it.folderId ? folders.find(f => f.id === it.folderId) : null;
+            const epCountBadgeHtml = (isSer && epsList.length > 0)
+              ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
+              : '';
+            const subLeftTxt = plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film');
+            return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
+              '<div class="card-poster-wrap">' +
+                '<div class="card-top-left-stack">' +
+                  epCountBadgeHtml +
+                '</div>' +
+                '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
+                '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Details öffnen">ℹ️ Details</button>' +
+                '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer abspielen">▶ Trailer</button>' +
+                '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM')) + '" onerror="this.onerror=null;this.src=buildPosterFallbackSvg(\\'' + itemTitleSafe + '\\',\\'' + (isSer ? 'SERIE' : 'FILM') + '\\');" loading="lazy" draggable="false" alt="' + itemTitleSafe + '" />' +
+              '</div>' +
+              '<div class="card-body">' +
+                '<div class="card-title">' + itemTitleSafe + '</div>' +
+                '<div class="card-sub"><span>' + subLeftTxt + '</span><span>' + yrStr + '</span></div>' +
+              '</div>' +
+            '</div>';
+          }).join("") + '</div>';
+          return;
+        }
+
         mount.innerHTML = filteredItems.map((it, idx) => {
           const isEp = it.contentType === 'episode';
           const isSer = it.contentType === 'series' || isEp;
@@ -4039,6 +4109,7 @@
         const enabledItems = allItems.filter(i => !i.folderId || !disabledFolderIds.has(i.folderId));
         const filteredItems = getFilteredAndSortedWishlistItems();
         const activeFolderObj = folders.find(f => f.id === cur) || null;
+        const isGridMode = state.wlViewMode !== "list";
 
         const folderBtns = [
           '<button class="btn '+(cur==='root'?'active':'')+'" onclick="loadWishlist(\\'root\\')">📂 Alle Aktiven ('+enabledItems.length+')</button>',
@@ -4113,20 +4184,25 @@
           ).join("") +
         '</div>';
 
-        const quickFilterBarHtml = '<div class="panel-box" style="margin-bottom:10px;padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
+        const quickFilterBarHtml = '<div class="panel-box" style="margin-bottom:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
           '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:800;color:var(--text-muted)">Typ:</span>' +
-            '<button class="btn ' + (state.wlFilterType === 'all' ? 'red' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'all\\')">📂 Alle</button>' +
-            '<button class="btn ' + (state.wlFilterType === 'm' ? 'red' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'m\\')">🎬 Nur Filme</button>' +
-            '<button class="btn ' + (state.wlFilterType === 's' ? 'red' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'s\\')">📺 Nur Serien</button>' +
+            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Typ:</span>' +
+            '<button class="btn ' + (state.wlFilterType === 'all' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'all\\')">📂 Alle</button>' +
+            '<button class="btn ' + (state.wlFilterType === 'm' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'m\\')">🎬 Nur Filme</button>' +
+            '<button class="btn ' + (state.wlFilterType === 's' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'s\\')">📺 Nur Serien</button>' +
           '</div>' +
           '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:800;color:var(--text-muted)">Sortierung:</span>' +
-            '<button class="btn ' + (state.wlSort === 'added_desc' ? 'purple' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'added_desc\\')">🆕 Zuletzt</button>' +
-            '<button class="btn ' + (state.wlSort === 'title_asc' ? 'purple' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'title_asc\\')">🔤 A–Z</button>' +
-            '<button class="btn ' + (state.wlSort === 'year_desc' ? 'purple' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'year_desc\\')">📅 Jahr</button>' +
+            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Sortierung:</span>' +
+            '<button class="btn ' + (state.wlSort === 'added_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'added_desc\\')">🆕 Zuletzt</button>' +
+            '<button class="btn ' + (state.wlSort === 'title_asc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'title_asc\\')">🔤 A–Z</button>' +
+            '<button class="btn ' + (state.wlSort === 'year_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'year_desc\\')">📅 Jahr</button>' +
           '</div>' +
-          '<input id="wishlistSearchInp" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:180px;flex:1;padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.18);background:#141418;color:#fff;font-size:12px" />' +
+          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
+            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Ansicht:</span>' +
+            '<button class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster-Grid</button>' +
+            '<button class="btn ' + (!isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'list\\')" title="Als kompakte Liste mit Episoden-Auswahl anzeigen">📋 Liste</button>' +
+          '</div>' +
+          '<input id="wishlistSearchInp" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:160px;flex:1;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);color:var(--text);font-size:12px" />' +
         '</div>';
 
         root.innerHTML = '<div class="section">' +
@@ -4263,11 +4339,11 @@
             : null;
 
           root.innerHTML = '<div class="section">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
-              '<button class="btn red" onclick="goHome()" style="padding:8px 14px;font-size:12.5px">⬅️ Zurück zur Übersicht (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
-              '<span style="font-size:12px;font-weight:800;color:var(--text-muted)">⚙️ Einstellungen & Filter-Cockpit</span>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">' +
+              '<button class="btn" onclick="goHome()" style="padding:7px 14px;font-size:12.5px">⬅️ Zurück zur Übersicht (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
+              '<span style="font-size:12px;font-weight:700;color:var(--text-muted)">⚙️ Einstellungen & Filter-Cockpit</span>' +
             '</div>' +
-            '<div class="panel-box" style="border-color:rgba(91,70,245,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🔐 Account & Sicherheit (' + (isAuth ? ('Verbunden: ID ' + esc(u.telegramId)) : '👤 Gast-Modus ohne Speicher') + ')</span>' +
                 '<div style="display:flex;gap:6px">' +
@@ -4288,66 +4364,66 @@
               const deliv = getDeliveryPreferencesClient();
               const dMode = deliv.targetMode || "dm";
               const customHookUrl = window.location.origin + "/api/telegram/custom-webhook" + (deliv.customBotToken ? ("?botToken=" + encodeURIComponent(deliv.customBotToken)) : "");
-              return '<div class="panel-box" style="border-color:rgba(56,189,248,0.45)">' +
+              return '<div class="panel-box">' +
                 '<div class="section-title">' +
-                  '<span>📤 Standard-Versandziel, Gruppen-Delivery & Eigener Bot (TelegramIntegration)</span>' +
-                  '<span style="font-size:11px;color:#38bdf8;font-weight:800">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
+                  '<span>📤 Standard-Versandziel, Gruppen-Delivery & Eigener Bot</span>' +
+                  '<span style="font-size:11px;color:#38bdf8;font-weight:700">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
                 '</div>' +
-                '<p style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:8px">' +
+                '<p style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">' +
                   'Bestimme, wohin Filme & Serien standardmäßig gesendet werden: in deinen <b>💬 Bot-Privatchat</b>, in eine <b>👥 eigene Ziel-Gruppe</b> oder über deinen <b>🤖 eigenen Telegram-Bot-Token</b>. ' +
-                  'Wenn der Bot Mitglied deiner Quellgruppe (aus <code>result.json</code>) ist, löst er Dateien automatisch per <code>copyMessage</code> auf und speichert die File-ID in D1!' +
+                  'Wenn der Bot Mitglied deiner Quellgruppe (aus <code>result.json</code>) ist, löst er Dateien automatisch per <code>copyMessage</code> auf und speichert die File-ID in D1.' +
                 '</p>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-                  '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
-                  '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
-                  '<button class="btn ' + (dMode === 'custom_bot' ? 'purple' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
+                  '<button class="btn ' + (dMode === 'dm' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
+                  '<button class="btn ' + (dMode === 'group' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
+                  '<button class="btn ' + (dMode === 'custom_bot' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +
-                    '<input id="settingsTargetGroupIdInp" value="' + esc(deliv.targetGroupChatId || '') + '" placeholder="-1001234567890" style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +
+                    '<input id="settingsTargetGroupIdInp" value="' + esc(deliv.targetGroupChatId || '') + '" placeholder="-1001234567890" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">🧵 Topic / Thread-ID in Ziel-Gruppe (optional):</div>' +
-                    '<input id="settingsTargetTopicIdInp" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">🧵 Topic / Thread-ID in Ziel-Gruppe (optional):</div>' +
+                    '<input id="settingsTargetTopicIdInp" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
-                    '<input id="settingsSourceBridgeIdInp" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
+                    '<input id="settingsSourceBridgeIdInp" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
-                    '<input id="settingsCustomBotTokenInp" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
+                    '<input id="settingsCustomBotTokenInp" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
                   '<button class="btn green" onclick="verifyAndConnectCustomBotInSettingsClient()">💾 Speichern & optionalen Bot-Webhook verbinden</button>' +
-                  '<span style="font-size:11px;color:#94a3b8">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
+                  '<span style="font-size:11px;color:var(--text-muted)">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
                 '</div>' +
                 '<div id="customBotVerifyStatus" style="font-size:12px;color:#38bdf8;margin-top:6px">' +
                   (deliv.customBotUsername ? ('✅ Aktiver eigener Bot: @' + esc(deliv.customBotUsername)) : '') +
                 '</div>' +
-                '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1)">' +
+                '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08)">' +
                   '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
                     '<div>' +
-                      '<div style="font-size:12px;font-weight:800;color:#f8fafc">🧹 Retention Policy (KV-Performance & Log-Aufbewahrung)</div>' +
-                      '<div style="font-size:11px;color:#94a3b8">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
+                      '<div style="font-size:12px;font-weight:700;color:var(--text)">🧹 Retention Policy (KV-Performance & Log-Aufbewahrung)</div>' +
+                      '<div style="font-size:11px;color:var(--text-muted)">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
                     '</div>' +
                     '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
                       '<button type="button" class="btn" style="padding:4px 8px;font-size:11px;color:#fb7185" onclick="clearTmaActivityLogClient()" title="Alle gespeicherten Telegram-Zustelllogs in KV sofort löschen">🗑️ Log leeren</button>' +
                     '</div>' +
                   '</div>' +
                   '<div style="font-size:10.5px;color:#38bdf8;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MY_KV</code>)</div>' +
-                  '<div id="tmaActivityLogMount"><div style="font-size:11px;color:#64748b">Lade letzte Zustell-Aktivitäten...</div></div>' +
+                  '<div id="tmaActivityLogMount"><div style="font-size:11px;color:var(--text-muted)">Lade letzte Zustell-Aktivitäten...</div></div>' +
                 '</div>' +
               '</div>' +
               buildAntiSpamCockpitBoxHtmlClient();
             })() +
 
-            '<div class="panel-box" style="border-color:rgba(16,185,129,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🧭 Steuerung, Maus-Hover & Slider-Einstellungen</span>' +
               '</div>' +
@@ -4361,16 +4437,16 @@
                   '<b>' + (modalHoldNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
                 '</button>' +
                 '<button id="settingsHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
-                  '<span>🎬 Empfehlungs-Slider auf der Startseite</span>' +
+                  '<span>🎬 Spotlight-Banner auf der Startseite</span>' +
                   '<b>' + (state.heroHidden ? 'AUSGEBLENDET' : 'SICHTBAR') + '</b>' +
                 '</button>' +
               '</div>' +
             '</div>' +
 
-            '<div class="panel-box" style="border-color:rgba(56,189,248,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
-                '<span>⚡ Telegram-Bot Schnellbefehls-Übersicht (Cheat-Sheet #22)</span>' +
-                '<span style="font-size:11px;color:#38bdf8;font-weight:800">f = Film • s = Serie</span>' +
+                '<span>⚡ Telegram-Bot Schnellbefehls-Übersicht</span>' +
+                '<span style="font-size:11px;color:#38bdf8;font-weight:700">f = Film • s = Serie</span>' +
               '</div>' +
               '<p style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Nutze diese Kurzbefehle jederzeit direkt im Telegram-Bot-Chat (optional auch mit Genre dahinter, z. B. <code>/t f Action</code>):</p>' +
               '<div class="shortcut-cheat-grid">' +
@@ -4381,15 +4457,15 @@
               '</div>' +
             '</div>' +
 
-            '<div class="panel-box" style="border-color:rgba(229,9,20,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🎬 Instant-Trailer Provider (Direktwiedergabe aus der Übersicht)</span>' +
-                '<span style="font-size:11.5px;color:var(--accent-primary);font-weight:800">Aktiv: ' + esc(getTrailerProviderLabel(trailerProvider)) + '</span>' +
+                '<span style="font-size:11.5px;color:var(--text-muted);font-weight:700">Aktiv: <b style="color:var(--text)">' + esc(getTrailerProviderLabel(trailerProvider)) + '</b></span>' +
               '</div>' +
               '<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Wähle deinen bevorzugten Video-Anbieter, wenn du auf einer Film-/Serienkarte direkt auf <b>▶ Trailer</b> tippst:</p>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 TRAILER_PROVIDERS_CLIENT.map(tp =>
-                  '<button class="btn ' + (trailerProvider === tp.id ? 'red' : '') + '" onclick="setTrailerProvider(\\'' + esc(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
+                  '<button class="btn ' + (trailerProvider === tp.id ? 'active' : '') + '" onclick="setTrailerProvider(\\'' + esc(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
                 ).join("") +
               '</div>' +
             '</div>' +

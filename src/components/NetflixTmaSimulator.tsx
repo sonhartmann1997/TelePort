@@ -317,33 +317,30 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
 
   return (
     <div
-      className={`flex flex-col bg-[#0d111a] border border-slate-800/90 rounded-xl overflow-hidden shadow-2xl ${
+      className={`flex flex-col bg-[#0b0d13] border border-white/[0.07] rounded-xl overflow-hidden shadow-2xl ${
         isFullscreen ? 'fixed inset-2 z-50' : 'h-full w-full'
       }`}
     >
       {/* Simulator Top Control Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-slate-950/90 border-b border-slate-800/80 text-xs">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-semibold text-slate-100">
-              STREAMFLIX Mini-App Live-Simulator
-            </span>
-          </div>
-          <span className="text-slate-600">·</span>
-          <span className="font-mono text-[11px] text-slate-400">
-            Route: <strong className="text-slate-200">{lastApiRoute}</strong> ({lastDurationMs} ms)
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-[#0b0d13] border-b border-white/[0.06] text-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-slate-200">
+            TelePort Mini-App Vorschau
+          </span>
+          <span className="text-slate-500 hidden sm:inline">·</span>
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            Rolle &amp; Geräte-Ansicht testen
           </span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
           {/* Auth Persona Switcher */}
-          <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+          <div className="flex items-center bg-white/[0.04] p-0.5 rounded-lg border border-white/[0.07]">
             <button
               onClick={() => setAuthPersona('admin_vip')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 authPersona === 'admin_vip'
-                  ? 'bg-red-600 text-white'
+                  ? 'bg-white text-slate-950 font-semibold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Simuliert verifizierten Telegram Admin + VIP Status"
@@ -353,9 +350,9 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
             </button>
             <button
               onClick={() => setAuthPersona('standard_user')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 authPersona === 'standard_user'
-                  ? 'bg-sky-600 text-white'
+                  ? 'bg-white text-slate-950 font-semibold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Simuliert regulären Telegram Mini-App Nutzer"
@@ -365,9 +362,9 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
             </button>
             <button
               onClick={() => setAuthPersona('external_guest')}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 authPersona === 'external_guest'
-                  ? 'bg-slate-700 text-white'
+                  ? 'bg-white text-slate-950 font-semibold'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
               title="Simuliert externen Browser ohne Telegram initData (Gast / Web-Login)"
@@ -378,12 +375,12 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
           </div>
 
           {/* Viewport Size Switcher */}
-          <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+          <div className="flex items-center bg-white/[0.04] p-0.5 rounded-lg border border-white/[0.07]">
             <button
               onClick={() => setViewportPreset('full')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 viewportPreset === 'full'
-                  ? 'bg-slate-800 text-white'
+                  ? 'bg-white/[0.14] text-white'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -392,9 +389,9 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
             </button>
             <button
               onClick={() => setViewportPreset('tv')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 viewportPreset === 'tv'
-                  ? 'bg-slate-800 text-white'
+                  ? 'bg-white/[0.14] text-white'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -403,9 +400,9 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
             </button>
             <button
               onClick={() => setViewportPreset('mobile')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 viewportPreset === 'mobile'
-                  ? 'bg-slate-800 text-white'
+                  ? 'bg-white/[0.14] text-white'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
@@ -416,15 +413,15 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
 
           <button
             onClick={loadMiniApp}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 transition-colors text-[11px] font-medium"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 border border-white/[0.08] transition-colors text-[11px] font-medium cursor-pointer"
           >
             <RotateCcw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>Neu starten</span>
+            <span>Neu laden</span>
           </button>
 
           <button
             onClick={() => setIsFullscreen((prev) => !prev)}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors text-[11px]"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 border border-white/[0.08] transition-colors text-[11px] cursor-pointer"
             title={isFullscreen ? 'Vollbild verlassen' : 'Simulator maximieren'}
           >
             {isFullscreen ? (
@@ -437,12 +434,12 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
       </div>
 
       {/* Main STREAMFLIX Mini-App Viewport */}
-      <div className="flex-1 bg-[#090c12] flex items-center justify-center overflow-hidden relative">
+      <div className="flex-1 bg-[#0b0d13] flex items-center justify-center overflow-hidden relative">
         {isLoading && (
-          <div className="absolute inset-0 z-20 bg-[#141414]/80 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-slate-200">
-            <Loader2 className="w-7 h-7 text-red-600 animate-spin" />
+          <div className="absolute inset-0 z-20 bg-[#0b0d13]/85 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-slate-200">
+            <Loader2 className="w-7 h-7 text-[#e50914] animate-spin" />
             <span className="text-xs font-medium tracking-wide">
-              STREAMFLIX Mini-App wird aus worker.js geladen…
+              TelePort Mini-App wird geladen…
             </span>
           </div>
         )}
@@ -450,7 +447,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         <div
           className={`h-full transition-all duration-200 overflow-hidden ${
             viewportPreset === 'mobile'
-              ? 'w-[412px] max-w-full border-x border-slate-800 shadow-2xl'
+              ? 'w-[412px] max-w-full border-x border-white/[0.08] shadow-2xl'
               : viewportPreset === 'tv'
                 ? 'w-full max-w-[1600px]'
                 : 'w-full'
@@ -460,7 +457,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
             ref={iframeRef}
             title="STREAMFLIX Telegram Mini-App Simulator"
             srcDoc={srcDocHtml}
-            className="w-full h-full border-0 bg-[#141414]"
+            className="w-full h-full border-0 bg-[#0b0d13]"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
           />
         </div>

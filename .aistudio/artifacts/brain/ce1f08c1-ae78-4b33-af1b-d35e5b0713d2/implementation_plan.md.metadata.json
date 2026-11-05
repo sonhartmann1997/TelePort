@@ -1,6 +1,6 @@
 {
-  "summary": "Architektur- und Umsetzungsplan zur Reparatur der Serien-Erkennungsweiche (Film-vor-Serie-Fallback für Nummerntitel wie Black Box 1, Spuk im Hochhaus 1..7, Pippi Langstrumpf 1..21), Subrequest-Budget-Schutz ohne 0%-Konflikte und automatische D1-Serien-Deduplizierung inkl. TMDb-Poster-Heilung.",
-  "updatedAt": "2026-11-04T11:22:17.870051691Z",
+  "summary": "Implementierungsplan (Phase 2) für die bestätigten UX- und Design-Optimierungen: (1) Aufgeräumte Poster-Karten im Katalog (nur Lesezeichen & VIP-Punkt dauerhaft, Schnell-Buttons erst bei Hover/Fokus), (2) Neu strukturierte Detail-Modal-Aktionsleiste mit separater kompakter Admin-Leiste sowie einzeiligem, aufklappbarem Versandziel-Wähler, und (3) Umschaltbare Merklisten-Ansicht zwischen Poster-Grid und kompakter Listen-Ansicht bei 100 % Funktionserhalt.",
+  "updatedAt": "2026-11-05T11:01:50.832392901Z",
   "requestFeedback": true,
   "userFacing": true
 }

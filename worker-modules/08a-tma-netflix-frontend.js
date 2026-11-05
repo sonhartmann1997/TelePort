@@ -461,20 +461,24 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
       :root {
-        --bg: #141414;
-        --surface: #18181c;
-        --card: #222228;
-        --red: #E50914;
-        --blue: #0284c7;
-        --purple: #5b46f5;
-        --text: #FFFFFF;
-        --muted: #A3A3A3;
-        --inc-bg: rgba(16, 185, 129, 0.22);
-        --inc-border: rgba(16, 185, 129, 0.65);
+        --bg: #0b0d13;
+        --surface: #12151e;
+        --card: #181c28;
+        --bg-elevated: #181c28;
+        --red: #e50914;
+        --accent-primary: #e50914;
+        --blue: #0ea5e9;
+        --purple: #6366f1;
+        --text: #f8fafc;
+        --text-main: #f8fafc;
+        --muted: #94a3b8;
+        --text-muted: #94a3b8;
+        --inc-bg: rgba(16, 185, 129, 0.16);
+        --inc-border: rgba(16, 185, 129, 0.55);
         --inc-text: #6ee7b7;
         --inc-solid: #059669;
-        --exc-bg: rgba(239, 68, 68, 0.22);
-        --exc-border: rgba(239, 68, 68, 0.65);
+        --exc-bg: rgba(239, 68, 68, 0.16);
+        --exc-border: rgba(239, 68, 68, 0.55);
         --exc-text: #fca5a5;
         --exc-solid: #dc2626;
         --scale-all: 1;
@@ -489,8 +493,12 @@
         --bg: #f1f5f9;
         --surface: #ffffff;
         --card: #ffffff;
+        --bg-elevated: #f8fafc;
         --text: #0f172a;
+        --text-main: #0f172a;
         --muted: #475569;
+        --text-muted: #475569;
+        --accent-primary: #e50914;
         --inc-bg: rgba(16, 185, 129, 0.14);
         --inc-border: #059669;
         --inc-text: #047857;
@@ -805,11 +813,15 @@
         --bg: #070510;
         --surface: #110b22;
         --card: #191030;
+        --bg-elevated: #191030;
         --red: #ff007f;
+        --accent-primary: #ff007f;
         --blue: #00f0ff;
         --purple: #b829ff;
         --text: #f0f6ff;
+        --text-main: #f0f6ff;
         --muted: #94a3b8;
+        --text-muted: #94a3b8;
       }
       body[data-theme="cyberpunk"] header {
         background: rgba(12, 6, 26, 0.95);
@@ -931,10 +943,11 @@
         position: sticky;
         top: 0;
         z-index: 60;
-        background: rgba(18,18,22,0.96);
-        backdrop-filter: blur(14px);
-        padding: calc(7px * var(--scale-menu)) calc(12px * var(--scale-menu));
-        border-bottom: 1px solid rgba(255,255,255,0.09);
+        background: rgba(11, 13, 19, 0.88);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        padding: calc(8px * var(--scale-menu)) calc(14px * var(--scale-menu));
+        border-bottom: 1px solid rgba(255,255,255,0.07);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -944,33 +957,33 @@
       .brand-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
       .brand-logo {
         color: #f8fafc;
-        font-weight: 900;
+        font-weight: 800;
         font-size: calc(15.5px * var(--scale-menu));
-        letter-spacing: 0.4px;
+        letter-spacing: -0.2px;
         cursor: pointer;
         user-select: none;
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 3px 7px;
-        border-radius: 8px;
-        background: linear-gradient(135deg, rgba(229, 9, 20, 0.14), rgba(56, 189, 248, 0.12));
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 4px 8px;
+        border-radius: 9px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         transition: background 0.15s, transform 0.12s, border-color 0.15s, box-shadow 0.15s;
         flex-shrink: 0;
       }
       .brand-logo:hover,
       .brand-logo.spatial-focus,
       .brand-logo:focus-visible {
-        background: linear-gradient(135deg, rgba(229, 9, 20, 0.28), rgba(56, 189, 248, 0.26));
-        border-color: #38bdf8;
+        background: rgba(255, 255, 255, 0.09);
+        border-color: rgba(255, 255, 255, 0.22);
       }
       .brand-logo:active { transform: scale(0.96); }
       .teleport-logo-svg {
         width: 20px;
         height: 20px;
         flex-shrink: 0;
-        filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.55));
+        filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.35));
       }
       .teleport-accent {
         background: linear-gradient(135deg, #38bdf8, #a855f7, #e50914);
@@ -995,23 +1008,23 @@
       .sync-badge {
         font-size: calc(10.5px * var(--scale-text));
         color: #34d399;
-        background: rgba(16,185,129,0.14);
-        border: 1px solid rgba(16,185,129,0.35);
+        background: rgba(16,185,129,0.12);
+        border: 1px solid rgba(16,185,129,0.28);
         padding: 4px 8px;
-        border-radius: 7px;
+        border-radius: 8px;
         font-weight: 700;
         cursor: pointer;
       }
       .device-badge {
         display: none;
       }
-      .nav-btns { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+      .nav-btns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
       .btn {
-        background: rgba(255,255,255,0.09);
-        color: #fff;
-        border: 1px solid rgba(255,255,255,0.15);
-        border-radius: 7px;
-        padding: calc(5.5px * var(--scale-menu)) calc(9px * var(--scale-menu));
+        background: rgba(255,255,255,0.06);
+        color: #f1f5f9;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+        padding: calc(6px * var(--scale-menu)) calc(10px * var(--scale-menu));
         font-size: calc(11.5px * var(--scale-menu));
         font-weight: 600;
         cursor: pointer;
@@ -1019,18 +1032,23 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 4px;
+        gap: 5px;
         white-space: nowrap;
-        transition: all 0.14s ease;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
       }
-      .btn:hover { background: rgba(255,255,255,0.16); }
-      .btn:active { transform: scale(0.96); }
-      .btn.red { background: var(--red); border-color: #ff1f2d; color: #fff; }
-      .btn.blue { background: var(--blue); border-color: #38bdf8; color: #fff; }
-      .btn.green { background: var(--inc-solid); border-color: var(--inc-border); color: #fff; }
-      .btn.purple { background: var(--purple); border-color: #7c69ff; color: #fff; border-radius: 999px; padding: calc(5.5px * var(--scale-menu)) calc(11px * var(--scale-menu)); }
-      .btn.amber { background: linear-gradient(135deg, #d97706, #b45309); border-color: #fbbf24; color: #fff; font-weight: 700; }
-      .btn.active { background: #fff; color: #000; border-color: #fff; font-weight: 800; }
+      .btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
+      .btn:active { transform: scale(0.97); }
+      .btn.red { background: var(--red); border-color: rgba(255,255,255,0.18); color: #fff; box-shadow: 0 2px 10px rgba(229,9,20,0.25); }
+      .btn.red:hover { background: #f40612; }
+      .btn.blue { background: rgba(14, 165, 233, 0.18); border-color: rgba(56, 189, 248, 0.4); color: #e0f2fe; }
+      .btn.blue:hover { background: rgba(14, 165, 233, 0.28); border-color: #38bdf8; color: #fff; }
+      .btn.green { background: rgba(16, 185, 129, 0.18); border-color: rgba(16, 185, 129, 0.45); color: #d1fae5; }
+      .btn.green:hover { background: rgba(16, 185, 129, 0.3); border-color: #34d399; color: #fff; }
+      .btn.purple { background: rgba(99, 102, 241, 0.18); border-color: rgba(129, 140, 248, 0.42); color: #e0e7ff; border-radius: 8px; padding: calc(6px * var(--scale-menu)) calc(11px * var(--scale-menu)); }
+      .btn.purple:hover { background: rgba(99, 102, 241, 0.3); border-color: #818cf8; color: #fff; }
+      .btn.amber { background: rgba(245, 158, 11, 0.16); border-color: rgba(251, 191, 36, 0.42); color: #fef3c7; font-weight: 700; }
+      .btn.amber:hover { background: rgba(245, 158, 11, 0.26); border-color: #fbbf24; color: #fff; }
+      .btn.active { background: #f8fafc; color: #0f172a; border-color: #f8fafc; font-weight: 800; }
 
       /* Linke Off-Canvas Sidebar für Filter, Größe, Themes & Farbenblind-Modus */
       .sidebar-backdrop {
@@ -1839,11 +1857,12 @@
 
       /* Schlanke Kategorie- & Sortier-Leiste ohne mehrzeiliges Flattern */
       .floating-filter-bar {
-        background: rgba(24, 24, 32, 0.72);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 10px;
-        padding: 6px 8px;
-        margin: 2px 0 6px;
+        background: rgba(18, 21, 30, 0.78);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 12px;
+        padding: 8px 10px;
+        margin: 4px 0 10px;
       }
       .ff-controls-grid {
         display: flex;
@@ -1869,20 +1888,21 @@
       .ff-top-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
       .ff-dropdown-tabs { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; flex: 1; }
       .ff-tab-btn {
-        background: rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.06);
         color: #e2e8f0;
-        border: 1px solid rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.1);
         border-radius: 8px;
         padding: calc(5px * var(--scale-menu)) calc(9px * var(--scale-menu));
         font-size: calc(11.5px * var(--scale-menu));
-        font-weight: 700;
+        font-weight: 600;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         gap: 5px;
+        transition: all 0.14s ease;
       }
-      .ff-tab-btn:hover { background: rgba(255,255,255,0.14); }
-      .ff-tab-btn.open { background: var(--purple); border-color: #9381ff; color: #fff; box-shadow: 0 3px 12px rgba(91,70,245,0.4); }
+      .ff-tab-btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
+      .ff-tab-btn.open { background: rgba(99, 102, 241, 0.24); border-color: #818cf8; color: #fff; box-shadow: 0 3px 12px rgba(99,102,241,0.25); }
       .ff-tab-btn.has-inc { border-color: var(--inc-border); background: var(--inc-bg); color: var(--inc-text); }
       .ff-tab-btn.has-exc { border-color: var(--exc-border); }
 
@@ -1890,21 +1910,22 @@
       .sort-select,
       .mode-filter-select,
       .new-filter-select {
-        background-color: #1e1e26;
-        color: #f8fafc;
-        border: 1px solid rgba(255,255,255,0.18);
+        background-color: rgba(255, 255, 255, 0.05);
+        color: #f1f5f9;
+        border: 1px solid rgba(255,255,255,0.12);
         border-radius: 8px;
-        padding: calc(5px * var(--scale-menu)) calc(8px * var(--scale-menu));
+        padding: calc(5.5px * var(--scale-menu)) calc(9px * var(--scale-menu));
         font-size: calc(11.5px * var(--scale-menu));
-        font-weight: 700;
+        font-weight: 600;
         cursor: pointer;
         outline: none;
         color-scheme: dark;
+        transition: border-color 0.14s ease, background-color 0.14s ease;
       }
       .sort-select option,
       .mode-filter-select option,
       .new-filter-select option {
-        background-color: #181820;
+        background-color: #12151e;
         color: #f8fafc;
       }
       .sort-select:hover,
@@ -1915,8 +1936,8 @@
       .new-filter-select:hover,
       .new-filter-select.spatial-focus,
       .new-filter-select.active-new {
-        border-color: var(--red);
-        background-color: rgba(229,9,20,0.22);
+        border-color: rgba(229, 9, 20, 0.65);
+        background-color: rgba(229, 9, 20, 0.14);
         color: #fff;
       }
 
@@ -2128,7 +2149,7 @@
         flex-shrink: 0;
         pointer-events: auto;
       }
-      /* Gespeichert-Icon: Im Ruhezustand NUR sichtbar, wenn der Titel in der Merkliste gespeichert ist (.saved)! */
+      /* Lesezeichen-Button oben rechts: dauerhaft dezent sichtbar, bei Gespeichert (.saved) grün hervorgehoben */
       .card-quick-save {
         position: absolute;
         top: 6px;
@@ -2136,8 +2157,9 @@
         width: 28px;
         height: 28px;
         border-radius: 999px;
-        background: rgba(15, 23, 42, 0.92);
-        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: rgba(15, 23, 42, 0.86);
+        backdrop-filter: blur(6px);
+        border: 1px solid rgba(255, 255, 255, 0.22);
         color: #fff;
         font-size: 12px;
         display: inline-flex;
@@ -2145,25 +2167,21 @@
         justify-content: center;
         cursor: pointer;
         z-index: 4;
-        opacity: 0;
-        pointer-events: none;
-        transition: transform 0.14s, background 0.14s, opacity 0.14s;
+        opacity: 0.92;
+        pointer-events: auto;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+        transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, opacity 0.14s, border-color 0.14s;
       }
       @media (hover: none), (pointer: coarse) {
         .card-quick-save {
-          opacity: 0.92;
+          opacity: 0.95;
           pointer-events: auto;
-          width: 32px;
-          height: 32px;
-          font-size: 13px;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.65);
+          width: 30px;
+          height: 30px;
+          font-size: 12.5px;
         }
-        .card-quick-info {
-          display: none !important;
-        }
-      }
-      @media (max-width: 640px) {
-        .card-quick-info {
+        .card-quick-info,
+        .card-quick-trailer {
           display: none !important;
         }
       }
@@ -2173,6 +2191,7 @@
       }
       .card-quick-save.saved,
       .card:hover .card-quick-save,
+      .card:focus-within .card-quick-save,
       .card.card-subnav-active .card-quick-save {
         opacity: 1;
         pointer-events: auto;
@@ -2181,7 +2200,7 @@
       .card-quick-save.spatial-focus {
         opacity: 1;
         pointer-events: auto;
-        transform: scale(1.14);
+        transform: scale(1.12);
         background: var(--red);
         border-color: #fff;
         box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.55), 0 4px 12px rgba(0,0,0,0.85);
@@ -2241,6 +2260,7 @@
         right: 6px;
         z-index: 3;
         background: rgba(14, 14, 20, 0.94);
+        backdrop-filter: blur(6px);
         color: #fff;
         border: 1px solid rgba(229, 9, 20, 0.65);
         border-radius: 999px;
@@ -2253,20 +2273,23 @@
         gap: 4px;
         opacity: 0;
         pointer-events: none;
+        transform: translateY(4px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.15s ease, transform 0.14s, background 0.14s, border-color 0.14s, box-shadow 0.14s;
+        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
       }
       .card:hover .card-quick-trailer,
+      .card:focus-within .card-quick-trailer,
       .card.spatial-focus .card-quick-trailer,
       .card.card-subnav-active .card-quick-trailer {
         opacity: 1;
         pointer-events: auto;
+        transform: translateY(0);
       }
       .card-quick-trailer:hover,
       .card-quick-trailer.spatial-focus {
         background: var(--red);
         border-color: #fff;
-        transform: scale(1.08);
+        transform: translateY(0) scale(1.06);
         box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.55), 0 4px 14px rgba(0,0,0,0.85);
       }
       /* Info/Details Sub-Button unten links: NUR bei Hover oder Fokus sichtbar! */
@@ -2276,6 +2299,7 @@
         left: 6px;
         z-index: 3;
         background: rgba(14, 14, 20, 0.94);
+        backdrop-filter: blur(6px);
         color: #e2e8f0;
         border: 1px solid rgba(255, 255, 255, 0.28);
         border-radius: 999px;
@@ -2288,27 +2312,77 @@
         gap: 3px;
         opacity: 0;
         pointer-events: none;
+        transform: translateY(4px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.15s ease, transform 0.14s, background 0.14s, border-color 0.14s, box-shadow 0.14s;
+        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
       }
       .card:hover .card-quick-info,
+      .card:focus-within .card-quick-info,
       .card.spatial-focus .card-quick-info,
       .card.card-subnav-active .card-quick-info {
         display: inline-flex !important;
         opacity: 1;
         pointer-events: auto;
+        transform: translateY(0);
       }
       .card-quick-info:hover,
       .card-quick-info.spatial-focus {
         background: var(--purple);
         border-color: #fff;
         color: #fff;
-        transform: scale(1.08);
+        transform: translateY(0) scale(1.06);
         box-shadow: 0 0 0 3px rgba(91, 70, 245, 0.6), 0 4px 14px rgba(0,0,0,0.85);
       }
       .card.card-subnav-active {
         border-color: var(--accent-primary) !important;
         box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.45), 0 12px 28px rgba(0,0,0,0.75);
+      }
+      /* Aufgeräumte Detail-Modal Nutzer-Aktionsleiste & eigene kompakte Admin-Leiste */
+      .modal-user-actions-bar {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      .modal-admin-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 6px 10px;
+        margin-bottom: 10px;
+        border-radius: 9px;
+        background: rgba(139, 92, 246, 0.08);
+        border: 1px solid rgba(139, 92, 246, 0.28);
+      }
+      .modal-admin-toolbar-label {
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 800;
+        color: #c4b5fd;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      body[data-theme="light"] .modal-admin-toolbar {
+        background: #f5f3ff;
+        border-color: #c4b5fd;
+      }
+      body[data-theme="light"] .modal-admin-toolbar-label {
+        color: #5b21b6;
+      }
+      .delivery-compact-bar {
+        padding: 6px 10px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      body[data-theme="light"] .delivery-compact-bar {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
       }
       .card-body { padding: 7px 8px; display: flex; flex-direction: column; flex: 1; justify-content: space-between; gap: 4px; }
       .card-title { font-size: calc(12px * var(--scale-text)); font-weight: 700; line-height: 1.3; white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
@@ -2355,6 +2429,31 @@
       }
 
       /* Seiten-Anzeige (Seite X von Y) & Direkt-Seitenwahl (#17) */
+      .pagination-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+        padding: 12px 10px;
+        border-radius: 12px;
+        background: rgba(18, 21, 30, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+      }
+      .page-counter-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 5px 12px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--text);
+        font-size: calc(11.5px * var(--scale-text));
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
       .page-jump-bar {
         grid-column: 1 / -1;
         display: flex;
@@ -2787,7 +2886,7 @@
       .embed-box { margin: 10px 0; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); }
       .embed-frame { width: 100%; aspect-ratio: 16/9; border: 0; display: block; background: #000; }
       .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-      .panel-box { background: rgba(30,30,36,0.95); border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+      .panel-box { background: rgba(18, 21, 30, 0.88); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
       .lightbox-backdrop { position: fixed; inset: 0; z-index: 220; background: rgba(0,0,0,0.94); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; }
       .lightbox-img { max-width: 96vw; max-height: 82vh; object-fit: contain; border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,0.9); transition: transform 0.2s ease; cursor: zoom-in; }
       .lightbox-img.zoomed { transform: scale(1.65); cursor: zoom-out; }
@@ -3561,22 +3660,22 @@
           : "👤 Gast • Login";
 
         body.innerHTML =
-          /* 0. Schnellzugriff & Konto (aus dem Header hierher aufgeräumt) */
+          /* 0. Schnellzugriff & Konto */
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
-              '<span>⚡ Schnellzugriff & Konto</span>' +
+              '<span>⚡ Navigation & Konto</span>' +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px">' +
-              '<button id="syncBadge" class="btn" style="grid-column:1 / -1;justify-content:space-between;color:' + (isAuth ? '#34d399' : '#fbbf24') + ';border-color:' + (isAuth ? 'rgba(16,185,129,0.4)' : 'rgba(251,191,36,0.4)') + '" onclick="closeFilterSidebar();openAccountModal()">' +
-                '<span>' + esc(accLabel) + '</span><span>🔐 Account</span>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
+              '<button id="syncBadge" class="btn" style="grid-column:1 / -1;justify-content:space-between;background:rgba(255,255,255,0.04);color:' + (isAuth ? '#34d399' : '#fbbf24') + ';border-color:' + (isAuth ? 'rgba(16,185,129,0.32)' : 'rgba(251,191,36,0.32)') + '" onclick="closeFilterSidebar();openAccountModal()">' +
+                '<span>' + esc(accLabel) + '</span><span style="color:var(--text-muted);font-size:11px">🔐 Konto öffnen ▸</span>' +
               '</button>' +
-              '<button id="sidebarRandomBtn" class="btn amber" onclick="closeFilterSidebar();triggerRandom()" title="Zufälligen Titel mit aktiven Filtern ziehen">' +
+              '<button id="sidebarRandomBtn" class="btn" onclick="closeFilterSidebar();triggerRandom()" title="Zufälligen Titel mit aktiven Filtern ziehen">' +
                 (state.type === 's' ? '🎲 Zufalls-Serie' : '🎲 Zufalls-Film') +
               '</button>' +
-              '<button class="btn purple" onclick="closeFilterSidebar();loadFranchisesHub()" title="Alle Filmreihen & Filmuniversen öffnen">' +
+              '<button class="btn" onclick="closeFilterSidebar();loadFranchisesHub()" title="Alle Filmreihen & Filmuniversen öffnen">' +
                 '🌌 Welten & Reihen' +
               '</button>' +
-              '<button id="sidebarOpenInBotBtn" class="btn blue" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
+              '<button id="sidebarOpenInBotBtn" class="btn" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
                 '🤖 Im Bot öffnen' +
               '</button>' +
               '<button class="btn" onclick="closeFilterSidebar();loadSettingsView()" title="Alle Einstellungen öffnen">' +
@@ -3589,7 +3688,7 @@
                 '🔄 Neu starten' +
               '</button>' +
               (u.isAdmin ? (
-                '<button id="adminHeaderBtn" class="btn amber" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Panel & VIP-Verwaltung</button>'
+                '<button id="adminHeaderBtn" class="btn amber" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'
               ) : '') +
             '</div>' +
           '</div>' +
@@ -3597,8 +3696,8 @@
           /* 1. Filter-Kategorien (kompakt, beim Öffnen eingeklappt) */
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
-              '<span>🎛️ Filter</span>' +
-              '<span style="font-size:10px;color:var(--text-muted)">✓ Positiv • ✕ Negativ</span>' +
+              '<span>🎛️ Katalog-Filter</span>' +
+              '<span style="font-size:10px;color:var(--text-muted)">✓ Einschluss • ✕ Ausschluss</span>' +
             '</div>' +
             '<div style="display:flex;gap:5px;flex-wrap:wrap;' + (catGridHtml || isCurrentUserVip() ? 'margin-bottom:8px' : '') + '">' +
               '<button id="sidebarCatTab_genres" class="ff-tab-btn ' + (curTab === 'genres' ? 'open' : '') + (gCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'genres\\')">🎞️ Genres' + (gCount ? ' (' + gCount + ')' : '') + '</button>' +
@@ -3609,8 +3708,8 @@
             '</div>' +
             /* Optimierung #13: Exklusiver VIP-Filter "Nur Titel mit verfügbarem Stream anzeigen" */
             (isCurrentUserVip() ? (
-              '<button id="sidebarVipStreamsOnlyBtn" class="btn ' + (s.onlyVipStreams ? 'amber' : '') + '" style="width:100%;justify-content:space-between;' + (catGridHtml ? 'margin-bottom:8px' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
-                '<span>🌟 Nur mit VIP-Stream anzeigen</span>' +
+              '<button id="sidebarVipStreamsOnlyBtn" class="btn ' + (s.onlyVipStreams ? 'green' : '') + '" style="width:100%;justify-content:space-between;' + (catGridHtml ? 'margin-bottom:8px' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
+                '<span>🌟 Nur mit verfügbarem Stream</span>' +
                 '<b>' + (s.onlyVipStreams ? 'AKTIV' : 'ALLE') + '</b>' +
               '</button>'
             ) : '') +
@@ -3620,15 +3719,15 @@
           /* 2. Design & Ansicht (eingeklappt beim Öffnen) */
           '<div class="sidebar-section">' +
             '<button type="button" id="sidebarSecBtn_design" class="sidebar-collapse-btn" onclick="toggleSidebarExtraSection(\\'design\\')">' +
-              '<span>🎨 Design & Ansicht</span>' +
+              '<span>🎨 Darstellung & Komfort</span>' +
               '<span class="sidebar-collapse-meta">' + themeBadge + ' ' + (state.sidebarDesignOpen ? '▾' : '▸') + '</span>' +
             '</button>' +
             (state.sidebarDesignOpen ? (
               '<div id="sidebarDesignBody" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08)">' +
                 '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">' +
-                  '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'red' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
-                  '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'blue' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
-                  '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'purple' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
+                  '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'active' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
+                  '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'active' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
+                  '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'active' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
                 '</div>' +
                 '<button id="sidebarColorblindBtn" class="btn ' + (colorblindMode ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleColorblindMode()">' +
                   '<span>👁️ Farbenblind-Modus</span>' +
@@ -3643,7 +3742,7 @@
                   '<b>' + (modalHoldNavEnabled ? 'EIN' : 'AUS') + '</b>' +
                 '</button>' +
                 '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
-                  '<span>🎬 Empfehlungs-Slider</span>' +
+                  '<span>🎬 Spotlight-Banner</span>' +
                   '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
                 '</button>' +
               '</div>'
@@ -3653,7 +3752,7 @@
           /* 3. Ansichtsgröße (eingeklappt beim Öffnen) */
           '<div class="sidebar-section">' +
             '<button type="button" id="sidebarSecBtn_scale" class="sidebar-collapse-btn" onclick="toggleSidebarExtraSection(\\'scale\\')">' +
-              '<span>🔠 Größe</span>' +
+              '<span>🔠 Skalierung & Textgröße</span>' +
               '<span class="sidebar-collapse-meta">' + scaleBadge + ' ' + (state.sidebarScaleOpen ? '▾' : '▸') + '</span>' +
             '</button>' +
             (state.sidebarScaleOpen ? (
@@ -3668,12 +3767,6 @@
                 buildScaleRow("🎛️ Menü", "menu", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"125%",v:125}]) +
               '</div>'
             ) : '') +
-          '</div>' +
-
-          /* 4. Kompakte Fußzeile für Einstellungen & Account */
-          '<div style="display:flex;gap:6px">' +
-            '<button class="btn" style="flex:1" onclick="closeFilterSidebar();loadSettingsView()">⚙️ Einstellungen</button>' +
-            '<button class="btn" style="flex:1" onclick="closeFilterSidebar();openAccountModal()">🔐 Account</button>' +
           '</div>';
 
         if (jumpToOptions) {
@@ -4435,6 +4528,9 @@
         wlSort: "added_desc",
         wlSearchQuery: "",
         wlLetter: "ALL",
+        wlViewMode: (function() {
+          try { return localStorage.getItem("tma_wl_view_mode") || "grid"; } catch (e) { return "grid"; }
+        })(),
         cachedWishlistItems: [],
         cachedWishlistFolders: [],
         activeDetails: null,
@@ -4798,6 +4894,7 @@
           includedStudios: [], excludedStudios: [],
           includedFsk: [], excludedFsk: [],
           showUnreleased: false,
+          onlyVipStreams: false,
           filtersActive: true
         };
         const inp = document.getElementById("searchInput");
@@ -4818,7 +4915,7 @@
               type: "m",
               genreId: "all",
               mode: "trend",
-              sort: "pop_desc"
+              sort: "default"
             })
           });
           if (res && res.settings) state.settings = res.settings;
@@ -4826,7 +4923,7 @@
             state.type = "m";
             state.genreId = "all";
             state.mode = "trend";
-            state.sort = "pop_desc";
+            state.sort = "default";
             state.startPage = 1;
             state.page = 1;
             state.items = res.discover.items || [];
@@ -4842,7 +4939,7 @@
         } catch (e) {} finally {
           setBusyState(false);
         }
-        loadDiscover("m", "all", "trend", "pop_desc");
+        loadDiscover("m", "all", "trend", "default");
       }
 
       function updateSearchClearBtnVisibility() {

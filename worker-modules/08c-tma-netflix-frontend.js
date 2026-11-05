@@ -3351,13 +3351,13 @@
             '<div class="section-title">' +
               '<span>👑 Admin-Dashboard & VIP- / Playlisten- / Backup-Verwaltung</span>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn ' + (state.adminTab === 'users' ? 'red' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'reports' ? 'red' : (openReportsCount > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'reports\\';loadAdminPanelView()">🚨 Meldungen (' + openReportsCount + ' offen)</button>' +
-                '<button class="btn ' + (state.adminTab === 'gaps' ? 'red' : (Number(seriesGaps.seriesWithInternalGapsCount || 0) > 0 ? 'amber' : 'blue')) + '" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView()" title="Fehlende Folgen in Serien (insb. Lücken mitten in einer Staffel wie Folge 1+2 fehlt, Folge 3 ist da)">📉 Serien-Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'playlists' ? 'red' : 'green') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten & Bot-VIP (' + adminPlaylists.length + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'backup' ? 'red' : 'amber') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 Backup-Import (100k+)</button>' +
-                '<button class="btn ' + (state.adminTab === 'diaglog' ? 'red' : 'blue') + '" onclick="state.adminTab=\\'diaglog\\';loadAdminPanelView()">🛠️ Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'crud' ? 'red' : '') + '" onclick="state.adminTab=\\'crud\\';loadAdminPanelView()">🎬 Film/Serien CRUD (' + mediaList.length + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'users' ? 'active' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'reports' ? 'active' : (openReportsCount > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'reports\\';loadAdminPanelView()">🚨 Meldungen (' + openReportsCount + ' offen)</button>' +
+                '<button class="btn ' + (state.adminTab === 'gaps' ? 'active' : '') + '" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView()" title="Fehlende Folgen in Serien (insb. Lücken mitten in einer Staffel wie Folge 1+2 fehlt, Folge 3 ist da)">📉 Serien-Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'playlists' ? 'active' : '') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten & Bot-VIP (' + adminPlaylists.length + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 Backup-Import (100k+)</button>' +
+                '<button class="btn ' + (state.adminTab === 'diaglog' ? 'active' : '') + '" onclick="state.adminTab=\\'diaglog\\';loadAdminPanelView()">🛠️ Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'crud' ? 'active' : '') + '" onclick="state.adminTab=\\'crud\\';loadAdminPanelView()">🎬 Film/Serien CRUD (' + mediaList.length + ')</button>' +
                 '<button class="btn" onclick="adminRunD1DedupeFilesClient()" title="Entfernt alle doppelten oder defekten Stream-Buttons in D1">🧹 Doppelte Buttons bereinigen</button>' +
                 '<button class="btn red" onclick="adminRunCompleteMediaResetClient()" title="Löscht alle Filme, Serien, Episoden & Playlisten für einen sauberen Neustart">🧨 Komplett-Reset</button>' +
                 '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' +
