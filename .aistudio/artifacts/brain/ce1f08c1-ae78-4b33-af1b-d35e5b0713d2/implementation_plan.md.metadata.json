@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan für den 2-Stufen-Schutz gegen gleichnamige Filme/Mockbuster im selben Jahr (Stufe 1: enrichVideoFromNeighborPost mit +1/-1/+2/-2 Nachbar-Prüfung, Basiswort-Check und contextOverview; Stufe 2: pickBestTMDbMovie mit Beschreibungs-Fingerabdruck und Blockbuster-Bonus) sowie gezielter E.T. (1982) Kurztitel-Erkennung.",
-  "updatedAt": "2026-11-06T08:49:45.571773819Z",
+  "summary": "Implementierungsplan zur drastischen Reduzierung von Cloudflare Worker Requests, D1 Read/Write-Abfragen (durch SQLite-Indizes und RAM-First-Caching) sowie KV-Schreibzugriffen, inklusive Quota-Notfallzugang für das Admin-Panel.",
+  "updatedAt": "2026-11-06T09:25:36.658214511Z",
   "requestFeedback": true,
   "userFacing": true
 }

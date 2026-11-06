@@ -262,15 +262,19 @@
     if (bearerToken) {
       const verifiedToken = await verifyTmaSessionToken(bearerToken, env);
       if (verifiedToken && verifiedToken.telegramId) {
-        const dbRow = await getUserByTelegramIdFromD1(env, verifiedToken.telegramId);
+        const dbRow = await getUserByTelegramIdFromD1(env, verifiedToken.telegramId).catch(() => null);
         const userProfile = formatUserRowForClient(
           dbRow || {
             telegram_id: verifiedToken.telegramId,
             tg_username: verifiedToken.tgUsername || "",
-            first_name: verifiedToken.firstName || ""
+            first_name: verifiedToken.firstName || "",
+            is_admin: verifiedToken.isAdmin ? 1 : 0,
+            is_vip: verifiedToken.isVip ? 1 : 0
           },
           env
         );
+        if (userProfile && verifiedToken.isAdmin) userProfile.isAdmin = true;
+        if (userProfile && verifiedToken.isVip) userProfile.isVip = true;
         return {
           isAuthenticated: true,
           isGuest: false,

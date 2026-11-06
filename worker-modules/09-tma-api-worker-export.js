@@ -75,6 +75,8 @@
           telegramId: String(verified.user.id),
           tgUsername: verified.user.username || "",
           firstName: verified.user.first_name || "",
+          isAdmin: Boolean(userProfile?.isAdmin),
+          isVip: Boolean(userProfile?.isVip),
           authMethod: "initData",
           hasInitData: true
         }, env);
@@ -136,6 +138,8 @@
           telegramId: String(userRow.telegram_id),
           tgUsername: userRow.tg_username || "",
           firstName: userRow.first_name || "",
+          isAdmin: Boolean(userProfile?.isAdmin),
+          isVip: Boolean(userProfile?.isVip),
           authMethod: "password",
           hasInitData: false
         }, env);
@@ -176,6 +180,8 @@
           telegramId: String(auth.chatId),
           tgUsername: saved.user.tgUsername || "",
           firstName: saved.user.firstName || "",
+          isAdmin: Boolean(saved.user?.isAdmin || auth.user?.isAdmin),
+          isVip: Boolean(saved.user?.isVip || auth.user?.isVip),
           authMethod: "password",
           hasInitData: auth.hasInitData
         }, env);
@@ -350,6 +356,7 @@
             const body = await request.json().catch(() => ({}));
             if (body.action === "clear" || body.clear === true) {
               memoryFallback.delete("tma_backup_import_checkpoint_v1");
+              memoryFallback.delete("tma_backup_import_checkpoint_kv_cnt");
               if (kvStore) {
                 await kvStore.delete("tma_backup_import_checkpoint_v1").catch(() => {});
               }
@@ -357,8 +364,15 @@
             }
             if (body.checkpoint) {
               memoryFallback.set("tma_backup_import_checkpoint_v1", body.checkpoint);
-              if (kvStore) {
-                await kvStore.put("tma_backup_import_checkpoint_v1", JSON.stringify(body.checkpoint)).catch(() => {});
+              const forceKv = Boolean(body.forceKv);
+              const deferCnt = Number(memoryFallback.get("tma_backup_import_checkpoint_kv_cnt") || 0) + 1;
+              if (forceKv || deferCnt >= 20) {
+                memoryFallback.set("tma_backup_import_checkpoint_kv_cnt", 0);
+                if (kvStore) {
+                  await kvStore.put("tma_backup_import_checkpoint_v1", JSON.stringify(body.checkpoint)).catch(() => {});
+                }
+              } else {
+                memoryFallback.set("tma_backup_import_checkpoint_kv_cnt", deferCnt);
               }
             }
             return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
@@ -369,19 +383,19 @@
           const playlistChatId = String(url.searchParams.get("playlistChatId") || auth.chatId);
           const requestedFolderId = String(url.searchParams.get("folderId") || "").trim();
           if (playlistChatId === "bot_vip") {
-            await ensureBotVipDefaultPlaylist(env);
+            await ensureBotVipDefaultPlaylist(env).catch(() => null);
           }
           await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
-            listAllUsersFromD1(env),
-            listAllMediaFromD1(env, mediaType),
-            getImportQueueStatsFromD1(env),
-            getFolders(env, playlistChatId),
-            getSavedList(env, playlistChatId),
-            listMediaReportsFromD1(env, "all"),
-            computeSeriesGapsOverview(env)
+            listAllUsersFromD1(env).catch(() => []),
+            listAllMediaFromD1(env, mediaType).catch(() => []),
+            getImportQueueStatsFromD1(env).catch(() => ({ pending: 0, processing: 0, done: 0, failed: 0, total: 0 })),
+            getFolders(env, playlistChatId).catch(() => []),
+            getSavedList(env, playlistChatId).catch(() => []),
+            listMediaReportsFromD1(env, "all").catch(() => []),
+            computeSeriesGapsOverview(env).catch(() => ({ totalSeriesChecked: 0, incompleteSeriesCount: 0, totalMissingEpisodes: 0, seriesList: [] }))
           ]);
-          const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems);
+          const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || []);
           const playlists = (targetFolders || []).map(f => ({
             ...f,
             enabled: f.enabled !== false,
@@ -566,7 +580,8 @@
               chatId: targetChatId,
               folderId: playlistFolder.id,
               playlistName: playlistFolder.name,
-              playlistMode: playlistFolder.playlistMode || playlistMode
+              playlistMode: playlistFolder.playlistMode || playlistMode,
+              deferKvWrite: Boolean(body.deferKvWrite)
             }
           );
           return new Response(JSON.stringify({

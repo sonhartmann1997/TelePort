@@ -1168,12 +1168,29 @@
     });
   }
 
-  async function saveRawList(env, chatId, list) {
+  async function saveRawList(env, chatId, list, options = {}) {
     memoryFallback.set(`user_${chatId}`, list);
     try {
       if (env.MOVIE_SAVED) {
+        const deferKv = Boolean(options?.deferKvWrite);
+        const forceKv = Boolean(options?.forceKvWrite);
+        const deferKey = `kv_defer_cnt_user_${chatId}`;
+        if (deferKv && !forceKv) {
+          const cnt = Number(memoryFallback.get(deferKey) || 0) + 1;
+          if (cnt < 15) {
+            memoryFallback.set(deferKey, cnt);
+            return;
+          }
+        }
+        memoryFallback.set(deferKey, 0);
+        const jsonStr = JSON.stringify(list);
+        const lastJsonKey = `kv_last_json_user_${chatId}`;
+        if (!forceKv && memoryFallback.get(lastJsonKey) === jsonStr) {
+          return;
+        }
+        memoryFallback.set(lastJsonKey, jsonStr);
         trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(`user_${chatId}`, JSON.stringify(list));
+        await env.MOVIE_SAVED.put(`user_${chatId}`, jsonStr);
       }
     } catch (e) {}
   }
@@ -1188,18 +1205,25 @@
         const data = await env.MOVIE_SAVED.get(`folders_${chatId}`);
         const parsed = data ? JSON.parse(data) : [];
         memoryFallback.set(`folders_${chatId}`, parsed);
+        if (data) memoryFallback.set(`kv_last_json_folders_${chatId}`, data);
         return parsed;
       }
     } catch (e) {}
     return [];
   }
 
-  async function saveFolders(env, chatId, folders) {
+  async function saveFolders(env, chatId, folders, options = {}) {
     memoryFallback.set(`folders_${chatId}`, folders);
     try {
       if (env.MOVIE_SAVED) {
+        const jsonStr = JSON.stringify(folders);
+        const lastJsonKey = `kv_last_json_folders_${chatId}`;
+        if (!options?.forceKvWrite && memoryFallback.get(lastJsonKey) === jsonStr) {
+          return;
+        }
+        memoryFallback.set(lastJsonKey, jsonStr);
         trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(`folders_${chatId}`, JSON.stringify(folders));
+        await env.MOVIE_SAVED.put(`folders_${chatId}`, jsonStr);
       }
     } catch (e) {}
   }
@@ -1513,34 +1537,47 @@
     let list = Array.isArray(rawItems) ? rawItems : await getSavedList(env, chatId);
     if (!Array.isArray(list) || list.length === 0) return [];
     let changed = false;
-    const epMap = await getAllSeriesEpisodesMapFromD1(env);
-    const db = await ensureD1Schema(env);
+    const now = Date.now();
+    let epMap = memoryFallback.get("d1_all_series_ep_map_cache");
+    const epMapTs = Number(memoryFallback.get("d1_all_series_ep_map_cache_ts") || 0);
+    if (!(epMap instanceof Map) || (now - epMapTs) > 90000) {
+      epMap = await getAllSeriesEpisodesMapFromD1(env);
+      memoryFallback.set("d1_all_series_ep_map_cache", epMap);
+      memoryFallback.set("d1_all_series_ep_map_cache_ts", now);
+    }
 
-    // Map aus D1 movies & series für fehlende Poster
-    const posterLookup = new Map();
-    if (db) {
-      try {
-        const [mRows, sRows] = await Promise.all([
-          db.prepare("SELECT tmdb_id, poster_path, details_json FROM movies LIMIT 500").all().catch(() => ({ results: [] })),
-          db.prepare("SELECT tmdb_id, poster_path, details_json FROM series LIMIT 500").all().catch(() => ({ results: [] }))
-        ]);
-        for (const r of (mRows?.results || [])) {
-          let ext = "";
-          if (!r.poster_path && r.details_json) {
-            try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+    // Map aus D1 movies & series für fehlende Poster (3 Minuten im RAM gecacht, spart 1.000 D1-Reads pro Admin-Tab-Klick)
+    let posterLookup = memoryFallback.get("d1_poster_lookup_cache");
+    const posterLookupTs = Number(memoryFallback.get("d1_poster_lookup_cache_ts") || 0);
+    if (!(posterLookup instanceof Map) || (now - posterLookupTs) > 180000) {
+      posterLookup = new Map();
+      const db = await ensureD1Schema(env);
+      if (db) {
+        try {
+          const [mRows, sRows] = await Promise.all([
+            db.prepare("SELECT tmdb_id, poster_path, details_json FROM movies LIMIT 500").all().catch(() => ({ results: [] })),
+            db.prepare("SELECT tmdb_id, poster_path, details_json FROM series LIMIT 500").all().catch(() => ({ results: [] }))
+          ]);
+          for (const r of (mRows?.results || [])) {
+            let ext = "";
+            if (!r.poster_path && r.details_json) {
+              try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+            }
+            const p = resolvePosterUrl(r.poster_path, "w185", ext);
+            if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
           }
-          const p = resolvePosterUrl(r.poster_path, "w185", ext);
-          if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
-        }
-        for (const r of (sRows?.results || [])) {
-          let ext = "";
-          if (!r.poster_path && r.details_json) {
-            try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+          for (const r of (sRows?.results || [])) {
+            let ext = "";
+            if (!r.poster_path && r.details_json) {
+              try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+            }
+            const p = resolvePosterUrl(r.poster_path, "w185", ext);
+            if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
           }
-          const p = resolvePosterUrl(r.poster_path, "w185", ext);
-          if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
-        }
-      } catch (e) {}
+          memoryFallback.set("d1_poster_lookup_cache", posterLookup);
+          memoryFallback.set("d1_poster_lookup_cache_ts", now);
+        } catch (e) {}
+      }
     }
 
     for (const item of list) {
@@ -1822,6 +1859,7 @@
     if (changed) {
       await saveRawList(env, "bot_vip", list);
     }
+    memoryFallback.set("last_bot_vip_sync_ts", Date.now());
 
     const nextOffset = safeOffset + sliceEntries.length;
     return {
@@ -1837,6 +1875,13 @@
   }
 
   async function ensureBotVipDefaultPlaylist(env, options = {}) {
+    const now = Date.now();
+    const lastSyncTs = Number(memoryFallback.get("last_bot_vip_sync_ts") || 0);
+    if (!options?.forceSync && lastSyncTs > 0 && (now - lastSyncTs) < 180000) {
+      const folders = await getFolders(env, "bot_vip");
+      const existingMain = folders.find(f => f.type === "playlist" || f.isJsonPlaylist) || folders[0] || null;
+      if (existingMain) return existingMain;
+    }
     const res = await syncD1CatalogIntoBotVipPlaylist(env, null, options);
     return res.mainFolder;
   }
@@ -2208,6 +2253,7 @@
     const modeStr = typeof playlistMode === "object" && playlistMode !== null
       ? String(playlistMode.playlistMode || "both")
       : String(playlistMode || "both");
+    const deferKvWrite = Boolean(typeof playlistMode === "object" && playlistMode !== null && playlistMode.deferKvWrite);
     try {
       let list = await getSavedList(env, chatId);
       let addedCount = 0;
@@ -2288,7 +2334,7 @@
         changedAny = true;
       }
       if (changedAny) {
-        await saveRawList(env, chatId, list);
+        await saveRawList(env, chatId, list, { deferKvWrite });
       }
       return addedCount;
     } catch (e) {

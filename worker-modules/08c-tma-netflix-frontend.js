@@ -1259,7 +1259,7 @@
         return null;
       }
 
-      function saveBackupCheckpointClient() {
+      function saveBackupCheckpointClient(forceServerSync = false) {
         if (!backupImportJob.entries || !backupImportJob.entries.length) return;
         const cp = {
           fileSignature: backupImportJob.fileSignature || (backupImportJob.fileName + "::" + backupImportJob.entries.length),
@@ -1282,11 +1282,15 @@
         try {
           localStorage.setItem(BACKUP_CHECKPOINT_STORAGE_KEY, JSON.stringify(cp));
         } catch (e) {}
-        apiFetchJson(API_BASE + "/admin/import-checkpoint", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ checkpoint: cp })
-        }).catch(() => {});
+        backupImportJob._cpSyncStep = Number(backupImportJob._cpSyncStep || 0) + 1;
+        const shouldSyncServer = Boolean(forceServerSync) || (backupImportJob._cpSyncStep % 20 === 0) || (cp.cursor >= cp.totalEntries);
+        if (shouldSyncServer) {
+          apiFetchJson(API_BASE + "/admin/import-checkpoint", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ checkpoint: cp, forceKv: Boolean(forceServerSync) })
+          }).catch(() => {});
+        }
       }
 
       function clearBackupCheckpointClient() {
@@ -2858,6 +2862,9 @@
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
           const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
           const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
+          const isFinalBatch = (backupImportJob.cursor + effectiveBatchSize) >= backupImportJob.entries.length;
+          const batchSeqNum = Math.floor(backupImportJob.cursor / DEFAULT_BATCH_SIZE) + 1;
+          const deferKvWrite = !isFinalBatch && (batchSeqNum % 15 !== 0);
           let hadRateWarning = false;
           try {
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
@@ -2870,7 +2877,8 @@
                 playlistMode: backupImportJob.playlistMode || "both",
                 playlistFolderId: backupImportJob.playlistFolderId || null,
                 targetChatId: backupImportJob.targetPlaylistChatId || chatId,
-                sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName
+                sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
+                deferKvWrite
               })
             });
             if (r && r.ok) {
@@ -2996,7 +3004,7 @@
       function pauseBackupImport() {
         backupImportJob.paused = true;
         backupImportJob.running = false;
-        saveBackupCheckpointClient();
+        saveBackupCheckpointClient(true);
         showHudToast("⏸️ Pausiert & Checkpoint bei #" + backupImportJob.cursor + " gespeichert.");
         renderBackupImportBoxDom();
       }

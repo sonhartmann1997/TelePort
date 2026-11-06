@@ -215,7 +215,15 @@
             type_code TEXT,
             details_json TEXT,
             created_at INTEGER NOT NULL
-          )`)
+          )`),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_movie_id ON movie_files(movie_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_fid ON movie_files(telegram_file_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_episode_files_series_ep ON episode_files(series_id, season_number, episode_number)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_episode_files_fid ON episode_files(telegram_file_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_series_episodes_series ON series_episodes(series_id, season_number)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_media_reports_status ON media_reports(status, created_at)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_status ON import_diagnostic_logs(status, id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_msg ON import_diagnostic_logs(msg_id)")
         ]);
         // Subrequest-sparende Auto-Migration: Prüfe in 1 einziger Abfrage sqlite_master und führe fehlende Spalten gebündelt per db.batch aus
         try {
@@ -264,7 +272,7 @@
   }
 
   // Persistentes Diagnose-Log (D1 + Memory-Fallback) für das Admin-Dashboard [ 🛠️ Diagnose-Log ]
-  async function saveImportDiagnosticLogsToD1(env, logsArray) {
+  async function saveImportDiagnosticLogsToD1(env, logsArray, options = {}) {
     if (!Array.isArray(logsArray) || logsArray.length === 0) return;
     const now = Date.now();
     const memKey = "d1_import_diagnostic_logs";
@@ -290,12 +298,19 @@
     const mergedMem = [...normalizedBatch, ...existingMem].slice(0, 2500);
     memoryFallback.set(memKey, mergedMem);
 
+    // D1-Write-Quota-Schutz: Im RAM bleiben alle 2.500 Einträge (inkl. OK & SKIPPED_DUPLICATE) sofort sichtbar.
+    // In D1 werden dauerhaft bevorzugt Konflikte, Fehler, Nicht-Gefunden und Vorabversionen gespeichert (spart ~85% D1-Writes beim Massen-Import!).
+    const d1ToPersist = options?.persistAll
+      ? normalizedBatch
+      : normalizedBatch.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE" && l.status !== "SKIPPED_HEADER" && l.status !== "SKIPPED_JUNK");
+    if (d1ToPersist.length === 0) return;
+
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
       const chunkSize = 40;
-      for (let i = 0; i < normalizedBatch.length; i += chunkSize) {
-        const slice = normalizedBatch.slice(i, i + chunkSize);
+      for (let i = 0; i < d1ToPersist.length; i += chunkSize) {
+        const slice = d1ToPersist.slice(i, i + chunkSize);
         const stmts = slice.map(l =>
           db.prepare(`INSERT INTO import_diagnostic_logs (
             msg_id, stage, status, reason, file_name, text_preview, parsed_title,
@@ -324,16 +339,21 @@
   }
 
   async function listImportDiagnosticLogsFromD1(env, filterStatus = "ALL", searchQuery = "", limit = 1500) {
+    if (filterStatus && typeof filterStatus === "object") {
+      searchQuery = filterStatus.search || filterStatus.searchQuery || "";
+      limit = filterStatus.limit || 1500;
+      filterStatus = filterStatus.statusFilter || filterStatus.filterStatus || "ALL";
+    }
     const db = await ensureD1Schema(env);
-    let rows = [];
+    let d1Rows = [];
     if (db) {
       try {
         const res = await db
           .prepare("SELECT * FROM import_diagnostic_logs ORDER BY id DESC LIMIT ?1")
-          .bind(Math.min(2500, Math.max(50, Number(limit) || 1500)))
+          .bind(Math.min(1000, Math.max(50, Number(limit) || 600)))
           .all();
         if (Array.isArray(res?.results)) {
-          rows = res.results.map(r => {
+          d1Rows = res.results.map(r => {
             let details = {};
             try {
               if (r.details_json) details = JSON.parse(r.details_json);
@@ -360,10 +380,18 @@
         }
       } catch (e) {}
     }
-    if (rows.length === 0) {
-      const mem = memoryFallback.get("d1_import_diagnostic_logs");
-      if (Array.isArray(mem)) rows = mem;
+    const memRows = Array.isArray(memoryFallback.get("d1_import_diagnostic_logs"))
+      ? memoryFallback.get("d1_import_diagnostic_logs")
+      : [];
+    const mergedMap = new Map();
+    for (const r of [...memRows, ...d1Rows]) {
+      if (!r) continue;
+      const dedupeKey = `${r.msgId || ""}|${r.fileName || ""}|${r.parsedTitle || ""}|${r.season || ""}|${r.episode || ""}`;
+      if (!mergedMap.has(dedupeKey)) {
+        mergedMap.set(dedupeKey, r);
+      }
     }
+    const rows = Array.from(mergedMap.values()).sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
 
     const counts = {
       total: rows.length,
@@ -624,7 +652,14 @@
     existingMem.first_name = firstName || existingMem.first_name;
     if (adminFlag) existingMem.is_admin = 1;
     existingMem.last_seen_at = now;
+    existingMem._cachedAt = now;
     memoryFallback.set(memKey, existingMem);
+
+    // RAM-First Debounce: Wenn derselbe User in den letzten 10 Minuten bereits in D1 synchronisiert wurde,
+    // spare den D1-Write + D1-Read bei wiederkehrenden Requests komplett ein!
+    if (existingMem._d1SyncedAt && (now - Number(existingMem._d1SyncedAt)) < 600000) {
+      return formatUserRowForClient(existingMem, env);
+    }
 
     const db = await ensureD1Schema(env);
     if (db) {
@@ -647,6 +682,8 @@
           .bind(telegramId)
           .first();
         if (row) {
+          row._cachedAt = now;
+          row._d1SyncedAt = now;
           memoryFallback.set(memKey, row);
           if (row.custom_username) memoryFallback.set(`d1_username_${String(row.custom_username).toLowerCase()}`, telegramId);
           return formatUserRowForClient(row, env);
@@ -656,9 +693,15 @@
     return formatUserRowForClient(existingMem, env);
   }
 
-  async function getUserByTelegramIdFromD1(env, telegramId) {
+  async function getUserByTelegramIdFromD1(env, telegramId, forceFresh = false) {
     if (!telegramId || telegramId === "guest") return null;
     const tid = String(telegramId);
+    const memKey = `d1_user_${tid}`;
+    const cached = memoryFallback.get(memKey);
+    // RAM-First Cache (5 Minuten gültig): Verhindert einen D1-Read bei jedem einzelnen /api/tma/* Aufruf!
+    if (!forceFresh && cached && cached.telegram_id && (Date.now() - Number(cached._cachedAt || 0)) < 300000) {
+      return cached;
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -668,12 +711,14 @@
           .bind(tid)
           .first();
         if (row) {
-          memoryFallback.set(`d1_user_${tid}`, row);
+          row._cachedAt = Date.now();
+          row._d1SyncedAt = Date.now();
+          memoryFallback.set(memKey, row);
           return row;
         }
       } catch (e) {}
     }
-    return memoryFallback.get(`d1_user_${tid}`) || null;
+    return cached || null;
   }
 
   async function getUserByCustomUsernameFromD1(env, customUsername) {
@@ -1491,10 +1536,12 @@
     const incomingIsPrerelease = isPrereleaseOrMicDub(rawCaption, rawFilename, fileInfo.tags || "");
 
     const memKey = `d1_movie_files_${mid}`;
+    const memLoadedTsKey = `d1_movie_files_ts_${mid}`;
     let existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
     const db = await ensureD1Schema(env);
     let existingDbRows = [];
-    if (db) {
+    const memFresh = existingMem.length > 0 && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 180000;
+    if (db && !memFresh) {
       try {
         const res = await db
           .prepare("SELECT id, telegram_file_id, quality, codec, part, tags, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id = ?1")
@@ -1559,6 +1606,7 @@
       ...existingMem.filter(x => x && x.telegram_file_id !== entry.telegram_file_id && (!entry.telegram_unique_id || x.telegram_unique_id !== entry.telegram_unique_id))
     ]);
     memoryFallback.set(memKey, nextMem);
+    memoryFallback.set(memLoadedTsKey, Date.now());
 
     if (!db) return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
     try {
@@ -1633,6 +1681,12 @@
   async function getMovieFilesFromD1(env, movieId) {
     if (!movieId) return [];
     const mid = Number(movieId);
+    const memKey = `d1_movie_files_${mid}`;
+    const memLoadedTsKey = `d1_movie_files_ts_${mid}`;
+    const memFiles = memoryFallback.get(memKey);
+    if (Array.isArray(memFiles) && memFiles.length > 0 && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 180000) {
+      return sortAndDedupeStreamFiles(memFiles.map(enrichStreamFileRowMeta));
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -1642,11 +1696,13 @@
           .bind(mid)
           .all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
-          return sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+          const sorted = sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+          memoryFallback.set(memKey, sorted);
+          memoryFallback.set(memLoadedTsKey, Date.now());
+          return sorted;
         }
       } catch (e) {}
     }
-    const memFiles = memoryFallback.get(`d1_movie_files_${mid}`);
     return Array.isArray(memFiles) ? sortAndDedupeStreamFiles(memFiles.map(enrichStreamFileRowMeta)) : [];
   }
 
@@ -1667,10 +1723,13 @@
     const incomingIsPrerelease = isPrereleaseOrMicDub(rawCaption, rawFilename, fileInfo.tags || fileInfo.versionLabel || "");
 
     const memKey = `d1_ep_files_${sid}_${sNum}`;
+    const memEpTsKey = `d1_ep_files_ts_${sid}_${sNum}_${eNum}`;
     let existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
+    const memEpRows = existingMem.filter(x => x && Number(x.episode_number) === eNum);
+    const memEpFresh = memEpRows.length > 0 && (Date.now() - Number(memoryFallback.get(memEpTsKey) || 0)) < 180000;
     const db = await ensureD1Schema(env);
     let existingDbRows = [];
-    if (db) {
+    if (db && !memEpFresh) {
       try {
         const res = await db
           .prepare("SELECT id, telegram_file_id, quality, codec, part, tags, version_label, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3")
@@ -1682,7 +1741,7 @@
 
     const allExistingEpRows = [
       ...existingDbRows,
-      ...existingMem.filter(x => x && Number(x.episode_number) === eNum)
+      ...memEpRows
     ];
     const hasCleanExisting = allExistingEpRows.some(r => r && r.telegram_file_id !== normalizedFid && !isPrereleaseOrMicDub(r.raw_caption, r.raw_filename, r.tags || r.version_label));
 
@@ -1742,7 +1801,9 @@
     ]);
     const otherEps = existingMem.filter(x => x && Number(x.episode_number) !== eNum);
     memoryFallback.set(memKey, [...sameEpDeduped, ...otherEps]);
+    memoryFallback.set(memEpTsKey, Date.now());
     memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
+    memoryFallback.delete("d1_series_gaps_cache");
 
     const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped));
 
@@ -2035,7 +2096,13 @@
   }
 
   // Automatische Bereinigung (Cleanup): Löscht alle Serien aus D1 & Memory-Fallback, die 0 gültige Episoden mit verknüpfter Videodatei haben
-  async function cleanupEmptySeriesInD1AndMemory(env) {
+  async function cleanupEmptySeriesInD1AndMemory(env, forceRun = false) {
+    const now = Date.now();
+    const lastCleanupTs = Number(memoryFallback.get("last_empty_series_cleanup_ts") || 0);
+    if (!forceRun && lastCleanupTs > 0 && (now - lastCleanupTs) < 300000) {
+      return 0;
+    }
+    memoryFallback.set("last_empty_series_cleanup_ts", now);
     let removedSeriesCount = 0;
     const db = await ensureD1Schema(env);
     if (db) {
@@ -2426,7 +2493,11 @@
   }
 
   // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03; Priorität 2: Fehlende Folgen bis Staffelende)
-  async function computeSeriesGapsOverview(env) {
+  async function computeSeriesGapsOverview(env, forceRefresh = false) {
+    const cachedGaps = memoryFallback.get("d1_series_gaps_cache");
+    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 180000) {
+      return cachedGaps.data;
+    }
     const db = await ensureD1Schema(env);
     const seriesMap = new Map();
     const seasonMetaBySeries = new Map();
@@ -2664,7 +2735,7 @@
       return String(a.title || "").localeCompare(String(b.title || ""), "de");
     });
 
-    return {
+    const resultObj = {
       totalSeriesWithGaps: seriesGapsList.length,
       totalSeriesWithInternalGaps,
       totalSeriesWithMultiEpisodeGaps,
@@ -2672,22 +2743,44 @@
       totalTrailingMissingEpisodes,
       series: seriesGapsList
     };
+    memoryFallback.set("d1_series_gaps_cache", { ts: Date.now(), data: resultObj });
+    return resultObj;
   }
 
   async function getEpisodeFilesFromD1(env, seriesId, seasonNumber, episodeNumber = null) {
     if (!seriesId) return [];
     const sid = Number(seriesId);
     const sNum = Number(seasonNumber || 1);
+    const memKey = `d1_ep_files_${sid}_${sNum}`;
+    if (episodeNumber !== null) {
+      const eNum = Number(episodeNumber);
+      const memEpTsKey = `d1_ep_files_ts_${sid}_${sNum}_${eNum}`;
+      const memFiles = memoryFallback.get(memKey);
+      if (Array.isArray(memFiles) && (Date.now() - Number(memoryFallback.get(memEpTsKey) || 0)) < 180000) {
+        const filtered = memFiles.filter(f => Number(f.episode_number) === eNum);
+        if (filtered.length > 0) {
+          return sortAndDedupeStreamFiles(filtered.map(enrichStreamFileRowMeta));
+        }
+      }
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Reads");
         if (episodeNumber !== null) {
+          const eNum = Number(episodeNumber);
           const res = await db
             .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 ORDER BY updated_at DESC")
-            .bind(sid, sNum, Number(episodeNumber))
+            .bind(sid, sNum, eNum)
             .all();
-          if (Array.isArray(res?.results) && res.results.length > 0) return sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+          if (Array.isArray(res?.results) && res.results.length > 0) {
+            const sorted = sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+            const existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
+            const otherEps = existingMem.filter(x => x && Number(x.episode_number) !== eNum);
+            memoryFallback.set(memKey, [...sorted, ...otherEps]);
+            memoryFallback.set(`d1_ep_files_ts_${sid}_${sNum}_${eNum}`, Date.now());
+            return sorted;
+          }
         } else {
           const resAll = await db
             .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 ORDER BY episode_number ASC, updated_at DESC")
@@ -2701,15 +2794,17 @@
               byEp.get(epKey).push(row);
             }
             const merged = [];
-            for (const [, epRows] of byEp.entries()) {
+            for (const [epKey, epRows] of byEp.entries()) {
               merged.push(...sortAndDedupeStreamFiles(epRows));
+              memoryFallback.set(`d1_ep_files_ts_${sid}_${sNum}_${epKey}`, Date.now());
             }
+            memoryFallback.set(memKey, merged);
             return merged;
           }
         }
       } catch (e) {}
     }
-    const memFiles = memoryFallback.get(`d1_ep_files_${sid}_${sNum}`);
+    const memFiles = memoryFallback.get(memKey);
     if (!Array.isArray(memFiles)) return [];
     if (episodeNumber !== null) {
       return sortAndDedupeStreamFiles(memFiles.filter(f => Number(f.episode_number) === Number(episodeNumber)).map(enrichStreamFileRowMeta));
@@ -2951,13 +3046,19 @@
   }
 
   async function getMovieFromD1(env, movieId) {
+    if (!movieId) return null;
+    const mid = Number(movieId);
+    const memMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
+    if (memMovie && memMovie.title) {
+      return memMovie;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !movieId) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
         .prepare("SELECT telegraph_url, details_json, updated_at FROM movies WHERE tmdb_id = ?1")
-        .bind(Number(movieId))
+        .bind(mid)
         .first();
       if (!row || !row.details_json) return null;
       if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
@@ -2966,6 +3067,7 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        memoryFallback.set(`d1_catalog_movie_${mid}`, parsed);
         trackStat("d1Hits");
         return parsed;
       }
@@ -2975,7 +3077,14 @@
 
   async function saveMovieToD1(env, movieObj) {
     if (!movieObj || !movieObj.id) return;
-    memoryFallback.set(`d1_catalog_movie_${Number(movieObj.id)}`, movieObj);
+    const mid = Number(movieObj.id);
+    const prevSavedTs = Number(memoryFallback.get(`d1_movie_saved_ts_${mid}`) || 0);
+    const prevMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
+    memoryFallback.set(`d1_catalog_movie_${mid}`, movieObj);
+    // Wenn derselbe Film in den letzten 10 Minuten bereits in D1 gespeichert wurde und sich das Poster nicht geändert hat, spare den redundanten D1-Write!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevMovie && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
+      return;
+    }
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -2993,7 +3102,7 @@
           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
         )`)
         .bind(
-          Number(movieObj.id),
+          mid,
           String(movieObj.title || "Unbekannt"),
           String(movieObj.releaseDate || "Keine Angabe"),
           releaseYear,
@@ -3017,17 +3126,24 @@
           Date.now()
         )
         .run();
+      memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
     } catch (e) {}
   }
 
   async function getSeriesFromD1(env, seriesId) {
+    if (!seriesId) return null;
+    const sid = Number(seriesId);
+    const memSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
+    if (memSeries && memSeries.title) {
+      return memSeries;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !seriesId) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
         .prepare("SELECT telegraph_url, details_json, updated_at FROM series WHERE tmdb_id = ?1")
-        .bind(Number(seriesId))
+        .bind(sid)
         .first();
       if (!row || !row.details_json) return null;
       if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
@@ -3036,6 +3152,7 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        memoryFallback.set(`d1_catalog_series_${sid}`, parsed);
         trackStat("d1Hits");
         return parsed;
       }
@@ -3081,7 +3198,14 @@
   async function saveSeriesToD1(env, seriesObj) {
     if (!seriesObj || !seriesObj.id) return;
     const sid = Number(seriesObj.id);
+    const prevSavedTs = Number(memoryFallback.get(`d1_series_saved_ts_${sid}`) || 0);
+    const prevSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
     memoryFallback.set(`d1_catalog_series_${sid}`, seriesObj);
+    // Wenn dieselbe Serie in den letzten 10 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E03)
+    // und sich weder Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevSeries && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
+      return;
+    }
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -3149,17 +3273,25 @@
         }
       }
       await db.batch(stmts);
+      memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
     } catch (e) {}
   }
 
   async function getSeasonFromD1(env, seriesId, seasonNumber) {
+    if (!seriesId) return null;
+    const sid = Number(seriesId);
+    const sNum = Number(seasonNumber);
+    const memSeason = getCachedTmdb(`tv_season_${sid}_${sNum}`);
+    if (memSeason && Array.isArray(memSeason.episodes)) {
+      return memSeason;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !seriesId) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
         .prepare("SELECT telegraph_url, episodes_json, updated_at FROM series_seasons WHERE series_id = ?1 AND season_number = ?2")
-        .bind(Number(seriesId), Number(seasonNumber))
+        .bind(sid, sNum)
         .first();
       if (!row || !row.episodes_json) return null;
       if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
@@ -3168,6 +3300,7 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        setCachedTmdb(`tv_season_${sid}_${sNum}`, parsed);
         trackStat("d1Hits");
         return parsed;
       }
@@ -3176,8 +3309,16 @@
   }
 
   async function saveSeasonToD1(env, seriesId, seasonNumber, seasonObj) {
+    if (!seriesId || !seasonObj) return;
+    const sid = Number(seriesId);
+    const sNum = Number(seasonNumber);
+    const prevSavedTs = Number(memoryFallback.get(`d1_season_saved_ts_${sid}_${sNum}`) || 0);
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && !seasonObj.telegraphUrl) {
+      return;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !seriesId || !seasonObj) return;
+    if (!db) return;
+    memoryFallback.set(`d1_season_saved_ts_${sid}_${sNum}`, Date.now());
     try {
       trackStat("d1Writes");
       const rawMaxEpCount = Number(seasonObj.seasonEpisodeCount || (Array.isArray(seasonObj.episodes) ? seasonObj.episodes.length : 0));

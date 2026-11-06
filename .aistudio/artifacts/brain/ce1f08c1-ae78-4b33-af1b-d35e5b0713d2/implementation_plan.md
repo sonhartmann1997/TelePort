@@ -1,57 +1,87 @@
-# Implementierungsplan: 2-Stufen-Film-Erkennung (`enrichVideoFromNeighborPost` + `pickBestTMDbMovie`) & `E.T.` Kurztitel-Regel
+# Cloudflare API-, D1- & KV-Quota-Optimierung (Kein Tageslimit-Lockout mehr)
 
-## Zielsetzung
-1. **Stufe 1 – Nachbar-Post-Anreicherung (`+1`, `-1`, `+2`, `-2`) mit Basiswort-Schutz (`enrichVideoFromNeighborPost`)**:
-   - Bei Videos mit Kurztiteln wie `Arielle 2023` steht das Poster samt vollständigem Filmtitel (`Disneys Arielle, die Meerjungfrau`) und der Handlungsbeschreibung im Telegram-Kanal oft im Post **direkt unter dem Video (`index + 1`)**, während direkt darüber (`index - 1`) noch der Text des vorherigen Films (`Tin & Tina 2023`) steht.
-   - Der Parser prüft deshalb Nachbar-Posts in der Reihenfolge `[+1, -1, +2, -2]` (sofern der Nachbar kein eigenes Video ist):
-     - Studio-Präfixe am Zeilenanfang (`Disneys`, `Disney's`, `Marvels`, `Marvel's`, `Pixars`, `Pixar's`) werden entfernt (`"Disneys Arielle, die Meerjungfrau"` $\rightarrow$ `"Arielle, die Meerjungfrau"`).
-     - **Harter Sicherheits-Check (`baseWord`)**: Das erste Hauptwort des Video-Kurztitels (mind. 3 Zeichen, ohne Artikel/Studio-Präfix, z. B. `"arielle"`) **muss** in der ersten Zeile des Nachbar-Posts vorkommen. Dadurch werden fremde Nachbar-Posts wie `"Tin & Tina 2023"` (`-1`) sofort ausgeschlossen.
-     - **Jahres-Abgleich**: Falls sowohl Video als auch Nachbar-Post eine Jahreszahl nennen, müssen diese übereinstimmen (`parsedVideo.year === neighborYear`).
-     - **Übernahme**: Der angereicherte Langtitel (ohne angehängte Jahreszahl), das Jahr sowie der gesamte Beschreibungstext (`contextOverview = lines.slice(1).join(" ")`) werden am Eintrag gespeichert und an die TMDb-Suche übergeben.
+Dieser Plan behebt die vier Hauptursachen im Code, die bisher deine täglichen Cloudflare-Kontingente (5 Mio. D1-Reads, 100k D1-Writes, 1.000 KV-Writes und 100k Worker-Requests) vorzeitig aufgebraucht und das Admin-Panel am Ende des Tages blockiert haben.
 
-2. **Stufe 2 – Intelligentes TMDb-Kandidaten-Scoring (`pickBestTMDbMovie`)**:
-   - Statt bei `/search/movie` blind `results[0]` oder nur einen reinen Titel-/Jahres-Treffer zu nehmen, werden alle Kandidaten mit `pickBestTMDbMovie(results, parsedItem)` bewertet:
-     1. **Jahres-Check**: Exaktes Jahr (`diff === 0`) gibt `+40` Punkte, `diff === 1` gibt `+15` Punkte, größere Abweichungen werden mit `-diff * 25` hart abgestraft.
-     2. **Titel-Genauigkeit**: Exakter Match mit dem (angereicherten) Titel (`title` oder `original_title`) gibt `+50` Punkte, `startsWith` gibt `+30` Punkte, `includes` gibt `+15` Punkte.
-     3. **Beschreibungs-Fingerabdruck (`contextOverview` vs. TMDb `overview`)**: Alle signifikanten Wörter (`length >= 5`, z. B. `"meerjungfrau"`, `"lieblingstochter"`, `"triton"`, `"halle"`, `"bailey"`) aus dem Telegram-Nachbar-Post werden mit `movie.overview` von TMDb abgeglichen. Jedes gemeinsame Wort bringt `+20` Punkte (bis zu `+100` Punkte).
-     4. **Bekanntheits- / Blockbuster-Bonus (`vote_count`)**: Schützt zuverlässig vor billigen Mockbustern oder obskuren Doppelgängern aus demselben Jahr (`votes > 1000` $\rightarrow$ `+35`, `votes > 200` $\rightarrow$ `+20`, `votes > 50` $\rightarrow$ `+10`, `votes < 10` $\rightarrow$ `-15`).
+## User Review & Critical Decisions
 
-3. **Gezielte Kurztitel-Erkennung für `E.T.` / `ET` (1982)**:
-   - Ohne die bestehende Parsing-Logik zu verändern, wird eine gezielte Kurztitel- und Alias-Regel für `E.T.` (`E.T. - Der Außerirdische`, `E.T.`, `ET 1982`, `E.T. 1982`) eingebaut, die direkt auf `"E.T. – Der Außerirdische"` (1982, TMDb `#601`) auflöst und in `cleanMediaTitle` nicht an der 3-Zeichen-Mindestlänge scheitert.
+> [!IMPORTANT]
+> **Warum das Tageslimit bisher explodiert ist (Code-Diagnose):**
+> 1. **Fehlende SQLite-Indizes in D1 (Full-Table-Scans):** In `movie_files`, `episode_files` und `series_episodes` fehlten Sekundär-Indizes auf `movie_id`, `series_id` und `telegram_file_id`. Dadurch hat D1 bei **jeder einzelnen Episoden-Speicherung** die komplette Tabelle (tausende Zeilen × 6 Abfragen = ~30.000 gelesene Zeilen pro Folge!) komplett durchsucht.
+> 2. **KV-Write-Explosion beim Import (1.000 KV-Writes/Tag Limit):** Jeder 6er-Batch beim JSON-Import hat bisher sofort die riesige `saved_bot_vip`-Liste UND den `import-checkpoint` per `KV.put()` geschrieben. Bei 500 Batches waren das 1.000 `KV.put`-Aufrufe – das komplette Tageslimit von Cloudflare KV!
+> 3. **Schwere Voll-Synchronisation bei jedem Admin-Panel-Öffnen:** `GET /api/tma/admin/overview` hat bei jedem Öffnen automatisch `ensureBotVipDefaultPlaylist` (liest alle Filme, alle Serien und alle Episoden-Dateien + schreibt KV), `cleanupEmptySeriesInD1AndMemory` (Full-Table-Scan `DELETE`) und `computeSeriesGapsOverview` ausgeführt.
+> 4. **Redundante Serien-Writes pro Folge:** Beim Import von Staffel 1 (z. B. 20 Folgen) wurde `saveSeriesToD1` (inkl. Staffel-Cleanup-Queries) 20-mal hintereinander für dieselbe Serie ausgeführt statt nur 1-mal.
+
+- **Entscheidung 1 (SQLite-Indizes & RAM-First-Caching):** Wir legen alle fehlenden D1-Indizes automatisch in `ensureD1Schema` an und prüfen bei User-Auth (`getUserByTelegramIdFromD1`), Film-/Serien-Details und Datei-Abfragen immer zuerst den `memoryFallback`-RAM-Cache, bevor D1 abgefragt wird.
+- **Entscheidung 2 (KV-Write-Bremse):** Checkpoints und Playlist-Updates während des laufenden JSON-Imports werden im RAM + Browser-`localStorage` sofort aktualisiert, aber nur noch gebündelt (alle 15 Batches bzw. bei Pause/Abschluss) in Cloudflare KV geschrieben (**-93% KV-Writes**).
+- **Entscheidung 3 (Admin-Notfallzugang bei erschöpftem Limit):** Falls D1 oder KV am Abend ein Quota-Limit melden, fängt ein **Quota-Fallback-Schutzschild** den Fehler ab und bedient Auth sowie Admin-Panel nahtlos aus dem signierten Session-Token und dem Worker-RAM-Cache.
 
 ---
 
-## Geplante Änderungen im Detail
+## 1. Overview & Core Concept
 
-### 1. `/worker-modules/02-parser-ingester.js`
-- **`enrichVideoFromNeighborPost(messages, currentIndex, parsedVideo)`**:
-  - Implementierung der Nachbar-Post-Prüfung in der Reihenfolge `[1, -1, 2, -2]`.
-  - Extrahiert `baseWord` (ohne führende Artikel `der|die|das|the|a|disneys|disney's`), prüft `firstLine.toLowerCase().includes(baseWord)` und die Jahreskompatibilität, entfernt Studio-Präfixe (`disney'?s|marvel'?s|pixar'?s`) und speichert `title`, `year` und `contextOverview`.
-- **Gezielte `E.T.`-Kurztitel-Unterstützung**:
-  - Ergänzung in `MOVIE_COLLECTION_ALIASES` / Kurztitel-Erkennung in `cleanMediaTitle` und `parseMediaFilename`, sodass Dateinamen wie `E.T. 1982.mp4`, `ET 1982.mp4`, `E.T. - Der Ausserirdische.mp4` oder `E.T..mkv` sauber als `"E.T. – Der Außerirdische"` (Jahr `1982`, TMDb `#601`) erkannt werden, während alle anderen 2-Buchstaben-Fragmente weiterhin streng gefiltert bleiben.
-
-### 2. `/worker-modules/08c-tma-netflix-frontend.js` (Client-Backup-Parser)
-- **`detectAndParseClientBackupJson` & `streamParseLargeClientBackupFile`**:
-  - Integration von `enrichVideoFromNeighborPost` beim Parsen der Telegram-Nachrichtenliste (`messages`), damit bei Kurztiteln wie `Arielle 2023` direkt im Browser der Post darunter (`+1`) vor dem Post darüber (`-1`) geprüft wird.
-  - Übergabe von `contextOverview` (sowie dem angereicherten `cleanTitle` und `year`) im Entry-Objekt an `/api/tma/admin/import-batch`.
-  - Ergänzung der `E.T.`-Kurztitel-Regel im Client-Pre-Parser (`cleanClientMediaTitle`).
-
-### 3. `/worker-modules/05-tmdb-telegraph.js` & `/worker-modules/07-webhook-callbacks.js` (Server-Parser & TMDb-Scoring)
-- **`detectAndExtractTelegramBackupOrJson` (`/worker-modules/07-webhook-callbacks.js`)**:
-  - Aufruf von `enrichVideoFromNeighborPost(tgMessages, idx, ...)` für jedes erkannte Video, sodass `cleanTitle`, `year` und `contextOverview` aus dem passenden Nachbar-Post (`+1` vor `-1`) angereichert werden.
-  - Weitergabe von `parsed.contextOverview = rawEntry.contextOverview` in `resolveAndIngestMediaEntry`.
-- **`pickBestTMDbMovie(results, parsedItem)` (`/worker-modules/05-tmdb-telegraph.js` & `/worker-modules/07-webhook-callbacks.js`)**:
-  - Einbau der Scoring-Funktion `pickBestTMDbMovie` in die TMDb-Filmsuche (`findOnTMDbWithValidation`, `findOnTMDb` und `searchTmdbCandidatesForImport`).
-  - Berücksichtigung von:
-    - Jahres-Abstand (`+40` / `+15` / `-diff * 25`)
-    - Titel-Genauigkeit (`+50` exakt / `+30` Präfix / `+15` Teilstring, inkl. Bereinigung von `"Disneys "`-Präfixen)
-    - Beschreibungs-Fingerabdruck (`contextOverview`-Wörter $\ge 5$ Zeichen gegen `movie.overview`, bis zu `+100` Punkte)
-    - Bekanntheits-Bonus (`vote_count > 1000` $\rightarrow$ `+35`, `> 200` $\rightarrow$ `+20`, `> 50` $\rightarrow$ `+10`, `< 10` $\rightarrow$ `-15`).
+- **Was wird verbessert:** Drastische Senkung der gelesenen und geschriebenen D1-Zeilen (um ca. **90–95 %**), der KV-Schreibzugriffe (um ca. **90 %**) und der Admin-API-Last, ohne dass Funktionen oder Daten verloren gehen.
+- **Hauptnutzen:** Selbst an Tagen mit riesigen JSON-Importen (tausende Filme & Serien-Episoden) bleibt dein tägliches Cloudflare-Kontingent im grünen Bereich, und das Admin-Panel öffnet jederzeit verzögerungsfrei.
 
 ---
 
-## Verifikation
-- Kompilierung und statische Code-Prüfung mit `compile_applet` und `lint_applet`.
-- Prüfung der Testfälle:
-  - `Arielle 2023` mit `Tin & Tina 2023` in Post `-1` und `Disneys Arielle, die Meerjungfrau` + Beschreibungstext in Post `+1` $\rightarrow$ wählt garantiert den echten Disney-Kinofilm **Arielle, die Meerjungfrau (2023, TMDb #447277)** statt eines 2023er Mockbusters.
-  - `E.T. 1982` / `ET 1982` / `E.T.` $\rightarrow$ wird zuverlässig als **E.T. – Der Außerirdische (1982, TMDb #601)** erkannt.
+## 2. User Experience & Visual Design
+
+- **Sofortiger Admin-Panel-Start:** Das Öffnen des Admin-Panels lädt die Übersicht in einem Bruchteil der bisherigen Zeit, weil keine unaufgeforderten Voll-Scans (`syncD1CatalogIntoBotVipPlaylist`, `cleanupEmptySeries`) mehr bei jedem Tab-Wechsel blockieren.
+- **Ununterbrochener Import ohne KV-Blockade:** Der Batch-Import läuft flüssig durch, ohne nach einigen hundert Einträgen an `KV put limit exceeded` oder `D1 rows read exceeded` zu scheitern.
+- **Gezielte Diagnose-Log-Speicherung:** Um D1-Writes zu schonen, werden im schnellen RAM-Puffer weiterhin alle 2.500 letzten Einträge gehalten, während in die D1-Tabelle `import_diagnostic_logs` bevorzugt relevante Einträge (Konflikte, Fehler, Nicht-Gefunden, Vorabversionen) bzw. kompakte Batches geschrieben werden.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Entscheidung 1: Sekundär-Indizes für alle D1-Fremdschlüssel**
+  - *Gewählter Ansatz:* `CREATE INDEX IF NOT EXISTS` für `idx_movie_files_movie_id`, `idx_movie_files_fid`, `idx_episode_files_series_ep`, `idx_episode_files_fid`, `idx_series_episodes_series`, `idx_media_reports_status` und `idx_diag_logs_msg`.
+  - *Warum:* Cloudflare D1 zählt jede bei einem Query gescannte Zeile gegen das 5-Mio.-Tageslimit. Mit Index liest `WHERE movie_id = ?1` exakt 1–2 Zeilen statt 10.000 Zeilen.
+- **Entscheidung 2: RAM-First User-Auth & gecachte Admin-Übersicht**
+  - *Gewählter Ansatz:* `getUserByTelegramIdFromD1` nutzt einen 5-Minuten-RAM-Cache (`memoryFallback`), sodass nicht jeder einzelne API-Request (`/api/tma/*`) einen D1-Read auf `users` auslöst. Schwere Aufgaben wie `computeSeriesGapsOverview` und `cleanupEmptySeriesInD1AndMemory` werden für 3 Minuten im RAM gecacht bzw. nur bei echten Änderungen invalidiert.
+  - *Warum:* Spart bei normaler App- und Admin-Nutzung über 80 % aller wiederkehrenden D1-Reads.
+- **Entscheidung 3: Gedrosselte KV-Persistierung (Write-Coalescing)**
+  - *Gewählter Ansatz:* Während `/api/tma/admin/import-batch` läuft, wird die KV-Playlist (`saved_bot_vip` / `saved_<chatId>`) im Worker-RAM sofort aktualisiert und nur alle 15 Batches (oder beim letzten Batch / Pause) physisch per `KV.put` geschrieben. Der Client-Checkpoint nutzt primär `localStorage` + Worker-RAM und schreibt nur bei Pause/Stopp oder alle 20 Batches in KV.
+  - *Warum:* Schützt das extrem knappe Cloudflare Free-Tier-Limit von 1.000 `KV.put`-Aufrufen pro Tag.
+
+---
+
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+### Architektur- & Quota-Schutz-Diagramm
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                 Client / Admin-Panel (Browser & TMA)                     │
+│  • Checkpoint bei jedem Batch in localStorage (KV nur alle 20 Batches)   │
+│  • Deduped Admin-Overview Abfrage (kein Doppel-Reload bei Tab-Wechsel)   │
+└────────────────────────────────────┬─────────────────────────────────────┘
+                                     │
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│               Cloudflare Worker API & Quota-Shield (RAM-First)           │
+│  1. Auth-Check: Signiertes Session-Token + 5-Min. RAM-Cache (0 D1-Reads) │
+│  2. Import-Batch:                                                        │
+│     • Serie bereits in D1/RAM? -> Überspringe redundantes saveSeriesToD1 │
+│     • Staffel bereits in D1/RAM? -> Überspringe redundantes saveSeason   │
+│     • Playlist-Sync im RAM -> Physisches KV.put nur alle 15 Batches      │
+│  3. Admin-Overview:                                                      │
+│     • Kein ungefragtes Voll-Sync/DELETE bei jedem GET-Request            │
+│     • Series-Gaps & Katalog-Listen mit Smart-TTL im RAM gecacht          │
+└─────────────────┬────────────────────────────────────────┬───────────────┘
+                  │                                        │
+                  ▼                                        ▼
+┌──────────────────────────────────────┐ ┌─────────────────────────────────┐
+│     Cloudflare D1 (SQLite + Index)   │ │       Cloudflare KV Store       │
+│ • idx_movie_files_movie_id           │ │ • Write-Coalescing (Debounced)  │
+│ • idx_episode_files_series_ep        │ │ • RAM-Fallback falls 1.000/Tag  │
+│ • idx_series_episodes_series         │ │   KV-Put-Limit erreicht ist     │
+│ • 1–2 Rows Read statt Full-Scan!     │ └─────────────────────────────────┘
+└──────────────────────────────────────┘
+```
+
+### Interaktive Komponenten- & Status-Zuordnung
+1. **D1 Schema & Index-Booster:** Beim ersten Zugriff legt `ensureD1Schema` alle 7 Performance-Indizes in einem einzigen `db.batch()` an.
+2. **RAM-First Caching Layer:** `getMovieFromD1`, `getSeriesFromD1`, `getSeasonFromD1`, `getMovieFilesFromD1`, `getEpisodeFilesFromD1` und `getUserByTelegramIdFromD1` prüfen zuerst den Worker-RAM (`memoryFallback`), bevor sie eine D1-Query abfeuern, und aktualisieren den RAM-Cache bei jedem Write.
+3. **Import-Write-Reduktion:** Während eines Serien-Imports wird `saveSeriesToD1` pro Serie nur noch einmal ausgeführt (statt für jede Episode erneut), und `saveSeasonToD1` schreibt nur noch geänderte Staffeln.
+4. **Admin-Panel Quota-Resilienz:** Selbst wenn Cloudflare D1 oder KV einen Rate-/Quota-Fehler wirft, fällt `/api/tma/admin/overview` und `/api/tma/auth/*` niemals mit HTTP 500/503 aus, sondern liefert die im Worker-RAM und Session-Token gehaltenen Admin-Daten zurück.
