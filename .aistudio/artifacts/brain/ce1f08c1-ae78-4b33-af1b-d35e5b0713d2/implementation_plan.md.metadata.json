@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan zur drastischen Reduzierung von Cloudflare Worker Requests, D1 Read/Write-Abfragen (durch SQLite-Indizes und RAM-First-Caching) sowie KV-Schreibzugriffen, inklusive Quota-Notfallzugang für das Admin-Panel.",
-  "updatedAt": "2026-11-06T09:25:36.658214511Z",
+  "summary": "Implementierungsplan für die 5 TMDb-Such- und Nachbar-Post-Schutzmechanismen:\n1. Untertitel-Fallback (Bindestrich-/Doppelpunkt-Cutter wie bei \"Silk Road - Gebieter des Darknets\" -> \"Silk Road\")\n2. Umlaut-Normalisierung (ae/oe/ue -> ä/ö/ü wie bei \"Rotkaeppchen.1954.mp4\" -> \"Rotkäppchen\")\n3. Harter Jahres-Schutz (> 2 Jahre Abweichung zwingend als status: \"?\" / Konflikt markieren, niemals automatisch als \"ok\" übernehmen)\n4. Doppelpunkt nach Römischen Zahlen erzwingen (\"Star Trek II Der Zorn des Khan\" -> \"Star Trek II: Der Zorn des Khan\")\n5. Collection-Header- & Detailtitel-Schutz in enrichVideoFromNeighborPost & Pre-Context (\"Der König der Löwen 2 - Simbas Königreich\" darf niemals von \"König der Löwen teil 1 bis 3\" überschrieben werden)",
+  "updatedAt": "2026-11-06T11:17:00.970859012Z",
   "requestFeedback": true,
   "userFacing": true
 }

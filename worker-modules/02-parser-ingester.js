@@ -399,24 +399,24 @@
     " - viii -": " - 8 -"
   };
 
+  function enforceRomanNumeralColon(rawTitle) {
+    if (!rawTitle) return "";
+    return String(rawTitle).replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
+  }
+
   function cleanMovieQuery(rawTitle) {
     if (!rawTitle) return "";
-    let s = ` ${String(rawTitle).toLowerCase()} `;
+    // Zuerst Doppelpunkt nach römischen Zahlen erzwingen ("Star Trek II Der Zorn" -> "Star Trek II: Der Zorn")
+    const withRomanColon = enforceRomanNumeralColon(String(rawTitle));
+    let s = ` ${withRomanColon.toLowerCase()} `;
 
-    // 1. Römische Zahlen in arabische Ziffern umwandeln (z.B. "viii" -> "8")
+    // 1. Römische Zahlen in arabische Ziffern umwandeln (z.B. "viii" -> "8") als Alternativ-Query
     for (const [roman, arabic] of Object.entries(ROMAN_NUMERALS)) {
       s = s.replace(new RegExp(roman, "g"), arabic);
     }
     s = s.trim();
 
-    // 2. Bekannte "Star Trek"-Sonderfälle glattbügeln
-    // "Star Trek 8 Der Aufstand" -> "Star Trek Der Aufstand" oder direkt "Star Trek Der Aufstand"
-    if (s.includes("star trek")) {
-      // Entferne die Nummer hinter Star Trek, damit TMDb den Film über den Untertitel findet
-      s = s.replace(/star\s*trek\s*\d+\b/i, "star trek");
-    }
-
-    // 3. Bindestriche und Doppelpunkte vereinheitlichen
+    // 2. Bindestriche und Doppelpunkte vereinheitlichen
     s = s.replace(/[-–—]/g, ":");
 
     return s
@@ -736,11 +736,15 @@
       } else {
         // Auch bei längeren Einzeilern mit Handlungsbeschreibung (wie ID 108858 "My Big Fat Greek Wedding – Hochzeit auf Griechisch 2002 Mit dreißig Jahren...")
         // innerhalb der ersten 90 Zeichen nach Titel + Jahreszahl suchen
-        const headSlice = firstLine.slice(0, 90);
-        const ym = (` ${headSlice} `).match(YEAR_REGEX);
-        if (ym && ym.index >= 2) {
-          nextContext.year = parseInt(ym[1], 10);
-          nextContext.title = cleanMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
+        // WICHTIG: Collection-Header ("König der Löwen teil 1 bis 3", "Trilogie", "Collection") niemals als Einzeltitel im PreContext speichern!
+        const isCollectionHeaderLine = /(?:teil\s*\d+\s*(?:bis|-|–)\s*\d+|\b\d+\s*-\s*\d+\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
+        if (!isCollectionHeaderLine) {
+          const headSlice = firstLine.slice(0, 90);
+          const ym = (` ${headSlice} `).match(YEAR_REGEX);
+          if (ym && ym.index >= 2) {
+            nextContext.year = parseInt(ym[1], 10);
+            nextContext.title = cleanMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
+          }
         }
       }
     }
@@ -797,11 +801,49 @@
 
       if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
 
+      // Collection-Header & Detailtitel-Schutz ("Der König der Löwen 2 - Simbas Königreich (1998)" vs. "König der Löwen teil 1 bis 3"):
+      // 1. Wenn der Nachbar-Post Wörter wie "teil 1 bis 3", "1-3", "collection", "trilogie" oder "box" enthält, darf er NIEMALS parsedVideo.title überschreiben!
+      // 2. Wenn das Video bereits einen eigenen ausführlichen Titel mit Fortsetzungs-Nummer ([1-9]) oder Bindestrich ("-") besitzt,
+      //    ist der eigene Titel hochwertiger als jeder Nachbar-Post und darf nicht überschrieben werden!
+      const neighborTitleLower = firstLine.toLowerCase();
+      const isCollectionHeader = /(?:teil\s*\d+\s*(?:bis|-|–)\s*\d+|\d+\s*-\s*\d+|collection|trilogie|trilogy|quadrilogie|box)/i.test(neighborTitleLower);
+      const videoHasDetailedTitle = Boolean(rawCurrentTitle && (/[1-9]/.test(rawCurrentTitle) || rawCurrentTitle.includes("-") || rawCurrentTitle.includes("–") || rawCurrentTitle.includes(":")));
+
+      if (isCollectionHeader || videoHasDetailedTitle) {
+        return {
+          ...parsedVideo,
+          contextOverview: lines.slice(1).join(" ").trim() || parsedVideo.contextOverview || ""
+        };
+      }
+
+      // Beschreibungs-Schutz ("Cocaine Bear" / "Ted Bundy"):
+      // Wenn die erste Zeile des Nachbarn > 60 Zeichen lang ist, ist es ein Beschreibungstext und KEIN Kurztitel!
+      // Behalte in diesem Fall den sauberen Video-Titel bei und übernimm den Nachbar-Text nur in contextOverview.
+      if (firstLine.length > 60) {
+        const shortHead = firstLine.split(/[:\n(]/)[0].trim();
+        const candidateShort = (shortHead.length >= 3 && shortHead.length <= 50 && shortHead.toLowerCase().includes(baseWord))
+          ? (cleanMediaTitle(shortHead.replace(/\s*[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?\s*$/, "")) || parsedVideo.title)
+          : (parsedVideo.cleanTitle || parsedVideo.title);
+        return {
+          ...parsedVideo,
+          title: candidateShort,
+          cleanTitle: candidateShort,
+          year: parsedVideo.year || neighborYear,
+          contextOverview: rawText.trim() || parsedVideo.contextOverview || ""
+        };
+      }
+
       const rawEnrichedTitle = firstLine
         .replace(/\s*[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?\s*$/, "")
         .trim();
-      const cleanedTitle = cleanMediaTitle(rawEnrichedTitle) || rawEnrichedTitle;
-      const contextOverview = lines.slice(1).join(" ").trim();
+      let cleanedTitle = cleanMediaTitle(rawEnrichedTitle) || rawEnrichedTitle;
+      let contextOverview = lines.slice(1).join(" ").trim();
+      if (cleanedTitle && cleanedTitle.length > 50) {
+        contextOverview = `${cleanedTitle} ${contextOverview}`.trim();
+        cleanedTitle = parsedVideo.cleanTitle && parsedVideo.cleanTitle.length <= 50
+          ? parsedVideo.cleanTitle
+          : cleanedTitle.split(/[:\n(]/)[0].trim().slice(0, 40);
+      }
 
       return {
         ...parsedVideo,
@@ -875,12 +917,46 @@
 
     const isGenericFile = !fileName || /^(?:video|new+|vmp4|\d+|d-[a-z0-9-]+)\.(mp4|mkv|avi|m4v)$/i.test(fileName.trim());
 
-    // THE ROOKIE S01E11 & E01S01 FRONTIER KONTEXT-SCHUTZ:
-    // Wenn eine Videodatei ihren eigenen Seriennamen im Text/Dateinamen hat (z.B. "The Rookie S01E11" oder "E01S01 Frontier 2016"),
+    // "Episode 6 Staffel 2 von Little Britain.mp4" Context-Bleeding-Fix:
+    // Extrahiere den Seriennamen hinter "von" VOR jedem Fallback auf prevContext und überschreibe den alten Kontext sofort!
+    const rawFnForVon = String(rawFileName || "").replace(/_/g, " ");
+    const rawTxtForVon = String(rawTextWithoutPlot || "").replace(/_/g, " ");
+    const vonPattern = /(?:(?:Episode|Folge)\s*0*(\d{1,3})(?:[\s.\-&]+0*(\d{1,3}))?\s*(?:(?:\(?Staffel|\(?Season)\s*0*(\d{1,2})\)?\s*)?|(?:Staffel|Season)\s*0*(\d{1,2})\s*(?:Episode|Folge)\s*0*(\d{1,3})\s*|\bS0*(\d{1,2})E0*(\d{1,3})(?:-E0*(\d{1,3}))?\s+)von\s+(.+?)(?:\s*\(\d{1,3}\))?(?:\.(?:mp4|mkv|avi|mov|m4v|webm|ts)|[\s._]*(?:s[_. ]?to(?:[_. ]*Serien)?|_sto_Serien|Sto[\s_-]*Serien|HD|Online|❤)|\r?\n|$)/i;
+    const earlyVonMatch = rawFnForVon.match(vonPattern) || fileName.match(vonPattern) || rawTxtForVon.match(vonPattern);
+    let explicitVonSeriesTitle = "";
+    let explicitVonSeason = null;
+    let explicitVonEpisode = null;
+    let explicitVonEpisodeEnd = null;
+    if (earlyVonMatch) {
+      explicitVonEpisode = parseInt(earlyVonMatch[1] || earlyVonMatch[5] || earlyVonMatch[7] || "1", 10);
+      if (earlyVonMatch[2] || earlyVonMatch[8]) {
+        explicitVonEpisodeEnd = parseInt(earlyVonMatch[2] || earlyVonMatch[8], 10);
+      }
+      explicitVonSeason = parseInt(earlyVonMatch[3] || earlyVonMatch[4] || earlyVonMatch[6] || "1", 10);
+      explicitVonSeriesTitle = cleanMediaTitle(String(earlyVonMatch[9] || "").replace(/_/g, " ").trim());
+      if (explicitVonSeriesTitle) {
+        if (prevContext && typeof prevContext === "object") {
+          prevContext.seriesHeader = explicitVonSeriesTitle;
+          prevContext.season = explicitVonSeason;
+          delete prevContext.tmdbId;
+          delete prevContext.imdbId;
+          delete prevContext.title;
+        }
+        activeContext = {
+          seriesHeader: explicitVonSeriesTitle,
+          season: explicitVonSeason,
+          isSeriesHeader: true,
+          lastMessageId: currentMsgId
+        };
+      }
+    }
+
+    // THE ROOKIE S01E11 & E01S01 FRONTIER & LITTLE BRITAIN KONTEXT-SCHUTZ:
+    // Wenn eine Videodatei ihren eigenen Seriennamen im Text/Dateinamen hat (z.B. "The Rookie S01E11", "E01S01 Frontier 2016", "Episode 6 Staffel 2 von Little Britain"),
     // darf dieser NIEMALS vom prevContext (tmdbId, title, seriesHeader) einer vorherigen Serie/Films überschrieben werden!
     const prelimTextSe = extractSePartsFromSource(line1 || text);
     const prelimFileSe = !isGenericFile ? extractSePartsFromSource(fileName) : null;
-    const ownSeriesNameInMsg = pickBestSeriesTitleCandidate(
+    const ownSeriesNameInMsg = explicitVonSeriesTitle || pickBestSeriesTitleCandidate(
       prelimTextSe ? (prelimTextSe.before || (prelimTextSe.index === 0 ? prelimTextSe.after : "")) : "",
       prelimFileSe ? (prelimFileSe.before || (prelimFileSe.index === 0 ? prelimFileSe.after : "")) : "",
       ""
@@ -889,8 +965,10 @@
     if (ownSeriesNameInMsg && contextKnownName) {
       const ownNorm = normalizeCompareString(ownSeriesNameInMsg);
       const ctxNorm = normalizeCompareString(contextKnownName);
-      if (ownNorm && ctxNorm && !ownNorm.startsWith(ctxNorm.slice(0, 5)) && !ctxNorm.startsWith(ownNorm.slice(0, 5))) {
-        activeContext = {};
+      if (ownNorm && ctxNorm && ownNorm !== ctxNorm) {
+        activeContext = explicitVonSeriesTitle
+          ? { seriesHeader: explicitVonSeriesTitle, season: explicitVonSeason || 1, isSeriesHeader: true, lastMessageId: currentMsgId }
+          : {};
       }
     } else if (ownSeriesNameInMsg && (activeContext.tmdbId || activeContext.imdbId) && !contextKnownName) {
       activeContext = {};
@@ -898,7 +976,7 @@
 
     let tmdbId = activeContext.tmdbId || null;
     let imdbId = activeContext.imdbId || null;
-    let mediaType = activeContext.mediaType || "movie";
+    let mediaType = explicitVonSeriesTitle ? "tv" : (activeContext.mediaType || "movie");
     let explicitMovUrlHit = false;
     let explicitTvUrlHit = false;
     for (const ent of entities) {
@@ -923,6 +1001,7 @@
     );
     const hasOwnSeriesMarkerInMsg = Boolean(
       explicitTvUrlHit ||
+      explicitVonSeriesTitle ||
       EARLY_EXPLICIT_SERIES_MARKER.test(text) ||
       EARLY_EXPLICIT_SERIES_MARKER.test(fileName)
     );
@@ -938,7 +1017,7 @@
 
     // activeContext.title nur heranziehen, wenn der Dateiname generisch ist oder das Basiswort übereinstimmt
     // (Verhindert, dass z.B. "Tin & Tina 2023" aus index - 1 ein Video "Arielle 2023.mp4" ohne Caption überschreibt!)
-    const ownVideoTitleCandidate = cleanMediaTitle((line1 || (!isGenericFile ? fileName : "")).replace(YEAR_REGEX, " "));
+    const ownVideoTitleCandidate = cleanMediaTitle(((line1 && line1.length <= 60 ? line1 : "") || (!isGenericFile ? fileName : "")).replace(YEAR_REGEX, " "));
     const ownBaseWord = ownVideoTitleCandidate
       .toLowerCase()
       .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\s+/i, "")
@@ -956,6 +1035,7 @@
       !ownSeriesNameInMsg &&
       !(hasOwnParenYear && !hasOwnSeriesMarkerInMsg && activeContext.mediaType === "tv") &&
       activeContext.title &&
+      activeContext.title.length <= 60 &&
       preContextMatchesOwnTitle &&
       (
         activeContext.tmdbId ||
@@ -970,17 +1050,34 @@
     const originalTitle = text.match(/Originaltitel:\s*([^\n]+)/i)?.[1]?.trim() || (usePreContextTitle ? activeContext.originalTitle : null);
     const explicitYear  = inlineExplicitYear || (usePreContextTitle ? activeContext.year : null);
 
-    // Regel 2 / Fall 15: 60-Zeichen-Abschneidung bei file_name umgehen -> line1 hat Vorrang
+    // Beschreibungs-Schutz ("Ted Bundy" ID 3558 / "Cocaine Bear" ID 3435):
+    // Wenn line1 > 60 Zeichen lang ist, ist es eine Filmbeschreibung im Post-Text und KEIN Titel!
+    // Nutze dann strikt den Dateinamen (vor dem Jahr) bzw. das Kurzsegment vor Doppelpunkt/Klammer und rette den Text in contextOverview!
+    let extractedContextOverview = lines.length > 1 ? lines.slice(1).join(" ").trim() : "";
     let sourceUsed = "file_name";
     let primarySource = fileName;
-    if (explicitTitle) {
+    if (explicitTitle && explicitTitle.length <= 60) {
       primarySource = explicitTitle;
       sourceUsed = usePreContextTitle ? "pre_context_title" : "explicit_title";
-    } else if (line1 && line1.length >= 2 && line1.length <= 160 && !/^(?:Qualität|Größe|Groesse|Size|Format|Dauer|Laufzeit|Länge|Sprache|Language|Genre|Gener|Studio|Director|Regie|Darsteller|Actors|Cast|Released|Release|FSK|IMDb|Rating|Preis|Free)\s*[:=-]/i.test(line1) && !/^(?:\+?\s*1[268]\s*\+?|Ab\s+\d+\s+Jahren)/i.test(line1)) {
+    } else if (line1 && line1.length >= 2 && line1.length <= 60 && !/^(?:Qualität|Größe|Groesse|Size|Format|Dauer|Laufzeit|Länge|Sprache|Language|Genre|Gener|Studio|Director|Regie|Darsteller|Actors|Cast|Released|Release|FSK|IMDb|Rating|Preis|Free)\s*[:=-]/i.test(line1) && !/^(?:\+?\s*1[268]\s*\+?|Ab\s+\d+\s+Jahren)/i.test(line1)) {
       primarySource = line1;
       sourceUsed = "caption_line1";
+    } else if (line1 && line1.length > 60) {
+      extractedContextOverview = lines.join(" ").trim();
+      if (!isGenericFile && fileName) {
+        primarySource = fileName;
+        sourceUsed = "file_name";
+      } else {
+        const yearInLine1 = (` ${line1.slice(0, 65)} `).match(YEAR_REGEX);
+        if (yearInLine1 && yearInLine1.index >= 2) {
+          primarySource = line1.slice(0, yearInLine1.index).trim();
+        } else {
+          primarySource = line1.split(/[:\n(]/)[0].trim().slice(0, 45);
+        }
+        sourceUsed = "caption_line1_shortened";
+      }
     } else if (isGenericFile && line1) {
-      primarySource = line1;
+      primarySource = line1.slice(0, 50);
       sourceUsed = "caption_line1";
     } else if (isGenericFile && !activeContext.seriesHeader && !tmdbId) {
       return null;
@@ -1074,6 +1171,13 @@
         tailEp = fileSeParts.after;
       }
       episodeTitle = tailEp;
+    } else if (explicitVonSeriesTitle) {
+      mediaType = "tv";
+      hasExplicitEpisodeMarker = true;
+      episode = explicitVonEpisode || 1;
+      episodeEnd = explicitVonEpisodeEnd || null;
+      season = explicitVonSeason || inlineStaffelNum || 1;
+      seriesTitle = explicitVonSeriesTitle;
     } else if (epStaffelVon) {
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
@@ -1081,6 +1185,9 @@
       if (epStaffelVon[2]) episodeEnd = parseInt(epStaffelVon[2], 10);
       season = epStaffelVon[3] ? parseInt(epStaffelVon[3], 10) : (inlineStaffelNum || 1);
       seriesTitle = cleanMediaTitle(epStaffelVon[4]);
+      if (seriesTitle && prevContext && typeof prevContext === "object") {
+        prevContext.seriesHeader = seriesTitle;
+      }
     } else if (textSeParts || fileSeParts) {
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
@@ -1148,6 +1255,33 @@
       seriesTitle = activeContext.seriesHeader || remClean || "Unbekannt";
       if (activeContext.seriesHeader && remClean && normalizeCompareString(remClean) !== normalizeCompareString(activeContext.seriesHeader)) {
         episodeTitle = remClean;
+      }
+    } else if (
+      !partInfo.isSplit &&
+      !hasOwnParenYear &&
+      (!durationSec || durationSec < 4200) &&
+      (
+        /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim()) ||
+        /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(primarySource.trim())
+      )
+    ) {
+      // Fix 2 ("05 Ein Star ist geboren" ID 4441 / "13 Hochzeitspläne" ID 4449):
+      // Dateinamen oder Zeilen mit führender 2- oder 3-stelliger Folgennummer (/^\d{2,3}[\s\-]/) und Dauer < 4200s zwingend als Serienfolge behandeln!
+      const rawLeadSrc = /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim())
+        ? fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim()
+        : primarySource.trim();
+      const leadMatch = rawLeadSrc.match(/^0*(\d{1,3})[\s\-]+(.+)$/);
+      const epNumVal = leadMatch ? parseInt(leadMatch[1], 10) : 0;
+      const afterNumTitle = leadMatch ? cleanMediaTitle(leadMatch[2].replace(YEAR_REGEX, " ")) : "";
+      const fallbackSeriesFromCtx = activeContext.seriesHeader || prevContext?.seriesHeader || activeContext.title || prevContext?.title || "";
+      if (epNumVal >= 1 && epNumVal <= 300 && (fallbackSeriesFromCtx || afterNumTitle)) {
+        mediaType = "tv";
+        hasExplicitEpisodeMarker = true;
+        episode = epNumVal;
+        season = inlineStaffelNum || activeContext.season || prevContext?.season || 1;
+        seriesTitle = fallbackSeriesFromCtx || afterNumTitle;
+        episodeTitle = fallbackSeriesFromCtx ? afterNumTitle : "";
+        sourceUsed = "leading_episode_number";
       }
     } else if (
       activeContext.seriesHeader &&
@@ -1255,7 +1389,7 @@
 
     let year = explicitYear ? parseInt(explicitYear, 10) : (yearMatch ? parseInt(yearMatch[1], 10) : null);
     if (!year && mediaType === "tv" && activeContext.year && activeContext.seriesHeader && seriesTitle &&
-        normalizeCompareString(seriesTitle).slice(0, 6) === normalizeCompareString(activeContext.seriesHeader).slice(0, 6)) {
+        normalizeCompareString(seriesTitle) === normalizeCompareString(activeContext.seriesHeader)) {
       year = Number(activeContext.year);
     }
 
@@ -1272,8 +1406,22 @@
     }
     rawTitle = rawTitle.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]?/gi, "");
     rawTitle = rawTitle.replace(/\s*(?:Plot|Beschreibung)\s*:.*$/i, "");
-    const cleanTitle = cleanMediaTitle(rawTitle) || cleanMediaTitle(fileName) || cleanMediaTitle(line1);
+    let cleanTitle = cleanMediaTitle(rawTitle) || cleanMediaTitle(fileName) || cleanMediaTitle(line1);
     if (!cleanTitle) return null;
+
+    // Harter Beschreibungs-Schutz ("Cocaine Bear" / "Ted Bundy"):
+    // Falls cleanTitle > 50 Zeichen ist, ist versehentlich eine Filmbeschreibung in den Titel gerutscht!
+    if (cleanTitle.length > 50) {
+      if (!extractedContextOverview) extractedContextOverview = cleanTitle;
+      const fnBeforeYear = !isGenericFile && fileName
+        ? cleanMediaTitle(fileName.replace(/[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?.*$/i, ""))
+        : "";
+      if (fnBeforeYear && fnBeforeYear.length >= 2 && fnBeforeYear.length <= 50) {
+        cleanTitle = fnBeforeYear;
+      } else {
+        cleanTitle = cleanMediaTitle(cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 40)) || cleanTitle.slice(0, 40).trim();
+      }
+    }
 
     if (episodeTitle && year) {
       episodeTitle = cleanMediaTitle(episodeTitle.replace(new RegExp(`\\b${year}\\b`, "g"), " "));
@@ -1294,6 +1442,7 @@
       episode,
       episodeEnd,
       episodeTitle,
+      contextOverview: extractedContextOverview || "",
       quality,
       width: videoWidth,
       height: videoHeight,
@@ -1575,6 +1724,7 @@
         tags: extractedTagsList.join(" · "),
         languages,
         subtitles,
+        contextOverview: gmParsed.contextOverview || "",
         sourceUsed: gmParsed.sourceUsed || "file_name",
         parsedFileSize
       };

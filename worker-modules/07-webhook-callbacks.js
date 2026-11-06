@@ -193,9 +193,9 @@
       } else if (diff === 2) {
         score -= 5;
       } else {
-        // HARTE SPERRE GEGEN FALSCHE JAHRZEHNTE (Math.abs(tmdbYear - parsed.year) > 2, z.B. 2013 vs. 1994):
-        // Ein Treffer mit > 2 Jahren Abweichung darf NIEMALS automatisch als "ok" (>= 74) durchgewunken werden!
-        score = Math.min(score - 28, 55);
+        // HARTE SPERRE GEGEN FALSCHE JAHRZEHNTE (Math.abs(tmdbYear - parsed.year) > 2, z.B. "Rotkäppchen (1954)" vs. "Die Rotkäppchen-Verschwörung (2005)"):
+        // Ein Treffer mit > 2 Jahren Abweichung darf NIEMALS automatisch als "ok" (>= 74) durchgewunken oder hoch bewertet werden!
+        score = Math.min(score - 35, 48);
       }
     } else if (!parsed.year) {
       // Ohne Jahresangabe im Dateinamen: Deutschsprachige Produktionen (DE/AT/CH/XG) bei exakter Namensgleichheit bevorzugen,
@@ -304,8 +304,11 @@
   }
 
   async function searchTmdbCandidatesForImport(env, parsed, forceTypeCode = null) {
-    const searchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
-    if ((!searchTitle || searchTitle === "Unbekannt") && !parsed?.tmdbId && !parsed?.imdbId) return [];
+    const rawSearchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
+    if ((!rawSearchTitle || rawSearchTitle === "Unbekannt") && !parsed?.tmdbId && !parsed?.imdbId) return [];
+
+    // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn des Khan" -> "Star Trek II: Der Zorn des Khan")
+    const searchTitle = rawSearchTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
 
     const primaryType = forceTypeCode || (parsed.isSeries ? "s" : "m");
     const secondaryType = primaryType === "s" ? "m" : "s";
@@ -324,7 +327,7 @@
       }
     }
 
-    const runTmdbQuery = async (tc, qStr, yearVal) => {
+    const runTmdbQuery = async (tc, qStr, yearVal, baseTitleOverride = null) => {
       if (!qStr || qStr.length < 1) return 0;
       const endpoint = tc === "s" ? "tv" : "movie";
       const yearParam = yearVal
@@ -334,35 +337,41 @@
       const data = await cachedExternalFetchJson(url, { headers });
       if (Array.isArray(data?.results)) {
         for (const item of data.results.slice(0, 6)) {
-          rawPool.push({ ...item, _typeCode: tc });
+          rawPool.push({ ...item, _typeCode: tc, ...(baseTitleOverride ? { _baseTitleForConf: baseTitleOverride } : {}) });
         }
         return data.results.length;
       }
       return 0;
     };
 
-    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (inkl. Umlaut-Rekonstruktion & cleanMovieQuery für Filmreihen/römische Zahlen wie "Star Trek VIII")
-    const umlautVariant = searchTitle
-      .replace(/ae/gi, m => m[0] === "A" ? "Ä" : "ä")
-      .replace(/oe/gi, m => m[0] === "O" ? "Ö" : "ö")
-      .replace(/ue/gi, m => m[0] === "U" ? "Ü" : "ü");
+    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (inkl. Römischer Doppelpunkt-Variante, Umlaut-Normalisierung ae/oe/ue & cleanMovieQuery)
+    const hasAsciiUmlauts = /(?:ae|oe|ue)/i.test(searchTitle) && !/[äöüß]/i.test(searchTitle);
+    const umlautVariant = hasAsciiUmlauts
+      ? searchTitle
+          .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+          .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
+      : searchTitle;
     const romanMovieVariant = cleanMovieQuery(searchTitle);
     if (searchTitle && searchTitle !== "Unbekannt") {
-      const hitsWithYear = await runTmdbQuery(primaryType, searchTitle, parsed.year);
+      const hitsWithYear = await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle);
       if (!parsed.year || hitsWithYear < 2) {
-        await runTmdbQuery(primaryType, searchTitle, null);
+        await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
+      }
+      if (rawSearchTitle !== searchTitle && hitsWithYear === 0) {
+        const rawHitsYear = await runTmdbQuery(primaryType, rawSearchTitle, parsed.year, searchTitle);
+        if (parsed.year && rawHitsYear === 0) await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
       }
       if (romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
-        const beforeRomanLen = rawPool.length;
-        const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null);
-        if (parsed.year && rHits === 0) await runTmdbQuery(primaryType, romanMovieVariant, null);
-        for (let k = beforeRomanLen; k < rawPool.length; k++) {
-          rawPool[k]._baseTitleForConf = romanMovieVariant;
-        }
+        const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null, romanMovieVariant);
+        if (parsed.year && rHits === 0) await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
       }
-      if (umlautVariant !== searchTitle && rawPool.length === 0) {
-        await runTmdbQuery(primaryType, umlautVariant, parsed.year || null);
-        if (parsed.year && rawPool.length === 0) await runTmdbQuery(primaryType, umlautVariant, null);
+      // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen"):
+      // IMMER ausführen, wenn ae/oe/ue (ohne äöüß) im Titel vorkommt – auch wenn die ASCII-Suche ohne Jahr bereits falsche Jahrzehnte (z.B. 2005) geliefert hat!
+      if (umlautVariant !== searchTitle) {
+        const uHits = await runTmdbQuery(primaryType, umlautVariant, parsed.year || null, umlautVariant);
+        if (parsed.year && uHits === 0) {
+          await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
+        }
       }
     }
 
@@ -392,22 +401,43 @@
       }
     }
 
-    // Stufe 4: Bindestrich-/Doppelpunkt-Split & Edition/Cut-Bereinigung ("7 vs. Wild - Panama" -> "7 vs. Wild", "Underworld Extended Cut" -> "Underworld")
+    // Stufe 4: Untertitel-Fallback / Bindestrich- & Doppelpunkt-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road", "7 vs. Wild - Panama" -> "7 vs. Wild")
     if ((rawPool.length === 0 || bestPrimaryConf < 78) && searchTitle) {
       const strippedCutVariant = cleanMediaTitle(
         searchTitle
           .replace(EDITION_CUT_REGEX, " ")
           .replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|edition|version|fassung|redux|special|extended|uncut|unrated)\s*$/i, "$1")
       );
+      const rawHyphenShort = rawSearchTitle.includes("-") || rawSearchTitle.includes("–") || rawSearchTitle.includes("—") || rawSearchTitle.includes(":")
+        ? rawSearchTitle.split(/\s*[:–—\-]\s*/)[0].trim()
+        : "";
       const splitMain = (strippedCutVariant || searchTitle).split(/\s*[:–—\-]\s*/)[0].trim();
+      const umlautSplitMain = (umlautVariant !== searchTitle && (umlautVariant.includes("-") || umlautVariant.includes("–") || umlautVariant.includes(":")))
+        ? umlautVariant.split(/\s*[:–—\-]\s*/)[0].trim()
+        : "";
       const words = (strippedCutVariant || searchTitle).split(/\s+/).filter(Boolean);
       const lastWordIsSequelNum = /^[2-9]$/.test(words[words.length - 1] || "");
       const shorterCandidates = [];
-      if (strippedCutVariant && strippedCutVariant.length >= 2 && strippedCutVariant.toLowerCase() !== searchTitle.toLowerCase()) {
-        shorterCandidates.push(strippedCutVariant);
+      // 1. Untertitel-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road") hat höchste Priorität in Stufe 4!
+      if (rawHyphenShort && rawHyphenShort.length >= 2 && rawHyphenShort.toLowerCase() !== rawSearchTitle.toLowerCase()) {
+        shorterCandidates.push(rawHyphenShort);
       }
       if (splitMain && splitMain.length >= 2 && splitMain.toLowerCase() !== searchTitle.toLowerCase() && !shorterCandidates.includes(splitMain)) {
         shorterCandidates.push(splitMain);
+      }
+      if (umlautSplitMain && umlautSplitMain.length >= 2 && !shorterCandidates.includes(umlautSplitMain)) {
+        shorterCandidates.push(umlautSplitMain);
+      }
+      // 2. "The International"-Fix: Führende Artikel (The/Der/Die/Das/A/An) entfernen
+      const leadingArticleRegex = /^(?:the|a|an|der|die|das|les|le|la)\s+/i;
+      if (leadingArticleRegex.test(searchTitle)) {
+        const withoutLeadingArticle = cleanMediaTitle(searchTitle.replace(leadingArticleRegex, "").trim());
+        if (withoutLeadingArticle && withoutLeadingArticle.length >= 3 && !shorterCandidates.includes(withoutLeadingArticle)) {
+          shorterCandidates.push(withoutLeadingArticle);
+        }
+      }
+      if (strippedCutVariant && strippedCutVariant.length >= 2 && strippedCutVariant.toLowerCase() !== searchTitle.toLowerCase() && !shorterCandidates.includes(strippedCutVariant)) {
+        shorterCandidates.push(strippedCutVariant);
       }
       // Wichtig: Niemals eine Fortsetzungs-Ziffer (2-9, z.B. "Iron Man 3", "Pirates of the Caribbean 3") am Ende blind als Film abschneiden!
       if (words.length >= 2 && !lastWordIsSequelNum) {
@@ -424,13 +454,26 @@
       }
       for (const shorterTitle of shorterCandidates) {
         const beforeLen = rawPool.length;
-        await runTmdbQuery(primaryType, shorterTitle, parsed.year || null);
-        if (parsed.year && rawPool.length === beforeLen) await runTmdbQuery(primaryType, shorterTitle, null);
-        if (!forceTypeCode && !strictMovieWithYearLock && rawPool.length === beforeLen) await runTmdbQuery(secondaryType, shorterTitle, parsed.year || null);
-        for (let k = beforeLen; k < rawPool.length; k++) {
-          rawPool[k]._baseTitleForConf = shorterTitle;
+        await runTmdbQuery(primaryType, shorterTitle, parsed.year || null, shorterTitle);
+        if (parsed.year) {
+          const hasYearMatch = rawPool.slice(beforeLen).some(it => {
+            const rel = String(it.release_date || it.first_air_date || "");
+            const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
+            return y && Math.abs(Number(parsed.year) - y) <= 2;
+          });
+          if (!hasYearMatch) {
+            await runTmdbQuery(primaryType, shorterTitle, null, shorterTitle);
+          }
         }
-        if (rawPool.length > beforeLen) break;
+        if (!forceTypeCode && !strictMovieWithYearLock && rawPool.length === beforeLen) {
+          await runTmdbQuery(secondaryType, shorterTitle, parsed.year || null, shorterTitle);
+        }
+        let bestShortConf = 0;
+        for (let k = beforeLen; k < rawPool.length; k++) {
+          const c = computeTmdbMatchConfidence(parsed, rawPool[k], rawPool[k]._typeCode);
+          if (c > bestShortConf) bestShortConf = c;
+        }
+        if (bestShortConf >= 78) break;
       }
     }
 
@@ -842,10 +885,29 @@
         (parsed.isSeries && rawEntry.cleanTitle && String(rawEntry.cleanTitle).trim().length >= 2 && String(rawEntry.cleanTitle).trim().length < String(parsed.cleanTitle || "").trim().length)
       ) {
         const rawProvided = String(rawEntry.manualTitle || rawEntry.cleanTitle || rawEntry.title).trim();
-        const cleanedCandidate = cleanMediaTitle(rawProvided);
-        if (cleanedCandidate && cleanedCandidate !== "Unbekannt") {
-          parsed.cleanTitle = cleanedCandidate;
+        // "Cocaine Bear"- & "Ted Bundy"-Fix: Wenn rawProvided (> 50 Zeichen, ohne manualTitle) eigentlich eine Filmbeschreibung ist, NIEMALS als Titel übernehmen!
+        if (!rawEntry.manualTitle && rawProvided.length > 50) {
+          if (!parsed.contextOverview) parsed.contextOverview = rawProvided;
+        } else {
+          const cleanedCandidate = cleanMediaTitle(rawProvided);
+          if (cleanedCandidate && cleanedCandidate !== "Unbekannt") {
+            parsed.cleanTitle = cleanedCandidate;
+          }
         }
+      }
+      // Sicherheits-Regel vor der TMDb-Suche: parsed.cleanTitle niemals länger als 50 Zeichen lassen!
+      if (!rawEntry?.manualTitle && parsed.cleanTitle && parsed.cleanTitle.length > 50) {
+        if (!parsed.contextOverview) parsed.contextOverview = parsed.cleanTitle;
+        const shortFromRawName = rawName
+          ? cleanMediaTitle(
+              String(rawName)
+                .replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|json))+$/i, "")
+                .replace(/[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?.*$/i, "")
+            )
+          : "";
+        parsed.cleanTitle = (shortFromRawName && shortFromRawName.length >= 2 && shortFromRawName.length <= 50)
+          ? shortFromRawName
+          : parsed.cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 40);
       }
       if (parsed.isSeries && parsed.episode && parsed.cleanTitle) {
         const epNumRe = new RegExp(`^(.{2,}?)\\s+(?:[-–]\\s*)?(?:teil\\s+|part\\s+|ep\\.?\\s*|folge\\s+)?0*${Number(parsed.episode)}(?:\\s+[-–:]?\\s*.+)?$`, "i");
@@ -1330,11 +1392,38 @@
       const seqNum = trailingSeqMatch ? trailingSeqMatch[1] : null;
       const tmdbTitlesCombined = normalizeTitleForConfidence(`${seriesDetails.title || ""} ${seriesDetails.originalTitle || seriesDetails.original_name || ""}`);
       const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && yearDiff >= 1 && bestConfidence < 88);
-      // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2), immer als Konflikt markieren!
-      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
+      // "Little Britain" Staffel 4 Fix: Prüfe auch, ob die geforderte Staffel höher ist als die Gesamtzahl der Staffeln des TMDb-Treffers (z.B. Staffel 4 bei "Little Britain USA" mit nur 1 Staffel)
+      const maxTmdbSeasons = Number(
+        seriesDetails.numberOfSeasons ||
+        seriesDetails.number_of_seasons ||
+        (Array.isArray(seriesDetails.seasons) ? seriesDetails.seasons.filter(s => Number(s?.season_number) > 0).length : 0) ||
+        0
+      );
+      const seasonOverflowConflict = Boolean(!explicitTmdbId && maxTmdbSeasons > 0 && seasonNum > maxTmdbSeasons && Number(seriesDetails.id) < 8000000);
+      // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2) oder Staffel-Konflikt vorliegt, immer als Konflikt markieren!
+      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch || seasonOverflowConflict));
       const errorReason = contextError
-        ? `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${seriesDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`
+        ? (seasonOverflowConflict
+            ? `Staffel-Konflikt: Datei verlangt Staffel ${seasonNum} von "${parsed.cleanTitle}", aber TMDb-Treffer "${seriesDetails.title}" (${tmdbYearNum || "?"}) hat nur ${maxTmdbSeasons} Staffel(n). Bitte im Konflikt-Tab die richtige TMDb-ID zuweisen!`
+            : `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${seriesDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`)
         : null;
+
+      // Wenn status: "CONFLICT_?" ausgelöst wird, bleibt der Treffer in der DB (mit needsReview: true) und landet automatisch im Dashboard-Tab [ 🚨 Meldungen / Konflikte ]
+      if (contextError && typeof createMediaReportInD1 === "function") {
+        await createMediaReportInD1(env, {
+          reporterTelegramId: "system_import",
+          reporterUsername: "Auto-Konflikt-Schutz",
+          typeCode: "s",
+          tmdbId: seriesDetails.id,
+          title: `${seriesDetails.title} (S${String(seasonNum).padStart(2, "0")}E${String(epNum).padStart(2, "0")})`,
+          seasonNumber: seasonNum,
+          episodeNumber: epNum,
+          telegramFileId: effectiveFileMeta?.fileId || "",
+          reasonCode: "wrong_tmdb",
+          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
+        }).catch(() => {});
+      }
 
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const posterUrl = resolvePosterUrl(seriesDetails.poster_path, "w185", seriesDetails.external_poster_url || candidates[0]?.poster || "");
@@ -1345,6 +1434,7 @@
       return {
         ok: true,
         status: contextError ? "?" : "ok",
+        needsReview: Boolean(contextError),
         contextError,
         errorReason,
         typeCode: "s",
@@ -1390,11 +1480,28 @@
         });
       }
 
-      if (!movieDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
-        const fbHit = await fetchMultiApiFallbackCascade(env, parsed, "m");
-        if (fbHit && fbHit.id) {
+      // Harter Jahres-Schutz ("Rotkäppchen (1954)" vs. "Die Rotkäppchen-Verschwörung (2005)"):
+      // Wenn movieDetails aus einem falschen Jahrzehnt stammt (> 2 Jahre Abweichung zu parsed.year),
+      // prüfe zuerst die Multi-API-Fallback-Kaskade (OMDb / Wikidata / Wikipedia DE) auf einen Treffer im richtigen Jahr!
+      const prelimMovieYearStr = String(movieDetails?.releaseDate || "").split("-")[0];
+      const prelimMovieYear = /^\d{4}$/.test(prelimMovieYearStr) ? parseInt(prelimMovieYearStr, 10) : null;
+      const prelimYearMismatch = Boolean(!explicitTmdbId && parsed.year && prelimMovieYear && Math.abs(Number(parsed.year) - prelimMovieYear) > 2);
+
+      if ((!movieDetails || prelimYearMismatch) && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
+        const fbQueryParsed = (/(?:ae|oe|ue)/i.test(parsed.cleanTitle || "") && !/[äöüß]/i.test(parsed.cleanTitle || ""))
+          ? {
+              ...parsed,
+              cleanTitle: String(parsed.cleanTitle)
+                .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+                .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
+            }
+          : parsed;
+        const fbHit = await fetchMultiApiFallbackCascade(env, fbQueryParsed, "m");
+        const fbYear = fbHit?.year && /^\d{4}$/.test(String(fbHit.year)) ? parseInt(String(fbHit.year), 10) : null;
+        const fbMatchesTargetYear = Boolean(!parsed.year || (fbYear && Math.abs(Number(parsed.year) - fbYear) <= 2));
+        if (fbHit && fbHit.id && (!movieDetails || fbMatchesTargetYear)) {
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : Number(fbHit.id);
-          bestConfidence = Math.max(bestConfidence, fbHit.confidence || 76);
+          bestConfidence = Math.max(bestConfidence, fbHit.confidence || 82);
           metadataSource = fbHit.source || "Fallback";
           movieDetails = await saveFallbackHitToD1AndCache(env, { ...fbHit, id: targetId, typeCode: "m" });
         }
@@ -1463,12 +1570,29 @@
         ? `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${movieDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`
         : null;
 
+      if (contextError && typeof createMediaReportInD1 === "function") {
+        await createMediaReportInD1(env, {
+          reporterTelegramId: "system_import",
+          reporterUsername: "Auto-Konflikt-Schutz",
+          typeCode: "m",
+          tmdbId: movieDetails.id,
+          title: `${movieDetails.title} (${rawYear})`,
+          seasonNumber: 0,
+          episodeNumber: 0,
+          telegramFileId: effectiveFileMeta?.fileId || "",
+          reasonCode: "wrong_tmdb",
+          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
+        }).catch(() => {});
+      }
+
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const posterUrl = resolvePosterUrl(movieDetails.poster_path, "w185", movieDetails.external_poster_url || candidates[0]?.poster || "");
 
       return {
         ok: true,
         status: contextError ? "?" : "ok",
+        needsReview: Boolean(contextError),
         contextError,
         errorReason,
         typeCode: "m",
@@ -1767,6 +1891,7 @@
         languages: gmVideo.languages || ["de"],
         subtitles: gmVideo.subtitles || [],
         duration_sec: gmVideo.durationSec || null,
+        contextOverview: gmVideo.contextOverview || "",
         source_used: gmVideo.sourceUsed || "file_name",
         pre_context: { ...prevContext },
         telegram_file_id: msg.telegram_file_id || msg.file_id || null,
@@ -2071,10 +2196,16 @@
               delete rollingPreContext.year;
               delete rollingPreContext.mediaType;
             }
-            // Fall 10 & Fall 17 (IDs 45807->45808, 131127->131141):
-            // Wenn eine Serien-Videonachricht in ihrer Caption einen Serientitel etabliert, als seriesHeader für nachfolgende titellose Episodendateien merken!
+            // Fall 10 & Fall 17 (IDs 45807->45808, 131127->131141) + "Episode X Staffel Y von Little Britain":
+            // Wenn eine Serien-Videonachricht einen Serientitel etabliert (auch aus Dateiname wie "von Little Britain"),
+            // zwingend als seriesHeader für nachfolgende Episoden merken und den alten Kontext überschreiben!
             if (it.isSeries && it.cleanTitle && it.cleanTitle !== "Unbekannt") {
-              if (it.source_used === "caption_line1" || it.source_used === "caption_line1_3" || it.source_used === "caption_multiline") {
+              if (
+                it.source_used === "caption_line1" ||
+                it.source_used === "caption_line1_3" ||
+                it.source_used === "caption_multiline" ||
+                it.source_used === "file_name"
+              ) {
                 if (rollingPreContext.seriesHeader !== it.cleanTitle) {
                   delete rollingPreContext.year;
                 }

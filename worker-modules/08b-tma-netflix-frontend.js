@@ -5061,7 +5061,8 @@
                                 withoutExt.match(/^(.+?)[_\\s]*#[_\\s]*Staffel[_\\s]*(\\d{1,2})[_\\s,.\\-]*(?:Folge|Episode)[_\\s]*(\\d{1,3})[_\\s]*(?:[#\\-–]+[_\\s]*)(.+)$/i);
         const archeMatch = withoutExt.match(/^S(\\d{1,2})E(\\d{1,3})\\s*[-–]\\s*@\\w+\\s*[-–]\\s*(.+)$/i);
         const hashStaffelMatch = withoutExt.match(/^#?\\s*S(\\d{1,2})E(\\d{1,3})\\s*[-–]\\s*(.+)$/i);
-        const epStaffelVonMatch = withoutExt.match(/(?:Episode|Folge)[\\s._]*(\\d{1,3})(?:[\\s._\\-&]+\\d{1,3})?[\\s._\\-]*(?:(?:\\(?Staffel[\\s._]*(\\d{1,2})\\)?)[\\s._\\-]*(?:von[\\s._]+)?|(?:von[\\s._]+))(.+?)(?:[\\s._]*\\(\\d{1,3}\\))?(?:[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i);
+        const epStaffelVonMatch = raw.match(/(?:Episode|Folge)[\\s._]*(\\d+)(?:[\\s._\\-&]+\\d+)?[\\s._\\-]*(?:Staffel|Season)[\\s._]*(\\d+)[\\s._\\-]*von[\\s._]+(.+?)(?:\\.mp4|\\.mkv|\\.avi|s_to_Serien|_sto_Serien|[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i) ||
+                                  withoutExt.match(/(?:Episode|Folge)[\\s._]*(\\d{1,3})(?:[\\s._\\-&]+\\d{1,3})?[\\s._\\-]*(?:(?:\\(?Staffel[\\s._]*(\\d{1,2})\\)?)[\\s._\\-]*(?:von[\\s._]+)?|(?:von[\\s._]+))(.+?)(?:[\\s._]*\\(\\d{1,3}\\))?(?:s_to_Serien|_sto_Serien|[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i);
         const seMatch = withoutExt.match(/\\bS(\\d{1,2})[\\s._-]*E(\\d{1,3})(?:[-–]E?(\\d{1,3}))?\\b/i);
 
         let cutIdx = withoutExt.length;
@@ -5085,7 +5086,10 @@
           isSeries = true;
           episode = parseInt(epStaffelVonMatch[1], 10) || 1;
           season = epStaffelVonMatch[2] ? parseInt(epStaffelVonMatch[2], 10) : 1;
-          explicitTitle = epStaffelVonMatch[3];
+          explicitTitle = epStaffelVonMatch[3].replace(/_/g, " ").trim();
+          if (msgObj && typeof msgObj === "object" && msgObj.pre_context) {
+            msgObj.pre_context.seriesHeader = cleanClientMediaTitle(explicitTitle) || explicitTitle;
+          }
         } else if (seMatch) {
           isSeries = true;
           season = parseInt(seMatch[1], 10) || 1;

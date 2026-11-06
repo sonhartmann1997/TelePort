@@ -985,7 +985,20 @@
     "fluch der karibik 4": "Pirates of the Caribbean - Fremde Gezeiten",
     "professor t": "Professor T.",
     "9 1 2 wochen": "9½ Wochen",
-    "9 1/2 wochen": "9½ Wochen"
+    "9 1/2 wochen": "9½ Wochen",
+    "e.t.": "E.T. – Der Außerirdische",
+    "e.t": "E.T. – Der Außerirdische",
+    "e t": "E.T. – Der Außerirdische",
+    "et": "E.T. – Der Außerirdische",
+    "e.t. der ausserirdische": "E.T. – Der Außerirdische",
+    "e.t. der außerirdische": "E.T. – Der Außerirdische",
+    "et der ausserirdische": "E.T. – Der Außerirdische",
+    "et der außerirdische": "E.T. – Der Außerirdische",
+    "e.t. - der ausserirdische": "E.T. – Der Außerirdische",
+    "e.t. - der außerirdische": "E.T. – Der Außerirdische",
+    "e.t. – der außerirdische": "E.T. – Der Außerirdische",
+    "e.t. the extra-terrestrial": "E.T. – Der Außerirdische",
+    "et the extra terrestrial": "E.T. – Der Außerirdische"
   };
 
   // .rar / .partXX.rar Archive sind erlaubt und erhalten eine eigene Kategorie/Version ("📦 RAR-Archiv")
@@ -993,7 +1006,7 @@
   const SUBTITLE_EXTENSIONS = /\.(?:srt|vtt|sub|ass|ssa)$/i;
   const BLOCKED_EXTENSIONS = /\.(webp|tgs|webm|gif|mp3|ogg|wav|flac|m4a|idx|apk|exe|msi|dmg|pdf|epub|txt|nfo|jpg|jpeg|png|zip|7z|tar|gz)$/i;
   const BLOCKED_FILENAMES  = /^(?:sticker|animatedsticker|giphy|tenor|video_?\d*)\.(?:webp|tgs|webm|mp4|gif)$/i;
-  const TRAILER_KEYWORD_REGEX = /(?:^|[\s._\-(\[])(?:kinotrailer|official\s+trailer|offizieller\s+trailer|teaser\s+trailer|trailer|teaser|coming\s+soon|zwiastun|vorschau)(?=$|[\s._\-)\]:])/i;
+  const TRAILER_KEYWORD_REGEX = /(?:^|[\s._\-(\[])(?:kinotrailer|official\s+trailer|offizieller\s+trailer|teaser\s+trailer|trailer\s+(?:german|deutsch|englisch|english|hd|full\s*hd|1080p|720p|4k)|trailer|teaser|coming\s+soon|zwiastun|vorschau)(?=$|[\s._\-)\]:])/i;
 
   function extractSubtitleAttachmentFromMsg(msg, chatMeta = {}) {
     if (!msg || typeof msg !== "object") return null;
@@ -1055,9 +1068,11 @@
     }
 
     // 3. Explizite Trailer / Teaser / Coming Soon aussortieren (außer es ist ein voller Hauptfilm >= 900s)
-    const rawCaptionPreview = String(typeof msg.text === "string" ? msg.text : (typeof msg.caption === "string" ? msg.caption : "")).slice(0, 160);
+    const rawCaptionPreview = String(typeof msg.text === "string" ? msg.text : (typeof msg.caption === "string" ? msg.caption : "")).slice(0, 220);
     if (
-      (TRAILER_KEYWORD_REGEX.test(fileName) || /^(?:trailer|teaser|coming\s+soon)\b/i.test(rawCaptionPreview)) &&
+      (TRAILER_KEYWORD_REGEX.test(fileName) ||
+       /^(?:trailer|teaser|coming\s+soon)\b/i.test(rawCaptionPreview) ||
+       /\b(?:official\s+trailer|offizieller\s+trailer|kinotrailer|teaser\s+trailer|trailer\s+(?:german|deutsch)|(?:\(|\[)\s*trailer\b|coming\s+soon)\b/i.test(rawCaptionPreview)) &&
       (duration === null || Number(duration) < 900)
     ) {
       return true;
@@ -1117,12 +1132,20 @@
         if (/^❖\s*@/.test(l) || /^(?:➠|✔️|🔞|قیمت)/.test(l)) {
           return false;
         }
+        // 1b. Reine Metadaten-Zeilen ("Size: 295 MB", "Studio:", "Gener:", "+18", "Ab 16 Jahren") niemals als Filmtitel werten!
+        if (/^(?:size|größe|groesse|qualität|qualitaet|quality|format|dauer|laufzeit|runtime|länge|laenge|sprache|language|genre|gener|fsk|studio|director|regie|darsteller|actors|cast|released|release|imdb|rating|preis|free|uncensored)\s*[:=-]/i.test(l)) {
+          return false;
+        }
+        if (/^(?:\+?\s*1[268]\s*\+?|ab\s+\d{1,2}\s+jahren.*|fsk\s*\d{1,2}|\d+(?:[.,]\d+)?\s*(?:mb|gb|tb))\s*$/i.test(l)) {
+          return false;
+        }
         // 2. Reine @Mentions, #Hashtags, Links & Emojis abziehen – bleibt danach < 2 Zeichen übrig, Zeile verwerfen!
         const stripped = l
           .replace(/https?:\/\/\S+/gi, "")
           .replace(/[@#][A-Za-z0-9_äöüÄÖÜß]+/g, "")
           .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")
           .replace(/[0-9#*]\uFE0F?\u20E3|[\p{Emoji_Presentation}\p{Extended_Pictographic}•·‧▪▫❖➠✔️👉👈👇👆⬇️⬆️]/gu, "")
+          .replace(/^\+?\s*1[268]\s*\+?$/g, "")
           .replace(/[^A-Za-z0-9äöüÄÖÜß]+/g, "")
           .trim();
         return stripped.length >= 2;
@@ -1143,19 +1166,18 @@
       return { isSplit: false, isArchive: true, part: 1, partType: "RAR", partLabel: "RAR" };
     }
 
-    // 1. Eindeutige Datei-Splits: CD1, CD 2, CD01, Disc 1, DVD 2, Part 1, oder -001 / -002 am Dateiende
-    const cdMatch = combined.match(/(?:^|[\s._\-(])(cd|disc|disk|dvd|part)[\s._-]*0*([1-9])(?:$|[\s._\-)])/i)
+    // 1. Eindeutige Datei-Splits: CD1, CD 2, CD01, Disc 1, DVD 2, Part 1, oder -001 / -002 am Dateiende -> einheitlich "CD 1", "CD 2"...
+    const cdMatch = combined.match(/(?:^|[\s._\-(])(cd|disc|disk|dvd|part|split)[\s._-]*0*([1-9])(?:$|[\s._\-)])/i)
                  || combined.match(/AC3\.?(cd)0*([1-9])\b/i);
     if (cdMatch) {
-      const pType = cdMatch[1].toUpperCase() === "DISK" ? "DISC" : cdMatch[1].toUpperCase();
       const pNum = parseInt(cdMatch[2], 10);
-      return { isSplit: true, isArchive: false, part: pNum, partType: pType, partLabel: `${pType}${pNum}` };
+      return { isSplit: true, isArchive: false, part: pNum, partType: "CD", partLabel: `CD ${pNum}` };
     }
 
     const splitNumMatch = String(rawFileName || "").match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
     if (splitNumMatch) {
       const pNum = parseInt(splitNumMatch[1], 10);
-      return { isSplit: true, isArchive: false, part: pNum, partType: "SPLIT", partLabel: `SPLIT${pNum}` };
+      return { isSplit: true, isArchive: false, part: pNum, partType: "CD", partLabel: `CD ${pNum}` };
     }
 
     return { isSplit: false, isArchive: false, part: 1, partType: null, partLabel: null };
@@ -1239,10 +1261,10 @@
   const ARABIC_DIGITS  = [/٠/g, /١/g, /٢/g, /٣/g, /٤/g, /٥/g, /٦/g, /٧/g, /٨/g, /٩/g];
 
   // Erweitertes Edition-/Cut-Pattern (muss vor Einzelwörtern greifen, damit aus "Extended Cut" niemals "Cut" übrig bleibt!)
-  const EDITION_CUT_REGEX = /\b(?:super[\s._-]*duper[\s._-]*cut|extended[\s._-]*director'?s?[\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\s._-]*matte|international|rough|workprint)[\s._-]*(?:cut|edition|version|fassung|ed\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\s._-]*(?:fassung|version|edition|cut)|(?:4k[\s._-]*)?(?:digitally[\s._-]*)?(?:remastered|restored)|mastered[\s._-]*in[\s._-]*4k|open[\s._-]*matte)\b/gi;
+  const EDITION_CUT_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\s._-]*duper[\s._-]*cut|extended[\s._-]*director'?s?[\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\s._-]*matte|international|rough|workprint)[\s._-]*(?:cut|edition|version|fassung|ed\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\s._-]*(?:fassung|version|edition|cut)|(?:4k[\s._-]*)?(?:digitally[\s._-]*)?(?:remastered|restored)|mastered[\s._-]*in[\s._-]*4k|open[\s._-]*matte)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
-  // Erweiterter Cleaner-Regex, der auch alle Sprach-/Sub-/Länder-/Cut-Tags restlos aus dem Filmtitel putzt (schützt "World Wide Web" und "Grundkurs Spanish"):
-  const TECH_JUNK_REGEX = /\b(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|dvdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3|aac|6ch|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)\b/gi;
+  // Erweiterter Cleaner-Regex mit Umlaut-sicheren Wortgrenzen (schützt "Geisterjäger", "Jäger", "Bürger", "World Wide Web" & "Grundkurs Spanish"):
+  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|dvdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3|aac|6ch|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Volle Datumsangaben (DD.MM.YYYY wie 21.07.2012 oder 01.12.2018) erkennen & schützen (Regel 6 / Fall 17)
   const FULL_DATE_REGEX = /\b\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\b/g;
@@ -1311,24 +1333,24 @@
     " - viii -": " - 8 -"
   };
 
+  function enforceRomanNumeralColon(rawTitle) {
+    if (!rawTitle) return "";
+    return String(rawTitle).replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
+  }
+
   function cleanMovieQuery(rawTitle) {
     if (!rawTitle) return "";
-    let s = ` ${String(rawTitle).toLowerCase()} `;
+    // Zuerst Doppelpunkt nach römischen Zahlen erzwingen ("Star Trek II Der Zorn" -> "Star Trek II: Der Zorn")
+    const withRomanColon = enforceRomanNumeralColon(String(rawTitle));
+    let s = ` ${withRomanColon.toLowerCase()} `;
 
-    // 1. Römische Zahlen in arabische Ziffern umwandeln (z.B. "viii" -> "8")
+    // 1. Römische Zahlen in arabische Ziffern umwandeln (z.B. "viii" -> "8") als Alternativ-Query
     for (const [roman, arabic] of Object.entries(ROMAN_NUMERALS)) {
       s = s.replace(new RegExp(roman, "g"), arabic);
     }
     s = s.trim();
 
-    // 2. Bekannte "Star Trek"-Sonderfälle glattbügeln
-    // "Star Trek 8 Der Aufstand" -> "Star Trek Der Aufstand" oder direkt "Star Trek Der Aufstand"
-    if (s.includes("star trek")) {
-      // Entferne die Nummer hinter Star Trek, damit TMDb den Film über den Untertitel findet
-      s = s.replace(/star\s*trek\s*\d+\b/i, "star trek");
-    }
-
-    // 3. Bindestriche und Doppelpunkte vereinheitlichen
+    // 2. Bindestriche und Doppelpunkte vereinheitlichen
     s = s.replace(/[-–—]/g, ":");
 
     return s
@@ -1358,6 +1380,9 @@
 
     // 1. Mehrfache Leerzeichen/Tabs/NBSP auf ein einzelnes Leerzeichen reduzieren (löst das 80-Leerzeichen-Problem bei "What's up, Dad?")
     s = s.replace(/[\u00A0 \t]+/g, " ");
+
+    // 1b. Senkrechte Striche als römische Zahlen am Wortende umwandeln (z.B. "Creed |||" -> "Creed III", "Creed ||" -> "Creed II")
+    s = s.replace(/(?<=[A-Za-zÄÖÜäöüß])\s+(\|{2,3})(?=$|[\s)\]._-])/g, (_, pipes) => pipes.length === 3 ? " III" : " II");
 
     // 2. Alle abweichenden Episoden-Formate direkt in S01E01 umwandeln:
     // a) "Staffel 1 - Episode 1" / "Staffel 1, Folge 1" -> "S01E01" (auch mit Unterstrichen wie bei PS Profis)
@@ -1438,16 +1463,18 @@
     s = s.replace(/s[\._]to\s*-?\s*Serien.*/i, "").replace(/Sto\s*-\s*Serien.*/i, "");
     s = s.replace(/serien[\._](?:life|show).*/i, "").replace(/HD\s*Filme\s*Serien.*/i, "");
     s = s.replace(/^(?:Title|Titel)\s*:\s*/i, "").replace(/^(?:vs-|cd-|spy-|d-|4sf-|arc-|tvp-)/i, "");
+    // Studio-Präfixe am Anfang (wie "Disneys Arielle, die Meerjungfrau" -> "Arielle, die Meerjungfrau") entfernen
+    s = s.replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "");
     // Führende S01E01 / E01S01 / 1x01 Präfixe sowie defekte S05E0Fragmente entfernen (Fall 1, Fall 4)
     s = s.replace(/^(?:s\d{1,2}\s*e\d{1,3}(?:-e\d{1,3})?|e\d{1,3}\s*s\d{1,2}|\d{1,2}x\d{2,3})\b[\s._\-–:]*/i, "");
     s = s.replace(/\bS\d{1,2}\s*E\d{0,3}(?:-E\d{1,3})?(?=[A-Za-z]|\b)/gi, " ");
     s = s.replace(/\b\d{3,4}\s*[x×]\s*\d{3,4}\b/g, "");
 
     // Getrennte Sub/Dub-Kombinationen & CD/Part-Marker (inkl. part01..part25 bei RAR-Archiven) VOR den Einzelwörtern löschen:
-    s = s.replace(/\b(?:ger|deu|de|eng|en|jap|jpn)(?:[\s._-]+(?:ger|deu|de|eng|en|jap|jpn))?[\s._-]+(?:sub|subs|subbed|dub|dubbed)\b/gi, " ");
+    s = s.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|de|eng|en|jap|jpn)(?:[\s._-]+(?:ger|deu|de|eng|en|jap|jpn))?[\s._-]+(?:sub|subs|subbed|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
     s = s.replace(/AC3\.?CD0*[1-9]/gi, " "); // Spezialfix für "Klasse84AC3.CD01"
-    s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|part)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
-    s = s.replace(/-00[1-9]$/i, " ");
+    s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|part|split)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
+    s = s.replace(/(?:[-_.]|\s)00[1-9]\b/gi, " ");
 
     // Editionen (Extended Cut, Director's Cut, Collector's Edition etc.) & Tech-Junk entfernen
     s = extractAndStripEditions(s).cleaned;
@@ -1630,7 +1657,8 @@
         const ymHeader = (` ${text.slice(0, 120)} `).match(YEAR_REGEX);
         if (ymHeader && !nextContext.year) nextContext.year = parseInt(ymHeader[1], 10);
         const headerClean = cleanMediaTitle(firstLine.replace(/Staffel\s*\d+.*/i, "").replace(/\bS\d{1,2}E\d{1,3}\b.*/i, "").replace(YEAR_REGEX, " "));
-        if (headerClean) {
+        const isGenericHeaderWord = /^(?:film|filme|serie|serien|video|deutsch|german|hd|fullhd|neu|new|kino|stream|action|horror|comedy|drama|thriller|scifi|fantasy|ab\s+\d+\s+jahren|\+?18\+?)$/i.test(headerClean);
+        if (headerClean && !isGenericHeaderWord) {
           if (nextContext.seriesHeader && normalizeCompareString(nextContext.seriesHeader) !== normalizeCompareString(headerClean)) {
             if (!staffelHeaderMatch) delete nextContext.season;
           }
@@ -1642,16 +1670,125 @@
       } else {
         // Auch bei längeren Einzeilern mit Handlungsbeschreibung (wie ID 108858 "My Big Fat Greek Wedding – Hochzeit auf Griechisch 2002 Mit dreißig Jahren...")
         // innerhalb der ersten 90 Zeichen nach Titel + Jahreszahl suchen
-        const headSlice = firstLine.slice(0, 90);
-        const ym = (` ${headSlice} `).match(YEAR_REGEX);
-        if (ym && ym.index > 2) {
-          nextContext.year = parseInt(ym[1], 10);
-          nextContext.title = cleanMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
+        // WICHTIG: Collection-Header ("König der Löwen teil 1 bis 3", "Trilogie", "Collection") niemals als Einzeltitel im PreContext speichern!
+        const isCollectionHeaderLine = /(?:teil\s*\d+\s*(?:bis|-|–)\s*\d+|\b\d+\s*-\s*\d+\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
+        if (!isCollectionHeaderLine) {
+          const headSlice = firstLine.slice(0, 90);
+          const ym = (` ${headSlice} `).match(YEAR_REGEX);
+          if (ym && ym.index >= 2) {
+            nextContext.year = parseInt(ym[1], 10);
+            nextContext.title = cleanMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
+          }
         }
       }
     }
 
     return nextContext;
+  }
+
+  function extractPlainText(msg) {
+    if (!msg || typeof msg !== "object") return "";
+    return normalizeText(flattenTelegramExportText(msg.caption || msg.text || msg.text_entities)).trim();
+  }
+
+  function enrichVideoFromNeighborPost(messages, currentIndex, parsedVideo) {
+    if (!parsedVideo || !Array.isArray(messages)) return parsedVideo;
+    const rawCurrentTitle = String(parsedVideo.title || parsedVideo.cleanTitle || "").trim();
+    if (!rawCurrentTitle) return parsedVideo;
+
+    const baseWord = rawCurrentTitle
+      .toLowerCase()
+      .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\s+/i, "")
+      .split(/[\s:,\-–]+/)[0]; // z.B. "arielle"
+
+    if (!baseWord || (baseWord.length < 3 && baseWord !== "et" && baseWord !== "es")) return parsedVideo;
+
+    // Prüfe zuerst den Post direkt DARUNTER (+1), dann darüber (-1), dann +2 / -2
+    for (const offset of [1, -1, 2, -2]) {
+      const neighbor = messages[currentIndex + offset];
+      if (!neighbor || typeof neighbor !== "object") continue;
+      const nbFile = String(neighbor.video?.file_name || neighbor.document?.file_name || neighbor.file_name || neighbor.file || "").trim();
+      const nbIsVideoOrArchive = Boolean(
+        neighbor.media_type === "video_file" ||
+        neighbor.video ||
+        (neighbor.document?.mime_type && String(neighbor.document.mime_type).startsWith("video/")) ||
+        (neighbor.mime_type && String(neighbor.mime_type).startsWith("video/")) ||
+        /\.(mp4|mkv|avi|m4v|mov|webm|ts|flv|mk3d|rar|srt|vtt|sub|ass|ssa)$/i.test(nbFile)
+      );
+      if (nbIsVideoOrArchive) continue;
+
+      const rawText = extractPlainText(neighbor);
+      const lines = rawText.split("\n").map(l => l.trim()).filter(Boolean);
+      if (lines.length === 0) continue;
+
+      const firstLine = lines[0]
+        .replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\s]+/gu, "")
+        .replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "")
+        .trim();
+
+      // Sicherheits-Check: Die erste Zeile des Nachbarn MUSS das Basiswort ("arielle") enthalten!
+      // Dadurch wird "Tin & Tina 2023" (-1) sofort ausgeschlossen!
+      if (!firstLine.toLowerCase().includes(baseWord)) continue;
+
+      const yearMatch = rawText.match(/\b(19[2-9]\d|20[0-2]\d)\b/);
+      const neighborYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+      if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
+
+      // Collection-Header & Detailtitel-Schutz ("Der König der Löwen 2 - Simbas Königreich (1998)" vs. "König der Löwen teil 1 bis 3"):
+      // 1. Wenn der Nachbar-Post Wörter wie "teil 1 bis 3", "1-3", "collection", "trilogie" oder "box" enthält, darf er NIEMALS parsedVideo.title überschreiben!
+      // 2. Wenn das Video bereits einen eigenen ausführlichen Titel mit Fortsetzungs-Nummer ([1-9]) oder Bindestrich ("-") besitzt,
+      //    ist der eigene Titel hochwertiger als jeder Nachbar-Post und darf nicht überschrieben werden!
+      const neighborTitleLower = firstLine.toLowerCase();
+      const isCollectionHeader = /(?:teil\s*\d+\s*(?:bis|-|–)\s*\d+|\d+\s*-\s*\d+|collection|trilogie|trilogy|quadrilogie|box)/i.test(neighborTitleLower);
+      const videoHasDetailedTitle = Boolean(rawCurrentTitle && (/[1-9]/.test(rawCurrentTitle) || rawCurrentTitle.includes("-") || rawCurrentTitle.includes("–") || rawCurrentTitle.includes(":")));
+
+      if (isCollectionHeader || videoHasDetailedTitle) {
+        return {
+          ...parsedVideo,
+          contextOverview: lines.slice(1).join(" ").trim() || parsedVideo.contextOverview || ""
+        };
+      }
+
+      // Beschreibungs-Schutz ("Cocaine Bear" / "Ted Bundy"):
+      // Wenn die erste Zeile des Nachbarn > 60 Zeichen lang ist, ist es ein Beschreibungstext und KEIN Kurztitel!
+      // Behalte in diesem Fall den sauberen Video-Titel bei und übernimm den Nachbar-Text nur in contextOverview.
+      if (firstLine.length > 60) {
+        const shortHead = firstLine.split(/[:\n(]/)[0].trim();
+        const candidateShort = (shortHead.length >= 3 && shortHead.length <= 50 && shortHead.toLowerCase().includes(baseWord))
+          ? (cleanMediaTitle(shortHead.replace(/\s*[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?\s*$/, "")) || parsedVideo.title)
+          : (parsedVideo.cleanTitle || parsedVideo.title);
+        return {
+          ...parsedVideo,
+          title: candidateShort,
+          cleanTitle: candidateShort,
+          year: parsedVideo.year || neighborYear,
+          contextOverview: rawText.trim() || parsedVideo.contextOverview || ""
+        };
+      }
+
+      const rawEnrichedTitle = firstLine
+        .replace(/\s*[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?\s*$/, "")
+        .trim();
+      let cleanedTitle = cleanMediaTitle(rawEnrichedTitle) || rawEnrichedTitle;
+      let contextOverview = lines.slice(1).join(" ").trim();
+      if (cleanedTitle && cleanedTitle.length > 50) {
+        contextOverview = `${cleanedTitle} ${contextOverview}`.trim();
+        cleanedTitle = parsedVideo.cleanTitle && parsedVideo.cleanTitle.length <= 50
+          ? parsedVideo.cleanTitle
+          : cleanedTitle.split(/[:\n(]/)[0].trim().slice(0, 40);
+      }
+
+      return {
+        ...parsedVideo,
+        title: cleanedTitle || parsedVideo.title,
+        cleanTitle: cleanedTitle || parsedVideo.cleanTitle || parsedVideo.title,
+        year: parsedVideo.year || neighborYear,
+        contextOverview: contextOverview || parsedVideo.contextOverview || "" // Speichert die Filmbeschreibung für den TMDb-Abgleich!
+      };
+    }
+
+    return parsedVideo;
   }
 
   function parseTelegramMessage(msg, prevContext = {}) {
@@ -1714,12 +1851,46 @@
 
     const isGenericFile = !fileName || /^(?:video|new+|vmp4|\d+|d-[a-z0-9-]+)\.(mp4|mkv|avi|m4v)$/i.test(fileName.trim());
 
-    // THE ROOKIE S01E11 & E01S01 FRONTIER KONTEXT-SCHUTZ:
-    // Wenn eine Videodatei ihren eigenen Seriennamen im Text/Dateinamen hat (z.B. "The Rookie S01E11" oder "E01S01 Frontier 2016"),
+    // "Episode 6 Staffel 2 von Little Britain.mp4" Context-Bleeding-Fix:
+    // Extrahiere den Seriennamen hinter "von" VOR jedem Fallback auf prevContext und überschreibe den alten Kontext sofort!
+    const rawFnForVon = String(rawFileName || "").replace(/_/g, " ");
+    const rawTxtForVon = String(rawTextWithoutPlot || "").replace(/_/g, " ");
+    const vonPattern = /(?:(?:Episode|Folge)\s*0*(\d{1,3})(?:[\s.\-&]+0*(\d{1,3}))?\s*(?:(?:\(?Staffel|\(?Season)\s*0*(\d{1,2})\)?\s*)?|(?:Staffel|Season)\s*0*(\d{1,2})\s*(?:Episode|Folge)\s*0*(\d{1,3})\s*|\bS0*(\d{1,2})E0*(\d{1,3})(?:-E0*(\d{1,3}))?\s+)von\s+(.+?)(?:\s*\(\d{1,3}\))?(?:\.(?:mp4|mkv|avi|mov|m4v|webm|ts)|[\s._]*(?:s[_. ]?to(?:[_. ]*Serien)?|_sto_Serien|Sto[\s_-]*Serien|HD|Online|❤)|\r?\n|$)/i;
+    const earlyVonMatch = rawFnForVon.match(vonPattern) || fileName.match(vonPattern) || rawTxtForVon.match(vonPattern);
+    let explicitVonSeriesTitle = "";
+    let explicitVonSeason = null;
+    let explicitVonEpisode = null;
+    let explicitVonEpisodeEnd = null;
+    if (earlyVonMatch) {
+      explicitVonEpisode = parseInt(earlyVonMatch[1] || earlyVonMatch[5] || earlyVonMatch[7] || "1", 10);
+      if (earlyVonMatch[2] || earlyVonMatch[8]) {
+        explicitVonEpisodeEnd = parseInt(earlyVonMatch[2] || earlyVonMatch[8], 10);
+      }
+      explicitVonSeason = parseInt(earlyVonMatch[3] || earlyVonMatch[4] || earlyVonMatch[6] || "1", 10);
+      explicitVonSeriesTitle = cleanMediaTitle(String(earlyVonMatch[9] || "").replace(/_/g, " ").trim());
+      if (explicitVonSeriesTitle) {
+        if (prevContext && typeof prevContext === "object") {
+          prevContext.seriesHeader = explicitVonSeriesTitle;
+          prevContext.season = explicitVonSeason;
+          delete prevContext.tmdbId;
+          delete prevContext.imdbId;
+          delete prevContext.title;
+        }
+        activeContext = {
+          seriesHeader: explicitVonSeriesTitle,
+          season: explicitVonSeason,
+          isSeriesHeader: true,
+          lastMessageId: currentMsgId
+        };
+      }
+    }
+
+    // THE ROOKIE S01E11 & E01S01 FRONTIER & LITTLE BRITAIN KONTEXT-SCHUTZ:
+    // Wenn eine Videodatei ihren eigenen Seriennamen im Text/Dateinamen hat (z.B. "The Rookie S01E11", "E01S01 Frontier 2016", "Episode 6 Staffel 2 von Little Britain"),
     // darf dieser NIEMALS vom prevContext (tmdbId, title, seriesHeader) einer vorherigen Serie/Films überschrieben werden!
     const prelimTextSe = extractSePartsFromSource(line1 || text);
     const prelimFileSe = !isGenericFile ? extractSePartsFromSource(fileName) : null;
-    const ownSeriesNameInMsg = pickBestSeriesTitleCandidate(
+    const ownSeriesNameInMsg = explicitVonSeriesTitle || pickBestSeriesTitleCandidate(
       prelimTextSe ? (prelimTextSe.before || (prelimTextSe.index === 0 ? prelimTextSe.after : "")) : "",
       prelimFileSe ? (prelimFileSe.before || (prelimFileSe.index === 0 ? prelimFileSe.after : "")) : "",
       ""
@@ -1728,8 +1899,10 @@
     if (ownSeriesNameInMsg && contextKnownName) {
       const ownNorm = normalizeCompareString(ownSeriesNameInMsg);
       const ctxNorm = normalizeCompareString(contextKnownName);
-      if (ownNorm && ctxNorm && !ownNorm.startsWith(ctxNorm.slice(0, 5)) && !ctxNorm.startsWith(ownNorm.slice(0, 5))) {
-        activeContext = {};
+      if (ownNorm && ctxNorm && ownNorm !== ctxNorm) {
+        activeContext = explicitVonSeriesTitle
+          ? { seriesHeader: explicitVonSeriesTitle, season: explicitVonSeason || 1, isSeriesHeader: true, lastMessageId: currentMsgId }
+          : {};
       }
     } else if (ownSeriesNameInMsg && (activeContext.tmdbId || activeContext.imdbId) && !contextKnownName) {
       activeContext = {};
@@ -1737,7 +1910,7 @@
 
     let tmdbId = activeContext.tmdbId || null;
     let imdbId = activeContext.imdbId || null;
-    let mediaType = activeContext.mediaType || "movie";
+    let mediaType = explicitVonSeriesTitle ? "tv" : (activeContext.mediaType || "movie");
     let explicitMovUrlHit = false;
     let explicitTvUrlHit = false;
     for (const ent of entities) {
@@ -1762,6 +1935,7 @@
     );
     const hasOwnSeriesMarkerInMsg = Boolean(
       explicitTvUrlHit ||
+      explicitVonSeriesTitle ||
       EARLY_EXPLICIT_SERIES_MARKER.test(text) ||
       EARLY_EXPLICIT_SERIES_MARKER.test(fileName)
     );
@@ -1775,17 +1949,33 @@
       }
     }
 
-    // activeContext.title nur heranziehen, wenn ein TMDb/IMDb-Steckbrief vorliegt, der Dateiname generisch ist oder der Titel übereinstimmt
+    // activeContext.title nur heranziehen, wenn der Dateiname generisch ist oder das Basiswort übereinstimmt
+    // (Verhindert, dass z.B. "Tin & Tina 2023" aus index - 1 ein Video "Arielle 2023.mp4" ohne Caption überschreibt!)
+    const ownVideoTitleCandidate = cleanMediaTitle(((line1 && line1.length <= 60 ? line1 : "") || (!isGenericFile ? fileName : "")).replace(YEAR_REGEX, " "));
+    const ownBaseWord = ownVideoTitleCandidate
+      .toLowerCase()
+      .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\s+/i, "")
+      .split(/[\s:,\-–]+/)[0] || "";
+    const ctxTitleLower = String(activeContext.title || "").toLowerCase();
+    const preContextMatchesOwnTitle = !ownBaseWord || ownBaseWord.length < 2 || ctxTitleLower.includes(ownBaseWord);
+
+    if (!preContextMatchesOwnTitle && !hasOwnSeriesMarkerInMsg && activeContext.title && !activeContext.seriesHeader) {
+      tmdbId = explicitMovUrlHit || explicitTvUrlHit ? tmdbId : null;
+      imdbId = null;
+    }
+
     const usePreContextTitle = Boolean(
       !inlineExplicitTitle &&
       !ownSeriesNameInMsg &&
       !(hasOwnParenYear && !hasOwnSeriesMarkerInMsg && activeContext.mediaType === "tv") &&
       activeContext.title &&
+      activeContext.title.length <= 60 &&
+      preContextMatchesOwnTitle &&
       (
         activeContext.tmdbId ||
         activeContext.imdbId ||
         isGenericFile ||
-        !line1 ||
+        (!line1 && isGenericFile) ||
         cleanMediaTitle(line1).toLowerCase().startsWith(activeContext.title.toLowerCase().slice(0, 6))
       )
     );
@@ -1794,17 +1984,34 @@
     const originalTitle = text.match(/Originaltitel:\s*([^\n]+)/i)?.[1]?.trim() || (usePreContextTitle ? activeContext.originalTitle : null);
     const explicitYear  = inlineExplicitYear || (usePreContextTitle ? activeContext.year : null);
 
-    // Regel 2 / Fall 15: 60-Zeichen-Abschneidung bei file_name umgehen -> line1 hat Vorrang
+    // Beschreibungs-Schutz ("Ted Bundy" ID 3558 / "Cocaine Bear" ID 3435):
+    // Wenn line1 > 60 Zeichen lang ist, ist es eine Filmbeschreibung im Post-Text und KEIN Titel!
+    // Nutze dann strikt den Dateinamen (vor dem Jahr) bzw. das Kurzsegment vor Doppelpunkt/Klammer und rette den Text in contextOverview!
+    let extractedContextOverview = lines.length > 1 ? lines.slice(1).join(" ").trim() : "";
     let sourceUsed = "file_name";
     let primarySource = fileName;
-    if (explicitTitle) {
+    if (explicitTitle && explicitTitle.length <= 60) {
       primarySource = explicitTitle;
       sourceUsed = usePreContextTitle ? "pre_context_title" : "explicit_title";
-    } else if (line1 && line1.length >= 2 && line1.length <= 160 && !/^(?:Qualität|Größe|Format|Dauer|Sprache|Genre|FSK):/i.test(line1)) {
+    } else if (line1 && line1.length >= 2 && line1.length <= 60 && !/^(?:Qualität|Größe|Groesse|Size|Format|Dauer|Laufzeit|Länge|Sprache|Language|Genre|Gener|Studio|Director|Regie|Darsteller|Actors|Cast|Released|Release|FSK|IMDb|Rating|Preis|Free)\s*[:=-]/i.test(line1) && !/^(?:\+?\s*1[268]\s*\+?|Ab\s+\d+\s+Jahren)/i.test(line1)) {
       primarySource = line1;
       sourceUsed = "caption_line1";
+    } else if (line1 && line1.length > 60) {
+      extractedContextOverview = lines.join(" ").trim();
+      if (!isGenericFile && fileName) {
+        primarySource = fileName;
+        sourceUsed = "file_name";
+      } else {
+        const yearInLine1 = (` ${line1.slice(0, 65)} `).match(YEAR_REGEX);
+        if (yearInLine1 && yearInLine1.index >= 2) {
+          primarySource = line1.slice(0, yearInLine1.index).trim();
+        } else {
+          primarySource = line1.split(/[:\n(]/)[0].trim().slice(0, 45);
+        }
+        sourceUsed = "caption_line1_shortened";
+      }
     } else if (isGenericFile && line1) {
-      primarySource = line1;
+      primarySource = line1.slice(0, 50);
       sourceUsed = "caption_line1";
     } else if (isGenericFile && !activeContext.seriesHeader && !tmdbId) {
       return null;
@@ -1841,8 +2048,8 @@
     // Regel 7: Alle Serien- & Episoden-Muster (inkl. Raute-Schema, Mehrzeiler, Cross-Check Text <-> Dateiname)
     const hashStaffelMatch = primarySource.match(/^(.+?)[_\s]*#[_\s]*(?:Staffel[_\s]*(\d{1,2})[_\s,.\-]*(?:Folge|Episode)[_\s]*(\d{1,3})|S(\d{1,2})E(\d{1,3}))[_\s]*(?:[#\-–]+[_\s]*)(.+)$/i)
                           || fileName.match(/^(.+?)[_\s]*#[_\s]*(?:Staffel[_\s]*(\d{1,2})[_\s,.\-]*(?:Folge|Episode)[_\s]*(\d{1,3})|S(\d{1,2})E(\d{1,3}))[_\s]*(?:[#\-–]+[_\s]*)(.+)$/i);
-    const epStaffelVon = (primarySource.match(/^(?:Episode|Folge)[_\s.]*(\d{1,3})(?:[_\s.\-&]+(\d{1,3}))?[_\s.\-]*(?:\(?Staffel[_\s.]*(\d{1,2})\)?)?[_\s.\-]*(?:von[_\s.]+)(.+?)(?:[_\s.]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|\.(?:mp4|mkv)|$)/i)
-                       || fileName.match(/^(?:Episode|Folge)[_\s.]*(\d{1,3})(?:[_\s.\-&]+(\d{1,3}))?[_\s.\-]*(?:\(?Staffel[_\s.]*(\d{1,2})\)?)?[_\s.\-]*(?:von[_\s.]+)(.+?)(?:[_\s.]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|\.(?:mp4|mkv)|$)/i));
+    const epStaffelVon = (primarySource.match(/^(?:Episode|Folge)[_\s.]*(\d{1,3})(?:[_\s.\-&]+(\d{1,3}))?[_\s.\-]*(?:(?:\(?Staffel[_\s.]*(\d{1,2})\)?)[_\s.\-]*(?:von[_\s.]+)?|(?:von[_\s.]+))(.+?)(?:[_\s.]*\(\d{1,3}\))?(?:[_\s.]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|\.(?:mp4|mkv)|$)/i)
+                       || fileName.match(/^(?:Episode|Folge)[_\s.]*(\d{1,3})(?:[_\s.\-&]+(\d{1,3}))?[_\s.\-]*(?:(?:\(?Staffel[_\s.]*(\d{1,2})\)?)[_\s.\-]*(?:von[_\s.]+)?|(?:von[_\s.]+))(.+?)(?:[_\s.]*\(\d{1,3}\))?(?:[_\s.]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|\.(?:mp4|mkv)|$)/i));
     const textSeParts = extractSePartsFromSource(primarySource);
     const fileSeParts = !isGenericFile ? extractSePartsFromSource(fileName) : null;
     const seriesFolge = primarySource.match(/^(.+?)[_\s.\-·‧]+(?:Staffel[_\s.]*(\d{1,2})[_\s.\-·‧]+)?(?:Folge|Episode)[_\s.]*(\d{1,3})\b[_\s.\-·‧:]*(.*)$/i)
@@ -1898,6 +2105,13 @@
         tailEp = fileSeParts.after;
       }
       episodeTitle = tailEp;
+    } else if (explicitVonSeriesTitle) {
+      mediaType = "tv";
+      hasExplicitEpisodeMarker = true;
+      episode = explicitVonEpisode || 1;
+      episodeEnd = explicitVonEpisodeEnd || null;
+      season = explicitVonSeason || inlineStaffelNum || 1;
+      seriesTitle = explicitVonSeriesTitle;
     } else if (epStaffelVon) {
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
@@ -1905,6 +2119,9 @@
       if (epStaffelVon[2]) episodeEnd = parseInt(epStaffelVon[2], 10);
       season = epStaffelVon[3] ? parseInt(epStaffelVon[3], 10) : (inlineStaffelNum || 1);
       seriesTitle = cleanMediaTitle(epStaffelVon[4]);
+      if (seriesTitle && prevContext && typeof prevContext === "object") {
+        prevContext.seriesHeader = seriesTitle;
+      }
     } else if (textSeParts || fileSeParts) {
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
@@ -1974,11 +2191,39 @@
         episodeTitle = remClean;
       }
     } else if (
+      !partInfo.isSplit &&
+      !hasOwnParenYear &&
+      (!durationSec || durationSec < 4200) &&
+      (
+        /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim()) ||
+        /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(primarySource.trim())
+      )
+    ) {
+      // Fix 2 ("05 Ein Star ist geboren" ID 4441 / "13 Hochzeitspläne" ID 4449):
+      // Dateinamen oder Zeilen mit führender 2- oder 3-stelliger Folgennummer (/^\d{2,3}[\s\-]/) und Dauer < 4200s zwingend als Serienfolge behandeln!
+      const rawLeadSrc = /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim())
+        ? fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim()
+        : primarySource.trim();
+      const leadMatch = rawLeadSrc.match(/^0*(\d{1,3})[\s\-]+(.+)$/);
+      const epNumVal = leadMatch ? parseInt(leadMatch[1], 10) : 0;
+      const afterNumTitle = leadMatch ? cleanMediaTitle(leadMatch[2].replace(YEAR_REGEX, " ")) : "";
+      const fallbackSeriesFromCtx = activeContext.seriesHeader || prevContext?.seriesHeader || activeContext.title || prevContext?.title || "";
+      if (epNumVal >= 1 && epNumVal <= 300 && (fallbackSeriesFromCtx || afterNumTitle)) {
+        mediaType = "tv";
+        hasExplicitEpisodeMarker = true;
+        episode = epNumVal;
+        season = inlineStaffelNum || activeContext.season || prevContext?.season || 1;
+        seriesTitle = fallbackSeriesFromCtx || afterNumTitle;
+        episodeTitle = fallbackSeriesFromCtx ? afterNumTitle : "";
+        sourceUsed = "leading_episode_number";
+      }
+    } else if (
       activeContext.seriesHeader &&
+      !partInfo.isSplit &&
+      !hasOwnParenYear &&
       (!durationSec || durationSec < 4200)
     ) {
       // Regel 4 & Regel 8: "Endziffer / Mittelziffer = Episode"-Weiche bei aktivem Serien-Header:
-      // Greift auch dann, wenn im Header oder Dateinamen ein Erscheinungsjahr (z. B. 1982 bei Spuk im Hochhaus oder 2023 bei Black Box) steht!
       const cleanedLine = cleanMediaTitle((line1 || fileName || primarySource).replace(YEAR_REGEX, " "));
       const headerLow = activeContext.seriesHeader.toLowerCase();
       const lineLow = cleanedLine.toLowerCase();
@@ -2015,20 +2260,26 @@
 
     // Eingebettete Folgennummer + Episodentitel (z.B. "Pippi Langstrumpf 1 Pippi zieht in die Villa Kunterbunt", "Zur See 1 Die Bewährung")
     // ODER einfache Endziffern (z.B. "Black Box 1", "Spuk im Hochhaus 1", "Spuk unterm Riesenrad 1"):
-    const MOVIE_FRANCHISE_GUARD = /^(?:saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|the\s+fast\s+and\s+the\s+furious|transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle|avengers|captain\s+america|thor|guardians\s+of\s+the\s+galaxy|deadpool|x[\s-]*men|matrix|john\s+wick|equalizer|expendables|rambo|rocky|creed|alien|predator|terminator|robocop|die\s+hard|stirb\s+langsam|lethal\s+weapon|beverly\s+hills\s+cop|bad\s+boys|men\s+in\s+black|ghostbusters|back\s+to\s+the\s+future|zurück\s+in\s+die\s+zukunft|lord\s+of\s+the\s+rings|herr\s+der\s+ringe|hobbit|narnia|twilight|hunger\s+games|tribute\s+von\s+panem|maze\s+runner|divergent|resident\s+evil|silent\s+hill|conjuring|purge|quiet\s+place|hangover|oceans|now\s+you\s+see\s+me|unfassbaren|hotel\s+transsilvanien|ice\s+age|madagascar|ich\s+einfach\s+unverbesserlich|minions|toy\s+story|cars|kung\s+fu\s+panda|drachenzähmen)\b/i;
+    const MOVIE_FRANCHISE_GUARD = /^(?:deep\s+blue\s+sea|deep\s+blue|mad\s+max|sharknado|sector|ghettogangz|burg\s+schreckenstein|fifty\s+shades|jumanji|machete|crank|mechanic|tremors|lake\s+placid|anaconda|piranha|death\s+race|sniper|marine|jarhead|scorpion\s+king|mumie|mummy|vermächtnis|percy\s+jackson|schlümpfe|smurfs|ralph\s+reichts|zoomania|pets|sing|rio|jagdfieber|paddington|ted|kill\s+bill|sin\s+city|300|kick[\s-]*ass|johnny\s+english|austin\s+powers|universal\s+soldier|bloodsport|kickboxer|never\s+back\s+down|boyka|fack\s+ju|ostwind|bibi|conni|vorstadtkrokodile|wilde\s+kerle|fünf\s+freunde|tkkg|drei\s+fragezeichen|rush\s+hour|taken|punisher|blade|ong\s+bak|raid|goal|hooligans|manta|troll|nun|sinister|freitag\s+der|nightmare|saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|the\s+fast\s+and\s+the\s+furious|transporter|russian\s+transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle|avengers|captain\s+america|thor|guardians\s+of\s+the\s+galaxy|deadpool|x[\s-]*men|matrix|john\s+wick|equalizer|expendables|rambo|rocky|creed|alien|predator|terminator|robocop|die\s+hard|stirb\s+langsam|lethal\s+weapon|beverly\s+hills\s+cop|bad\s+boys|men\s+in\s+black|ghostbusters|back\s+to\s+the\s+future|zurück\s+in\s+die\s+zukunft|lord\s+of\s+the\s+rings|herr\s+der\s+ringe|hobbit|narnia|twilight|hunger\s+games|tribute\s+von\s+panem|maze\s+runner|divergent|resident\s+evil|silent\s+hill|conjuring|purge|quiet\s+place|hangover|oceans|now\s+you\s+see\s+me|unfassbaren|hotel\s+transsilvanien|hotel\s+transylvania|ice\s+age|madagascar|ich\s+einfach\s+unverbesserlich|despicable\s+me|minions|toy\s+story|cars|planes|kung\s+fu\s+panda|drachenzähmen|how\s+to\s+train\s+your\s+dragon|frozen|eiskönigin)\b/i;
+    // Wichtig ("Deep Blue Sea 3 (2020)-001.mkv"-Fix):
+    // 1. Mehrteilige Video-Splits (partInfo.isSplit, z.B. -001.mkv .. -005.mkv, CD 1..5) ohne explizites SxxExx/Staffel/Folge sind IMMER Filme!
+    // 2. Steht im Originaltext/Dateinamen eine Jahreszahl in Klammern (hasOwnParenYear, z.B. "(2020)"), ist eine Zahl vor (2020) eine Film-Fortsetzungsnummer und NIEMALS eine Serien-Folge!
     if (
       mediaType !== "tv" &&
       !tmdbId &&
+      !partInfo.isSplit &&
+      !hasOwnParenYear &&
       (!durationSec || durationSec < 4200)
     ) {
       const cleanedCand = cleanMediaTitle(primarySource.replace(YEAR_REGEX, " "));
       const normHeader = activeContext.seriesHeader ? normalizeCompareString(activeContext.seriesHeader) : "";
       const midEp = cleanedCand.match(/^(.{3,}?)\s+(?<!\d)0?([1-9]\d?)\s+([A-ZÄÖÜa-zäöü].{3,})$/);
-      if (midEp && !/^(?:Teil|Part|CD|Disc|DVD|bd|4k|uhd|1080p|720p)\b/i.test(midEp[3]) && !/\b007\b/.test(cleanedCand) && !MOVIE_FRANCHISE_GUARD.test(midEp[1].trim())) {
+      if (midEp && !/^(?:Teil|Part|CD|Disc|DVD|bd|4k|uhd|1080p|720p)\b/i.test(midEp[3]) && !/\b007\b/.test(cleanedCand) && !MOVIE_FRANCHISE_GUARD.test(midEp[1].trim()) && !MOVIE_FRANCHISE_GUARD.test(cleanedCand)) {
         const candBaseNorm = normalizeCompareString(midEp[1]);
-        const headerMatches = !normHeader || Boolean(candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
+        const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
+        const isKnownClassicNumberedSeries = /^(?:pippi\s+langstrumpf|zur\s+see|spuk\s+im\s+hochhaus|spuk\s+unterm\s+riesenrad|spuk\s+von\s+draußen|spuk\s+von\s+draussen|black\s+box|das\s+schloss\s+im\s+nebel|gormenghast|archiv\s+des\s+todes|front\s+ohne\s+gnade|feuerdrachen|gefährliche\s+fahndung|treffpunkt\s+flughafen|rote\s+bergsteiger)\b/i.test(midEp[1].trim());
         const epNumVal = parseInt(midEp[2], 10);
-        if ((headerMatches || !hasOwnParenYear) && epNumVal >= 1 && epNumVal <= 99) {
+        if ((headerMatches || isKnownClassicNumberedSeries) && epNumVal >= 1 && epNumVal <= 99) {
           mediaType = "tv";
           seriesTitle = (headerMatches && activeContext.seriesHeader) ? activeContext.seriesHeader : cleanMediaTitle(midEp[1]);
           season = inlineStaffelNum || activeContext.season || 1;
@@ -2038,13 +2289,13 @@
         }
       } else {
         // Einfache Endziffern (z. B. "Black Box 1", "Spuk im Hochhaus 1", "Spuk unterm Riesenrad 1"):
-        // Wenn kein eigenes Jahr in Klammern (YYYY) im Roh-Dateinamen steht und kein gesperrtes Film-Franchise vorliegt
         const tailEpMatch = cleanedCand.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\s._\-]{2,}?)\s+0*([1-9]\d?)$/);
-        if (tailEpMatch && !/\b(?:Teil|Part|CD|Disc|DVD|4K|3D|007)\s*$/i.test(tailEpMatch[1]) && !MOVIE_FRANCHISE_GUARD.test(tailEpMatch[1].trim())) {
+        if (tailEpMatch && !/\b(?:Teil|Part|CD|Disc|DVD|4K|3D|007)\s*$/i.test(tailEpMatch[1]) && !MOVIE_FRANCHISE_GUARD.test(tailEpMatch[1].trim()) && !MOVIE_FRANCHISE_GUARD.test(cleanedCand)) {
           const candBaseNorm = normalizeCompareString(tailEpMatch[1]);
           const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
+          const isKnownClassicNumberedSeries = /^(?:pippi\s+langstrumpf|zur\s+see|spuk\s+im\s+hochhaus|spuk\s+unterm\s+riesenrad|spuk\s+von\s+draußen|spuk\s+von\s+draussen|black\s+box|das\s+schloss\s+im\s+nebel|gormenghast|archiv\s+des\s+todes|front\s+ohne\s+gnade|feuerdrachen|gefährliche\s+fahndung|treffpunkt\s+flughafen|rote\s+bergsteiger)\b/i.test(tailEpMatch[1].trim());
           const epNumVal = parseInt(tailEpMatch[2], 10);
-          if ((headerMatches || !hasOwnParenYear) && epNumVal >= 1 && epNumVal <= 30) {
+          if ((headerMatches || isKnownClassicNumberedSeries) && epNumVal >= 1 && epNumVal <= 30) {
             mediaType = "tv";
             seriesTitle = (headerMatches && activeContext.seriesHeader) ? activeContext.seriesHeader : cleanMediaTitle(tailEpMatch[1]);
             season = inlineStaffelNum || activeContext.season || 1;
@@ -2072,12 +2323,12 @@
 
     let year = explicitYear ? parseInt(explicitYear, 10) : (yearMatch ? parseInt(yearMatch[1], 10) : null);
     if (!year && mediaType === "tv" && activeContext.year && activeContext.seriesHeader && seriesTitle &&
-        normalizeCompareString(seriesTitle).slice(0, 6) === normalizeCompareString(activeContext.seriesHeader).slice(0, 6)) {
+        normalizeCompareString(seriesTitle) === normalizeCompareString(activeContext.seriesHeader)) {
       year = Number(activeContext.year);
     }
 
     let rawTitle = seriesTitle || explicitTitle || primarySource;
-    if (!seriesTitle && !explicitTitle && yearMatch && yearMatch.index > 2) {
+    if (!seriesTitle && !explicitTitle && yearMatch && yearMatch.index >= 2) {
       const matchedSource = parenYearMatch
         ? (dateSafePrimary.match(PAREN_YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(PAREN_YEAR_REGEX) ? dateSafeLine1 : dateSafeFile))
         : (dateSafePrimary.match(YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(YEAR_REGEX) ? dateSafeLine1 : dateSafeFile));
@@ -2089,8 +2340,22 @@
     }
     rawTitle = rawTitle.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]?/gi, "");
     rawTitle = rawTitle.replace(/\s*(?:Plot|Beschreibung)\s*:.*$/i, "");
-    const cleanTitle = cleanMediaTitle(rawTitle) || cleanMediaTitle(fileName) || cleanMediaTitle(line1);
+    let cleanTitle = cleanMediaTitle(rawTitle) || cleanMediaTitle(fileName) || cleanMediaTitle(line1);
     if (!cleanTitle) return null;
+
+    // Harter Beschreibungs-Schutz ("Cocaine Bear" / "Ted Bundy"):
+    // Falls cleanTitle > 50 Zeichen ist, ist versehentlich eine Filmbeschreibung in den Titel gerutscht!
+    if (cleanTitle.length > 50) {
+      if (!extractedContextOverview) extractedContextOverview = cleanTitle;
+      const fnBeforeYear = !isGenericFile && fileName
+        ? cleanMediaTitle(fileName.replace(/[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?.*$/i, ""))
+        : "";
+      if (fnBeforeYear && fnBeforeYear.length >= 2 && fnBeforeYear.length <= 50) {
+        cleanTitle = fnBeforeYear;
+      } else {
+        cleanTitle = cleanMediaTitle(cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 40)) || cleanTitle.slice(0, 40).trim();
+      }
+    }
 
     if (episodeTitle && year) {
       episodeTitle = cleanMediaTitle(episodeTitle.replace(new RegExp(`\\b${year}\\b`, "g"), " "));
@@ -2111,6 +2376,7 @@
       episode,
       episodeEnd,
       episodeTitle,
+      contextOverview: extractedContextOverview || "",
       quality,
       width: videoWidth,
       height: videoHeight,
@@ -2392,6 +2658,7 @@
         tags: extractedTagsList.join(" · "),
         languages,
         subtitles,
+        contextOverview: gmParsed.contextOverview || "",
         sourceUsed: gmParsed.sourceUsed || "file_name",
         parsedFileSize
       };
@@ -2427,7 +2694,7 @@
     const yearMatch = paddedWithoutExt.match(YEAR_REGEX);
     if (yearMatch) {
       year = parseInt(yearMatch[1], 10);
-      if (typeof yearMatch.index === "number" && yearMatch.index > 2) {
+      if (typeof yearMatch.index === "number" && yearMatch.index >= 2) {
         cutIndex = Math.min(cutIndex, yearMatch.index - 1);
       }
     }
@@ -3907,12 +4174,29 @@
     });
   }
 
-  async function saveRawList(env, chatId, list) {
+  async function saveRawList(env, chatId, list, options = {}) {
     memoryFallback.set(`user_${chatId}`, list);
     try {
       if (env.MOVIE_SAVED) {
+        const deferKv = Boolean(options?.deferKvWrite);
+        const forceKv = Boolean(options?.forceKvWrite);
+        const deferKey = `kv_defer_cnt_user_${chatId}`;
+        if (deferKv && !forceKv) {
+          const cnt = Number(memoryFallback.get(deferKey) || 0) + 1;
+          if (cnt < 15) {
+            memoryFallback.set(deferKey, cnt);
+            return;
+          }
+        }
+        memoryFallback.set(deferKey, 0);
+        const jsonStr = JSON.stringify(list);
+        const lastJsonKey = `kv_last_json_user_${chatId}`;
+        if (!forceKv && memoryFallback.get(lastJsonKey) === jsonStr) {
+          return;
+        }
+        memoryFallback.set(lastJsonKey, jsonStr);
         trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(`user_${chatId}`, JSON.stringify(list));
+        await env.MOVIE_SAVED.put(`user_${chatId}`, jsonStr);
       }
     } catch (e) {}
   }
@@ -3927,18 +4211,25 @@
         const data = await env.MOVIE_SAVED.get(`folders_${chatId}`);
         const parsed = data ? JSON.parse(data) : [];
         memoryFallback.set(`folders_${chatId}`, parsed);
+        if (data) memoryFallback.set(`kv_last_json_folders_${chatId}`, data);
         return parsed;
       }
     } catch (e) {}
     return [];
   }
 
-  async function saveFolders(env, chatId, folders) {
+  async function saveFolders(env, chatId, folders, options = {}) {
     memoryFallback.set(`folders_${chatId}`, folders);
     try {
       if (env.MOVIE_SAVED) {
+        const jsonStr = JSON.stringify(folders);
+        const lastJsonKey = `kv_last_json_folders_${chatId}`;
+        if (!options?.forceKvWrite && memoryFallback.get(lastJsonKey) === jsonStr) {
+          return;
+        }
+        memoryFallback.set(lastJsonKey, jsonStr);
         trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(`folders_${chatId}`, JSON.stringify(folders));
+        await env.MOVIE_SAVED.put(`folders_${chatId}`, jsonStr);
       }
     } catch (e) {}
   }
@@ -4252,34 +4543,47 @@
     let list = Array.isArray(rawItems) ? rawItems : await getSavedList(env, chatId);
     if (!Array.isArray(list) || list.length === 0) return [];
     let changed = false;
-    const epMap = await getAllSeriesEpisodesMapFromD1(env);
-    const db = await ensureD1Schema(env);
+    const now = Date.now();
+    let epMap = memoryFallback.get("d1_all_series_ep_map_cache");
+    const epMapTs = Number(memoryFallback.get("d1_all_series_ep_map_cache_ts") || 0);
+    if (!(epMap instanceof Map) || (now - epMapTs) > 90000) {
+      epMap = await getAllSeriesEpisodesMapFromD1(env);
+      memoryFallback.set("d1_all_series_ep_map_cache", epMap);
+      memoryFallback.set("d1_all_series_ep_map_cache_ts", now);
+    }
 
-    // Map aus D1 movies & series für fehlende Poster
-    const posterLookup = new Map();
-    if (db) {
-      try {
-        const [mRows, sRows] = await Promise.all([
-          db.prepare("SELECT tmdb_id, poster_path, details_json FROM movies LIMIT 500").all().catch(() => ({ results: [] })),
-          db.prepare("SELECT tmdb_id, poster_path, details_json FROM series LIMIT 500").all().catch(() => ({ results: [] }))
-        ]);
-        for (const r of (mRows?.results || [])) {
-          let ext = "";
-          if (!r.poster_path && r.details_json) {
-            try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+    // Map aus D1 movies & series für fehlende Poster (3 Minuten im RAM gecacht, spart 1.000 D1-Reads pro Admin-Tab-Klick)
+    let posterLookup = memoryFallback.get("d1_poster_lookup_cache");
+    const posterLookupTs = Number(memoryFallback.get("d1_poster_lookup_cache_ts") || 0);
+    if (!(posterLookup instanceof Map) || (now - posterLookupTs) > 180000) {
+      posterLookup = new Map();
+      const db = await ensureD1Schema(env);
+      if (db) {
+        try {
+          const [mRows, sRows] = await Promise.all([
+            db.prepare("SELECT tmdb_id, poster_path, details_json FROM movies LIMIT 500").all().catch(() => ({ results: [] })),
+            db.prepare("SELECT tmdb_id, poster_path, details_json FROM series LIMIT 500").all().catch(() => ({ results: [] }))
+          ]);
+          for (const r of (mRows?.results || [])) {
+            let ext = "";
+            if (!r.poster_path && r.details_json) {
+              try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+            }
+            const p = resolvePosterUrl(r.poster_path, "w185", ext);
+            if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
           }
-          const p = resolvePosterUrl(r.poster_path, "w185", ext);
-          if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
-        }
-        for (const r of (sRows?.results || [])) {
-          let ext = "";
-          if (!r.poster_path && r.details_json) {
-            try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+          for (const r of (sRows?.results || [])) {
+            let ext = "";
+            if (!r.poster_path && r.details_json) {
+              try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+            }
+            const p = resolvePosterUrl(r.poster_path, "w185", ext);
+            if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
           }
-          const p = resolvePosterUrl(r.poster_path, "w185", ext);
-          if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
-        }
-      } catch (e) {}
+          memoryFallback.set("d1_poster_lookup_cache", posterLookup);
+          memoryFallback.set("d1_poster_lookup_cache_ts", now);
+        } catch (e) {}
+      }
     }
 
     for (const item of list) {
@@ -4561,6 +4865,7 @@
     if (changed) {
       await saveRawList(env, "bot_vip", list);
     }
+    memoryFallback.set("last_bot_vip_sync_ts", Date.now());
 
     const nextOffset = safeOffset + sliceEntries.length;
     return {
@@ -4576,6 +4881,13 @@
   }
 
   async function ensureBotVipDefaultPlaylist(env, options = {}) {
+    const now = Date.now();
+    const lastSyncTs = Number(memoryFallback.get("last_bot_vip_sync_ts") || 0);
+    if (!options?.forceSync && lastSyncTs > 0 && (now - lastSyncTs) < 180000) {
+      const folders = await getFolders(env, "bot_vip");
+      const existingMain = folders.find(f => f.type === "playlist" || f.isJsonPlaylist) || folders[0] || null;
+      if (existingMain) return existingMain;
+    }
     const res = await syncD1CatalogIntoBotVipPlaylist(env, null, options);
     return res.mainFolder;
   }
@@ -4947,6 +5259,7 @@
     const modeStr = typeof playlistMode === "object" && playlistMode !== null
       ? String(playlistMode.playlistMode || "both")
       : String(playlistMode || "both");
+    const deferKvWrite = Boolean(typeof playlistMode === "object" && playlistMode !== null && playlistMode.deferKvWrite);
     try {
       let list = await getSavedList(env, chatId);
       let addedCount = 0;
@@ -5027,7 +5340,7 @@
         changedAny = true;
       }
       if (changedAny) {
-        await saveRawList(env, chatId, list);
+        await saveRawList(env, chatId, list, { deferKvWrite });
       }
       return addedCount;
     } catch (e) {
@@ -5704,7 +6017,15 @@
             type_code TEXT,
             details_json TEXT,
             created_at INTEGER NOT NULL
-          )`)
+          )`),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_movie_id ON movie_files(movie_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_fid ON movie_files(telegram_file_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_episode_files_series_ep ON episode_files(series_id, season_number, episode_number)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_episode_files_fid ON episode_files(telegram_file_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_series_episodes_series ON series_episodes(series_id, season_number)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_media_reports_status ON media_reports(status, created_at)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_status ON import_diagnostic_logs(status, id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_msg ON import_diagnostic_logs(msg_id)")
         ]);
         // Subrequest-sparende Auto-Migration: Prüfe in 1 einziger Abfrage sqlite_master und führe fehlende Spalten gebündelt per db.batch aus
         try {
@@ -5753,7 +6074,7 @@
   }
 
   // Persistentes Diagnose-Log (D1 + Memory-Fallback) für das Admin-Dashboard [ 🛠️ Diagnose-Log ]
-  async function saveImportDiagnosticLogsToD1(env, logsArray) {
+  async function saveImportDiagnosticLogsToD1(env, logsArray, options = {}) {
     if (!Array.isArray(logsArray) || logsArray.length === 0) return;
     const now = Date.now();
     const memKey = "d1_import_diagnostic_logs";
@@ -5779,12 +6100,19 @@
     const mergedMem = [...normalizedBatch, ...existingMem].slice(0, 2500);
     memoryFallback.set(memKey, mergedMem);
 
+    // D1-Write-Quota-Schutz: Im RAM bleiben alle 2.500 Einträge (inkl. OK & SKIPPED_DUPLICATE) sofort sichtbar.
+    // In D1 werden dauerhaft bevorzugt Konflikte, Fehler, Nicht-Gefunden und Vorabversionen gespeichert (spart ~85% D1-Writes beim Massen-Import!).
+    const d1ToPersist = options?.persistAll
+      ? normalizedBatch
+      : normalizedBatch.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE" && l.status !== "SKIPPED_HEADER" && l.status !== "SKIPPED_JUNK");
+    if (d1ToPersist.length === 0) return;
+
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
       const chunkSize = 40;
-      for (let i = 0; i < normalizedBatch.length; i += chunkSize) {
-        const slice = normalizedBatch.slice(i, i + chunkSize);
+      for (let i = 0; i < d1ToPersist.length; i += chunkSize) {
+        const slice = d1ToPersist.slice(i, i + chunkSize);
         const stmts = slice.map(l =>
           db.prepare(`INSERT INTO import_diagnostic_logs (
             msg_id, stage, status, reason, file_name, text_preview, parsed_title,
@@ -5813,16 +6141,21 @@
   }
 
   async function listImportDiagnosticLogsFromD1(env, filterStatus = "ALL", searchQuery = "", limit = 1500) {
+    if (filterStatus && typeof filterStatus === "object") {
+      searchQuery = filterStatus.search || filterStatus.searchQuery || "";
+      limit = filterStatus.limit || 1500;
+      filterStatus = filterStatus.statusFilter || filterStatus.filterStatus || "ALL";
+    }
     const db = await ensureD1Schema(env);
-    let rows = [];
+    let d1Rows = [];
     if (db) {
       try {
         const res = await db
           .prepare("SELECT * FROM import_diagnostic_logs ORDER BY id DESC LIMIT ?1")
-          .bind(Math.min(2500, Math.max(50, Number(limit) || 1500)))
+          .bind(Math.min(1000, Math.max(50, Number(limit) || 600)))
           .all();
         if (Array.isArray(res?.results)) {
-          rows = res.results.map(r => {
+          d1Rows = res.results.map(r => {
             let details = {};
             try {
               if (r.details_json) details = JSON.parse(r.details_json);
@@ -5849,10 +6182,18 @@
         }
       } catch (e) {}
     }
-    if (rows.length === 0) {
-      const mem = memoryFallback.get("d1_import_diagnostic_logs");
-      if (Array.isArray(mem)) rows = mem;
+    const memRows = Array.isArray(memoryFallback.get("d1_import_diagnostic_logs"))
+      ? memoryFallback.get("d1_import_diagnostic_logs")
+      : [];
+    const mergedMap = new Map();
+    for (const r of [...memRows, ...d1Rows]) {
+      if (!r) continue;
+      const dedupeKey = `${r.msgId || ""}|${r.fileName || ""}|${r.parsedTitle || ""}|${r.season || ""}|${r.episode || ""}`;
+      if (!mergedMap.has(dedupeKey)) {
+        mergedMap.set(dedupeKey, r);
+      }
     }
+    const rows = Array.from(mergedMap.values()).sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
 
     const counts = {
       total: rows.length,
@@ -6113,7 +6454,14 @@
     existingMem.first_name = firstName || existingMem.first_name;
     if (adminFlag) existingMem.is_admin = 1;
     existingMem.last_seen_at = now;
+    existingMem._cachedAt = now;
     memoryFallback.set(memKey, existingMem);
+
+    // RAM-First Debounce: Wenn derselbe User in den letzten 10 Minuten bereits in D1 synchronisiert wurde,
+    // spare den D1-Write + D1-Read bei wiederkehrenden Requests komplett ein!
+    if (existingMem._d1SyncedAt && (now - Number(existingMem._d1SyncedAt)) < 600000) {
+      return formatUserRowForClient(existingMem, env);
+    }
 
     const db = await ensureD1Schema(env);
     if (db) {
@@ -6136,6 +6484,8 @@
           .bind(telegramId)
           .first();
         if (row) {
+          row._cachedAt = now;
+          row._d1SyncedAt = now;
           memoryFallback.set(memKey, row);
           if (row.custom_username) memoryFallback.set(`d1_username_${String(row.custom_username).toLowerCase()}`, telegramId);
           return formatUserRowForClient(row, env);
@@ -6145,9 +6495,15 @@
     return formatUserRowForClient(existingMem, env);
   }
 
-  async function getUserByTelegramIdFromD1(env, telegramId) {
+  async function getUserByTelegramIdFromD1(env, telegramId, forceFresh = false) {
     if (!telegramId || telegramId === "guest") return null;
     const tid = String(telegramId);
+    const memKey = `d1_user_${tid}`;
+    const cached = memoryFallback.get(memKey);
+    // RAM-First Cache (5 Minuten gültig): Verhindert einen D1-Read bei jedem einzelnen /api/tma/* Aufruf!
+    if (!forceFresh && cached && cached.telegram_id && (Date.now() - Number(cached._cachedAt || 0)) < 300000) {
+      return cached;
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -6157,12 +6513,14 @@
           .bind(tid)
           .first();
         if (row) {
-          memoryFallback.set(`d1_user_${tid}`, row);
+          row._cachedAt = Date.now();
+          row._d1SyncedAt = Date.now();
+          memoryFallback.set(memKey, row);
           return row;
         }
       } catch (e) {}
     }
-    return memoryFallback.get(`d1_user_${tid}`) || null;
+    return cached || null;
   }
 
   async function getUserByCustomUsernameFromD1(env, customUsername) {
@@ -6715,6 +7073,35 @@
     return { channelId: raw, sampleMessageId: null, username: "" };
   }
 
+  function normalizeStreamPartLabel(rawPart, rawFilename = "") {
+    const pStr = String(rawPart || "").trim();
+    if (!pStr && !rawFilename) return null;
+    if (/^RAR/i.test(pStr)) return pStr.toUpperCase();
+    const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*([1-9]\d?)$/i);
+    if (m) return `CD ${parseInt(m[1], 10)}`;
+    if (!pStr && rawFilename) {
+      const fnSplit = String(rawFilename).match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
+      if (fnSplit) return `CD ${parseInt(fnSplit[1], 10)}`;
+    }
+    return pStr || null;
+  }
+
+  function extractStreamPartNumber(partLabel) {
+    if (!partLabel) return 0;
+    const m = String(partLabel).match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function cleanStreamTagsWithoutRedundantPart(rawTags = "") {
+    if (!rawTags) return "";
+    return String(rawTags)
+      .split(/\s*[·•|]\s*/)
+      .map(t => t.trim())
+      .filter(t => t && !/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*\d+$/i.test(t))
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .join(" · ");
+  }
+
   function sortAndDedupeStreamFiles(filesList) {
     if (!Array.isArray(filesList) || filesList.length === 0) return [];
     const prepared = [];
@@ -6724,13 +7111,15 @@
       const validity = scoreTelegramFileIdValidity(normalizedFid);
       const msgId = extractExportMessageIdFromFileId(normalizedFid);
       const normalizedSize = parseHumanFileSizeToBytes(raw.file_size);
+      const normalizedPart = normalizeStreamPartLabel(raw.part, raw.raw_filename || raw.rawFilename || "");
+      const cleanedTags = cleanStreamTagsWithoutRedundantPart(raw.tags ? String(raw.tags) : "");
       prepared.push({
         ...raw,
         telegram_file_id: normalizedFid,
         quality: String(raw.quality || "1080p"),
         codec: String(raw.codec || "x264"),
-        part: raw.part ? String(raw.part) : null,
-        tags: raw.tags ? String(raw.tags) : "",
+        part: normalizedPart,
+        tags: cleanedTags,
         file_size: normalizedSize,
         _validity: validity,
         _msgId: msgId
@@ -6782,6 +7171,17 @@
     return deduped.sort((a, b) => {
       const qDiff = rankQualityLabel(b.quality) - rankQualityLabel(a.quality);
       if (qDiff !== 0) return qDiff;
+      const aHasPart = Boolean(a.part);
+      const bHasPart = Boolean(b.part);
+      if (aHasPart && bHasPart) {
+        const pNumDiff = extractStreamPartNumber(a.part) - extractStreamPartNumber(b.part);
+        if (pNumDiff !== 0) return pNumDiff;
+        const pStrDiff = String(a.part || "").localeCompare(String(b.part || ""), undefined, { numeric: true });
+        if (pStrDiff !== 0) return pStrDiff;
+      } else if (aHasPart !== bHasPart) {
+        // Mehrteiler einer Qualitätsstufe zusammenhalten
+        return aHasPart ? -1 : 1;
+      }
       const sDiff = Number(b.file_size || 0) - Number(a.file_size || 0);
       if (sDiff !== 0) return sDiff;
       return String(a.part || "").localeCompare(String(b.part || ""), undefined, { numeric: true });
@@ -6823,6 +7223,7 @@
             if (!v || !(v.file_id || v.telegram_file_id)) continue;
             const fid = String(v.file_id || v.telegram_file_id);
             const vLabel = extractEpisodeVersionLabel(v);
+            const normPart = normalizeStreamPartLabel(v.part, v.raw_filename || v.rawFilename || "");
             const key = `${vLabel}|${String(v.quality || "1080p").toUpperCase()}|${fid}`;
             const parsedSubs = Array.isArray(v.subtitles) ? v.subtitles : (() => { try { return JSON.parse(v.subtitles_json || "[]"); } catch (_) { return []; } })();
             versionMap.set(key, {
@@ -6831,9 +7232,9 @@
               telegram_file_id: fid,
               quality: String(v.quality || "1080p"),
               codec: String(v.codec || "x264"),
-              part: v.part || null,
+              part: normPart,
               file_size: Number(v.file_size || 0),
-              tags: normalizeCompactVersionTags(v.tags || vLabel),
+              tags: cleanStreamTagsWithoutRedundantPart(normalizeCompactVersionTags(v.tags || vLabel)),
               subtitles: Array.isArray(parsedSubs) ? parsedSubs : []
             });
           }
@@ -6844,6 +7245,7 @@
       if (!f || !f.telegram_file_id) continue;
       const fid = String(f.telegram_file_id);
       const vLabel = extractEpisodeVersionLabel(f);
+      const normPart = normalizeStreamPartLabel(f.part, f.raw_filename || f.rawFilename || "");
       const key = `${vLabel}|${String(f.quality || "1080p").toUpperCase()}|${fid}`;
       const parsedSubs = Array.isArray(f.subtitles) ? f.subtitles : (() => { try { return JSON.parse(f.subtitles_json || "[]"); } catch (_) { return []; } })();
       versionMap.set(key, {
@@ -6852,9 +7254,9 @@
         telegram_file_id: fid,
         quality: String(f.quality || "1080p"),
         codec: String(f.codec || "x264"),
-        part: f.part || null,
+        part: normPart,
         file_size: Number(f.file_size || 0),
-        tags: normalizeCompactVersionTags(f.tags || vLabel),
+        tags: cleanStreamTagsWithoutRedundantPart(normalizeCompactVersionTags(f.tags || vLabel)),
         subtitles: Array.isArray(parsedSubs) ? parsedSubs : []
       });
     }
@@ -6897,6 +7299,8 @@
   function enrichStreamFileRowMeta(row) {
     if (!row || typeof row !== "object") return row;
     const vLabel = extractEpisodeVersionLabel(row);
+    const normPart = normalizeStreamPartLabel(row.part, row.raw_filename || row.rawFilename || "");
+    const cleanTags = cleanStreamTagsWithoutRedundantPart(row.tags || "");
     let subs = [];
     if (Array.isArray(row.subtitles)) {
       subs = row.subtitles;
@@ -6908,6 +7312,8 @@
     }
     return {
       ...row,
+      part: normPart,
+      tags: cleanTags,
       version_label: vLabel,
       versionLabel: vLabel,
       raw_filename: row.raw_filename || row.rawFilename || "",
@@ -6932,10 +7338,12 @@
     const incomingIsPrerelease = isPrereleaseOrMicDub(rawCaption, rawFilename, fileInfo.tags || "");
 
     const memKey = `d1_movie_files_${mid}`;
+    const memLoadedTsKey = `d1_movie_files_ts_${mid}`;
     let existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
     const db = await ensureD1Schema(env);
     let existingDbRows = [];
-    if (db) {
+    const memFresh = existingMem.length > 0 && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 180000;
+    if (db && !memFresh) {
       try {
         const res = await db
           .prepare("SELECT id, telegram_file_id, quality, codec, part, tags, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id = ?1")
@@ -7000,6 +7408,7 @@
       ...existingMem.filter(x => x && x.telegram_file_id !== entry.telegram_file_id && (!entry.telegram_unique_id || x.telegram_unique_id !== entry.telegram_unique_id))
     ]);
     memoryFallback.set(memKey, nextMem);
+    memoryFallback.set(memLoadedTsKey, Date.now());
 
     if (!db) return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
     try {
@@ -7074,6 +7483,12 @@
   async function getMovieFilesFromD1(env, movieId) {
     if (!movieId) return [];
     const mid = Number(movieId);
+    const memKey = `d1_movie_files_${mid}`;
+    const memLoadedTsKey = `d1_movie_files_ts_${mid}`;
+    const memFiles = memoryFallback.get(memKey);
+    if (Array.isArray(memFiles) && memFiles.length > 0 && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 180000) {
+      return sortAndDedupeStreamFiles(memFiles.map(enrichStreamFileRowMeta));
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -7083,11 +7498,13 @@
           .bind(mid)
           .all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
-          return sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+          const sorted = sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+          memoryFallback.set(memKey, sorted);
+          memoryFallback.set(memLoadedTsKey, Date.now());
+          return sorted;
         }
       } catch (e) {}
     }
-    const memFiles = memoryFallback.get(`d1_movie_files_${mid}`);
     return Array.isArray(memFiles) ? sortAndDedupeStreamFiles(memFiles.map(enrichStreamFileRowMeta)) : [];
   }
 
@@ -7108,10 +7525,13 @@
     const incomingIsPrerelease = isPrereleaseOrMicDub(rawCaption, rawFilename, fileInfo.tags || fileInfo.versionLabel || "");
 
     const memKey = `d1_ep_files_${sid}_${sNum}`;
+    const memEpTsKey = `d1_ep_files_ts_${sid}_${sNum}_${eNum}`;
     let existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
+    const memEpRows = existingMem.filter(x => x && Number(x.episode_number) === eNum);
+    const memEpFresh = memEpRows.length > 0 && (Date.now() - Number(memoryFallback.get(memEpTsKey) || 0)) < 180000;
     const db = await ensureD1Schema(env);
     let existingDbRows = [];
-    if (db) {
+    if (db && !memEpFresh) {
       try {
         const res = await db
           .prepare("SELECT id, telegram_file_id, quality, codec, part, tags, version_label, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3")
@@ -7123,7 +7543,7 @@
 
     const allExistingEpRows = [
       ...existingDbRows,
-      ...existingMem.filter(x => x && Number(x.episode_number) === eNum)
+      ...memEpRows
     ];
     const hasCleanExisting = allExistingEpRows.some(r => r && r.telegram_file_id !== normalizedFid && !isPrereleaseOrMicDub(r.raw_caption, r.raw_filename, r.tags || r.version_label));
 
@@ -7183,7 +7603,9 @@
     ]);
     const otherEps = existingMem.filter(x => x && Number(x.episode_number) !== eNum);
     memoryFallback.set(memKey, [...sameEpDeduped, ...otherEps]);
+    memoryFallback.set(memEpTsKey, Date.now());
     memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
+    memoryFallback.delete("d1_series_gaps_cache");
 
     const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped));
 
@@ -7476,7 +7898,13 @@
   }
 
   // Automatische Bereinigung (Cleanup): Löscht alle Serien aus D1 & Memory-Fallback, die 0 gültige Episoden mit verknüpfter Videodatei haben
-  async function cleanupEmptySeriesInD1AndMemory(env) {
+  async function cleanupEmptySeriesInD1AndMemory(env, forceRun = false) {
+    const now = Date.now();
+    const lastCleanupTs = Number(memoryFallback.get("last_empty_series_cleanup_ts") || 0);
+    if (!forceRun && lastCleanupTs > 0 && (now - lastCleanupTs) < 300000) {
+      return 0;
+    }
+    memoryFallback.set("last_empty_series_cleanup_ts", now);
     let removedSeriesCount = 0;
     const db = await ensureD1Schema(env);
     if (db) {
@@ -7867,7 +8295,11 @@
   }
 
   // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03; Priorität 2: Fehlende Folgen bis Staffelende)
-  async function computeSeriesGapsOverview(env) {
+  async function computeSeriesGapsOverview(env, forceRefresh = false) {
+    const cachedGaps = memoryFallback.get("d1_series_gaps_cache");
+    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 180000) {
+      return cachedGaps.data;
+    }
     const db = await ensureD1Schema(env);
     const seriesMap = new Map();
     const seasonMetaBySeries = new Map();
@@ -8105,7 +8537,7 @@
       return String(a.title || "").localeCompare(String(b.title || ""), "de");
     });
 
-    return {
+    const resultObj = {
       totalSeriesWithGaps: seriesGapsList.length,
       totalSeriesWithInternalGaps,
       totalSeriesWithMultiEpisodeGaps,
@@ -8113,22 +8545,44 @@
       totalTrailingMissingEpisodes,
       series: seriesGapsList
     };
+    memoryFallback.set("d1_series_gaps_cache", { ts: Date.now(), data: resultObj });
+    return resultObj;
   }
 
   async function getEpisodeFilesFromD1(env, seriesId, seasonNumber, episodeNumber = null) {
     if (!seriesId) return [];
     const sid = Number(seriesId);
     const sNum = Number(seasonNumber || 1);
+    const memKey = `d1_ep_files_${sid}_${sNum}`;
+    if (episodeNumber !== null) {
+      const eNum = Number(episodeNumber);
+      const memEpTsKey = `d1_ep_files_ts_${sid}_${sNum}_${eNum}`;
+      const memFiles = memoryFallback.get(memKey);
+      if (Array.isArray(memFiles) && (Date.now() - Number(memoryFallback.get(memEpTsKey) || 0)) < 180000) {
+        const filtered = memFiles.filter(f => Number(f.episode_number) === eNum);
+        if (filtered.length > 0) {
+          return sortAndDedupeStreamFiles(filtered.map(enrichStreamFileRowMeta));
+        }
+      }
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Reads");
         if (episodeNumber !== null) {
+          const eNum = Number(episodeNumber);
           const res = await db
             .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 ORDER BY updated_at DESC")
-            .bind(sid, sNum, Number(episodeNumber))
+            .bind(sid, sNum, eNum)
             .all();
-          if (Array.isArray(res?.results) && res.results.length > 0) return sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+          if (Array.isArray(res?.results) && res.results.length > 0) {
+            const sorted = sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+            const existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
+            const otherEps = existingMem.filter(x => x && Number(x.episode_number) !== eNum);
+            memoryFallback.set(memKey, [...sorted, ...otherEps]);
+            memoryFallback.set(`d1_ep_files_ts_${sid}_${sNum}_${eNum}`, Date.now());
+            return sorted;
+          }
         } else {
           const resAll = await db
             .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 ORDER BY episode_number ASC, updated_at DESC")
@@ -8142,15 +8596,17 @@
               byEp.get(epKey).push(row);
             }
             const merged = [];
-            for (const [, epRows] of byEp.entries()) {
+            for (const [epKey, epRows] of byEp.entries()) {
               merged.push(...sortAndDedupeStreamFiles(epRows));
+              memoryFallback.set(`d1_ep_files_ts_${sid}_${sNum}_${epKey}`, Date.now());
             }
+            memoryFallback.set(memKey, merged);
             return merged;
           }
         }
       } catch (e) {}
     }
-    const memFiles = memoryFallback.get(`d1_ep_files_${sid}_${sNum}`);
+    const memFiles = memoryFallback.get(memKey);
     if (!Array.isArray(memFiles)) return [];
     if (episodeNumber !== null) {
       return sortAndDedupeStreamFiles(memFiles.filter(f => Number(f.episode_number) === Number(episodeNumber)).map(enrichStreamFileRowMeta));
@@ -8392,13 +8848,19 @@
   }
 
   async function getMovieFromD1(env, movieId) {
+    if (!movieId) return null;
+    const mid = Number(movieId);
+    const memMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
+    if (memMovie && memMovie.title) {
+      return memMovie;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !movieId) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
         .prepare("SELECT telegraph_url, details_json, updated_at FROM movies WHERE tmdb_id = ?1")
-        .bind(Number(movieId))
+        .bind(mid)
         .first();
       if (!row || !row.details_json) return null;
       if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
@@ -8407,6 +8869,7 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        memoryFallback.set(`d1_catalog_movie_${mid}`, parsed);
         trackStat("d1Hits");
         return parsed;
       }
@@ -8416,7 +8879,14 @@
 
   async function saveMovieToD1(env, movieObj) {
     if (!movieObj || !movieObj.id) return;
-    memoryFallback.set(`d1_catalog_movie_${Number(movieObj.id)}`, movieObj);
+    const mid = Number(movieObj.id);
+    const prevSavedTs = Number(memoryFallback.get(`d1_movie_saved_ts_${mid}`) || 0);
+    const prevMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
+    memoryFallback.set(`d1_catalog_movie_${mid}`, movieObj);
+    // Wenn derselbe Film in den letzten 10 Minuten bereits in D1 gespeichert wurde und sich das Poster nicht geändert hat, spare den redundanten D1-Write!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevMovie && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
+      return;
+    }
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -8434,7 +8904,7 @@
           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
         )`)
         .bind(
-          Number(movieObj.id),
+          mid,
           String(movieObj.title || "Unbekannt"),
           String(movieObj.releaseDate || "Keine Angabe"),
           releaseYear,
@@ -8458,17 +8928,24 @@
           Date.now()
         )
         .run();
+      memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
     } catch (e) {}
   }
 
   async function getSeriesFromD1(env, seriesId) {
+    if (!seriesId) return null;
+    const sid = Number(seriesId);
+    const memSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
+    if (memSeries && memSeries.title) {
+      return memSeries;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !seriesId) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
         .prepare("SELECT telegraph_url, details_json, updated_at FROM series WHERE tmdb_id = ?1")
-        .bind(Number(seriesId))
+        .bind(sid)
         .first();
       if (!row || !row.details_json) return null;
       if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
@@ -8477,6 +8954,7 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        memoryFallback.set(`d1_catalog_series_${sid}`, parsed);
         trackStat("d1Hits");
         return parsed;
       }
@@ -8522,7 +9000,14 @@
   async function saveSeriesToD1(env, seriesObj) {
     if (!seriesObj || !seriesObj.id) return;
     const sid = Number(seriesObj.id);
+    const prevSavedTs = Number(memoryFallback.get(`d1_series_saved_ts_${sid}`) || 0);
+    const prevSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
     memoryFallback.set(`d1_catalog_series_${sid}`, seriesObj);
+    // Wenn dieselbe Serie in den letzten 10 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E03)
+    // und sich weder Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevSeries && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
+      return;
+    }
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -8590,17 +9075,25 @@
         }
       }
       await db.batch(stmts);
+      memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
     } catch (e) {}
   }
 
   async function getSeasonFromD1(env, seriesId, seasonNumber) {
+    if (!seriesId) return null;
+    const sid = Number(seriesId);
+    const sNum = Number(seasonNumber);
+    const memSeason = getCachedTmdb(`tv_season_${sid}_${sNum}`);
+    if (memSeason && Array.isArray(memSeason.episodes)) {
+      return memSeason;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !seriesId) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
         .prepare("SELECT telegraph_url, episodes_json, updated_at FROM series_seasons WHERE series_id = ?1 AND season_number = ?2")
-        .bind(Number(seriesId), Number(seasonNumber))
+        .bind(sid, sNum)
         .first();
       if (!row || !row.episodes_json) return null;
       if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
@@ -8609,6 +9102,7 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        setCachedTmdb(`tv_season_${sid}_${sNum}`, parsed);
         trackStat("d1Hits");
         return parsed;
       }
@@ -8617,8 +9111,16 @@
   }
 
   async function saveSeasonToD1(env, seriesId, seasonNumber, seasonObj) {
+    if (!seriesId || !seasonObj) return;
+    const sid = Number(seriesId);
+    const sNum = Number(seasonNumber);
+    const prevSavedTs = Number(memoryFallback.get(`d1_season_saved_ts_${sid}_${sNum}`) || 0);
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && !seasonObj.telegraphUrl) {
+      return;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !seriesId || !seasonObj) return;
+    if (!db) return;
+    memoryFallback.set(`d1_season_saved_ts_${sid}_${sNum}`, Date.now());
     try {
       trackStat("d1Writes");
       const rawMaxEpCount = Number(seasonObj.seasonEpisodeCount || (Array.isArray(seasonObj.episodes) ? seasonObj.episodes.length : 0));
@@ -9632,6 +10134,85 @@
   }
 
   /**
+   * 2. TMDb-Kandidaten-Scoring (Verhindert falsche Doppelgänger / Mockbuster im selben Jahr wie "Arielle 2023")
+   * Bewertet alle Treffer anhand von Jahr, Titel-Genauigkeit, Beschreibungs-Fingerabdruck (contextOverview vs. overview)
+   * und Bekanntheits-Bonus (vote_count).
+   */
+  function pickBestTMDbMovie(results = [], parsedItem = {}) {
+    if (!Array.isArray(results) || !results.length) return null;
+
+    const targetTitle = String(parsedItem.title || parsedItem.cleanTitle || "")
+      .replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "")
+      .toLowerCase()
+      .trim();
+    const normTargetTitle = normalizeCompareString(targetTitle);
+    const contextWords = Array.from(
+      new Set(
+        String(parsedItem.contextOverview || "")
+          .toLowerCase()
+          .split(/[^\p{L}\d]+/u)
+          .filter(w => w.length >= 5)
+      )
+    );
+
+    const scored = results.map(movie => {
+      let score = 0;
+      const tmdbTitle = String(movie.title || movie.name || "").toLowerCase().trim();
+      const tmdbOrig  = String(movie.original_title || movie.original_name || "").toLowerCase().trim();
+      const normTmdbTitle = normalizeCompareString(tmdbTitle);
+      const normTmdbOrig  = normalizeCompareString(tmdbOrig);
+      const relStr = String(movie.release_date || movie.first_air_date || "");
+      const releaseYear = relStr ? parseInt(relStr.slice(0, 4), 10) : null;
+
+      // 1. Jahres-Check
+      if (parsedItem.year && releaseYear) {
+        const diff = Math.abs(Number(parsedItem.year) - releaseYear);
+        if (diff === 0) score += 40;
+        else if (diff === 1) score += 15;
+        else score -= diff * 25; // Falsches Jahrzehnt hart abstrafen!
+      }
+
+      // 2. Titel-Genauigkeit
+      if (
+        tmdbTitle === targetTitle ||
+        tmdbOrig === targetTitle ||
+        (normTargetTitle && (normTmdbTitle === normTargetTitle || normTmdbOrig === normTargetTitle))
+      ) {
+        score += 50;
+      } else if (tmdbTitle.startsWith(targetTitle) || (normTargetTitle && normTmdbTitle.startsWith(normTargetTitle))) {
+        score += 30;
+      } else if (tmdbTitle.includes(targetTitle) || (normTargetTitle && normTmdbTitle.includes(normTargetTitle))) {
+        score += 15;
+      }
+
+      // 3. Beschreibungs-Fingerabdruck (Telegram-Text vs. TMDb-Overview)
+      if (contextWords.length > 0 && movie.overview) {
+        const ovLower = String(movie.overview).toLowerCase();
+        let matches = 0;
+        for (const word of contextWords) {
+          if (ovLower.includes(word)) matches++;
+        }
+        score += Math.min(matches * 20, 100); // Bis zu +100 Punkte bei passender Beschreibung!
+      }
+
+      // 4. Bekanntheits-Bonus (Schutz gegen billige Mockbuster im selben Jahr)
+      const votes = Number(movie.vote_count || 0);
+      if (votes > 1000) score += 35;
+      else if (votes > 200) score += 20;
+      else if (votes > 50) score += 10;
+      else if (votes < 10) score -= 15;
+
+      return { movie, score };
+    });
+
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return Number(b.movie?.popularity || 0) - Number(a.movie?.popularity || 0);
+    });
+    return scored[0].movie;
+  }
+
+  /**
    * Sucht auf TMDb und prüft das Ergebnis auf Kontext-Konflikte (z.B. "Pirates of the Caribbean 3 (2011)"
    * -> Teil 3 ist von 2007, 2011 ist Teil 4). Markiert Widersprüche mit status: "?" und contextError: true,
    * anstatt blind die Fortsetzungsnummer "3" zu löschen!
@@ -9642,9 +10223,18 @@
     }
     const baseUrl = "https://api.themoviedb.org/3";
     const type = (parsedItem.mediaType === "tv" || parsedItem.isSeries || parsedItem.typeCode === "s") ? "tv" : "movie";
+    if (parsedItem.title && String(parsedItem.title).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.title);
+      parsedItem.title = String(parsedItem.title).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
+    if (parsedItem.cleanTitle && String(parsedItem.cleanTitle).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.cleanTitle);
+      parsedItem.cleanTitle = String(parsedItem.cleanTitle).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
     const rawQueryTitle = String(parsedItem.title || parsedItem.cleanTitle || "").trim();
-    const cleanedMovieQ = type === "movie" ? cleanMovieQuery(rawQueryTitle) : rawQueryTitle;
-    const queryTitle = rawQueryTitle;
+    // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn des Khan" -> "Star Trek II: Der Zorn des Khan")
+    const queryTitle = rawQueryTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
+    const cleanedMovieQ = type === "movie" ? cleanMovieQuery(queryTitle) : queryTitle;
     const yearParam = type === "movie" ? "primary_release_year" : "first_air_date_year";
 
     const isEnvObj = tmdbApiKeyOrEnv && typeof tmdbApiKeyOrEnv === "object";
@@ -9665,18 +10255,45 @@
     };
 
     let tmdbHit = null;
+    let fallbackWrongYearHit = null;
+
+    const getHitYearDiff = (hit) => {
+      if (!hit || !parsedItem.year) return 0;
+      const rel = String(hit.release_date || hit.first_air_date || "");
+      const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
+      return y ? Math.abs(Number(parsedItem.year) - y) : 0;
+    };
+
+    const acceptCandidateHit = (candidate) => {
+      if (!candidate) return;
+      if (getHitYearDiff(candidate) <= 2) {
+        if (!tmdbHit) tmdbHit = candidate;
+      } else if (!fallbackWrongYearHit) {
+        fallbackWrongYearHit = candidate;
+      }
+    };
 
     // 1. Direkte ID
     if (parsedItem.tmdbId) {
       tmdbHit = await cachedFetchJson(buildUrl(`/${type}/${parsedItem.tmdbId}?language=de-DE`));
     }
 
-    // Hilfsfunktion: Sortiert TMDb-Ergebnisse bei gleichem/ähnlichem Titel immer nach der kleinsten Jahres-Abweichung
-    const pickBestHitBySmallestYearDiff = (resultsList) => {
+    // Hilfsfunktion: Erkennt deutschsprachige Produktionen (DACH + DDR/XG)
+    const isCandidateDach = (item) => {
+      if (!item || typeof item !== "object") return false;
+      if (String(item.original_language || "").toLowerCase() === "de") return true;
+      const countries = Array.isArray(item.origin_country) ? item.origin_country : [];
+      return countries.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim()));
+    };
+
+    // Hilfsfunktion: Nutzt bei Filmen pickBestTMDbMovie (inkl. contextOverview + Blockbuster-Bonus) und bei Serien Jahres-/DACH-Sortierung
+    const pickBestHitBySmallestYearDiff = (resultsList, overrideTitle = null) => {
       if (!Array.isArray(resultsList) || resultsList.length === 0) return null;
-      if (!parsedItem.year) return resultsList[0];
-      const targetY = Number(parsedItem.year);
-      const normQ = normalizeCompareString(queryTitle);
+      if (type === "movie") {
+        return pickBestTMDbMovie(resultsList, overrideTitle ? { ...parsedItem, title: overrideTitle } : parsedItem);
+      }
+      const targetY = parsedItem.year ? Number(parsedItem.year) : null;
+      const normQ = normalizeCompareString(overrideTitle || queryTitle);
       return [...resultsList].sort((a, b) => {
         const aTitle = normalizeCompareString(a.title || a.name || "");
         const bTitle = normalizeCompareString(b.title || b.name || "");
@@ -9685,54 +10302,89 @@
         const aExact = (aTitle === normQ || aOrig === normQ) ? 1 : 0;
         const bExact = (bTitle === normQ || bOrig === normQ) ? 1 : 0;
         if (aExact !== bExact) return bExact - aExact;
-        const aDate = String(a.release_date || a.first_air_date || "");
-        const bDate = String(b.release_date || b.first_air_date || "");
-        const aYear = aDate ? parseInt(aDate.slice(0, 4), 10) : 9999;
-        const bYear = bDate ? parseInt(bDate.slice(0, 4), 10) : 9999;
-        const aDiff = Math.abs(aYear - targetY);
-        const bDiff = Math.abs(bYear - targetY);
-        if (aDiff !== bDiff) return aDiff - bDiff;
+        if (targetY) {
+          const aDate = String(a.release_date || a.first_air_date || "");
+          const bDate = String(b.release_date || b.first_air_date || "");
+          const aYear = aDate ? parseInt(aDate.slice(0, 4), 10) : 9999;
+          const bYear = bDate ? parseInt(bDate.slice(0, 4), 10) : 9999;
+          const aDiff = Math.abs(aYear - targetY);
+          const bDiff = Math.abs(bYear - targetY);
+          if (aDiff !== bDiff) return aDiff - bDiff;
+        } else if (aExact && bExact) {
+          const aDach = isCandidateDach(a);
+          const bDach = isCandidateDach(b);
+          if (aDach !== bDach) {
+            const nonDach = aDach ? b : a;
+            const dach = aDach ? a : b;
+            const nonDachIsGlobalHit = (Number(nonDach.vote_count || 0) >= 150 || Number(nonDach.popularity || 0) >= 25) && Number(dach.vote_count || 0) < 30;
+            if (!nonDachIsGlobalHit) return aDach ? -1 : 1;
+          }
+        }
         return Number(b.popularity || 0) - Number(a.popularity || 0);
       })[0];
     };
 
-    // 2. Suche mit Titel + Jahr (bei mediaType === "movie" ausschließlich unter /search/movie mit &primary_release_year=${parsedItem.year})
-    if (!tmdbHit && parsedItem.year && queryTitle) {
-      const res = await cachedFetchJson(
-        buildUrl(`/search/${type}?query=${encodeURIComponent(queryTitle)}&${yearParam}=${parsedItem.year}&language=de-DE`)
-      );
-      if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
-      if (!tmdbHit && cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
-        const resClean = await cachedFetchJson(
-          buildUrl(`/search/${type}?query=${encodeURIComponent(cleanedMovieQ)}&${yearParam}=${parsedItem.year}&language=de-DE`)
+    const queryTmdbWithAndWithoutYear = async (qStr) => {
+      if (!qStr || qStr.length < 2 || tmdbHit) return;
+      if (parsedItem.year) {
+        const resY = await cachedFetchJson(
+          buildUrl(`/search/${type}?query=${encodeURIComponent(qStr)}&${yearParam}=${parsedItem.year}&language=de-DE`)
         );
-        if (resClean?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(resClean.results);
+        if (resY?.results?.length > 0) acceptCandidateHit(pickBestHitBySmallestYearDiff(resY.results, qStr));
       }
-    }
+      if (!tmdbHit) {
+        const resNoY = await cachedFetchJson(
+          buildUrl(`/search/${type}?query=${encodeURIComponent(qStr)}&language=de-DE`)
+        );
+        if (resNoY?.results?.length > 0) acceptCandidateHit(pickBestHitBySmallestYearDiff(resNoY.results, qStr));
+      }
+    };
 
-    // 3. Suche OHNE Jahr (falls Jahreszahl im Post leicht abwich, sortiert nach kleinster Jahres-Abweichung!)
+    // 2 & 3. Suche mit Titel (+ römischer Doppelpunkt-Normalisierung) mit und ohne Jahr
     if (!tmdbHit && queryTitle) {
-      const res = await cachedFetchJson(
-        buildUrl(`/search/${type}?query=${encodeURIComponent(queryTitle)}&language=de-DE`)
-      );
-      if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
+      await queryTmdbWithAndWithoutYear(queryTitle);
+      if (!tmdbHit && rawQueryTitle !== queryTitle) {
+        await queryTmdbWithAndWithoutYear(rawQueryTitle);
+      }
       if (!tmdbHit && cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
-        const resClean = await cachedFetchJson(
-          buildUrl(`/search/${type}?query=${encodeURIComponent(cleanedMovieQ)}&language=de-DE`)
-        );
-        if (resClean?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(resClean.results);
+        await queryTmdbWithAndWithoutYear(cleanedMovieQ);
       }
     }
 
-    // 4. Bindestrich-Split (NUR bei echten Bindestrichen/Doppelpunkten, niemals Teil-Nummern wie "3" abschneiden!)
-    if (!tmdbHit && (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes(":"))) {
-      const mainTitle = queryTitle.split(/\s*[-–:]\s*/)[0].trim();
-      if (mainTitle.length >= 3) {
-        const res = await cachedFetchJson(
-          buildUrl(`/search/${type}?query=${encodeURIComponent(mainTitle)}&language=de-DE`)
-        );
-        if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
+    // 3B. Umlaut-Normalisierung (ae, oe, ue -> ä, ö, ü, z.B. "Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
+    if (!tmdbHit && /(?:ae|oe|ue)/i.test(queryTitle) && !/[äöüß]/i.test(queryTitle)) {
+      const umlautTitle = queryTitle
+        .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+        .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü");
+      await queryTmdbWithAndWithoutYear(umlautTitle);
+    }
+
+    // 4. Untertitel-Fallback / Bindestrich-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road")
+    if (!tmdbHit && (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes("—") || queryTitle.includes(":"))) {
+      const shortTitle = queryTitle.split(/\s*[-–—:]\s*/)[0].trim();
+      if (shortTitle.length >= 2 && shortTitle.toLowerCase() !== queryTitle.toLowerCase()) {
+        await queryTmdbWithAndWithoutYear(shortTitle);
+        if (!tmdbHit && /(?:ae|oe|ue)/i.test(shortTitle) && !/[äöüß]/i.test(shortTitle)) {
+          const shortUmlaut = shortTitle
+            .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+            .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü");
+          await queryTmdbWithAndWithoutYear(shortUmlaut);
+        }
       }
+    }
+
+    // 4B. Artikel-Fallback ("The International" -> "International", falls Stufen 1-4 keinen passenden Treffer lieferten)
+    const articleRegex = /^(?:the|a|an|der|die|das|les|le|la)\s+/i;
+    if (!tmdbHit && articleRegex.test(queryTitle)) {
+      const titleWithoutArticle = queryTitle.replace(articleRegex, "").trim();
+      if (titleWithoutArticle.length >= 3) {
+        await queryTmdbWithAndWithoutYear(titleWithoutArticle);
+      }
+    }
+
+    // Falls nur ein Treffer aus einem falschen Jahrzehnt (> 2 Jahre Abweichung) existierte, diesen für die Konflikt-Meldung heranziehen
+    if (!tmdbHit && fallbackWrongYearHit) {
+      tmdbHit = fallbackWrongYearHit;
     }
 
     if (!tmdbHit) {
@@ -9778,7 +10430,17 @@
     if (!parsedItem || (!parsedItem.tmdbId && !parsedItem.title && !parsedItem.cleanTitle)) return null;
     const baseUrl = "https://api.themoviedb.org/3";
     const type = (parsedItem.mediaType === "tv" || parsedItem.isSeries || parsedItem.typeCode === "s") ? "tv" : "movie";
-    const queryTitle = String(parsedItem.title || parsedItem.cleanTitle || "").trim();
+    if (parsedItem.title && String(parsedItem.title).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.title);
+      parsedItem.title = String(parsedItem.title).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
+    if (parsedItem.cleanTitle && String(parsedItem.cleanTitle).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.cleanTitle);
+      parsedItem.cleanTitle = String(parsedItem.cleanTitle).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
+    const rawQueryTitle = String(parsedItem.title || parsedItem.cleanTitle || "").trim();
+    // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn" -> "Star Trek II: Der Zorn")
+    const queryTitle = rawQueryTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
     const cleanedMovieQ = type === "movie" ? cleanMovieQuery(queryTitle) : queryTitle;
     const headers = {
       accept: "application/json",
@@ -9790,6 +10452,22 @@
       const directHit = await cachedExternalFetchJson(`${baseUrl}/${type}/${parsedItem.tmdbId}?language=de-DE`, { headers });
       if (directHit && directHit.id) return { ...directHit, _resolvedType: type, _stage: "stage1_id" };
     }
+
+    const isDachItem = (item) => {
+      if (!item || typeof item !== "object") return false;
+      if (String(item.original_language || "").toLowerCase() === "de") return true;
+      const countries = Array.isArray(item.origin_country) ? item.origin_country : [];
+      return countries.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim()));
+    };
+
+    const isYearAcceptable = (hit) => {
+      if (!hit || !parsedItem.year) return true;
+      const rel = String(hit.release_date || hit.first_air_date || "");
+      const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
+      return !y || Math.abs(Number(parsedItem.year) - y) <= 2;
+    };
+
+    let fallbackWrongDecadeHit = null;
 
     const searchTmdbStage = async (qStr, includeYear = true, searchType = type) => {
       if (!qStr || qStr.length < 1) return null;
@@ -9803,15 +10481,52 @@
         params.set(yp, String(parsedItem.year));
       }
       const data = await cachedExternalFetchJson(`${baseUrl}/search/${searchType}?${params.toString()}`, { headers });
-      return Array.isArray(data?.results) && data.results.length > 0
-        ? { ...data.results[0], _resolvedType: searchType, _allResults: data.results.slice(0, 6) }
-        : null;
+      if (!Array.isArray(data?.results) || data.results.length === 0) return null;
+      if (searchType === "movie") {
+        const bestMovie = pickBestTMDbMovie(data.results, { ...parsedItem, title: qStr });
+        const sortedMovies = bestMovie
+          ? [bestMovie, ...data.results.filter(r => r && r.id !== bestMovie.id)]
+          : data.results;
+        const candidate = { ...(bestMovie || data.results[0]), _resolvedType: searchType, _allResults: sortedMovies.slice(0, 6) };
+        if (isYearAcceptable(candidate)) return candidate;
+        if (!fallbackWrongDecadeHit) fallbackWrongDecadeHit = candidate;
+        return null;
+      }
+      const normQ = normalizeCompareString(qStr);
+      const sortedResults = [...data.results].sort((a, b) => {
+        const aTitle = normalizeCompareString(a.title || a.name || "");
+        const bTitle = normalizeCompareString(b.title || b.name || "");
+        const aOrig  = normalizeCompareString(a.original_title || a.original_name || "");
+        const bOrig  = normalizeCompareString(b.original_title || b.original_name || "");
+        const aExact = (aTitle === normQ || aOrig === normQ) ? 1 : 0;
+        const bExact = (bTitle === normQ || bOrig === normQ) ? 1 : 0;
+        if (aExact !== bExact) return bExact - aExact;
+        if (!parsedItem.year && aExact && bExact) {
+          const aDach = isDachItem(a);
+          const bDach = isDachItem(b);
+          if (aDach !== bDach) {
+            const nonDach = aDach ? b : a;
+            const dach = aDach ? a : b;
+            const nonDachIsGlobalHit = (Number(nonDach.vote_count || 0) >= 150 || Number(nonDach.popularity || 0) >= 25) && Number(dach.vote_count || 0) < 30;
+            if (!nonDachIsGlobalHit) return aDach ? -1 : 1;
+          }
+        }
+        return Number(b.popularity || 0) - Number(a.popularity || 0);
+      });
+      const candidate = { ...sortedResults[0], _resolvedType: searchType, _allResults: sortedResults.slice(0, 6) };
+      if (isYearAcceptable(candidate)) return candidate;
+      if (!fallbackWrongDecadeHit) fallbackWrongDecadeHit = candidate;
+      return null;
     };
 
     // STUFE 2: Suche mit Titel + Jahr
     if (parsedItem.year && queryTitle) {
       const hitWithYear = await searchTmdbStage(queryTitle, true, type);
       if (hitWithYear) return { ...hitWithYear, _stage: "stage2_title_year" };
+      if (rawQueryTitle !== queryTitle) {
+        const hitRawYear = await searchTmdbStage(rawQueryTitle, true, type);
+        if (hitRawYear) return { ...hitRawYear, _stage: "stage2_raw_year" };
+      }
       if (cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
         const hitCleanWithYear = await searchTmdbStage(cleanedMovieQ, true, type);
         if (hitCleanWithYear) return { ...hitCleanWithYear, _stage: "stage2_clean_movie_year" };
@@ -9834,16 +10549,47 @@
       if (hitOriginal) return { ...hitOriginal, _stage: "stage3b_original" };
     }
 
-    // STUFE 4: Bindestrich-Split für Staffel-Untertitel ("7 vs. Wild - Panama" -> "7 vs. Wild")
-    if (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes(":")) {
-      const mainTitle = queryTitle.split(/\s*[-–:]\s*/)[0].trim();
-      if (mainTitle.length >= 3 && mainTitle.toLowerCase() !== queryTitle.toLowerCase()) {
+    // STUFE 3C: Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
+    if (/(?:ae|oe|ue)/i.test(queryTitle) && !/[äöüß]/i.test(queryTitle)) {
+      const umlautTitle = queryTitle
+        .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+        .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü");
+      if (parsedItem.year) {
+        const hitUmlautYear = await searchTmdbStage(umlautTitle, true, type);
+        if (hitUmlautYear) return { ...hitUmlautYear, _stage: "stage3c_umlaut_year" };
+      }
+      const hitUmlaut = await searchTmdbStage(umlautTitle, false, type);
+      if (hitUmlaut) return { ...hitUmlaut, _stage: "stage3c_umlaut" };
+    }
+
+    // STUFE 4: Untertitel-Fallback / Bindestrich-Split ("Silk Road - Gebieter des Darknets" -> "Silk Road")
+    if (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes("—") || queryTitle.includes(":")) {
+      const mainTitle = queryTitle.split(/\s*[-–—:]\s*/)[0].trim();
+      if (mainTitle.length >= 2 && mainTitle.toLowerCase() !== queryTitle.toLowerCase()) {
+        if (parsedItem.year) {
+          const hitSplitYear = await searchTmdbStage(mainTitle, true, type);
+          if (hitSplitYear) return { ...hitSplitYear, _stage: "stage4_split_year" };
+        }
         const hitSplit = await searchTmdbStage(mainTitle, false, type);
         if (hitSplit) return { ...hitSplit, _stage: "stage4_split" };
       }
     }
 
-    return null;
+    // STUFE 4B: Artikel-Fallback ("The International" -> "International")
+    const articleRegex = /^(?:the|a|an|der|die|das|les|le|la)\s+/i;
+    if (articleRegex.test(queryTitle)) {
+      const titleWithoutArticle = queryTitle.replace(articleRegex, "").trim();
+      if (titleWithoutArticle.length >= 3) {
+        if (parsedItem.year) {
+          const hitArtYear = await searchTmdbStage(titleWithoutArticle, true, type);
+          if (hitArtYear) return { ...hitArtYear, _stage: "stage4b_article_year" };
+        }
+        const hitArt = await searchTmdbStage(titleWithoutArticle, false, type);
+        if (hitArt) return { ...hitArt, _stage: "stage4b_article" };
+      }
+    }
+
+    return fallbackWrongDecadeHit ? { ...fallbackWrongDecadeHit, _stage: "stage_wrong_decade_conflict" } : null;
   }
 
   // ============================================================================
@@ -16977,14 +17723,51 @@
       } else if (diff === 2) {
         score -= 5;
       } else {
-        // HARTE SPERRE GEGEN FALSCHE JAHRZEHNTE (Math.abs(tmdbYear - parsed.year) > 2, z.B. 2013 vs. 1994):
-        // Ein Treffer mit > 2 Jahren Abweichung darf NIEMALS automatisch als "ok" (>= 74) durchgewunken werden!
-        score = Math.min(score - 28, 55);
+        // HARTE SPERRE GEGEN FALSCHE JAHRZEHNTE (Math.abs(tmdbYear - parsed.year) > 2, z.B. "Rotkäppchen (1954)" vs. "Die Rotkäppchen-Verschwörung (2005)"):
+        // Ein Treffer mit > 2 Jahren Abweichung darf NIEMALS automatisch als "ok" (>= 74) durchgewunken oder hoch bewertet werden!
+        score = Math.min(score - 35, 48);
       }
     } else if (!parsed.year) {
-      // Ohne Jahresangabe im Dateinamen leichter Bonus für populäre Haupttreffer, aber Deckelung bei unsicheren Teil-Treffern
-      if (Number(candidate.vote_count || 0) > 150 && score >= 82) score += 3;
+      // Ohne Jahresangabe im Dateinamen: Deutschsprachige Produktionen (DE/AT/CH/XG) bei exakter Namensgleichheit bevorzugen,
+      // sowie leichter Bonus für populäre Haupttreffer, aber Deckelung bei unsicheren Teil-Treffern
+      const isDach = String(candidate.original_language || "").toLowerCase() === "de" ||
+        (Array.isArray(candidate.origin_country) && candidate.origin_country.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim())));
+      if (isDach && score >= 95) {
+        score = Math.min(99, score + 3);
+      } else if (Number(candidate.vote_count || 0) > 150 && score >= 82) {
+        score += 3;
+      }
       if (score < 88) score = Math.min(score, 75);
+    }
+
+    // 3. Beschreibungs-Fingerabdruck (Telegram Nachbar-Post contextOverview vs. TMDb overview)
+    if (parsed.contextOverview && candidate.overview) {
+      const ctxWords = Array.from(
+        new Set(
+          String(parsed.contextOverview)
+            .toLowerCase()
+            .split(/[^\p{L}\d]+/u)
+            .filter(w => w.length >= 5)
+        )
+      );
+      if (ctxWords.length > 0) {
+        const ovLow = String(candidate.overview).toLowerCase();
+        let ovMatches = 0;
+        for (const w of ctxWords) {
+          if (ovLow.includes(w)) ovMatches++;
+        }
+        if (ovMatches > 0) {
+          score += Math.min(ovMatches * 5, 22);
+        }
+      }
+    }
+
+    // 4. Bekanntheits-Bonus (Schutz gegen billige Mockbuster im selben Jahr)
+    if (candidateTypeCode === "m" && score >= 68) {
+      const votes = Number(candidate.vote_count || 0);
+      if (votes > 1000) score += 5;
+      else if (votes > 200) score += 3;
+      else if (votes < 10 && parsed.year) score -= 8;
     }
 
     // Wenn ein Eintrag als Film mit Jahreszahl erkannt wurde (!parsed.isSeries && parsed.year), blockiere TV-Serien-Kandidaten strikt
@@ -17051,8 +17834,11 @@
   }
 
   async function searchTmdbCandidatesForImport(env, parsed, forceTypeCode = null) {
-    const searchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
-    if ((!searchTitle || searchTitle === "Unbekannt") && !parsed?.tmdbId && !parsed?.imdbId) return [];
+    const rawSearchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
+    if ((!rawSearchTitle || rawSearchTitle === "Unbekannt") && !parsed?.tmdbId && !parsed?.imdbId) return [];
+
+    // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn des Khan" -> "Star Trek II: Der Zorn des Khan")
+    const searchTitle = rawSearchTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
 
     const primaryType = forceTypeCode || (parsed.isSeries ? "s" : "m");
     const secondaryType = primaryType === "s" ? "m" : "s";
@@ -17071,7 +17857,7 @@
       }
     }
 
-    const runTmdbQuery = async (tc, qStr, yearVal) => {
+    const runTmdbQuery = async (tc, qStr, yearVal, baseTitleOverride = null) => {
       if (!qStr || qStr.length < 1) return 0;
       const endpoint = tc === "s" ? "tv" : "movie";
       const yearParam = yearVal
@@ -17081,35 +17867,41 @@
       const data = await cachedExternalFetchJson(url, { headers });
       if (Array.isArray(data?.results)) {
         for (const item of data.results.slice(0, 6)) {
-          rawPool.push({ ...item, _typeCode: tc });
+          rawPool.push({ ...item, _typeCode: tc, ...(baseTitleOverride ? { _baseTitleForConf: baseTitleOverride } : {}) });
         }
         return data.results.length;
       }
       return 0;
     };
 
-    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (inkl. Umlaut-Rekonstruktion & cleanMovieQuery für Filmreihen/römische Zahlen wie "Star Trek VIII")
-    const umlautVariant = searchTitle
-      .replace(/ae/gi, m => m[0] === "A" ? "Ä" : "ä")
-      .replace(/oe/gi, m => m[0] === "O" ? "Ö" : "ö")
-      .replace(/ue/gi, m => m[0] === "U" ? "Ü" : "ü");
+    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (inkl. Römischer Doppelpunkt-Variante, Umlaut-Normalisierung ae/oe/ue & cleanMovieQuery)
+    const hasAsciiUmlauts = /(?:ae|oe|ue)/i.test(searchTitle) && !/[äöüß]/i.test(searchTitle);
+    const umlautVariant = hasAsciiUmlauts
+      ? searchTitle
+          .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+          .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
+      : searchTitle;
     const romanMovieVariant = cleanMovieQuery(searchTitle);
     if (searchTitle && searchTitle !== "Unbekannt") {
-      const hitsWithYear = await runTmdbQuery(primaryType, searchTitle, parsed.year);
+      const hitsWithYear = await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle);
       if (!parsed.year || hitsWithYear < 2) {
-        await runTmdbQuery(primaryType, searchTitle, null);
+        await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
+      }
+      if (rawSearchTitle !== searchTitle && hitsWithYear === 0) {
+        const rawHitsYear = await runTmdbQuery(primaryType, rawSearchTitle, parsed.year, searchTitle);
+        if (parsed.year && rawHitsYear === 0) await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
       }
       if (romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
-        const beforeRomanLen = rawPool.length;
-        const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null);
-        if (parsed.year && rHits === 0) await runTmdbQuery(primaryType, romanMovieVariant, null);
-        for (let k = beforeRomanLen; k < rawPool.length; k++) {
-          rawPool[k]._baseTitleForConf = romanMovieVariant;
-        }
+        const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null, romanMovieVariant);
+        if (parsed.year && rHits === 0) await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
       }
-      if (umlautVariant !== searchTitle && rawPool.length === 0) {
-        await runTmdbQuery(primaryType, umlautVariant, parsed.year || null);
-        if (parsed.year && rawPool.length === 0) await runTmdbQuery(primaryType, umlautVariant, null);
+      // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen"):
+      // IMMER ausführen, wenn ae/oe/ue (ohne äöüß) im Titel vorkommt – auch wenn die ASCII-Suche ohne Jahr bereits falsche Jahrzehnte (z.B. 2005) geliefert hat!
+      if (umlautVariant !== searchTitle) {
+        const uHits = await runTmdbQuery(primaryType, umlautVariant, parsed.year || null, umlautVariant);
+        if (parsed.year && uHits === 0) {
+          await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
+        }
       }
     }
 
@@ -17139,22 +17931,43 @@
       }
     }
 
-    // Stufe 4: Bindestrich-/Doppelpunkt-Split & Edition/Cut-Bereinigung ("7 vs. Wild - Panama" -> "7 vs. Wild", "Underworld Extended Cut" -> "Underworld")
+    // Stufe 4: Untertitel-Fallback / Bindestrich- & Doppelpunkt-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road", "7 vs. Wild - Panama" -> "7 vs. Wild")
     if ((rawPool.length === 0 || bestPrimaryConf < 78) && searchTitle) {
       const strippedCutVariant = cleanMediaTitle(
         searchTitle
           .replace(EDITION_CUT_REGEX, " ")
           .replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|edition|version|fassung|redux|special|extended|uncut|unrated)\s*$/i, "$1")
       );
+      const rawHyphenShort = rawSearchTitle.includes("-") || rawSearchTitle.includes("–") || rawSearchTitle.includes("—") || rawSearchTitle.includes(":")
+        ? rawSearchTitle.split(/\s*[:–—\-]\s*/)[0].trim()
+        : "";
       const splitMain = (strippedCutVariant || searchTitle).split(/\s*[:–—\-]\s*/)[0].trim();
+      const umlautSplitMain = (umlautVariant !== searchTitle && (umlautVariant.includes("-") || umlautVariant.includes("–") || umlautVariant.includes(":")))
+        ? umlautVariant.split(/\s*[:–—\-]\s*/)[0].trim()
+        : "";
       const words = (strippedCutVariant || searchTitle).split(/\s+/).filter(Boolean);
       const lastWordIsSequelNum = /^[2-9]$/.test(words[words.length - 1] || "");
       const shorterCandidates = [];
-      if (strippedCutVariant && strippedCutVariant.length >= 2 && strippedCutVariant.toLowerCase() !== searchTitle.toLowerCase()) {
-        shorterCandidates.push(strippedCutVariant);
+      // 1. Untertitel-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road") hat höchste Priorität in Stufe 4!
+      if (rawHyphenShort && rawHyphenShort.length >= 2 && rawHyphenShort.toLowerCase() !== rawSearchTitle.toLowerCase()) {
+        shorterCandidates.push(rawHyphenShort);
       }
       if (splitMain && splitMain.length >= 2 && splitMain.toLowerCase() !== searchTitle.toLowerCase() && !shorterCandidates.includes(splitMain)) {
         shorterCandidates.push(splitMain);
+      }
+      if (umlautSplitMain && umlautSplitMain.length >= 2 && !shorterCandidates.includes(umlautSplitMain)) {
+        shorterCandidates.push(umlautSplitMain);
+      }
+      // 2. "The International"-Fix: Führende Artikel (The/Der/Die/Das/A/An) entfernen
+      const leadingArticleRegex = /^(?:the|a|an|der|die|das|les|le|la)\s+/i;
+      if (leadingArticleRegex.test(searchTitle)) {
+        const withoutLeadingArticle = cleanMediaTitle(searchTitle.replace(leadingArticleRegex, "").trim());
+        if (withoutLeadingArticle && withoutLeadingArticle.length >= 3 && !shorterCandidates.includes(withoutLeadingArticle)) {
+          shorterCandidates.push(withoutLeadingArticle);
+        }
+      }
+      if (strippedCutVariant && strippedCutVariant.length >= 2 && strippedCutVariant.toLowerCase() !== searchTitle.toLowerCase() && !shorterCandidates.includes(strippedCutVariant)) {
+        shorterCandidates.push(strippedCutVariant);
       }
       // Wichtig: Niemals eine Fortsetzungs-Ziffer (2-9, z.B. "Iron Man 3", "Pirates of the Caribbean 3") am Ende blind als Film abschneiden!
       if (words.length >= 2 && !lastWordIsSequelNum) {
@@ -17171,13 +17984,26 @@
       }
       for (const shorterTitle of shorterCandidates) {
         const beforeLen = rawPool.length;
-        await runTmdbQuery(primaryType, shorterTitle, parsed.year || null);
-        if (parsed.year && rawPool.length === beforeLen) await runTmdbQuery(primaryType, shorterTitle, null);
-        if (!forceTypeCode && !strictMovieWithYearLock && rawPool.length === beforeLen) await runTmdbQuery(secondaryType, shorterTitle, parsed.year || null);
-        for (let k = beforeLen; k < rawPool.length; k++) {
-          rawPool[k]._baseTitleForConf = shorterTitle;
+        await runTmdbQuery(primaryType, shorterTitle, parsed.year || null, shorterTitle);
+        if (parsed.year) {
+          const hasYearMatch = rawPool.slice(beforeLen).some(it => {
+            const rel = String(it.release_date || it.first_air_date || "");
+            const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
+            return y && Math.abs(Number(parsed.year) - y) <= 2;
+          });
+          if (!hasYearMatch) {
+            await runTmdbQuery(primaryType, shorterTitle, null, shorterTitle);
+          }
         }
-        if (rawPool.length > beforeLen) break;
+        if (!forceTypeCode && !strictMovieWithYearLock && rawPool.length === beforeLen) {
+          await runTmdbQuery(secondaryType, shorterTitle, parsed.year || null, shorterTitle);
+        }
+        let bestShortConf = 0;
+        for (let k = beforeLen; k < rawPool.length; k++) {
+          const c = computeTmdbMatchConfidence(parsed, rawPool[k], rawPool[k]._typeCode);
+          if (c > bestShortConf) bestShortConf = c;
+        }
+        if (bestShortConf >= 78) break;
       }
     }
 
@@ -17282,6 +18108,66 @@
       }
     }
 
+    const contextWordsForMovieScore = Array.from(
+      new Set(
+        String(parsed?.contextOverview || "")
+          .toLowerCase()
+          .split(/[^\p{L}\d]+/u)
+          .filter(w => w.length >= 5)
+      )
+    );
+    const targetMovieTitleLow = String(parsed?.cleanTitle || parsed?.title || "")
+      .replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "")
+      .toLowerCase()
+      .trim();
+    const normTargetMovieTitle = normalizeCompareString(targetMovieTitleLow);
+
+    const computeMoviePickerScore = (movie) => {
+      let mScore = 0;
+      const tmdbTitle = String(movie.title || movie.name || "").toLowerCase().trim();
+      const tmdbOrig  = String(movie.original_title || movie.original_name || "").toLowerCase().trim();
+      const normTmdbT = normalizeCompareString(tmdbTitle);
+      const normTmdbO = normalizeCompareString(tmdbOrig);
+      const relStr = String(movie.release_date || movie.first_air_date || "");
+      const releaseYear = relStr ? parseInt(relStr.slice(0, 4), 10) : null;
+
+      if (parsed?.year && releaseYear) {
+        const diff = Math.abs(Number(parsed.year) - releaseYear);
+        if (diff === 0) mScore += 40;
+        else if (diff === 1) mScore += 15;
+        else mScore -= diff * 25;
+      }
+
+      if (
+        tmdbTitle === targetMovieTitleLow ||
+        tmdbOrig === targetMovieTitleLow ||
+        (normTargetMovieTitle && (normTmdbT === normTargetMovieTitle || normTmdbO === normTargetMovieTitle))
+      ) {
+        mScore += 50;
+      } else if (tmdbTitle.startsWith(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.startsWith(normTargetMovieTitle))) {
+        mScore += 30;
+      } else if (tmdbTitle.includes(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.includes(normTargetMovieTitle))) {
+        mScore += 15;
+      }
+
+      if (contextWordsForMovieScore.length > 0 && movie.overview) {
+        const ovLower = String(movie.overview).toLowerCase();
+        let matches = 0;
+        for (const word of contextWordsForMovieScore) {
+          if (ovLower.includes(word)) matches++;
+        }
+        mScore += Math.min(matches * 20, 100);
+      }
+
+      const votes = Number(movie.vote_count || 0);
+      if (votes > 1000) mScore += 35;
+      else if (votes > 200) mScore += 20;
+      else if (votes > 50) mScore += 10;
+      else if (votes < 10) mScore -= 15;
+
+      return mScore;
+    };
+
     const dedupedMap = new Map();
     for (const item of rawPool) {
       if (!item || !item.id) continue;
@@ -17290,9 +18176,12 @@
         ? { ...parsed, cleanTitle: item._baseTitleForConf, isSeries: item._typeCode === "s" }
         : parsed;
       const baseConf = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsedForConf, item, item._typeCode);
+      const moviePickerScore = item._typeCode === "m" ? computeMoviePickerScore(item) : 0;
       const conf = Math.min(99, baseConf + Number(item._confidenceBoost || 0));
       const existing = dedupedMap.get(key);
-      if (!existing || conf > existing.confidence) {
+      const isDachOrigin = String(item.original_language || "").toLowerCase() === "de" ||
+        (Array.isArray(item.origin_country) && item.origin_country.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim())));
+      if (!existing || conf > existing.confidence || (conf === existing.confidence && moviePickerScore > (existing.moviePickerScore || 0))) {
         const rawDate = String(item.release_date || item.first_air_date || "");
         dedupedMap.set(key, {
           tmdbId: Number(item.id),
@@ -17303,7 +18192,10 @@
           year: (rawDate.split("-")[0]) || "k.A.",
           poster: item.poster_path ? `https://image.tmdb.org/t/p/w185${item.poster_path}` : "",
           voteAverage: Number(item.vote_average || 0).toFixed(1),
+          voteCount: Number(item.vote_count || 0),
           popularity: Number(item.popularity || 0),
+          isDachOrigin,
+          moviePickerScore,
           confidence: conf,
           inferredSeason: item._inferredEpisode ? (item._inferredSeason || 1) : (existing?.inferredSeason || null),
           inferredEpisode: item._inferredEpisode || existing?.inferredEpisode || null,
@@ -17396,6 +18288,24 @@
           const bDiff = Math.abs(bY - targetY);
           if (aDiff !== bDiff) return aDiff - bDiff;
         }
+        // Bei Filmen (gleiches Jahr oder ähnliche Confidence <= 20): pickBestTMDbMovie-Score (contextOverview-Fingerabdruck + vote_count Blockbuster-Bonus) entscheidet!
+        if (a.typeCode === "m" && b.typeCode === "m" && Math.abs(b.confidence - a.confidence) <= 20) {
+          const aPick = Number(a.moviePickerScore || 0);
+          const bPick = Number(b.moviePickerScore || 0);
+          if (aPick !== bPick) return bPick - aPick;
+        }
+        // Ohne Jahresangabe bei exakter Namensgleichheit: Deutschsprachige Produktionen (DE/AT/CH/XG) bevorzugen,
+        // sofern der fremdsprachige Kandidat kein internationaler Mainstream-Hit (voteCount >= 150 oder popularity >= 25) ist!
+        if (!parsed?.year && a.confidence >= 94 && b.confidence >= 94 && Math.abs(b.confidence - a.confidence) <= 4) {
+          const aDach = Boolean(a.isDachOrigin);
+          const bDach = Boolean(b.isDachOrigin);
+          if (aDach !== bDach) {
+            const nonDach = aDach ? b : a;
+            const dach = aDach ? a : b;
+            const nonDachIsGlobalHit = (Number(nonDach.voteCount || 0) >= 150 || Number(nonDach.popularity || 0) >= 25) && Number(dach.voteCount || 0) < 30;
+            if (!nonDachIsGlobalHit) return aDach ? -1 : 1;
+          }
+        }
         if (b.confidence !== a.confidence) return b.confidence - a.confidence;
         if (a.inferredEpisode && !b.inferredEpisode) return -1;
         if (b.inferredEpisode && !a.inferredEpisode) return 1;
@@ -17482,16 +18392,52 @@
           messageLink: String(rawEntry.message_link || rawEntry.messageLink || "")
         };
       }
+      if (rawEntry.contextOverview || rawEntry.context_overview) {
+        parsed.contextOverview = String(rawEntry.contextOverview || rawEntry.context_overview).trim();
+      }
+      const isNeighborEnrichedMovieTitle = Boolean(
+        !parsed.isSeries &&
+        (rawEntry.cleanTitle || rawEntry.title) &&
+        (
+          rawEntry.neighborEnriched ||
+          rawEntry.contextOverview ||
+          (
+            parsed.cleanTitle &&
+            String(rawEntry.cleanTitle || rawEntry.title).toLowerCase().includes(String(parsed.cleanTitle).toLowerCase()) &&
+            String(rawEntry.cleanTitle || rawEntry.title).trim().length > String(parsed.cleanTitle).trim().length
+          )
+        )
+      );
       if (
         rawEntry.manualTitle ||
+        isNeighborEnrichedMovieTitle ||
         ((!parsed.cleanTitle || parsed.cleanTitle === "Unbekannt") && (rawEntry.cleanTitle || rawEntry.title)) ||
         (parsed.isSeries && rawEntry.cleanTitle && String(rawEntry.cleanTitle).trim().length >= 2 && String(rawEntry.cleanTitle).trim().length < String(parsed.cleanTitle || "").trim().length)
       ) {
         const rawProvided = String(rawEntry.manualTitle || rawEntry.cleanTitle || rawEntry.title).trim();
-        const cleanedCandidate = cleanMediaTitle(rawProvided);
-        if (cleanedCandidate && cleanedCandidate !== "Unbekannt") {
-          parsed.cleanTitle = cleanedCandidate;
+        // "Cocaine Bear"- & "Ted Bundy"-Fix: Wenn rawProvided (> 50 Zeichen, ohne manualTitle) eigentlich eine Filmbeschreibung ist, NIEMALS als Titel übernehmen!
+        if (!rawEntry.manualTitle && rawProvided.length > 50) {
+          if (!parsed.contextOverview) parsed.contextOverview = rawProvided;
+        } else {
+          const cleanedCandidate = cleanMediaTitle(rawProvided);
+          if (cleanedCandidate && cleanedCandidate !== "Unbekannt") {
+            parsed.cleanTitle = cleanedCandidate;
+          }
         }
+      }
+      // Sicherheits-Regel vor der TMDb-Suche: parsed.cleanTitle niemals länger als 50 Zeichen lassen!
+      if (!rawEntry?.manualTitle && parsed.cleanTitle && parsed.cleanTitle.length > 50) {
+        if (!parsed.contextOverview) parsed.contextOverview = parsed.cleanTitle;
+        const shortFromRawName = rawName
+          ? cleanMediaTitle(
+              String(rawName)
+                .replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|json))+$/i, "")
+                .replace(/[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?.*$/i, "")
+            )
+          : "";
+        parsed.cleanTitle = (shortFromRawName && shortFromRawName.length >= 2 && shortFromRawName.length <= 50)
+          ? shortFromRawName
+          : parsed.cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 40);
       }
       if (parsed.isSeries && parsed.episode && parsed.cleanTitle) {
         const epNumRe = new RegExp(`^(.{2,}?)\\s+(?:[-–]\\s*)?(?:teil\\s+|part\\s+|ep\\.?\\s*|folge\\s+)?0*${Number(parsed.episode)}(?:\\s+[-–:]?\\s*.+)?$`, "i");
@@ -17976,11 +18922,38 @@
       const seqNum = trailingSeqMatch ? trailingSeqMatch[1] : null;
       const tmdbTitlesCombined = normalizeTitleForConfidence(`${seriesDetails.title || ""} ${seriesDetails.originalTitle || seriesDetails.original_name || ""}`);
       const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && yearDiff >= 1 && bestConfidence < 88);
-      // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2), immer als Konflikt markieren!
-      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
+      // "Little Britain" Staffel 4 Fix: Prüfe auch, ob die geforderte Staffel höher ist als die Gesamtzahl der Staffeln des TMDb-Treffers (z.B. Staffel 4 bei "Little Britain USA" mit nur 1 Staffel)
+      const maxTmdbSeasons = Number(
+        seriesDetails.numberOfSeasons ||
+        seriesDetails.number_of_seasons ||
+        (Array.isArray(seriesDetails.seasons) ? seriesDetails.seasons.filter(s => Number(s?.season_number) > 0).length : 0) ||
+        0
+      );
+      const seasonOverflowConflict = Boolean(!explicitTmdbId && maxTmdbSeasons > 0 && seasonNum > maxTmdbSeasons && Number(seriesDetails.id) < 8000000);
+      // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2) oder Staffel-Konflikt vorliegt, immer als Konflikt markieren!
+      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch || seasonOverflowConflict));
       const errorReason = contextError
-        ? `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${seriesDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`
+        ? (seasonOverflowConflict
+            ? `Staffel-Konflikt: Datei verlangt Staffel ${seasonNum} von "${parsed.cleanTitle}", aber TMDb-Treffer "${seriesDetails.title}" (${tmdbYearNum || "?"}) hat nur ${maxTmdbSeasons} Staffel(n). Bitte im Konflikt-Tab die richtige TMDb-ID zuweisen!`
+            : `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${seriesDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`)
         : null;
+
+      // Wenn status: "CONFLICT_?" ausgelöst wird, bleibt der Treffer in der DB (mit needsReview: true) und landet automatisch im Dashboard-Tab [ 🚨 Meldungen / Konflikte ]
+      if (contextError && typeof createMediaReportInD1 === "function") {
+        await createMediaReportInD1(env, {
+          reporterTelegramId: "system_import",
+          reporterUsername: "Auto-Konflikt-Schutz",
+          typeCode: "s",
+          tmdbId: seriesDetails.id,
+          title: `${seriesDetails.title} (S${String(seasonNum).padStart(2, "0")}E${String(epNum).padStart(2, "0")})`,
+          seasonNumber: seasonNum,
+          episodeNumber: epNum,
+          telegramFileId: effectiveFileMeta?.fileId || "",
+          reasonCode: "wrong_tmdb",
+          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
+        }).catch(() => {});
+      }
 
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const posterUrl = resolvePosterUrl(seriesDetails.poster_path, "w185", seriesDetails.external_poster_url || candidates[0]?.poster || "");
@@ -17991,6 +18964,7 @@
       return {
         ok: true,
         status: contextError ? "?" : "ok",
+        needsReview: Boolean(contextError),
         contextError,
         errorReason,
         typeCode: "s",
@@ -18036,11 +19010,28 @@
         });
       }
 
-      if (!movieDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
-        const fbHit = await fetchMultiApiFallbackCascade(env, parsed, "m");
-        if (fbHit && fbHit.id) {
+      // Harter Jahres-Schutz ("Rotkäppchen (1954)" vs. "Die Rotkäppchen-Verschwörung (2005)"):
+      // Wenn movieDetails aus einem falschen Jahrzehnt stammt (> 2 Jahre Abweichung zu parsed.year),
+      // prüfe zuerst die Multi-API-Fallback-Kaskade (OMDb / Wikidata / Wikipedia DE) auf einen Treffer im richtigen Jahr!
+      const prelimMovieYearStr = String(movieDetails?.releaseDate || "").split("-")[0];
+      const prelimMovieYear = /^\d{4}$/.test(prelimMovieYearStr) ? parseInt(prelimMovieYearStr, 10) : null;
+      const prelimYearMismatch = Boolean(!explicitTmdbId && parsed.year && prelimMovieYear && Math.abs(Number(parsed.year) - prelimMovieYear) > 2);
+
+      if ((!movieDetails || prelimYearMismatch) && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
+        const fbQueryParsed = (/(?:ae|oe|ue)/i.test(parsed.cleanTitle || "") && !/[äöüß]/i.test(parsed.cleanTitle || ""))
+          ? {
+              ...parsed,
+              cleanTitle: String(parsed.cleanTitle)
+                .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+                .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
+            }
+          : parsed;
+        const fbHit = await fetchMultiApiFallbackCascade(env, fbQueryParsed, "m");
+        const fbYear = fbHit?.year && /^\d{4}$/.test(String(fbHit.year)) ? parseInt(String(fbHit.year), 10) : null;
+        const fbMatchesTargetYear = Boolean(!parsed.year || (fbYear && Math.abs(Number(parsed.year) - fbYear) <= 2));
+        if (fbHit && fbHit.id && (!movieDetails || fbMatchesTargetYear)) {
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : Number(fbHit.id);
-          bestConfidence = Math.max(bestConfidence, fbHit.confidence || 76);
+          bestConfidence = Math.max(bestConfidence, fbHit.confidence || 82);
           metadataSource = fbHit.source || "Fallback";
           movieDetails = await saveFallbackHitToD1AndCache(env, { ...fbHit, id: targetId, typeCode: "m" });
         }
@@ -18109,12 +19100,29 @@
         ? `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${movieDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`
         : null;
 
+      if (contextError && typeof createMediaReportInD1 === "function") {
+        await createMediaReportInD1(env, {
+          reporterTelegramId: "system_import",
+          reporterUsername: "Auto-Konflikt-Schutz",
+          typeCode: "m",
+          tmdbId: movieDetails.id,
+          title: `${movieDetails.title} (${rawYear})`,
+          seasonNumber: 0,
+          episodeNumber: 0,
+          telegramFileId: effectiveFileMeta?.fileId || "",
+          reasonCode: "wrong_tmdb",
+          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
+        }).catch(() => {});
+      }
+
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const posterUrl = resolvePosterUrl(movieDetails.poster_path, "w185", movieDetails.external_poster_url || candidates[0]?.poster || "");
 
       return {
         ok: true,
         status: contextError ? "?" : "ok",
+        needsReview: Boolean(contextError),
         contextError,
         errorReason,
         typeCode: "m",
@@ -18413,6 +19421,7 @@
         languages: gmVideo.languages || ["de"],
         subtitles: gmVideo.subtitles || [],
         duration_sec: gmVideo.durationSec || null,
+        contextOverview: gmVideo.contextOverview || "",
         source_used: gmVideo.sourceUsed || "file_name",
         pre_context: { ...prevContext },
         telegram_file_id: msg.telegram_file_id || msg.file_id || null,
@@ -18568,6 +19577,8 @@
             part: parsed.part,
             partInfo: item.partInfo || parsed.partInfo || null,
             editions: item.editions || parsed.editions || [],
+            contextOverview: item.contextOverview || item.context_overview || parsed.contextOverview || "",
+            neighborEnriched: Boolean(item.neighborEnriched),
             isQualityVariant
           }
         : {
@@ -18585,6 +19596,7 @@
             part: parsed.part,
             partInfo: parsed.partInfo || null,
             editions: parsed.editions || [],
+            contextOverview: parsed.contextOverview || "",
             isQualityVariant
           };
 
@@ -18687,7 +19699,23 @@
           : [tgMessages[i - 2], tgMessages[i - 1]].filter(Boolean);
         const itemsFromMsg = extractCandidateRawItemsFromTgMessage(msg, rollingPreContext, prevWindow, chatMeta);
         if (itemsFromMsg.length > 0) {
-          for (const it of itemsFromMsg) {
+          for (const rawIt of itemsFromMsg) {
+            const it = (!rawIt.isSeries && typeof enrichVideoFromNeighborPost === "function")
+              ? (() => {
+                  const enriched = enrichVideoFromNeighborPost(tgMessages, i, {
+                    ...rawIt,
+                    title: rawIt.cleanTitle || rawIt.title || ""
+                  });
+                  const didEnrich = Boolean(enriched && (enriched.contextOverview || (enriched.title && enriched.title !== rawIt.cleanTitle)));
+                  return {
+                    ...rawIt,
+                    cleanTitle: enriched?.cleanTitle || enriched?.title || rawIt.cleanTitle,
+                    year: enriched?.year || rawIt.year || null,
+                    contextOverview: enriched?.contextOverview || rawIt.contextOverview || "",
+                    neighborEnriched: didEnrich
+                  };
+                })()
+              : rawIt;
             rawCandidates.push(it);
             // Fall 16 (IDs 108709-108715): Ein Film-Steckbrief gilt immer nur für das unmittelbar zugehörige Video!
             delete rollingPreContext.tmdbId;
@@ -18698,10 +19726,16 @@
               delete rollingPreContext.year;
               delete rollingPreContext.mediaType;
             }
-            // Fall 10 & Fall 17 (IDs 45807->45808, 131127->131141):
-            // Wenn eine Serien-Videonachricht in ihrer Caption einen Serientitel etabliert, als seriesHeader für nachfolgende titellose Episodendateien merken!
+            // Fall 10 & Fall 17 (IDs 45807->45808, 131127->131141) + "Episode X Staffel Y von Little Britain":
+            // Wenn eine Serien-Videonachricht einen Serientitel etabliert (auch aus Dateiname wie "von Little Britain"),
+            // zwingend als seriesHeader für nachfolgende Episoden merken und den alten Kontext überschreiben!
             if (it.isSeries && it.cleanTitle && it.cleanTitle !== "Unbekannt") {
-              if (it.source_used === "caption_line1" || it.source_used === "caption_line1_3" || it.source_used === "caption_multiline") {
+              if (
+                it.source_used === "caption_line1" ||
+                it.source_used === "caption_line1_3" ||
+                it.source_used === "caption_multiline" ||
+                it.source_used === "file_name"
+              ) {
                 if (rollingPreContext.seriesHeader !== it.cleanTitle) {
                   delete rollingPreContext.year;
                 }
@@ -19052,15 +20086,19 @@
 
     let playlistSavedCount = 0;
     if (playlistContext && playlistContext.chatId && playlistContext.folderId && resolvedObjects.length > 0) {
+      const deferKvWrite = Boolean(playlistContext.deferKvWrite);
       try {
         if (playlistMode === "watchlist" || playlistMode === "both" || String(playlistContext.chatId) === "bot_vip") {
           playlistSavedCount = await batchSaveIngestedItemsToPlaylist(
             env,
             playlistContext.chatId,
             playlistContext.folderId,
-            resolvedObjects
+            resolvedObjects,
+            { playlistMode, deferKvWrite }
           );
-          await flushUserSession(env, playlistContext.chatId);
+          if (!deferKvWrite) {
+            await flushUserSession(env, playlistContext.chatId);
+          }
         }
         // Wenn als VIP-Stream oder Beides gewählt, zusätzlich in der globalen Bot-VIP-Playlist ("bot_vip") synchronisieren
         if (shouldRegisterVipStream && String(playlistContext.chatId) !== "bot_vip") {
@@ -19071,7 +20109,13 @@
             playlistContext.sourceLabel || "VIP-Import",
             "vip_stream"
           );
-          const syncedCount = await batchSaveIngestedItemsToPlaylist(env, "bot_vip", botVipFolder.id, resolvedObjects);
+          const syncedCount = await batchSaveIngestedItemsToPlaylist(
+            env,
+            "bot_vip",
+            botVipFolder.id,
+            resolvedObjects,
+            { playlistMode: "vip_stream", deferKvWrite }
+          );
           if (!playlistSavedCount) playlistSavedCount = syncedCount;
         }
       } catch (plErr) {
@@ -22200,15 +23244,19 @@
     if (bearerToken) {
       const verifiedToken = await verifyTmaSessionToken(bearerToken, env);
       if (verifiedToken && verifiedToken.telegramId) {
-        const dbRow = await getUserByTelegramIdFromD1(env, verifiedToken.telegramId);
+        const dbRow = await getUserByTelegramIdFromD1(env, verifiedToken.telegramId).catch(() => null);
         const userProfile = formatUserRowForClient(
           dbRow || {
             telegram_id: verifiedToken.telegramId,
             tg_username: verifiedToken.tgUsername || "",
-            first_name: verifiedToken.firstName || ""
+            first_name: verifiedToken.firstName || "",
+            is_admin: verifiedToken.isAdmin ? 1 : 0,
+            is_vip: verifiedToken.isVip ? 1 : 0
           },
           env
         );
+        if (userProfile && verifiedToken.isAdmin) userProfile.isAdmin = true;
+        if (userProfile && verifiedToken.isVip) userProfile.isVip = true;
         return {
           isAuthenticated: true,
           isGuest: false,
@@ -22399,20 +23447,24 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
       :root {
-        --bg: #141414;
-        --surface: #18181c;
-        --card: #222228;
-        --red: #E50914;
-        --blue: #0284c7;
-        --purple: #5b46f5;
-        --text: #FFFFFF;
-        --muted: #A3A3A3;
-        --inc-bg: rgba(16, 185, 129, 0.22);
-        --inc-border: rgba(16, 185, 129, 0.65);
+        --bg: #0b0d13;
+        --surface: #12151e;
+        --card: #181c28;
+        --bg-elevated: #181c28;
+        --red: #e50914;
+        --accent-primary: #e50914;
+        --blue: #0ea5e9;
+        --purple: #6366f1;
+        --text: #f8fafc;
+        --text-main: #f8fafc;
+        --muted: #94a3b8;
+        --text-muted: #94a3b8;
+        --inc-bg: rgba(16, 185, 129, 0.16);
+        --inc-border: rgba(16, 185, 129, 0.55);
         --inc-text: #6ee7b7;
         --inc-solid: #059669;
-        --exc-bg: rgba(239, 68, 68, 0.22);
-        --exc-border: rgba(239, 68, 68, 0.65);
+        --exc-bg: rgba(239, 68, 68, 0.16);
+        --exc-border: rgba(239, 68, 68, 0.55);
         --exc-text: #fca5a5;
         --exc-solid: #dc2626;
         --scale-all: 1;
@@ -22427,8 +23479,12 @@
         --bg: #f1f5f9;
         --surface: #ffffff;
         --card: #ffffff;
+        --bg-elevated: #f8fafc;
         --text: #0f172a;
+        --text-main: #0f172a;
         --muted: #475569;
+        --text-muted: #475569;
+        --accent-primary: #e50914;
         --inc-bg: rgba(16, 185, 129, 0.14);
         --inc-border: #059669;
         --inc-text: #047857;
@@ -22743,11 +23799,15 @@
         --bg: #070510;
         --surface: #110b22;
         --card: #191030;
+        --bg-elevated: #191030;
         --red: #ff007f;
+        --accent-primary: #ff007f;
         --blue: #00f0ff;
         --purple: #b829ff;
         --text: #f0f6ff;
+        --text-main: #f0f6ff;
         --muted: #94a3b8;
+        --text-muted: #94a3b8;
       }
       body[data-theme="cyberpunk"] header {
         background: rgba(12, 6, 26, 0.95);
@@ -22869,10 +23929,11 @@
         position: sticky;
         top: 0;
         z-index: 60;
-        background: rgba(18,18,22,0.96);
-        backdrop-filter: blur(14px);
-        padding: calc(7px * var(--scale-menu)) calc(12px * var(--scale-menu));
-        border-bottom: 1px solid rgba(255,255,255,0.09);
+        background: rgba(11, 13, 19, 0.88);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        padding: calc(8px * var(--scale-menu)) calc(14px * var(--scale-menu));
+        border-bottom: 1px solid rgba(255,255,255,0.07);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -22882,33 +23943,33 @@
       .brand-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
       .brand-logo {
         color: #f8fafc;
-        font-weight: 900;
+        font-weight: 800;
         font-size: calc(15.5px * var(--scale-menu));
-        letter-spacing: 0.4px;
+        letter-spacing: -0.2px;
         cursor: pointer;
         user-select: none;
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 3px 7px;
-        border-radius: 8px;
-        background: linear-gradient(135deg, rgba(229, 9, 20, 0.14), rgba(56, 189, 248, 0.12));
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        padding: 4px 8px;
+        border-radius: 9px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         transition: background 0.15s, transform 0.12s, border-color 0.15s, box-shadow 0.15s;
         flex-shrink: 0;
       }
       .brand-logo:hover,
       .brand-logo.spatial-focus,
       .brand-logo:focus-visible {
-        background: linear-gradient(135deg, rgba(229, 9, 20, 0.28), rgba(56, 189, 248, 0.26));
-        border-color: #38bdf8;
+        background: rgba(255, 255, 255, 0.09);
+        border-color: rgba(255, 255, 255, 0.22);
       }
       .brand-logo:active { transform: scale(0.96); }
       .teleport-logo-svg {
         width: 20px;
         height: 20px;
         flex-shrink: 0;
-        filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.55));
+        filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.35));
       }
       .teleport-accent {
         background: linear-gradient(135deg, #38bdf8, #a855f7, #e50914);
@@ -22933,23 +23994,23 @@
       .sync-badge {
         font-size: calc(10.5px * var(--scale-text));
         color: #34d399;
-        background: rgba(16,185,129,0.14);
-        border: 1px solid rgba(16,185,129,0.35);
+        background: rgba(16,185,129,0.12);
+        border: 1px solid rgba(16,185,129,0.28);
         padding: 4px 8px;
-        border-radius: 7px;
+        border-radius: 8px;
         font-weight: 700;
         cursor: pointer;
       }
       .device-badge {
         display: none;
       }
-      .nav-btns { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+      .nav-btns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
       .btn {
-        background: rgba(255,255,255,0.09);
-        color: #fff;
-        border: 1px solid rgba(255,255,255,0.15);
-        border-radius: 7px;
-        padding: calc(5.5px * var(--scale-menu)) calc(9px * var(--scale-menu));
+        background: rgba(255,255,255,0.06);
+        color: #f1f5f9;
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+        padding: calc(6px * var(--scale-menu)) calc(10px * var(--scale-menu));
         font-size: calc(11.5px * var(--scale-menu));
         font-weight: 600;
         cursor: pointer;
@@ -22957,18 +24018,23 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 4px;
+        gap: 5px;
         white-space: nowrap;
-        transition: all 0.14s ease;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
       }
-      .btn:hover { background: rgba(255,255,255,0.16); }
-      .btn:active { transform: scale(0.96); }
-      .btn.red { background: var(--red); border-color: #ff1f2d; color: #fff; }
-      .btn.blue { background: var(--blue); border-color: #38bdf8; color: #fff; }
-      .btn.green { background: var(--inc-solid); border-color: var(--inc-border); color: #fff; }
-      .btn.purple { background: var(--purple); border-color: #7c69ff; color: #fff; border-radius: 999px; padding: calc(5.5px * var(--scale-menu)) calc(11px * var(--scale-menu)); }
-      .btn.amber { background: linear-gradient(135deg, #d97706, #b45309); border-color: #fbbf24; color: #fff; font-weight: 700; }
-      .btn.active { background: #fff; color: #000; border-color: #fff; font-weight: 800; }
+      .btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
+      .btn:active { transform: scale(0.97); }
+      .btn.red { background: var(--red); border-color: rgba(255,255,255,0.18); color: #fff; box-shadow: 0 2px 10px rgba(229,9,20,0.25); }
+      .btn.red:hover { background: #f40612; }
+      .btn.blue { background: rgba(14, 165, 233, 0.18); border-color: rgba(56, 189, 248, 0.4); color: #e0f2fe; }
+      .btn.blue:hover { background: rgba(14, 165, 233, 0.28); border-color: #38bdf8; color: #fff; }
+      .btn.green { background: rgba(16, 185, 129, 0.18); border-color: rgba(16, 185, 129, 0.45); color: #d1fae5; }
+      .btn.green:hover { background: rgba(16, 185, 129, 0.3); border-color: #34d399; color: #fff; }
+      .btn.purple { background: rgba(99, 102, 241, 0.18); border-color: rgba(129, 140, 248, 0.42); color: #e0e7ff; border-radius: 8px; padding: calc(6px * var(--scale-menu)) calc(11px * var(--scale-menu)); }
+      .btn.purple:hover { background: rgba(99, 102, 241, 0.3); border-color: #818cf8; color: #fff; }
+      .btn.amber { background: rgba(245, 158, 11, 0.16); border-color: rgba(251, 191, 36, 0.42); color: #fef3c7; font-weight: 700; }
+      .btn.amber:hover { background: rgba(245, 158, 11, 0.26); border-color: #fbbf24; color: #fff; }
+      .btn.active { background: #f8fafc; color: #0f172a; border-color: #f8fafc; font-weight: 800; }
 
       /* Linke Off-Canvas Sidebar für Filter, Größe, Themes & Farbenblind-Modus */
       .sidebar-backdrop {
@@ -23777,11 +24843,12 @@
 
       /* Schlanke Kategorie- & Sortier-Leiste ohne mehrzeiliges Flattern */
       .floating-filter-bar {
-        background: rgba(24, 24, 32, 0.72);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 10px;
-        padding: 6px 8px;
-        margin: 2px 0 6px;
+        background: rgba(18, 21, 30, 0.78);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255,255,255,0.07);
+        border-radius: 12px;
+        padding: 8px 10px;
+        margin: 4px 0 10px;
       }
       .ff-controls-grid {
         display: flex;
@@ -23807,20 +24874,21 @@
       .ff-top-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
       .ff-dropdown-tabs { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; flex: 1; }
       .ff-tab-btn {
-        background: rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.06);
         color: #e2e8f0;
-        border: 1px solid rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.1);
         border-radius: 8px;
         padding: calc(5px * var(--scale-menu)) calc(9px * var(--scale-menu));
         font-size: calc(11.5px * var(--scale-menu));
-        font-weight: 700;
+        font-weight: 600;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         gap: 5px;
+        transition: all 0.14s ease;
       }
-      .ff-tab-btn:hover { background: rgba(255,255,255,0.14); }
-      .ff-tab-btn.open { background: var(--purple); border-color: #9381ff; color: #fff; box-shadow: 0 3px 12px rgba(91,70,245,0.4); }
+      .ff-tab-btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
+      .ff-tab-btn.open { background: rgba(99, 102, 241, 0.24); border-color: #818cf8; color: #fff; box-shadow: 0 3px 12px rgba(99,102,241,0.25); }
       .ff-tab-btn.has-inc { border-color: var(--inc-border); background: var(--inc-bg); color: var(--inc-text); }
       .ff-tab-btn.has-exc { border-color: var(--exc-border); }
 
@@ -23828,21 +24896,22 @@
       .sort-select,
       .mode-filter-select,
       .new-filter-select {
-        background-color: #1e1e26;
-        color: #f8fafc;
-        border: 1px solid rgba(255,255,255,0.18);
+        background-color: rgba(255, 255, 255, 0.05);
+        color: #f1f5f9;
+        border: 1px solid rgba(255,255,255,0.12);
         border-radius: 8px;
-        padding: calc(5px * var(--scale-menu)) calc(8px * var(--scale-menu));
+        padding: calc(5.5px * var(--scale-menu)) calc(9px * var(--scale-menu));
         font-size: calc(11.5px * var(--scale-menu));
-        font-weight: 700;
+        font-weight: 600;
         cursor: pointer;
         outline: none;
         color-scheme: dark;
+        transition: border-color 0.14s ease, background-color 0.14s ease;
       }
       .sort-select option,
       .mode-filter-select option,
       .new-filter-select option {
-        background-color: #181820;
+        background-color: #12151e;
         color: #f8fafc;
       }
       .sort-select:hover,
@@ -23853,8 +24922,8 @@
       .new-filter-select:hover,
       .new-filter-select.spatial-focus,
       .new-filter-select.active-new {
-        border-color: var(--red);
-        background-color: rgba(229,9,20,0.22);
+        border-color: rgba(229, 9, 20, 0.65);
+        background-color: rgba(229, 9, 20, 0.14);
         color: #fff;
       }
 
@@ -24066,7 +25135,7 @@
         flex-shrink: 0;
         pointer-events: auto;
       }
-      /* Gespeichert-Icon: Im Ruhezustand NUR sichtbar, wenn der Titel in der Merkliste gespeichert ist (.saved)! */
+      /* Lesezeichen-Button oben rechts: dauerhaft dezent sichtbar, bei Gespeichert (.saved) grün hervorgehoben */
       .card-quick-save {
         position: absolute;
         top: 6px;
@@ -24074,8 +25143,9 @@
         width: 28px;
         height: 28px;
         border-radius: 999px;
-        background: rgba(15, 23, 42, 0.92);
-        border: 1px solid rgba(255, 255, 255, 0.25);
+        background: rgba(15, 23, 42, 0.86);
+        backdrop-filter: blur(6px);
+        border: 1px solid rgba(255, 255, 255, 0.22);
         color: #fff;
         font-size: 12px;
         display: inline-flex;
@@ -24083,25 +25153,21 @@
         justify-content: center;
         cursor: pointer;
         z-index: 4;
-        opacity: 0;
-        pointer-events: none;
-        transition: transform 0.14s, background 0.14s, opacity 0.14s;
+        opacity: 0.92;
+        pointer-events: auto;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+        transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, opacity 0.14s, border-color 0.14s;
       }
       @media (hover: none), (pointer: coarse) {
         .card-quick-save {
-          opacity: 0.92;
+          opacity: 0.95;
           pointer-events: auto;
-          width: 32px;
-          height: 32px;
-          font-size: 13px;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.65);
+          width: 30px;
+          height: 30px;
+          font-size: 12.5px;
         }
-        .card-quick-info {
-          display: none !important;
-        }
-      }
-      @media (max-width: 640px) {
-        .card-quick-info {
+        .card-quick-info,
+        .card-quick-trailer {
           display: none !important;
         }
       }
@@ -24111,6 +25177,7 @@
       }
       .card-quick-save.saved,
       .card:hover .card-quick-save,
+      .card:focus-within .card-quick-save,
       .card.card-subnav-active .card-quick-save {
         opacity: 1;
         pointer-events: auto;
@@ -24119,7 +25186,7 @@
       .card-quick-save.spatial-focus {
         opacity: 1;
         pointer-events: auto;
-        transform: scale(1.14);
+        transform: scale(1.12);
         background: var(--red);
         border-color: #fff;
         box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.55), 0 4px 12px rgba(0,0,0,0.85);
@@ -24179,6 +25246,7 @@
         right: 6px;
         z-index: 3;
         background: rgba(14, 14, 20, 0.94);
+        backdrop-filter: blur(6px);
         color: #fff;
         border: 1px solid rgba(229, 9, 20, 0.65);
         border-radius: 999px;
@@ -24191,20 +25259,23 @@
         gap: 4px;
         opacity: 0;
         pointer-events: none;
+        transform: translateY(4px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.15s ease, transform 0.14s, background 0.14s, border-color 0.14s, box-shadow 0.14s;
+        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
       }
       .card:hover .card-quick-trailer,
+      .card:focus-within .card-quick-trailer,
       .card.spatial-focus .card-quick-trailer,
       .card.card-subnav-active .card-quick-trailer {
         opacity: 1;
         pointer-events: auto;
+        transform: translateY(0);
       }
       .card-quick-trailer:hover,
       .card-quick-trailer.spatial-focus {
         background: var(--red);
         border-color: #fff;
-        transform: scale(1.08);
+        transform: translateY(0) scale(1.06);
         box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.55), 0 4px 14px rgba(0,0,0,0.85);
       }
       /* Info/Details Sub-Button unten links: NUR bei Hover oder Fokus sichtbar! */
@@ -24214,6 +25285,7 @@
         left: 6px;
         z-index: 3;
         background: rgba(14, 14, 20, 0.94);
+        backdrop-filter: blur(6px);
         color: #e2e8f0;
         border: 1px solid rgba(255, 255, 255, 0.28);
         border-radius: 999px;
@@ -24226,27 +25298,336 @@
         gap: 3px;
         opacity: 0;
         pointer-events: none;
+        transform: translateY(4px);
         box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.15s ease, transform 0.14s, background 0.14s, border-color 0.14s, box-shadow 0.14s;
+        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
       }
       .card:hover .card-quick-info,
+      .card:focus-within .card-quick-info,
       .card.spatial-focus .card-quick-info,
       .card.card-subnav-active .card-quick-info {
         display: inline-flex !important;
         opacity: 1;
         pointer-events: auto;
+        transform: translateY(0);
       }
       .card-quick-info:hover,
       .card-quick-info.spatial-focus {
         background: var(--purple);
         border-color: #fff;
         color: #fff;
-        transform: scale(1.08);
+        transform: translateY(0) scale(1.06);
         box-shadow: 0 0 0 3px rgba(91, 70, 245, 0.6), 0 4px 14px rgba(0,0,0,0.85);
       }
       .card.card-subnav-active {
         border-color: var(--accent-primary) !important;
         box-shadow: 0 0 0 2px rgba(229, 9, 20, 0.45), 0 12px 28px rgba(0,0,0,0.75);
+      }
+      /* Aufgeräumte Detail-Modal Nutzer-Aktionsleiste & eigene kompakte Admin-Leiste */
+      .modal-actions-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 12px;
+        margin-bottom: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .modal-actions-primary {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .modal-actions-tools {
+        display: flex;
+        gap: 5px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .btn-action-glass {
+        background: rgba(255, 255, 255, 0.07);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        color: #f8fafc;
+        font-weight: 700;
+        padding: 6px 12px;
+        border-radius: 8px;
+        font-size: calc(12px * var(--scale-text));
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.15s ease;
+        text-decoration: none;
+      }
+      .btn-action-glass:hover,
+      .btn-action-glass.spatial-focus {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.32);
+        color: #ffffff;
+      }
+      .btn-action-glass.saved,
+      .btn-action-glass.green {
+        background: rgba(16, 185, 129, 0.16);
+        border-color: rgba(16, 185, 129, 0.45);
+        color: #6ee7b7;
+      }
+      .btn-tool-quiet {
+        background: rgba(255, 255, 255, 0.035);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        color: #94a3b8;
+        font-weight: 600;
+        padding: 5px 9px;
+        border-radius: 7px;
+        font-size: calc(11.5px * var(--scale-text));
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        transition: all 0.14s ease;
+      }
+      .btn-tool-quiet:hover,
+      .btn-tool-quiet.spatial-focus {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.24);
+        color: #f8fafc;
+      }
+      /* Edle einzeilige Metadaten- & Genre-Leisten im Detail-Header (Apple TV+ / Netflix Stil) */
+      .modal-meta-inline {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 7px;
+        font-size: calc(12.5px * var(--scale-text));
+        font-weight: 600;
+        color: #cbd5e1;
+        line-height: 1.4;
+      }
+      .modal-meta-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .modal-meta-item.clickable {
+        cursor: pointer;
+        transition: color 0.14s ease;
+      }
+      .modal-meta-item.clickable:hover,
+      .modal-meta-item.clickable.spatial-focus {
+        color: #ffffff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .modal-meta-rating {
+        color: #fbbf24;
+        font-weight: 800;
+      }
+      .modal-meta-fsk {
+        padding: 1px 6px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        color: #e2e8f0;
+        letter-spacing: 0.2px;
+      }
+      .modal-meta-dot {
+        color: rgba(148, 163, 184, 0.55);
+        font-weight: 900;
+        user-select: none;
+      }
+      .modal-genre-inline {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        font-size: calc(12px * var(--scale-text));
+        color: #94a3b8;
+      }
+      .modal-genre-link {
+        color: #e2e8f0;
+        font-weight: 600;
+        cursor: pointer;
+        transition: color 0.14s ease;
+      }
+      .modal-genre-link:hover,
+      .modal-genre-link.spatial-focus {
+        color: #ffffff;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      /* Kompakter integrierter Versandziel-Umschalter (in Staffel-Zeile oder Film-Header) */
+      .delivery-inline-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .delivery-inline-pills {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 3px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        flex-wrap: wrap;
+      }
+      .delivery-inline-label {
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        color: #94a3b8;
+        padding: 0 6px 0 5px;
+        white-space: nowrap;
+      }
+      .delivery-pill-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: #94a3b8;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.14s ease;
+        white-space: nowrap;
+      }
+      .delivery-pill-btn:hover {
+        color: #f8fafc;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .delivery-pill-btn.active {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.22);
+        color: #ffffff;
+      }
+      .delivery-config-drawer {
+        padding: 10px 12px;
+        border-radius: 9px;
+        background: rgba(15, 23, 42, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        margin-top: 4px;
+        margin-bottom: 6px;
+      }
+      .season-toolbar-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      }
+      /* Kompakte Release-Box für mehrteilige Filme (CD 1 bis CD N nebeneinander) */
+      .release-box-card {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+        padding: 11px 13px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        transition: border-color 0.16s ease, background 0.16s ease;
+      }
+      .release-box-card:hover {
+        border-color: rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.045);
+      }
+      .release-box-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding-bottom: 7px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .release-cd-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        align-items: center;
+      }
+      .cd-part-chip-wrap {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+      }
+      .btn-cd-part {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 8px;
+        background: rgba(229, 9, 20, 0.14);
+        border: 1px solid rgba(229, 9, 20, 0.45);
+        color: #ffffff;
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 800;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        font-variant-numeric: tabular-nums;
+      }
+      .btn-cd-part:hover,
+      .btn-cd-part.spatial-focus {
+        background: var(--red);
+        border-color: #ffffff;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 14px rgba(229, 9, 20, 0.38);
+      }
+      .btn-cd-part .cd-size-sub {
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.78);
+      }
+      body[data-theme="light"] .release-box-card {
+        background: #f8fafc;
+        border-color: #cbd5e1;
+      }
+      body[data-theme="light"] .release-box-header {
+        border-bottom-color: #e2e8f0;
+      }
+      body[data-theme="light"] .btn-cd-part {
+        background: #fee2e2;
+        border-color: #ef4444;
+        color: #7f1d1d;
+      }
+      body[data-theme="light"] .btn-cd-part .cd-size-sub {
+        color: #991b1b;
+      }
+      body[data-theme="light"] .btn-action-glass {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+        color: #0f172a;
+      }
+      body[data-theme="light"] .btn-action-glass:hover {
+        background: #e2e8f0;
+      }
+      body[data-theme="light"] .btn-tool-quiet {
+        background: #f8fafc;
+        border-color: #cbd5e1;
+        color: #475569;
+      }
+      body[data-theme="light"] .btn-tool-quiet:hover {
+        background: #e2e8f0;
+        color: #0f172a;
+      }
+      body[data-theme="light"] .delivery-inline-pills {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+      }
+      body[data-theme="light"] .delivery-pill-btn {
+        color: #475569;
+      }
+      body[data-theme="light"] .delivery-pill-btn.active {
+        background: #0f172a;
+        color: #ffffff;
+      }
+      body[data-theme="light"] .delivery-config-drawer {
+        background: #f8fafc;
+        border-color: #cbd5e1;
       }
       .card-body { padding: 7px 8px; display: flex; flex-direction: column; flex: 1; justify-content: space-between; gap: 4px; }
       .card-title { font-size: calc(12px * var(--scale-text)); font-weight: 700; line-height: 1.3; white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
@@ -24293,6 +25674,31 @@
       }
 
       /* Seiten-Anzeige (Seite X von Y) & Direkt-Seitenwahl (#17) */
+      .pagination-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 16px;
+        padding: 12px 10px;
+        border-radius: 12px;
+        background: rgba(18, 21, 30, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.07);
+      }
+      .page-counter-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 5px 12px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--text);
+        font-size: calc(11.5px * var(--scale-text));
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
       .page-jump-bar {
         grid-column: 1 / -1;
         display: flex;
@@ -24580,9 +25986,10 @@
         padding: 4px 7px !important;
         font-size: calc(11px * var(--scale-text)) !important;
         border-radius: 6px;
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.14);
-        color: #cbd5e1;
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.1);
+        color: #94a3b8;
+        transition: all 0.14s ease;
       }
       .ep-icon-btn:hover {
         background: rgba(255,255,255,0.14);
@@ -24641,11 +26048,153 @@
         text-transform: uppercase;
         letter-spacing: 0.4px;
       }
-      .ep-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: rgba(255,255,255,0.04); border-radius: 8px; margin-bottom: 6px; gap: 8px; border: 1px solid rgba(255,255,255,0.08); flex-wrap: wrap; }
-      .ep-row.ep-watched { border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.07); }
-      .ep-row.ep-next-up { border-color: rgba(245, 158, 11, 0.55); background: rgba(245, 158, 11, 0.08); }
-      .ep-title { font-size: calc(12.5px * var(--scale-text)); font-weight: 600; color: #60a5fa; cursor: pointer; flex: 1; min-width: 170px; border-radius: 6px; padding: 2px 4px; transition: background 0.14s, color 0.14s; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-      .ep-title.spatial-focus, .ep-title:hover { background: rgba(96, 165, 250, 0.16); color: #fff; outline: 2px solid #60a5fa; }
+      /* Edle Episoden-Zeilen (Apple TV+ / Netflix Stil) */
+      .ep-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 9px 12px;
+        background: rgba(255, 255, 255, 0.025);
+        border-radius: 9px;
+        margin-bottom: 6px;
+        gap: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.065);
+        flex-wrap: wrap;
+        transition: background 0.14s ease, border-color 0.14s ease;
+      }
+      .ep-row:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.14);
+      }
+      .ep-row.ep-watched { border-color: rgba(16, 185, 129, 0.42); background: rgba(16, 185, 129, 0.06); }
+      .ep-row.ep-next-up { border-color: rgba(245, 158, 11, 0.5); background: rgba(245, 158, 11, 0.07); }
+      .ep-title {
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 600;
+        color: #f1f5f9;
+        cursor: pointer;
+        flex: 1;
+        min-width: 180px;
+        border-radius: 6px;
+        padding: 2px 4px;
+        transition: color 0.14s ease;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        flex-wrap: wrap;
+      }
+      .ep-title.spatial-focus,
+      .ep-title:hover {
+        color: #ffffff;
+      }
+      .ep-title:hover .ep-name-text,
+      .ep-title.spatial-focus .ep-name-text {
+        text-decoration: underline;
+        text-decoration-color: rgba(255, 255, 255, 0.45);
+        text-underline-offset: 3px;
+      }
+      .ep-code-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px 7px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: #94a3b8;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.3px;
+        flex-shrink: 0;
+      }
+      .ep-name-text {
+        color: #f8fafc;
+        font-weight: 600;
+        line-height: 1.35;
+      }
+      .btn-stream-clean {
+        background: rgba(229, 9, 20, 0.14);
+        border: 1px solid rgba(229, 9, 20, 0.42);
+        color: #fecaca;
+        font-weight: 700;
+        padding: 5px 10px;
+        border-radius: 7px;
+        font-size: calc(11px * var(--scale-text));
+        font-variant-numeric: tabular-nums;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        transition: all 0.14s ease;
+      }
+      .btn-stream-clean:hover,
+      .btn-stream-clean.spatial-focus {
+        background: #e50914;
+        border-color: #ff4d4d;
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(229, 9, 20, 0.35);
+      }
+      .btn-stream-clean.prerelease {
+        background: rgba(245, 158, 11, 0.15);
+        border-color: rgba(245, 158, 11, 0.45);
+        color: #fde68a;
+      }
+      .btn-stream-clean.prerelease:hover {
+        background: #d97706;
+        border-color: #fbbf24;
+        color: #ffffff;
+      }
+      .ep-ghost-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        color: #94a3b8;
+        padding: 4px 7px;
+        border-radius: 6px;
+        font-size: calc(11.5px * var(--scale-text));
+        cursor: pointer;
+        opacity: 0.5;
+        transition: opacity 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .ep-row:hover .ep-ghost-btn,
+      .ep-row:focus-within .ep-ghost-btn,
+      .ep-ghost-btn:hover,
+      .ep-ghost-btn.spatial-focus {
+        opacity: 0.92;
+      }
+      .ep-ghost-btn:hover,
+      .ep-ghost-btn.spatial-focus {
+        opacity: 1;
+        background: rgba(255, 255, 255, 0.09);
+        border-color: rgba(255, 255, 255, 0.18);
+        color: #ffffff;
+      }
+      .ep-ghost-btn.saved {
+        opacity: 1;
+        background: rgba(16, 185, 129, 0.16);
+        border-color: rgba(16, 185, 129, 0.42);
+        color: #6ee7b7;
+      }
+      body[data-theme="light"] .ep-name-text {
+        color: #0f172a;
+      }
+      body[data-theme="light"] .ep-code-badge {
+        background: #e2e8f0;
+        border-color: #cbd5e1;
+        color: #334155;
+      }
+      body[data-theme="light"] .btn-stream-clean {
+        background: #fee2e2;
+        border-color: #fca5a5;
+        color: #991b1b;
+      }
+      body[data-theme="light"] .btn-stream-clean:hover {
+        background: #e50914;
+        color: #ffffff;
+      }
       .stream-meta-pill {
         display: inline-flex;
         align-items: center;
@@ -24725,7 +26274,7 @@
       .embed-box { margin: 10px 0; background: #000; border-radius: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); }
       .embed-frame { width: 100%; aspect-ratio: 16/9; border: 0; display: block; background: #000; }
       .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-      .panel-box { background: rgba(30,30,36,0.95); border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+      .panel-box { background: rgba(18, 21, 30, 0.88); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
       .lightbox-backdrop { position: fixed; inset: 0; z-index: 220; background: rgba(0,0,0,0.94); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; }
       .lightbox-img { max-width: 96vw; max-height: 82vh; object-fit: contain; border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,0.9); transition: transform 0.2s ease; cursor: zoom-in; }
       .lightbox-img.zoomed { transform: scale(1.65); cursor: zoom-out; }
@@ -25499,22 +27048,22 @@
           : "👤 Gast • Login";
 
         body.innerHTML =
-          /* 0. Schnellzugriff & Konto (aus dem Header hierher aufgeräumt) */
+          /* 0. Schnellzugriff & Konto */
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
-              '<span>⚡ Schnellzugriff & Konto</span>' +
+              '<span>⚡ Navigation & Konto</span>' +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px">' +
-              '<button id="syncBadge" class="btn" style="grid-column:1 / -1;justify-content:space-between;color:' + (isAuth ? '#34d399' : '#fbbf24') + ';border-color:' + (isAuth ? 'rgba(16,185,129,0.4)' : 'rgba(251,191,36,0.4)') + '" onclick="closeFilterSidebar();openAccountModal()">' +
-                '<span>' + esc(accLabel) + '</span><span>🔐 Account</span>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
+              '<button id="syncBadge" class="btn" style="grid-column:1 / -1;justify-content:space-between;background:rgba(255,255,255,0.04);color:' + (isAuth ? '#34d399' : '#fbbf24') + ';border-color:' + (isAuth ? 'rgba(16,185,129,0.32)' : 'rgba(251,191,36,0.32)') + '" onclick="closeFilterSidebar();openAccountModal()">' +
+                '<span>' + esc(accLabel) + '</span><span style="color:var(--text-muted);font-size:11px">🔐 Konto öffnen ▸</span>' +
               '</button>' +
-              '<button id="sidebarRandomBtn" class="btn amber" onclick="closeFilterSidebar();triggerRandom()" title="Zufälligen Titel mit aktiven Filtern ziehen">' +
+              '<button id="sidebarRandomBtn" class="btn" onclick="closeFilterSidebar();triggerRandom()" title="Zufälligen Titel mit aktiven Filtern ziehen">' +
                 (state.type === 's' ? '🎲 Zufalls-Serie' : '🎲 Zufalls-Film') +
               '</button>' +
-              '<button class="btn purple" onclick="closeFilterSidebar();loadFranchisesHub()" title="Alle Filmreihen & Filmuniversen öffnen">' +
+              '<button class="btn" onclick="closeFilterSidebar();loadFranchisesHub()" title="Alle Filmreihen & Filmuniversen öffnen">' +
                 '🌌 Welten & Reihen' +
               '</button>' +
-              '<button id="sidebarOpenInBotBtn" class="btn blue" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
+              '<button id="sidebarOpenInBotBtn" class="btn" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
                 '🤖 Im Bot öffnen' +
               '</button>' +
               '<button class="btn" onclick="closeFilterSidebar();loadSettingsView()" title="Alle Einstellungen öffnen">' +
@@ -25527,7 +27076,7 @@
                 '🔄 Neu starten' +
               '</button>' +
               (u.isAdmin ? (
-                '<button id="adminHeaderBtn" class="btn amber" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Panel & VIP-Verwaltung</button>'
+                '<button id="adminHeaderBtn" class="btn amber" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'
               ) : '') +
             '</div>' +
           '</div>' +
@@ -25535,8 +27084,8 @@
           /* 1. Filter-Kategorien (kompakt, beim Öffnen eingeklappt) */
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
-              '<span>🎛️ Filter</span>' +
-              '<span style="font-size:10px;color:var(--text-muted)">✓ Positiv • ✕ Negativ</span>' +
+              '<span>🎛️ Katalog-Filter</span>' +
+              '<span style="font-size:10px;color:var(--text-muted)">✓ Einschluss • ✕ Ausschluss</span>' +
             '</div>' +
             '<div style="display:flex;gap:5px;flex-wrap:wrap;' + (catGridHtml || isCurrentUserVip() ? 'margin-bottom:8px' : '') + '">' +
               '<button id="sidebarCatTab_genres" class="ff-tab-btn ' + (curTab === 'genres' ? 'open' : '') + (gCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'genres\\')">🎞️ Genres' + (gCount ? ' (' + gCount + ')' : '') + '</button>' +
@@ -25547,8 +27096,8 @@
             '</div>' +
             /* Optimierung #13: Exklusiver VIP-Filter "Nur Titel mit verfügbarem Stream anzeigen" */
             (isCurrentUserVip() ? (
-              '<button id="sidebarVipStreamsOnlyBtn" class="btn ' + (s.onlyVipStreams ? 'amber' : '') + '" style="width:100%;justify-content:space-between;' + (catGridHtml ? 'margin-bottom:8px' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
-                '<span>🌟 Nur mit VIP-Stream anzeigen</span>' +
+              '<button id="sidebarVipStreamsOnlyBtn" class="btn ' + (s.onlyVipStreams ? 'green' : '') + '" style="width:100%;justify-content:space-between;' + (catGridHtml ? 'margin-bottom:8px' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
+                '<span>🌟 Nur mit verfügbarem Stream</span>' +
                 '<b>' + (s.onlyVipStreams ? 'AKTIV' : 'ALLE') + '</b>' +
               '</button>'
             ) : '') +
@@ -25558,15 +27107,15 @@
           /* 2. Design & Ansicht (eingeklappt beim Öffnen) */
           '<div class="sidebar-section">' +
             '<button type="button" id="sidebarSecBtn_design" class="sidebar-collapse-btn" onclick="toggleSidebarExtraSection(\\'design\\')">' +
-              '<span>🎨 Design & Ansicht</span>' +
+              '<span>🎨 Darstellung & Komfort</span>' +
               '<span class="sidebar-collapse-meta">' + themeBadge + ' ' + (state.sidebarDesignOpen ? '▾' : '▸') + '</span>' +
             '</button>' +
             (state.sidebarDesignOpen ? (
               '<div id="sidebarDesignBody" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08)">' +
                 '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">' +
-                  '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'red' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
-                  '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'blue' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
-                  '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'purple' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
+                  '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'active' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
+                  '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'active' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
+                  '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'active' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
                 '</div>' +
                 '<button id="sidebarColorblindBtn" class="btn ' + (colorblindMode ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleColorblindMode()">' +
                   '<span>👁️ Farbenblind-Modus</span>' +
@@ -25581,7 +27130,7 @@
                   '<b>' + (modalHoldNavEnabled ? 'EIN' : 'AUS') + '</b>' +
                 '</button>' +
                 '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
-                  '<span>🎬 Empfehlungs-Slider</span>' +
+                  '<span>🎬 Spotlight-Banner</span>' +
                   '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
                 '</button>' +
               '</div>'
@@ -25591,7 +27140,7 @@
           /* 3. Ansichtsgröße (eingeklappt beim Öffnen) */
           '<div class="sidebar-section">' +
             '<button type="button" id="sidebarSecBtn_scale" class="sidebar-collapse-btn" onclick="toggleSidebarExtraSection(\\'scale\\')">' +
-              '<span>🔠 Größe</span>' +
+              '<span>🔠 Skalierung & Textgröße</span>' +
               '<span class="sidebar-collapse-meta">' + scaleBadge + ' ' + (state.sidebarScaleOpen ? '▾' : '▸') + '</span>' +
             '</button>' +
             (state.sidebarScaleOpen ? (
@@ -25606,12 +27155,6 @@
                 buildScaleRow("🎛️ Menü", "menu", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"125%",v:125}]) +
               '</div>'
             ) : '') +
-          '</div>' +
-
-          /* 4. Kompakte Fußzeile für Einstellungen & Account */
-          '<div style="display:flex;gap:6px">' +
-            '<button class="btn" style="flex:1" onclick="closeFilterSidebar();loadSettingsView()">⚙️ Einstellungen</button>' +
-            '<button class="btn" style="flex:1" onclick="closeFilterSidebar();openAccountModal()">🔐 Account</button>' +
           '</div>';
 
         if (jumpToOptions) {
@@ -26373,6 +27916,9 @@
         wlSort: "added_desc",
         wlSearchQuery: "",
         wlLetter: "ALL",
+        wlViewMode: (function() {
+          try { return localStorage.getItem("tma_wl_view_mode") || "grid"; } catch (e) { return "grid"; }
+        })(),
         cachedWishlistItems: [],
         cachedWishlistFolders: [],
         activeDetails: null,
@@ -26736,6 +28282,7 @@
           includedStudios: [], excludedStudios: [],
           includedFsk: [], excludedFsk: [],
           showUnreleased: false,
+          onlyVipStreams: false,
           filtersActive: true
         };
         const inp = document.getElementById("searchInput");
@@ -26756,7 +28303,7 @@
               type: "m",
               genreId: "all",
               mode: "trend",
-              sort: "pop_desc"
+              sort: "default"
             })
           });
           if (res && res.settings) state.settings = res.settings;
@@ -26764,7 +28311,7 @@
             state.type = "m";
             state.genreId = "all";
             state.mode = "trend";
-            state.sort = "pop_desc";
+            state.sort = "default";
             state.startPage = 1;
             state.page = 1;
             state.items = res.discover.items || [];
@@ -26780,7 +28327,7 @@
         } catch (e) {} finally {
           setBusyState(false);
         }
-        loadDiscover("m", "all", "trend", "pop_desc");
+        loadDiscover("m", "all", "trend", "default");
       }
 
       function updateSearchClearBtnVisibility() {
@@ -26836,10 +28383,12 @@
       }
 
       function onSearchScopeChange(newScope) {
-        state.searchScope = newScope || "all";
+        const selEl = document.getElementById("searchScopeSelect");
+        const resolvedScope = newScope || (selEl && selEl.value) || "all";
+        state.searchScope = resolvedScope;
         const inp = document.getElementById("searchInput");
         if (inp && inp.value.trim()) {
-          runSearch(false);
+          runSearch(false, inp.value.trim(), state.searchScope);
         } else if (state.isSearchMode && state.searchQuery) {
           runSearch(false, state.searchQuery, state.searchScope);
         }
@@ -26848,12 +28397,12 @@
       function toggleSearchDetectedEntities() {
         state.searchEntitiesExpanded = !state.searchEntitiesExpanded;
         const box = document.getElementById("searchDetectedEntitiesBody");
-        const iconEl = document.getElementById("searchDetectedEntitiesChevron");
+        const iconEl = document.getElementById("searchDetectedEntitiesToggleIcon") || document.getElementById("searchDetectedEntitiesChevron");
         if (box) {
           box.style.display = state.searchEntitiesExpanded ? "flex" : "none";
         }
         if (iconEl) {
-          iconEl.textContent = state.searchEntitiesExpanded ? "Einklappen ▴" : "Ausklappen ▾";
+          iconEl.textContent = state.searchEntitiesExpanded ? "Ausblenden ▴" : "Anzeigen ▾";
         }
       }
 
@@ -27868,7 +29417,7 @@
         const curScope = state.searchScope || 'all';
         const modeOrScopeHtml = state.isSearchMode
           ? (
-            '<select id="searchScopeSelect" class="mode-filter-select active-mode" onchange="onSearchScopeChange()" title="Suchbereich einschränken">' +
+            '<select id="searchScopeSelect" class="mode-filter-select active-mode" onchange="onSearchScopeChange(this.value)" title="Suchbereich einschränken">' +
               '<option value="all"' + (curScope === 'all' ? ' selected' : '') + '>⚡ Bereich: Alles</option>' +
               '<option value="movie"' + (curScope === 'movie' ? ' selected' : '') + '>🎬 Nur Filme</option>' +
               '<option value="series"' + (curScope === 'series' ? ' selected' : '') + '>📺 Nur Serien</option>' +
@@ -28201,7 +29750,6 @@
               const cardKey = tc + "_" + it.id;
               const isCardSaved = savedKeysSet.has(cardKey);
               const rankHtml = (showTop10Ranks && idx < 10) ? ('<span class="card-rank-badge">#' + (idx + 1) + '</span>') : '';
-              const typeBadgeHtml = isMixedMediaView ? ('<span class="card-type-badge">' + badgeTxt + '</span>') : '';
               // Dezenter grüner VIP-Punkt auf dem Cover (Details im Modal)
               const vipQualityHtml = (vipAllowed && it.vipQuality)
                 ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(it.vipQuality) + '"></span>')
@@ -28211,11 +29759,11 @@
               const itemPosterSafe = esc(it.poster_path || it.external_poster_url || it.poster || '');
               const yrStr = esc((it.release_date || it.first_air_date || '').slice(0, 4) || '–');
               const ratStr = it.vote_average ? it.vote_average.toFixed(1) : '–';
+              const subRightTxt = isMixedMediaView ? ((tc === 's' ? '📺 ' : '🎬 ') + yrStr) : yrStr;
               return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')">' +
                 '<div class="card-poster-wrap">' +
                   '<div class="card-top-left-stack">' +
                     rankHtml +
-                    typeBadgeHtml +
                     vipQualityHtml +
                   '</div>' +
                   '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="In Merkliste speichern oder entfernen (Tipp oder Karte gedrückt halten)">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
@@ -28225,7 +29773,7 @@
                 '</div>' +
                 '<div class="card-body">' +
                   '<div class="card-title">' + itemTitleSafe + '</div>' +
-                  '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + yrStr + '</span></div>' +
+                  '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
                 '</div>' +
               '</div>';
             }).join("") + paginationBarHtml : (
@@ -28384,15 +29932,19 @@
             box.innerHTML = '<div style="font-size:12px;color:#94a3b8;margin-top:8px">Keine ähnlichen Titel mit den aktuellen Filtern gefunden.</div>';
             return;
           }
-          box.innerHTML = '<div class="modal-sub-box" style="margin-top:10px;padding:10px;background:var(--card);border-radius:8px;border:1px solid rgba(148,163,184,0.22)">' +
+          box.innerHTML = '<div class="modal-sub-box" style="margin-top:10px;padding:12px;background:var(--card);border-radius:10px;border:1px solid rgba(255,255,255,0.08)">' +
             '<div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:8px">✨ Ähnliche Empfehlungen (' + items.length + '):</div>' +
-            '<div class="carousel" style="grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px">' +
+            '<div class="carousel" style="grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:8px">' +
               items.slice(0, 8).map(it => {
                 const tc = it.media_type === 'tv' ? 's' : type;
-                const simPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '');
+                const itemTitle = it.title || it.name || 'Titel';
+                const fbSvg = buildPosterFallbackSvg(itemTitle, tc === 's');
+                const simPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '') || fbSvg;
                 return '<div class="card" tabindex="0" onclick="openDetails(\\''+tc+'\\','+it.id+',false)">' +
-                  '<img src="' + (simPoster ? esc(simPoster) : 'https://via.placeholder.com/300x450?text=Poster') + '" loading="lazy" draggable="false" oncontextmenu="return false;" />' +
-                  '<div class="card-body"><div class="card-title">' + esc(it.title || it.name) + '</div><div class="card-sub"><span>⭐ ' + (it.vote_average ? it.vote_average.toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
+                  '<div class="card-poster-wrap">' +
+                    '<img src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" loading="lazy" draggable="false" oncontextmenu="return false;" onerror="this.onerror=null;this.src=\\'' + fbSvg + '\\'" />' +
+                  '</div>' +
+                  '<div class="card-body"><div class="card-title">' + esc(itemTitle) + '</div><div class="card-sub"><span>⭐ ' + (it.vote_average ? Number(it.vote_average).toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
                 '</div>';
               }).join("") +
             '</div>' +
@@ -28688,9 +30240,15 @@
           const ytSearchUrl = 'https://www.youtube.com/results?search_query=' + ytSearchQuery;
 
           // Klickbare Genres & bereinigte, deduplizierte Streaming-Anbieter
-          const clickableGenresHtml = (d.genres && d.genres !== "Keine Angabe" ? d.genres.split(",").map(g => g.trim()).filter(Boolean) : []).map(gName =>
-            '<span class="f-pill inc" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + genreEmoji(gName) + ' ' + esc(gName) + '</span>'
+          const genresListClean = (d.genres && d.genres !== "Keine Angabe")
+            ? d.genres.split(",").map(g => g.trim()).filter(Boolean)
+            : [];
+          const clickableGenresHtml = genresListClean.map(gName =>
+            '<span class="f-pill inc" tabindex="0" onclick="filterByCategoryFromModal(\\'' + 'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + genreEmoji(gName) + ' ' + esc(gName) + '</span>'
           ).join(" ");
+          const heroInlineGenresHtml = genresListClean.map(gName =>
+            '<span class="modal-genre-link" tabindex="0" onclick="filterByCategoryFromModal(\\'' + 'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>'
+          ).join('<span class="modal-meta-dot">·</span>');
 
           const directorsArr = Array.isArray(d.directorsList) && d.directorsList.length > 0
             ? d.directorsList
@@ -28729,6 +30287,20 @@
           const prevAdj = getAdjacentDetailItem(-1);
           const nextAdj = getAdjacentDetailItem(1);
           const hasCreditsOrStudios = Boolean(clickableDirectorsHtml || clickableCastHtml || clickableStudiosHtml || clickableYearInDetailsHtml);
+
+          // Edle einzeilige Metadaten-Elemente mit Trennpunkten (Apple TV+ / Netflix Stil)
+          const cleanStatusLabel = (type === 's' && d.statusText && d.statusText !== 'Unbekannt')
+            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\s*/, '').trim()
+            : '';
+          const heroMetaParts = [
+            (d.vote && d.vote !== '0.0') ? ('<span class="modal-meta-item modal-meta-rating">★ ' + esc(d.vote) + '</span>') : '',
+            hasValidFsk ? ('<span class="modal-meta-item modal-meta-fsk clickable" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : '',
+            (d.runtime && d.runtime !== 'Keine Angabe') ? ('<span class="modal-meta-item">' + esc(d.runtime) + '</span>') : '',
+            (d.country && d.country !== 'k.A.' && d.country !== 'Keine Angabe') ? ('<span class="modal-meta-item clickable" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + ' suchen">' + esc(d.country) + '</span>') : '',
+            (type === 's' && d.numberOfSeasons) ? ('<span class="modal-meta-item">' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? ' Staffel' : ' Staffeln') + ' (' + Number(d.numberOfEpisodes || 0) + ' Flg.)</span>') : '',
+            cleanStatusLabel ? ('<span class="modal-meta-item">' + esc(cleanStatusLabel) + '</span>') : ''
+          ].filter(Boolean);
+          const heroMetaInlineHtml = heroMetaParts.join('<span class="modal-meta-dot">·</span>');
 
           // Prüfen, ob mehrteilige Film-Teile (z.B. CD1 & CD2 / Part 1 & Part 2) vorliegen
           const multiPartFiles = (vipAllowed && Array.isArray(d.files))
@@ -28771,24 +30343,17 @@
                     : '<div class="flix-poster-card" style="display:flex;align-items:center;justify-content:center;font-size:32px">' + (type === 's' ? '📺' : '🎬') + '</div>') +
                   '<div class="flix-meta-col">' +
                     '<div class="flix-title-row">' +
-                      '<h2 style="font-size:22px;font-weight:900;color:#ffffff;margin:0;line-height:1.2;text-shadow:0 2px 14px rgba(0,0,0,0.95)">' +
+                      '<h2 style="font-size:24px;font-weight:900;color:#ffffff;margin:0;line-height:1.18;letter-spacing:-0.01em;text-shadow:0 2px 14px rgba(0,0,0,0.95)">' +
                         '<span style="cursor:pointer;color:#ffffff" onclick="runSearch(false,\\'' + esc(d.title) + '\\')" title="Antippen, um nach diesem Titel zu suchen">' + esc(d.title) + '</span>' +
-                        (hasValidYear ? ' <span style="color:#cbd5e1;font-weight:700;font-size:17px">(' + esc(d.year) + ')</span>' : '') +
+                        (hasValidYear ? ' <span style="color:#94a3b8;font-weight:600;font-size:17px">(' + esc(d.year) + ')</span>' : '') +
                       '</h2>' +
                     '</div>' +
 
-                    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-                      (d.vote && d.vote !== '0.0' ? '<span class="f-pill neutral">⭐ ' + esc(d.vote) + '</span>' : '') +
-                      (hasValidFsk ? '<span class="f-pill neutral" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">🔞 ' + esc(fskFilterTarget) + '</span>' : '') +
-                      (d.runtime && d.runtime !== 'Keine Angabe' ? '<span class="f-pill neutral">⏳ ' + esc(d.runtime) + '</span>' : '') +
-                      (d.country && d.country !== 'k.A.' && d.country !== 'Keine Angabe' ? '<span class="f-pill neutral" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')">🌍 ' + esc(d.country) + '</span>' : '') +
-                      (type === 's' && d.numberOfSeasons ? '<span class="f-pill neutral">📚 ' + Number(d.numberOfSeasons) + ' St. / ' + Number(d.numberOfEpisodes || 0) + ' Flg.</span>' : '') +
-                      (type === 's' && d.statusText && d.statusText !== 'Unbekannt' ? '<span class="f-pill neutral">' + esc(d.statusText) + '</span>' : '') +
-                    '</div>' +
+                    (heroMetaInlineHtml ? '<div class="modal-meta-inline">' + heroMetaInlineHtml + '</div>' : '') +
 
-                    (clickableGenresHtml ? '<div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableGenresHtml + '</div>' : '') +
+                    (heroInlineGenresHtml ? '<div class="modal-genre-inline">' + heroInlineGenresHtml + '</div>' : '') +
 
-                    '<p style="font-size:12.5px;line-height:1.5;color:#e2e8f0;margin:2px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden" title="Vollständige Beschreibung im Reiter Details">' +
+                    '<p style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden" title="Vollständige Beschreibung im Reiter Details">' +
                       esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') +
                     '</p>' +
                   '</div>' +
@@ -28809,19 +30374,23 @@
               '</div>' +
 
               '<div class="modal-body">' +
-                /* Schnell-Aktionsleiste direkt sichtbar (Merkliste, Ähnliche Titel, Fehler melden für VIP/Admin, Admin-Tools, Mehr) */
-                '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">' +
-                  ((d.providerButtons && d.providerButtons.length > 0) ? (
-                    d.providerButtons.map(pb =>
-                      '<a class="btn" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(229,9,20,0.22)') + ';border-color:' + esc(pb.border || '#e50914') + ';font-weight:800;color:#fff">' + esc(pb.buttonText) + '</a>'
-                    ).join("")
-                  ) : '') +
-                  '<button id="modalWishlistBtn" class="btn ' + (d.isSaved ? 'green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
-                  '<button class="btn amber" onclick="loadSimilarInTma(\\''+type+'\\','+d.id+')">✨ Ähnliche Titel</button>' +
-                  (canReportMedia ? '<button type="button" class="btn" style="border-color:rgba(245,158,11,0.5);color:#fbbf24" onclick="openMediaReportModal({typeCode:\\''+type+'\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',versionLabel:\\''+esc(primaryVersionBadgeText || 'Originalfassung')+'\\'})" title="Falschen Titel, falsche Staffel/Folge oder defektes Video melden">⚠️ Fehler melden</button>' : '') +
-                  (isAdminUser ? '<button type="button" class="btn purple" onclick="toggleModalPosterPicker(\\''+type+'\\','+d.id+')" title="Original-Cover von TMDb (EN/DE), Apple iTunes DE, OMDb oder eigene Bild-URL wählen">🖼️ Cover ändern</button>' : '') +
-                  (isAdminUser ? '<button type="button" class="btn blue" onclick="toggleModalRemapBox(\\''+type+'\\','+d.id+')" title="Falsch zugeordneten Film/Serie inkl. Original-Dateiname & Telegram-Link neu zuordnen">🔄 Neu zuordnen</button>' : '') +
-                  '<button type="button" id="modalMoreActionsBtn" class="btn" onclick="toggleModalMoreActions()">⋯ Mehr ▾</button>' +
+                /* Vereinte, ruhige Aktionsleiste: Links Hauptaktionen, rechts dezente Admin- & Melde-Werkzeuge */
+                '<div class="modal-actions-row">' +
+                  '<div class="modal-actions-primary">' +
+                    ((d.providerButtons && d.providerButtons.length > 0) ? (
+                      d.providerButtons.map(pb =>
+                        '<a class="btn-action-glass" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(229,9,20,0.22)') + ';border-color:' + esc(pb.border || '#e50914') + ';color:#fff">' + esc(pb.buttonText) + '</a>'
+                      ).join("")
+                    ) : '') +
+                    '<button id="modalWishlistBtn" class="btn-action-glass ' + (d.isSaved ? 'saved green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
+                    '<button class="btn-action-glass" onclick="loadSimilarInTma(\\''+type+'\\','+d.id+')">✨ Ähnliche Titel</button>' +
+                  '</div>' +
+                  '<div class="modal-actions-tools">' +
+                    (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalPosterPicker(\\''+type+'\\','+d.id+')" title="Original-Cover von TMDb (EN/DE), Apple iTunes DE, OMDb oder eigene Bild-URL wählen">🖼️ Cover</button>' : '') +
+                    (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalRemapBox(\\''+type+'\\','+d.id+')" title="Falsch zugeordneten Film/Serie inkl. Original-Dateiname & Telegram-Link neu zuordnen">🔄 Zuordnen</button>' : '') +
+                    (canReportMedia ? '<button type="button" class="btn-tool-quiet" onclick="openMediaReportModal({typeCode:\\''+type+'\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',versionLabel:\\''+esc(primaryVersionBadgeText || 'Originalfassung')+'\\'})" title="Falschen Titel, falsche Staffel/Folge oder defektes Video melden">⚠️ Melden</button>' : '') +
+                    '<button type="button" id="modalMoreActionsBtn" class="btn-tool-quiet" onclick="toggleModalMoreActions()" title="Teilen, Telegraph-Guide, Original-Poster & TMDb">⋯ Mehr ▾</button>' +
+                  '</div>' +
                 '</div>' +
 
                 '<div id="modalPosterPickerBox" style="display:none;margin:10px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.92);border:1px solid rgba(168,85,247,0.45)"></div>' +
@@ -28842,53 +30411,14 @@
 
                 /* TAB 1: STAFFELN & EPISODEN (bzw. STREAMS & DATEIEN bei Filmen) */
                 '<div id="flixTabPanel_streams" style="display:' + (initialTab === 'streams' ? 'block' : 'none') + '">' +
-                  ((vipAllowed && ((d.files && d.files.length > 0) || type === 's')) ? (
-                    '<div class="modal-sub-box" style="margin:6px 0 10px;padding:10px;background:var(--card);border-radius:10px;border:1px solid rgba(229,9,20,0.4)">' +
-                      buildModalDeliveryTargetSelectorHtml() +
-                      ((d.files && d.files.length > 0) ? (
-                        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0">' +
-                          '<div style="font-size:12.5px;font-weight:800;color:var(--text)">🌟 VIP-Streams & Versionen (' + esc(d.title) + ' • ' + d.files.length + '):</div>' +
-                          (hasMultipleParts ? (
-                            '<button class="btn amber" onclick="sendAllMoviePartsToTelegram()" title="Alle Teile (z.B. CD1 & CD2) nacheinander an das gewählte Ziel senden">' +
-                              '📦 Alle ' + multiPartFiles.length + ' Teile nacheinander senden' +
-                            '</button>'
-                          ) : '') +
-                        '</div>' +
-                        '<div style="display:flex;flex-direction:column;gap:6px">' +
-                          d.files.map((f, fIdx) => {
-                            const sizeLabel = formatFileSizeClient(f.file_size);
-                            const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
-                            const tagsLabel = isRarFile ? "📦 RAR-Archiv" : String(f.tags || f.versionLabel || f.version_label || "").trim();
-                            const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsLabel);
-                            const partLabel = String(f.part || "").trim();
-                            const isExportRef = String(f.telegram_file_id || "").startsWith("tg_export_");
-                            const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
-                            return '<div class="ep-row" style="margin-bottom:0;' + (isPrereleaseTag ? 'border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.06);' : '') + '">' +
-                              '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-                                '<span class="btn ' + (isRarFile || isPrereleaseTag ? 'amber' : 'red') + '" style="padding:2px 7px;font-size:11px;pointer-events:none">' + esc(isRarFile ? '📦 RAR' : (f.quality || '1080p')) + '</span>' +
-                                '<span class="stream-meta-pill">' + esc(f.codec || 'x264') + (partLabel ? ' • ' + esc(partLabel) : '') + '</span>' +
-                                (sizeLabel ? '<span class="stream-meta-pill size" title="Dateigröße">📦 ' + esc(sizeLabel) + '</span>' : '') +
-                                (tagsLabel ? '<span class="stream-meta-pill tags" title="Schnittfassung / Kategorie">🏷️ ' + esc(tagsLabel) + '</span>' : '') +
-                                (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399" title="Wird beim Video-Versand automatisch mitgesendet">💬 ' + subsList.length + ' UT</span>' : '') +
-                                (isExportRef ? '<span class="stream-meta-pill" style="border-color:rgba(56,189,248,0.45);color:#38bdf8" title="Wird automatisch per copyMessage aus der Quellgruppe aufgelöst & File-ID gespeichert">🔗 Quellgruppe (Auto-Copy)</span>' : '') +
-                              '</div>' +
-                              '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                                '<button class="btn ' + (isRarFile ? 'amber' : 'red') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR an Bot senden' : ('📥 ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
-                                (subsList.length > 0 ? '<button type="button" class="btn blue" style="padding:5px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title) + '\\',{seriesId:null})" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 Untertitel (' + subsList.length + ')</button>' : '') +
-                                (isAdminUser ? '<button type="button" class="btn ep-icon-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',telegramFileId:\\''+esc(f.telegram_file_id)+'\\',versionLabel:\\''+esc(tagsLabel || 'Originalfassung')+'\\',quality:\\''+esc(f.quality || '1080p')+'\\',rawFilename:\\''+esc(f.raw_filename || '')+'\\',messageLink:\\''+esc(f.message_link || '')+'\\'})" title="Datei-Version ändern oder mit anderem TMDb-Titel/Folge verknüpfen">✏️</button>' : '') +
-                                (canReportMedia ? '<button type="button" class="btn ep-icon-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',telegramFileId:\\''+esc(f.telegram_file_id)+'\\',versionLabel:\\''+esc(tagsLabel || 'Originalfassung')+'\\'})" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
-                              '</div>' +
-                            '</div>';
-                          }).join("") +
-                        '</div>'
-                      ) : '') +
-                    '</div>'
+                  ((vipAllowed && type === 'm' && d.files && d.files.length > 0) ? (
+                    buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia)
                   ) : (!vipAllowed && type === 'm' ? (
                     '<div class="panel-box" style="margin:6px 0;text-align:center;color:#94a3b8;font-size:12.5px">' +
                       '🔒 Direkt-Streams & Downloads sind exklusiv für freigeschaltete <b>VIP-Mitglieder</b> sichtbar. Nutze die Tabs oben für <b>Versionen</b> & <b>Details / Trailer</b>.' +
                     '</div>'
                   ) : '')) +
-                  (type === 's' ? '<div id="seasonBox" style="margin-top:8px">Lade Episoden...</div>' : '') +
+                  (type === 's' ? '<div id="seasonBox" style="margin-top:4px">Lade Episoden...</div>' : '') +
                 '</div>' +
 
                 /* TAB 2: VERSIONEN (Übersicht aller Schnittfassungen, Episode-Groups & Dateien) */
@@ -29348,33 +30878,38 @@
         const prefs = getDeliveryPreferencesClient();
         const mode = prefs.targetMode || "dm";
         const showConfigInputs = modalDeliveryConfigExpanded || (mode === "group" && !prefs.targetGroupChatId) || (mode === "custom_bot" && !prefs.customBotToken);
-        return '<div id="modalDeliveryTargetMount" style="padding:8px 10px;margin-bottom:8px;border-radius:8px;background:rgba(15,23,42,0.75);border:1px solid rgba(56,189,248,0.35)">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">' +
-            '<span style="font-size:11.5px;font-weight:800;color:#38bdf8">📤 Wohin soll die Datei gesendet werden?</span>' +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-              '<button type="button" class="btn ' + (mode === 'dm' ? 'blue' : '') + '" style="padding:3px 8px;font-size:11px" onclick="switchModalDeliveryModeClient(\\'dm\\')">💬 Bot-Privatchat</button>' +
-              '<button type="button" class="btn ' + (mode === 'group' ? 'blue' : '') + '" style="padding:3px 8px;font-size:11px" onclick="switchModalDeliveryModeClient(\\'group\\')">👥 Eigene Gruppe</button>' +
-              '<button type="button" class="btn ' + (mode === 'custom_bot' ? 'purple' : '') + '" style="padding:3px 8px;font-size:11px" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')">🤖 Eigener Bot</button>' +
-              '<button type="button" class="btn" style="padding:3px 7px;font-size:11px" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️ ' + (showConfigInputs ? '▴' : '▾') + '</button>' +
-            '</div>' +
+        const activeModeSummary = mode === "group"
+          ? ("Eigene Gruppe" + (prefs.targetGroupChatId ? (" (" + esc(prefs.targetGroupChatId) + ")") : " (ID fehlt)"))
+          : mode === "custom_bot"
+            ? ("Eigener Bot" + (prefs.customBotUsername ? (" (@" + esc(prefs.customBotUsername) + ")") : ""))
+            : "Bot-Privatchat (DM)";
+        return '<div id="modalDeliveryTargetMount" class="delivery-inline-wrap">' +
+          '<div class="delivery-inline-pills" title="Aktives Versandziel: ' + activeModeSummary + '">' +
+            '<span class="delivery-inline-label">📤 Ziel:</span>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'dm' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'dm\\')" title="An privaten Bot-Chat senden">💬 Privat</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'group' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'group\\')" title="In eigene Telegram-Gruppe senden">👥 Gruppe</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'custom_bot' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')" title="Über eigenen Bot senden">🤖 Bot</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️</button>' +
           '</div>' +
           (showConfigInputs ? (
-            '<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.1);display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:6px">' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">👥 Ziel-Gruppen Chat-ID (Tipp: <code>/id</code> in Gruppe):</div>' +
-                '<input id="modalDelivGroupIdInp" value="' + esc(prefs.targetGroupChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="z.B. -1001987654321" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
-              '</div>' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">🧵 Topic / Thread-ID (optional):</div>' +
-                '<input id="modalDelivTopicIdInp" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
-              '</div>' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">📦 Quellgruppen-ID (für result.json Auto-Copy):</div>' +
-                '<input id="modalDelivSourceGroupInp" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
-              '</div>' +
-              '<div>' +
-                '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:2px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
-                '<input id="modalDelivBotTokenInp" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+            '<div class="delivery-config-drawer">' +
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (<code>/id</code>):</div>' +
+                  '<input id="modalDelivGroupIdInp" value="' + esc(prefs.targetGroupChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="z.B. -1001987654321" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">🧵 Topic / Thread-ID (optional):</div>' +
+                  '<input id="modalDelivTopicIdInp" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">📦 Quellgruppen-ID (Auto-Copy):</div>' +
+                  '<input id="modalDelivSourceGroupInp" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
+                '<div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">🤖 Eigenes Bot-Token (optional):</div>' +
+                  '<input id="modalDelivBotTokenInp" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                '</div>' +
               '</div>' +
             '</div>'
           ) : '') +
@@ -29882,8 +31417,167 @@
         }
       }
 
-      // Mehrteilige Filme (z.B. CD1 & CD2) geordnet nacheinander an das gewählte Ziel senden
-      async function sendAllMoviePartsToTelegram() {
+      function normalizeClientPartLabel(rawPart, rawFilename = "") {
+        const pStr = String(rawPart || "").trim();
+        if (!pStr && !rawFilename) return "";
+        if (/^RAR/i.test(pStr)) return pStr.toUpperCase();
+        const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*([1-9]\d?)$/i);
+        if (m) return "CD " + parseInt(m[1], 10);
+        if (!pStr && rawFilename) {
+          const fnSplit = String(rawFilename).match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
+          if (fnSplit) return "CD " + parseInt(fnSplit[1], 10);
+        }
+        return pStr;
+      }
+
+      function extractClientPartNumber(partStr) {
+        if (!partStr) return 0;
+        const m = String(partStr).match(/(\d+)/);
+        return m ? parseInt(m[1], 10) : 0;
+      }
+
+      function cleanUserVisibleStreamTagsClient(rawTags = "") {
+        if (!rawTags) return "";
+        return String(rawTags)
+          .split(/\s*[·•|]\s*/)
+          .map(t => t.trim())
+          .filter(t => t && !/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*\d+$/i.test(t) && !/^Originalfassung$/i.test(t))
+          .filter((v, i, a) => a.indexOf(v) === i)
+          .join(" · ");
+      }
+
+      function buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) {
+        const rawFiles = Array.isArray(d.files) ? d.files.filter(f => f && f.telegram_file_id) : [];
+        const normalizedFiles = rawFiles.map(f => {
+          const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+          const normPart = normalizeClientPartLabel(f.part, f.raw_filename || "");
+          const partNum = extractClientPartNumber(normPart);
+          const cleanTags = isRarFile ? "📦 RAR-Archiv" : cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
+          return {
+            ...f,
+            _isRar: isRarFile,
+            _normPart: normPart,
+            _partNum: partNum,
+            _cleanTags: cleanTags
+          };
+        });
+
+        // Gruppiere mehrteilige Dateien desselben Releases (Qualität + Codec) in eine gemeinsame Release-Box
+        const releaseBuckets = new Map();
+        const orderedBlocks = [];
+
+        for (const f of normalizedFiles) {
+          if (f._normPart && f._partNum > 0) {
+            const gKey = (f._isRar ? "RAR" : String(f.quality || "1080p").toUpperCase()) + "|" + String(f.codec || "x264").toUpperCase();
+            if (!releaseBuckets.has(gKey)) {
+              const bucket = { type: "multipart", key: gKey, files: [] };
+              releaseBuckets.set(gKey, bucket);
+              orderedBlocks.push(bucket);
+            }
+            releaseBuckets.get(gKey).files.push(f);
+          } else {
+            orderedBlocks.push({ type: "single", file: f });
+          }
+        }
+
+        // Falls ein "multipart"-Bucket nur 1 einzige Datei hat, als normale Einzel-Zeile behandeln
+        const finalBlocks = [];
+        for (const blk of orderedBlocks) {
+          if (blk.type === "multipart") {
+            blk.files.sort((a, b) => (a._partNum - b._partNum) || String(a._normPart).localeCompare(String(b._normPart), "de", { numeric: true }));
+            if (blk.files.length === 1) {
+              finalBlocks.push({ type: "single", file: blk.files[0] });
+            } else {
+              finalBlocks.push(blk);
+            }
+          } else {
+            finalBlocks.push(blk);
+          }
+        }
+
+        const totalReleaseCount = finalBlocks.length;
+
+        return '<div>' +
+          '<div class="season-toolbar-row">' +
+            '<div style="font-size:12.5px;font-weight:800;color:var(--text)">🎬 Verfügbare Releases (' + totalReleaseCount + (rawFiles.length > totalReleaseCount ? ' · ' + rawFiles.length + ' Dateien' : '') + ')</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+              buildModalDeliveryTargetSelectorHtml() +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;flex-direction:column;gap:8px">' +
+            finalBlocks.map(blk => {
+              if (blk.type === "multipart") {
+                const parts = blk.files;
+                const first = parts[0];
+                const isRar = first._isRar;
+                const qual = isRar ? "RAR" : (first.quality || "1080p");
+                const codec = first.codec || "x264";
+                const tagsLabel = first._cleanTags || "DE";
+                const totalBytes = parts.reduce((acc, item) => acc + (Number(item.file_size) || 0), 0);
+                const totalSizeStr = formatFileSizeClient(totalBytes);
+                const partWord = isRar ? "RAR-Teile" : "CDs";
+                return '<div class="release-box-card">' +
+                  '<div class="release-box-header">' +
+                    '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">' +
+                      '<span class="ep-code-badge">' + esc(qual) + '</span>' +
+                      '<span class="ep-name-text">' + esc(codec) + '</span>' +
+                      (tagsLabel ? '<span class="stream-meta-pill tags">' + esc(tagsLabel) + '</span>' : '') +
+                      '<span class="stream-meta-pill size">' + parts.length + ' ' + partWord + (totalSizeStr ? (' · Gesamt ' + esc(totalSizeStr)) : '') + '</span>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                      '<button type="button" class="btn-action-glass" style="padding:4px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllMoviePartsToTelegram(\\'' + esc(blk.key) + '\\')" title="Alle ' + parts.length + ' ' + partWord + ' geordnet von 1 bis ' + parts.length + ' an dein gewähltes Ziel senden">' +
+                        '📦 Alle ' + parts.length + ' ' + partWord + ' senden' +
+                      '</button>' +
+                      (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(first.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\'})" title="Fehler zu diesem Mehrteiler-Release melden">⚠️</button>' : '') +
+                    '</div>' +
+                  '</div>' +
+                  '<div class="release-cd-grid">' +
+                    parts.map(p => {
+                      const pSize = formatFileSizeClient(p.file_size);
+                      const pLabel = p._normPart || ("CD " + p._partNum);
+                      const pSubs = Array.isArray(p.subtitles) ? p.subtitles : [];
+                      return '<div class="cd-part-chip-wrap">' +
+                        '<button type="button" class="btn-cd-part" onclick="requestTelegramStream(\\'' + esc(p.telegram_file_id) + '\\',\\'' + esc(d.title + ' (' + pLabel + ')') + '\\',\\'' + esc(p.quality || '1080p') + '\\',{fileSize:\\'' + esc(pSize) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})" title="' + esc(d.title + ' – ' + pLabel + (pSize ? ' (' + pSize + ')' : '')) + ' senden">' +
+                          '<span>▶ ' + esc(pLabel) + '</span>' +
+                          (pSize ? '<span class="cd-size-sub">· ' + esc(pSize) + '</span>' : '') +
+                          (pSubs.length > 0 ? '<span class="cd-size-sub">+ UT</span>' : '') +
+                        '</button>' +
+                        (isAdminUser ? '<button type="button" class="ep-ghost-btn" style="width:24px;height:24px;font-size:11px" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title + ' (' + pLabel + ')') + '\\',telegramFileId:\\'' + esc(p.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\',quality:\\'' + esc(p.quality || '1080p') + '\\',rawFilename:\\'' + esc(p.raw_filename || '') + '\\',messageLink:\\'' + esc(p.message_link || '') + '\\'})" title="' + esc(pLabel) + ' bearbeiten / Details & Quellgruppe prüfen">✏️</button>' : '') +
+                      '</div>';
+                    }).join("") +
+                  '</div>' +
+                '</div>';
+              }
+
+              const f = blk.file;
+              const sizeLabel = formatFileSizeClient(f.file_size);
+              const isRarFile = f._isRar;
+              const tagsLabel = f._cleanTags;
+              const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsLabel);
+              const partLabel = f._normPart;
+              const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
+              return '<div class="ep-row" style="margin-bottom:0;' + (isPrereleaseTag ? 'border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.06);' : '') + '">' +
+                '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">' +
+                  '<span class="ep-code-badge">' + esc(isRarFile ? 'RAR' : (f.quality || '1080p')) + '</span>' +
+                  '<span class="ep-name-text">' + esc(f.codec || 'x264') + (partLabel ? ' · ' + esc(partLabel) : '') + '</span>' +
+                  (sizeLabel ? '<span class="stream-meta-pill size" title="Dateigröße">' + esc(sizeLabel) + '</span>' : '') +
+                  (tagsLabel ? '<span class="stream-meta-pill tags" title="Sprache / Schnittfassung">' + esc(tagsLabel) + '</span>' : '') +
+                  (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399" title="Wird beim Video-Versand automatisch mitgesendet">💬 ' + subsList.length + ' UT</span>' : '') +
+                '</div>' +
+                '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                  '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
+                  (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title) + '\\',{seriesId:null})" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
+                  (isAdminUser ? '<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(f.raw_filename || '') + '\\',messageLink:\\'' + esc(f.message_link || '') + '\\'})" title="Datei-Version ändern, Quellgruppe prüfen oder mit anderem TMDb-Titel verknüpfen">✏️</button>' : '') +
+                  (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\'})" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
+                '</div>' +
+              '</div>';
+            }).join("") +
+          '</div>' +
+        '</div>';
+      }
+
+      // Mehrteilige Filme (z.B. CD 1 bis CD 5) strikt aufsteigend (1 -> 2 -> 3 -> 4 -> 5) an das gewählte Ziel senden
+      async function sendAllMoviePartsToTelegram(releaseGroupKey = "") {
         if (!isCurrentUserVip()) {
           showHudToast("🔒 Exklusiv für VIP-Mitglieder verfügbar.");
           return;
@@ -29892,9 +31586,23 @@
         if (!d || !Array.isArray(d.files)) return;
         const prefs = getDeliveryPreferencesClient();
         const partFiles = d.files
-          .filter(f => f && f.telegram_file_id && f.part)
-          .slice()
-          .sort((a, b) => String(a.part || "").localeCompare(String(b.part || ""), "de", { numeric: true }));
+          .filter(f => {
+            if (!f || !f.telegram_file_id) return false;
+            const normP = normalizeClientPartLabel(f.part, f.raw_filename || "");
+            if (!normP) return false;
+            if (releaseGroupKey) {
+              const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(normP);
+              const gKey = (isRar ? "RAR" : String(f.quality || "1080p").toUpperCase()) + "|" + String(f.codec || "x264").toUpperCase();
+              return gKey === releaseGroupKey;
+            }
+            return true;
+          })
+          .map(f => ({
+            ...f,
+            _normPart: normalizeClientPartLabel(f.part, f.raw_filename || ""),
+            _partNum: extractClientPartNumber(normalizeClientPartLabel(f.part, f.raw_filename || ""))
+          }))
+          .sort((a, b) => (a._partNum - b._partNum) || String(a._normPart).localeCompare(String(b._normPart), "de", { numeric: true }));
         const targetList = partFiles.length >= 2 ? partFiles : d.files.filter(f => f && f.telegram_file_id);
         if (targetList.length === 0) return;
 
@@ -29902,9 +31610,10 @@
         let queuedCount = 0;
         for (let i = 0; i < targetList.length; i++) {
           const f = targetList[i];
-          const partLabel = f.part ? (" (" + f.part + ")") : (" (Teil " + (i + 1) + ")");
+          const cleanPartStr = f._normPart || normalizeClientPartLabel(f.part, f.raw_filename || "") || ("CD " + (i + 1));
+          const partLabel = " (" + cleanPartStr + ")";
           const sizeLabel = formatFileSizeClient(f.file_size);
-          setBusyState(true, "📦 Sende Teil " + (i + 1) + "/" + targetList.length + ": " + d.title + partLabel + "...");
+          setBusyState(true, "📦 Sende " + cleanPartStr + " (" + (i + 1) + "/" + targetList.length + "): " + d.title + "...");
           try {
             const r = await apiFetchJson(API_BASE + "/stream", {
               method: "POST",
@@ -29915,7 +31624,7 @@
                 title: d.title + partLabel,
                 quality: f.quality || "1080p",
                 fileSize: sizeLabel,
-                tags: f.tags || "",
+                tags: cleanUserVisibleStreamTagsClient(f.tags || ""),
                 targetMode: prefs.targetMode || "dm",
                 targetGroupChatId: prefs.targetGroupChatId || "",
                 targetTopicId: prefs.targetTopicId || "",
@@ -29936,9 +31645,9 @@
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
         if (queuedCount > 0) {
-          showHudToast("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Teil(e) in Anti-Spam Warteschleife eingereiht!");
+          showHudToast("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " CD(s) in Anti-Spam Warteschleife eingereiht!");
         } else {
-          showHudToast("✅ " + sentCount + "/" + targetList.length + " Teile gesendet!");
+          showHudToast("✅ Alle " + sentCount + "/" + targetList.length + " CDs gesendet!");
         }
       }
 
@@ -30048,28 +31757,30 @@
           const isProgSeason = prog && Number(prog.season) === Number(n);
           const rawCnt = vipAllowed ? Number(sCounts[n] || sCounts[String(n)] || 0) : 0;
           const vipEpCnt = (n === seasonNum && maxAllowedEpisodes > 0) ? Math.min(rawCnt, maxAllowedEpisodes) : rawCnt;
-          const vipBadgeTxt = vipEpCnt > 0 ? (' 🌟' + vipEpCnt) : '';
-          return '<button class="btn '+(n===seasonNum?'red':'')+'" onclick="loadSeason('+seriesId+','+n+',true)">Staffel '+n+vipBadgeTxt+(isProgSeason ? ' 👁️' : '')+'</button>';
+          const vipBadgeTxt = vipEpCnt > 0 ? (' · ' + vipEpCnt) : '';
+          return '<button class="btn '+(n===seasonNum?'red':'')+'" style="padding:5px 11px;font-size:12px" onclick="loadSeason('+seriesId+','+n+',true)">Staffel '+n+vipBadgeTxt+(isProgSeason ? ' 👁️' : '')+'</button>';
         }).join(" ");
 
         const progressBannerHtml = prog ? (
-          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.35);font-size:11.5px">' +
-            '<span>👁️ <b>Serien-Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);font-size:11.5px">' +
+            '<span>👁️ <b>Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
             (Number(prog.season) !== Number(seasonNum) ? '<button class="btn green" style="padding:3px 8px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>' : '') +
           '</div>'
         ) : '';
 
         box.innerHTML =
-          '<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">' +
-            '<div style="display:flex;gap:6px;flex-wrap:wrap">' + sBtns + '</div>' +
-            ((vipAllowed && seasonStreamableCount > 0) ? (
-              '<button class="btn amber" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' nacheinander an deinen Telegram-Chat senden">' +
-                '📦 Ganze Staffel ' + seasonNum + ' senden (' + seasonStreamableCount + ' Flg.)' +
-              '</button>'
-            ) : '') +
+          '<div class="season-toolbar-row">' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' + sBtns + '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+              (vipAllowed ? buildModalDeliveryTargetSelectorHtml() : '') +
+              ((vipAllowed && seasonStreamableCount > 0) ? (
+                '<button class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' nacheinander an dein gewähltes Ziel senden">' +
+                  '📦 Staffel ' + seasonNum + ' senden (' + seasonStreamableCount + ')' +
+                '</button>'
+              ) : '') +
+            '</div>' +
           '</div>' +
           progressBannerHtml +
-          '<div style="font-size:11.5px;color:#aaa;margin-bottom:6px">💡 Tippe auf den Episodentitel für den Telegraph-Guide' + (vipAllowed ? ' oder wähle rechts die VIP-Version (inkl. Versions-Switcher bei mehreren Schnittfassungen) zum Streamen/Downloaden:' : ':') + '</div>' +
           episodes.map(ep => {
             const epCode = 'S'+String(seasonNum).padStart(2,'0')+'E'+String(ep.episode_number).padStart(2,'0');
             const isLastWatched = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(prog.episode) === Number(ep.episode_number));
@@ -30078,7 +31789,7 @@
             const progBadgeHtml = isLastWatched
               ? '<span class="ep-progress-badge">👁️ Zuletzt</span>'
               : isNextEpisode
-                ? '<span class="ep-progress-badge next">▶️ Nächste</span>'
+                ? '<span class="ep-progress-badge next">▶ Nächste</span>'
                 : '';
 
             // Episoden-Streams & Versions-Switcher strikt NUR für VIP-Mitglieder!
@@ -30108,25 +31819,36 @@
                 const activeSizeStr = formatFileSizeClient(activeVer.file_size);
                 const activeLabel = activeVer.versionLabel || "Originalfassung";
                 const activeSubs = Array.isArray(activeVer.subtitles) ? activeVer.subtitles : [];
-                const activeBtnMeta = [activeVer.quality || '1080p', activeVer.codec || '', activeSizeStr ? ('• ' + activeSizeStr) : '', '• ' + activeLabel].filter(Boolean).join(' ');
+                const activeBtnMeta = [activeVer.quality || '1080p', activeVer.codec || '', activeSizeStr ? ('· ' + activeSizeStr) : '', '· ' + activeLabel].filter(Boolean).join(' ');
 
                 const switcherTabsHtml =
-                  '<div class="version-switcher" style="display:inline-flex;gap:4px;align-items:center;background:rgba(255,255,255,0.06);padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,0.14)">' +
+                  '<div class="version-switcher" style="display:inline-flex;gap:3px;align-items:center;background:rgba(255,255,255,0.04);padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">' +
                     epVersions.map((v, vIdx) => {
                       const isSel = vIdx === activeIdx;
                       const vLbl = v.versionLabel || "Originalfassung";
-                      return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="padding:2px 7px;font-size:10.5px;border-radius:4px;' + (isSel ? '' : 'background:transparent;border-color:transparent;color:#bbb;') + '" onclick="selectEpisodeVersion(' + seriesId + ',' + seasonNum + ',' + ep.episode_number + ',' + vIdx + ')">' + esc(vLbl) + '</button>';
+                      return '<button type="button" class="delivery-pill-btn ' + (isSel ? 'active' : '') + '" style="padding:2px 7px;font-size:10.5px" onclick="selectEpisodeVersion(' + seriesId + ',' + seasonNum + ',' + ep.episode_number + ',' + vIdx + ')">' + esc(vLbl) + '</button>';
                     }).join('') +
                   '</div>';
 
-                const playBtnHtml = '<button class="btn red" style="padding:4px 8px;font-size:11px;font-variant-numeric:tabular-nums" onclick="requestTelegramStream(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(activeVer.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(activeSizeStr)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶️ ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + 💬 UT' : '') + '</button>' +
-                  (activeSubs.length > 0 ? ' <button type="button" class="btn blue" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
+                const playBtnHtml = '<button class="btn-stream-clean" onclick="requestTelegramStream(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(activeVer.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(activeSizeStr)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶ ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                  (activeSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
 
                 filesBtns = switcherTabsHtml + " " + playBtnHtml;
               } else if (Array.isArray(ep.files)) {
-                filesBtns = ep.files.map(f => {
+                const sortedEpFiles = ep.files
+                  .slice()
+                  .map(f => ({
+                    ...f,
+                    _normPart: normalizeClientPartLabel(f.part, f.raw_filename || ""),
+                    _partNum: extractClientPartNumber(normalizeClientPartLabel(f.part, f.raw_filename || ""))
+                  }))
+                  .sort((a, b) => {
+                    if (a._partNum > 0 && b._partNum > 0 && a._partNum !== b._partNum) return a._partNum - b._partNum;
+                    return 0;
+                  });
+                filesBtns = sortedEpFiles.map(f => {
                   const sizeStr = formatFileSizeClient(f.file_size);
-                  const rawTagsStr = String(f.tags || f.versionLabel || f.version_label || "").trim();
+                  const rawTagsStr = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
                   const fSubs = Array.isArray(f.subtitles) ? f.subtitles : [];
                   const tagsStr = rawTagsStr
                     .split(/\s*·\s*/)
@@ -30141,9 +31863,10 @@
                     .filter((v, i, arr) => arr.indexOf(v) === i)
                     .join(" · ");
                   const isPrereleaseEp = tagsStr.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsStr);
-                  const btnMeta = [f.quality || '1080p', f.codec || '', sizeStr ? ('• ' + sizeStr) : '', tagsStr ? ('• ' + tagsStr) : ''].filter(Boolean).join(' ');
-                  return '<button class="btn ' + (isPrereleaseEp ? 'amber' : 'red') + '" style="padding:4px 8px;font-size:11px;font-variant-numeric:tabular-nums" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sizeStr)+'\\',tags:\\''+esc(tagsStr)+'\\'})">▶️ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + 💬 UT' : '') + '</button>' +
-                    (fSubs.length > 0 ? ' <button type="button" class="btn blue" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + fSubs.length + ')</button>' : '');
+                  const partPrefix = f._normPart ? (f._normPart + ' · ') : '';
+                  const btnMeta = [partPrefix + (f.quality || '1080p'), f.codec || '', sizeStr ? ('· ' + sizeStr) : '', tagsStr ? ('· ' + tagsStr) : ''].filter(Boolean).join(' ');
+                  return '<button class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name + (f._normPart ? ' (' + f._normPart + ')' : ''))+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sizeStr)+'\\',tags:\\''+esc(tagsStr)+'\\'})">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                    (fSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + fSubs.length + ')</button>' : '');
                 }).join(" ");
               }
             }
@@ -30156,23 +31879,24 @@
             const hasStreamFile = Boolean(Array.isArray(ep.files) && ep.files.length > 0);
 
             const adminEditBtnHtml = (isAdminUser && hasStreamFile)
-              ? ('<button type="button" class="btn ep-icon-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\',quality:\\'' + esc(activeQualStr) + '\\'})" title="Folge korrigieren (Staffel/Folge anpassen, Schnittfassung wechseln oder mit neuer TMDb-ID verknüpfen)">✏️</button>')
+              ? ('<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\',quality:\\'' + esc(activeQualStr) + '\\'})" title="Folge korrigieren (Staffel/Folge anpassen, Schnittfassung wechseln oder mit neuer TMDb-ID verknüpfen)">✏️</button>')
               : '';
 
             const reportBtnHtml = canReportMedia
-              ? ('<button type="button" class="btn ep-icon-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\'})" title="Fehler für ' + epCode + ' melden">⚠️</button>')
+              ? ('<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\'})" title="Fehler für ' + epCode + ' melden">⚠️</button>')
               : '';
 
             return '<div class="' + rowCls + '">' +
-              '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')">' +
-                '<span>' + epCode + ' – ' + esc(ep.name) + '</span>' +
+              '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')" title="Antippen für Episoden-Beschreibung & Telegraph-Guide">' +
+                '<span class="ep-code-badge">' + epCode + '</span>' +
+                '<span class="ep-name-text">' + esc(ep.name) + '</span>' +
                 progBadgeHtml +
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                 filesBtns +
                 adminEditBtnHtml +
                 reportBtnHtml +
-                '<button class="btn '+(ep.isSaved?'green':'')+'" onclick="toggleEpisodeSave('+seriesId+','+seasonNum+','+ep.episode_number+')">'+(ep.isSaved?'✅ Gespeichert':'💾')+'</button>' +
+                '<button class="ep-ghost-btn '+(ep.isSaved?'saved':'')+'" onclick="toggleEpisodeSave('+seriesId+','+seasonNum+','+ep.episode_number+')" title="'+(ep.isSaved?'Folge aus Merkliste entfernen':'Folge auf Merkliste speichern')+'">'+(ep.isSaved?'✓':'🔖')+'</button>' +
               '</div>' +
             '</div>';
           }).join("");
@@ -30296,9 +32020,11 @@
                 '<div style="font-weight:800;color:#f8fafc">' + esc(st.title) + ' <span style="color:#38bdf8">(' + epBadge + ')</span></div>' +
                 '<div style="color:#94a3b8;font-size:11px;margin-top:3px">' +
                   'Aktuelle Version: <b style="color:#fbbf24">' + esc(st.versionLabel) + '</b> • Qualität: <b>' + esc(st.quality) + '</b>' +
+                  (String(st.telegramFileId || "").startsWith("tg_export_") ? ' • <span style="color:#38bdf8">🔗 Quellgruppe (Auto-Copy)</span>' : (st.telegramFileId ? ' • <span style="color:#34d399">⚡ Direkte Telegram File-ID</span>' : '')) +
                   (st.reportId ? (' • <span style="color:#34d399">🚨 Verknüpft mit Meldung #' + st.reportId + ' (wird beim Speichern automatisch gelöst)</span>') : '') +
                 '</div>' +
                 (st.rawFilename ? '<div style="margin-top:4px;font-family:monospace;font-size:10.5px;color:#cbd5e1;word-break:break-all">📄 Original-Datei: ' + esc(st.rawFilename) + '</div>' : '') +
+                (st.telegramFileId ? '<div style="margin-top:2px;font-family:monospace;font-size:10px;color:#64748b;word-break:break-all">🔑 File-Ref: ' + esc(st.telegramFileId) + '</div>' : '') +
                 (st.messageLink ? '<div style="margin-top:4px"><a href="' + esc(st.messageLink) + '" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;font-size:11px;text-decoration:underline">🔗 Original-Nachricht in Telegram öffnen</a></div>' : '') +
               '</div>' +
 
@@ -30772,6 +32498,12 @@
         return sorted;
       }
 
+      function setWishlistViewMode(nextMode) {
+        state.wlViewMode = nextMode === "list" ? "list" : "grid";
+        try { localStorage.setItem("tma_wl_view_mode", state.wlViewMode); } catch (e) {}
+        renderWishlistViewDomOnly();
+      }
+
       function renderWishlistListItemsMountOnly() {
         const mount = document.getElementById("wishlistItemsMount");
         const countEl = document.getElementById("wishlistCountSpan");
@@ -30780,9 +32512,47 @@
         const filteredItems = getFilteredAndSortedWishlistItems();
         if (countEl) countEl.textContent = String(filteredItems.length);
         if (filteredItems.length === 0) {
-          mount.innerHTML = '<div class="panel-box" style="color:#aaa;font-size:12.5px">Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</div>';
+          mount.innerHTML = '<div class="panel-box" style="color:var(--text-muted);font-size:12.5px">Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</div>';
           return;
         }
+
+        const isGridMode = state.wlViewMode !== "list";
+        if (isGridMode) {
+          mount.innerHTML = '<div class="carousel">' + filteredItems.map(it => {
+            const isEp = it.contentType === 'episode';
+            const isSer = it.contentType === 'series' || isEp;
+            const tc = isSer ? 's' : 'm';
+            const targetId = Number(isEp ? it.seriesId : it.tmdbId) || 0;
+            const cardKey = tc + "_" + targetId;
+            const itemTitleSafe = esc(it.title || 'Titel');
+            const resolvedCardPoster = resolvePosterUrlClient(it.poster, 'w342', '');
+            const itemPosterSafe = esc(it.poster || '');
+            const yrStr = esc((it.year && it.year !== 'K. A.') ? String(it.year).slice(0, 4) : '–');
+            const epsList = Array.isArray(it.episodes) ? it.episodes : [];
+            const plObj = it.folderId ? folders.find(f => f.id === it.folderId) : null;
+            const epCountBadgeHtml = (isSer && epsList.length > 0)
+              ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
+              : '';
+            const subLeftTxt = plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film');
+            return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
+              '<div class="card-poster-wrap">' +
+                '<div class="card-top-left-stack">' +
+                  epCountBadgeHtml +
+                '</div>' +
+                '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
+                '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Details öffnen">ℹ️ Details</button>' +
+                '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer abspielen">▶ Trailer</button>' +
+                '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM')) + '" onerror="this.onerror=null;this.src=buildPosterFallbackSvg(\\'' + itemTitleSafe + '\\',\\'' + (isSer ? 'SERIE' : 'FILM') + '\\');" loading="lazy" draggable="false" alt="' + itemTitleSafe + '" />' +
+              '</div>' +
+              '<div class="card-body">' +
+                '<div class="card-title">' + itemTitleSafe + '</div>' +
+                '<div class="card-sub"><span>' + subLeftTxt + '</span><span>' + yrStr + '</span></div>' +
+              '</div>' +
+            '</div>';
+          }).join("") + '</div>';
+          return;
+        }
+
         mount.innerHTML = filteredItems.map((it, idx) => {
           const isEp = it.contentType === 'episode';
           const isSer = it.contentType === 'series' || isEp;
@@ -30844,6 +32614,7 @@
         const enabledItems = allItems.filter(i => !i.folderId || !disabledFolderIds.has(i.folderId));
         const filteredItems = getFilteredAndSortedWishlistItems();
         const activeFolderObj = folders.find(f => f.id === cur) || null;
+        const isGridMode = state.wlViewMode !== "list";
 
         const folderBtns = [
           '<button class="btn '+(cur==='root'?'active':'')+'" onclick="loadWishlist(\\'root\\')">📂 Alle Aktiven ('+enabledItems.length+')</button>',
@@ -30918,20 +32689,25 @@
           ).join("") +
         '</div>';
 
-        const quickFilterBarHtml = '<div class="panel-box" style="margin-bottom:10px;padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
+        const quickFilterBarHtml = '<div class="panel-box" style="margin-bottom:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
           '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:800;color:var(--text-muted)">Typ:</span>' +
-            '<button class="btn ' + (state.wlFilterType === 'all' ? 'red' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'all\\')">📂 Alle</button>' +
-            '<button class="btn ' + (state.wlFilterType === 'm' ? 'red' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'m\\')">🎬 Nur Filme</button>' +
-            '<button class="btn ' + (state.wlFilterType === 's' ? 'red' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'s\\')">📺 Nur Serien</button>' +
+            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Typ:</span>' +
+            '<button class="btn ' + (state.wlFilterType === 'all' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'all\\')">📂 Alle</button>' +
+            '<button class="btn ' + (state.wlFilterType === 'm' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'m\\')">🎬 Nur Filme</button>' +
+            '<button class="btn ' + (state.wlFilterType === 's' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'s\\')">📺 Nur Serien</button>' +
           '</div>' +
           '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:800;color:var(--text-muted)">Sortierung:</span>' +
-            '<button class="btn ' + (state.wlSort === 'added_desc' ? 'purple' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'added_desc\\')">🆕 Zuletzt</button>' +
-            '<button class="btn ' + (state.wlSort === 'title_asc' ? 'purple' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'title_asc\\')">🔤 A–Z</button>' +
-            '<button class="btn ' + (state.wlSort === 'year_desc' ? 'purple' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'year_desc\\')">📅 Jahr</button>' +
+            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Sortierung:</span>' +
+            '<button class="btn ' + (state.wlSort === 'added_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'added_desc\\')">🆕 Zuletzt</button>' +
+            '<button class="btn ' + (state.wlSort === 'title_asc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'title_asc\\')">🔤 A–Z</button>' +
+            '<button class="btn ' + (state.wlSort === 'year_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'year_desc\\')">📅 Jahr</button>' +
           '</div>' +
-          '<input id="wishlistSearchInp" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:180px;flex:1;padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.18);background:#141418;color:#fff;font-size:12px" />' +
+          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
+            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Ansicht:</span>' +
+            '<button class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster-Grid</button>' +
+            '<button class="btn ' + (!isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'list\\')" title="Als kompakte Liste mit Episoden-Auswahl anzeigen">📋 Liste</button>' +
+          '</div>' +
+          '<input id="wishlistSearchInp" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:160px;flex:1;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);color:var(--text);font-size:12px" />' +
         '</div>';
 
         root.innerHTML = '<div class="section">' +
@@ -31068,11 +32844,11 @@
             : null;
 
           root.innerHTML = '<div class="section">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
-              '<button class="btn red" onclick="goHome()" style="padding:8px 14px;font-size:12.5px">⬅️ Zurück zur Übersicht (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
-              '<span style="font-size:12px;font-weight:800;color:var(--text-muted)">⚙️ Einstellungen & Filter-Cockpit</span>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">' +
+              '<button class="btn" onclick="goHome()" style="padding:7px 14px;font-size:12.5px">⬅️ Zurück zur Übersicht (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
+              '<span style="font-size:12px;font-weight:700;color:var(--text-muted)">⚙️ Einstellungen & Filter-Cockpit</span>' +
             '</div>' +
-            '<div class="panel-box" style="border-color:rgba(91,70,245,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🔐 Account & Sicherheit (' + (isAuth ? ('Verbunden: ID ' + esc(u.telegramId)) : '👤 Gast-Modus ohne Speicher') + ')</span>' +
                 '<div style="display:flex;gap:6px">' +
@@ -31093,66 +32869,66 @@
               const deliv = getDeliveryPreferencesClient();
               const dMode = deliv.targetMode || "dm";
               const customHookUrl = window.location.origin + "/api/telegram/custom-webhook" + (deliv.customBotToken ? ("?botToken=" + encodeURIComponent(deliv.customBotToken)) : "");
-              return '<div class="panel-box" style="border-color:rgba(56,189,248,0.45)">' +
+              return '<div class="panel-box">' +
                 '<div class="section-title">' +
-                  '<span>📤 Standard-Versandziel, Gruppen-Delivery & Eigener Bot (TelegramIntegration)</span>' +
-                  '<span style="font-size:11px;color:#38bdf8;font-weight:800">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
+                  '<span>📤 Standard-Versandziel, Gruppen-Delivery & Eigener Bot</span>' +
+                  '<span style="font-size:11px;color:#38bdf8;font-weight:700">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
                 '</div>' +
-                '<p style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:8px">' +
+                '<p style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">' +
                   'Bestimme, wohin Filme & Serien standardmäßig gesendet werden: in deinen <b>💬 Bot-Privatchat</b>, in eine <b>👥 eigene Ziel-Gruppe</b> oder über deinen <b>🤖 eigenen Telegram-Bot-Token</b>. ' +
-                  'Wenn der Bot Mitglied deiner Quellgruppe (aus <code>result.json</code>) ist, löst er Dateien automatisch per <code>copyMessage</code> auf und speichert die File-ID in D1!' +
+                  'Wenn der Bot Mitglied deiner Quellgruppe (aus <code>result.json</code>) ist, löst er Dateien automatisch per <code>copyMessage</code> auf und speichert die File-ID in D1.' +
                 '</p>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-                  '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
-                  '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
-                  '<button class="btn ' + (dMode === 'custom_bot' ? 'purple' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
+                  '<button class="btn ' + (dMode === 'dm' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
+                  '<button class="btn ' + (dMode === 'group' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
+                  '<button class="btn ' + (dMode === 'custom_bot' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +
-                    '<input id="settingsTargetGroupIdInp" value="' + esc(deliv.targetGroupChatId || '') + '" placeholder="-1001234567890" style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +
+                    '<input id="settingsTargetGroupIdInp" value="' + esc(deliv.targetGroupChatId || '') + '" placeholder="-1001234567890" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">🧵 Topic / Thread-ID in Ziel-Gruppe (optional):</div>' +
-                    '<input id="settingsTargetTopicIdInp" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">🧵 Topic / Thread-ID in Ziel-Gruppe (optional):</div>' +
+                    '<input id="settingsTargetTopicIdInp" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
-                    '<input id="settingsSourceBridgeIdInp" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
+                    '<input id="settingsSourceBridgeIdInp" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:#cbd5e1;margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
-                    '<input id="settingsCustomBotTokenInp" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%;padding:7px 9px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
+                    '<input id="settingsCustomBotTokenInp" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
                   '<button class="btn green" onclick="verifyAndConnectCustomBotInSettingsClient()">💾 Speichern & optionalen Bot-Webhook verbinden</button>' +
-                  '<span style="font-size:11px;color:#94a3b8">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
+                  '<span style="font-size:11px;color:var(--text-muted)">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
                 '</div>' +
                 '<div id="customBotVerifyStatus" style="font-size:12px;color:#38bdf8;margin-top:6px">' +
                   (deliv.customBotUsername ? ('✅ Aktiver eigener Bot: @' + esc(deliv.customBotUsername)) : '') +
                 '</div>' +
-                '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1)">' +
+                '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08)">' +
                   '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
                     '<div>' +
-                      '<div style="font-size:12px;font-weight:800;color:#f8fafc">🧹 Retention Policy (KV-Performance & Log-Aufbewahrung)</div>' +
-                      '<div style="font-size:11px;color:#94a3b8">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
+                      '<div style="font-size:12px;font-weight:700;color:var(--text)">🧹 Retention Policy (KV-Performance & Log-Aufbewahrung)</div>' +
+                      '<div style="font-size:11px;color:var(--text-muted)">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
                     '</div>' +
                     '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
                       '<button type="button" class="btn" style="padding:4px 8px;font-size:11px;color:#fb7185" onclick="clearTmaActivityLogClient()" title="Alle gespeicherten Telegram-Zustelllogs in KV sofort löschen">🗑️ Log leeren</button>' +
                     '</div>' +
                   '</div>' +
                   '<div style="font-size:10.5px;color:#38bdf8;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MY_KV</code>)</div>' +
-                  '<div id="tmaActivityLogMount"><div style="font-size:11px;color:#64748b">Lade letzte Zustell-Aktivitäten...</div></div>' +
+                  '<div id="tmaActivityLogMount"><div style="font-size:11px;color:var(--text-muted)">Lade letzte Zustell-Aktivitäten...</div></div>' +
                 '</div>' +
               '</div>' +
               buildAntiSpamCockpitBoxHtmlClient();
             })() +
 
-            '<div class="panel-box" style="border-color:rgba(16,185,129,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🧭 Steuerung, Maus-Hover & Slider-Einstellungen</span>' +
               '</div>' +
@@ -31166,16 +32942,16 @@
                   '<b>' + (modalHoldNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
                 '</button>' +
                 '<button id="settingsHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
-                  '<span>🎬 Empfehlungs-Slider auf der Startseite</span>' +
+                  '<span>🎬 Spotlight-Banner auf der Startseite</span>' +
                   '<b>' + (state.heroHidden ? 'AUSGEBLENDET' : 'SICHTBAR') + '</b>' +
                 '</button>' +
               '</div>' +
             '</div>' +
 
-            '<div class="panel-box" style="border-color:rgba(56,189,248,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
-                '<span>⚡ Telegram-Bot Schnellbefehls-Übersicht (Cheat-Sheet #22)</span>' +
-                '<span style="font-size:11px;color:#38bdf8;font-weight:800">f = Film • s = Serie</span>' +
+                '<span>⚡ Telegram-Bot Schnellbefehls-Übersicht</span>' +
+                '<span style="font-size:11px;color:#38bdf8;font-weight:700">f = Film • s = Serie</span>' +
               '</div>' +
               '<p style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Nutze diese Kurzbefehle jederzeit direkt im Telegram-Bot-Chat (optional auch mit Genre dahinter, z. B. <code>/t f Action</code>):</p>' +
               '<div class="shortcut-cheat-grid">' +
@@ -31186,15 +32962,15 @@
               '</div>' +
             '</div>' +
 
-            '<div class="panel-box" style="border-color:rgba(229,9,20,0.45)">' +
+            '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🎬 Instant-Trailer Provider (Direktwiedergabe aus der Übersicht)</span>' +
-                '<span style="font-size:11.5px;color:var(--accent-primary);font-weight:800">Aktiv: ' + esc(getTrailerProviderLabel(trailerProvider)) + '</span>' +
+                '<span style="font-size:11.5px;color:var(--text-muted);font-weight:700">Aktiv: <b style="color:var(--text)">' + esc(getTrailerProviderLabel(trailerProvider)) + '</b></span>' +
               '</div>' +
               '<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Wähle deinen bevorzugten Video-Anbieter, wenn du auf einer Film-/Serienkarte direkt auf <b>▶ Trailer</b> tippst:</p>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 TRAILER_PROVIDERS_CLIENT.map(tp =>
-                  '<button class="btn ' + (trailerProvider === tp.id ? 'red' : '') + '" onclick="setTrailerProvider(\\'' + esc(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
+                  '<button class="btn ' + (trailerProvider === tp.id ? 'active' : '') + '" onclick="setTrailerProvider(\\'' + esc(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
                 ).join("") +
               '</div>' +
             '</div>' +
@@ -31382,7 +33158,17 @@
         "fluch der karibik 4": "Pirates of the Caribbean - Fremde Gezeiten",
         "professor t": "Professor T.",
         "9 1 2 wochen": "9½ Wochen",
-        "9 1/2 wochen": "9½ Wochen"
+        "9 1/2 wochen": "9½ Wochen",
+        "e.t.": "E.T. – Der Außerirdische",
+        "e.t": "E.T. – Der Außerirdische",
+        "e t": "E.T. – Der Außerirdische",
+        "et": "E.T. – Der Außerirdische",
+        "e.t. der ausserirdische": "E.T. – Der Außerirdische",
+        "e.t. der außerirdische": "E.T. – Der Außerirdische",
+        "e.t. - der ausserirdische": "E.T. – Der Außerirdische",
+        "e.t. - der außerirdische": "E.T. – Der Außerirdische",
+        "et der ausserirdische": "E.T. – Der Außerirdische",
+        "et der außerirdische": "E.T. – Der Außerirdische"
       };
 
       function detectClientVideoQuality(msg, rawText, rawFileName) {
@@ -31409,13 +33195,14 @@
           .map(l => l.trim())
           .filter(l => {
             if (!l) return false;
-            if (/^(?:weitergeleitet|forwarded|kanal|channel|quelle|source|join|abonniert)\\b/i.test(l)) return false;
+            if (/^(?:weitergeleitet|forwarded|kanal|channel|quelle|source|join|abonniert|size|größe|groesse|dateigröße|runtime|laufzeit|dauer|länge|laenge|erscheinungsjahr|produktionsland|genre|gener|studio|regie|director|darsteller|actors|cast|fsk|imdb|tmdb|rating|bewertung|audio|format|codec|sprache|language|untertitel|subtitles|released|preis|free|kostenlos)\\b/i.test(l)) return false;
+            if (/^(?:[🔞➕+\\s]*(?:12|16|18)\\+?|ab\\s+\\d+\\s+jahren|fsk\\s*\\d+|\\d+(?:[.,]\\d+)?\\s*(?:mb|gb|tb|min|minuten))$/i.test(l)) return false;
             const stripped = l
               .replace(/https?:\\/\\/\\S+/gi, "")
               .replace(/[@#][A-Za-z0-9_äöüÄÖÜß]+/g, "")
               .replace(/[\\u{1F1E6}-\\u{1F1FF}]{2}/gu, "")
               .replace(/[^A-Za-z0-9äöüÄÖÜß]/g, "");
-            return stripped.length >= 2;
+            return stripped.length >= 2 && !/^(?:18|16|12|fsk18|fsk16|fsk12|hd|uhd|4k)$/i.test(stripped);
           });
       }
 
@@ -31443,9 +33230,10 @@
         }
         const dur = Number(msg.duration_seconds || msg.duration || 0);
         const isVid = mType === "video_file" || /^video\\//i.test(msg.mime_type || "") || /\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d)$/i.test(fName);
-        const rawCap = flattenClientTgText(msg.text || msg.caption).slice(0, 160);
-        const hasTrailerKeyword = /(?:^|[\\s._\\-(\\[])(?:kinotrailer|official\\s+trailer|offizieller\\s+trailer|teaser\\s+trailer|trailer|teaser|coming\\s+soon|zwiastun|vorschau)(?=$|[\\s._\\-)\\]:])/i.test(fName) ||
-          /^(?:trailer|teaser|coming\\s+soon)\\b/i.test(rawCap);
+        const rawCap = flattenClientTgText(msg.text || msg.caption).slice(0, 220);
+        const hasTrailerKeyword = /(?:^|[\\s._\\-(\\[])(?:kinotrailer|official\\s+trailer|offizieller\\s+trailer|teaser\\s+trailer|trailer\\s+(?:german|deutsch|englisch|english|hd|full\\s*hd|1080p|720p|4k)|trailer|teaser|coming\\s+soon|zwiastun|vorschau)(?=$|[\\s._\\-)\\]:])/i.test(fName) ||
+          /^(?:trailer|teaser|coming\\s+soon)\\b/i.test(rawCap) ||
+          /\\b(?:official\\s+trailer|offizieller\\s+trailer|kinotrailer|teaser\\s+trailer|trailer\\s+(?:german|deutsch)|(?:\\(|\\[)\\s*trailer\\b|coming\\s+soon)\\b/i.test(rawCap);
         if (hasTrailerKeyword && (!dur || dur < 900)) {
           return "🎬 Trailer / Teaser / Coming Soon übersprungen";
         }
@@ -31474,21 +33262,20 @@
         }
         const fn = rawFnStr.replace(/(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d))+$/i, "");
         const combined = (fn + " " + String(rawText || "")).trim();
-        const cdMatch = combined.match(/\\b(CD|Disc|Disk|DVD)[\\s._-]*0*([1-9])\\b/i);
+        const cdMatch = combined.match(/\\b(CD|Disc|Disk|DVD|Split)[\\s._-]*0*([1-9])\\b/i);
         if (cdMatch) {
-          const prefix = cdMatch[1].toUpperCase() === "DISK" ? "DISC" : cdMatch[1].toUpperCase();
           const num = parseInt(cdMatch[2], 10);
-          return { isMultiPart: true, isArchive: false, partNumber: num, partType: prefix, partLabel: prefix + num };
+          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
         }
         const splitMatch = fn.match(/(?:[-_.]|\\s)00([1-9])$/);
         if (splitMatch) {
           const num = parseInt(splitMatch[1], 10);
-          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "SPLIT", partLabel: "SPLIT" + num };
+          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
         }
         const partMatch = combined.match(/\\bPart[\\s._-]*0*([1-9])\\b/i);
         if (partMatch && (!durationSec || durationSec < 5000)) {
           const num = parseInt(partMatch[1], 10);
-          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "PART", partLabel: "PART" + num };
+          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
         }
         return null;
       }
@@ -31509,6 +33296,8 @@
           .replace(/󠄿/g, "")
           .replace(/_/g, " ")
           .replace(/[\\u00A0 \\t]+/g, " ");
+        // Senkrechte Striche als römische Zahlen am Wortende umwandeln ("Creed |||" -> "Creed III")
+        s = s.replace(/(?<=[A-Za-zÄÖÜäöüß])\\s+(\\|{2,3})(?=$|[\\s)\\]._-])/g, (_, pipes) => pipes.length === 3 ? " III" : " II");
         // Regel 1: Episoden-Muster in S01E01 umwandeln
         s = s.replace(/\\b(?:Staffel|Season)\\s*0*(\\d{1,2})\\s*(?:[-–,·‧:|\\/]|\\s)+\\s*(?:Folge|Episode|Ep\\.?)\\s*0*(\\d{1,3})(?!\\s*[-–]\\s*\\d{1,3})\\b/gi, (_, st, ep) => "S" + String(st).padStart(2, "0") + "E" + String(ep).padStart(2, "0"));
         s = s.replace(/\\bS0*(\\d{1,2})\\s*[-–]\\s*E0*(\\d{1,3})\\b/gi, (_, st, ep) => "S" + String(st).padStart(2, "0") + "E" + String(ep).padStart(2, "0"));
@@ -31547,14 +33336,14 @@
           .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|json))+$/i, "");
         t = t.replace(/\\(\\s*\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\s*\\)/g, " ");
         t = t.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
-        if ((t.match(/\\./g) || []).length >= 2 && !t.includes(" ")) {
+        if ((t.match(/\\./g) || []).length >= 2 && !t.includes(" ") && !/^e\\.t\\.?$/i.test(t.trim())) {
           t = t.replace(/\\./g, " ");
         }
-        t = t.replace(/\\b(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:ger|deu|eng|jap|jpn|fr|es|it|tr|ru)[\\s._-]+(?:sub|subs|dub|dubbed)\\b/gi, " ");
-        t = t.replace(/\\b(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|japanisch|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:sub|subs|ut|untertitel|dub|dubbed|forced)\\b/gi, " ");
-        t = t.replace(/(?:AC3|AAC|DTS|DD5\\.?1)?[\\s._-]*(?:CD|Disc|Disk|DVD)[\\s._-]*0*[1-9]\\b/gi, " ");
+        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:ger|deu|eng|jap|jpn|fr|es|it|tr|ru)[\\s._-]+(?:sub|subs|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
+        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|japanisch|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:sub|subs|ut|untertitel|dub|dubbed|forced)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
+        t = t.replace(/(?:AC3|AAC|DTS|DD5\\.?1)?[\\s._-]*(?:CD|Disc|Disk|DVD|Split)[\\s._-]*0*[1-9]\\b/gi, " ");
         t = t.replace(/(?:^|[\\s._\\-(])Part[\\s._-]*0*([1-9]\\d?)(?:$|[\\s._\\-)])/gi, " ");
-        t = t.replace(/(?:[-_.]|\\s)00[1-9]$/g, " ");
+        t = t.replace(/(?:[-_.]|\\s)00[1-9]\\b/g, " ");
         t = t.replace(/[\\u{1F1E6}-\\u{1F1FF}]{2}/gu, "");
         t = t.replace(/[《》«»⟨⟩]/g, " ");
         t = t.replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\\s]+/gu, "");
@@ -31566,11 +33355,12 @@
         t = t.replace(/s[\\._]to\\s*-?\\s*Serien.*/i, "").replace(/Sto\\s*-\\s*Serien.*/i, "");
         t = t.replace(/serien[\\._](?:life|show).*/i, "").replace(/HD\\s*Filme\\s*Serien.*/i, "");
         t = t.replace(/^(?:Title|Titel)\\s*:\\s*/i, "").replace(/^(?:vs-|cd-|spy-|d-|4sf-|arc-|tvp-)/i, "");
+        t = t.replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\\s+/i, "");
         t = t.replace(/^(?:s\\d{1,2}[\\s._-]*e\\d{1,3}|e\\d{1,3}[\\s._-]*s\\d{1,2}|\\d{1,2}x\\d{1,3})\\b[\\s._\\-–:]*/i, "");
         t = t.replace(/\\bS\\d{1,2}\\s*E\\d{0,3}(?=[A-Za-z]|\\b)/gi, " ");
         t = t.replace(/\\b\\d{3,4}\\s*[x×]\\s*\\d{3,4}\\b/g, "");
-        t = t.replace(/\\b(?:super[\\s._-]*duper[\\s._-]*cut|extended[\\s._-]*director'?s?[\\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\\s._-]*matte|international|rough|workprint)[\\s._-]*(?:cut|edition|version|fassung|ed\\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\\s._-]*(?:fassung|version|edition|cut)|(?:4k[\\s._-]*)?(?:digitally[\\s._-]*)?(?:remastered|restored)|mastered[\\s._-]*in[\\s._-]*4k|open[\\s._-]*matte|3d|hsbs|sbs|hou)\\b/gi, " ");
-        t = t.replace(/\\b(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|spanisch|spanish|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|dvdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3|aac|6ch|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)\\b/gi, " ");
+        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\\s._-]*duper[\\s._-]*cut|extended[\\s._-]*director'?s?[\\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\\s._-]*matte|international|rough|workprint)[\\s._-]*(?:cut|edition|version|fassung|ed\\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\\s._-]*(?:fassung|version|edition|cut)|(?:4k[\\s._-]*)?(?:digitally[\\s._-]*)?(?:remastered|restored)|mastered[\\s._-]*in[\\s._-]*4k|open[\\s._-]*matte|3d|hsbs|sbs|hou)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
+        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|dvdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3|aac|6ch|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/[\\(\\[]\\s*(?:the\\s+)?(?:cut|dc|edition|version|fassung)\\s*[\\)\\]]/gi, " ");
         t = t.replace(/[\\(\\[]\\s*(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s*[\\)\\]]/gi, " ");
         t = t.replace(/^(.{2,}?)\\s+(?:[-–:]\\s*)?(?:the\\s+)?(?:cut|edition|version|fassung|redux)\\s*$/i, "$1");
@@ -31623,7 +33413,8 @@
                                 withoutExt.match(/^(.+?)[_\\s]*#[_\\s]*Staffel[_\\s]*(\\d{1,2})[_\\s,.\\-]*(?:Folge|Episode)[_\\s]*(\\d{1,3})[_\\s]*(?:[#\\-–]+[_\\s]*)(.+)$/i);
         const archeMatch = withoutExt.match(/^S(\\d{1,2})E(\\d{1,3})\\s*[-–]\\s*@\\w+\\s*[-–]\\s*(.+)$/i);
         const hashStaffelMatch = withoutExt.match(/^#?\\s*S(\\d{1,2})E(\\d{1,3})\\s*[-–]\\s*(.+)$/i);
-        const epStaffelVonMatch = withoutExt.match(/(?:Episode|Folge)[\\s._]*(\\d{1,3})(?:[\\s._\\-&]+\\d{1,3})?[\\s._\\-]*(?:\\(?Staffel[\\s._]*(\\d{1,2})\\)?)?[\\s._\\-]*von[\\s._]*(.+?)(?:[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i);
+        const epStaffelVonMatch = raw.match(/(?:Episode|Folge)[\\s._]*(\\d+)(?:[\\s._\\-&]+\\d+)?[\\s._\\-]*(?:Staffel|Season)[\\s._]*(\\d+)[\\s._\\-]*von[\\s._]+(.+?)(?:\\.mp4|\\.mkv|\\.avi|s_to_Serien|_sto_Serien|[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i) ||
+                                  withoutExt.match(/(?:Episode|Folge)[\\s._]*(\\d{1,3})(?:[\\s._\\-&]+\\d{1,3})?[\\s._\\-]*(?:(?:\\(?Staffel[\\s._]*(\\d{1,2})\\)?)[\\s._\\-]*(?:von[\\s._]+)?|(?:von[\\s._]+))(.+?)(?:[\\s._]*\\(\\d{1,3}\\))?(?:s_to_Serien|_sto_Serien|[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i);
         const seMatch = withoutExt.match(/\\bS(\\d{1,2})[\\s._-]*E(\\d{1,3})(?:[-–]E?(\\d{1,3}))?\\b/i);
 
         let cutIdx = withoutExt.length;
@@ -31647,7 +33438,10 @@
           isSeries = true;
           episode = parseInt(epStaffelVonMatch[1], 10) || 1;
           season = epStaffelVonMatch[2] ? parseInt(epStaffelVonMatch[2], 10) : 1;
-          explicitTitle = epStaffelVonMatch[3];
+          explicitTitle = epStaffelVonMatch[3].replace(/_/g, " ").trim();
+          if (msgObj && typeof msgObj === "object" && msgObj.pre_context) {
+            msgObj.pre_context.seriesHeader = cleanClientMediaTitle(explicitTitle) || explicitTitle;
+          }
         } else if (seMatch) {
           isSeries = true;
           season = parseInt(seMatch[1], 10) || 1;
@@ -31675,19 +33469,36 @@
             season = 1;
             episode = parseInt(epOnly[1], 10) || 1;
             if (typeof epOnly.index === "number" && epOnly.index > 1) cutIdx = Math.min(cutIdx, epOnly.index);
-          } else if (durationSec <= 0 || durationSec <= 4200) {
+          } else if (!pInfo?.isMultiPart && !/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[\(\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\)\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
+            // Fall "05 Ein Star ist geboren" / "13 Hochzeitspläne": Anführende 2- oder 3-stellige Zahl + Leerzeichen/Bindestrich bei < 4200s
+            const leadEpNumMatch = withoutExt.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/);
+            const numberedMovieGuardRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
+            const leadEpVal = leadEpNumMatch ? parseInt(leadEpNumMatch[1], 10) : 0;
+            if (leadEpNumMatch && leadEpVal >= 1 && leadEpVal <= 399 && !numberedMovieGuardRe.test(withoutExt) && !/\\b(?:19[2-9]\\d|20[0-2]\\d)\\b/.test(withoutExt)) {
+              isSeries = true;
+              season = Number(msgObj?.pre_context?.season || 1);
+              episode = leadEpVal;
+              episodeTitle = cleanClientMediaTitle(leadEpNumMatch[2]);
+              explicitTitle = (msgObj?.pre_context?.seriesHeader || msgObj?.pre_context?.title || episodeTitle);
+            }
             // Fall Black Box 1 bis 6, Spuk im Hochhaus 1..7 & Pippi Langstrumpf 1 Pippi zieht...:
-            const strippedTrailingQual = withoutExt
+            const strippedTrailingQual = !isSeries ? withoutExt
               .replace(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/gi, " ")
               .replace(/\\b(?:1080p|720p|2160p|480p|4k|uhd|x264|x265|h264|h265|hevc|ger|deu|german|deutsch|web-dl|webrip|bluray|hd|mp4|mkv|avi)\\b/gi, " ")
               .replace(/\\s+/g, " ")
-              .trim();
-            const franchiseGuardRe = /^(?:iron man|thor|avengers|matrix|john wick|shrek|toy story|cars|fast|furious|hangover|rambo|rocky|creed|mad max|spider man|batman|superman|deadpool|guardians|men in black|rush hour|bad boys|oceans|expendables|transporter|taken|equalizer|punisher|blade|underworld|resident evil|alien|predator|terminator|jurassic|indiana jones|star wars|harry potter|herr der ringe|hobbit|fluch der karibik|mission impossible|james bond|bourne|twilight|tribute von panem|maze runner|divergent|pitch perfect|step up|scary movie|american pie|final destination|saw|scream|conjuring|insidious|paranormal|purge|halloween|freitag der|nightmare|hellraiser|chucky|annabelle|nun|sinister|troll|ip man|ong bak|raid|undisputed|goal|hooligans|manta|fack ju|ostwind|bibi|conni|schule der magischen|vorstadtkrokodile|wilde kerle|fünf freunde|tkkg|drei fragezeichen)\\b/i;
+              .trim() : "";
+            const franchiseGuardRe = /^(?:iron man|thor|avengers|matrix|john wick|shrek|toy story|cars|fast|furious|hangover|rambo|rocky|creed|mad max|spider man|batman|superman|deadpool|guardians|men in black|rush hour|bad boys|oceans|expendables|transporter|taken|equalizer|punisher|blade|underworld|resident evil|alien|predator|terminator|jurassic|indiana jones|star wars|harry potter|herr der ringe|hobbit|fluch der karibik|mission impossible|james bond|bourne|twilight|tribute von panem|maze runner|divergent|pitch perfect|step up|scary movie|american pie|final destination|saw|scream|conjuring|insidious|paranormal|purge|halloween|freitag der|nightmare|hellraiser|chucky|annabelle|nun|sinister|troll|ip man|ong bak|raid|undisputed|goal|hooligans|manta|fack ju|ostwind|bibi|conni|schule der magischen|vorstadtkrokodile|wilde kerle|fünf freunde|tkkg|drei fragezeichen|deep blue sea|deep blue|sharknado|sector|ghettogangz|banlieue|burg schreckenstein|fifty shades|jumanji|hotel transsilvanien|ich einfach unverbesserlich|minions|ice age|madagascar|kung fu panda|drachenzähmen|rio|sing|pets|zoomania|vaiana|frozen|eiskönigin|ralph reichts|incredibles|unglaublichen|findet nemo|findet dorie|monster ag|monster uni|wall e|oben|coco|soul|luca|encanto)\\b/i;
+            const isKnownClassicSeriesRe = /^(?:pippi langstrumpf|zur see|spuk im hochhaus|spuk unterm riesenrad|spuk von draußen|black box|das schloss im nebel|gormenghast|archiv des todes|front ohne gnade|feuerdrachen|gefährliche fahndung|treffpunkt flughafen|rote bergsteiger)\\b/i;
+            const ctxSeriesHeader = msgObj && msgObj.pre_context && msgObj.pre_context.seriesHeader
+              ? normalizeClientCompareTitle(msgObj.pre_context.seriesHeader)
+              : "";
             const midNumMatch = strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|[1-9]\\d)\\s+([A-Za-zÄÖÜäöüß].{3,})$/);
             const trailingNumMatch = !midNumMatch ? strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|1\\d|2[0-9]|30)\\s*$/) : null;
-            if (midNumMatch && !/^(?:part|teil|cd|disc|dvd)\\b/i.test(midNumMatch[3])) {
+            if (midNumMatch && !/^(?:part|teil|cd|disc|dvd|hd|uhd|4k|1080p|720p|german|deutsch)\\b/i.test(midNumMatch[3])) {
               const candBase = cleanClientMediaTitle(midNumMatch[1]);
-              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase)) {
+              const normCand = normalizeClientCompareTitle(candBase);
+              const matchesCtxSeries = Boolean(ctxSeriesHeader && normCand && (normCand === ctxSeriesHeader || normCand.startsWith(ctxSeriesHeader + " ")));
+              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase) && (matchesCtxSeries || isKnownClassicSeriesRe.test(candBase))) {
                 isSeries = true;
                 season = 1;
                 episode = parseInt(midNumMatch[2], 10) || 1;
@@ -31696,7 +33507,9 @@
               }
             } else if (trailingNumMatch && !/\\b(?:part|teil|cd|disc|dvd)\\b/i.test(strippedTrailingQual)) {
               const candBase = cleanClientMediaTitle(trailingNumMatch[1]);
-              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase)) {
+              const normCand = normalizeClientCompareTitle(candBase);
+              const matchesCtxSeries = Boolean(ctxSeriesHeader && normCand && (normCand === ctxSeriesHeader || normCand.startsWith(ctxSeriesHeader + " ")));
+              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase) && (matchesCtxSeries || isKnownClassicSeriesRe.test(candBase))) {
                 isSeries = true;
                 season = 1;
                 episode = parseInt(trailingNumMatch[2], 10) || 1;
@@ -31711,7 +33524,7 @@
         const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
         if (ym) {
           year = parseInt(ym[1], 10);
-          if (!explicitTitle && typeof ym.index === "number" && ym.index > 2) cutIdx = Math.min(cutIdx, ym.index - 1);
+          if (!explicitTitle && typeof ym.index === "number" && ym.index >= 2) cutIdx = Math.min(cutIdx, ym.index - 1);
         }
 
         let titleCand = explicitTitle ? explicitTitle : (withoutExt.slice(0, cutIdx).trim() || withoutExt);
@@ -31721,6 +33534,9 @@
             .replace(new RegExp("\\\\b" + year + "\\\\b", "g"), " ");
         }
         let cleanTitle = cleanClientMediaTitle(titleCand) || "Unbekannt";
+        if (cleanTitle && cleanTitle.length > 50) {
+          cleanTitle = cleanTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+        }
         const jacobMatch = cleanTitle.match(/^(Jacob\\s*2[\\s/_]*2)\\s+(und\\s+.+)$/i);
         if (jacobMatch) cleanTitle = "Jacob 2/2";
 
@@ -31857,7 +33673,7 @@
         }
       }
 
-      function deduplicateAndClassifyClientEntries(rawCandidates) {
+      async function deduplicateAndClassifyClientEntries(rawCandidates, statusEl = null) {
         const entries = [];
         const seenExactKeys = new Set();
         const seenFileIds = new Set();
@@ -31867,8 +33683,19 @@
         let detectedMoviesCount = 0;
         let detectedSeriesCount = 0;
         const previewSamples = [];
+        const totalRaw = rawCandidates.length;
 
-        for (let i = 0; i < rawCandidates.length; i++) {
+        for (let i = 0; i < totalRaw; i++) {
+          if (i > 0 && i % 400 === 0) {
+            if (statusEl) {
+              const pct = Math.min(100, Math.round((i / totalRaw) * 100));
+              statusEl.textContent =
+                "⏳ Gruppiere & prüfe Duplikate: " +
+                i.toLocaleString("de-DE") + " / " + totalRaw.toLocaleString("de-DE") +
+                " (" + pct + "%)...";
+            }
+            await new Promise(r => setTimeout(r, 0));
+          }
           const item = rawCandidates[i];
           if (!item) continue;
           const rawStr = typeof item === "string"
@@ -31887,7 +33714,9 @@
           const parsed = parseClientMediaPreview(rawStr, durationSec, typeof item === "object" ? item : null);
           if (typeof item === "object" && item !== null) {
             if (item.cleanTitle && item.cleanTitle !== "Unbekannt") {
-              parsed.cleanTitle = cleanClientMediaTitle(String(item.cleanTitle)) || String(item.cleanTitle);
+              parsed.cleanTitle = item.neighborEnriched
+                ? String(item.cleanTitle).trim()
+                : (cleanClientMediaTitle(String(item.cleanTitle)) || String(item.cleanTitle));
             }
             if (item.type === "series" || item.type === "tv" || item.isSeries || item.season || item.episode) {
               parsed.isSeries = true;
@@ -31963,6 +33792,8 @@
                 codec: parsed.codec,
                 part: parsed.part,
                 tags: parsed.isArchive ? "📦 RAR-Archiv" : (item.tags || ""),
+                contextOverview: item.contextOverview || "",
+                neighborEnriched: Boolean(item.neighborEnriched),
                 isQualityVariant
               }
             : {
@@ -31979,6 +33810,8 @@
                 codec: parsed.codec,
                 part: parsed.part,
                 tags: parsed.isArchive ? "📦 RAR-Archiv" : "",
+                contextOverview: "",
+                neighborEnriched: false,
                 isQualityVariant
               };
 
@@ -32102,21 +33935,28 @@
             const ymHeader = (" " + txt.slice(0, 120) + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
             if (ymHeader && !ctx.year) ctx.year = parseInt(ymHeader[1], 10);
             const hClean = cleanClientMediaTitle(firstLine.replace(/Staffel\\s*\\d+.*/i, "").replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
-            if (hClean) {
+            if (hClean && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(hClean)) {
               ctx.seriesHeader = hClean;
               ctx.isSeriesHeader = true;
               delete ctx.title;
               delete ctx.tmdbId;
             }
           } else if (!msg.file_name && msg.media_type !== "video_file") {
-            const headSlice = txt.slice(0, 110);
-            const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
-            if (ym && ym.index > 2) {
-              ctx.year = parseInt(ym[1], 10);
-              const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
-              if (tGuess) {
-                ctx.title = tGuess;
-                ctx.seriesHeader = tGuess;
+            const isCollectionHeaderLine = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\b\\d+\\s*-\\s*\\d+\\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
+            if (!isCollectionHeaderLine) {
+              const headSlice = txt.slice(0, 110);
+              const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+              if (ym && ym.index >= 2) {
+                ctx.year = parseInt(ym[1], 10);
+                const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
+                if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
+                  ctx.title = tGuess;
+                  if (ctx.isSeriesHeader) {
+                    ctx.seriesHeader = tGuess;
+                  } else {
+                    delete ctx.seriesHeader;
+                  }
+                }
               }
             }
           }
@@ -32124,7 +33964,91 @@
         return ctx;
       }
 
-      function detectAndParseClientBackupJson(parsedJson, fileName = "result.json", fileSizeBytes = 0, repairMeta = null) {
+      // Stufe 1 (Arielle 2023 & Kurztitel): Nachbar-Post (+1 / -1 / +2 / -2) auf passenden Voll-Titel & Beschreibungstext prüfen
+      function enrichClientVideoFromNeighborPost(messages, currentIndex, parsedVideo) {
+        if (!parsedVideo || !parsedVideo.title) return parsedVideo;
+
+        const baseWord = String(parsedVideo.title)
+          .toLowerCase()
+          .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\\s+/i, "")
+          .split(/[\\s:,\\-–_.]+/)[0];
+
+        if (!baseWord || baseWord.length < 3) return parsedVideo;
+
+        // Prüfe zuerst den Post direkt DARUNTER (+1), dann darüber (-1), dann +2 / -2
+        for (const offset of [1, -1, 2, -2]) {
+          const neighbor = messages[currentIndex + offset];
+          if (!neighbor || neighbor.media_type === "video_file" || neighbor.video) continue;
+          const nFile = String(neighbor.file_name || neighbor.file || "").toLowerCase();
+          if (/\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|srt|vtt|sub|ass|ssa)$/i.test(nFile)) continue;
+
+          const rawText = flattenClientTgText(neighbor.text || neighbor.caption || neighbor.text_entities);
+          const lines = rawText.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
+          if (lines.length === 0) continue;
+
+          const firstLine = lines[0]
+            .replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\\s]+/gu, "")
+            .replace(/^(?:(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*)?(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\\s+/i, "")
+            .replace(/^(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*/i, "")
+            .trim();
+
+          // Sicherheits-Check: Die erste Zeile des Nachbarn MUSS das Basiswort ("arielle") enthalten!
+          // Dadurch wird "Tin & Tina 2023" (-1) sofort ausgeschlossen!
+          if (!firstLine.toLowerCase().includes(baseWord)) continue;
+
+          const yearMatch = rawText.match(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/);
+          const neighborYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+          if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
+
+          // Collection-Header & Detailtitel-Schutz ("Der König der Löwen 2 - Simbas Königreich (1998)" vs. "König der Löwen teil 1 bis 3"):
+          // 1. Wenn der Titel des Nachbar-Posts Wörter wie "teil 1 bis 3", "1-3", "collection", "trilogie" oder "box" enthält, darf er NIEMALS parsedVideo.title überschreiben!
+          // 2. Wenn das aktuelle Video bereits einen eigenen ausführlichen Titel mit Fortsetzungs-Nummer ([1-9]) oder Bindestrich ("-") besitzt,
+          //    ist der eigene Titel hochwertiger als jeder Nachbar-Post und darf nicht überschrieben werden!
+          const neighborTitleLower = firstLine.toLowerCase();
+          const isCollectionHeader = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\d+\\s*-\\s*\\d+|collection|trilogie|trilogy|quadrilogie|box)/i.test(neighborTitleLower);
+          const videoHasDetailedTitle = Boolean(parsedVideo.title && (/[1-9]/.test(parsedVideo.title) || parsedVideo.title.includes("-") || parsedVideo.title.includes("–") || parsedVideo.title.includes(":")));
+
+          if (isCollectionHeader || videoHasDetailedTitle) {
+            return {
+              ...parsedVideo,
+              contextOverview: lines.slice(1).join(" ").trim() || parsedVideo.contextOverview || ""
+            };
+          }
+
+          const cleanedNeighborTitle = firstLine
+            .replace(/\\s*[(\\[\\-–]*\\s*\\b(19[2-9]\\d|20[0-2]\\d)\\b\\s*[)\\]]*\\s*$/, "")
+            .trim();
+          // "Cocaine Bear"- & "Ted Bundy"-Schutz (Max. Titellänge 60 Zeichen):
+          // Wenn die erste Zeile des Nachbar-Posts länger als 60 Zeichen ist, ist es eine Filmbeschreibung!
+          if (cleanedNeighborTitle.length > 60) {
+            return {
+              ...parsedVideo,
+              year: parsedVideo.year || neighborYear,
+              contextOverview: rawText.trim(),
+              neighborEnriched: true,
+              neighborOffset: offset
+            };
+          }
+          let finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
+          if (finalTitle && finalTitle.length > 50) {
+            finalTitle = finalTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+          }
+
+          return {
+            ...parsedVideo,
+            title: finalTitle || parsedVideo.title,
+            year: parsedVideo.year || neighborYear,
+            contextOverview: lines.slice(1).join(" ").trim(),
+            neighborEnriched: true,
+            neighborOffset: offset
+          };
+        }
+
+        return parsedVideo;
+      }
+
+      async function detectAndParseClientBackupJson(parsedJson, fileName = "result.json", fileSizeBytes = 0, repairMeta = null, statusEl = null) {
         let tgMessages = null;
         let backupChatName = "";
         let backupChatId = "";
@@ -32148,16 +34072,28 @@
         }
 
         if (Array.isArray(tgMessages)) {
+          await new Promise(r => setTimeout(r, 0));
           // 1. Chronologische Sortierung vor dem Loop erzwingen (Id aufsteigend)
           tgMessages.sort((a, b) => Number(a?.id || a?.message_id || 0) - Number(b?.id || b?.message_id || 0));
 
           const rawCandidates = [];
           const clientPreLogs = [];
-          const metaPrefixRegex = /^(?:Qualität|Quality|Genre|FSK|Jahr|Release|Bewertung|Rating|Audio|Sprache|Dauer|Laufzeit|Regie|Darsteller|Cast|Handlung|Inhalt|Beschreibung|Plot|Info|Größe|Size|Format|Codec|Quelle|Source|Link|Download|Stream|Kanal|Channel)\\s*[:\\-]/i;
+          const metaPrefixRegex = /^(?:Qualität|Quality|Genre|Gener|Studio|FSK|Jahr|Erscheinungsjahr|Produktionsland|Release|Released|Bewertung|Rating|IMDb|TMDB|Audio|Sprache|Language|Untertitel|Subtitles|Dauer|Laufzeit|Länge|Laenge|Runtime|Regie|Director|Darsteller|Actors|Cast|Handlung|Inhalt|Beschreibung|Plot|Info|Größe|Groesse|Dateigröße|Size|Format|Codec|Quelle|Source|Link|Download|Stream|Kanal|Channel|Preis|Free|Kostenlos)\\s*[:\\-]/i;
 
           let rollingPreContext = {};
+          const totalMsgs = tgMessages.length;
 
-          for (let i = 0; i < tgMessages.length; i++) {
+          for (let i = 0; i < totalMsgs; i++) {
+            if (i > 0 && i % 400 === 0) {
+              if (statusEl) {
+                const pct = Math.min(100, Math.round((i / totalMsgs) * 100));
+                statusEl.textContent =
+                  "⏳ Lese & analysiere Nachricht " +
+                  i.toLocaleString("de-DE") + " / " + totalMsgs.toLocaleString("de-DE") +
+                  " (" + pct + "% • " + rawCandidates.length.toLocaleString("de-DE") + " Videos gefunden)...";
+              }
+              await new Promise(r => setTimeout(r, 0));
+            }
             const msg = tgMessages[i];
             if (!msg || (msg.type && msg.type !== "message")) continue;
             const currentMsgId = Number(msg.id || msg.message_id || 0);
@@ -32351,41 +34287,106 @@
               }
             }
 
-            // Schutzregel ("The Rookie S01E11" / "E01S01 Frontier 2016"):
+            // "Episode 6 Staffel 2 von Little Britain.mp4" Context-Bleeding Fix:
+            // Extrahiere den Seriennamen hinter "von" VOR jedem Fallback auf effectivePre und überschreibe sofort den alten Kontext!
+            const rawVonSource = String(rawFileName || validFilePath || normFileName || firstTextLine || "");
+            const vonMatch = rawVonSource.match(/(?:Episode|Folge)[\\s._]*(\\d+)(?:[\\s._\\-&]+\\d+)?[\\s._\\-]*(?:Staffel|Season)[\\s._]*(\\d+)[\\s._\\-]*von[\\s._]+(.+?)(?:\\.mp4|\\.mkv|\\.avi|s_to_Serien|_sto_Serien|[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i);
+            let vonSeriesTitle = "";
+            if (vonMatch) {
+              const epFromVon = parseInt(vonMatch[1], 10) || 1;
+              const seFromVon = parseInt(vonMatch[2], 10) || 1;
+              vonSeriesTitle = cleanClientMediaTitle(vonMatch[3].replace(/_/g, " ").trim()) || vonMatch[3].replace(/_/g, " ").trim();
+              seInText = "S" + String(seFromVon).padStart(2, "0") + "E" + String(epFromVon).padStart(2, "0");
+              if (vonSeriesTitle) {
+                rollingPreContext = {
+                  seriesHeader: vonSeriesTitle,
+                  season: seFromVon,
+                  isSeriesHeader: true,
+                  lastMessageId: currentMsgId
+                };
+                effectivePre = { ...rollingPreContext };
+              }
+            }
+
+            // Anführende 2- oder 3-stellige Zahl als Folge erkennen ("05 Ein Star ist geboren", "13 Hochzeitspläne")
+            const leadEpCandidateStr = String(normFileName || firstTextLine || "").trim();
+            const leadEpMatch = (!seInText && !multiLineSeLine && !vonMatch && (Number(msg.duration_seconds || 0) <= 0 || Number(msg.duration_seconds || 0) < 4200))
+              ? leadEpCandidateStr.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/)
+              : null;
+            const numberedMovieGuardClientRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
+            let isLeadingNumberEpisode = false;
+            if (leadEpMatch && !numberedMovieGuardClientRe.test(leadEpCandidateStr) && !/\\b(?:19[2-9]\\d|20[0-2]\\d)\\b/.test(leadEpCandidateStr)) {
+              const epVal = parseInt(leadEpMatch[1], 10);
+              if (epVal >= 1 && epVal <= 399) {
+                isLeadingNumberEpisode = true;
+                const ctxSeason = effectivePre.season || rollingPreContext.season || 1;
+                seInText = "S" + String(ctxSeason).padStart(2, "0") + "E" + String(epVal).padStart(2, "0");
+                multiLineEpTitle = cleanClientMediaTitle(leadEpMatch[2]);
+                if (rollingPreContext.seriesHeader) {
+                  rollingPreContext.lastMessageId = currentMsgId;
+                }
+              }
+            }
+
+            // Schutzregel ("The Rookie S01E11" / "E01S01 Frontier 2016" / "Episode 6 Staffel 2 von Little Britain"):
             // Wenn die Datei oder Caption bereits einen EIGENEN Seriennamen mitbringt, darf dieser NIEMALS vom effectivePre der vorherigen Serie überschrieben werden!
-            // WICHTIG: Wenn ownExplicitSeriesTitle mit effectivePre.seriesHeader beginnt (z.B. "Spuk im Hochhaus 1" bei Header "Spuk im Hochhaus" oder "Black Box 1" bei Header "Black Box"),
-            // ist es DIESELBE Serie (Episode N) und der Vorab-Kontext (inkl. Jahr 1982 / 2023) MUSS erhalten bleiben!
-            const fileCleanOwn = !isGenericFile ? cleanClientMediaTitle(( normFileName || "" ).replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "")) : "";
-            const textCleanOwn = cleanFirstLine ? cleanClientMediaTitle(firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "").replace(/\\bStaffel\\s*\\d+.*/i, "")) : "";
-            const ownExplicitSeriesTitle = (textCleanOwn && textCleanOwn.length >= 2) ? textCleanOwn : ((fileCleanOwn && fileCleanOwn.length >= 2) ? fileCleanOwn : "");
+            const fileCleanOwn = vonSeriesTitle
+              ? vonSeriesTitle
+              : (!isGenericFile && !isLeadingNumberEpisode ? cleanClientMediaTitle(( normFileName || "" ).replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "")) : "");
+            const textCleanOwn = (cleanFirstLine && firstTextLine.length <= 60 && !isLeadingNumberEpisode)
+              ? cleanClientMediaTitle(firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "").replace(/\\bStaffel\\s*\\d+.*/i, ""))
+              : "";
+            const ownExplicitSeriesTitle = vonSeriesTitle || ((textCleanOwn && textCleanOwn.length >= 2) ? textCleanOwn : ((fileCleanOwn && fileCleanOwn.length >= 2) ? fileCleanOwn : ""));
 
             const normOwnSeries = normalizeClientCompareTitle(ownExplicitSeriesTitle);
             const normHeaderSeries = effectivePre.seriesHeader ? normalizeClientCompareTitle(effectivePre.seriesHeader) : "";
             const isSameSeriesWithEpSuffix = Boolean(
               normOwnSeries &&
               normHeaderSeries &&
-              (normOwnSeries === normHeaderSeries || normOwnSeries.startsWith(normHeaderSeries + " ") || normOwnSeries.startsWith(normHeaderSeries))
+              (normOwnSeries === normHeaderSeries || /^(.+?)\\s+0*\\d{1,2}(?:\\s+.+)?$/.exec(normOwnSeries)?.[1] === normHeaderSeries)
             );
 
             if (ownExplicitSeriesTitle && effectivePre.seriesHeader && !isSameSeriesWithEpSuffix) {
-              // Stripping einer evtl. angehängten Episodennummer ("Spuk unterm Riesenrad 1" -> "Spuk unterm Riesenrad") für den neuen Serien-Header
-              const strippedNewHeader = cleanClientMediaTitle(ownExplicitSeriesTitle.replace(/\\s+0*([1-9]\\d?)(?:\\s+.+)?$/, "")) || ownExplicitSeriesTitle;
+              const hasExplicitEpCue = Boolean(vonSeriesTitle || seInText || multiLineSeLine || /^(?:pippi langstrumpf|zur see|spuk im hochhaus|spuk unterm riesenrad|spuk von draußen|black box)\\b/i.test(ownExplicitSeriesTitle));
               effectivePre = { lastMessageId: currentMsgId };
-              rollingPreContext = { seriesHeader: strippedNewHeader, isSeriesHeader: true, lastMessageId: currentMsgId };
+              if (hasExplicitEpCue) {
+                const strippedNewHeader = cleanClientMediaTitle(ownExplicitSeriesTitle.replace(/\\s+0*([1-9]\\d?)(?:\\s+.+)?$/, "")) || ownExplicitSeriesTitle;
+                rollingPreContext = { seriesHeader: strippedNewHeader, isSeriesHeader: true, lastMessageId: currentMsgId };
+                effectivePre = { ...rollingPreContext };
+              } else {
+                rollingPreContext = { lastMessageId: currentMsgId };
+              }
             }
 
             let baseCandidate = "";
             let parsedFrom = isRarMsg ? "RAR-Archiv" : "Dateiname";
-            if (!ownExplicitSeriesTitle && effectivePre.title && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
+            const ownVideoTitleCandidate = cleanFirstLine || fileCleanOwn || "";
+            const ownBaseWord = ownVideoTitleCandidate
+              .toLowerCase()
+              .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\\s+/i, "")
+              .split(/[\\s:,\\-–_.]+/)[0];
+            const preTitleMatchesOwn = !ownBaseWord || ownBaseWord.length < 3 ||
+              (effectivePre.title && String(effectivePre.title).toLowerCase().includes(ownBaseWord));
+
+            // Beschreibungs-Schutz ("Ted Bundy" / "Cocaine Bear"): Wenn firstTextLine > 60 Zeichen lang ist, ist es eine Beschreibung und kein Titel!
+            const firstLineIsDescription = firstTextLine.length > 60;
+
+            if (vonSeriesTitle) {
+              baseCandidate = vonSeriesTitle + " " + seInText;
+              parsedFrom = "Dateiname (Episode X Staffel Y von Serie)";
+            } else if (isLeadingNumberEpisode && (effectivePre.seriesHeader || effectivePre.title)) {
+              baseCandidate = (effectivePre.seriesHeader || effectivePre.title) + " " + seInText + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
+              parsedFrom = "Serien-Header + Episodennummer";
+            } else if (!ownExplicitSeriesTitle && effectivePre.title && ((isGenericFile && !cleanFirstLine) || preTitleMatchesOwn) && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
               baseCandidate = effectivePre.title;
               parsedFrom = "Vorab-Steckbrief (Nachricht darüber)";
             } else if (!ownExplicitSeriesTitle && effectivePre.seriesHeader && (isGenericFile || !cleanFirstLine)) {
               baseCandidate = effectivePre.seriesHeader + (seInText ? (" " + seInText) : "");
               parsedFrom = "Serien-Header (Nachricht darüber)";
-            } else if (multiLineSeLine && cleanFirstLine) {
+            } else if (multiLineSeLine && cleanFirstLine && !firstLineIsDescription) {
               baseCandidate = cleanFirstLine + " " + multiLineSeLine + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
               parsedFrom = "Caption Zeile 1";
-            } else if (cleanFirstLine && firstTextLine.length >= 2 && firstTextLine.length <= 140) {
+            } else if (cleanFirstLine && firstTextLine.length >= 2 && !firstLineIsDescription) {
               // Regel 2: Cross-Check Text <-> Dateiname (z. B. D O P E T H I E F im Text vs Dope.Thief im Dateinamen)
               const rawSpaced = /^(?:[A-Za-zÄÖÜäöüß]\\s+){3,}[A-Za-zÄÖÜäöüß]/.test(firstTextLine);
               if (rawSpaced && normFileName && !isGenericFile) {
@@ -32396,7 +34397,7 @@
                 parsedFrom = isRarMsg ? "RAR-Archiv (Caption)" : "Caption Zeile 1";
               }
             } else {
-              baseCandidate = normFileName || firstTextLine;
+              baseCandidate = normFileName || (firstLineIsDescription ? firstTextLine.split(/[:\\n(]/)[0].trim().slice(0, 40) : firstTextLine);
               parsedFrom = isRarMsg ? "RAR-Archiv" : (rawFileName ? "Dateiname" : "Caption");
             }
 
@@ -32427,6 +34428,26 @@
               enrichedName += " " + detectedQual;
             }
 
+            // Stufe 1 (Arielle 2023): Nachbar-Post (+1 / -1 / +2 / -2) auf passenden Voll-Titel & Beschreibungstext prüfen
+            let neighborEnrichedTitle = null;
+            let neighborEnrichedYear = null;
+            let neighborContextOverview = "";
+            if (!seInText && !multiLineSeLine && effectivePre.mediaType !== "tv" && !effectivePre.seriesHeader) {
+              const prelimParsed = parseClientMediaPreview(enrichedName, Number(msg.duration_seconds || 0), msg);
+              if (!prelimParsed.isSeries && prelimParsed.cleanTitle && prelimParsed.cleanTitle !== "Unbekannt") {
+                const enrichedNeighbor = enrichClientVideoFromNeighborPost(tgMessages, i, {
+                  title: prelimParsed.cleanTitle,
+                  year: prelimParsed.year || yearInText || null
+                });
+                if (enrichedNeighbor && (enrichedNeighbor.contextOverview || enrichedNeighbor.title !== prelimParsed.cleanTitle)) {
+                  neighborEnrichedTitle = enrichedNeighbor.title;
+                  neighborEnrichedYear = enrichedNeighbor.year || prelimParsed.year || null;
+                  neighborContextOverview = enrichedNeighbor.contextOverview || "";
+                  parsedFrom = parsedFrom + " + Nachbar-Post";
+                }
+              }
+            }
+
             const rarPartObj = isRarMsg ? extractClientPartInfo(flatTextRaw, rawFileName || validFilePath, 0) : null;
             rawCandidates.push({
               filename: enrichedName,
@@ -32434,6 +34455,10 @@
               raw_file_name: rawFileName || validFilePath || "",
               raw_text: flatTextRaw.slice(0, 600),
               parsed_from: parsedFrom,
+              cleanTitle: neighborEnrichedTitle || undefined,
+              year: neighborEnrichedYear || undefined,
+              contextOverview: neighborContextOverview || undefined,
+              neighborEnriched: Boolean(neighborEnrichedTitle || neighborContextOverview),
               tmdb_id: effectivePre.tmdbId || null,
               imdb_id: effectivePre.imdbId || null,
               type: effectivePre.mediaType === "tv" ? "series" : (effectivePre.mediaType === "movie" ? "movie" : undefined),
@@ -32476,7 +34501,7 @@
             }
           }
 
-          const classified = deduplicateAndClassifyClientEntries(rawCandidates);
+          const classified = await deduplicateAndClassifyClientEntries(rawCandidates, statusEl);
           if (typeof appendClientDiagnosticLogs === "function" && clientPreLogs.length > 0) {
             appendClientDiagnosticLogs(clientPreLogs);
           }
@@ -32505,7 +34530,7 @@
                 ? parsedJson.movies
                 : [parsedJson];
 
-        const classified = deduplicateAndClassifyClientEntries(rawList);
+        const classified = await deduplicateAndClassifyClientEntries(rawList, statusEl);
 
         return {
           fileName,
@@ -32537,6 +34562,7 @@
         let inString = false;
         let isEscaped = false;
         let currentObjStr = "";
+        let postVideoFollowRemaining = 0;
 
         while (offset < totalBytes) {
           const end = Math.min(totalBytes, offset + SLICE_BYTES);
@@ -32590,6 +34616,10 @@
                   if (isCandidateVideo) {
                     parsedMsgObj._prevMessages = recentWindowMsgs.slice(-2);
                     extractedMessages.push(parsedMsgObj);
+                    postVideoFollowRemaining = 2;
+                  } else if (postVideoFollowRemaining > 0) {
+                    extractedMessages.push(parsedMsgObj);
+                    postVideoFollowRemaining--;
                   }
                   recentWindowMsgs.push({
                     id: parsedMsgObj.id,
@@ -32619,13 +34649,13 @@
         }
 
         const syntheticParsed = { id: backupChatId || undefined, name: backupChatName, messages: extractedMessages };
-        const info = detectAndParseClientBackupJson(syntheticParsed, file.name, file.size, {
+        const info = await detectAndParseClientBackupJson(syntheticParsed, file.name, file.size, {
           repaired: true,
           repairNotes: [
             "2 MB Stream-Slicer für Großdatei (" + (totalBytes / (1024 * 1024)).toFixed(1) + " MB): " +
             rawMsgCount.toLocaleString("de-DE") + " Roh-Nachrichten gescannt, inkl. 2-Nachrichten-Kontext über jedem Video"
           ]
-        });
+        }, statusEl);
         info.rawMessageCount = rawMsgCount;
         return info;
       }
@@ -32794,7 +34824,7 @@
         return null;
       }
 
-      function saveBackupCheckpointClient() {
+      function saveBackupCheckpointClient(forceServerSync = false) {
         if (!backupImportJob.entries || !backupImportJob.entries.length) return;
         const cp = {
           fileSignature: backupImportJob.fileSignature || (backupImportJob.fileName + "::" + backupImportJob.entries.length),
@@ -32817,11 +34847,15 @@
         try {
           localStorage.setItem(BACKUP_CHECKPOINT_STORAGE_KEY, JSON.stringify(cp));
         } catch (e) {}
-        apiFetchJson(API_BASE + "/admin/import-checkpoint", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ checkpoint: cp })
-        }).catch(() => {});
+        backupImportJob._cpSyncStep = Number(backupImportJob._cpSyncStep || 0) + 1;
+        const shouldSyncServer = Boolean(forceServerSync) || (backupImportJob._cpSyncStep % 20 === 0) || (cp.cursor >= cp.totalEntries);
+        if (shouldSyncServer) {
+          apiFetchJson(API_BASE + "/admin/import-checkpoint", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ checkpoint: cp, forceKv: Boolean(forceServerSync) })
+          }).catch(() => {});
+        }
       }
 
       function clearBackupCheckpointClient() {
@@ -32996,16 +35030,18 @@
           statusEl.textContent = "⏳ Lese & analysiere " + file.name + " (" + sizeMb.toFixed(2) + " MB)...";
         }
         try {
+          await new Promise(r => setTimeout(r, 10));
           let info = null;
           if (sizeMb > 15) {
             info = await streamParseLargeClientBackupFile(file, statusEl);
           } else {
             const text = await file.text();
+            await new Promise(r => setTimeout(r, 0));
             const repairRes = repairAndParseClientBackupJson(text);
             if (!repairRes.ok || !repairRes.parsed) {
               info = await streamParseLargeClientBackupFile(file, statusEl);
             } else {
-              info = detectAndParseClientBackupJson(repairRes.parsed, file.name, file.size, repairRes);
+              info = await detectAndParseClientBackupJson(repairRes.parsed, file.name, file.size, repairRes, statusEl);
             }
           }
 
@@ -33646,7 +35682,72 @@
         '</div>';
       }
 
+      function openAdminTabDirectClient(tabName = "backup") {
+        state.adminTab = tabName || "backup";
+        loadAdminPanelView(false);
+      }
+
+      function updateFloatingImportStatusBarDom() {
+        try {
+          let widgetEl = document.getElementById("floatingImportStatusWidget");
+          const j = backupImportJob;
+          const total = Array.isArray(j?.entries) ? j.entries.length : 0;
+          const done = Number(j?.cursor || 0);
+          const hasActiveOrPausedJob = Boolean(
+            state.isAuthenticated &&
+            state.authUser?.isAdmin &&
+            total > 0 &&
+            (j.running || (done > 0 && done < total))
+          );
+
+          if (!hasActiveOrPausedJob || state.currentView === "admin") {
+            if (widgetEl) widgetEl.style.display = "none";
+            return;
+          }
+
+          if (!widgetEl && document.body) {
+            widgetEl = document.createElement("div");
+            widgetEl.id = "floatingImportStatusWidget";
+            widgetEl.style.cssText =
+              "position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:9500;" +
+              "width:min(94vw,680px);background:rgba(15,23,42,0.96);border:1px solid rgba(56,189,248,0.55);" +
+              "border-radius:12px;padding:9px 12px;box-shadow:0 12px 32px rgba(0,0,0,0.8);backdrop-filter:blur(10px);";
+            document.body.appendChild(widgetEl);
+          }
+          if (!widgetEl) return;
+
+          const pct = total > 0 ? ((done / total) * 100).toFixed(1) : "0.0";
+          const issuesCount = Number(j.failedCount || 0) + Number(j.uncertainCount || 0);
+          widgetEl.style.display = "block";
+          widgetEl.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc">' +
+                '<span style="font-weight:900;color:' + (j.running ? '#38bdf8' : '#fbbf24') + '">' +
+                  (j.running ? '⚡ Backup-Import läuft:' : '⏸️ Import pausiert:') +
+                '</span>' +
+                '<b>' + done.toLocaleString("de-DE") + ' / ' + total.toLocaleString("de-DE") + ' (' + pct + '%)</b>' +
+                '<span style="color:#34d399;font-size:11.5px">🎬 ' + Number(j.moviesSaved || 0).toLocaleString("de-DE") + '</span>' +
+                '<span style="color:#38bdf8;font-size:11.5px">📺 ' + Number(j.seriesSaved || 0).toLocaleString("de-DE") + '</span>' +
+                (issuesCount > 0 ? ('<span style="color:#fbbf24;font-size:11.5px">⚠️ ' + issuesCount + '</span>') : '') +
+              '</div>' +
+              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                (j.running
+                  ? '<button type="button" class="btn amber" style="padding:4px 9px;font-size:11px" onclick="pauseBackupImport()">⏸️ Pause</button>'
+                  : '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="startOrResumeBackupImport()">▶️ Weiter</button>') +
+                '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
+                '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
+              '</div>' +
+            '</div>' +
+            '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px">' +
+              '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
+            '</div>';
+        } catch (e) {}
+      }
+
+      setInterval(updateFloatingImportStatusBarDom, 600);
+
       function renderBackupImportBoxDom() {
+        updateFloatingImportStatusBarDom();
         const mount = document.getElementById("backupImportLiveMount");
         if (!mount) return;
         const j = backupImportJob;
@@ -34315,9 +36416,20 @@
         };
 
         while (backupImportJob.running && !backupImportJob.paused && backupImportJob.cursor < backupImportJob.entries.length) {
+          // Wenn der Admin gerade aktiv eine Übersicht lädt, kurz warten, damit es keinen HTTP 503 Konflikt gibt
+          let waitGuard = 0;
+          while (window._adminPriorityRequestInFlight && waitGuard < 25) {
+            await new Promise(res => setTimeout(res, 150));
+            waitGuard++;
+          }
+          if (!backupImportJob.running || backupImportJob.paused) break;
+
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
           const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
           const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
+          const isFinalBatch = (backupImportJob.cursor + effectiveBatchSize) >= backupImportJob.entries.length;
+          const batchSeqNum = Math.floor(backupImportJob.cursor / DEFAULT_BATCH_SIZE) + 1;
+          const deferKvWrite = !isFinalBatch && (batchSeqNum % 15 !== 0);
           let hadRateWarning = false;
           try {
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
@@ -34330,7 +36442,8 @@
                 playlistMode: backupImportJob.playlistMode || "both",
                 playlistFolderId: backupImportJob.playlistFolderId || null,
                 targetChatId: backupImportJob.targetPlaylistChatId || chatId,
-                sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName
+                sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
+                deferKvWrite
               })
             });
             if (r && r.ok) {
@@ -34456,7 +36569,7 @@
       function pauseBackupImport() {
         backupImportJob.paused = true;
         backupImportJob.running = false;
-        saveBackupCheckpointClient();
+        saveBackupCheckpointClient(true);
         showHudToast("⏸️ Pausiert & Checkpoint bei #" + backupImportJob.cursor + " gespeichert.");
         renderBackupImportBoxDom();
       }
@@ -34824,32 +36937,90 @@
         loadAdminPanelView();
       }
 
-      async function loadAdminPanelView() {
+      async function loadAdminPanelView(forceNetworkRefresh = false) {
         if (!state.isAuthenticated || !state.authUser?.isAdmin) {
           showHudToast("⛔ Zugriff verweigert: Nur für autorisierte Administratoren.");
           return;
         }
+        const wasAlreadyInAdmin = state.currentView === "admin";
         state.currentView = "admin";
+        updateFloatingImportStatusBarDom();
         if (!state.adminPlaylistTargetChatId) state.adminPlaylistTargetChatId = String(chatId);
-        setBusyState(true, "👑 Lade Admin-Dashboard, User, VIP-Playlisten & Mediendatenbank...");
+
+        const hasActiveOrPausedImport = Boolean(
+          Array.isArray(backupImportJob?.entries) &&
+          backupImportJob.entries.length > 0 &&
+          (backupImportJob.running || (backupImportJob.cursor > 0 && backupImportJob.cursor < backupImportJob.entries.length))
+        );
+        if (!wasAlreadyInAdmin && hasActiveOrPausedImport && state.adminTab !== "diaglog") {
+          state.adminTab = "backup";
+        }
+        if (!state.adminTab) {
+          state.adminTab = hasActiveOrPausedImport ? "backup" : "users";
+        }
+
+        // Sofort-Zugang ohne Netzwerk-Blockade: Wenn der Import läuft oder Backup/Logs geöffnet werden und ein Cache vorliegt,
+        // niemals durch /admin/overview blockieren oder ein HTTP 503 riskieren!
+        const canUseInstantCache = Boolean(
+          !forceNetworkRefresh &&
+          (backupImportJob.running || ((state.adminTab === "backup" || state.adminTab === "diaglog") && window._lastAdminOverviewCache))
+        );
+
+        let r = null;
         try {
-          const r = await apiFetchJson(
-            API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
-            "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
-            "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "")
-          );
-          if (!r || !r.ok) {
-            showHudToast("⚠️ " + (r?.error || "Admin-Daten konnten nicht geladen werden."));
-            return;
+          if (canUseInstantCache) {
+            r = window._lastAdminOverviewCache || {
+              ok: true,
+              users: [],
+              media: [],
+              playlists: [],
+              reports: window._adminReportsCache || [],
+              _instantLocalMode: true
+            };
+          } else {
+            window._adminPriorityRequestInFlight = true;
+            setBusyState(true, "👑 Lade Admin-Dashboard, User, VIP-Playlisten & Mediendatenbank...");
+            try {
+              r = await apiFetchJson(
+                API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
+                "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
+                "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "")
+              );
+              if (r && r.ok) {
+                window._lastAdminOverviewCache = r;
+              }
+            } catch (netErr) {
+              r = null;
+            } finally {
+              window._adminPriorityRequestInFlight = false;
+            }
           }
+
+          if (!r || !r.ok) {
+            // Niemals das Öffnen des Admin-Panels abbrechen! Stattdessen sofort mit Cache/Fallback-Daten öffnen,
+            // damit Backup-Import (Pause/Stopp) und Diagnose-Logs zu 100% erreichbar bleiben!
+            r = window._lastAdminOverviewCache || {
+              ok: true,
+              users: [],
+              media: [],
+              playlists: [],
+              reports: window._adminReportsCache || [],
+              _fallbackOn503: true
+            };
+            if (!wasAlreadyInAdmin && state.adminTab !== "diaglog") {
+              state.adminTab = "backup";
+            }
+            showHudToast("⚡ Admin-Panel im Direkt-Modus geöffnet (Import-Steuerung & Logs sofort bereit)");
+          }
+
           const users = r.users || [];
           const mediaList = r.media || [];
           const qStats = r.queueStats || { pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 };
           const adminPlaylists = r.playlists || [];
           const seriesGaps = r.seriesGaps || { totalSeriesChecked: 0, seriesWithGapsCount: 0, seriesWithInternalGapsCount: 0, totalMissingInternal: 0, totalMissingTrailing: 0, totalPrereleaseOnly: 0, items: [] };
-          const allReports = Array.isArray(r.reports) ? r.reports : [];
+          const allReports = Array.isArray(r.reports) ? r.reports : (window._adminReportsCache || []);
           window._adminReportsCache = allReports;
-          if (!clientDiagnosticLogState.loadedFromD1Once) {
+          if (!clientDiagnosticLogState.loadedFromD1Once && !backupImportJob.running) {
             clientDiagnosticLogState.loadedFromD1Once = true;
             syncDiagnosticLogsFromD1Client(true);
           }
@@ -35023,13 +37194,14 @@
             '<div class="section-title">' +
               '<span>👑 Admin-Dashboard & VIP- / Playlisten- / Backup-Verwaltung</span>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn ' + (state.adminTab === 'users' ? 'red' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'reports' ? 'red' : (openReportsCount > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'reports\\';loadAdminPanelView()">🚨 Meldungen (' + openReportsCount + ' offen)</button>' +
-                '<button class="btn ' + (state.adminTab === 'gaps' ? 'red' : (Number(seriesGaps.seriesWithInternalGapsCount || 0) > 0 ? 'amber' : 'blue')) + '" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView()" title="Fehlende Folgen in Serien (insb. Lücken mitten in einer Staffel wie Folge 1+2 fehlt, Folge 3 ist da)">📉 Serien-Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'playlists' ? 'red' : 'green') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten & Bot-VIP (' + adminPlaylists.length + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'backup' ? 'red' : 'amber') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 Backup-Import (100k+)</button>' +
-                '<button class="btn ' + (state.adminTab === 'diaglog' ? 'red' : 'blue') + '" onclick="state.adminTab=\\'diaglog\\';loadAdminPanelView()">🛠️ Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'crud' ? 'red' : '') + '" onclick="state.adminTab=\\'crud\\';loadAdminPanelView()">🎬 Film/Serien CRUD (' + mediaList.length + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'users' ? 'active' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'reports' ? 'active' : (openReportsCount > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'reports\\';loadAdminPanelView()">🚨 Meldungen (' + openReportsCount + ' offen)</button>' +
+                '<button class="btn ' + (state.adminTab === 'gaps' ? 'active' : '') + '" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView()" title="Fehlende Folgen in Serien (insb. Lücken mitten in einer Staffel wie Folge 1+2 fehlt, Folge 3 ist da)">📉 Serien-Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'playlists' ? 'active' : '') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten & Bot-VIP (' + adminPlaylists.length + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 Backup-Import (100k+)</button>' +
+                '<button class="btn ' + (state.adminTab === 'diaglog' ? 'active' : '') + '" onclick="state.adminTab=\\'diaglog\\';loadAdminPanelView()">🛠️ Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'crud' ? 'active' : '') + '" onclick="state.adminTab=\\'crud\\';loadAdminPanelView()">🎬 Film/Serien CRUD (' + mediaList.length + ')</button>' +
+                '<button class="btn" onclick="loadAdminPanelView(true)" title="Admin-Übersicht frisch vom Server laden">🔄 Übersicht</button>' +
                 '<button class="btn" onclick="adminRunD1DedupeFilesClient()" title="Entfernt alle doppelten oder defekten Stream-Buttons in D1">🧹 Doppelte Buttons bereinigen</button>' +
                 '<button class="btn red" onclick="adminRunCompleteMediaResetClient()" title="Löscht alle Filme, Serien, Episoden & Playlisten für einen sauberen Neustart">🧨 Komplett-Reset</button>' +
                 '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' +
@@ -36638,6 +38810,8 @@
           telegramId: String(verified.user.id),
           tgUsername: verified.user.username || "",
           firstName: verified.user.first_name || "",
+          isAdmin: Boolean(userProfile?.isAdmin),
+          isVip: Boolean(userProfile?.isVip),
           authMethod: "initData",
           hasInitData: true
         }, env);
@@ -36699,6 +38873,8 @@
           telegramId: String(userRow.telegram_id),
           tgUsername: userRow.tg_username || "",
           firstName: userRow.first_name || "",
+          isAdmin: Boolean(userProfile?.isAdmin),
+          isVip: Boolean(userProfile?.isVip),
           authMethod: "password",
           hasInitData: false
         }, env);
@@ -36739,6 +38915,8 @@
           telegramId: String(auth.chatId),
           tgUsername: saved.user.tgUsername || "",
           firstName: saved.user.firstName || "",
+          isAdmin: Boolean(saved.user?.isAdmin || auth.user?.isAdmin),
+          isVip: Boolean(saved.user?.isVip || auth.user?.isVip),
           authMethod: "password",
           hasInitData: auth.hasInitData
         }, env);
@@ -36913,6 +39091,7 @@
             const body = await request.json().catch(() => ({}));
             if (body.action === "clear" || body.clear === true) {
               memoryFallback.delete("tma_backup_import_checkpoint_v1");
+              memoryFallback.delete("tma_backup_import_checkpoint_kv_cnt");
               if (kvStore) {
                 await kvStore.delete("tma_backup_import_checkpoint_v1").catch(() => {});
               }
@@ -36920,8 +39099,15 @@
             }
             if (body.checkpoint) {
               memoryFallback.set("tma_backup_import_checkpoint_v1", body.checkpoint);
-              if (kvStore) {
-                await kvStore.put("tma_backup_import_checkpoint_v1", JSON.stringify(body.checkpoint)).catch(() => {});
+              const forceKv = Boolean(body.forceKv);
+              const deferCnt = Number(memoryFallback.get("tma_backup_import_checkpoint_kv_cnt") || 0) + 1;
+              if (forceKv || deferCnt >= 20) {
+                memoryFallback.set("tma_backup_import_checkpoint_kv_cnt", 0);
+                if (kvStore) {
+                  await kvStore.put("tma_backup_import_checkpoint_v1", JSON.stringify(body.checkpoint)).catch(() => {});
+                }
+              } else {
+                memoryFallback.set("tma_backup_import_checkpoint_kv_cnt", deferCnt);
               }
             }
             return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
@@ -36932,19 +39118,19 @@
           const playlistChatId = String(url.searchParams.get("playlistChatId") || auth.chatId);
           const requestedFolderId = String(url.searchParams.get("folderId") || "").trim();
           if (playlistChatId === "bot_vip") {
-            await ensureBotVipDefaultPlaylist(env);
+            await ensureBotVipDefaultPlaylist(env).catch(() => null);
           }
           await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
-            listAllUsersFromD1(env),
-            listAllMediaFromD1(env, mediaType),
-            getImportQueueStatsFromD1(env),
-            getFolders(env, playlistChatId),
-            getSavedList(env, playlistChatId),
-            listMediaReportsFromD1(env, "all"),
-            computeSeriesGapsOverview(env)
+            listAllUsersFromD1(env).catch(() => []),
+            listAllMediaFromD1(env, mediaType).catch(() => []),
+            getImportQueueStatsFromD1(env).catch(() => ({ pending: 0, processing: 0, done: 0, failed: 0, total: 0 })),
+            getFolders(env, playlistChatId).catch(() => []),
+            getSavedList(env, playlistChatId).catch(() => []),
+            listMediaReportsFromD1(env, "all").catch(() => []),
+            computeSeriesGapsOverview(env).catch(() => ({ totalSeriesChecked: 0, incompleteSeriesCount: 0, totalMissingEpisodes: 0, seriesList: [] }))
           ]);
-          const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems);
+          const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || []);
           const playlists = (targetFolders || []).map(f => ({
             ...f,
             enabled: f.enabled !== false,
@@ -37129,7 +39315,8 @@
               chatId: targetChatId,
               folderId: playlistFolder.id,
               playlistName: playlistFolder.name,
-              playlistMode: playlistFolder.playlistMode || playlistMode
+              playlistMode: playlistFolder.playlistMode || playlistMode,
+              deferKvWrite: Boolean(body.deferKvWrite)
             }
           );
           return new Response(JSON.stringify({

@@ -893,9 +893,18 @@
     }
     const baseUrl = "https://api.themoviedb.org/3";
     const type = (parsedItem.mediaType === "tv" || parsedItem.isSeries || parsedItem.typeCode === "s") ? "tv" : "movie";
+    if (parsedItem.title && String(parsedItem.title).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.title);
+      parsedItem.title = String(parsedItem.title).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
+    if (parsedItem.cleanTitle && String(parsedItem.cleanTitle).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.cleanTitle);
+      parsedItem.cleanTitle = String(parsedItem.cleanTitle).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
     const rawQueryTitle = String(parsedItem.title || parsedItem.cleanTitle || "").trim();
-    const cleanedMovieQ = type === "movie" ? cleanMovieQuery(rawQueryTitle) : rawQueryTitle;
-    const queryTitle = rawQueryTitle;
+    // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn des Khan" -> "Star Trek II: Der Zorn des Khan")
+    const queryTitle = rawQueryTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
+    const cleanedMovieQ = type === "movie" ? cleanMovieQuery(queryTitle) : queryTitle;
     const yearParam = type === "movie" ? "primary_release_year" : "first_air_date_year";
 
     const isEnvObj = tmdbApiKeyOrEnv && typeof tmdbApiKeyOrEnv === "object";
@@ -916,6 +925,23 @@
     };
 
     let tmdbHit = null;
+    let fallbackWrongYearHit = null;
+
+    const getHitYearDiff = (hit) => {
+      if (!hit || !parsedItem.year) return 0;
+      const rel = String(hit.release_date || hit.first_air_date || "");
+      const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
+      return y ? Math.abs(Number(parsedItem.year) - y) : 0;
+    };
+
+    const acceptCandidateHit = (candidate) => {
+      if (!candidate) return;
+      if (getHitYearDiff(candidate) <= 2) {
+        if (!tmdbHit) tmdbHit = candidate;
+      } else if (!fallbackWrongYearHit) {
+        fallbackWrongYearHit = candidate;
+      }
+    };
 
     // 1. Direkte ID
     if (parsedItem.tmdbId) {
@@ -931,13 +957,13 @@
     };
 
     // Hilfsfunktion: Nutzt bei Filmen pickBestTMDbMovie (inkl. contextOverview + Blockbuster-Bonus) und bei Serien Jahres-/DACH-Sortierung
-    const pickBestHitBySmallestYearDiff = (resultsList) => {
+    const pickBestHitBySmallestYearDiff = (resultsList, overrideTitle = null) => {
       if (!Array.isArray(resultsList) || resultsList.length === 0) return null;
       if (type === "movie") {
-        return pickBestTMDbMovie(resultsList, parsedItem);
+        return pickBestTMDbMovie(resultsList, overrideTitle ? { ...parsedItem, title: overrideTitle } : parsedItem);
       }
       const targetY = parsedItem.year ? Number(parsedItem.year) : null;
-      const normQ = normalizeCompareString(queryTitle);
+      const normQ = normalizeCompareString(overrideTitle || queryTitle);
       return [...resultsList].sort((a, b) => {
         const aTitle = normalizeCompareString(a.title || a.name || "");
         const bTitle = normalizeCompareString(b.title || b.name || "");
@@ -968,43 +994,67 @@
       })[0];
     };
 
-    // 2. Suche mit Titel + Jahr (bei mediaType === "movie" ausschließlich unter /search/movie mit &primary_release_year=${parsedItem.year})
-    if (!tmdbHit && parsedItem.year && queryTitle) {
-      const res = await cachedFetchJson(
-        buildUrl(`/search/${type}?query=${encodeURIComponent(queryTitle)}&${yearParam}=${parsedItem.year}&language=de-DE`)
-      );
-      if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
-      if (!tmdbHit && cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
-        const resClean = await cachedFetchJson(
-          buildUrl(`/search/${type}?query=${encodeURIComponent(cleanedMovieQ)}&${yearParam}=${parsedItem.year}&language=de-DE`)
+    const queryTmdbWithAndWithoutYear = async (qStr) => {
+      if (!qStr || qStr.length < 2 || tmdbHit) return;
+      if (parsedItem.year) {
+        const resY = await cachedFetchJson(
+          buildUrl(`/search/${type}?query=${encodeURIComponent(qStr)}&${yearParam}=${parsedItem.year}&language=de-DE`)
         );
-        if (resClean?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(resClean.results);
+        if (resY?.results?.length > 0) acceptCandidateHit(pickBestHitBySmallestYearDiff(resY.results, qStr));
       }
-    }
+      if (!tmdbHit) {
+        const resNoY = await cachedFetchJson(
+          buildUrl(`/search/${type}?query=${encodeURIComponent(qStr)}&language=de-DE`)
+        );
+        if (resNoY?.results?.length > 0) acceptCandidateHit(pickBestHitBySmallestYearDiff(resNoY.results, qStr));
+      }
+    };
 
-    // 3. Suche OHNE Jahr (falls Jahreszahl im Post leicht abwich, sortiert nach kleinster Jahres-Abweichung!)
+    // 2 & 3. Suche mit Titel (+ römischer Doppelpunkt-Normalisierung) mit und ohne Jahr
     if (!tmdbHit && queryTitle) {
-      const res = await cachedFetchJson(
-        buildUrl(`/search/${type}?query=${encodeURIComponent(queryTitle)}&language=de-DE`)
-      );
-      if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
+      await queryTmdbWithAndWithoutYear(queryTitle);
+      if (!tmdbHit && rawQueryTitle !== queryTitle) {
+        await queryTmdbWithAndWithoutYear(rawQueryTitle);
+      }
       if (!tmdbHit && cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
-        const resClean = await cachedFetchJson(
-          buildUrl(`/search/${type}?query=${encodeURIComponent(cleanedMovieQ)}&language=de-DE`)
-        );
-        if (resClean?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(resClean.results);
+        await queryTmdbWithAndWithoutYear(cleanedMovieQ);
       }
     }
 
-    // 4. Bindestrich-Split (NUR bei echten Bindestrichen/Doppelpunkten, niemals Teil-Nummern wie "3" abschneiden!)
-    if (!tmdbHit && (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes(":"))) {
-      const mainTitle = queryTitle.split(/\s*[-–:]\s*/)[0].trim();
-      if (mainTitle.length >= 3) {
-        const res = await cachedFetchJson(
-          buildUrl(`/search/${type}?query=${encodeURIComponent(mainTitle)}&language=de-DE`)
-        );
-        if (res?.results?.length > 0) tmdbHit = pickBestHitBySmallestYearDiff(res.results);
+    // 3B. Umlaut-Normalisierung (ae, oe, ue -> ä, ö, ü, z.B. "Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
+    if (!tmdbHit && /(?:ae|oe|ue)/i.test(queryTitle) && !/[äöüß]/i.test(queryTitle)) {
+      const umlautTitle = queryTitle
+        .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+        .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü");
+      await queryTmdbWithAndWithoutYear(umlautTitle);
+    }
+
+    // 4. Untertitel-Fallback / Bindestrich-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road")
+    if (!tmdbHit && (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes("—") || queryTitle.includes(":"))) {
+      const shortTitle = queryTitle.split(/\s*[-–—:]\s*/)[0].trim();
+      if (shortTitle.length >= 2 && shortTitle.toLowerCase() !== queryTitle.toLowerCase()) {
+        await queryTmdbWithAndWithoutYear(shortTitle);
+        if (!tmdbHit && /(?:ae|oe|ue)/i.test(shortTitle) && !/[äöüß]/i.test(shortTitle)) {
+          const shortUmlaut = shortTitle
+            .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+            .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü");
+          await queryTmdbWithAndWithoutYear(shortUmlaut);
+        }
       }
+    }
+
+    // 4B. Artikel-Fallback ("The International" -> "International", falls Stufen 1-4 keinen passenden Treffer lieferten)
+    const articleRegex = /^(?:the|a|an|der|die|das|les|le|la)\s+/i;
+    if (!tmdbHit && articleRegex.test(queryTitle)) {
+      const titleWithoutArticle = queryTitle.replace(articleRegex, "").trim();
+      if (titleWithoutArticle.length >= 3) {
+        await queryTmdbWithAndWithoutYear(titleWithoutArticle);
+      }
+    }
+
+    // Falls nur ein Treffer aus einem falschen Jahrzehnt (> 2 Jahre Abweichung) existierte, diesen für die Konflikt-Meldung heranziehen
+    if (!tmdbHit && fallbackWrongYearHit) {
+      tmdbHit = fallbackWrongYearHit;
     }
 
     if (!tmdbHit) {
@@ -1050,7 +1100,17 @@
     if (!parsedItem || (!parsedItem.tmdbId && !parsedItem.title && !parsedItem.cleanTitle)) return null;
     const baseUrl = "https://api.themoviedb.org/3";
     const type = (parsedItem.mediaType === "tv" || parsedItem.isSeries || parsedItem.typeCode === "s") ? "tv" : "movie";
-    const queryTitle = String(parsedItem.title || parsedItem.cleanTitle || "").trim();
+    if (parsedItem.title && String(parsedItem.title).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.title);
+      parsedItem.title = String(parsedItem.title).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
+    if (parsedItem.cleanTitle && String(parsedItem.cleanTitle).length > 50) {
+      if (!parsedItem.contextOverview) parsedItem.contextOverview = String(parsedItem.cleanTitle);
+      parsedItem.cleanTitle = String(parsedItem.cleanTitle).split(/[:\n(]/)[0].trim().slice(0, 40);
+    }
+    const rawQueryTitle = String(parsedItem.title || parsedItem.cleanTitle || "").trim();
+    // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn" -> "Star Trek II: Der Zorn")
+    const queryTitle = rawQueryTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
     const cleanedMovieQ = type === "movie" ? cleanMovieQuery(queryTitle) : queryTitle;
     const headers = {
       accept: "application/json",
@@ -1070,6 +1130,15 @@
       return countries.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim()));
     };
 
+    const isYearAcceptable = (hit) => {
+      if (!hit || !parsedItem.year) return true;
+      const rel = String(hit.release_date || hit.first_air_date || "");
+      const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
+      return !y || Math.abs(Number(parsedItem.year) - y) <= 2;
+    };
+
+    let fallbackWrongDecadeHit = null;
+
     const searchTmdbStage = async (qStr, includeYear = true, searchType = type) => {
       if (!qStr || qStr.length < 1) return null;
       const params = new URLSearchParams({
@@ -1088,7 +1157,10 @@
         const sortedMovies = bestMovie
           ? [bestMovie, ...data.results.filter(r => r && r.id !== bestMovie.id)]
           : data.results;
-        return { ...(bestMovie || data.results[0]), _resolvedType: searchType, _allResults: sortedMovies.slice(0, 6) };
+        const candidate = { ...(bestMovie || data.results[0]), _resolvedType: searchType, _allResults: sortedMovies.slice(0, 6) };
+        if (isYearAcceptable(candidate)) return candidate;
+        if (!fallbackWrongDecadeHit) fallbackWrongDecadeHit = candidate;
+        return null;
       }
       const normQ = normalizeCompareString(qStr);
       const sortedResults = [...data.results].sort((a, b) => {
@@ -1111,13 +1183,20 @@
         }
         return Number(b.popularity || 0) - Number(a.popularity || 0);
       });
-      return { ...sortedResults[0], _resolvedType: searchType, _allResults: sortedResults.slice(0, 6) };
+      const candidate = { ...sortedResults[0], _resolvedType: searchType, _allResults: sortedResults.slice(0, 6) };
+      if (isYearAcceptable(candidate)) return candidate;
+      if (!fallbackWrongDecadeHit) fallbackWrongDecadeHit = candidate;
+      return null;
     };
 
     // STUFE 2: Suche mit Titel + Jahr
     if (parsedItem.year && queryTitle) {
       const hitWithYear = await searchTmdbStage(queryTitle, true, type);
       if (hitWithYear) return { ...hitWithYear, _stage: "stage2_title_year" };
+      if (rawQueryTitle !== queryTitle) {
+        const hitRawYear = await searchTmdbStage(rawQueryTitle, true, type);
+        if (hitRawYear) return { ...hitRawYear, _stage: "stage2_raw_year" };
+      }
       if (cleanedMovieQ && cleanedMovieQ !== queryTitle.toLowerCase()) {
         const hitCleanWithYear = await searchTmdbStage(cleanedMovieQ, true, type);
         if (hitCleanWithYear) return { ...hitCleanWithYear, _stage: "stage2_clean_movie_year" };
@@ -1140,16 +1219,47 @@
       if (hitOriginal) return { ...hitOriginal, _stage: "stage3b_original" };
     }
 
-    // STUFE 4: Bindestrich-Split für Staffel-Untertitel ("7 vs. Wild - Panama" -> "7 vs. Wild")
-    if (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes(":")) {
-      const mainTitle = queryTitle.split(/\s*[-–:]\s*/)[0].trim();
-      if (mainTitle.length >= 3 && mainTitle.toLowerCase() !== queryTitle.toLowerCase()) {
+    // STUFE 3C: Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
+    if (/(?:ae|oe|ue)/i.test(queryTitle) && !/[äöüß]/i.test(queryTitle)) {
+      const umlautTitle = queryTitle
+        .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+        .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü");
+      if (parsedItem.year) {
+        const hitUmlautYear = await searchTmdbStage(umlautTitle, true, type);
+        if (hitUmlautYear) return { ...hitUmlautYear, _stage: "stage3c_umlaut_year" };
+      }
+      const hitUmlaut = await searchTmdbStage(umlautTitle, false, type);
+      if (hitUmlaut) return { ...hitUmlaut, _stage: "stage3c_umlaut" };
+    }
+
+    // STUFE 4: Untertitel-Fallback / Bindestrich-Split ("Silk Road - Gebieter des Darknets" -> "Silk Road")
+    if (queryTitle.includes("-") || queryTitle.includes("–") || queryTitle.includes("—") || queryTitle.includes(":")) {
+      const mainTitle = queryTitle.split(/\s*[-–—:]\s*/)[0].trim();
+      if (mainTitle.length >= 2 && mainTitle.toLowerCase() !== queryTitle.toLowerCase()) {
+        if (parsedItem.year) {
+          const hitSplitYear = await searchTmdbStage(mainTitle, true, type);
+          if (hitSplitYear) return { ...hitSplitYear, _stage: "stage4_split_year" };
+        }
         const hitSplit = await searchTmdbStage(mainTitle, false, type);
         if (hitSplit) return { ...hitSplit, _stage: "stage4_split" };
       }
     }
 
-    return null;
+    // STUFE 4B: Artikel-Fallback ("The International" -> "International")
+    const articleRegex = /^(?:the|a|an|der|die|das|les|le|la)\s+/i;
+    if (articleRegex.test(queryTitle)) {
+      const titleWithoutArticle = queryTitle.replace(articleRegex, "").trim();
+      if (titleWithoutArticle.length >= 3) {
+        if (parsedItem.year) {
+          const hitArtYear = await searchTmdbStage(titleWithoutArticle, true, type);
+          if (hitArtYear) return { ...hitArtYear, _stage: "stage4b_article_year" };
+        }
+        const hitArt = await searchTmdbStage(titleWithoutArticle, false, type);
+        if (hitArt) return { ...hitArt, _stage: "stage4b_article" };
+      }
+    }
+
+    return fallbackWrongDecadeHit ? { ...fallbackWrongDecadeHit, _stage: "stage_wrong_decade_conflict" } : null;
   }
 
   // ============================================================================

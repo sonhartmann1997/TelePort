@@ -4,12 +4,23 @@
             episode = parseInt(epOnly[1], 10) || 1;
             if (typeof epOnly.index === "number" && epOnly.index > 1) cutIdx = Math.min(cutIdx, epOnly.index);
           } else if (!pInfo?.isMultiPart && !/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[\(\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\)\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
+            // Fall "05 Ein Star ist geboren" / "13 Hochzeitspläne": Anführende 2- oder 3-stellige Zahl + Leerzeichen/Bindestrich bei < 4200s
+            const leadEpNumMatch = withoutExt.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/);
+            const numberedMovieGuardRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
+            const leadEpVal = leadEpNumMatch ? parseInt(leadEpNumMatch[1], 10) : 0;
+            if (leadEpNumMatch && leadEpVal >= 1 && leadEpVal <= 399 && !numberedMovieGuardRe.test(withoutExt) && !/\\b(?:19[2-9]\\d|20[0-2]\\d)\\b/.test(withoutExt)) {
+              isSeries = true;
+              season = Number(msgObj?.pre_context?.season || 1);
+              episode = leadEpVal;
+              episodeTitle = cleanClientMediaTitle(leadEpNumMatch[2]);
+              explicitTitle = (msgObj?.pre_context?.seriesHeader || msgObj?.pre_context?.title || episodeTitle);
+            }
             // Fall Black Box 1 bis 6, Spuk im Hochhaus 1..7 & Pippi Langstrumpf 1 Pippi zieht...:
-            const strippedTrailingQual = withoutExt
+            const strippedTrailingQual = !isSeries ? withoutExt
               .replace(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/gi, " ")
               .replace(/\\b(?:1080p|720p|2160p|480p|4k|uhd|x264|x265|h264|h265|hevc|ger|deu|german|deutsch|web-dl|webrip|bluray|hd|mp4|mkv|avi)\\b/gi, " ")
               .replace(/\\s+/g, " ")
-              .trim();
+              .trim() : "";
             const franchiseGuardRe = /^(?:iron man|thor|avengers|matrix|john wick|shrek|toy story|cars|fast|furious|hangover|rambo|rocky|creed|mad max|spider man|batman|superman|deadpool|guardians|men in black|rush hour|bad boys|oceans|expendables|transporter|taken|equalizer|punisher|blade|underworld|resident evil|alien|predator|terminator|jurassic|indiana jones|star wars|harry potter|herr der ringe|hobbit|fluch der karibik|mission impossible|james bond|bourne|twilight|tribute von panem|maze runner|divergent|pitch perfect|step up|scary movie|american pie|final destination|saw|scream|conjuring|insidious|paranormal|purge|halloween|freitag der|nightmare|hellraiser|chucky|annabelle|nun|sinister|troll|ip man|ong bak|raid|undisputed|goal|hooligans|manta|fack ju|ostwind|bibi|conni|schule der magischen|vorstadtkrokodile|wilde kerle|fünf freunde|tkkg|drei fragezeichen|deep blue sea|deep blue|sharknado|sector|ghettogangz|banlieue|burg schreckenstein|fifty shades|jumanji|hotel transsilvanien|ich einfach unverbesserlich|minions|ice age|madagascar|kung fu panda|drachenzähmen|rio|sing|pets|zoomania|vaiana|frozen|eiskönigin|ralph reichts|incredibles|unglaublichen|findet nemo|findet dorie|monster ag|monster uni|wall e|oben|coco|soul|luca|encanto)\\b/i;
             const isKnownClassicSeriesRe = /^(?:pippi langstrumpf|zur see|spuk im hochhaus|spuk unterm riesenrad|spuk von draußen|black box|das schloss im nebel|gormenghast|archiv des todes|front ohne gnade|feuerdrachen|gefährliche fahndung|treffpunkt flughafen|rote bergsteiger)\\b/i;
             const ctxSeriesHeader = msgObj && msgObj.pre_context && msgObj.pre_context.seriesHeader
@@ -57,6 +68,9 @@
             .replace(new RegExp("\\\\b" + year + "\\\\b", "g"), " ");
         }
         let cleanTitle = cleanClientMediaTitle(titleCand) || "Unbekannt";
+        if (cleanTitle && cleanTitle.length > 50) {
+          cleanTitle = cleanTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+        }
         const jacobMatch = cleanTitle.match(/^(Jacob\\s*2[\\s/_]*2)\\s+(und\\s+.+)$/i);
         if (jacobMatch) cleanTitle = "Jacob 2/2";
 
@@ -462,17 +476,20 @@
               delete ctx.tmdbId;
             }
           } else if (!msg.file_name && msg.media_type !== "video_file") {
-            const headSlice = txt.slice(0, 110);
-            const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
-            if (ym && ym.index >= 2) {
-              ctx.year = parseInt(ym[1], 10);
-              const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
-              if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
-                ctx.title = tGuess;
-                if (ctx.isSeriesHeader) {
-                  ctx.seriesHeader = tGuess;
-                } else {
-                  delete ctx.seriesHeader;
+            const isCollectionHeaderLine = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\b\\d+\\s*-\\s*\\d+\\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
+            if (!isCollectionHeaderLine) {
+              const headSlice = txt.slice(0, 110);
+              const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+              if (ym && ym.index >= 2) {
+                ctx.year = parseInt(ym[1], 10);
+                const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
+                if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
+                  ctx.title = tGuess;
+                  if (ctx.isSeriesHeader) {
+                    ctx.seriesHeader = tGuess;
+                  } else {
+                    delete ctx.seriesHeader;
+                  }
                 }
               }
             }
@@ -518,10 +535,39 @@
 
           if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
 
+          // Collection-Header & Detailtitel-Schutz ("Der König der Löwen 2 - Simbas Königreich (1998)" vs. "König der Löwen teil 1 bis 3"):
+          // 1. Wenn der Titel des Nachbar-Posts Wörter wie "teil 1 bis 3", "1-3", "collection", "trilogie" oder "box" enthält, darf er NIEMALS parsedVideo.title überschreiben!
+          // 2. Wenn das aktuelle Video bereits einen eigenen ausführlichen Titel mit Fortsetzungs-Nummer ([1-9]) oder Bindestrich ("-") besitzt,
+          //    ist der eigene Titel hochwertiger als jeder Nachbar-Post und darf nicht überschrieben werden!
+          const neighborTitleLower = firstLine.toLowerCase();
+          const isCollectionHeader = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\d+\\s*-\\s*\\d+|collection|trilogie|trilogy|quadrilogie|box)/i.test(neighborTitleLower);
+          const videoHasDetailedTitle = Boolean(parsedVideo.title && (/[1-9]/.test(parsedVideo.title) || parsedVideo.title.includes("-") || parsedVideo.title.includes("–") || parsedVideo.title.includes(":")));
+
+          if (isCollectionHeader || videoHasDetailedTitle) {
+            return {
+              ...parsedVideo,
+              contextOverview: lines.slice(1).join(" ").trim() || parsedVideo.contextOverview || ""
+            };
+          }
+
           const cleanedNeighborTitle = firstLine
             .replace(/\\s*[(\\[\\-–]*\\s*\\b(19[2-9]\\d|20[0-2]\\d)\\b\\s*[)\\]]*\\s*$/, "")
             .trim();
-          const finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
+          // "Cocaine Bear"- & "Ted Bundy"-Schutz (Max. Titellänge 60 Zeichen):
+          // Wenn die erste Zeile des Nachbar-Posts länger als 60 Zeichen ist, ist es eine Filmbeschreibung!
+          if (cleanedNeighborTitle.length > 60) {
+            return {
+              ...parsedVideo,
+              year: parsedVideo.year || neighborYear,
+              contextOverview: rawText.trim(),
+              neighborEnriched: true,
+              neighborOffset: offset
+            };
+          }
+          let finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
+          if (finalTitle && finalTitle.length > 50) {
+            finalTitle = finalTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+          }
 
           return {
             ...parsedVideo,
@@ -775,28 +821,72 @@
               }
             }
 
-            // Schutzregel ("The Rookie S01E11" / "E01S01 Frontier 2016"):
+            // "Episode 6 Staffel 2 von Little Britain.mp4" Context-Bleeding Fix:
+            // Extrahiere den Seriennamen hinter "von" VOR jedem Fallback auf effectivePre und überschreibe sofort den alten Kontext!
+            const rawVonSource = String(rawFileName || validFilePath || normFileName || firstTextLine || "");
+            const vonMatch = rawVonSource.match(/(?:Episode|Folge)[\\s._]*(\\d+)(?:[\\s._\\-&]+\\d+)?[\\s._\\-]*(?:Staffel|Season)[\\s._]*(\\d+)[\\s._\\-]*von[\\s._]+(.+?)(?:\\.mp4|\\.mkv|\\.avi|s_to_Serien|_sto_Serien|[\\s._]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|$)/i);
+            let vonSeriesTitle = "";
+            if (vonMatch) {
+              const epFromVon = parseInt(vonMatch[1], 10) || 1;
+              const seFromVon = parseInt(vonMatch[2], 10) || 1;
+              vonSeriesTitle = cleanClientMediaTitle(vonMatch[3].replace(/_/g, " ").trim()) || vonMatch[3].replace(/_/g, " ").trim();
+              seInText = "S" + String(seFromVon).padStart(2, "0") + "E" + String(epFromVon).padStart(2, "0");
+              if (vonSeriesTitle) {
+                rollingPreContext = {
+                  seriesHeader: vonSeriesTitle,
+                  season: seFromVon,
+                  isSeriesHeader: true,
+                  lastMessageId: currentMsgId
+                };
+                effectivePre = { ...rollingPreContext };
+              }
+            }
+
+            // Anführende 2- oder 3-stellige Zahl als Folge erkennen ("05 Ein Star ist geboren", "13 Hochzeitspläne")
+            const leadEpCandidateStr = String(normFileName || firstTextLine || "").trim();
+            const leadEpMatch = (!seInText && !multiLineSeLine && !vonMatch && (Number(msg.duration_seconds || 0) <= 0 || Number(msg.duration_seconds || 0) < 4200))
+              ? leadEpCandidateStr.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/)
+              : null;
+            const numberedMovieGuardClientRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
+            let isLeadingNumberEpisode = false;
+            if (leadEpMatch && !numberedMovieGuardClientRe.test(leadEpCandidateStr) && !/\\b(?:19[2-9]\\d|20[0-2]\\d)\\b/.test(leadEpCandidateStr)) {
+              const epVal = parseInt(leadEpMatch[1], 10);
+              if (epVal >= 1 && epVal <= 399) {
+                isLeadingNumberEpisode = true;
+                const ctxSeason = effectivePre.season || rollingPreContext.season || 1;
+                seInText = "S" + String(ctxSeason).padStart(2, "0") + "E" + String(epVal).padStart(2, "0");
+                multiLineEpTitle = cleanClientMediaTitle(leadEpMatch[2]);
+                if (rollingPreContext.seriesHeader) {
+                  rollingPreContext.lastMessageId = currentMsgId;
+                }
+              }
+            }
+
+            // Schutzregel ("The Rookie S01E11" / "E01S01 Frontier 2016" / "Episode 6 Staffel 2 von Little Britain"):
             // Wenn die Datei oder Caption bereits einen EIGENEN Seriennamen mitbringt, darf dieser NIEMALS vom effectivePre der vorherigen Serie überschrieben werden!
-            // WICHTIG: Wenn ownExplicitSeriesTitle mit effectivePre.seriesHeader beginnt (z.B. "Spuk im Hochhaus 1" bei Header "Spuk im Hochhaus" oder "Black Box 1" bei Header "Black Box"),
-            // ist es DIESELBE Serie (Episode N) und der Vorab-Kontext (inkl. Jahr 1982 / 2023) MUSS erhalten bleiben!
-            const fileCleanOwn = !isGenericFile ? cleanClientMediaTitle(( normFileName || "" ).replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "")) : "";
-            const textCleanOwn = cleanFirstLine ? cleanClientMediaTitle(firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "").replace(/\\bStaffel\\s*\\d+.*/i, "")) : "";
-            const ownExplicitSeriesTitle = (textCleanOwn && textCleanOwn.length >= 2) ? textCleanOwn : ((fileCleanOwn && fileCleanOwn.length >= 2) ? fileCleanOwn : "");
+            const fileCleanOwn = vonSeriesTitle
+              ? vonSeriesTitle
+              : (!isGenericFile && !isLeadingNumberEpisode ? cleanClientMediaTitle(( normFileName || "" ).replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "")) : "");
+            const textCleanOwn = (cleanFirstLine && firstTextLine.length <= 60 && !isLeadingNumberEpisode)
+              ? cleanClientMediaTitle(firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "").replace(/\\bStaffel\\s*\\d+.*/i, ""))
+              : "";
+            const ownExplicitSeriesTitle = vonSeriesTitle || ((textCleanOwn && textCleanOwn.length >= 2) ? textCleanOwn : ((fileCleanOwn && fileCleanOwn.length >= 2) ? fileCleanOwn : ""));
 
             const normOwnSeries = normalizeClientCompareTitle(ownExplicitSeriesTitle);
             const normHeaderSeries = effectivePre.seriesHeader ? normalizeClientCompareTitle(effectivePre.seriesHeader) : "";
             const isSameSeriesWithEpSuffix = Boolean(
               normOwnSeries &&
               normHeaderSeries &&
-              (normOwnSeries === normHeaderSeries || normOwnSeries.startsWith(normHeaderSeries + " ") || normOwnSeries.startsWith(normHeaderSeries))
+              (normOwnSeries === normHeaderSeries || /^(.+?)\\s+0*\\d{1,2}(?:\\s+.+)?$/.exec(normOwnSeries)?.[1] === normHeaderSeries)
             );
 
             if (ownExplicitSeriesTitle && effectivePre.seriesHeader && !isSameSeriesWithEpSuffix) {
-              const hasExplicitEpCue = Boolean(seInText || multiLineSeLine || /^(?:pippi langstrumpf|zur see|spuk im hochhaus|spuk unterm riesenrad|spuk von draußen|black box)\\b/i.test(ownExplicitSeriesTitle));
+              const hasExplicitEpCue = Boolean(vonSeriesTitle || seInText || multiLineSeLine || /^(?:pippi langstrumpf|zur see|spuk im hochhaus|spuk unterm riesenrad|spuk von draußen|black box)\\b/i.test(ownExplicitSeriesTitle));
               effectivePre = { lastMessageId: currentMsgId };
               if (hasExplicitEpCue) {
                 const strippedNewHeader = cleanClientMediaTitle(ownExplicitSeriesTitle.replace(/\\s+0*([1-9]\\d?)(?:\\s+.+)?$/, "")) || ownExplicitSeriesTitle;
                 rollingPreContext = { seriesHeader: strippedNewHeader, isSeriesHeader: true, lastMessageId: currentMsgId };
+                effectivePre = { ...rollingPreContext };
               } else {
                 rollingPreContext = { lastMessageId: currentMsgId };
               }
@@ -812,16 +902,25 @@
             const preTitleMatchesOwn = !ownBaseWord || ownBaseWord.length < 3 ||
               (effectivePre.title && String(effectivePre.title).toLowerCase().includes(ownBaseWord));
 
-            if (!ownExplicitSeriesTitle && effectivePre.title && ((isGenericFile && !cleanFirstLine) || preTitleMatchesOwn) && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
+            // Beschreibungs-Schutz ("Ted Bundy" / "Cocaine Bear"): Wenn firstTextLine > 60 Zeichen lang ist, ist es eine Beschreibung und kein Titel!
+            const firstLineIsDescription = firstTextLine.length > 60;
+
+            if (vonSeriesTitle) {
+              baseCandidate = vonSeriesTitle + " " + seInText;
+              parsedFrom = "Dateiname (Episode X Staffel Y von Serie)";
+            } else if (isLeadingNumberEpisode && (effectivePre.seriesHeader || effectivePre.title)) {
+              baseCandidate = (effectivePre.seriesHeader || effectivePre.title) + " " + seInText + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
+              parsedFrom = "Serien-Header + Episodennummer";
+            } else if (!ownExplicitSeriesTitle && effectivePre.title && ((isGenericFile && !cleanFirstLine) || preTitleMatchesOwn) && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
               baseCandidate = effectivePre.title;
               parsedFrom = "Vorab-Steckbrief (Nachricht darüber)";
             } else if (!ownExplicitSeriesTitle && effectivePre.seriesHeader && (isGenericFile || !cleanFirstLine)) {
               baseCandidate = effectivePre.seriesHeader + (seInText ? (" " + seInText) : "");
               parsedFrom = "Serien-Header (Nachricht darüber)";
-            } else if (multiLineSeLine && cleanFirstLine) {
+            } else if (multiLineSeLine && cleanFirstLine && !firstLineIsDescription) {
               baseCandidate = cleanFirstLine + " " + multiLineSeLine + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
               parsedFrom = "Caption Zeile 1";
-            } else if (cleanFirstLine && firstTextLine.length >= 2 && firstTextLine.length <= 140) {
+            } else if (cleanFirstLine && firstTextLine.length >= 2 && !firstLineIsDescription) {
               // Regel 2: Cross-Check Text <-> Dateiname (z. B. D O P E T H I E F im Text vs Dope.Thief im Dateinamen)
               const rawSpaced = /^(?:[A-Za-zÄÖÜäöüß]\\s+){3,}[A-Za-zÄÖÜäöüß]/.test(firstTextLine);
               if (rawSpaced && normFileName && !isGenericFile) {
@@ -832,7 +931,7 @@
                 parsedFrom = isRarMsg ? "RAR-Archiv (Caption)" : "Caption Zeile 1";
               }
             } else {
-              baseCandidate = normFileName || firstTextLine;
+              baseCandidate = normFileName || (firstLineIsDescription ? firstTextLine.split(/[:\\n(]/)[0].trim().slice(0, 40) : firstTextLine);
               parsedFrom = isRarMsg ? "RAR-Archiv" : (rawFileName ? "Dateiname" : "Caption");
             }
 
