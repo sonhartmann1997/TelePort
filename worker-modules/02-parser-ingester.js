@@ -1148,8 +1148,13 @@
       episode = parseInt(m[2], 10);
       if (m[3]) episodeEnd = parseInt(m[3], 10);
 
-      // Schutz für Batch-Überschriften auf Einzelfolgen (z. B. ID 45807 Hardcore Pawn "Staffel 5 Folge 19 - 26" bei Datei "S05E19")
-      if (episodeEnd && (episodeEnd - episode >= 2) && fileSeParts && !fileSeParts.episodeEnd) {
+      // Dateiname hat Vorrang vor Caption bei Episoden-Widersprüchen (z.B. ID 911: Datei "Queen of the South S01E13.mp4" vs. Caption "S01E3")
+      if (fileSeParts && fileSeParts.episode && fileSeParts.episode !== episode) {
+        episode = fileSeParts.episode;
+        if (fileSeParts.season) season = fileSeParts.season;
+        episodeEnd = fileSeParts.episodeEnd || null;
+      } else if (episodeEnd && (episodeEnd - episode >= 2) && fileSeParts && !fileSeParts.episodeEnd) {
+        // Schutz für Batch-Überschriften auf Einzelfolgen (z. B. ID 45807 Hardcore Pawn "Staffel 5 Folge 19 - 26" bei Datei "S05E19")
         episode = fileSeParts.episode;
         episodeEnd = null;
       }
@@ -1191,8 +1196,12 @@
     } else if (textSeParts || fileSeParts) {
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
-      const mainSe = textSeParts || fileSeParts;
-      season = mainSe.season;
+      // Dateiname hat Vorrang vor Caption bei Episoden-Widersprüchen (z.B. ID 911: Datei "Queen of the South S01E13.mp4" vs. Caption "Queen of the South S01E3"):
+      // Wenn der Dateiname ein klares Episoden-Schema besitzt und die Caption abweicht (insb. 2-stellig im Dateinamen vs. 1-stellig/Tippfehler im Text), gewinnt immer der Dateiname!
+      const mainSe = (fileSeParts && fileSeParts.episode && (!textSeParts || fileSeParts.episode !== textSeParts.episode))
+        ? fileSeParts
+        : (textSeParts || fileSeParts);
+      season = mainSe.season || fileSeParts?.season || textSeParts?.season || 1;
       episode = mainSe.episode;
       episodeEnd = mainSe.episodeEnd;
 
@@ -1236,8 +1245,8 @@
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
       seriesTitle = cleanMediaTitle(seriesFolge[1].replace(/Staffel\s*\d+.*/i, "").replace(YEAR_REGEX, " "));
-      season = seriesFolge[2] ? parseInt(seriesFolge[2], 10) : (inlineStaffelNum || 1);
-      episode = parseInt(seriesFolge[3], 10);
+      season = (fileSeParts && fileSeParts.season) ? fileSeParts.season : (seriesFolge[2] ? parseInt(seriesFolge[2], 10) : (inlineStaffelNum || 1));
+      episode = (fileSeParts && fileSeParts.episode) ? fileSeParts.episode : parseInt(seriesFolge[3], 10);
       episodeTitle = cleanMediaTitle(seriesFolge[4]);
       // Fall 7 (IDs 12794-12795): "01 - Jacob_2_2_und_der_Kapuzen_Reisszahn_Episode_1.mp4" -> Serie "Jacob 2/2"
       const jacobMatch = seriesTitle.match(/^(Jacob\s*2[\s/_]*2)\s+(und\s+.+)$/i);
@@ -1249,8 +1258,8 @@
       // Fall 17 (ID 131141) & Breaking Bad S03 Folge 1-4: "Folge 1" / "Folge 15 - @ArcheMovie"
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
-      season = inlineStaffelNum || 1;
-      episode = parseInt(leadingFolgeOnly[1], 10);
+      season = (fileSeParts && fileSeParts.season) ? fileSeParts.season : (inlineStaffelNum || 1);
+      episode = (fileSeParts && fileSeParts.episode) ? fileSeParts.episode : parseInt(leadingFolgeOnly[1], 10);
       const remClean = cleanMediaTitle(leadingFolgeOnly[2].replace(YEAR_REGEX, " "));
       seriesTitle = activeContext.seriesHeader || remClean || "Unbekannt";
       if (activeContext.seriesHeader && remClean && normalizeCompareString(remClean) !== normalizeCompareString(activeContext.seriesHeader)) {
@@ -1431,6 +1440,8 @@
     }
 
     return {
+      msgId: currentMsgId > 0 ? currentMsgId : null,
+      message_id: currentMsgId > 0 ? currentMsgId : null,
       mediaType,
       isArchive,
       tmdbId,
@@ -1466,7 +1477,8 @@
       if (!item) continue;
       const isTv = Boolean(item.isSeries || item.mediaType === "tv" || item.type === "series" || item.type === "tv");
       const title = String(item.cleanTitle || item.title || "Unbekannt").trim();
-      const msgId = item.message_id || item.msg_id || item.id || null;
+      const rawMsgIdVal = Number(item.message_id || item.msg_id || item.id || 0);
+      const msgId = rawMsgIdVal > 0 ? rawMsgIdVal : null;
       const fName = item.raw_file_name || item.rawFileName || item.file_name || item.filename || null;
 
       if (isTv) {

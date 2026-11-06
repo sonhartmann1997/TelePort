@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan für die KV-Batching- & Write-Back-Engine zur Vermeidung von Cloudflare 503-/Quota-Limits:\n1. Konsolidiertes User-KV-Dokument (u_bundle_<chatId> vereint settings, savedList, folders und session in einem einzigen KV-Key mit automatischer Legacy-Migration).\n2. Zentraler In-Memory Read-Through Cache & Dirty Write-Back Batcher (kvBatchEngine) für MOVIE_SAVED und MY_KV.\n3. Periodischer & Session-End Write-Back (statt Einzel-Writes bei jedem Klick/Log-Event), inklusive Deduplizierung identischer Payloads.",
-  "updatedAt": "2026-11-06T12:09:24.801518430Z",
+  "summary": "Implementation plan for (1) displaying explicit conflict/review reasons in the Prüfen & Korrigieren tab, (2) eliminating empty VIP stream covers without valid file_ids from catalog/playlists and cleaning up orphan D1 entries, (3) replacing false SKIPPED_DUPLICATE rejections with smart Episode/Movie UPSERT while preserving multi-quality stream selection, and (4) prioritizing filename episode numbers over caption typos (e.g. Queen of the South S01E13.mp4 vs S01E3) with numeric message_id normalization.",
+  "updatedAt": "2026-11-06T13:19:41.426410544Z",
   "requestFeedback": true,
   "userFacing": true
 }

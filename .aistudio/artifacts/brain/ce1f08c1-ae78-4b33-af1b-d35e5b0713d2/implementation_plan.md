@@ -1,91 +1,94 @@
-# KV-Batching & Session Write-Back Engine (Schutz gegen 503- & Quota-Limits)
+# Episoden-UPSERT, Dateinamen-Priorität, Prüfgründe & Schutz vor leeren VIP-Covers
 
-Dieser Plan führt eine zentrale **KV-Batching- & Write-Back-Engine** ein, die alle Lese- und Schreibzugriffe auf Cloudflare KV (`MOVIE_SAVED` & `MY_KV`) im Arbeitsspeicher bündelt, Nutzerdaten in einem einzigen KV-Dokument pro `chatId` konsolidiert und Änderungen gesammelt am Session-Ende bzw. periodisch zurückschreibt.
+Dieses Update schließt die 34 fehlenden Serienfolgen durch ein echtes D1-Episoden-UPSERT (inkl. Multi-Qualitäts-Unterstützung), gibt dem Dateinamen Vorrang bei Caption-Tippfehlern (`S01E13.mp4` statt `S01E3`), blendet leere Cover ohne gültige Videodatei (`file_id`) konsequent aus und zeigt im Tab **„🛠️ Prüfen & Korrigieren“** zu jedem Eintrag den exakten Prüfgrund (`reason`) prominent an.
+
+---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> **Bestätigte Architektur-Entscheidungen aus deinen Antworten:**
-> - **Bestätigte Entscheidung 1 – Konsolidiertes User-KV-Dokument (`u_bundle_<chatId>`) + Write-Back-Batcher**: Statt 4 separater KV-Keys pro Nutzer (`settings_<id>`, `user_<id>`, `folders_<id>`, `sess_<id>`) werden alle vier Bereiche in einem einzigen JSON-Bundle `u_bundle_<chatId}` gespeichert (mit automatischer, transparenter Übernahme bestehender alter Keys beim ersten Lesen). Dadurch sinken die KV-Aufrufe pro Nutzer-Interaktion sofort um bis zu **75–90 %**.
-> - **Bestätigte Entscheidung 2 – In-Memory-Pufferung mit periodischem & Session-End-Flush**: Schreibzugriffe (Merkliste, Ordner, Filter, Activity-Logs, Anti-Spam-Status, Bot-Tokens) ändern sofort den RAM-Zustand (`memoryFallback`) und markieren den Key in einer `dirtyKvWrites`-Map. Ein echter KV-Write erfolgt erst gebündelt am Ende einer Session/Import-Sequenz oder nach Ablauf des Puffer-Intervalls.
+> **Bestätigte Architekturentscheidungen aus der Rücksprache:**
+> - **Umgang mit leeren Covern ohne gültige Videodatei (`file_id`)**: Für VIP-Streams werden Einträge ohne echte Telegram-Videodatei (`telegram_file_id`) automatisch aus Katalog, Entdecken-Ansicht und VIP-Playlisten ausgeblendet sowie verwaiste DB-Einträge bereinigt.
+> - **Episoden-UPSERT & Multi-Qualität**: Existiert ein Episoden-Slot bereits, wird `SKIPPED_DUPLICATE` **nur noch dann** ausgelöst, wenn sowohl `message_id` als auch `file_id` identisch sind. Leere Slots werden per UPSERT gefüllt, abweichende Dateien derselben Qualitätsstufe aktualisiert und unterschiedliche Qualitätsstufen (`720p`, `1080p`, `4K`, verschiedene Fassungen) bleiben weiterhin nebeneinander auswählbar.
 
 ---
 
-## 1. Übersicht & Kernkonzept
+## 1. Overview & Core Concept
 
-- **Was umgesetzt wird**:
-  1. **Zentraler KV-Read-Through- & Write-Back-Manager (`kvBatchEngine`)**:
-     - Jeder KV-Key wird pro Worker-Session maximal **einmal** aus Cloudflare KV gelesen und danach vollständig aus dem RAM (`memoryFallback`) bedient (auch bei `null`/leeren Werten, damit nicht-existente Keys wie `TG_CUSTOM_BOT_TOKEN` nicht bei jedem Request erneut abgefragt werden).
-     - Alle Schreibvorgänge (`kvStagePut`, `kvStageDelete`) landen zunächst im Dirty-Buffer (`dirtyKvWrites`), wobei mehrfache Änderungen am selben Key automatisch zu **einem einzigen** Schreibvorgang verschmolzen werden (Write Coalescing).
-  2. **Unified User Bundle (`u_bundle_<chatId>`)**:
-     - Vereint `session` (`wlState`, `searchState`, `originSession`, `simAnchor`, `promptState`), `settings` (Filter, FSK, UI-Scale, Delivery-Config), `savedList` (Merkliste / VIP-Stream-Items) und `folders` (Playlists & Sammlungen) in einem einzigen KV-Eintrag pro `chatId`.
-     - **Nahtlose Legacy-Migration**: Existiert `u_bundle_<chatId>` noch nicht in KV, liest der Hydrator einmalig vorhandene Altdaten (`user_<chatId>`, `folders_<chatId>`, `settings_<chatId>`, `sess_<chatId>`) ein und führt sie im neuen Bundle zusammen.
-  3. **Gedrosseltes Write-Back für System- & Diagnose-Keys (`MY_KV`)**:
-     - Häufig aktualisierte System-Keys wie `TG_ACTIVITY_LOG_JSON`, `TG_LOG_RETENTION_DAYS`, `TG_ANTI_SPAM_STATE_JSON` und `tma_backup_import_checkpoint_v1` werden im RAM gepuffert und nur noch periodisch (z. B. alle 15–25 Mutationen oder nach >= 60 Sekunden) bzw. beim expliziten Session-Flush in KV geschrieben.
+- **Was wird gelöst**:
+  1. **Prüfgrund (`reason`) im Tab „🛠️ Prüfen & Korrigieren“**: Jede Prüfkarte zeigt sofort in einer hervorgehobenen Diagnose-Zeile an, *warum* der Eintrag zur Prüfung markiert wurde (z. B. *„Jahres-Konflikt: Datei nennt 1954, TMDb-Treffer ist 2005“*, *„Staffel-Überlauf: Datei verlangt Staffel 4, TMDb-Treffer hat nur 1 Staffel“*, *„Niedrige Konfidenz (68% Match)“* oder *„Kein TMDb-Treffer für Suchtitel“*).
+  2. **Keine leeren VIP-Stream-Cover mehr**: Serien, für die lediglich TMDb-Staffel-Metadaten in `series_episodes` existieren, aber keine einzige echte Videodatei in `episode_files` vorliegt, erhielten bisher fälschlicherweise ein VIP-Qualitäts-Badge und erschienen als leere Cover. Zudem wurden Filme ohne `fileId` beim Import in D1 angelegt. Beides wird unterbunden und bereinigt.
+  3. **Smartes Episoden-UPSERT statt falschem `SKIPPED_DUPLICATE`**: Bisher wurden Episoden übersprungen, sobald eine Signatur ohne `file_id`/`message_id` (oder mit Dateigröße `0`) im Set lag. Künftig prüft die Speicherschleife exakt auf `(telegram_file_id, message_id)` und führt bei leeren Slots oder aktualisierten Dateien ein D1-UPSERT aus, während verschiedene Qualitäten (`720p`, `1080p`, `4K`) als auswählbare Streams erhalten bleiben.
+  4. **Dateiname schlägt Caption bei Episoden-Widersprüchen (`Queen of the South S01E13.mp4` vs. `S01E3`)**: Hat der Dateiname ein eindeutiges `SxxExx`- oder `Episode X Staffel Y`-Schema, gewinnt bei Abweichungen zur Caption immer die Episoden-/Staffelnummer aus dem Dateinamen. Zusätzlich werden alle `msgId`-Werte im Logger strikt als `Number` normalisiert.
 
 ---
 
-## 2. User Experience & Admin-Transparenz
+## 2. User Experience & Visual Design
 
-- **Sofortige UI-Reaktion ohne KV-Wartezeit**:
-  - Alle Aktionen im Admin-Panel, in der Netflix-Mini-App und im Telegram-Bot lesen und mutieren direkt den In-Memory-Bundle-State. Dadurch antworten Endpunkte wie `/api/tma/admin/overview`, `/api/tma/admin/playlists` und `/api/tma/stream` verzögerungsfrei und lösen keine 503-Fehler durch KV-Rate-Limits mehr aus.
-- **Sicheres Persistieren über `waitUntil` & Session-Flush**:
-  - Am Ende eines Benutzer-Flows oder Batch-Imports (sowie über einen periodischen Flush-Hook in `ctx.waitUntil`) schreibt `flushDirtyKvBatch(env, options)` alle geänderten Keys in einem einzigen Durchgang zurück, sofern sich der JSON-Inhalt gegenüber dem letzten KV-Stand tatsächlich geändert hat (Hash-/String-Diff-Prüfung).
+- **Diagnose-Banner in jeder Prüfkarte (`🛠️ Prüfen & Korrigieren`)**:
+  - Direkt unterhalb der Kopfzeile jeder Karte im Prüf-Tab wird eine klare, farbcodierte Begründungs-Box (`🔎 Warum prüfen? / Grund:`) eingeblendet:
+    - **Rot (`#f87171` / `rgba(239,68,68,0.12)`)** bei fehlendem TMDb-Treffer (`TMDB_NOT_FOUND`).
+    - **Amber (`#fbbf24` / `rgba(245,158,11,0.14)`)** bei Kontext-, Jahres- oder Staffel-Konflikten (`CONFLICT_?`, z. B. Abweichung > 2 Jahre oder Staffel-Überlauf) sowie bei niedriger Match-Konfidenz (`< 74 %`).
+- **Sauberer VIP-Katalog ohne Geister-Cover**:
+  - Im VIP-Stream-Modus und in der Bot-VIP-Playlist werden ausschließlich Filme und Serien gerendert, die mindestens eine valide Videodatei (`scoreTelegramFileIdValidity > 0`) in `movie_files` bzw. `episode_files` besitzen.
 
 ---
 
-## 3. Technische Architektur & Datenfluss
+## 3. Key Product Decisions & Trade-Offs
+
+- **Entscheidung 1: Exakter Duplikat-Vergleich über `file_id` + `message_id` statt Metadaten-Schätzung**
+  - *Gewählter Ansatz*: Ein Eintrag gilt nur dann als `SKIPPED_DUPLICATE`, wenn in D1 für dieselbe Episode bzw. denselben Film bereits exakt dieselbe `telegram_file_id` **und** dieselbe `message_id` gespeichert ist.
+  - *Warum*: In Telegram-JSON-Exporten fehlen oft exakte Byte-Größen (`file_size = 0`). Ein reiner Vergleich auf `quality | codec | size:0` führte dazu, dass Folge 4–6 oder Re-Uploads als vermeintliches Duplikat verworfen wurden.
+- **Entscheidung 2: Dateinamen-Priorität bei `SxxExx`-Abweichungen**
+  - *Gewählter Ansatz*: Wenn sowohl Dateiname (`fileSeParts`) als auch Caption (`textSeParts` / `multiLineSeHit`) eine Episodennummer liefern und diese voneinander abweichen (insbesondere wenn der Dateiname zweistellig wie `E13` ist und die Caption `E3` lautet), wird zwingend `fileSeParts` für `season`, `episode` und `episodeEnd` verwendet.
+  - *Warum*: Dateinamen stammen automatisiert aus der Release-/Encoding-Pipeline, während Telegram-Captions häufig händisch getippt werden.
+
+---
+
+## 4. Technical Architecture & Data Strategy
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                 INCOMING REQUEST / BOT UPDATE / ADMIN ACTION                 │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ 1. IN-MEMORY READ-THROUGH CACHE & UNIFIED USER BUNDLE                        │
-│                                                                              │
-│  getUserBundle(env, chatId)  ──► Prüft RAM (`u_bundle_<chatId>`)             │
-│    ├─ Treffer im RAM?        ──► Sofortige Rückgabe (0 KV-Reads!)            │
-│    └─ Nicht im RAM?          ──► 1x KV-Read `u_bundle_<chatId>`              │
-│                                  (Fallback: einmalige Migration alter Keys   │
-│                                   `user_`, `folders_`, `settings_`, `sess_`) │
-│                                                                              │
-│  cachedKvGet(kv, key)        ──► Speichert auch leere Treffer ("__KV_NULL__")│
-│                                  im RAM (verhindert wiederholte KV-Reads     │
-│                                  für `TG_CUSTOM_BOT_TOKEN` etc.)             │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ 2. WRITE COALESCING & DIRTY BUFFER (`dirtyKvWrites` Map)                     │
-│                                                                              │
-│  • saveUserSettings / saveRawList / saveFolders / saveWishlistViewState      │
-│      ──► Mutiert `u_bundle_<chatId>` im RAM                                  │
-│      ──► Markiert `u_bundle_<chatId>` im Dirty-Buffer (1 Key statt 4!)       │
-│                                                                              │
-│  • recordAndPruneWorkerActivityLog / persistAntiSpamStateToStorage           │
-│      ──► Aktualisiert RAM-Liste sofort                                       │
-│      ──► Reiht Key mit Zähler/Zeitstempel in den periodischen Buffer ein     │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ 3. SINGLE WRITE-BACK FLUSH (`flushDirtyKvBatch` via `ctx.waitUntil`)         │
-│                                                                              │
-│  • Prüft pro Dirty-Key: Hat sich `JSON.stringify(val)` seit dem letzten      │
-│    KV-Stand geändert? Falls identisch -> Skip (0 KV-Writes).                 │
-│  • Schreibt geänderte User-Bundles am Session-Ende / nach Batch-Abschluss    │
-│    oder wenn das periodische Zeitfenster (>= 45s / >= 15 Mutationen) greift, │
-│    in einem einzigen Write-Back nach Cloudflare KV zurück.                   │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                   1. PARSER & KONTEXT-EXTRAKTION                           │
+│  • Dateiname ("Queen of the South S01E13.mp4") vs. Caption ("S01E3")       │
+│  • fileSeParts hat Vorrang vor textSeParts/multiLineSeHit bei Abweichung   │
+│  • msgId wird überall strikt als Number(msg.id || msg.message_id) geführt  │
+└───────────────────────────────────────┬────────────────────────────────────┘
+                                        │
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│             2. D1 EPISODEN- & FILM-UPSERT + MULTI-QUALITÄT                 │
+│  • Prüfe vorhandene D1-Streams für (series_id, season, episode):           │
+│    ├─ Identische file_id UND message_id vorhanden? -> SKIPPED_DUPLICATE    │
+│    ├─ Leerer Slot (file_id leer/synthetisch) oder Update derselben Quali?  │
+│    │  -> UPSERT / UPDATE (file_id, message_id, raw_filename, quality, size)│
+│    └─ Andere Qualitätsstufe (z. B. 720p + 1080p + 4K)?                     │
+│       -> Als zusätzliche auswählbare Qualitätsstufe speichern (MERGE)      │
+└───────────────────────────────────────┬────────────────────────────────────┘
+                                        │
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│        3. GEISTER-COVER-FILTER & PRÜFGRUND-ANZEIGE IM ADMIN-UI             │
+│  • attachVipQualitiesToMediaList prüft für VIP-Status NUR echte            │
+│    episode_files & movie_files (keine leeren series_episodes-Metadaten!)   │
+│  • saveMovieToD1 / saveSeriesToD1 nur bei gültiger Videodatei              │
+│  • Prüfen-Tab rendert explizite Begründungs-Box (errorReason / reason)     │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 4. Wichtige Produkt- & Architektur-Entscheidungen
-
-1. **Negative-Caching für optionale Konfigurations-Keys (`__KV_EMPTY__`)**:
-   - **Problem bisher**: Wenn `TG_CUSTOM_BOT_TOKEN`, `TG_DEFAULT_CHAT_ID` oder `tma_verified_source_channel_v1` in KV leer (`null`) waren, hat der Worker bei *jedem* API-Request erneut `kv.get(...)` aufgerufen, weil `null` nicht im RAM gecacht wurde.
-   - **Lösung**: `kvGetCached` speichert auch `null`-Ergebnisse mit einem Sentinel-Eintrag im RAM. Damit sinken KV-Reads für optionale Settings nach dem ersten Request auf **0**.
-
-2. **Konsolidierung von 4 User-Keys auf 1 `u_bundle_<chatId>`**:
-   - **Problem bisher**: Beim Laden des Admin-Dashboards oder der Mini-App wurden `settings_<id>`, `user_<id>`, `folders_<id>` und `sess_<id>` einzeln gelesen und bei Playlist-/Filter-Aktionen einzeln geschrieben.
-   - **Lösung**: Alle vier Strukturen leben gemeinsam in `u_bundle_<chatId> = { v: 2, updatedAt, session, settings, folders, savedList }`. Egal wie viele Änderungen an Merkliste, Ordnern, Suchstatus und Filtern während einer Session passieren: Beim Flush wird maximal **1 einziger KV-Write** für das gesamte Nutzerprofil ausgeführt.
+### Geplante Detail-Anpassungen:
+1. **Dateiname vor Caption & `Number(msgId)` (`02-parser-ingester.js`, `08b-tma-netflix-frontend.js`, `08c-tma-netflix-frontend.js`)**:
+   - In `parseTelegramMessage` / `parseMediaFilename`: Wenn `fileSeParts` vorhanden ist und `textSeParts` (oder `multiLineSeHit`) eine abweichende Episoden- oder Staffelnummer liefert, überschreibt `fileSeParts` immer die Episoden- und Staffelnummer der Caption (`Queen of the South S01E13.mp4` -> `S01E13`).
+   - Alle `msgId`-Felder in Parser, Batch-Ingester und Import-Logger werden einheitlich mit `Number(rawMsgId) || 0` normalisiert.
+2. **Episoden- & Film-UPSERT statt `SKIPPED_DUPLICATE` (`04-d1-database.js`, `07-webhook-callbacks.js`)**:
+   - In `resolveAndIngestMediaEntry` (`07-webhook-callbacks.js`) und `saveEpisodeFileToD1` / `saveMovieFileToD1` (`04-d1-database.js`):
+     - Vergleiche eingehende `(normalizedFid, incomingMsgId)` mit den vorhandenen D1-Einträgen der Episode.
+     - **Nur wenn ein D1-Eintrag exakt dieselbe `telegram_file_id` UND `message_id` besitzt**, wird `ingestStatus = "duplicate"` (`SKIPPED_DUPLICATE`) gemeldet.
+     - Ist der vorhandene Slot leer (`telegram_file_id` leer oder Platzhalter `vip_playlist_*` / `tg_export_0_*`) oder kommt eine aktualisierte Datei derselben Qualitätsstufe (`quality` + `version_label`), führt D1 ein `UPSERT / UPDATE` aus (`ingestStatus = "updated"` bzw. `"added"`).
+     - Kommt eine Datei mit einer anderen Auflösung/Qualität (`720p` vs. `1080p` vs. `4K`), bleibt sie als zusätzliche Qualitätsstufe in `episode_files` erhalten (`ingestStatus = "merged_quality"`).
+3. **Schutz vor leeren Covern ohne VIP-Streams (`04-d1-database.js`, `03-telegram-kv-engine.js`, `07-webhook-callbacks.js`)**:
+   - In `attachVipQualitiesToMediaList` (`04-d1-database.js`): Entferne den Fallback auf `series_episodes` (reine TMDb-Episoden-Metadaten ohne Video!), sodass `bestSeriesMap` und `vipQuality` ausschließlich aus echten Einträgen in `episode_files` (mit gültiger `telegram_file_id` und `NOT LIKE 'vip_playlist_%'`) gespeist werden.
+   - In `resolveAndIngestMediaEntry` (`07-webhook-callbacks.js`): Speichere Filme (`saveMovieToD1`) und Serien (`saveSeriesToD1`) beim Kanal-/Backup-Import nur dann in D1 und in der VIP-Playlist, wenn tatsächlich eine gültige Videodatei (`hasValidVideoFile`) verknüpft ist, und bereinige verwaiste Einträge ohne `movie_files` / `episode_files` automatisch in `cleanupEmptySeriesInD1AndMemory`.
+4. **Anzeige des Prüfgrunds (`reason` / `errorReason`) im Tab „🛠️ Prüfen & Korrigieren“ (`07-webhook-callbacks.js`, `08c-tma-netflix-frontend.js`)**:
+   - Generiere für jeden unsicheren oder fehlerhaften Eintrag (`isUncertain`, `contextError`, `unmatched`) einen klaren, sprechenden `errorReason`-Text (z. B. Jahres-Abweichung, Staffel-Konflikt, niedrige Titel-Übereinstimmung mit Prozentwert oder Grund des Nicht-Findens).
+   - Zeige diesen Grund prominent als Diagnose-Banner in jeder Karte von `renderSingleBackupReviewCardHtml` sowie in der eingeklappten Übersicht an.

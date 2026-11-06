@@ -1559,11 +1559,13 @@
            FROM episode_files ef
            LEFT JOIN series_episodes se
              ON se.series_id = ef.series_id AND se.season_number = ef.season_number AND se.episode_number = ef.episode_number
+           WHERE ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
+             AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
            ORDER BY ef.series_id ASC, ef.season_number ASC, ef.episode_number ASC, ef.updated_at DESC`
         ).all().catch(() => ({ results: [] }));
         for (const r of (res?.results || [])) {
           const sid = Number(r.series_id);
-          if (!sid) continue;
+          if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
           const prevList = epMap.get(sid) || [];
           prevList.push({
             season: Number(r.season_number || 1),
@@ -1584,7 +1586,7 @@
       if (k.startsWith("d1_ep_files_") && Array.isArray(v)) {
         for (const r of v) {
           const sid = Number(r?.series_id);
-          if (!sid) continue;
+          if (!sid || scoreTelegramFileIdValidity(r?.telegram_file_id) === 0) continue;
           const prevList = epMap.get(sid) || [];
           prevList.push({
             season: Number(r.season_number || 1),
@@ -1653,17 +1655,20 @@
       memoryFallback.set("d1_all_series_ep_map_cache_ts", now);
     }
 
-    // Map aus D1 movies & series für fehlende Poster (3 Minuten im RAM gecacht, spart 1.000 D1-Reads pro Admin-Tab-Klick)
+    // Map aus D1 movies & series für fehlende Poster + Set gültiger VIP-Film-Streams (3 Minuten im RAM gecacht)
     let posterLookup = memoryFallback.get("d1_poster_lookup_cache");
+    let validMovieIdsSet = memoryFallback.get("d1_valid_movie_ids_set_cache");
     const posterLookupTs = Number(memoryFallback.get("d1_poster_lookup_cache_ts") || 0);
-    if (!(posterLookup instanceof Map) || (now - posterLookupTs) > 180000) {
+    if (!(posterLookup instanceof Map) || !(validMovieIdsSet instanceof Set) || (now - posterLookupTs) > 180000) {
       posterLookup = new Map();
+      validMovieIdsSet = new Set();
       const db = await ensureD1Schema(env);
       if (db) {
         try {
-          const [mRows, sRows] = await Promise.all([
+          const [mRows, sRows, mfRows] = await Promise.all([
             db.prepare("SELECT tmdb_id, poster_path, details_json FROM movies LIMIT 500").all().catch(() => ({ results: [] })),
-            db.prepare("SELECT tmdb_id, poster_path, details_json FROM series LIMIT 500").all().catch(() => ({ results: [] }))
+            db.prepare("SELECT tmdb_id, poster_path, details_json FROM series LIMIT 500").all().catch(() => ({ results: [] })),
+            db.prepare("SELECT DISTINCT movie_id, telegram_file_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'").all().catch(() => ({ results: [] }))
           ]);
           for (const r of (mRows?.results || [])) {
             let ext = "";
@@ -1681,9 +1686,23 @@
             const p = resolvePosterUrl(r.poster_path, "w185", ext);
             if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
           }
+          for (const mf of (mfRows?.results || [])) {
+            if (mf && mf.movie_id && scoreTelegramFileIdValidity(mf.telegram_file_id) > 0) {
+              validMovieIdsSet.add(Number(mf.movie_id));
+            }
+          }
           memoryFallback.set("d1_poster_lookup_cache", posterLookup);
+          memoryFallback.set("d1_valid_movie_ids_set_cache", validMovieIdsSet);
           memoryFallback.set("d1_poster_lookup_cache_ts", now);
         } catch (e) {}
+      }
+      for (const [k, v] of memoryFallback.entries()) {
+        if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
+          const mid = Number(k.replace("d1_movie_files_", ""));
+          if (mid && v.some(x => x && scoreTelegramFileIdValidity(x.telegram_file_id || x.fileId || x.file_id) > 0)) {
+            validMovieIdsSet.add(mid);
+          }
+        }
       }
     }
 
@@ -1723,14 +1742,23 @@
       }
     }
 
-    // Automatische Bereinigung: Komplett leere Serien (0 gültige Episoden mit verknüpfter Videodatei) aus allen Listen filtern
+    // Automatische Bereinigung: Komplett leere Serien (0 gültige Episoden) sowie leere VIP-Filme (ohne gültige file_id) automatisch ausblenden/entfernen
+    const isVipPlaylistTarget = String(chatId) === "bot_vip";
     const validFilteredList = list.filter(item => {
       if (!item) return false;
+      const isVipItem = isVipPlaylistTarget || item.playlistMode === "vip_stream" || item.syncedFromD1;
       if (item.contentType === "series") {
         const validEps = (item.episodes || []).filter(ep =>
-          Boolean(ep && (ep.fileId || ep.file_id || ep.telegram_file_id || ep.message_id || ep.versions?.length))
+          Boolean(ep && (scoreTelegramFileIdValidity(ep.fileId || ep.file_id || ep.telegram_file_id || "") > 0 || ep.versions?.length))
         );
         return validEps.length > 0;
+      }
+      if (isVipItem && item.contentType === "movie") {
+        const tid = Number(item.tmdbId || 0);
+        const hasDirectFile = scoreTelegramFileIdValidity(item.fileId || item.telegram_file_id || "") > 0;
+        const hasMemFile = Array.isArray(memoryFallback.get(`d1_movie_files_${tid}`)) &&
+          memoryFallback.get(`d1_movie_files_${tid}`).some(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
+        return Boolean(hasDirectFile || hasMemFile || (tid > 0 && validMovieIdsSet.has(tid)));
       }
       return true;
     });
@@ -1779,6 +1807,8 @@
                     GROUP_CONCAT(DISTINCT mf.quality) AS qualities
              FROM movies m
              INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+             WHERE mf.telegram_file_id IS NOT NULL AND mf.telegram_file_id != ''
+               AND mf.telegram_file_id NOT LIKE 'vip_playlist_%' AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
              GROUP BY m.tmdb_id
              HAVING COUNT(mf.id) > 0
              ORDER BY COUNT(mf.id) DESC, m.updated_at DESC
@@ -1790,6 +1820,8 @@
                     GROUP_CONCAT(DISTINCT ef.quality) AS qualities
              FROM series s
              INNER JOIN episode_files ef ON ef.series_id = s.tmdb_id
+             WHERE ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
+               AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
              GROUP BY s.tmdb_id
              HAVING COUNT(ef.id) > 0
              ORDER BY COUNT(ef.id) DESC, s.updated_at DESC
@@ -2367,6 +2399,11 @@
       let changedAny = false;
       for (const res of resolvedResults) {
         if (!res || !res.tmdbId) continue;
+        // Für VIP-Stream-Playlisten (bot_vip / vip_stream) niemals leere Cover ohne gültige Videodatei (file_id) anlegen!
+        const hasValidFileId = Boolean(res.hasValidVideoFile || scoreTelegramFileIdValidity(res.fileMeta?.fileId || res.fileMeta?.telegram_file_id || "") > 0);
+        if ((String(chatId) === "bot_vip" || modeStr === "vip_stream") && !hasValidFileId) {
+          continue;
+        }
         const contentType = res.typeCode === "s" ? "series" : "movie";
         const prefix = res.typeCode === "s" ? "s" : "m";
         const d = res.details || {};

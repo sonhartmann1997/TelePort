@@ -52,6 +52,17 @@
             }
           }
         }
+        // Dateiname hat Vorrang vor Caption-Tippfehlern (z.B. "Queen of the South S01E13.mp4" vs Caption "S01E3")
+        if (fileExplicitSeMatch) {
+          const isEpStaffelOrder = /^(?:Episode|Folge)/i.test(fileExplicitSeMatch[0]);
+          const fSeason = parseInt(isEpStaffelOrder ? fileExplicitSeMatch[2] : fileExplicitSeMatch[1], 10) || 1;
+          const fEpisode = parseInt(isEpStaffelOrder ? fileExplicitSeMatch[1] : fileExplicitSeMatch[2], 10) || 1;
+          if (!isSeries || episode !== fEpisode || !season) {
+            isSeries = true;
+            season = fSeason;
+            episode = fEpisode;
+          }
+        }
 
         let year = null;
         const parenYm = (" " + withoutExt + " ").match(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[\(\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\)\]]/i);
@@ -729,7 +740,10 @@
 
             let effectivePre = { ...rollingPreContext };
             const cleanChatId = String(backupChatId || "").replace(/^-100/, "").replace(/^-/, "");
-            const msgId = msg.id || msg.message_id || null;
+            const rawMsgIdVal = msg.id ?? msg.message_id ?? null;
+            const msgId = (rawMsgIdVal !== null && rawMsgIdVal !== "" && Number.isFinite(Number(rawMsgIdVal)))
+              ? Number(rawMsgIdVal)
+              : rawMsgIdVal;
             const messageLink = msgId
               ? (backupChatUsername
                   ? ("https://t.me/" + backupChatUsername + "/" + msgId)
@@ -747,8 +761,12 @@
 
             const safeTextForYear = flatText.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
             const yearInText = (" " + safeTextForYear + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i)?.[1] || effectivePre.year || null;
-            let seInText = flatText.match(/\\b(S\\d{1,2}[\\s._-]*E\\d{1,3}(?:[-–]E?\\d{1,3})?|(?:Folge|Episode)\\s*0*\\d{1,3})\\b/i)?.[1] || null;
-            if (seInText && /^(?:Folge|Episode)/i.test(seInText)) {
+            const seInFileRaw = normFileName ? normFileName.match(/\\bS(\\d{1,2})[\\s._-]*E(\\d{1,3})(?:[-–]E?(\\d{1,3}))?\\b/i) : null;
+            const seInFile = seInFileRaw
+              ? ("S" + String(parseInt(seInFileRaw[1], 10) || 1).padStart(2, "0") + "E" + String(parseInt(seInFileRaw[2], 10) || 1).padStart(2, "0"))
+              : null;
+            let seInText = seInFile || flatText.match(/\\b(S\\d{1,2}[\\s._-]*E\\d{1,3}(?:[-–]E?\\d{1,3})?|(?:Folge|Episode)\\s*0*\\d{1,3})\\b/i)?.[1] || null;
+            if (!seInFile && seInText && /^(?:Folge|Episode)/i.test(seInText)) {
               const epDigits = seInText.match(/(\\d{1,3})/)?.[1] || "1";
               const ctxSeason = effectivePre.season || 1;
               seInText = "S" + String(ctxSeason).padStart(2, "0") + "E" + String(epDigits).padStart(2, "0");
@@ -918,7 +936,7 @@
               baseCandidate = effectivePre.seriesHeader + (seInText ? (" " + seInText) : "");
               parsedFrom = "Serien-Header (Nachricht darüber)";
             } else if (multiLineSeLine && cleanFirstLine && !firstLineIsDescription) {
-              baseCandidate = cleanFirstLine + " " + multiLineSeLine + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
+              baseCandidate = cleanFirstLine + " " + (seInFile || multiLineSeLine) + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
               parsedFrom = "Caption Zeile 1";
             } else if (cleanFirstLine && firstTextLine.length >= 2 && !firstLineIsDescription) {
               // Regel 2: Cross-Check Text <-> Dateiname (z. B. D O P E T H I E F im Text vs Dope.Thief im Dateinamen)
@@ -927,7 +945,10 @@
                 baseCandidate = normFileName;
                 parsedFrom = "Dateiname (Cross-Check)";
               } else {
-                baseCandidate = firstTextLine;
+                // Dateiname hat Vorrang vor Caption-Tippfehlern (ID 911: "Queen of the South S01E13.mp4" vs Caption "Queen of the South S01E3")
+                baseCandidate = seInFile
+                  ? firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}(?:[-–]E?\\d{1,3})?\\b/i, seInFile)
+                  : firstTextLine;
                 parsedFrom = isRarMsg ? "RAR-Archiv (Caption)" : "Caption Zeile 1";
               }
             } else {
@@ -939,7 +960,7 @@
             if (/^(?:trailer|coming soon)\\b/i.test(baseCandidate) || /\\b(official trailer|kinotrailer|coming\\s+soon)\\b/i.test(flatText.slice(0, 80))) {
               if (clientPreLogs.length < 350) {
                 clientPreLogs.push({
-                  msgId: currentMsgId || null,
+                  msgId: currentMsgId ? Number(currentMsgId) : null,
                   fileName: rawFileName || baseCandidate,
                   rawText: flatTextRaw.slice(0, 140),
                   status: "SKIPPED_JUNK",
@@ -951,7 +972,9 @@
               continue;
             }
 
-            let enrichedName = baseCandidate;
+            let enrichedName = seInFile
+              ? baseCandidate.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}(?:[-–]E?\\d{1,3})?\\b/i, seInFile)
+              : baseCandidate;
             if (seInText && !/\\b(?:S\\d{1,2}[\\s._-]*E\\d{1,3}|Folge\\s*\\d+|Episode\\s*\\d+)\\b/i.test(enrichedName)) {
               enrichedName += " " + seInText;
             }
@@ -2082,6 +2105,18 @@
           ? getMatchingOpenSeriesSiblingItems(item, item.tmdbId || cands[0]?.tmdbId || null)
           : [];
         const batchTmdbId = Number(item.tmdbId || cands[0]?.tmdbId || 0);
+        const reviewReasonText = String(
+          item.errorReason ||
+          item.reason ||
+          (isFailed
+            ? ("Kein passender TMDb-Eintrag für „" + (item.cleanTitle || item.rawInput || "Unbekannt") + "“ gefunden – bitte manuell suchen oder TMDb-ID zuweisen.")
+            : (item.contextError
+                ? "Kontext-, Staffel- oder Jahres-Konflikt zwischen Dateiname/Post und TMDb-Treffer erkannt."
+                : ("Unsichere automatische Zuordnung (" + Number(item.confidence || 0) + "% Match-Sicherheit) – bitte kurz prüfen oder bestätigen.")))
+        ).trim();
+        const reasonBoxStyle = isFailed
+          ? "background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.38);color:#fecaca"
+          : "background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.38);color:#fde68a";
 
         return '<div id="revCard_' + esc(item.id) + '" style="background:#101015;border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:12px">' +
           '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
@@ -2105,6 +2140,10 @@
               (item.tmdbId ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'' + (item.typeCode || 'm') + '\\',' + Number(item.tmdbId) + ',false)">👁️ Vorschau</button>' : '') +
               (isResolved ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="collapseResolvedReviewCard(\\'' + esc(item.id) + '\\')">🔼 Einklappen</button>' : '') +
             '</div>' +
+          '</div>' +
+          '<div style="' + reasonBoxStyle + ';border-radius:8px;padding:7px 10px;margin-bottom:8px;font-size:11.5px;display:flex;align-items:center;gap:7px;line-height:1.35">' +
+            '<span style="font-weight:900;white-space:nowrap">' + (isFailed ? '❌ Prüfgrund:' : '⚠️ Prüfgrund:') + '</span>' +
+            '<span style="font-weight:700">' + esc(reviewReasonText) + '</span>' +
           '</div>' +
           '<div style="background:#15151e;border:1px solid rgba(255,255,255,0.09);border-radius:8px;padding:9px;margin-bottom:8px;font-size:11.5px;display:flex;flex-direction:column;gap:5px">' +
             (rawFileName ? '<div><b style="color:#94a3b8">💾 Dateiname (file_name):</b> <code style="color:#f1f5f9;background:#0c0c12;padding:2px 6px;border-radius:4px;word-break:break-all">' + esc(rawFileName) + '</code></div>' : '') +
@@ -2523,9 +2562,13 @@
         const added = [];
         for (const raw of newEntries) {
           if (!raw) continue;
+          const rawMsgVal = raw.msgId ?? raw.msg_id ?? null;
+          const normMsgId = (rawMsgVal !== null && rawMsgVal !== "" && Number.isFinite(Number(rawMsgVal)))
+            ? Number(rawMsgVal)
+            : null;
           const entry = {
             id: raw.id || ("diag_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)),
-            msgId: raw.msgId ?? raw.msg_id ?? null,
+            msgId: normMsgId,
             fileName: String(raw.fileName || raw.file_name || raw.rawFileName || "Unbekannt").slice(0, 260),
             rawText: String(raw.rawText || raw.raw_text || "").slice(0, 500),
             status: String(raw.status || "OK").toUpperCase(),
@@ -2915,7 +2958,9 @@
             season: badEntry.season || null,
             episode: badEntry.episode || null,
             metadataSource: "Prüfung",
-            msgId: badEntry.msg_id || badEntry.messageId || null,
+            errorReason: "Nach Wiederholungsversuch isoliert: " + String(reasonMsg || "Unbekannter Fehler"),
+            reason: "Nach Wiederholungsversuch isoliert: " + String(reasonMsg || "Unbekannter Fehler"),
+            msgId: (badEntry.msg_id || badEntry.messageId || badEntry.message_id) ? Number(badEntry.msg_id || badEntry.messageId || badEntry.message_id) : null,
             messageLink: badEntry.message_link || badEntry.messageLink || "",
             rawFileName: badEntry.raw_file_name || badEntry.file_name || String(rawLabel),
             rawText: badEntry.raw_text || badEntry.rawText || "",
@@ -3003,8 +3048,22 @@
                 const batchDiagEntries = [];
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
+                  const computedReason = bItem.errorReason || (bItem.status === "failed"
+                    ? "Kein TMDb-Treffer für '" + (bItem.cleanTitle || bItem.rawInput || "") + "'"
+                    : bItem.isUncertain
+                      ? "Unsichere Zuordnung (" + (bItem.confidence || 0) + "%) → " + (bItem.cleanTitle || "")
+                      : bItem.ingestStatus === "skipped_prerelease"
+                        ? "Vorabversion/TS/MD übersprungen (gute Version bereits in D1)"
+                        : bItem.ingestStatus === "duplicate"
+                          ? "Identische Datei (file_id + message_id) bereits in D1 vorhanden (" + (bItem.cleanTitle || "") + ")"
+                          : bItem.ingestStatus === "updated"
+                            ? "Bestehender Episoden-/Film-Slot per UPSERT mit neuer Datei verknüpft → " + (bItem.cleanTitle || "")
+                            : "Erfolgreich zugeordnet → " + (bItem.cleanTitle || "") + (bItem.tmdbId ? " (TMDb #" + bItem.tmdbId + ")" : "") + (Number(bItem.replacedPrereleaseCount || 0) > 0 ? (" [🧹 " + bItem.replacedPrereleaseCount + " Vorabversion ersetzt!]") : ""));
                   const itemObj = {
                     ...bItem,
+                    errorReason: bItem.errorReason || (bItem.status === "failed" || bItem.isUncertain ? computedReason : null),
+                    reason: computedReason,
+                    msgId: bItem.msgId ? Number(bItem.msgId) : null,
                     id: "rev_" + (batchStartIdx + bi) + "_" + Date.now()
                   };
                   backupImportJob.reviewItems.push(itemObj);
@@ -3021,19 +3080,11 @@
                           ? "SKIPPED_DUPLICATE"
                           : "OK";
                   batchDiagEntries.push({
-                    msgId: bItem.msgId || null,
+                    msgId: bItem.msgId ? Number(bItem.msgId) : null,
                     fileName: bItem.rawFileName || bItem.rawInput || bItem.cleanTitle || "Unbekannt",
                     rawText: bItem.rawText || "",
                     status: diagStatus,
-                    reason: bItem.status === "failed"
-                      ? "Kein TMDb-Treffer für '" + (bItem.cleanTitle || bItem.rawInput || "") + "'"
-                      : bItem.isUncertain
-                        ? "Unsichere Zuordnung (" + (bItem.confidence || 0) + "%) → " + (bItem.cleanTitle || "")
-                        : bItem.ingestStatus === "skipped_prerelease"
-                          ? "Vorabversion/TS/MD übersprungen (gute Version bereits in D1)"
-                          : bItem.ingestStatus === "duplicate"
-                            ? "Bereits in D1 vorhanden (" + (bItem.cleanTitle || "") + ")"
-                            : "Erfolgreich zugeordnet → " + (bItem.cleanTitle || "") + (bItem.tmdbId ? " (TMDb #" + bItem.tmdbId + ")" : "") + (Number(bItem.replacedPrereleaseCount || 0) > 0 ? (" [🧹 " + bItem.replacedPrereleaseCount + " Vorabversion ersetzt!]") : ""),
+                    reason: computedReason,
                     detectedType: bItem.typeCode === "s" ? "series" : "movie",
                     parsedTitle: bItem.cleanTitle || "",
                     seasonNumber: bItem.season || null,

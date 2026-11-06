@@ -277,24 +277,30 @@
     const now = Date.now();
     const memKey = "d1_import_diagnostic_logs";
     const existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
-    const normalizedBatch = logsArray.map((item, idx) => ({
-      id: item.id || (now * 100 + idx),
-      msgId: item.msgId !== undefined && item.msgId !== null ? String(item.msgId) : "",
-      stage: String(item.stage || "IMPORT"),
-      status: String(item.status || "OK"),
-      reason: String(item.reason || ""),
-      fileName: String(item.fileName || ""),
-      textPreview: String(item.textPreview || "").slice(0, 260),
-      parsedTitle: String(item.parsedTitle || ""),
-      season: item.season ? Number(item.season) : null,
-      episode: item.episode ? Number(item.episode) : null,
-      tmdbQuery: String(item.tmdbQuery || ""),
-      tmdbResult: String(item.tmdbResult || ""),
-      tmdbId: item.tmdbId ? Number(item.tmdbId) : null,
-      typeCode: item.typeCode ? String(item.typeCode) : null,
-      details: item.details && typeof item.details === "object" ? item.details : {},
-      timestamp: Number(item.timestamp || now)
-    }));
+    const normalizedBatch = logsArray.map((item, idx) => {
+      const rawMsgNum = Number(item.msgId ?? item.msg_id ?? item.message_id ?? 0);
+      const normMsgId = Number.isFinite(rawMsgNum) && rawMsgNum > 0
+        ? rawMsgNum
+        : (item.msgId !== undefined && item.msgId !== null && String(item.msgId).trim() !== "" ? String(item.msgId).trim() : "");
+      return {
+        id: item.id || (now * 100 + idx),
+        msgId: normMsgId,
+        stage: String(item.stage || "IMPORT"),
+        status: String(item.status || "OK"),
+        reason: String(item.reason || ""),
+        fileName: String(item.fileName || ""),
+        textPreview: String(item.textPreview || "").slice(0, 260),
+        parsedTitle: String(item.parsedTitle || ""),
+        season: item.season ? Number(item.season) : null,
+        episode: item.episode ? Number(item.episode) : null,
+        tmdbQuery: String(item.tmdbQuery || ""),
+        tmdbResult: String(item.tmdbResult || ""),
+        tmdbId: item.tmdbId ? Number(item.tmdbId) : null,
+        typeCode: item.typeCode ? String(item.typeCode) : null,
+        details: item.details && typeof item.details === "object" ? item.details : {},
+        timestamp: Number(item.timestamp || now)
+      };
+    });
     const mergedMem = [...normalizedBatch, ...existingMem].slice(0, 2500);
     memoryFallback.set(memKey, mergedMem);
 
@@ -1583,6 +1589,25 @@
       effectiveTags = [effectiveTags, "⚠️ Vorabversion"].filter(Boolean).join(" · ");
     }
 
+    const msgId = Number(fileInfo.messageId || fileInfo.msgId || fileInfo.message_id || extractExportMessageIdFromFileId(normalizedFid) || 0) || null;
+    const validExistingMovieRows = allExistingRows.filter(r => r && r.telegram_file_id && scoreTelegramFileIdValidity(r.telegram_file_id) > 0);
+    const isExactDuplicate = validExistingMovieRows.some(r => {
+      const exFid = String(r.telegram_file_id || "").trim();
+      const exMsgId = Number(extractExportMessageIdFromFileId(exFid) || 0) || null;
+      const fidMatch = exFid === normalizedFid;
+      const msgMatch = (msgId && exMsgId) ? (msgId === exMsgId) : fidMatch;
+      return fidMatch && msgMatch;
+    }) && incomingSubs.length === 0;
+
+    const incomingQualNorm = String(fileInfo.quality || "1080p").toUpperCase();
+    const incomingPartNorm = String(fileInfo.part || "").toUpperCase();
+    const hasDifferentQuality = !isExactDuplicate && validExistingMovieRows.some(r =>
+      String(r.quality || "1080p").toUpperCase() !== incomingQualNorm ||
+      String(r.part || "").toUpperCase() !== incomingPartNorm
+    );
+    const isUpdated = !isExactDuplicate && validExistingMovieRows.length > 0 && !hasDifferentQuality;
+    const isMergedQuality = !isExactDuplicate && hasDifferentQuality;
+
     const entry = {
       movie_id: mid,
       telegram_file_id: normalizedFid,
@@ -1600,7 +1625,6 @@
       subtitles_json: JSON.stringify(mergedSubs),
       updated_at: Date.now()
     };
-    const msgId = extractExportMessageIdFromFileId(normalizedFid);
     const nextMem = sortAndDedupeStreamFiles([
       entry,
       ...existingMem.filter(x => x && x.telegram_file_id !== entry.telegram_file_id && (!entry.telegram_unique_id || x.telegram_unique_id !== entry.telegram_unique_id))
@@ -1608,18 +1632,19 @@
     memoryFallback.set(memKey, nextMem);
     memoryFallback.set(memLoadedTsKey, Date.now());
 
-    if (!db) return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
+    if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
       const stmts = [
         db.prepare(
           `DELETE FROM movie_files WHERE movie_id = ?1 AND (
-            telegram_file_id LIKE 'vip_playlist_%'
+            telegram_file_id IS NULL OR telegram_file_id = ''
+            OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
             ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (quality = ?2 AND codec = ?3 AND COALESCE(part, '') = ?4 AND COALESCE(file_size, 0) = ?5 AND telegram_file_id != ?6)
+            OR (quality = ?2 AND codec = ?3 AND COALESCE(part, '') = ?4 AND telegram_file_id != ?5)
           )`
-        ).bind(mid, entry.quality, entry.codec, entry.part || "", entry.file_size || 0, entry.telegram_file_id)
+        ).bind(mid, entry.quality, entry.codec, entry.part || "", entry.telegram_file_id)
       ];
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
@@ -1672,9 +1697,9 @@
           )
       );
       await db.batch(stmts);
-      return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
     } catch (e) {
-      return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
     }
   }
 
@@ -1772,6 +1797,30 @@
     const versionLabel = incomingIsPrerelease ? "⚠️ Vorabversion" : extractEpisodeVersionLabel(fileInfo);
     const cleanTags = normalizeCompactVersionTags(fileInfo.tags || versionLabel);
 
+    // Smart-UPSERT statt sturem SKIPPED_DUPLICATE:
+    // Nur wenn in D1 bereits ein Eintrag mit IDENTISCHER file_id UND message_id existiert, gilt es als exaktes Duplikat!
+    // Ist der Slot in D1 leer oder kommt eine andere/bessere Datei bzw. neue Qualitätsstufe an, wird ein UPSERT ausgeführt.
+    const msgId = Number(fileInfo.messageId || fileInfo.msgId || fileInfo.message_id || extractExportMessageIdFromFileId(normalizedFid) || 0) || null;
+    const validExistingEpRows = allExistingEpRows.filter(r => r && r.telegram_file_id && scoreTelegramFileIdValidity(r.telegram_file_id) > 0);
+    const isExactDuplicate = validExistingEpRows.some(r => {
+      const exFid = String(r.telegram_file_id || "").trim();
+      const exMsgId = Number(r.message_id || extractExportMessageIdFromFileId(exFid) || 0) || null;
+      const fidMatch = exFid === normalizedFid;
+      const msgMatch = (msgId && exMsgId) ? (msgId === exMsgId) : fidMatch;
+      return fidMatch && msgMatch;
+    }) && incomingSubs.length === 0;
+
+    const incomingQualNorm = String(fileInfo.quality || "1080p").toUpperCase();
+    const incomingVerNorm = String(versionLabel || "Originalfassung").toUpperCase();
+    const incomingPartNorm = String(fileInfo.part || "").toUpperCase();
+    const hasDifferentQualityOrVersion = !isExactDuplicate && validExistingEpRows.some(r =>
+      String(r.quality || "1080p").toUpperCase() !== incomingQualNorm ||
+      String(r.version_label || "Originalfassung").toUpperCase() !== incomingVerNorm ||
+      String(r.part || "").toUpperCase() !== incomingPartNorm
+    );
+    const isUpdated = !isExactDuplicate && validExistingEpRows.length > 0 && !hasDifferentQualityOrVersion;
+    const isMergedQuality = !isExactDuplicate && hasDifferentQualityOrVersion;
+
     const entry = {
       series_id: sid,
       season_number: sNum,
@@ -1794,7 +1843,6 @@
       subtitles_json: JSON.stringify(mergedSubs),
       updated_at: Date.now()
     };
-    const msgId = extractExportMessageIdFromFileId(normalizedFid);
     const sameEpDeduped = sortAndDedupeStreamFiles([
       entry,
       ...existingMem.filter(x => x && Number(x.episode_number) === eNum)
@@ -1807,20 +1855,22 @@
 
     const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped));
 
-    if (!db) return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
+    if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
-      // Multi-Versionen-Schutz: Lösche alte Einträge NUR, wenn sie dieselbe version_label haben!
-      // Eine "Originalfassung" überschreibt niemals eine "Netflix-Fassung" (und umgekehrt).
+      // Multi-Qualitäten & Multi-Versionen-Schutz:
+      // Leere Slots (NULL/'') oder alte Dateien DERSELBEN Qualität + Fassung werden aktualisiert,
+      // während verschiedene Qualitäten (720p, 1080p, 4K) und Fassungen nebeneinander auswählbar bleiben!
       const stmts = [
         db.prepare(
           `DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND (
-            telegram_file_id LIKE 'vip_playlist_%'
+            telegram_file_id IS NULL OR telegram_file_id = ''
+            OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
             ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (quality = ?4 AND codec = ?5 AND COALESCE(part, '') = ?6 AND COALESCE(file_size, 0) = ?7 AND telegram_file_id != ?8 AND COALESCE(version_label, 'Originalfassung') = ?9)
+            OR (quality = ?4 AND codec = ?5 AND COALESCE(part, '') = ?6 AND telegram_file_id != ?7 AND COALESCE(version_label, 'Originalfassung') = ?8)
           )`
-        ).bind(sid, sNum, eNum, entry.quality, entry.codec, entry.part || "", entry.file_size || 0, entry.telegram_file_id, entry.version_label)
+        ).bind(sid, sNum, eNum, entry.quality, entry.codec, entry.part || "", entry.telegram_file_id, entry.version_label)
       ];
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
@@ -1885,9 +1935,9 @@
           .bind(entry.series_id, entry.season_number, entry.episode_number, epTitle, versionsPayload, entry.updated_at)
       );
       await db.batch(stmts);
-      return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
     } catch (e) {
-      return { ok: true, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
     }
   }
 
@@ -2095,7 +2145,7 @@
     };
   }
 
-  // Automatische Bereinigung (Cleanup): Löscht alle Serien aus D1 & Memory-Fallback, die 0 gültige Episoden mit verknüpfter Videodatei haben
+  // Automatische Bereinigung (Cleanup): Löscht alle Serien & Filme aus D1 & Memory-Fallback, die 0 gültige Videodateien (file_id) haben
   async function cleanupEmptySeriesInD1AndMemory(env, forceRun = false) {
     const now = Date.now();
     const lastCleanupTs = Number(memoryFallback.get("last_empty_series_cleanup_ts") || 0);
@@ -2107,11 +2157,20 @@
     const db = await ensureD1Schema(env);
     if (db) {
       try {
-        const delRes = await db.prepare(
-          "DELETE FROM series WHERE tmdb_id NOT IN (SELECT DISTINCT series_id FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '')"
-        ).run().catch(() => ({ meta: { changes: 0 } }));
-        removedSeriesCount += Number(delRes?.meta?.changes || 0);
-        if (removedSeriesCount > 0) {
+        await Promise.all([
+          db.prepare("DELETE FROM episode_files WHERE telegram_file_id IS NULL OR telegram_file_id = '' OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'").run().catch(() => null),
+          db.prepare("DELETE FROM movie_files WHERE telegram_file_id IS NULL OR telegram_file_id = '' OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'").run().catch(() => null)
+        ]);
+        const [delSeriesRes, delMoviesRes] = await Promise.all([
+          db.prepare(
+            "DELETE FROM series WHERE tmdb_id NOT IN (SELECT DISTINCT series_id FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '')"
+          ).run().catch(() => ({ meta: { changes: 0 } })),
+          db.prepare(
+            "DELETE FROM movies WHERE tmdb_id NOT IN (SELECT DISTINCT movie_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '')"
+          ).run().catch(() => ({ meta: { changes: 0 } }))
+        ]);
+        removedSeriesCount += Number(delSeriesRes?.meta?.changes || 0) + Number(delMoviesRes?.meta?.changes || 0);
+        if (Number(delSeriesRes?.meta?.changes || 0) > 0) {
           await Promise.all([
             db.prepare("DELETE FROM series_seasons WHERE series_id NOT IN (SELECT tmdb_id FROM series)").run().catch(() => null),
             db.prepare("DELETE FROM series_episodes WHERE series_id NOT IN (SELECT tmdb_id FROM series)").run().catch(() => null)
@@ -2120,15 +2179,22 @@
       } catch (e) {}
     }
 
-    // Memory-Fallback prüfen: Serien ohne gültige Episoden-Dateien entfernen
+    // Memory-Fallback prüfen: Serien & Filme ohne gültige Videodateien entfernen
     const validSeriesIdsInMem = new Set();
+    const validMovieIdsInMem = new Set();
     for (const [k, v] of memoryFallback.entries()) {
       if (k.startsWith("d1_ep_files_") && Array.isArray(v)) {
-        const hasValidFile = v.some(ep => Boolean(ep && (ep.telegram_file_id || ep.fileId || ep.file_id || ep.message_id)));
+        const hasValidFile = v.some(ep => Boolean(ep && scoreTelegramFileIdValidity(ep.telegram_file_id || ep.fileId || ep.file_id) > 0));
         if (hasValidFile) {
           const parts = k.split("_");
           const sid = Number(parts[3]);
           if (sid) validSeriesIdsInMem.add(sid);
+        }
+      } else if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
+        const hasValidFile = v.some(m => Boolean(m && scoreTelegramFileIdValidity(m.telegram_file_id || m.fileId || m.file_id) > 0));
+        if (hasValidFile) {
+          const mid = Number(k.replace("d1_movie_files_", ""));
+          if (mid) validMovieIdsInMem.add(mid);
         }
       }
     }
@@ -2136,13 +2202,26 @@
       if ((k.startsWith("d1_catalog_series_") || k.startsWith("d1_series_")) && v && v.id) {
         const sid = Number(v.id);
         if (sid && !validSeriesIdsInMem.has(sid)) {
-          // Prüfe falls DB aktiv ist, ob dort Episoden liegen
           let hasDbEps = false;
           if (db) {
             const row = await db.prepare("SELECT 1 AS ok FROM episode_files WHERE series_id = ?1 AND telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 1").bind(sid).first().catch(() => null);
             hasDbEps = Boolean(row?.ok);
           }
           if (!hasDbEps) {
+            memoryFallback.delete(k);
+            memoryFallback.delete(`d1_series_best_quality_${sid}`);
+            removedSeriesCount++;
+          }
+        }
+      } else if ((k.startsWith("d1_catalog_movie_") || k.startsWith("d1_movie_")) && !k.startsWith("d1_movie_files_") && v && v.id) {
+        const mid = Number(v.id);
+        if (mid && !validMovieIdsInMem.has(mid)) {
+          let hasDbMov = false;
+          if (db) {
+            const row = await db.prepare("SELECT 1 AS ok FROM movie_files WHERE movie_id = ?1 AND telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 1").bind(mid).first().catch(() => null);
+            hasDbMov = Boolean(row?.ok);
+          }
+          if (!hasDbMov) {
             memoryFallback.delete(k);
             removedSeriesCount++;
           }
@@ -2886,7 +2965,8 @@
       if (hasVipStreamAccess) {
         const mFiles = memoryFallback.get(`d1_movie_files_${mid}`);
         if (Array.isArray(mFiles) && mFiles.length > 0) {
-          const sorted = sortAndDedupeStreamFiles(mFiles);
+          const validMFiles = mFiles.filter(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
+          const sorted = sortAndDedupeStreamFiles(validMFiles);
           const top = sorted[0];
           if (top) {
             bestMovieMap.set(mid, {
@@ -2910,7 +2990,7 @@
       }
     }
 
-    // 2. D1-Datenbank prüfen (für VIP-Qualitäten UND fehlende Poster aus movies / series)
+    // 2. D1-Datenbank prüfen (für ECHTE VIP-Qualitäten mit gültiger telegram_file_id UND fehlende Poster aus movies / series)
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -2920,7 +3000,7 @@
           const [resMPoster, resMFiles] = await Promise.all([
             db.prepare(`SELECT tmdb_id, poster_path, details_json FROM movies WHERE tmdb_id IN (${placeholders})`).bind(...uniqM).all().catch(() => ({ results: [] })),
             hasVipStreamAccess
-              ? db.prepare(`SELECT movie_id, quality, codec FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...uniqM).all().catch(() => ({ results: [] }))
+              ? db.prepare(`SELECT movie_id, quality, codec, telegram_file_id FROM movie_files WHERE movie_id IN (${placeholders}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqM).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
           for (const row of (resMPoster?.results || [])) {
@@ -2932,6 +3012,7 @@
             if (pVal) posterMap.set(`m_${mid}`, pVal);
           }
           for (const row of (resMFiles?.results || [])) {
+            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
             const mid = Number(row.movie_id);
             const cur = bestMovieMap.get(mid);
             const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
@@ -2945,13 +3026,10 @@
         if (seriesIds.length > 0) {
           const uniqS = [...new Set(seriesIds)].slice(0, 60);
           const placeholders = uniqS.map((_, i) => `?${i + 1}`).join(",");
-          const [resSPoster, resSFiles, resSEps] = await Promise.all([
+          const [resSPoster, resSFiles] = await Promise.all([
             db.prepare(`SELECT tmdb_id, poster_path, details_json FROM series WHERE tmdb_id IN (${placeholders})`).bind(...uniqS).all().catch(() => ({ results: [] })),
             hasVipStreamAccess
-              ? db.prepare(`SELECT series_id, quality, codec FROM episode_files WHERE series_id IN (${placeholders})`).bind(...uniqS).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] }),
-            hasVipStreamAccess
-              ? db.prepare(`SELECT series_id, COUNT(*) AS ep_cnt FROM series_episodes WHERE series_id IN (${placeholders}) GROUP BY series_id`).bind(...uniqS).all().catch(() => ({ results: [] }))
+              ? db.prepare(`SELECT series_id, quality, codec, telegram_file_id FROM episode_files WHERE series_id IN (${placeholders}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqS).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
           for (const row of (resSPoster?.results || [])) {
@@ -2963,6 +3041,7 @@
             if (pVal) posterMap.set(`s_${sid}`, pVal);
           }
           for (const row of (resSFiles?.results || [])) {
+            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
             const sid = Number(row.series_id);
             const cur = bestSeriesMap.get(sid);
             const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
@@ -2970,12 +3049,6 @@
               bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + 1 });
             } else {
               cur.count += 1;
-            }
-          }
-          for (const row of (resSEps?.results || [])) {
-            const sid = Number(row.series_id);
-            if (!bestSeriesMap.has(sid) && Number(row.ep_cnt || 0) > 0) {
-              bestSeriesMap.set(sid, { label: "1080p", count: Number(row.ep_cnt || 1) });
             }
           }
         }

@@ -852,9 +852,11 @@
         parsed.parsedFileSize = parseHumanFileSizeToBytes(rawEntry.file_size || rawEntry.fileSize || rawEntry.size);
       }
       if (!effectiveFileMeta && (rawEntry.telegram_file_id || rawEntry.file_id || rawEntry.fileId)) {
+        const entryMsgId = Number(rawEntry.msg_id || rawEntry.message_id || rawEntry.messageId || 0) || null;
         effectiveFileMeta = {
           fileId: String(rawEntry.telegram_file_id || rawEntry.file_id || rawEntry.fileId),
           fileUniqueId: rawEntry.telegram_unique_id || null,
+          messageId: entryMsgId,
           fileSize: parsed.parsedFileSize || null,
           mimeType: rawEntry.mime_type || "video/mp4",
           rawFilename: String(rawName || ""),
@@ -924,12 +926,14 @@
       const chatRef = (typeof rawEntry === "object" && (rawEntry?.chat_id || rawEntry?.chatId))
         ? String(rawEntry.chat_id || rawEntry.chatId).replace(/[^a-zA-Z0-9_@-]/g, "")
         : "vip";
-      const msgRef = (typeof rawEntry === "object" && (rawEntry?.msg_id || rawEntry?.message_id || rawEntry?.messageId))
-        ? String(rawEntry.msg_id || rawEntry.message_id || rawEntry.messageId)
+      const numericMsgRef = Number(typeof rawEntry === "object" && (rawEntry?.msg_id || rawEntry?.message_id || rawEntry?.messageId || 0)) || 0;
+      const msgRef = numericMsgRef > 0
+        ? String(numericMsgRef)
         : String(hashStringToPositiveInt(rawName || parsed.cleanTitle, 100000));
       effectiveFileMeta = {
         fileId: `tg_export_${chatRef}_${msgRef}`,
         fileUniqueId: `u_${chatRef}_${msgRef}`,
+        messageId: numericMsgRef > 0 ? numericMsgRef : null,
         fileSize: parsed.parsedFileSize || null,
         mimeType: (typeof rawEntry === "object" && rawEntry?.mime_type) ? String(rawEntry.mime_type) : "video/mp4",
         rawFilename: String(rawName || ""),
@@ -1307,32 +1311,17 @@
         };
       }
 
-      const memStreamKey = `ingested_streams_s_${seriesDetails.id}_${seasonNum}_${epNum}`;
-      const existingStreamsSet = memoryFallback.get(memStreamKey) || new Set();
-      const existingEpFiles = await getEpisodeFilesFromD1(env, seriesDetails.id, seasonNum, epNum);
-      for (const ef of existingEpFiles) {
-        const efSize = Number(ef.file_size || 0);
-        const efVer = extractEpisodeVersionLabel(ef).toUpperCase();
-        existingStreamsSet.add(`${String(ef.quality || "UNBEKANNT").toUpperCase()}|${String(ef.codec || "x264").toUpperCase()}|${String(ef.part || "").toUpperCase()}|${efVer}|sz:${efSize}`);
-      }
-      const curEpSize = Number(effectiveFileMeta?.fileSize || parsed.parsedFileSize || 0);
       const curVerLabel = String(versionInfo?.versionLabel || "Originalfassung");
-      const curStreamSig = `${String(parsed.quality || "UNBEKANNT").toUpperCase()}|${String(parsed.codec || "x264").toUpperCase()}|${String(parsed.part || "").toUpperCase()}|${curVerLabel.toUpperCase()}|sz:${curEpSize}`;
       let ingestStatus = "added";
-      if (preExistingSeries || existingStreamsSet.size > 0) {
-        if (existingStreamsSet.has(curStreamSig)) {
-          ingestStatus = "duplicate";
-        } else if (existingStreamsSet.size > 0) {
-          ingestStatus = "merged_quality";
-        }
-      }
-      existingStreamsSet.add(curStreamSig);
-      memoryFallback.set(memStreamKey, existingStreamsSet);
-
       let savedAtLeastOneEpisodeVideo = false;
       if (hasValidSeriesVideoFile) {
-        // Speichere Einzelfolgen sowie Doppelfolgen (z. B. ALF S01E16-E17) sauber in D1
+        // Speichere Einzelfolgen sowie Doppelfolgen (z. B. ALF S01E16-E17) per Smart-UPSERT in D1.
+        // NUR wenn in D1 bereits exakt dieselbe file_id UND message_id vorliegt, gilt es als Duplikat (SKIPPED_DUPLICATE).
+        // Leere Slots oder abweichende/bessere Dateien werden per UPSERT aktualisiert; andere Qualitäten (720p/1080p/4K) bleiben parallel wählbar!
         const activeSeasonMaxEps = Number(versionInfo?.seasonEpisodeCount || seasonData?.seasonEpisodeCount || 0);
+        let allExactDupes = true;
+        let anyMergedQuality = false;
+        let anyUpdated = false;
         for (let curEp = epNum; curEp <= epEndNum; curEp++) {
           // Verhindere das Anlegen von Folgen oberhalb der aktiven Gewinner-Gruppe (z. B. > 13 bei Haus des Geldes S01)
           if (FORCE_EPISODE_GROUP_SERIES.has(Number(seriesDetails.id)) && activeSeasonMaxEps > 0 && curEp > activeSeasonMaxEps) {
@@ -1358,13 +1347,30 @@
             episodeTitle: resolvedEpTitle
           });
           if (saveEpRes && typeof saveEpRes === "object") {
-            if (saveEpRes.skippedPrerelease) ingestStatus = "skipped_prerelease";
-            else {
+            if (saveEpRes.skippedPrerelease) {
+              ingestStatus = "skipped_prerelease";
+              allExactDupes = false;
+            } else {
               savedAtLeastOneEpisodeVideo = true;
+              if (!saveEpRes.isExactDuplicate) allExactDupes = false;
+              if (saveEpRes.isMergedQuality) anyMergedQuality = true;
+              if (saveEpRes.isUpdated) anyUpdated = true;
               if (saveEpRes.replacedPrereleaseCount > 0) ingestStatus = "replaced_prerelease";
             }
           } else if (saveEpRes) {
             savedAtLeastOneEpisodeVideo = true;
+            allExactDupes = false;
+          }
+        }
+        if (ingestStatus !== "skipped_prerelease" && ingestStatus !== "replaced_prerelease") {
+          if (savedAtLeastOneEpisodeVideo && allExactDupes) {
+            ingestStatus = "duplicate";
+          } else if (anyMergedQuality) {
+            ingestStatus = "merged_quality";
+          } else if (anyUpdated) {
+            ingestStatus = "updated";
+          } else {
+            ingestStatus = "added";
           }
         }
       }
@@ -1402,11 +1408,18 @@
       const seasonOverflowConflict = Boolean(!explicitTmdbId && maxTmdbSeasons > 0 && seasonNum > maxTmdbSeasons && Number(seriesDetails.id) < 8000000);
       // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2) oder Staffel-Konflikt vorliegt, immer als Konflikt markieren!
       const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch || seasonOverflowConflict));
+      const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const errorReason = contextError
         ? (seasonOverflowConflict
             ? `Staffel-Konflikt: Datei verlangt Staffel ${seasonNum} von "${parsed.cleanTitle}", aber TMDb-Treffer "${seriesDetails.title}" (${tmdbYearNum || "?"}) hat nur ${maxTmdbSeasons} Staffel(n). Bitte im Konflikt-Tab die richtige TMDb-ID zuweisen!`
-            : `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${seriesDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`)
-        : null;
+            : yearDiff > 2
+              ? `Jahres-Konflikt: Datei/Post nennt Jahr ${parsed.year}, aber TMDb-Treffer "${seriesDetails.title}" ist von ${tmdbYearNum || "?"} (${yearDiff} Jahre Abweichung).`
+              : sequelMismatch
+                ? `Fortsetzungs-/Teil-Konflikt: Dateiname nennt "${parsed.cleanTitle}" (Teil ${seqNum}), weicht aber vom TMDb-Titel "${seriesDetails.title}" (${tmdbYearNum || "?"}) ab.`
+                : `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${seriesDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`)
+        : (isUncertain
+            ? `Niedrige Treffer-Sicherheit (${bestConfidence}% Match): "${parsed.cleanTitle}" wurde vorläufig "${seriesDetails.title}" (${rawYear}) zugeordnet – bitte kurz prüfen oder bestätigen.`
+            : null);
 
       // Wenn status: "CONFLICT_?" ausgelöst wird, bleibt der Treffer in der DB (mit needsReview: true) und landet automatisch im Dashboard-Tab [ 🚨 Meldungen / Konflikte ]
       if (contextError && typeof createMediaReportInD1 === "function") {
@@ -1425,7 +1438,6 @@
         }).catch(() => {});
       }
 
-      const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const posterUrl = resolvePosterUrl(seriesDetails.poster_path, "w185", seriesDetails.external_poster_url || candidates[0]?.poster || "");
       const finalEpTitle = (epObj.name && !/^Episode\s+\d+$/i.test(epObj.name))
         ? epObj.name
@@ -1460,6 +1472,7 @@
         fileSize: effectiveFileMeta?.fileSize || parsed.parsedFileSize || null,
         details: seriesDetails,
         fileMeta: effectiveFileMeta,
+        hasValidVideoFile: Boolean(savedAtLeastOneEpisodeVideo),
         rawInput: rawName,
         ingestStatus,
         isUncertain,
@@ -1513,31 +1526,15 @@
           : null;
       }
 
-      if (!preExistingMovie) {
-        await saveMovieToD1(env, movieDetails);
-      }
+      const hasValidMovieVideoFile = Boolean(
+        effectiveFileMeta &&
+        effectiveFileMeta.fileId &&
+        scoreTelegramFileIdValidity(effectiveFileMeta.fileId) > 0
+      );
 
-      const memStreamKey = `ingested_streams_m_${movieDetails.id}`;
-      const existingStreamsSet = memoryFallback.get(memStreamKey) || new Set();
-      const existingMovieFiles = await getMovieFilesFromD1(env, movieDetails.id);
-      for (const mf of existingMovieFiles) {
-        const mfSize = Number(mf.file_size || 0);
-        existingStreamsSet.add(`${String(mf.quality || "UNBEKANNT").toUpperCase()}|${String(mf.codec || "x264").toUpperCase()}|${String(mf.part || "").toUpperCase()}|sz:${mfSize}`);
-      }
-      const curMovieSize = Number(effectiveFileMeta?.fileSize || parsed.parsedFileSize || 0);
-      const curStreamSig = `${String(parsed.quality || "UNBEKANNT").toUpperCase()}|${String(parsed.codec || "x264").toUpperCase()}|${String(parsed.part || "").toUpperCase()}|sz:${curMovieSize}`;
       let ingestStatus = "added";
-      if (preExistingMovie || existingStreamsSet.size > 0) {
-        if (existingStreamsSet.has(curStreamSig)) {
-          ingestStatus = "duplicate";
-        } else {
-          ingestStatus = "merged_quality";
-        }
-      }
-      existingStreamsSet.add(curStreamSig);
-      memoryFallback.set(memStreamKey, existingStreamsSet);
-
-      if (effectiveFileMeta && effectiveFileMeta.fileId) {
+      let savedMovieVideo = false;
+      if (hasValidMovieVideoFile) {
         const saveMovRes = await saveMovieFileToD1(env, movieDetails.id, {
           ...effectiveFileMeta,
           quality: parsed.quality,
@@ -1546,13 +1543,27 @@
           tags: parsed.tags || ""
         });
         if (saveMovRes && typeof saveMovRes === "object") {
-          if (saveMovRes.skippedPrerelease) ingestStatus = "skipped_prerelease";
-          else if (saveMovRes.replacedPrereleaseCount > 0) ingestStatus = "replaced_prerelease";
+          if (saveMovRes.skippedPrerelease) {
+            ingestStatus = "skipped_prerelease";
+          } else {
+            savedMovieVideo = true;
+            if (saveMovRes.replacedPrereleaseCount > 0) ingestStatus = "replaced_prerelease";
+            else if (saveMovRes.isExactDuplicate) ingestStatus = "duplicate";
+            else if (saveMovRes.isMergedQuality) ingestStatus = "merged_quality";
+            else if (saveMovRes.isUpdated) ingestStatus = "updated";
+          }
+        } else if (saveMovRes) {
+          savedMovieVideo = true;
         }
       }
 
       if (!movieDetails.poster_path && !movieDetails.external_poster_url && candidates[0]?.poster) {
         movieDetails.external_poster_url = candidates[0].poster;
+      }
+
+      // Kein leerer Film-Eintrag ohne gültige Videodatei in D1:
+      // Speichere `movies` in D1 erst dann, wenn tatsächlich eine gültige Videodatei gespeichert wurde (oder bereits existiert)!
+      if (savedMovieVideo || preExistingMovie) {
         await saveMovieToD1(env, movieDetails);
       }
 
@@ -1566,9 +1577,16 @@
       // Harte Sperre gegen falsche Jahrzehnte: Wenn parsed.year angegeben ist und der beste TMDb-Treffer > 2 Jahre abweicht (wie 2013 vs. 1994),
       // darf dieser Treffer NIEMALS automatisch als "ok" übernommen werden!
       const contextError = Boolean(!explicitTmdbId && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
+      const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const errorReason = contextError
-        ? `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${movieDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`
-        : null;
+        ? (yearDiff > 2
+            ? `Jahres-Konflikt: Datei/Post nennt Jahr ${parsed.year}, aber TMDb-Treffer "${movieDetails.title}" ist von ${tmdbYearNum || "?"} (${yearDiff} Jahre Abweichung). Bitte prüfen!`
+            : sequelMismatch
+              ? `Fortsetzungs-/Teil-Konflikt: Dateiname nennt "${parsed.cleanTitle}" (Teil ${seqNum}), weicht aber vom TMDb-Titel "${movieDetails.title}" (${tmdbYearNum || "?"}) ab.`
+              : `Kontext-Konflikt: Post nennt "${parsed.cleanTitle}" (${parsed.year || "ohne Jahr"}), aber TMDb-Treffer ist "${movieDetails.title}" (${tmdbYearNum || "?"}). Bitte manuell prüfen!`)
+        : (isUncertain
+            ? `Niedrige Treffer-Sicherheit (${bestConfidence}% Match): "${parsed.cleanTitle}" wurde vorläufig "${movieDetails.title}" (${rawYear}) zugeordnet – bitte kurz prüfen oder bestätigen.`
+            : null);
 
       if (contextError && typeof createMediaReportInD1 === "function") {
         await createMediaReportInD1(env, {
@@ -1586,7 +1604,6 @@
         }).catch(() => {});
       }
 
-      const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const posterUrl = resolvePosterUrl(movieDetails.poster_path, "w185", movieDetails.external_poster_url || candidates[0]?.poster || "");
 
       return {
@@ -1614,6 +1631,7 @@
         fileSize: effectiveFileMeta?.fileSize || parsed.parsedFileSize || null,
         details: movieDetails,
         fileMeta: effectiveFileMeta,
+        hasValidVideoFile: Boolean(savedMovieVideo),
         rawInput: rawName,
         ingestStatus,
         isUncertain,
@@ -1817,7 +1835,8 @@
 
   function summarizePrecedingMessageForContext(msg) {
     if (!msg || typeof msg !== "object") return null;
-    const msgId = msg.id || msg.message_id || null;
+    const rawMsgNum = Number(msg.id || msg.message_id || msg.msg_id || 0);
+    const msgId = rawMsgNum > 0 ? rawMsgNum : null;
     const rawText = flattenTelegramExportText(msg.text || msg.caption || msg.text_entities);
     const normText = normalizeText(rawText).trim();
     const preCtx = extractPreContext(msg, {});
@@ -1848,7 +1867,8 @@
       ? rawFilePath.split("/").pop()
       : "";
     const flatText = flattenTelegramExportText(msg.text || msg.caption || msg.text_entities);
-    const msgId = msg.id || msg.message_id || null;
+    const rawMsgNum = Number(msg.id || msg.message_id || msg.msg_id || 0);
+    const msgId = rawMsgNum > 0 ? rawMsgNum : null;
     const messageLink = buildTelegramMessageLink(chatMeta, msgId);
     const summarizedPrev = Array.isArray(prevMessagesWindow)
       ? prevMessagesWindow.map(summarizePrecedingMessageForContext).filter(Boolean).slice(-2)
@@ -1971,9 +1991,10 @@
         }
         if (item.type === "series" || item.type === "tv" || item.isSeries === true || item.season || item.episode) {
           parsed.isSeries = true;
-          parsed.season = Number(item.season || parsed.season || 1);
-          parsed.episode = Number(item.episode || parsed.episode || 1);
-          if (item.episodeEnd) parsed.episodeEnd = Number(item.episodeEnd);
+          // Dateiname hat Vorrang vor Caption-Tippfehlern (z.B. ID 911: "Queen of the South S01E13.mp4" vs. Caption "S01E3"):
+          parsed.season = Number(parsed.season || item.season || 1);
+          parsed.episode = Number(parsed.episode || item.episode || 1);
+          if (item.episodeEnd || parsed.episodeEnd) parsed.episodeEnd = Number(parsed.episodeEnd || item.episodeEnd);
         } else if (item.isSeries === false) {
           parsed.isSeries = false;
           parsed.season = null;
@@ -2380,8 +2401,12 @@
           ? rawEntry
           : (rawEntry?.rawInput || rawEntry?.filename || rawEntry?.title || `#${i + bIdx + 1}`);
 
+        const normMsgId = typeof rawEntry === "object" && rawEntry !== null
+          ? (Number(rawEntry.msg_id || rawEntry.message_id || rawEntry.messageId || 0) || null)
+          : null;
         const contextDiagnostics = typeof rawEntry === "object" && rawEntry !== null ? {
-          msgId: rawEntry.msg_id || rawEntry.message_id || rawEntry.messageId || null,
+          msgId: normMsgId,
+          messageId: normMsgId,
           messageLink: rawEntry.message_link || rawEntry.messageLink || "",
           rawFileName: rawEntry.raw_file_name || rawEntry.file_name || "",
           rawText: rawEntry.raw_text || rawEntry.rawText || "",
@@ -2390,6 +2415,7 @@
           prevMessages: Array.isArray(rawEntry.prev_messages || rawEntry.prevMessages) ? (rawEntry.prev_messages || rawEntry.prevMessages) : []
         } : {
           msgId: null,
+          messageId: null,
           messageLink: "",
           rawFileName: String(rawLabel),
           rawText: "",
@@ -2400,12 +2426,14 @@
 
         if (!res || res.unmatched) {
           failedItems.push(String(rawLabel).slice(0, 45));
+          const failReasonText = res?.error || `Kein passender TMDb-Eintrag für "${res?.parsed?.cleanTitle || rawLabel}" gefunden – bitte manuell suchen oder TMDb-ID zuweisen.`;
           const failItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
             status: "?",
             contextError: true,
-            errorReason: res?.error || "Kein passender TMDb-Eintrag gefunden",
+            errorReason: failReasonText,
+            reason: failReasonText,
             isUncertain: true,
             confidence: res?.confidence || 0,
             typeCode: res?.parsed?.isSeries ? "s" : "m",
@@ -2424,7 +2452,7 @@
           };
           batchItems.push(failItemObj);
           diagLogsToSave.push({
-            msgId: contextDiagnostics.msgId || "",
+            msgId: contextDiagnostics.msgId ?? "",
             stage: "TMDB_LOOKUP",
             status: res?.error ? "API_ERROR" : "TMDB_NOT_FOUND",
             reason: res?.error || `Kein TMDb-Treffer für "${res?.parsed?.cleanTitle || rawLabel}"`,
@@ -2453,12 +2481,18 @@
             moviesAdded.push(`${res.cleanTitle} (${qualLabel}${res.codec}${res.part ? ` ${res.part}` : ""})`);
           }
 
+          const resolvedReviewReason = res.errorReason || (
+            res.isUncertain
+              ? `Niedrige Treffer-Sicherheit (${Number(res.confidence || 0)}% Match): "${rawEntry?.cleanTitle || rawLabel}" wurde vorläufig "${res.cleanTitle}" (${res.year || "k.A."}) zugeordnet.`
+              : null
+          );
           const okItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
             status: res.contextError ? "?" : (res.isUncertain ? "uncertain" : (res.ingestStatus || "added")),
             contextError: Boolean(res.contextError),
-            errorReason: res.errorReason || null,
+            errorReason: resolvedReviewReason,
+            reason: resolvedReviewReason,
             ingestStatus: res.ingestStatus || "added",
             isUncertain: Boolean(res.isUncertain || res.contextError),
             confidence: Number(res.confidence || 100),
@@ -2489,18 +2523,18 @@
             : "";
           const replacedNote = res.ingestStatus === "replaced_prerelease"
             ? " [⚠️ Alte Vorabversion/TS/MD automatisch gelöscht & ersetzt!]"
-            : "";
+            : (res.ingestStatus === "updated" ? " [🔄 Bestehender Episoden-/Film-Slot per UPSERT aktualisiert]" : "");
           const boundSubsCount = Array.isArray(rawEntry?.subtitle_files || rawEntry?.subtitles) ? (rawEntry.subtitle_files || rawEntry.subtitles).length : 0;
           const subsNote = boundSubsCount > 0 ? ` [💬 +${boundSubsCount} Untertitel gebunden]` : "";
           diagLogsToSave.push({
-            msgId: contextDiagnostics.msgId || "",
+            msgId: contextDiagnostics.msgId ?? "",
             stage: "SAVED_D1",
             status: diagStatus,
-            reason: res.errorReason || (
+            reason: resolvedReviewReason || (
               res.ingestStatus === "skipped_prerelease"
                 ? "Vorabversion / TS / MD übersprungen (reguläre Version bereits in D1 vorhanden)"
                 : res.ingestStatus === "duplicate"
-                  ? "Exaktes Stream-Duplikat bereits in D1"
+                  ? "Exaktes Stream-Duplikat (identische file_id & message_id) bereits in D1"
                   : `Gespeichert via ${res.metadataSource || "TMDb"} (${res.confidence || 100}%)${replacedNote}${subsNote}`
             ),
             fileName: contextDiagnostics.rawFileName || String(rawLabel),
@@ -2522,8 +2556,9 @@
         nextStartIndex = abortBatchIndex;
         pauseReason = "SUBREQUEST_LIMIT_GUARD";
         const pausedEntry = entriesList[abortBatchIndex];
+        const pausedMsgId = Number(pausedEntry?.msg_id || pausedEntry?.message_id || 0) || "";
         diagLogsToSave.push({
-          msgId: pausedEntry?.msg_id || pausedEntry?.message_id || "",
+          msgId: pausedMsgId,
           stage: "BATCH_GUARD",
           status: "SUBREQUEST_PAUSE",
           reason: `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${abortBatchIndex})`,
