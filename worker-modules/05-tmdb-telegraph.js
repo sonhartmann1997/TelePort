@@ -804,6 +804,85 @@
   }
 
   /**
+   * 2. TMDb-Kandidaten-Scoring (Verhindert falsche Doppelgänger / Mockbuster im selben Jahr wie "Arielle 2023")
+   * Bewertet alle Treffer anhand von Jahr, Titel-Genauigkeit, Beschreibungs-Fingerabdruck (contextOverview vs. overview)
+   * und Bekanntheits-Bonus (vote_count).
+   */
+  function pickBestTMDbMovie(results = [], parsedItem = {}) {
+    if (!Array.isArray(results) || !results.length) return null;
+
+    const targetTitle = String(parsedItem.title || parsedItem.cleanTitle || "")
+      .replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "")
+      .toLowerCase()
+      .trim();
+    const normTargetTitle = normalizeCompareString(targetTitle);
+    const contextWords = Array.from(
+      new Set(
+        String(parsedItem.contextOverview || "")
+          .toLowerCase()
+          .split(/[^\p{L}\d]+/u)
+          .filter(w => w.length >= 5)
+      )
+    );
+
+    const scored = results.map(movie => {
+      let score = 0;
+      const tmdbTitle = String(movie.title || movie.name || "").toLowerCase().trim();
+      const tmdbOrig  = String(movie.original_title || movie.original_name || "").toLowerCase().trim();
+      const normTmdbTitle = normalizeCompareString(tmdbTitle);
+      const normTmdbOrig  = normalizeCompareString(tmdbOrig);
+      const relStr = String(movie.release_date || movie.first_air_date || "");
+      const releaseYear = relStr ? parseInt(relStr.slice(0, 4), 10) : null;
+
+      // 1. Jahres-Check
+      if (parsedItem.year && releaseYear) {
+        const diff = Math.abs(Number(parsedItem.year) - releaseYear);
+        if (diff === 0) score += 40;
+        else if (diff === 1) score += 15;
+        else score -= diff * 25; // Falsches Jahrzehnt hart abstrafen!
+      }
+
+      // 2. Titel-Genauigkeit
+      if (
+        tmdbTitle === targetTitle ||
+        tmdbOrig === targetTitle ||
+        (normTargetTitle && (normTmdbTitle === normTargetTitle || normTmdbOrig === normTargetTitle))
+      ) {
+        score += 50;
+      } else if (tmdbTitle.startsWith(targetTitle) || (normTargetTitle && normTmdbTitle.startsWith(normTargetTitle))) {
+        score += 30;
+      } else if (tmdbTitle.includes(targetTitle) || (normTargetTitle && normTmdbTitle.includes(normTargetTitle))) {
+        score += 15;
+      }
+
+      // 3. Beschreibungs-Fingerabdruck (Telegram-Text vs. TMDb-Overview)
+      if (contextWords.length > 0 && movie.overview) {
+        const ovLower = String(movie.overview).toLowerCase();
+        let matches = 0;
+        for (const word of contextWords) {
+          if (ovLower.includes(word)) matches++;
+        }
+        score += Math.min(matches * 20, 100); // Bis zu +100 Punkte bei passender Beschreibung!
+      }
+
+      // 4. Bekanntheits-Bonus (Schutz gegen billige Mockbuster im selben Jahr)
+      const votes = Number(movie.vote_count || 0);
+      if (votes > 1000) score += 35;
+      else if (votes > 200) score += 20;
+      else if (votes > 50) score += 10;
+      else if (votes < 10) score -= 15;
+
+      return { movie, score };
+    });
+
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return Number(b.movie?.popularity || 0) - Number(a.movie?.popularity || 0);
+    });
+    return scored[0].movie;
+  }
+
+  /**
    * Sucht auf TMDb und prüft das Ergebnis auf Kontext-Konflikte (z.B. "Pirates of the Caribbean 3 (2011)"
    * -> Teil 3 ist von 2007, 2011 ist Teil 4). Markiert Widersprüche mit status: "?" und contextError: true,
    * anstatt blind die Fortsetzungsnummer "3" zu löschen!
@@ -851,9 +930,12 @@
       return countries.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim()));
     };
 
-    // Hilfsfunktion: Sortiert TMDb-Ergebnisse bei gleichem/ähnlichem Titel nach kleinster Jahres-Abweichung bzw. DACH-Herkunft (ohne Jahr)
+    // Hilfsfunktion: Nutzt bei Filmen pickBestTMDbMovie (inkl. contextOverview + Blockbuster-Bonus) und bei Serien Jahres-/DACH-Sortierung
     const pickBestHitBySmallestYearDiff = (resultsList) => {
       if (!Array.isArray(resultsList) || resultsList.length === 0) return null;
+      if (type === "movie") {
+        return pickBestTMDbMovie(resultsList, parsedItem);
+      }
       const targetY = parsedItem.year ? Number(parsedItem.year) : null;
       const normQ = normalizeCompareString(queryTitle);
       return [...resultsList].sort((a, b) => {
@@ -1001,6 +1083,13 @@
       }
       const data = await cachedExternalFetchJson(`${baseUrl}/search/${searchType}?${params.toString()}`, { headers });
       if (!Array.isArray(data?.results) || data.results.length === 0) return null;
+      if (searchType === "movie") {
+        const bestMovie = pickBestTMDbMovie(data.results, { ...parsedItem, title: qStr });
+        const sortedMovies = bestMovie
+          ? [bestMovie, ...data.results.filter(r => r && r.id !== bestMovie.id)]
+          : data.results;
+        return { ...(bestMovie || data.results[0]), _resolvedType: searchType, _allResults: sortedMovies.slice(0, 6) };
+      }
       const normQ = normalizeCompareString(qStr);
       const sortedResults = [...data.results].sort((a, b) => {
         const aTitle = normalizeCompareString(a.title || a.name || "");

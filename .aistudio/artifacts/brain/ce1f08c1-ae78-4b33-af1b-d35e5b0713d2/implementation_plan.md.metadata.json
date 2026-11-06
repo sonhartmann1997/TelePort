@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan für ruckelfreies JSON-Einlesen (Chunked Async Parsing), blockierungsfreien Sofort-Zugang zum Admin-Panel während laufender Imports (inkl. Fallback-Cache bei HTTP 503) und eine schwebende Mini-Statusleiste auf anderen Seiten.",
-  "updatedAt": "2026-11-05T13:30:58.750101314Z",
+  "summary": "Implementierungsplan für den 2-Stufen-Schutz gegen gleichnamige Filme/Mockbuster im selben Jahr (Stufe 1: enrichVideoFromNeighborPost mit +1/-1/+2/-2 Nachbar-Prüfung, Basiswort-Check und contextOverview; Stufe 2: pickBestTMDbMovie mit Beschreibungs-Fingerabdruck und Blockbuster-Bonus) sowie gezielter E.T. (1982) Kurztitel-Erkennung.",
+  "updatedAt": "2026-11-06T08:49:45.571773819Z",
   "requestFeedback": true,
   "userFacing": true
 }

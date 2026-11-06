@@ -51,7 +51,20 @@
     "fluch der karibik 4": "Pirates of the Caribbean - Fremde Gezeiten",
     "professor t": "Professor T.",
     "9 1 2 wochen": "9½ Wochen",
-    "9 1/2 wochen": "9½ Wochen"
+    "9 1/2 wochen": "9½ Wochen",
+    "e.t.": "E.T. – Der Außerirdische",
+    "e.t": "E.T. – Der Außerirdische",
+    "e t": "E.T. – Der Außerirdische",
+    "et": "E.T. – Der Außerirdische",
+    "e.t. der ausserirdische": "E.T. – Der Außerirdische",
+    "e.t. der außerirdische": "E.T. – Der Außerirdische",
+    "et der ausserirdische": "E.T. – Der Außerirdische",
+    "et der außerirdische": "E.T. – Der Außerirdische",
+    "e.t. - der ausserirdische": "E.T. – Der Außerirdische",
+    "e.t. - der außerirdische": "E.T. – Der Außerirdische",
+    "e.t. – der außerirdische": "E.T. – Der Außerirdische",
+    "e.t. the extra-terrestrial": "E.T. – Der Außerirdische",
+    "et the extra terrestrial": "E.T. – Der Außerirdische"
   };
 
   // .rar / .partXX.rar Archive sind erlaubt und erhalten eine eigene Kategorie/Version ("📦 RAR-Archiv")
@@ -516,6 +529,8 @@
     s = s.replace(/s[\._]to\s*-?\s*Serien.*/i, "").replace(/Sto\s*-\s*Serien.*/i, "");
     s = s.replace(/serien[\._](?:life|show).*/i, "").replace(/HD\s*Filme\s*Serien.*/i, "");
     s = s.replace(/^(?:Title|Titel)\s*:\s*/i, "").replace(/^(?:vs-|cd-|spy-|d-|4sf-|arc-|tvp-)/i, "");
+    // Studio-Präfixe am Anfang (wie "Disneys Arielle, die Meerjungfrau" -> "Arielle, die Meerjungfrau") entfernen
+    s = s.replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "");
     // Führende S01E01 / E01S01 / 1x01 Präfixe sowie defekte S05E0Fragmente entfernen (Fall 1, Fall 4)
     s = s.replace(/^(?:s\d{1,2}\s*e\d{1,3}(?:-e\d{1,3})?|e\d{1,3}\s*s\d{1,2}|\d{1,2}x\d{2,3})\b[\s._\-–:]*/i, "");
     s = s.replace(/\bS\d{1,2}\s*E\d{0,3}(?:-E\d{1,3})?(?=[A-Za-z]|\b)/gi, " ");
@@ -723,7 +738,7 @@
         // innerhalb der ersten 90 Zeichen nach Titel + Jahreszahl suchen
         const headSlice = firstLine.slice(0, 90);
         const ym = (` ${headSlice} `).match(YEAR_REGEX);
-        if (ym && ym.index > 2) {
+        if (ym && ym.index >= 2) {
           nextContext.year = parseInt(ym[1], 10);
           nextContext.title = cleanMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
         }
@@ -731,6 +746,73 @@
     }
 
     return nextContext;
+  }
+
+  function extractPlainText(msg) {
+    if (!msg || typeof msg !== "object") return "";
+    return normalizeText(flattenTelegramExportText(msg.caption || msg.text || msg.text_entities)).trim();
+  }
+
+  function enrichVideoFromNeighborPost(messages, currentIndex, parsedVideo) {
+    if (!parsedVideo || !Array.isArray(messages)) return parsedVideo;
+    const rawCurrentTitle = String(parsedVideo.title || parsedVideo.cleanTitle || "").trim();
+    if (!rawCurrentTitle) return parsedVideo;
+
+    const baseWord = rawCurrentTitle
+      .toLowerCase()
+      .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\s+/i, "")
+      .split(/[\s:,\-–]+/)[0]; // z.B. "arielle"
+
+    if (!baseWord || (baseWord.length < 3 && baseWord !== "et" && baseWord !== "es")) return parsedVideo;
+
+    // Prüfe zuerst den Post direkt DARUNTER (+1), dann darüber (-1), dann +2 / -2
+    for (const offset of [1, -1, 2, -2]) {
+      const neighbor = messages[currentIndex + offset];
+      if (!neighbor || typeof neighbor !== "object") continue;
+      const nbFile = String(neighbor.video?.file_name || neighbor.document?.file_name || neighbor.file_name || neighbor.file || "").trim();
+      const nbIsVideoOrArchive = Boolean(
+        neighbor.media_type === "video_file" ||
+        neighbor.video ||
+        (neighbor.document?.mime_type && String(neighbor.document.mime_type).startsWith("video/")) ||
+        (neighbor.mime_type && String(neighbor.mime_type).startsWith("video/")) ||
+        /\.(mp4|mkv|avi|m4v|mov|webm|ts|flv|mk3d|rar|srt|vtt|sub|ass|ssa)$/i.test(nbFile)
+      );
+      if (nbIsVideoOrArchive) continue;
+
+      const rawText = extractPlainText(neighbor);
+      const lines = rawText.split("\n").map(l => l.trim()).filter(Boolean);
+      if (lines.length === 0) continue;
+
+      const firstLine = lines[0]
+        .replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\s]+/gu, "")
+        .replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "")
+        .trim();
+
+      // Sicherheits-Check: Die erste Zeile des Nachbarn MUSS das Basiswort ("arielle") enthalten!
+      // Dadurch wird "Tin & Tina 2023" (-1) sofort ausgeschlossen!
+      if (!firstLine.toLowerCase().includes(baseWord)) continue;
+
+      const yearMatch = rawText.match(/\b(19[2-9]\d|20[0-2]\d)\b/);
+      const neighborYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+      if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
+
+      const rawEnrichedTitle = firstLine
+        .replace(/\s*[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?\s*$/, "")
+        .trim();
+      const cleanedTitle = cleanMediaTitle(rawEnrichedTitle) || rawEnrichedTitle;
+      const contextOverview = lines.slice(1).join(" ").trim();
+
+      return {
+        ...parsedVideo,
+        title: cleanedTitle || parsedVideo.title,
+        cleanTitle: cleanedTitle || parsedVideo.cleanTitle || parsedVideo.title,
+        year: parsedVideo.year || neighborYear,
+        contextOverview: contextOverview || parsedVideo.contextOverview || "" // Speichert die Filmbeschreibung für den TMDb-Abgleich!
+      };
+    }
+
+    return parsedVideo;
   }
 
   function parseTelegramMessage(msg, prevContext = {}) {
@@ -854,17 +936,32 @@
       }
     }
 
-    // activeContext.title nur heranziehen, wenn ein TMDb/IMDb-Steckbrief vorliegt, der Dateiname generisch ist oder der Titel übereinstimmt
+    // activeContext.title nur heranziehen, wenn der Dateiname generisch ist oder das Basiswort übereinstimmt
+    // (Verhindert, dass z.B. "Tin & Tina 2023" aus index - 1 ein Video "Arielle 2023.mp4" ohne Caption überschreibt!)
+    const ownVideoTitleCandidate = cleanMediaTitle((line1 || (!isGenericFile ? fileName : "")).replace(YEAR_REGEX, " "));
+    const ownBaseWord = ownVideoTitleCandidate
+      .toLowerCase()
+      .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\s+/i, "")
+      .split(/[\s:,\-–]+/)[0] || "";
+    const ctxTitleLower = String(activeContext.title || "").toLowerCase();
+    const preContextMatchesOwnTitle = !ownBaseWord || ownBaseWord.length < 2 || ctxTitleLower.includes(ownBaseWord);
+
+    if (!preContextMatchesOwnTitle && !hasOwnSeriesMarkerInMsg && activeContext.title && !activeContext.seriesHeader) {
+      tmdbId = explicitMovUrlHit || explicitTvUrlHit ? tmdbId : null;
+      imdbId = null;
+    }
+
     const usePreContextTitle = Boolean(
       !inlineExplicitTitle &&
       !ownSeriesNameInMsg &&
       !(hasOwnParenYear && !hasOwnSeriesMarkerInMsg && activeContext.mediaType === "tv") &&
       activeContext.title &&
+      preContextMatchesOwnTitle &&
       (
         activeContext.tmdbId ||
         activeContext.imdbId ||
         isGenericFile ||
-        !line1 ||
+        (!line1 && isGenericFile) ||
         cleanMediaTitle(line1).toLowerCase().startsWith(activeContext.title.toLowerCase().slice(0, 6))
       )
     );
@@ -1163,7 +1260,7 @@
     }
 
     let rawTitle = seriesTitle || explicitTitle || primarySource;
-    if (!seriesTitle && !explicitTitle && yearMatch && yearMatch.index > 2) {
+    if (!seriesTitle && !explicitTitle && yearMatch && yearMatch.index >= 2) {
       const matchedSource = parenYearMatch
         ? (dateSafePrimary.match(PAREN_YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(PAREN_YEAR_REGEX) ? dateSafeLine1 : dateSafeFile))
         : (dateSafePrimary.match(YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(YEAR_REGEX) ? dateSafeLine1 : dateSafeFile));
@@ -1513,7 +1610,7 @@
     const yearMatch = paddedWithoutExt.match(YEAR_REGEX);
     if (yearMatch) {
       year = parseInt(yearMatch[1], 10);
-      if (typeof yearMatch.index === "number" && yearMatch.index > 2) {
+      if (typeof yearMatch.index === "number" && yearMatch.index >= 2) {
         cutIndex = Math.min(cutIndex, yearMatch.index - 1);
       }
     }

@@ -4806,7 +4806,17 @@
         "fluch der karibik 4": "Pirates of the Caribbean - Fremde Gezeiten",
         "professor t": "Professor T.",
         "9 1 2 wochen": "9½ Wochen",
-        "9 1/2 wochen": "9½ Wochen"
+        "9 1/2 wochen": "9½ Wochen",
+        "e.t.": "E.T. – Der Außerirdische",
+        "e.t": "E.T. – Der Außerirdische",
+        "e t": "E.T. – Der Außerirdische",
+        "et": "E.T. – Der Außerirdische",
+        "e.t. der ausserirdische": "E.T. – Der Außerirdische",
+        "e.t. der außerirdische": "E.T. – Der Außerirdische",
+        "e.t. - der ausserirdische": "E.T. – Der Außerirdische",
+        "e.t. - der außerirdische": "E.T. – Der Außerirdische",
+        "et der ausserirdische": "E.T. – Der Außerirdische",
+        "et der außerirdische": "E.T. – Der Außerirdische"
       };
 
       function detectClientVideoQuality(msg, rawText, rawFileName) {
@@ -4974,7 +4984,7 @@
           .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|json))+$/i, "");
         t = t.replace(/\\(\\s*\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\s*\\)/g, " ");
         t = t.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
-        if ((t.match(/\\./g) || []).length >= 2 && !t.includes(" ")) {
+        if ((t.match(/\\./g) || []).length >= 2 && !t.includes(" ") && !/^e\\.t\\.?$/i.test(t.trim())) {
           t = t.replace(/\\./g, " ");
         }
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:ger|deu|eng|jap|jpn|fr|es|it|tr|ru)[\\s._-]+(?:sub|subs|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
@@ -4993,6 +5003,7 @@
         t = t.replace(/s[\\._]to\\s*-?\\s*Serien.*/i, "").replace(/Sto\\s*-\\s*Serien.*/i, "");
         t = t.replace(/serien[\\._](?:life|show).*/i, "").replace(/HD\\s*Filme\\s*Serien.*/i, "");
         t = t.replace(/^(?:Title|Titel)\\s*:\\s*/i, "").replace(/^(?:vs-|cd-|spy-|d-|4sf-|arc-|tvp-)/i, "");
+        t = t.replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\\s+/i, "");
         t = t.replace(/^(?:s\\d{1,2}[\\s._-]*e\\d{1,3}|e\\d{1,3}[\\s._-]*s\\d{1,2}|\\d{1,2}x\\d{1,3})\\b[\\s._\\-–:]*/i, "");
         t = t.replace(/\\bS\\d{1,2}\\s*E\\d{0,3}(?=[A-Za-z]|\\b)/gi, " ");
         t = t.replace(/\\b\\d{3,4}\\s*[x×]\\s*\\d{3,4}\\b/g, "");

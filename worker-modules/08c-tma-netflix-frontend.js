@@ -47,7 +47,7 @@
         const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
         if (ym) {
           year = parseInt(ym[1], 10);
-          if (!explicitTitle && typeof ym.index === "number" && ym.index > 2) cutIdx = Math.min(cutIdx, ym.index - 1);
+          if (!explicitTitle && typeof ym.index === "number" && ym.index >= 2) cutIdx = Math.min(cutIdx, ym.index - 1);
         }
 
         let titleCand = explicitTitle ? explicitTitle : (withoutExt.slice(0, cutIdx).trim() || withoutExt);
@@ -234,7 +234,9 @@
           const parsed = parseClientMediaPreview(rawStr, durationSec, typeof item === "object" ? item : null);
           if (typeof item === "object" && item !== null) {
             if (item.cleanTitle && item.cleanTitle !== "Unbekannt") {
-              parsed.cleanTitle = cleanClientMediaTitle(String(item.cleanTitle)) || String(item.cleanTitle);
+              parsed.cleanTitle = item.neighborEnriched
+                ? String(item.cleanTitle).trim()
+                : (cleanClientMediaTitle(String(item.cleanTitle)) || String(item.cleanTitle));
             }
             if (item.type === "series" || item.type === "tv" || item.isSeries || item.season || item.episode) {
               parsed.isSeries = true;
@@ -310,6 +312,8 @@
                 codec: parsed.codec,
                 part: parsed.part,
                 tags: parsed.isArchive ? "📦 RAR-Archiv" : (item.tags || ""),
+                contextOverview: item.contextOverview || "",
+                neighborEnriched: Boolean(item.neighborEnriched),
                 isQualityVariant
               }
             : {
@@ -326,6 +330,8 @@
                 codec: parsed.codec,
                 part: parsed.part,
                 tags: parsed.isArchive ? "📦 RAR-Archiv" : "",
+                contextOverview: "",
+                neighborEnriched: false,
                 isQualityVariant
               };
 
@@ -458,7 +464,7 @@
           } else if (!msg.file_name && msg.media_type !== "video_file") {
             const headSlice = txt.slice(0, 110);
             const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
-            if (ym && ym.index > 2) {
+            if (ym && ym.index >= 2) {
               ctx.year = parseInt(ym[1], 10);
               const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
               if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
@@ -473,6 +479,61 @@
           }
         }
         return ctx;
+      }
+
+      // Stufe 1 (Arielle 2023 & Kurztitel): Nachbar-Post (+1 / -1 / +2 / -2) auf passenden Voll-Titel & Beschreibungstext prüfen
+      function enrichClientVideoFromNeighborPost(messages, currentIndex, parsedVideo) {
+        if (!parsedVideo || !parsedVideo.title) return parsedVideo;
+
+        const baseWord = String(parsedVideo.title)
+          .toLowerCase()
+          .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\\s+/i, "")
+          .split(/[\\s:,\\-–_.]+/)[0];
+
+        if (!baseWord || baseWord.length < 3) return parsedVideo;
+
+        // Prüfe zuerst den Post direkt DARUNTER (+1), dann darüber (-1), dann +2 / -2
+        for (const offset of [1, -1, 2, -2]) {
+          const neighbor = messages[currentIndex + offset];
+          if (!neighbor || neighbor.media_type === "video_file" || neighbor.video) continue;
+          const nFile = String(neighbor.file_name || neighbor.file || "").toLowerCase();
+          if (/\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|srt|vtt|sub|ass|ssa)$/i.test(nFile)) continue;
+
+          const rawText = flattenClientTgText(neighbor.text || neighbor.caption || neighbor.text_entities);
+          const lines = rawText.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
+          if (lines.length === 0) continue;
+
+          const firstLine = lines[0]
+            .replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\\s]+/gu, "")
+            .replace(/^(?:(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*)?(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\\s+/i, "")
+            .replace(/^(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*/i, "")
+            .trim();
+
+          // Sicherheits-Check: Die erste Zeile des Nachbarn MUSS das Basiswort ("arielle") enthalten!
+          // Dadurch wird "Tin & Tina 2023" (-1) sofort ausgeschlossen!
+          if (!firstLine.toLowerCase().includes(baseWord)) continue;
+
+          const yearMatch = rawText.match(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/);
+          const neighborYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+          if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
+
+          const cleanedNeighborTitle = firstLine
+            .replace(/\\s*[(\\[\\-–]*\\s*\\b(19[2-9]\\d|20[0-2]\\d)\\b\\s*[)\\]]*\\s*$/, "")
+            .trim();
+          const finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
+
+          return {
+            ...parsedVideo,
+            title: finalTitle || parsedVideo.title,
+            year: parsedVideo.year || neighborYear,
+            contextOverview: lines.slice(1).join(" ").trim(),
+            neighborEnriched: true,
+            neighborOffset: offset
+          };
+        }
+
+        return parsedVideo;
       }
 
       async function detectAndParseClientBackupJson(parsedJson, fileName = "result.json", fileSizeBytes = 0, repairMeta = null, statusEl = null) {
@@ -743,7 +804,15 @@
 
             let baseCandidate = "";
             let parsedFrom = isRarMsg ? "RAR-Archiv" : "Dateiname";
-            if (!ownExplicitSeriesTitle && effectivePre.title && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
+            const ownVideoTitleCandidate = cleanFirstLine || fileCleanOwn || "";
+            const ownBaseWord = ownVideoTitleCandidate
+              .toLowerCase()
+              .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\\s+/i, "")
+              .split(/[\\s:,\\-–_.]+/)[0];
+            const preTitleMatchesOwn = !ownBaseWord || ownBaseWord.length < 3 ||
+              (effectivePre.title && String(effectivePre.title).toLowerCase().includes(ownBaseWord));
+
+            if (!ownExplicitSeriesTitle && effectivePre.title && ((isGenericFile && !cleanFirstLine) || preTitleMatchesOwn) && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
               baseCandidate = effectivePre.title;
               parsedFrom = "Vorab-Steckbrief (Nachricht darüber)";
             } else if (!ownExplicitSeriesTitle && effectivePre.seriesHeader && (isGenericFile || !cleanFirstLine)) {
@@ -794,6 +863,26 @@
               enrichedName += " " + detectedQual;
             }
 
+            // Stufe 1 (Arielle 2023): Nachbar-Post (+1 / -1 / +2 / -2) auf passenden Voll-Titel & Beschreibungstext prüfen
+            let neighborEnrichedTitle = null;
+            let neighborEnrichedYear = null;
+            let neighborContextOverview = "";
+            if (!seInText && !multiLineSeLine && effectivePre.mediaType !== "tv" && !effectivePre.seriesHeader) {
+              const prelimParsed = parseClientMediaPreview(enrichedName, Number(msg.duration_seconds || 0), msg);
+              if (!prelimParsed.isSeries && prelimParsed.cleanTitle && prelimParsed.cleanTitle !== "Unbekannt") {
+                const enrichedNeighbor = enrichClientVideoFromNeighborPost(tgMessages, i, {
+                  title: prelimParsed.cleanTitle,
+                  year: prelimParsed.year || yearInText || null
+                });
+                if (enrichedNeighbor && (enrichedNeighbor.contextOverview || enrichedNeighbor.title !== prelimParsed.cleanTitle)) {
+                  neighborEnrichedTitle = enrichedNeighbor.title;
+                  neighborEnrichedYear = enrichedNeighbor.year || prelimParsed.year || null;
+                  neighborContextOverview = enrichedNeighbor.contextOverview || "";
+                  parsedFrom = parsedFrom + " + Nachbar-Post";
+                }
+              }
+            }
+
             const rarPartObj = isRarMsg ? extractClientPartInfo(flatTextRaw, rawFileName || validFilePath, 0) : null;
             rawCandidates.push({
               filename: enrichedName,
@@ -801,6 +890,10 @@
               raw_file_name: rawFileName || validFilePath || "",
               raw_text: flatTextRaw.slice(0, 600),
               parsed_from: parsedFrom,
+              cleanTitle: neighborEnrichedTitle || undefined,
+              year: neighborEnrichedYear || undefined,
+              contextOverview: neighborContextOverview || undefined,
+              neighborEnriched: Boolean(neighborEnrichedTitle || neighborContextOverview),
               tmdb_id: effectivePre.tmdbId || null,
               imdb_id: effectivePre.imdbId || null,
               type: effectivePre.mediaType === "tv" ? "series" : (effectivePre.mediaType === "movie" ? "movie" : undefined),
@@ -904,6 +997,7 @@
         let inString = false;
         let isEscaped = false;
         let currentObjStr = "";
+        let postVideoFollowRemaining = 0;
 
         while (offset < totalBytes) {
           const end = Math.min(totalBytes, offset + SLICE_BYTES);
@@ -957,6 +1051,10 @@
                   if (isCandidateVideo) {
                     parsedMsgObj._prevMessages = recentWindowMsgs.slice(-2);
                     extractedMessages.push(parsedMsgObj);
+                    postVideoFollowRemaining = 2;
+                  } else if (postVideoFollowRemaining > 0) {
+                    extractedMessages.push(parsedMsgObj);
+                    postVideoFollowRemaining--;
                   }
                   recentWindowMsgs.push({
                     id: parsedMsgObj.id,

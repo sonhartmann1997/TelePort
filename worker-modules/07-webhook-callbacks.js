@@ -210,6 +210,36 @@
       if (score < 88) score = Math.min(score, 75);
     }
 
+    // 3. Beschreibungs-Fingerabdruck (Telegram Nachbar-Post contextOverview vs. TMDb overview)
+    if (parsed.contextOverview && candidate.overview) {
+      const ctxWords = Array.from(
+        new Set(
+          String(parsed.contextOverview)
+            .toLowerCase()
+            .split(/[^\p{L}\d]+/u)
+            .filter(w => w.length >= 5)
+        )
+      );
+      if (ctxWords.length > 0) {
+        const ovLow = String(candidate.overview).toLowerCase();
+        let ovMatches = 0;
+        for (const w of ctxWords) {
+          if (ovLow.includes(w)) ovMatches++;
+        }
+        if (ovMatches > 0) {
+          score += Math.min(ovMatches * 5, 22);
+        }
+      }
+    }
+
+    // 4. Bekanntheits-Bonus (Schutz gegen billige Mockbuster im selben Jahr)
+    if (candidateTypeCode === "m" && score >= 68) {
+      const votes = Number(candidate.vote_count || 0);
+      if (votes > 1000) score += 5;
+      else if (votes > 200) score += 3;
+      else if (votes < 10 && parsed.year) score -= 8;
+    }
+
     // Wenn ein Eintrag als Film mit Jahreszahl erkannt wurde (!parsed.isSeries && parsed.year), blockiere TV-Serien-Kandidaten strikt
     if (!parsed.isSeries && parsed.year && candidateTypeCode === "s") {
       score = Math.min(score - 35, 40);
@@ -505,6 +535,66 @@
       }
     }
 
+    const contextWordsForMovieScore = Array.from(
+      new Set(
+        String(parsed?.contextOverview || "")
+          .toLowerCase()
+          .split(/[^\p{L}\d]+/u)
+          .filter(w => w.length >= 5)
+      )
+    );
+    const targetMovieTitleLow = String(parsed?.cleanTitle || parsed?.title || "")
+      .replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "")
+      .toLowerCase()
+      .trim();
+    const normTargetMovieTitle = normalizeCompareString(targetMovieTitleLow);
+
+    const computeMoviePickerScore = (movie) => {
+      let mScore = 0;
+      const tmdbTitle = String(movie.title || movie.name || "").toLowerCase().trim();
+      const tmdbOrig  = String(movie.original_title || movie.original_name || "").toLowerCase().trim();
+      const normTmdbT = normalizeCompareString(tmdbTitle);
+      const normTmdbO = normalizeCompareString(tmdbOrig);
+      const relStr = String(movie.release_date || movie.first_air_date || "");
+      const releaseYear = relStr ? parseInt(relStr.slice(0, 4), 10) : null;
+
+      if (parsed?.year && releaseYear) {
+        const diff = Math.abs(Number(parsed.year) - releaseYear);
+        if (diff === 0) mScore += 40;
+        else if (diff === 1) mScore += 15;
+        else mScore -= diff * 25;
+      }
+
+      if (
+        tmdbTitle === targetMovieTitleLow ||
+        tmdbOrig === targetMovieTitleLow ||
+        (normTargetMovieTitle && (normTmdbT === normTargetMovieTitle || normTmdbO === normTargetMovieTitle))
+      ) {
+        mScore += 50;
+      } else if (tmdbTitle.startsWith(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.startsWith(normTargetMovieTitle))) {
+        mScore += 30;
+      } else if (tmdbTitle.includes(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.includes(normTargetMovieTitle))) {
+        mScore += 15;
+      }
+
+      if (contextWordsForMovieScore.length > 0 && movie.overview) {
+        const ovLower = String(movie.overview).toLowerCase();
+        let matches = 0;
+        for (const word of contextWordsForMovieScore) {
+          if (ovLower.includes(word)) matches++;
+        }
+        mScore += Math.min(matches * 20, 100);
+      }
+
+      const votes = Number(movie.vote_count || 0);
+      if (votes > 1000) mScore += 35;
+      else if (votes > 200) mScore += 20;
+      else if (votes > 50) mScore += 10;
+      else if (votes < 10) mScore -= 15;
+
+      return mScore;
+    };
+
     const dedupedMap = new Map();
     for (const item of rawPool) {
       if (!item || !item.id) continue;
@@ -513,11 +603,12 @@
         ? { ...parsed, cleanTitle: item._baseTitleForConf, isSeries: item._typeCode === "s" }
         : parsed;
       const baseConf = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsedForConf, item, item._typeCode);
+      const moviePickerScore = item._typeCode === "m" ? computeMoviePickerScore(item) : 0;
       const conf = Math.min(99, baseConf + Number(item._confidenceBoost || 0));
       const existing = dedupedMap.get(key);
       const isDachOrigin = String(item.original_language || "").toLowerCase() === "de" ||
         (Array.isArray(item.origin_country) && item.origin_country.some(c => /^(?:DE|AT|CH|XG)$/i.test(String(c || "").trim())));
-      if (!existing || conf > existing.confidence) {
+      if (!existing || conf > existing.confidence || (conf === existing.confidence && moviePickerScore > (existing.moviePickerScore || 0))) {
         const rawDate = String(item.release_date || item.first_air_date || "");
         dedupedMap.set(key, {
           tmdbId: Number(item.id),
@@ -531,6 +622,7 @@
           voteCount: Number(item.vote_count || 0),
           popularity: Number(item.popularity || 0),
           isDachOrigin,
+          moviePickerScore,
           confidence: conf,
           inferredSeason: item._inferredEpisode ? (item._inferredSeason || 1) : (existing?.inferredSeason || null),
           inferredEpisode: item._inferredEpisode || existing?.inferredEpisode || null,
@@ -622,6 +714,12 @@
           const aDiff = Math.abs(aY - targetY);
           const bDiff = Math.abs(bY - targetY);
           if (aDiff !== bDiff) return aDiff - bDiff;
+        }
+        // Bei Filmen (gleiches Jahr oder ähnliche Confidence <= 20): pickBestTMDbMovie-Score (contextOverview-Fingerabdruck + vote_count Blockbuster-Bonus) entscheidet!
+        if (a.typeCode === "m" && b.typeCode === "m" && Math.abs(b.confidence - a.confidence) <= 20) {
+          const aPick = Number(a.moviePickerScore || 0);
+          const bPick = Number(b.moviePickerScore || 0);
+          if (aPick !== bPick) return bPick - aPick;
         }
         // Ohne Jahresangabe bei exakter Namensgleichheit: Deutschsprachige Produktionen (DE/AT/CH/XG) bevorzugen,
         // sofern der fremdsprachige Kandidat kein internationaler Mainstream-Hit (voteCount >= 150 oder popularity >= 25) ist!
@@ -721,8 +819,25 @@
           messageLink: String(rawEntry.message_link || rawEntry.messageLink || "")
         };
       }
+      if (rawEntry.contextOverview || rawEntry.context_overview) {
+        parsed.contextOverview = String(rawEntry.contextOverview || rawEntry.context_overview).trim();
+      }
+      const isNeighborEnrichedMovieTitle = Boolean(
+        !parsed.isSeries &&
+        (rawEntry.cleanTitle || rawEntry.title) &&
+        (
+          rawEntry.neighborEnriched ||
+          rawEntry.contextOverview ||
+          (
+            parsed.cleanTitle &&
+            String(rawEntry.cleanTitle || rawEntry.title).toLowerCase().includes(String(parsed.cleanTitle).toLowerCase()) &&
+            String(rawEntry.cleanTitle || rawEntry.title).trim().length > String(parsed.cleanTitle).trim().length
+          )
+        )
+      );
       if (
         rawEntry.manualTitle ||
+        isNeighborEnrichedMovieTitle ||
         ((!parsed.cleanTitle || parsed.cleanTitle === "Unbekannt") && (rawEntry.cleanTitle || rawEntry.title)) ||
         (parsed.isSeries && rawEntry.cleanTitle && String(rawEntry.cleanTitle).trim().length >= 2 && String(rawEntry.cleanTitle).trim().length < String(parsed.cleanTitle || "").trim().length)
       ) {
@@ -1807,6 +1922,8 @@
             part: parsed.part,
             partInfo: item.partInfo || parsed.partInfo || null,
             editions: item.editions || parsed.editions || [],
+            contextOverview: item.contextOverview || item.context_overview || parsed.contextOverview || "",
+            neighborEnriched: Boolean(item.neighborEnriched),
             isQualityVariant
           }
         : {
@@ -1824,6 +1941,7 @@
             part: parsed.part,
             partInfo: parsed.partInfo || null,
             editions: parsed.editions || [],
+            contextOverview: parsed.contextOverview || "",
             isQualityVariant
           };
 
@@ -1926,7 +2044,23 @@
           : [tgMessages[i - 2], tgMessages[i - 1]].filter(Boolean);
         const itemsFromMsg = extractCandidateRawItemsFromTgMessage(msg, rollingPreContext, prevWindow, chatMeta);
         if (itemsFromMsg.length > 0) {
-          for (const it of itemsFromMsg) {
+          for (const rawIt of itemsFromMsg) {
+            const it = (!rawIt.isSeries && typeof enrichVideoFromNeighborPost === "function")
+              ? (() => {
+                  const enriched = enrichVideoFromNeighborPost(tgMessages, i, {
+                    ...rawIt,
+                    title: rawIt.cleanTitle || rawIt.title || ""
+                  });
+                  const didEnrich = Boolean(enriched && (enriched.contextOverview || (enriched.title && enriched.title !== rawIt.cleanTitle)));
+                  return {
+                    ...rawIt,
+                    cleanTitle: enriched?.cleanTitle || enriched?.title || rawIt.cleanTitle,
+                    year: enriched?.year || rawIt.year || null,
+                    contextOverview: enriched?.contextOverview || rawIt.contextOverview || "",
+                    neighborEnriched: didEnrich
+                  };
+                })()
+              : rawIt;
             rawCandidates.push(it);
             // Fall 16 (IDs 108709-108715): Ein Film-Steckbrief gilt immer nur für das unmittelbar zugehörige Video!
             delete rollingPreContext.tmdbId;
