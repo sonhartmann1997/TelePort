@@ -2411,6 +2411,7 @@
         k.startsWith("d1_") ||
         k.startsWith("saved_") ||
         k.startsWith("folders_") ||
+        k.startsWith("u_bundle_bot_vip") ||
         k.startsWith("bot_vip") ||
         k.startsWith("tma_import_checkpoint") ||
         k.startsWith("tma_backup_import_checkpoint")
@@ -2418,15 +2419,13 @@
         memoryFallback.delete(k);
       }
     }
-    const kvStore = env.MOVIE_SAVED || env.KV;
-    if (kvStore) {
-      await kvStore.delete("tma_backup_import_checkpoint_v1").catch(() => {});
-    }
+    await kvStageDelete(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
 
     await saveRawList(env, "bot_vip", []);
     await saveFolders(env, "bot_vip", []);
     await saveBotVipHiddenKeys(env, new Set());
     await ensureBotVipDefaultPlaylist(env);
+    await flushUserSession(env, "bot_vip", { force: true });
 
     return {
       ok: true,

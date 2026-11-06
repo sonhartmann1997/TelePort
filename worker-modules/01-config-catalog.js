@@ -902,32 +902,166 @@
     }
   }
 
+  const KV_EMPTY_SENTINEL = "__KV_NULL_SENTINEL__";
+  const kvDirtyBuffer = new Map();
+
+  function resolveKvBinding(env, bindingName = "MOVIE_SAVED") {
+    if (!env) return null;
+    if (bindingName === "MY_KV") {
+      if (env.MY_KV && typeof env.MY_KV.get === "function") return env.MY_KV;
+      if (env.MOVIE_SAVED && typeof env.MOVIE_SAVED.get === "function") return env.MOVIE_SAVED;
+      if (env.KV && typeof env.KV.get === "function") return env.KV;
+      return null;
+    }
+    if (env.MOVIE_SAVED && typeof env.MOVIE_SAVED.get === "function") return env.MOVIE_SAVED;
+    if (env.KV && typeof env.KV.get === "function") return env.KV;
+    if (env.MY_KV && typeof env.MY_KV.get === "function") return env.MY_KV;
+    return null;
+  }
+
+  async function kvCachedGetRaw(env, key, bindingName = "MOVIE_SAVED") {
+    const cleanKey = String(key || "");
+    if (!cleanKey) return null;
+    if (kvDirtyBuffer.has(cleanKey)) {
+      return kvDirtyBuffer.get(cleanKey).valueStr;
+    }
+    const cacheKey = `kv_raw_${cleanKey}`;
+    if (memoryFallback.has(cacheKey)) {
+      const cached = memoryFallback.get(cacheKey);
+      return cached === KV_EMPTY_SENTINEL ? null : cached;
+    }
+    try {
+      const kv = resolveKvBinding(env, bindingName);
+      if (kv && typeof kv.get === "function") {
+        trackStat("kvReads");
+        const raw = await kv.get(cleanKey);
+        if (raw !== null && raw !== undefined) {
+          const strVal = typeof raw === "string" ? raw : JSON.stringify(raw);
+          memoryFallback.set(cacheKey, strVal);
+          memoryFallback.set(`kv_last_saved_${cleanKey}`, strVal);
+          return strVal;
+        }
+        memoryFallback.set(cacheKey, KV_EMPTY_SENTINEL);
+        return null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function kvStageWrite(env, key, rawOrObj, options = {}) {
+    const cleanKey = String(key || "");
+    if (!cleanKey) return false;
+    const valueStr = typeof rawOrObj === "string" ? rawOrObj : JSON.stringify(rawOrObj);
+    const cacheKey = `kv_raw_${cleanKey}`;
+    const lastSavedKey = `kv_last_saved_${cleanKey}`;
+    memoryFallback.set(cacheKey, valueStr);
+
+    const forceWrite = Boolean(options.forceKvWrite || options.flushNow);
+    if (!forceWrite && memoryFallback.get(lastSavedKey) === valueStr) {
+      kvDirtyBuffer.delete(cleanKey);
+      return false;
+    }
+
+    const prev = kvDirtyBuffer.get(cleanKey);
+    const now = Date.now();
+    const nextEntry = {
+      key: cleanKey,
+      valueStr,
+      bindingName: options.bindingName || prev?.bindingName || "MOVIE_SAVED",
+      expirationTtl: options.expirationTtl || prev?.expirationTtl || null,
+      periodicOnly: options.periodicOnly !== undefined ? Boolean(options.periodicOnly) : Boolean(prev?.periodicOnly),
+      dirtyCount: (prev?.dirtyCount || 0) + 1,
+      firstDirtiedAt: prev?.firstDirtiedAt || now,
+      updatedAt: now
+    };
+    kvDirtyBuffer.set(cleanKey, nextEntry);
+
+    if (options.flushNow === true) {
+      await flushDirtyKvBatch(env, { keys: [cleanKey], force: true });
+    }
+    return true;
+  }
+
+  async function kvStageDelete(env, key, bindingName = "MOVIE_SAVED") {
+    const cleanKey = String(key || "");
+    if (!cleanKey) return;
+    kvDirtyBuffer.delete(cleanKey);
+    memoryFallback.set(`kv_raw_${cleanKey}`, KV_EMPTY_SENTINEL);
+    memoryFallback.delete(`kv_last_saved_${cleanKey}`);
+    try {
+      const kv = resolveKvBinding(env, bindingName);
+      if (kv && typeof kv.delete === "function") {
+        await kv.delete(cleanKey).catch(() => {});
+      }
+    } catch (e) {}
+  }
+
+  async function flushDirtyKvBatch(env, options = {}) {
+    if (!kvDirtyBuffer.size) return 0;
+    const force = Boolean(options.force);
+    const targetKeys = Array.isArray(options.keys) && options.keys.length > 0 ? new Set(options.keys.map(String)) : null;
+    const now = Date.now();
+    const entriesToFlush = [];
+
+    for (const [k, entry] of kvDirtyBuffer.entries()) {
+      if (targetKeys && !targetKeys.has(k)) continue;
+      if (!force && entry.periodicOnly) {
+        const ageMs = now - (entry.firstDirtiedAt || now);
+        if ((entry.dirtyCount || 0) < 15 && ageMs < 45000) {
+          continue;
+        }
+      }
+      entriesToFlush.push(entry);
+    }
+
+    if (!entriesToFlush.length) return 0;
+
+    let writtenCount = 0;
+    await Promise.allSettled(entriesToFlush.map(async (entry) => {
+      kvDirtyBuffer.delete(entry.key);
+      const lastSavedKey = `kv_last_saved_${entry.key}`;
+      if (!force && memoryFallback.get(lastSavedKey) === entry.valueStr) {
+        return;
+      }
+      const kv = resolveKvBinding(env, entry.bindingName);
+      if (!kv || typeof kv.put !== "function") return;
+      const putOpts = entry.expirationTtl && Number(entry.expirationTtl) >= 60
+        ? { expirationTtl: Number(entry.expirationTtl) }
+        : undefined;
+      trackStat("kvWrites");
+      if (putOpts) {
+        await kv.put(entry.key, entry.valueStr, putOpts);
+      } else {
+        await kv.put(entry.key, entry.valueStr);
+      }
+      memoryFallback.set(lastSavedKey, entry.valueStr);
+      writtenCount += 1;
+    }));
+
+    return writtenCount;
+  }
+
   async function getActiveTiers(env) {
     if (memoryFallback.has("admin_active_tiers")) {
       return memoryFallback.get("admin_active_tiers");
     }
     try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvReads");
-        const raw = await env.MOVIE_SAVED.get("admin_active_tiers");
-        if (raw) {
-          const parsed = { ...DEFAULT_ACTIVE_TIERS, ...JSON.parse(raw) };
-          memoryFallback.set("admin_active_tiers", parsed);
-          return parsed;
-        }
+      const raw = await kvCachedGetRaw(env, "admin_active_tiers", "MOVIE_SAVED");
+      if (raw) {
+        const parsed = { ...DEFAULT_ACTIVE_TIERS, ...JSON.parse(raw) };
+        memoryFallback.set("admin_active_tiers", parsed);
+        return parsed;
       }
     } catch (e) {}
-    return { ...DEFAULT_ACTIVE_TIERS };
+    const fallbackTiers = { ...DEFAULT_ACTIVE_TIERS };
+    memoryFallback.set("admin_active_tiers", fallbackTiers);
+    return fallbackTiers;
   }
 
   async function saveActiveTiers(env, tiersObj) {
     const merged = { ...DEFAULT_ACTIVE_TIERS, ...tiersObj };
     memoryFallback.set("admin_active_tiers", merged);
-    try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvWrites");
-        await env.MOVIE_SAVED.put("admin_active_tiers", JSON.stringify(merged));
-      }
-    } catch (e) {}
+    await kvStageWrite(env, "admin_active_tiers", merged, { bindingName: "MOVIE_SAVED", flushNow: true });
     return merged;
   }
+

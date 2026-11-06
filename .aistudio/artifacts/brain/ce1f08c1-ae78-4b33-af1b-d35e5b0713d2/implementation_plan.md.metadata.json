@@ -1,6 +1,6 @@
 {
-  "summary": "Implementierungsplan für die 5 TMDb-Such- und Nachbar-Post-Schutzmechanismen:\n1. Untertitel-Fallback (Bindestrich-/Doppelpunkt-Cutter wie bei \"Silk Road - Gebieter des Darknets\" -> \"Silk Road\")\n2. Umlaut-Normalisierung (ae/oe/ue -> ä/ö/ü wie bei \"Rotkaeppchen.1954.mp4\" -> \"Rotkäppchen\")\n3. Harter Jahres-Schutz (> 2 Jahre Abweichung zwingend als status: \"?\" / Konflikt markieren, niemals automatisch als \"ok\" übernehmen)\n4. Doppelpunkt nach Römischen Zahlen erzwingen (\"Star Trek II Der Zorn des Khan\" -> \"Star Trek II: Der Zorn des Khan\")\n5. Collection-Header- & Detailtitel-Schutz in enrichVideoFromNeighborPost & Pre-Context (\"Der König der Löwen 2 - Simbas Königreich\" darf niemals von \"König der Löwen teil 1 bis 3\" überschrieben werden)",
-  "updatedAt": "2026-11-06T11:17:00.970859012Z",
+  "summary": "Implementierungsplan für die KV-Batching- & Write-Back-Engine zur Vermeidung von Cloudflare 503-/Quota-Limits:\n1. Konsolidiertes User-KV-Dokument (u_bundle_<chatId> vereint settings, savedList, folders und session in einem einzigen KV-Key mit automatischer Legacy-Migration).\n2. Zentraler In-Memory Read-Through Cache & Dirty Write-Back Batcher (kvBatchEngine) für MOVIE_SAVED und MY_KV.\n3. Periodischer & Session-End Write-Back (statt Einzel-Writes bei jedem Klick/Log-Event), inklusive Deduplizierung identischer Payloads.",
+  "updatedAt": "2026-11-06T12:09:24.801518430Z",
   "requestFeedback": true,
   "userFacing": true
 }

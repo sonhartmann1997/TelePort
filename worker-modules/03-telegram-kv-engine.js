@@ -208,44 +208,34 @@
       recentProcessed: antiSpamState.recentProcessed.slice(0, 20)
     };
     memoryFallback.set("TG_ANTI_SPAM_STATE_JSON", snapshot);
-    try {
-      const kv = (env && env.MY_KV && typeof env.MY_KV.put === "function")
-        ? env.MY_KV
-        : (env && env.MOVIE_SAVED && typeof env.MOVIE_SAVED.put === "function" ? env.MOVIE_SAVED : null);
-      if (kv) {
-        trackStat("kvWrites");
-        await kv.put("TG_ANTI_SPAM_STATE_JSON", JSON.stringify(snapshot), { expirationTtl: 7 * 86400 });
-      }
-    } catch (e) {}
+    await kvStageWrite(env, "TG_ANTI_SPAM_STATE_JSON", snapshot, {
+      bindingName: "MY_KV",
+      expirationTtl: 7 * 86400,
+      periodicOnly: true
+    });
   }
 
   async function hydrateAntiSpamStateFromStorage(env) {
     if (antiSpamState.hydratedFromStorage) return;
     antiSpamState.hydratedFromStorage = true;
     try {
-      const kv = (env && env.MY_KV && typeof env.MY_KV.get === "function")
-        ? env.MY_KV
-        : (env && env.MOVIE_SAVED && typeof env.MOVIE_SAVED.get === "function" ? env.MOVIE_SAVED : null);
-      if (kv) {
-        trackStat("kvReads");
-        const raw = await kv.get("TG_ANTI_SPAM_STATE_JSON");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === "object") {
-            if (Array.isArray(parsed.queue) && antiSpamState.queue.length === 0) {
-              antiSpamState.queue = parsed.queue.filter(q => q && q.status === "queued");
-            }
-            if (Array.isArray(parsed.recentProcessed) && antiSpamState.recentProcessed.length === 0) {
-              antiSpamState.recentProcessed = parsed.recentProcessed.slice(0, 20);
-            }
-            antiSpamState.totalEvaluated = Math.max(antiSpamState.totalEvaluated, Number(parsed.totalEvaluated) || 0);
-            antiSpamState.totalSentImmediate = Math.max(antiSpamState.totalSentImmediate, Number(parsed.totalSentImmediate) || 0);
-            antiSpamState.totalQueued = Math.max(antiSpamState.totalQueued, Number(parsed.totalQueued) || 0);
-            antiSpamState.totalDrained = Math.max(antiSpamState.totalDrained, Number(parsed.totalDrained) || 0);
-            antiSpamState.total429Hits = Math.max(antiSpamState.total429Hits, Number(parsed.total429Hits) || 0);
-            if (Number(parsed.floodWaitUntil) > Date.now()) {
-              antiSpamState.floodWaitUntil = Number(parsed.floodWaitUntil);
-            }
+      const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MY_KV");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          if (Array.isArray(parsed.queue) && antiSpamState.queue.length === 0) {
+            antiSpamState.queue = parsed.queue.filter(q => q && q.status === "queued");
+          }
+          if (Array.isArray(parsed.recentProcessed) && antiSpamState.recentProcessed.length === 0) {
+            antiSpamState.recentProcessed = parsed.recentProcessed.slice(0, 20);
+          }
+          antiSpamState.totalEvaluated = Math.max(antiSpamState.totalEvaluated, Number(parsed.totalEvaluated) || 0);
+          antiSpamState.totalSentImmediate = Math.max(antiSpamState.totalSentImmediate, Number(parsed.totalSentImmediate) || 0);
+          antiSpamState.totalQueued = Math.max(antiSpamState.totalQueued, Number(parsed.totalQueued) || 0);
+          antiSpamState.totalDrained = Math.max(antiSpamState.totalDrained, Number(parsed.totalDrained) || 0);
+          antiSpamState.total429Hits = Math.max(antiSpamState.total429Hits, Number(parsed.total429Hits) || 0);
+          if (Number(parsed.floodWaitUntil) > Date.now()) {
+            antiSpamState.floodWaitUntil = Number(parsed.floodWaitUntil);
           }
         }
       }
@@ -455,15 +445,19 @@
     if (fallbackFromSettings && (Number(fallbackFromSettings) === 7 || Number(fallbackFromSettings) === 30 || Number(fallbackFromSettings) === 90)) {
       return Number(fallbackFromSettings);
     }
+    if (memoryFallback.has("TG_LOG_RETENTION_DAYS")) {
+      return normalizeWorkerRetentionDays(memoryFallback.get("TG_LOG_RETENTION_DAYS"));
+    }
     try {
-      const kv = (env && (env.MY_KV || env.MOVIE_SAVED || env.KV)) || null;
-      if (kv && typeof kv.get === "function") {
-        const raw = await kv.get("TG_LOG_RETENTION_DAYS");
-        if (raw) return normalizeWorkerRetentionDays(raw);
+      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MY_KV");
+      if (raw) {
+        const norm = normalizeWorkerRetentionDays(raw);
+        memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
+        return norm;
       }
     } catch (e) {}
-    const memVal = memoryFallback.get("TG_LOG_RETENTION_DAYS");
-    return normalizeWorkerRetentionDays(memVal || 30);
+    memoryFallback.set("TG_LOG_RETENTION_DAYS", 30);
+    return 30;
   }
 
   async function recordAndPruneWorkerActivityLog(env, newEntry = null, retentionDaysOverride = null) {
@@ -472,21 +466,19 @@
       : await getWorkerRetentionDays(env, null);
     const ttlSeconds = retentionDays * 86400;
     const cutoffMs = Date.now() - (retentionDays * 86400 * 1000);
-    const kv = (env && (env.MY_KV || env.MOVIE_SAVED || env.KV)) || null;
 
     let rawList = [];
-    try {
-      if (kv && typeof kv.get === "function") {
-        const str = await kv.get("TG_ACTIVITY_LOG_JSON");
+    const memList = memoryFallback.get("TG_ACTIVITY_LOG_JSON");
+    if (Array.isArray(memList)) {
+      rawList = memList;
+    } else {
+      try {
+        const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MY_KV");
         if (str) {
           const parsed = JSON.parse(str);
           if (Array.isArray(parsed)) rawList = parsed;
         }
-      }
-    } catch (e) {}
-    if (!rawList.length) {
-      const memList = memoryFallback.get("TG_ACTIVITY_LOG_JSON");
-      if (Array.isArray(memList)) rawList = memList;
+      } catch (e) {}
     }
 
     const beforeCount = rawList.length;
@@ -509,12 +501,19 @@
     memoryFallback.set("TG_ACTIVITY_LOG_JSON", finalEntries);
     memoryFallback.set("TG_LOG_RETENTION_DAYS", retentionDays);
 
-    try {
-      if (kv && typeof kv.put === "function") {
-        await kv.put("TG_ACTIVITY_LOG_JSON", JSON.stringify(finalEntries), { expirationTtl: ttlSeconds });
-        await kv.put("TG_LOG_RETENTION_DAYS", String(retentionDays));
+    if (newEntry || retentionDaysOverride !== null || prunedCount > 0) {
+      await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", finalEntries, {
+        bindingName: "MY_KV",
+        expirationTtl: ttlSeconds,
+        periodicOnly: retentionDaysOverride === null
+      });
+      if (retentionDaysOverride !== null) {
+        await kvStageWrite(env, "TG_LOG_RETENTION_DAYS", String(retentionDays), {
+          bindingName: "MY_KV",
+          periodicOnly: false
+        });
       }
-    } catch (e) {}
+    }
 
     return { entries: finalEntries, retentionDays, ttlSeconds, prunedCount };
   }
@@ -1114,22 +1113,175 @@
   }
 
   // @ANCHOR: KV_STORAGE_WISHLIST
-  // --- KV Storage, Merkliste & Ordner-System (mit Read-Cache zur Minimierung von KV-Reads/Writes) ---
-  async function getSavedList(env, chatId) {
-    if (memoryFallback.has(`user_${chatId}`)) {
-      return normalizeSavedItems(memoryFallback.get(`user_${chatId}`));
+  // --- Unified User Bundle (`u_bundle_${chatId}`) + Write-Back Batcher ---
+  // Konsolidiert Merkliste (`user_`), Ordner (`folders_`), Einstellungen (`settings_`) & Session (`sess_`)
+  // in EINEN einzigen KV-Key pro Nutzer (mit automatischer Lazy-Migration bestehender Legacy-Keys beim ersten Lesen).
+  const DEFAULT_USER_SETTINGS_TEMPLATE = {
+    includedFsk: [],
+    excludedFsk: [],
+    includedGenres: [],
+    excludedGenres: [],
+    includedEras: [],
+    excludedEras: [],
+    includedStudios: [],
+    excludedStudios: [],
+    includedPlatforms: [],
+    excludedPlatforms: [],
+    showUnreleased: false,
+    filtersActive: true,
+    uiScale: { all: 100, text: 100, cover: 100, menu: 100 }
+  };
+
+  function syncUserBundleToMemoryMirrors(chatId, bundle) {
+    if (!chatId || !bundle) return;
+    memoryFallback.set(`u_bundle_${chatId}`, bundle);
+    memoryFallback.set(`user_${chatId}`, bundle.savedList || []);
+    memoryFallback.set(`folders_${chatId}`, bundle.folders || []);
+    memoryFallback.set(`settings_${chatId}`, bundle.settings || { ...DEFAULT_USER_SETTINGS_TEMPLATE });
+    memoryFallback.set(`sess_${chatId}`, bundle.session || {});
+  }
+
+  async function stageUserBundleWrite(env, chatId, bundle, options = {}) {
+    if (!chatId || !bundle) return;
+    const cleanSession = { ...(bundle.session || {}) };
+    delete cleanSession._dirty;
+    const normSavedList = Array.isArray(bundle.savedList) ? bundle.savedList : [];
+    const normFolders = Array.isArray(bundle.folders) ? bundle.folders : [];
+    const normSettings = bundle.settings && typeof bundle.settings === "object"
+      ? { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...bundle.settings }
+      : { ...DEFAULT_USER_SETTINGS_TEMPLATE };
+
+    syncUserBundleToMemoryMirrors(chatId, bundle);
+
+    const forceKv = Boolean(options?.forceKvWrite || options?.flushNow);
+    const contentSigKey = `u_bundle_sig_${chatId}`;
+    const nextSig = JSON.stringify({
+      savedList: normSavedList,
+      folders: normFolders,
+      settings: normSettings,
+      session: cleanSession
+    });
+    if (!forceKv && memoryFallback.get(contentSigKey) === nextSig) {
+      return;
     }
+    memoryFallback.set(contentSigKey, nextSig);
+
+    bundle.v = 2;
+    bundle.updatedAt = Date.now();
+    const payloadToPersist = {
+      v: 2,
+      updatedAt: bundle.updatedAt,
+      savedList: normSavedList,
+      folders: normFolders,
+      settings: normSettings,
+      session: cleanSession
+    };
+    const deferKv = Boolean(options?.deferKvWrite);
+    await kvStageWrite(env, `u_bundle_${chatId}`, payloadToPersist, {
+      bindingName: "MOVIE_SAVED",
+      periodicOnly: deferKv && !forceKv,
+      forceKvWrite: forceKv,
+      flushNow: Boolean(options?.flushNow)
+    });
+  }
+
+  async function getUserBundle(env, chatId) {
+    const cleanId = String(chatId || "guest");
+    const bundleKey = `u_bundle_${cleanId}`;
+    if (memoryFallback.has(bundleKey)) {
+      const memBundle = memoryFallback.get(bundleKey);
+      if (memBundle && typeof memBundle === "object") {
+        if (memoryFallback.has(`user_${cleanId}`)) {
+          memBundle.savedList = normalizeSavedItems(memoryFallback.get(`user_${cleanId}`));
+        }
+        if (memoryFallback.has(`folders_${cleanId}`)) {
+          memBundle.folders = memoryFallback.get(`folders_${cleanId}`) || [];
+        }
+        if (memoryFallback.has(`settings_${cleanId}`)) {
+          memBundle.settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...memoryFallback.get(`settings_${cleanId}`) };
+        }
+        if (memoryFallback.has(`sess_${cleanId}`)) {
+          memBundle.session = memoryFallback.get(`sess_${cleanId}`) || {};
+        }
+        return memBundle;
+      }
+    }
+
     try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvReads");
-        const data = await env.MOVIE_SAVED.get(`user_${chatId}`);
-        const raw = data ? JSON.parse(data) : [];
-        const norm = normalizeSavedItems(raw);
-        memoryFallback.set(`user_${chatId}`, norm);
-        return norm;
+      const rawBundle = await kvCachedGetRaw(env, bundleKey, "MOVIE_SAVED");
+      if (rawBundle) {
+        const parsed = JSON.parse(rawBundle);
+        if (parsed && typeof parsed === "object") {
+          const hydrated = {
+            v: 2,
+            updatedAt: parsed.updatedAt || Date.now(),
+            savedList: normalizeSavedItems(parsed.savedList || []),
+            folders: Array.isArray(parsed.folders) ? parsed.folders : [],
+            settings: { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...(parsed.settings || {}) },
+            session: parsed.session && typeof parsed.session === "object" ? parsed.session : {}
+          };
+          syncUserBundleToMemoryMirrors(cleanId, hydrated);
+          return hydrated;
+        }
       }
     } catch (e) {}
-    return [];
+
+    // Automatische Lazy-Migration bestehender Legacy-KV-Keys (1-malig beim ersten Laden)
+    let migratedFromLegacy = false;
+    let savedList = [];
+    let folders = [];
+    let settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE };
+    let session = {};
+
+    try {
+      const [rawUser, rawFolders, rawSettings, rawSess] = await Promise.all([
+        kvCachedGetRaw(env, `user_${cleanId}`, "MOVIE_SAVED"),
+        kvCachedGetRaw(env, `folders_${cleanId}`, "MOVIE_SAVED"),
+        kvCachedGetRaw(env, `settings_${cleanId}`, "MOVIE_SAVED"),
+        kvCachedGetRaw(env, `sess_${cleanId}`, "MOVIE_SAVED")
+      ]);
+      if (rawUser) {
+        savedList = normalizeSavedItems(JSON.parse(rawUser));
+        migratedFromLegacy = true;
+      }
+      if (rawFolders) {
+        const pf = JSON.parse(rawFolders);
+        if (Array.isArray(pf)) folders = pf;
+        migratedFromLegacy = true;
+      }
+      if (rawSettings) {
+        const ps = JSON.parse(rawSettings);
+        if (ps && typeof ps === "object") settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...ps };
+        migratedFromLegacy = true;
+      }
+      if (rawSess) {
+        const pss = JSON.parse(rawSess);
+        if (pss && typeof pss === "object") session = pss;
+        migratedFromLegacy = true;
+      }
+    } catch (e) {}
+
+    const bundle = {
+      v: 2,
+      updatedAt: Date.now(),
+      savedList,
+      folders,
+      settings,
+      session
+    };
+    syncUserBundleToMemoryMirrors(cleanId, bundle);
+
+    if (migratedFromLegacy) {
+      await stageUserBundleWrite(env, cleanId, bundle, { deferKvWrite: true });
+    }
+    return bundle;
+  }
+
+  async function getSavedList(env, chatId) {
+    const bundle = await getUserBundle(env, chatId);
+    bundle.savedList = normalizeSavedItems(bundle.savedList);
+    memoryFallback.set(`user_${chatId}`, bundle.savedList);
+    return bundle.savedList;
   }
 
   function normalizeSavedItems(list) {
@@ -1169,63 +1321,20 @@
   }
 
   async function saveRawList(env, chatId, list, options = {}) {
-    memoryFallback.set(`user_${chatId}`, list);
-    try {
-      if (env.MOVIE_SAVED) {
-        const deferKv = Boolean(options?.deferKvWrite);
-        const forceKv = Boolean(options?.forceKvWrite);
-        const deferKey = `kv_defer_cnt_user_${chatId}`;
-        if (deferKv && !forceKv) {
-          const cnt = Number(memoryFallback.get(deferKey) || 0) + 1;
-          if (cnt < 15) {
-            memoryFallback.set(deferKey, cnt);
-            return;
-          }
-        }
-        memoryFallback.set(deferKey, 0);
-        const jsonStr = JSON.stringify(list);
-        const lastJsonKey = `kv_last_json_user_${chatId}`;
-        if (!forceKv && memoryFallback.get(lastJsonKey) === jsonStr) {
-          return;
-        }
-        memoryFallback.set(lastJsonKey, jsonStr);
-        trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(`user_${chatId}`, jsonStr);
-      }
-    } catch (e) {}
+    const bundle = await getUserBundle(env, chatId);
+    bundle.savedList = Array.isArray(list) ? list : [];
+    await stageUserBundleWrite(env, chatId, bundle, options);
   }
 
   async function getFolders(env, chatId) {
-    if (memoryFallback.has(`folders_${chatId}`)) {
-      return memoryFallback.get(`folders_${chatId}`) || [];
-    }
-    try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvReads");
-        const data = await env.MOVIE_SAVED.get(`folders_${chatId}`);
-        const parsed = data ? JSON.parse(data) : [];
-        memoryFallback.set(`folders_${chatId}`, parsed);
-        if (data) memoryFallback.set(`kv_last_json_folders_${chatId}`, data);
-        return parsed;
-      }
-    } catch (e) {}
-    return [];
+    const bundle = await getUserBundle(env, chatId);
+    return Array.isArray(bundle.folders) ? bundle.folders : [];
   }
 
   async function saveFolders(env, chatId, folders, options = {}) {
-    memoryFallback.set(`folders_${chatId}`, folders);
-    try {
-      if (env.MOVIE_SAVED) {
-        const jsonStr = JSON.stringify(folders);
-        const lastJsonKey = `kv_last_json_folders_${chatId}`;
-        if (!options?.forceKvWrite && memoryFallback.get(lastJsonKey) === jsonStr) {
-          return;
-        }
-        memoryFallback.set(lastJsonKey, jsonStr);
-        trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(`folders_${chatId}`, jsonStr);
-      }
-    } catch (e) {}
+    const bundle = await getUserBundle(env, chatId);
+    bundle.folders = Array.isArray(folders) ? folders : [];
+    await stageUserBundleWrite(env, chatId, bundle, options);
   }
 
   // Löscht automatisch alle Ordner, die leer sind (0 gespeicherte Filme/Serien),
@@ -1311,12 +1420,15 @@
     const existing = folders.find(f => f.name.toLowerCase() === cleanName.toLowerCase());
     if (existing) {
       if (extraProps.isJsonPlaylist) {
-        existing.isJsonPlaylist = true;
-        existing.type = "playlist";
-        if (extraProps.sourceLabel) existing.sourceLabel = extraProps.sourceLabel;
-        if (extraProps.playlistMode) existing.playlistMode = extraProps.playlistMode;
-        if (existing.enabled === undefined) existing.enabled = true;
-        await saveFolders(env, chatId, folders);
+        let changed = false;
+        if (!existing.isJsonPlaylist) { existing.isJsonPlaylist = true; changed = true; }
+        if (existing.type !== "playlist") { existing.type = "playlist"; changed = true; }
+        if (extraProps.sourceLabel && existing.sourceLabel !== extraProps.sourceLabel) { existing.sourceLabel = extraProps.sourceLabel; changed = true; }
+        if (extraProps.playlistMode && existing.playlistMode !== extraProps.playlistMode) { existing.playlistMode = extraProps.playlistMode; changed = true; }
+        if (existing.enabled === undefined) { existing.enabled = true; changed = true; }
+        if (changed) {
+          await saveFolders(env, chatId, folders, { deferKvWrite: Boolean(extraProps.deferKvWrite) });
+        }
       }
       return existing;
     }
@@ -1364,17 +1476,16 @@
       if (Array.isArray(mem)) return new Set(mem);
     }
     try {
-      if (env.MOVIE_SAVED) {
-        const raw = await env.MOVIE_SAVED.get(key);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            memoryFallback.set(key, parsed);
-            return new Set(parsed);
-          }
+      const raw = await kvCachedGetRaw(env, key, "MOVIE_SAVED");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          memoryFallback.set(key, parsed);
+          return new Set(parsed);
         }
       }
     } catch (e) {}
+    memoryFallback.set(key, []);
     return new Set();
   }
 
@@ -1382,11 +1493,7 @@
     const key = "bot_vip_hidden_keys";
     const arr = Array.from(keySet || []);
     memoryFallback.set(key, arr);
-    try {
-      if (env.MOVIE_SAVED) {
-        await env.MOVIE_SAVED.put(key, JSON.stringify(arr));
-      }
-    } catch (e) {}
+    await kvStageWrite(env, key, arr, { bindingName: "MOVIE_SAVED" });
   }
 
   function resolvePosterUrl(posterPathOrUrl, size = "w185", fallbackUrl = "") {
@@ -2425,39 +2532,29 @@
     return false;
   }
 
-  // Gebündelte User-Session (1 einzelner KV-Eintrag pro Nutzer mit In-Memory Cache & Dirty-Flush am Ende des Requests!)
-  // Dadurch vergisst der Bot NIEMALS die Suche, das Genre oder den Anker-Film bei Isolate-Wechseln, spart aber ~85% KV-Calls!
+  // Gebündelte User-Session im Unified User Bundle (`u_bundle_${chatId}`) mit In-Memory Cache & Write-Back Batcher!
   async function getUserSession(env, chatId) {
-    const key = `sess_${chatId}`;
-    if (memoryFallback.has(key)) {
-      return memoryFallback.get(key);
+    const bundle = await getUserBundle(env, chatId);
+    if (!bundle.session || typeof bundle.session !== "object") {
+      bundle.session = {};
     }
-    let sess = {};
-    try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvReads");
-        const raw = await env.MOVIE_SAVED.get(key);
-        if (raw) {
-          sess = JSON.parse(raw) || {};
-        }
-      }
-    } catch (e) {}
-    memoryFallback.set(key, sess);
-    return sess;
+    memoryFallback.set(`sess_${chatId}`, bundle.session);
+    return bundle.session;
   }
 
-  async function flushUserSession(env, chatId) {
-    if (!chatId) return;
-    const key = `sess_${chatId}`;
-    const sess = memoryFallback.get(key);
-    if (!sess || !sess._dirty) return;
-    delete sess._dirty;
-    try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(key, JSON.stringify(sess));
-      }
-    } catch (e) {}
+  async function flushUserSession(env, chatId, options = {}) {
+    if (!chatId) {
+      await flushDirtyKvBatch(env, { force: Boolean(options?.force) });
+      return;
+    }
+    const bundle = await getUserBundle(env, chatId);
+    const sess = bundle.session || memoryFallback.get(`sess_${chatId}`);
+    if (sess && sess._dirty) {
+      delete sess._dirty;
+      bundle.session = sess;
+      await stageUserBundleWrite(env, chatId, bundle, options);
+    }
+    await flushDirtyKvBatch(env, { force: Boolean(options?.force) });
   }
 
   async function getWishlistViewState(env, chatId) {
@@ -2514,44 +2611,16 @@
   }
 
   async function getUserSettings(env, chatId) {
-    const defaultSettings = {
-      includedFsk: [],
-      excludedFsk: [],
-      includedGenres: [],
-      excludedGenres: [],
-      includedEras: [],
-      excludedEras: [],
-      includedStudios: [],
-      excludedStudios: [],
-      includedPlatforms: [],
-      excludedPlatforms: [],
-      showUnreleased: false,
-      filtersActive: true,
-      uiScale: { all: 100, text: 100, cover: 100, menu: 100 }
-    };
-    if (memoryFallback.has(`settings_${chatId}`)) {
-      return { ...defaultSettings, ...memoryFallback.get(`settings_${chatId}`) };
-    }
-    try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvReads");
-        const data = await env.MOVIE_SAVED.get(`settings_${chatId}`);
-        const parsed = data ? { ...defaultSettings, ...JSON.parse(data) } : defaultSettings;
-        memoryFallback.set(`settings_${chatId}`, parsed);
-        return parsed;
-      }
-    } catch (e) {}
-    return defaultSettings;
+    const bundle = await getUserBundle(env, chatId);
+    bundle.settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...(bundle.settings || {}) };
+    memoryFallback.set(`settings_${chatId}`, bundle.settings);
+    return bundle.settings;
   }
 
-  async function saveUserSettings(env, chatId, settings) {
-    memoryFallback.set(`settings_${chatId}`, settings);
-    try {
-      if (env.MOVIE_SAVED) {
-        trackStat("kvWrites");
-        await env.MOVIE_SAVED.put(`settings_${chatId}`, JSON.stringify(settings));
-      }
-    } catch (e) {}
+  async function saveUserSettings(env, chatId, settings, options = {}) {
+    const bundle = await getUserBundle(env, chatId);
+    bundle.settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...(settings || {}) };
+    await stageUserBundleWrite(env, chatId, bundle, options);
   }
 
   async function saveSearchState(env, chatId, query, page, totalResults = 0, movieCount = 0, seriesCount = 0, sortBy = null, ignoreFilters = null) {

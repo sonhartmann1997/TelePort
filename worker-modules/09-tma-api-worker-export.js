@@ -303,7 +303,6 @@
               }
             } catch (e) {}
           }
-          const kvStore = env.MOVIE_SAVED || env.KV;
           if (readable) {
             const verifiedPayload = {
               channelId,
@@ -311,9 +310,7 @@
               updatedAt: new Date().toISOString()
             };
             memoryFallback.set("tma_verified_source_channel_v1", verifiedPayload);
-            if (kvStore) {
-              await kvStore.put("tma_verified_source_channel_v1", JSON.stringify(verifiedPayload)).catch(() => {});
-            }
+            await kvStageWrite(env, "tma_verified_source_channel_v1", verifiedPayload, { bindingName: "MOVIE_SAVED" });
           }
           return new Response(JSON.stringify({
             ok: readable,
@@ -331,7 +328,7 @@
           const fallbackChannelId = String(body.fallbackChannelId || body.channelId || "").trim();
           if (action === "reset_all_media") {
             const resetRes = await resetAllMediaAndPlaylistsInD1AndKv(env);
-            await flushUserSession(env, auth.chatId);
+            await flushUserSession(env, auth.chatId, { force: true });
             return new Response(JSON.stringify(resetRes), { status: 200, headers: corsHeaders });
           }
           if (action === "dedupe_files" || action === "delete_broken_files") {
@@ -343,12 +340,16 @@
           return new Response(JSON.stringify(dedupeScan), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-checkpoint") {
-          const kvStore = env.MOVIE_SAVED || env.KV;
           if (request.method === "GET") {
             let checkpoint = memoryFallback.get("tma_backup_import_checkpoint_v1") || null;
-            if (!checkpoint && kvStore) {
-              checkpoint = await kvStore.get("tma_backup_import_checkpoint_v1", "json").catch(() => null);
-              if (checkpoint) memoryFallback.set("tma_backup_import_checkpoint_v1", checkpoint);
+            if (!checkpoint) {
+              const rawCp = await kvCachedGetRaw(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
+              if (rawCp) {
+                try {
+                  checkpoint = JSON.parse(rawCp);
+                  if (checkpoint) memoryFallback.set("tma_backup_import_checkpoint_v1", checkpoint);
+                } catch (e) {}
+              }
             }
             return new Response(JSON.stringify({ ok: true, checkpoint }), { status: 200, headers: corsHeaders });
           }
@@ -357,23 +358,18 @@
             if (body.action === "clear" || body.clear === true) {
               memoryFallback.delete("tma_backup_import_checkpoint_v1");
               memoryFallback.delete("tma_backup_import_checkpoint_kv_cnt");
-              if (kvStore) {
-                await kvStore.delete("tma_backup_import_checkpoint_v1").catch(() => {});
-              }
+              await kvStageDelete(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
               return new Response(JSON.stringify({ ok: true, cleared: true }), { status: 200, headers: corsHeaders });
             }
             if (body.checkpoint) {
               memoryFallback.set("tma_backup_import_checkpoint_v1", body.checkpoint);
               const forceKv = Boolean(body.forceKv);
-              const deferCnt = Number(memoryFallback.get("tma_backup_import_checkpoint_kv_cnt") || 0) + 1;
-              if (forceKv || deferCnt >= 20) {
-                memoryFallback.set("tma_backup_import_checkpoint_kv_cnt", 0);
-                if (kvStore) {
-                  await kvStore.put("tma_backup_import_checkpoint_v1", JSON.stringify(body.checkpoint)).catch(() => {});
-                }
-              } else {
-                memoryFallback.set("tma_backup_import_checkpoint_kv_cnt", deferCnt);
-              }
+              await kvStageWrite(env, "tma_backup_import_checkpoint_v1", body.checkpoint, {
+                bindingName: "MOVIE_SAVED",
+                periodicOnly: !forceKv,
+                forceKvWrite: forceKv,
+                flushNow: forceKv
+              });
             }
             return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
           }
@@ -511,10 +507,15 @@
           const parsedBodyChannel = parseAndNormalizeTelegramChannelInput(String(body.sourceChannelId || body.channelId || ""));
           let verifiedChannelId = parsedBodyChannel.channelId || "";
           if (!verifiedChannelId) {
-            const kvStore = env.MOVIE_SAVED || env.KV;
             let savedCh = memoryFallback.get("tma_verified_source_channel_v1") || null;
-            if (!savedCh && kvStore) {
-              savedCh = await kvStore.get("tma_verified_source_channel_v1", "json").catch(() => null);
+            if (!savedCh) {
+              const rawCh = await kvCachedGetRaw(env, "tma_verified_source_channel_v1", "MOVIE_SAVED");
+              if (rawCh) {
+                try {
+                  savedCh = JSON.parse(rawCh);
+                  if (savedCh) memoryFallback.set("tma_verified_source_channel_v1", savedCh);
+                } catch (e) {}
+              }
             }
             if (savedCh && savedCh.channelId) verifiedChannelId = String(savedCh.channelId);
           }
@@ -2143,81 +2144,11 @@
         return (n === 7 || n === 30 || n === 90) ? n : 30;
       };
 
-      const getWorkerRetentionDays = async (env, fallbackFromSettings) => {
-        if (fallbackFromSettings && (Number(fallbackFromSettings) === 7 || Number(fallbackFromSettings) === 30 || Number(fallbackFromSettings) === 90)) {
-          return Number(fallbackFromSettings);
-        }
-        try {
-          if (env.MY_KV && typeof env.MY_KV.get === "function") {
-            const raw = await env.MY_KV.get("TG_LOG_RETENTION_DAYS");
-            if (raw) return normalizeWorkerRetentionDays(raw);
-          }
-        } catch (e) {}
-        const memVal = memoryFallback.get("TG_LOG_RETENTION_DAYS");
-        return normalizeWorkerRetentionDays(memVal || 30);
-      };
-
-      const recordAndPruneWorkerActivityLog = async (env, newEntry = null, retentionDaysOverride = null) => {
-        const retentionDays = retentionDaysOverride
-          ? normalizeWorkerRetentionDays(retentionDaysOverride)
-          : await getWorkerRetentionDays(env, settings?.deliveryConfig?.retentionDays);
-        const ttlSeconds = retentionDays * 86400;
-        const cutoffMs = Date.now() - (retentionDays * 86400 * 1000);
-
-        let rawList = [];
-        try {
-          if (env.MY_KV && typeof env.MY_KV.get === "function") {
-            const str = await env.MY_KV.get("TG_ACTIVITY_LOG_JSON");
-            if (str) {
-              const parsed = JSON.parse(str);
-              if (Array.isArray(parsed)) rawList = parsed;
-            }
-          }
-        } catch (e) {}
-        if (!rawList.length) {
-          const memList = memoryFallback.get("TG_ACTIVITY_LOG_JSON");
-          if (Array.isArray(memList)) rawList = memList;
-        }
-
-        const beforeCount = rawList.length;
-        const kept = rawList.filter((item) => {
-          if (!item || !item.timestamp) return true;
-          const ts = new Date(item.timestamp).getTime();
-          return Number.isNaN(ts) || ts >= cutoffMs;
-        });
-        const prunedCount = Math.max(0, beforeCount - kept.length);
-
-        if (newEntry && typeof newEntry === "object") {
-          kept.unshift({
-            id: `tg_act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-            timestamp: new Date().toISOString(),
-            ...newEntry
-          });
-        }
-
-        const finalEntries = kept.slice(0, 100);
-        memoryFallback.set("TG_ACTIVITY_LOG_JSON", finalEntries);
-        memoryFallback.set("TG_LOG_RETENTION_DAYS", retentionDays);
-
-        try {
-          if (env.MY_KV && typeof env.MY_KV.put === "function") {
-            await env.MY_KV.put("TG_ACTIVITY_LOG_JSON", JSON.stringify(finalEntries), { expirationTtl: ttlSeconds });
-            await env.MY_KV.put("TG_LOG_RETENTION_DAYS", String(retentionDays));
-          }
-        } catch (e) {}
-
-        return { entries: finalEntries, retentionDays, ttlSeconds, prunedCount };
-      };
-
       if (path === "/api/tma/stream" && request.method === "POST") {
         const reqStartMs = Date.now();
         const body = await request.json();
-        const kvBotToken = (env.MY_KV && typeof env.MY_KV.get === "function")
-          ? String((await env.MY_KV.get("TG_CUSTOM_BOT_TOKEN")) || "").trim()
-          : "";
-        const kvDefaultChatId = (env.MY_KV && typeof env.MY_KV.get === "function")
-          ? String((await env.MY_KV.get("TG_DEFAULT_CHAT_ID")) || "").trim()
-          : "";
+        const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MY_KV")) || "").trim();
+        const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MY_KV")) || "").trim();
         const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
         // Erlaube Versand wenn entweder eingeloggt + VIP ODER wenn ein eigenes Bot-Token vom Nutzer angegeben wurde
         if (!auth.isAuthenticated && !customBotToken && !kvDefaultChatId) {
@@ -2595,11 +2526,11 @@
           if (body.action === "clear_log") {
             const retentionDays = await getWorkerRetentionDays(env, settings?.deliveryConfig?.retentionDays);
             memoryFallback.set("TG_ACTIVITY_LOG_JSON", []);
-            try {
-              if (env.MY_KV && typeof env.MY_KV.put === "function") {
-                await env.MY_KV.put("TG_ACTIVITY_LOG_JSON", "[]", { expirationTtl: retentionDays * 86400 });
-              }
-            } catch (e) {}
+            await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", [], {
+              bindingName: "MY_KV",
+              expirationTtl: retentionDays * 86400,
+              flushNow: true
+            });
             return new Response(JSON.stringify({ ok: true, entries: [], retentionDays }), { status: 200, headers: corsHeaders });
           }
           if (body.action === "set_retention") {
@@ -3273,6 +3204,7 @@
           const update = await request.json();
           const runAll = async () => {
             await handleUpdate(env, update);
+            await flushDirtyKvBatch(env);
           };
           if (ctx && ctx.waitUntil) {
             ctx.waitUntil(runAll());
@@ -3286,6 +3218,12 @@
       } catch (err) {
         console.error("[Worker Root Error]:", err);
         return new Response("OK", { status: 200 });
+      } finally {
+        if (ctx && typeof ctx.waitUntil === "function") {
+          ctx.waitUntil(flushDirtyKvBatch(env).catch(() => {}));
+        } else {
+          await flushDirtyKvBatch(env).catch(() => {});
+        }
       }
     },
   };

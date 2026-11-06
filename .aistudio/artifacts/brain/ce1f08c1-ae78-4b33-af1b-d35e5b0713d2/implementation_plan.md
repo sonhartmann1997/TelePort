@@ -1,78 +1,91 @@
-# TMDb-Suchkaskade & Nachbar-Post-Schutz (Feinschliff für >99% Trefferquote)
+# KV-Batching & Session Write-Back Engine (Schutz gegen 503- & Quota-Limits)
 
-Dieser Plan ergänzt die drei fehlenden TMDb-Fallback-Stufen (**Untertitel-Cutter**, **Umlaut-Normalisierung `ae/oe/ue`** und **Doppelpunkt nach Römischen Zahlen**) sowie zwei harte Schutzmechanismen (**Jahres-Sperre gegen falsche Jahrzehnte** und **Collection-Header-/Detailtitel-Schutz**), um die letzten Fehlzuordnungen im Konflikt-Dashboard zu beseitigen.
+Dieser Plan führt eine zentrale **KV-Batching- & Write-Back-Engine** ein, die alle Lese- und Schreibzugriffe auf Cloudflare KV (`MOVIE_SAVED` & `MY_KV`) im Arbeitsspeicher bündelt, Nutzerdaten in einem einzigen KV-Dokument pro `chatId` konsolidiert und Änderungen gesammelt am Session-Ende bzw. periodisch zurückschreibt.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Alle fünf Regeln aus deiner Analyse sind direkt als deterministische Stufen in der Server- und Client-Pipeline eingeplant:
-> - **Kein Überschreiben detaillierter Dateinamen**: Besitzt ein Video bereits eine Fortsetzungs-Ziffer (`[1-9]`) oder einen Untertitel-Trenner (`-`, `–`, `:`) im Titel (z. B. *„Der König der Löwen 2 - Simbas Königreich“*), oder ist der Nachbar-Post ein Sammlungs-Header (*„teil 1 bis 3“*, *„1-3“*, *„Collection“*, *„Trilogie“*, *„Box“*), bleibt der eigene Dateinamen-Titel unangetastet; maximal die Beschreibung (`contextOverview`) wird übernommen.
-> - **Harte Jahres-Sperre (`yearDiff > 2`)**: Weicht das Jahr des besten TMDb-Treffers um mehr als 2 Jahre vom Dateinamen-Jahr ab (z. B. *„Rotkäppchen (1954)“* vs. *„Die Rotkäppchen-Verschwörung (2005)“*), wird vorab noch geprüft, ob die Umlaut-Suche oder die Multi-API-Fallback-Kaskade (OMDb / Wikidata / Wikipedia DE) den exakten Jahrgang (`1954`) findet. Bleibt nur ein Treffer aus einem falschen Jahrzehnt übrig, wird dieser **zwingend** auf `status: "?"` (`needsReview: true`) gesetzt und niemals automatisch als `ok` durchgewunken.
+> **Bestätigte Architektur-Entscheidungen aus deinen Antworten:**
+> - **Bestätigte Entscheidung 1 – Konsolidiertes User-KV-Dokument (`u_bundle_<chatId>`) + Write-Back-Batcher**: Statt 4 separater KV-Keys pro Nutzer (`settings_<id>`, `user_<id>`, `folders_<id>`, `sess_<id>`) werden alle vier Bereiche in einem einzigen JSON-Bundle `u_bundle_<chatId}` gespeichert (mit automatischer, transparenter Übernahme bestehender alter Keys beim ersten Lesen). Dadurch sinken die KV-Aufrufe pro Nutzer-Interaktion sofort um bis zu **75–90 %**.
+> - **Bestätigte Entscheidung 2 – In-Memory-Pufferung mit periodischem & Session-End-Flush**: Schreibzugriffe (Merkliste, Ordner, Filter, Activity-Logs, Anti-Spam-Status, Bot-Tokens) ändern sofort den RAM-Zustand (`memoryFallback`) und markieren den Key in einer `dirtyKvWrites`-Map. Ein echter KV-Write erfolgt erst gebündelt am Ende einer Session/Import-Sequenz oder nach Ablauf des Puffer-Intervalls.
 
 ---
 
 ## 1. Übersicht & Kernkonzept
 
 - **Was umgesetzt wird**:
-  1. **Doppelpunkt nach Römischen Zahlen (`Star Trek II` $\rightarrow$ `Star Trek II:`)**: Automatische Normalisierung von Titeln mit römischen Zahlen (`I` bis `X`) gefolgt von Leerzeichen und Großbuchstaben vor der TMDb-Suche.
-  2. **Untertitel-Fallback (Bindestrich-/Doppelpunkt-Cutter)**: Schneidet bei 0 Treffern (oder wenn alle bisherigen Treffer am Jahres-Check scheitern) den deutschen Untertitel nach `-`, `–`, `—` oder `:` ab (z. B. *„Silk Road - Gebieter des Darknets“* $\rightarrow$ *„Silk Road“*) und sucht erneut mit und ohne Jahr.
-  3. **Umlaut-Normalisierung (`ae`, `oe`, `ue` $\rightarrow$ `ä`, `ö`, `ü`)**: Wandelt ASCII-Umlaute wie in `Rotkaeppchen.1954.mp4` automatisch in echte deutsche Umlaute (`Rotkäppchen`) um, sobald der Original-String keine echten Umlaute enthält und keinen validen Treffer im Zieljahr liefert.
-  4. **Harter Jahres-Schutz (`yearDiff > 2` $\rightarrow$ `status: "?"`)**: Verhindert, dass Filme mit > 2 Jahren Abweichung (z. B. 1954 vs. 2005) als `ok` gespeichert oder als sicherer Treffer gewertet werden.
-  5. **Collection-Header- & Detailtitel-Schutz (`König der Löwen 2`)**: Schützt Einzel-Filme in `enrichVideoFromNeighborPost`, `enrichClientVideoFromNeighborPost` und `extractPreContext` davor, durch Trilogie-/Sammlungs-Posts (*„König der Löwen teil 1 bis 3“*) überschrieben zu werden.
+  1. **Zentraler KV-Read-Through- & Write-Back-Manager (`kvBatchEngine`)**:
+     - Jeder KV-Key wird pro Worker-Session maximal **einmal** aus Cloudflare KV gelesen und danach vollständig aus dem RAM (`memoryFallback`) bedient (auch bei `null`/leeren Werten, damit nicht-existente Keys wie `TG_CUSTOM_BOT_TOKEN` nicht bei jedem Request erneut abgefragt werden).
+     - Alle Schreibvorgänge (`kvStagePut`, `kvStageDelete`) landen zunächst im Dirty-Buffer (`dirtyKvWrites`), wobei mehrfache Änderungen am selben Key automatisch zu **einem einzigen** Schreibvorgang verschmolzen werden (Write Coalescing).
+  2. **Unified User Bundle (`u_bundle_<chatId>`)**:
+     - Vereint `session` (`wlState`, `searchState`, `originSession`, `simAnchor`, `promptState`), `settings` (Filter, FSK, UI-Scale, Delivery-Config), `savedList` (Merkliste / VIP-Stream-Items) und `folders` (Playlists & Sammlungen) in einem einzigen KV-Eintrag pro `chatId`.
+     - **Nahtlose Legacy-Migration**: Existiert `u_bundle_<chatId>` noch nicht in KV, liest der Hydrator einmalig vorhandene Altdaten (`user_<chatId>`, `folders_<chatId>`, `settings_<chatId>`, `sess_<chatId>`) ein und führt sie im neuen Bundle zusammen.
+  3. **Gedrosseltes Write-Back für System- & Diagnose-Keys (`MY_KV`)**:
+     - Häufig aktualisierte System-Keys wie `TG_ACTIVITY_LOG_JSON`, `TG_LOG_RETENTION_DAYS`, `TG_ANTI_SPAM_STATE_JSON` und `tma_backup_import_checkpoint_v1` werden im RAM gepuffert und nur noch periodisch (z. B. alle 15–25 Mutationen oder nach >= 60 Sekunden) bzw. beim expliziten Session-Flush in KV geschrieben.
 
 ---
 
-## 2. Technische Architektur & Datenfluss
+## 2. User Experience & Admin-Transparenz
+
+- **Sofortige UI-Reaktion ohne KV-Wartezeit**:
+  - Alle Aktionen im Admin-Panel, in der Netflix-Mini-App und im Telegram-Bot lesen und mutieren direkt den In-Memory-Bundle-State. Dadurch antworten Endpunkte wie `/api/tma/admin/overview`, `/api/tma/admin/playlists` und `/api/tma/stream` verzögerungsfrei und lösen keine 503-Fehler durch KV-Rate-Limits mehr aus.
+- **Sicheres Persistieren über `waitUntil` & Session-Flush**:
+  - Am Ende eines Benutzer-Flows oder Batch-Imports (sowie über einen periodischen Flush-Hook in `ctx.waitUntil`) schreibt `flushDirtyKvBatch(env, options)` alle geänderten Keys in einem einzigen Durchgang zurück, sofern sich der JSON-Inhalt gegenüber dem letzten KV-Stand tatsächlich geändert hat (Hash-/String-Diff-Prüfung).
+
+---
+
+## 3. Technische Architektur & Datenfluss
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ 1. NACHBAR-POST & PRE-CONTEXT SCHUTZ (Backend & Client)                      │
-│                                                                              │
-│  Video: "Der König der Löwen 2 - Simbas Königreich (1998)"                   │
-│  Nachbar (-2): "König der Löwen teil 1 bis 3"                                │
-│    ├─ isCollectionHeader? (teil X bis Y / 1-3 / trilogie / collection / box) │
-│    ├─ videoHasDetailedTitle? (enthält [1-9] oder "-" / "–" / ":")            │
-│    └─ Falls JA: Titel NICHT überschreiben! Nur contextOverview übernehmen.   │
+│                 INCOMING REQUEST / BOT UPDATE / ADMIN ACTION                 │
 └──────────────────────────────────────┬───────────────────────────────────────┘
                                        ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ 2. TMDB-SUCHKASKADE (searchTmdbCandidatesForImport & findOnTMDb*)            │
+│ 1. IN-MEMORY READ-THROUGH CACHE & UNIFIED USER BUNDLE                        │
 │                                                                              │
-│  Stufe A: Römische Zahlen + Doppelpunkt                                      │
-│    • /\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g  ->  "$1: $2"              │
-│    • "Star Trek II Der Zorn des Khan" -> "Star Trek II: Der Zorn des Khan"   │
+│  getUserBundle(env, chatId)  ──► Prüft RAM (`u_bundle_<chatId>`)             │
+│    ├─ Treffer im RAM?        ──► Sofortige Rückgabe (0 KV-Reads!)            │
+│    └─ Nicht im RAM?          ──► 1x KV-Read `u_bundle_<chatId>`              │
+│                                  (Fallback: einmalige Migration alter Keys   │
+│                                   `user_`, `folders_`, `settings_`, `sess_`) │
 │                                                                              │
-│  Stufe B: Umlaut-Rekonstruktion (falls ae/oe/ue ohne ä/ö/üß)                 │
-│    • "Rotkaeppchen" (1954) -> "Rotkäppchen" (1954)                           │
-│    • Wird auch dann ausgeführt, wenn die ASCII-Suche nur falsche Jahrzehnte  │
-│      (> 2 Jahre Abweichung) geliefert hat!                                   │
-│                                                                              │
-│  Stufe C: Untertitel-Cutter (Bindestrich / Doppelpunkt)                      │
-│    • "Silk Road - Gebieter des Darknets" -> "Silk Road" (mit & ohne Jahr)    │
+│  cachedKvGet(kv, key)        ──► Speichert auch leere Treffer ("__KV_NULL__")│
+│                                  im RAM (verhindert wiederholte KV-Reads     │
+│                                  für `TG_CUSTOM_BOT_TOKEN` etc.)             │
 └──────────────────────────────────────┬───────────────────────────────────────┘
                                        ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ 3. HARTER JAHRES-SCHUTZ (Keine falschen Jahrzehnte!)                         │
+│ 2. WRITE COALESCING & DIRTY BUFFER (`dirtyKvWrites` Map)                     │
 │                                                                              │
-│  • Prüfe: Math.abs(tmdbYear - parsed.year) > 2                               │
-│  • Falls alle TMDb-Kandidaten > 2 Jahre abweichen (z.B. 1954 vs. 2005):      │
-│      1. Prüfe Multi-API-Fallback (OMDb / Wikidata / Wikipedia DE) für 1954   │
-│      2. Falls weiterhin > 2 Jahre Abweichung:                                │
-│         -> Zwingend status = "?", contextError = true, needsReview = true    │
-│         -> Niemals automatisch als status = "ok" durchwinken!                │
+│  • saveUserSettings / saveRawList / saveFolders / saveWishlistViewState      │
+│      ──► Mutiert `u_bundle_<chatId>` im RAM                                  │
+│      ──► Markiert `u_bundle_<chatId>` im Dirty-Buffer (1 Key statt 4!)       │
+│                                                                              │
+│  • recordAndPruneWorkerActivityLog / persistAntiSpamStateToStorage           │
+│      ──► Aktualisiert RAM-Liste sofort                                       │
+│      ──► Reiht Key mit Zähler/Zeitstempel in den periodischen Buffer ein     │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 3. SINGLE WRITE-BACK FLUSH (`flushDirtyKvBatch` via `ctx.waitUntil`)         │
+│                                                                              │
+│  • Prüft pro Dirty-Key: Hat sich `JSON.stringify(val)` seit dem letzten      │
+│    KV-Stand geändert? Falls identisch -> Skip (0 KV-Writes).                 │
+│  • Schreibt geänderte User-Bundles am Session-Ende / nach Batch-Abschluss    │
+│    oder wenn das periodische Zeitfenster (>= 45s / >= 15 Mutationen) greift, │
+│    in einem einzigen Write-Back nach Cloudflare KV zurück.                   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Wichtige Produkt- & Logik-Entscheidungen
+## 4. Wichtige Produkt- & Architektur-Entscheidungen
 
-1. **Warum `Rotkaeppchen (1954)` bisher `Die Rotkäppchen-Verschwörung (2005)` vorschlug**:
-   - **Ursache**: Wenn die Suche ohne Umlaut (`Rotkaeppchen`) oder ohne Jahr bereits irgendeinen Treffer in `rawPool` legte (`rawPool.length > 0`), wurde die Umlaut-Suche (`Rotkäppchen`) übersprungen oder das 2005er-Ergebnis blieb als einziger Kandidat übrig. Zudem stufte `cleanMovieQuery` römische Zahlen wie `II` in `2` um und löschte die Zahl hinter `Star Trek`.
-   - **Lösung**:
-     1. Vor der Suche wird `romanColonTitle` (`Star Trek II: Der Zorn des Khan`) gebildet und vorrangig abgefragt; `cleanMovieQuery` löscht keine Nummern mehr hinter `Star Trek`.
-     2. Die Umlaut-Normalisierung (`ae/oe/ue` $\rightarrow$ `ä/ö/ü`) läuft immer, sobald `/(?:ae|oe|ue)/i.test(cleanTitle) && !/[äöüß]/i.test(cleanTitle)` zutrifft und noch kein Kandidat mit passendem Jahr (`yearDiff <= 2`) gefunden wurde.
-     3. Weicht der beste TMDb-Treffer um mehr als 2 Jahre vom Dateinamen-Jahr ab (`yearDiff > 2`), wird die Multi-API-Kaskade (OMDb/Wikidata/Wikipedia) nach dem exakten Jahrgang (`1954`) gefragt; bleibt es bei `yearDiff > 2`, wird der Eintrag strikt mit `status: "?"` (`needsReview: true`) als Konflikt markiert.
+1. **Negative-Caching für optionale Konfigurations-Keys (`__KV_EMPTY__`)**:
+   - **Problem bisher**: Wenn `TG_CUSTOM_BOT_TOKEN`, `TG_DEFAULT_CHAT_ID` oder `tma_verified_source_channel_v1` in KV leer (`null`) waren, hat der Worker bei *jedem* API-Request erneut `kv.get(...)` aufgerufen, weil `null` nicht im RAM gecacht wurde.
+   - **Lösung**: `kvGetCached` speichert auch `null`-Ergebnisse mit einem Sentinel-Eintrag im RAM. Damit sinken KV-Reads für optionale Settings nach dem ersten Request auf **0**.
 
-2. **Doppelter Schutz gegen Collection-Header (`König der Löwen teil 1 bis 3`)**:
-   - Sowohl in `extractPreContext` / `extractClientPreContextFromMsg` (Vorab-Kontext) als auch in `enrichVideoFromNeighborPost` / `enrichClientVideoFromNeighborPost` (Nachbar-Posts `+1/-1/+2/-2`) werden Sammel-Überschriften (`teil 1 bis 3`, `1-3`, `collection`, `trilogie`, `box`) erkannt und blockiert, damit sie niemals den Einzeltitel eines Films überschreiben.
+2. **Konsolidierung von 4 User-Keys auf 1 `u_bundle_<chatId>`**:
+   - **Problem bisher**: Beim Laden des Admin-Dashboards oder der Mini-App wurden `settings_<id>`, `user_<id>`, `folders_<id>` und `sess_<id>` einzeln gelesen und bei Playlist-/Filter-Aktionen einzeln geschrieben.
+   - **Lösung**: Alle vier Strukturen leben gemeinsam in `u_bundle_<chatId> = { v: 2, updatedAt, session, settings, folders, savedList }`. Egal wie viele Änderungen an Merkliste, Ordnern, Suchstatus und Filtern während einer Session passieren: Beim Flush wird maximal **1 einziger KV-Write** für das gesamte Nutzerprofil ausgeführt.
