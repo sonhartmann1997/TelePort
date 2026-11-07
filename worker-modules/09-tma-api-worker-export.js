@@ -746,11 +746,26 @@
             isSeries: newTypeCode === "s",
             ...(newTypeCode === "s" && manualSeason ? { season: manualSeason, manualSeason } : {}),
             ...(newTypeCode === "s" && manualEpisode ? { episode: manualEpisode, manualEpisode } : {})
-          }, entryFileMeta, { registerAsVipStream });
+          }, entryFileMeta, { registerAsVipStream, bypassNegativeTitleCache: true });
 
           if (!resolved || !resolved.ok) {
             return new Response(JSON.stringify({ ok: false, error: "TMDb-Eintrag konnte nicht geladen werden." }), { status: 404, headers: corsHeaders });
           }
+
+          await invalidateOrUpdateTitleResolutionCacheInD1(
+            env,
+            rawEntry.cleanTitle || rawEntry.filename || rawEntry.raw_file_name || resolved.cleanTitle || "",
+            rawEntry.year || resolved.year,
+            newTypeCode,
+            {
+              tmdbId: Number(resolved.tmdbId),
+              typeCode: resolved.typeCode,
+              title: resolved.cleanTitle,
+              confidence: 100,
+              source: resolved.metadataSource || "Admin-Remap",
+              notFound: false
+            }
+          );
 
           // 3. In Ziel-Playlist eintragen
           if (playlistFolderId && (playlistMode === "watchlist" || playlistMode === "both" || targetChatId === "bot_vip")) {

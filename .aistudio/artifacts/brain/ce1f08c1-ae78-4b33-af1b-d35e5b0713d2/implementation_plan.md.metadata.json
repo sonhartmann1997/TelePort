@@ -1,6 +1,6 @@
 {
-  "summary":  "Erweiterter Implementierungsplan inkl. vollständiger Reparatur der VIP/Admin-Fehlermeldungen (Bestätigen/Lösen, Einzel- & Komplett-Löschen, Auto-Resolve bei Korrektur sowie automatisches Zurücksetzen beim Datenbank-Reset).",
-  "updatedAt":  "2026-11-07T11:50:18.949897159Z",
+  "summary":  "Architektur- und Umsetzungsplan zur drastischen Minimierung externer API-Zugriffe beim JSON-Import (D1-First Lookup, persistenter Positiv-/Negativ-Titel-Cache über alle 8 APIs für identische Titel, Sofort-Stopp ab 85% Trefferquote und präzises Cloudflare Subrequest-Accounting gegen HTTP 503).",
+  "updatedAt":  "2026-11-07T12:56:32.513934002Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

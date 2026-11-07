@@ -1,76 +1,89 @@
-# Implementierungsplan: Admin/VIP-Zugang im Simulator, End-to-End JSON-Import-Simulation & Reparatur der Fehlermeldungen
+# Minimierung der API-Zugriffe & Schutz vor HTTP 503 beim JSON-Import
 
-## 1. Ursache & Behebung des Admin/VIP-Zugangsproblems im Simulator
+Dieser Plan beseitigt die `HTTP 503` Gateway-/Rate-Limit-Abbrüche (z. B. bei Eintrag `#1093`) beim Massen-Import großer Telegram-Backups (`100k+` Einträge), indem identische Titel (Filme, Serien-Staffeln, Mehrteiler, Qualitäts-Upgrades und auch unauffindbare Titel) über alle 8 APIs hinweg nur **ein einziges Mal** gesucht und danach zu 100 % lokal aus D1 & RAM aufgelöst werden.
 
-### Identifizierte Ursachen
-1. **Überschreiben von `window.Telegram.WebApp.initData` durch `telegram-web-app.js`:**
-   - `NetflixTmaSimulator.tsx` injiziert das Persona-Bridge-Skript direkt nach `<head>`.
-   - Wenige Zeilen später lädt `08a-tma-netflix-frontend.js` das externe Skript `<script src="https://telegram.org/js/telegram-web-app.js"></script>`. Da im Simulator-Iframe keine echten Telegram-Hash-Parameter in der URL stehen, überschreibt das offizielle Skript `window.Telegram.WebApp` und setzt `initData = ""`.
-   - Beim App-Start ist `rawInitData` dadurch leer (`""`) und die Mini-App landet im **Gast-Modus (`👤 Gast • Login`)**, ohne `/api/tma/auth/init` aufzurufen.
-2. **Ablehnung der Simulator-Signatur im Worker-Backend (`resolveTmaAuthContext`):**
-   - Selbst wenn das Frontend im Simulator `sessionToken = "sim_session_token_valid"` oder `hash=sim_valid_hmac` sendet, schlagen `verifyTmaSessionToken` und `verifyTelegramInitDataHmac` in `08a-tma-netflix-frontend.js` bei nachfolgenden Backend-Requests (`/api/tma/admin/overview`, `/api/tma/admin/import-batch`, `/api/tma/admin/validate-channel`, `/api/tma/admin/reports`) fehl. Der Worker stuft den Request als `guest` ein (`403 Zugriff verweigert`).
-3. **Veraltetes `localStorage`-Token beim Rollenwechsel:**
-   - Beim Umschalten zwischen `Admin & VIP`, `Telegram User` und `Gast / Browser` in der oberen Leiste blieb ein zuvor gespeichertes `tma_session_token` im Iframe bestehen.
+## User Review & Critical Decisions
 
-### Geplante Lösung (Auto-Login über normales Mini-App-Menü)
-- **`src/components/NetflixTmaSimulator.tsx`:**
-  - Beim Injizieren der Simulator-Bridge wird `<script src="https://telegram.org/js/telegram-web-app.js"></script>` im Simulator-Iframe neutralisiert bzw. `window.Telegram.WebApp` gegen Überschreiben geschützt, sodass `initData` und `initDataUnsafe` der gewählten Rolle (`admin_vip` oder `standard_user`) stabil erhalten bleiben.
-  - Beim Wechsel der Rolle in der oberen Simulator-Leiste wird `localStorage` für `tma_session_token` automatisch synchronisiert, sodass sofort der Auto-Login als **Admin & VIP** (`🟢 @streamflix_admin 🌟VIP 👑`) greift und das Admin-Panel regulär über das Mini-App-Menü (Sidebar oder Account-Modal) geöffnet werden kann.
-  - Die `/api/tma/auth/init`- und `/api/tma/auth/me`-Requests werden direkt durch die echte Worker-Sandbox (`executeWorkerSandbox`) geleitet, die ein echtes, kryptografisch signiertes Session-Token ausstellt und den Admin-User in der D1-Sandbox (`users`-Tabelle) anlegt.
-- **`worker-modules/08a-tma-netflix-frontend.js`:**
-  - `verifyTelegramInitDataHmac` unterstützt neben der regulären HMAC-SHA256-Signatur auch verifizierte Simulator-Payloads (`hash=sim_valid_hmac`), sofern die User-ID mit der konfigurierten Simulator-Persona übereinstimmt. Dadurch durchlaufen **alle** nachfolgenden `/api/tma/admin/*`-Routen exakt denselben D1-Auth-Pfad wie in Produktion.
+> [!IMPORTANT]
+> Alle Entscheidungen basieren direkt auf deinen Vorgaben aus der Rückfrage:
+
+- **Entscheidung 1 (D1-First Vorab-Check & Sofort-Stopp ab 85 % Treffer)**: Bevor überhaupt ein externer Request an TMDb gesendet wird, prüft der Worker lokal in D1 (`movie_files`, `episode_files`, `movies`, `series`, `entity_cache`), ob Datei oder Titel bereits bekannt sind. Liefert die erste TMDb-Suche (Titel + Jahr) bereits einen Treffer mit $\ge 85\%$ Sicherheit, bricht die Suchkaskade sofort ab (keine überflüssige Zweitsuche ohne Jahr mehr).
+- **Entscheidung 2 (Alle 8 APIs aktiv, aber 0 doppelte Suchen bei gleichem Titel)**: Die vollständige 8-API-Kaskade (TMDb, OMDb, Apple iTunes DE, TVMaze, Wikidata, AniList, Jikan/MAL, Wikipedia DE/EN) bleibt während des Massen-Imports uneingeschränkt aktiv. Sobald ein Titel (egal ob als Treffer in TMDb, als Treffer in einer der 7 Fallback-APIs oder als „Nicht gefunden“) einmal aufgelöst wurde, wird das Ergebnis für diesen normalisierten Titel in RAM + D1 (`entity_cache`) hinterlegt, sodass alle weiteren Folgen, Teile oder Duplikate desselben Titels **0 externe API-Requests** verbrauchen.
 
 ---
 
-## 2. Ursache & Reparatur der VIP/Admin-Fehlermeldungen („🚨 Meldungen“)
+## 1. Ursache des Fehlers bei `#1093` (Root-Cause-Analyse)
 
-### Identifizierte Ursachen (warum Meldungen beim Bestätigen, Löschen und DB-Reset nicht verschwinden)
-1. **`media_reports` fehlte komplett beim Datenbank-Reset (`04-d1-database.js` Zeile 2580):**
-   - `resetAllMediaAndPlaylistsInD1AndKv(env)` löschte nur 9 Tabellen (`episode_files`, `series_episodes`, `series_seasons`, `series`, `movie_files`, `movies`, `search_cache`, `entity_cache`, `import_queue`), ließ aber **`media_reports`** (sowie `import_diagnostic_logs`, `d1_playlists`, `d1_playlist_items`, `d1_import_checkpoints`) in D1 unangetastet!
-   - Zusätzlich wurden in `resetAllD1MediaAdmin` (`08c-tma-netflix-frontend.js` Zeile 1785) die Client-Caches `window._adminReportsCache` und `window._lastAdminOverviewCache` nicht geleert.
-2. **Stale Client-Cache nach „Als gelöst markieren“ & „Löschen“ (`08b-tma-netflix-frontend.js` Zeilen 4007–4035 & `08c` Zeile 4036):**
-   - `adminResolveMediaReportClient` und `adminDeleteMediaReportClient` riefen zwar `POST /api/tma/admin/reports` auf, ignorierten aber die vom Server zurückgegebene aktualisierte `reports`-Liste und aktualisierten weder `window._adminReportsCache` noch `window._lastAdminOverviewCache`.
-   - Anschließend riefen sie `loadAdminPanelView()` mit `forceNetworkRefresh = false` auf, wodurch das Admin-Panel die alten gecachten Meldungen aus `window._lastAdminOverviewCache` / `window._adminReportsCache` wieder anzeigte.
-3. **ID-Abweichung zwischen `memoryFallback` (`Date.now()`) und SQLite `AUTOINCREMENT` (`04-d1-database.js` Zeile 1116 & 1141):**
-   - Beim Erstellen einer Meldung (`createMediaReportInD1`) wurde `entry.id = Date.now()` gesetzt, während `INSERT INTO media_reports` die `id`-Spalte wegließ. Wenn `res.meta.last_row_id` abwich oder aus dem Memory-Cache gelesen wurde, passte `WHERE id = ?1` beim Löschen/Bestätigen nicht zur gespeicherten ID.
-4. **Fehlende Auto-Auflösung bei Korrektur ohne vorhandene Quelldatei oder bei Titel-Neu-Zuordnung (`09-tma-api-worker-export.js` Zeilen 1005 & 1212):**
-   - Wenn eine gemeldete Folge bereits verschoben/gelöscht war, brach `/api/tma/admin/reassign-episode` mit `404` ab, **bevor** `resolveMatchingMediaReportsInD1` aufgerufen wurde.
-   - Ebenso löste `/api/tma/admin/remap-media` (Titel komplett neu zuordnen) offene Meldungen zum alten `tmdbId` nicht automatisch auf.
-
-### Geplante Lösung für die Fehlermeldungen
-- **`worker-modules/04-d1-database.js`:**
-  - **Datenbank-Reset (`resetAllMediaAndPlaylistsInD1AndKv`):** Löscht ab sofort auch `DELETE FROM media_reports`, `DELETE FROM import_diagnostic_logs`, `DELETE FROM d1_playlist_items`, `DELETE FROM d1_playlists` und `DELETE FROM d1_import_checkpoints` sowie `memoryFallback.delete("d1_media_reports")`.
-  - **Konsistente Report-IDs & sicheres Löschen/Bestätigen:** `resolveMediaReportInD1` und `deleteMediaReportFromD1` matchen sowohl über `id = ?1` als auch über `created_at = ?1`. Zusätzlich wird eine Funktion `clearAllMediaReportsInD1(env, onlyResolved = false)` ergänzt.
-- **`worker-modules/09-tma-api-worker-export.js`:**
-  - `/api/tma/admin/reports` unterstützt neben `resolve` und `delete` auch `clear_all` (alle Meldungen löschen) und `clear_resolved` (alle gelösten Meldungen löschen).
-  - `/api/tma/admin/reassign-episode`, `/api/tma/admin/remap-media` und `deleteMediaFromD1` lösen verknüpfte Meldungen (`reportId` bzw. `tmdbId`) immer zuverlässig auf – selbst wenn die alte Quelldatei bereits entfernt wurde.
-- **`worker-modules/08b-tma-netflix-frontend.js` & `08c-tma-netflix-frontend.js`:**
-  - `adminResolveMediaReportClient`, `adminDeleteMediaReportClient`, `submitAdminEpisodeReassign` und `resetAllD1MediaAdmin` aktualisieren sofort `window._adminReportsCache` und `window._lastAdminOverviewCache` mit den frischen Server-Daten und erzwingen `loadAdminPanelView(true)`.
-  - Im Tab **„🚨 Meldungen“** wird zusätzlich ein Button **„🗑️ Alle Meldungen löschen“** (sowie **„🧹 Gelöste entfernen“**) eingebaut.
+1. **Wiederholte 8-API-Suchen für denselben Titel (Hauptursache für HTTP 503)**:
+   - Bisher wurden nur offizielle TMDb-Serien (`id < 8000000`) im `entity_cache` gespeichert.
+   - Wurde eine Serie über eine der 7 Fallback-APIs (`id >= 8000000`, z. B. TVMaze, Wikidata oder Wikipedia) gelöst **oder** in keiner der 8 APIs gefunden (`TMDB_NOT_FOUND`), fand **keine** Speicherung im Titel-Cache statt.
+   - Bei einer Serie mit 20 Folgen oder mehreren Dateien gleichen Namens hat der Worker für **jede einzelne Folge** erneut bis zu 15 externe HTTP-Requests über alle 8 APIs abgefeuert.
+2. **Doppelte TMDb-Suche bei fast jedem Film (`hitsWithYear < 2`)**:
+   - In `searchTmdbCandidatesForImport` stand bisher `if (!parsed.year || hitsWithYear < 2) await runTmdbQuery(..., null)`. Da ein Film mit exakter Jahreszahl bei TMDb fast immer genau `1` Treffer liefert (`hitsWithYear === 1`), wurde bei nahezu jedem Film unnötig ein zweiter TMDb-Request ohne Jahr ausgeführt.
+3. **Versteckte Cloudflare-Subrequests durch `caches.default` & ungezählte Detail-Fetches**:
+   - Cloudflare berechnet für `caches.default.match()` und `caches.default.put()` jeweils einen eigenen Subrequest vom 50-Subrequest-Limit pro Worker-Aufruf. Ein einziger Cache-Miss verbrauchte damit 3 Subrequests statt 1, während `fetchMovieDetails`, `fetchSeriesDetails` und `fetchSeasonDetails` gar nicht im `currentInvocationSubrequests`-Zähler mitgezählt wurden. Dadurch griff der 40-Subrequest-Schutz (`PARTIAL_BATCH`) zu spät und Cloudflare brach den Request mit `HTTP 503` ab.
+4. **Wiederholtes `resolveSeriesVersionOnTMDb` & `saveSeriesToD1` pro Folge**:
+   - Bei 10 Folgen derselben Staffel in einem Batch wurde für jede Folge erneut die Serien-Versionsprüfung und das Speichern des Serien-Stammsatzes ausgeführt.
 
 ---
 
-## 3. Aufgedeckte Logikfehler in der JSON-Import-Pipeline (werden direkt behoben)
+## 2. Technische Architektur & Datenstrategie
 
-Bei der Analyse des JSON-Import-Datenflusses (`08c-tma-netflix-frontend.js`, `07-webhook-callbacks.js`, `09-tma-api-worker-export.js`) wurden **4 konkrete Logikfehler** gefunden:
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                   JSON-Import Batch (/api/tma/admin/import-batch)          │
+└──────────────────────────────────────┬─────────────────────────────────────┘
+                                       │
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ STUFE 0: Lokaler D1-First & RAM Vorab-Check (0 externe API-Requests!)      │
+│  1. Existiert telegram_file_id / (chat_id + msg_id) schon in D1?           │
+│     └──► JA: Sofort als SKIPPED_DUPLICATE / bekanntes Medium übernehmen    │
+│  2. Existiert Titel-Schlüssel (normTitle + Jahr + Typ) in RAM / D1?        │
+│     ├──► Bekannter Treffer (TMDb ODER Fallback-API >= 8000000):            │
+│     │    Sofort vorhandene ID & Metadaten aus D1/RAM nutzen (0 API-Calls)  │
+│     └──► Bekannter Negativ-Treffer (NEGATIVE_CACHE / TMDB_NOT_FOUND):      │
+│          Sofort als "Nicht erkannt" markieren, 8 APIs NICHT erneut fragen! │
+│  3. Existiert Film/Serie bereits mit exaktem Titel (+ Jahr) in D1          │
+│     (`movies` / `series` Tabelle)?                                         │
+│     └──► JA: Direkt bestehende D1-Entität verknüpfen (0 Such-Calls)        │
+└──────────────────────────────────────┬─────────────────────────────────────┘
+                                       │ (Nur bei echtem neuen/unbekannten Titel)
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ STUFE 1: TMDb-Suche mit Early-Exit ab >= 85% Confidence                    │
+│  • Suche (Titel + Jahr): Wenn bester Treffer >= 85% Confidence hat         │
+│    ──► SOFORT-STOPP! Keine Zweitsuche ohne Jahr, keine Varianten-Suche.    │
+└──────────────────────────────────────┬─────────────────────────────────────┘
+                                       │ (Nur wenn TMDb < 85% / kein Treffer)
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ STUFE 2: 8-API Fallback-Kaskade mit persistentem Titel-Cache               │
+│  • OMDb ──► iTunes DE ──► TVMaze ──► Wikidata ──► AniList ──► Jikan ──► WP │
+│  • Ergebnis (egal ob Fallback-Hit >= 8000000 oder Negativ-Ergebnis) wird   │
+│    sofort unter `title_res_<type>_<normTitle>_<year>` in RAM + D1          │
+│    (`entity_cache`) gespeichert -> 2. Datei gleichen Titels = 0 API-Calls! │
+└──────────────────────────────────────┬─────────────────────────────────────┘
+                                       │
+                                       ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ STUFE 3: Präzises Subrequest-Budget & Einmal-Staffel-Auflösung             │
+│  • Jede echte externe HTTP-Anfrage (inkl. Movie/Series/Season-Details)     │
+│    zählt exakt im Subrequest-Zähler; `caches.default` Overhead entfällt.   │
+│  • Serien-Stammdaten & Staffel-Metadaten werden pro Staffel nur 1x         │
+│    aufgelöst und für alle Folge-Episoden direkt aus D1/RAM bedient.        │
+└────────────────────────────────────────────────────────────────────────────┘
+```
 
-1. **Logikfehler 1 – Nicht erkannte Titel (`unmatched`) wurden als `"?"` statt `"failed"` markiert (`07-webhook-callbacks.js` Zeile 2452):**
-   - **Problem:** Wenn `resolveAndIngestMediaEntry` keinen TMDb-Treffer findet (`res.unmatched === true`), setzte `processEntriesBatchWithLimit` das Feld `status: "?"` statt `status: "failed"`.
-   - **Auswirkung:** Im Tab **„🛠️ Prüfen & Korrigieren“** stand der Zähler **„❌ Nicht erkannt (0)“** immer auf `0`, und alle nicht gefundenen Filme/Serien landeten fälschlich unter **„🔎 Unsichere Treffer“** mit Diagnose-Status `CONFLICT_?` statt `TMDB_NOT_FOUND`.
-   - **Fix:** `failItemObj.status` in `07-webhook-callbacks.js` wird sauber auf `"failed"` gesetzt; in `08c-tma-netflix-frontend.js` wird konsistent auf `(x.status === "failed" || !x.tmdbId)` geprüft.
-2. **Logikfehler 2 – Fehlerhafter Checkpoint-Cursor bei `PARTIAL_BATCH` (40-Subrequest-Guard) (`09-tma-api-worker-export.js` Zeile 587 & `08c` Zeile 3491):**
-   - **Problem:** Der Client schickte vor Batch-Start `cursor: backupImportJob.cursor + slice.length` mit, und der Server speicherte diesen Wert ungeprüft in D1 (`d1_import_checkpoints`). Bei `PARTIAL_BATCH` würden nach einem Reload die restlichen Einträge des Teil-Batches übersprungen.
-   - **Fix:** `/api/tma/admin/import-batch` berechnet den D1-Checkpoint erst **nach** `processEntriesBatchWithLimit` anhand des tatsächlichen `nextStartIndex` (`batchStartCursor + nextStartIndex`) und addiert die tatsächlich gespeicherten Zähler exakt auf.
-3. **Logikfehler 3 – Doppelte Zählung bei `isolateFailedEntryAtCursor` (`08c-tma-netflix-frontend.js` Zeile 3452):**
-   - **Problem:** Isolierte Fehleinträge erhöhten gleichzeitig `failedCount += 1` **und** `uncertainCount += 1`, beim Auflösen wurde aber nur `failedCount` reduziert.
-   - **Fix:** Isolierte Fehleinträge erhöhen nur `failedCount`.
-4. **Logikfehler 4 – Kanal-Verifizierung (`/api/tma/admin/validate-channel`) prüfte auf `env.BOT_TOKEN` statt `env.TELEGRAM_BOT_TOKEN` (`09-tma-api-worker-export.js` Zeile 269):**
-   - **Fix:** Nutzung von `env.TELEGRAM_BOT_TOKEN` mit automatischer Simulator-Erkennung, inklusive Speicherung des verifizierten Quell-Kanals in D1 und Memory.
+### Wichtige Produkt- & Architekturentscheidungen
 
----
-
-## 4. Echter End-to-End JSON-Import-Testlauf mit Test-Generator & Prüfbericht im Simulator
-
-Im Admin-Panel unter **„📦 Backup-Import (100k+)“** integrieren wir eine direkt ausführbare **End-to-End Simulations- & Diagnose-Suite** (`🧪 E2E JSON-Import Simulation starten`):
-- Generiert ein realistisches Telegram-Backup (`result.json`-Struktur mit Kanal `-1001987654321`) mit allen 7 Praxisfällen (1080p Film, TS-Vorabversion + 1080p-Upgrade, Exaktes Duplikat, Serie `S01E01`/`S01E02`/`S01E04` inkl. Lücken-Erkennung für `E03`, Jahres-Konflikt `YEAR_CONFLICT`, Unbekannter Titel `TMDB_NOT_FOUND`, Kanal-Header ohne Video).
-- Durchläuft die echte Pipeline (Kanal-Verifizierung → JSON-Parser & Datei-ID-Injektion → `/api/tma/admin/import-batch` → D1-Katalog-, Playlist-, Checkpoint-, Meldungs-Reset- und Hauptseiten-Prüfung) und zeigt einen detaillierten **Prüfbericht (Pass/Fail-Checkliste)** direkt im Admin-Dashboard an.
+- **Universeller Positiv- & Negativ-Titel-Cache (`title_res_*`) in RAM + D1 (`entity_cache`)**:
+  - *Gewählter Ansatz*: Jeder aufgelöste Titel – unabhängig davon, ob Film oder Serie, ob offizielle TMDb-ID (`< 8000000`), synthetische Fallback-ID (`>= 8000000`) oder `NOT_FOUND` – wird unter seinem normalisierten Schlüssel (`title_res_s_<normTitle>_<year>` bzw. `title_res_m_<normTitle>_<year>`) im RAM und in `entity_cache` (D1) gecacht.
+  - *Warum*: Wenn in einem Backup 25 Folgen einer seltenen Serie (oder 25 Teile mit nicht erkennbarem Dateinamen) hintereinander vorkommen, sucht nur Folge 1 über die 8 APIs. Die Folgen 2 bis 25 erhalten sofort (in `< 1 ms`) dasselbe Ergebnis aus dem Cache, ohne einen einzigen externen Request auszulösen.
+  - *Sicherheit bei manueller Korrektur*: Sobald du im Review-Tab einen `NOT_FOUND`- oder Konflikt-Eintrag manuell über „Alle 8 APIs durchsuchen“ oder per Kandidaten-Klick korrigierst (`remap-saved-media`), wird ein eventuell vorhandener Negativ-Cache-Eintrag für diesen Titel sofort mit der korrekten TMDb-ID überschrieben.
+- **D1-First Lookup in den Tabellen `movies` und `series`**:
+  - *Gewählter Ansatz*: Vor einer externen Suche prüft ein schneller D1-Lookup (gecacht in einer In-Memory-Titel-Map), ob in `movies` oder `series` bereits ein Eintrag mit identischem normalisiertem Titel (und passendem Release-Jahr) existiert.
+  - *Warum*: Bei Qualitäts-Upgrades (z. B. `720p` $\rightarrow$ `1080p`), Mehrteilern (`CD1` / `CD2`) oder beim Fortsetzen/Neustarten eines 180k-Imports werden bereits in D1 vorhandene Filme und Serien komplett ohne API-Aufruf zugeordnet.
+- **Exaktes Subrequest-Tracking & sanftes `PARTIAL_BATCH` statt `HTTP 503`**:
+  - *Gewählter Ansatz*: Alle externen `fetchWithTimeout`-Aufrufe (auch in `fetchMovieDetails`, `fetchSeriesDetails`, `fetchSeasonDetails`) erhöhen `currentInvocationSubrequests`. Zudem verzichten wir im Worker während des Massen-Imports auf unnötige `caches.default.match/put`-Subrequests, da Ergebnisse ohnehin persistent in D1 + RAM liegen.
+  - *Warum*: Der Subrequest-Guard stoppt garantiert rechtzeitig bei 30 Subrequests und gibt ein sauberes `PARTIAL_BATCH` zurück, statt bei Eintrag `#1093` in einen harten Cloudflare `HTTP 503` Fehler zu laufen und den Eintrag fälschlich zu isolieren.

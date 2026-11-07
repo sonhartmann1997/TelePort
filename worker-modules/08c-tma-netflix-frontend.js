@@ -1,5 +1,3 @@
-              neighborEnriched: true,
-              neighborOffset: offset
             };
           }
           let finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
@@ -3353,29 +3351,33 @@
             } else {
               hadRateWarning = true;
               const errMsg = String(r?.error || "Kurze Pause...");
-              backupImportJob.cursorRetries[backupImportJob.cursor] = curRetryCount + 1;
-              if (curRetryCount + 1 >= 2) {
+              const nextRetry = curRetryCount + 1;
+              backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
+              if (nextRetry >= 3) {
                 isolateFailedEntryAtCursor(errMsg);
               } else {
                 saveBackupCheckpointClient();
-                backupImportJob.recentLog.push("⏳ Einzel-Prüfung bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
-                await new Promise(res => setTimeout(res, 1200));
+                const waitMs = 1800 * nextRetry;
+                backupImportJob.recentLog.push("⏳ Einzel-Prüfung (" + nextRetry + "/2) bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
+                await new Promise(res => setTimeout(res, waitMs));
               }
             }
           } catch (e) {
             hadRateWarning = true;
             const errMsg = String(e?.message || e || "Netzwerkfehler");
-            backupImportJob.cursorRetries[backupImportJob.cursor] = curRetryCount + 1;
-            if (curRetryCount + 1 >= 2) {
+            const nextRetry = curRetryCount + 1;
+            backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
+            if (nextRetry >= 3) {
               isolateFailedEntryAtCursor(errMsg);
             } else {
               saveBackupCheckpointClient();
-              backupImportJob.recentLog.push("⏳ Rate-Limit / Einzel-Isolierung bei #" + backupImportJob.cursor + ": " + errMsg);
-              await new Promise(res => setTimeout(res, 1500));
+              const waitMs = 2200 * nextRetry;
+              backupImportJob.recentLog.push("⏳ Rate-Limit / Einzel-Isolierung (" + nextRetry + "/2) bei #" + backupImportJob.cursor + ": " + errMsg);
+              await new Promise(res => setTimeout(res, waitMs));
             }
           }
           renderBackupImportBoxDom();
-          await new Promise(res => setTimeout(res, hadRateWarning ? 500 : 380));
+          await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
         }
 
         backupImportJob.running = false;

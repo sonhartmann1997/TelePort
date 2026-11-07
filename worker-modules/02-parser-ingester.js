@@ -2058,6 +2058,9 @@
         }
         effectiveOptions.headers = hdrs;
       }
+      if (!options?._countedSubrequest && typeof currentInvocationSubrequests === "number") {
+        currentInvocationSubrequests++;
+      }
       const res = await fetch(targetUrl, { ...effectiveOptions, signal: controller.signal });
       clearTimeout(id);
       return res;

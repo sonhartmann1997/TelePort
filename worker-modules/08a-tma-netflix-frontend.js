@@ -5567,3 +5567,5 @@
         closeAutocomplete();
         state.isSearchMode = true;
         state.currentView = "person";
+
+        state.currentPersonId = personId;

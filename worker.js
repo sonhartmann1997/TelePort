@@ -3193,6 +3193,9 @@
         }
         effectiveOptions.headers = hdrs;
       }
+      if (!options?._countedSubrequest && typeof currentInvocationSubrequests === "number") {
+        currentInvocationSubrequests++;
+      }
       const res = await fetch(targetUrl, { ...effectiveOptions, signal: controller.signal });
       clearTimeout(id);
       return res;
@@ -8884,11 +8887,17 @@
     }
 
     tmdbCache.clear();
+    if (typeof externalFallbackCache !== "undefined" && externalFallbackCache && typeof externalFallbackCache.clear === "function") {
+      externalFallbackCache.clear();
+    }
     memoryFallback.delete("d1_media_reports");
     memoryFallback.delete("d1_import_diagnostic_logs");
     for (const k of Array.from(memoryFallback.keys())) {
       if (
         k.startsWith("d1_") ||
+        k.startsWith("series_res_") ||
+        k.startsWith("title_res_") ||
+        k.startsWith("series_ver_resolved_") ||
         k.startsWith("saved_") ||
         k.startsWith("folders_") ||
         k.startsWith("u_bundle_bot_vip") ||
@@ -9713,6 +9722,10 @@
     const prevSavedTs = Number(memoryFallback.get(`d1_movie_saved_ts_${mid}`) || 0);
     const prevMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
     memoryFallback.set(`d1_catalog_movie_${mid}`, movieObj);
+    const releaseYearForIdx = movieObj.releaseDate && movieObj.releaseDate !== "Keine Angabe"
+      ? parseInt(String(movieObj.releaseDate).split("-")[0], 10) || null
+      : null;
+    registerLocalD1CatalogTitleInRam("m", mid, movieObj.title, releaseYearForIdx);
     // Wenn derselbe Film in den letzten 10 Minuten bereits in D1 gespeichert wurde und sich das Poster nicht geändert hat, spare den redundanten D1-Write!
     if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevMovie && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
       return;
@@ -9833,6 +9846,10 @@
     const prevSavedTs = Number(memoryFallback.get(`d1_series_saved_ts_${sid}`) || 0);
     const prevSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
     memoryFallback.set(`d1_catalog_series_${sid}`, seriesObj);
+    const releaseYearForIdx = seriesObj.releaseDate && seriesObj.releaseDate !== "Keine Angabe"
+      ? parseInt(String(seriesObj.releaseDate).split("-")[0], 10) || null
+      : null;
+    registerLocalD1CatalogTitleInRam("s", sid, seriesObj.title, releaseYearForIdx);
     // Wenn dieselbe Serie in den letzten 10 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E03)
     // und sich weder Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
     if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevSeries && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
@@ -10065,8 +10082,14 @@
   }
 
   async function getSearchCacheFromD1(env, cacheKey) {
+    if (!cacheKey) return null;
+    const memKey = `d1_search_cache_${cacheKey}`;
+    const memEntry = memoryFallback.get(memKey);
+    if (memEntry && memEntry.data && (Date.now() - Number(memEntry.ts || 0) <= D1_SEARCH_TTL_MS)) {
+      return memEntry.data;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !cacheKey) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
@@ -10077,6 +10100,7 @@
       if (Date.now() - Number(row.updated_at || 0) > D1_SEARCH_TTL_MS) return null;
       const parsed = JSON.parse(row.response_json);
       if (parsed && Array.isArray(parsed.results)) {
+        memoryFallback.set(memKey, { data: parsed, ts: Number(row.updated_at || Date.now()) });
         trackStat("d1Hits");
         return parsed;
       }
@@ -10085,8 +10109,11 @@
   }
 
   async function saveSearchCacheToD1(env, cacheKey, query, page, dataObj) {
+    if (!cacheKey || !dataObj) return;
+    const now = Date.now();
+    memoryFallback.set(`d1_search_cache_${cacheKey}`, { data: dataObj, ts: now });
     const db = await ensureD1Schema(env);
-    if (!db || !cacheKey || !dataObj) return;
+    if (!db) return;
     try {
       trackStat("d1Writes");
       await db
@@ -10098,15 +10125,21 @@
           String(query || "").toLowerCase(),
           Number(page || 1),
           JSON.stringify(dataObj),
-          Date.now()
+          now
         )
         .run();
     } catch (e) {}
   }
 
   async function getEntityFromD1(env, cacheKey, ttlMs = D1_SEARCH_TTL_MS) {
+    if (!cacheKey) return null;
+    const memKey = `d1_entity_${cacheKey}`;
+    const memEntry = memoryFallback.get(memKey);
+    if (memEntry && memEntry.data && (Date.now() - Number(memEntry.ts || 0) <= ttlMs)) {
+      return memEntry.data;
+    }
     const db = await ensureD1Schema(env);
-    if (!db || !cacheKey) return null;
+    if (!db) return null;
     try {
       trackStat("d1Reads");
       const row = await db
@@ -10117,6 +10150,7 @@
       if (Date.now() - Number(row.updated_at || 0) > ttlMs) return null;
       const parsed = JSON.parse(row.data_json);
       if (parsed) {
+        memoryFallback.set(memKey, { data: parsed, ts: Number(row.updated_at || Date.now()) });
         trackStat("d1Hits");
         return parsed;
       }
@@ -10125,17 +10159,273 @@
   }
 
   async function saveEntityToD1(env, cacheKey, entityType, dataObj) {
+    if (!cacheKey || !dataObj) return;
+    const now = Date.now();
+    memoryFallback.set(`d1_entity_${cacheKey}`, { data: dataObj, ts: now });
     const db = await ensureD1Schema(env);
-    if (!db || !cacheKey || !dataObj) return;
+    if (!db) return;
     try {
       trackStat("d1Writes");
       await db
         .prepare(`INSERT OR REPLACE INTO entity_cache (
           cache_key, entity_type, data_json, updated_at
         ) VALUES (?1, ?2, ?3, ?4)`)
-        .bind(String(cacheKey), String(entityType || "misc"), JSON.stringify(dataObj), Date.now())
+        .bind(String(cacheKey), String(entityType || "misc"), JSON.stringify(dataObj), now)
         .run();
     } catch (e) {}
+  }
+
+  // ============================================================================
+  // D1-FIRST VORAB-CHECK & UNIVERSELLER TITEL-CACHE (POSITIV & NEGATIV FÜR ALLE 8 APIS)
+  // Verhindert, dass identische Titel (egal ob Film, Serie, Fallback >= 8000000 oder Nicht erkannt)
+  // beim Massen-Import mehrfach über TMDb, OMDb, iTunes, TVMaze, Wikidata, AniList, Jikan & Wikipedia gesucht werden!
+  // ============================================================================
+
+  function registerLocalD1CatalogTitleInRam(typeCode, tmdbId, title, releaseYear = null) {
+    if (!title || !tmdbId) return;
+    const normT = normalizeCompareString(title);
+    if (!normT || normT === "unbekannt") return;
+    let map = memoryFallback.get("d1_local_catalog_title_map");
+    if (!(map instanceof Map)) {
+      map = new Map();
+      memoryFallback.set("d1_local_catalog_title_map", map);
+    }
+    const tc = typeCode === "s" ? "s" : "m";
+    const entry = { typeCode: tc, tmdbId: Number(tmdbId), title: String(title), year: releaseYear ? Number(releaseYear) : null };
+    if (releaseYear) {
+      map.set(`${tc}_${normT}_${releaseYear}`, entry);
+    }
+    if (!map.has(`${tc}_${normT}_any`) || Number(tmdbId) < 8000000) {
+      map.set(`${tc}_${normT}_any`, entry);
+    }
+  }
+
+  async function ensureLocalD1CatalogTitleMapLoaded(env) {
+    const lastLoadedTs = Number(memoryFallback.get("d1_local_catalog_title_map_ts") || 0);
+    let map = memoryFallback.get("d1_local_catalog_title_map");
+    if (map instanceof Map && (Date.now() - lastLoadedTs) < 180000) {
+      return map;
+    }
+    if (!(map instanceof Map)) {
+      map = new Map();
+      memoryFallback.set("d1_local_catalog_title_map", map);
+    }
+    const db = await ensureD1Schema(env);
+    if (db) {
+      try {
+        trackStat("d1Reads");
+        const [mRows, sRows] = await Promise.all([
+          db.prepare("SELECT tmdb_id, title, release_year FROM movies").all().catch(() => ({ results: [] })),
+          db.prepare("SELECT tmdb_id, title, release_year FROM series").all().catch(() => ({ results: [] }))
+        ]);
+        for (const r of (mRows?.results || [])) {
+          registerLocalD1CatalogTitleInRam("m", r.tmdb_id, r.title, r.release_year);
+        }
+        for (const r of (sRows?.results || [])) {
+          registerLocalD1CatalogTitleInRam("s", r.tmdb_id, r.title, r.release_year);
+        }
+      } catch (e) {}
+    }
+    memoryFallback.set("d1_local_catalog_title_map_ts", Date.now());
+    return map;
+  }
+
+  function buildTitleResolutionCacheKeys(rawTitle, year = null, typeCode = "m") {
+    const normT = normalizeCompareString(rawTitle || "");
+    if (!normT || normT === "unbekannt") return null;
+    const tc = typeCode === "s" ? "s" : "m";
+    const yrKey = year ? String(year) : "any";
+    const exactKey = `title_res_${tc}_${normT}_${yrKey}`;
+    const anyYearKey = `title_res_${tc}_${normT}_any`;
+    const legacySeriesKey = tc === "s" ? `series_res_${normT}_${yrKey}` : null;
+    const legacySeriesAnyKey = tc === "s" ? `series_res_${normT}_any` : null;
+    return { normT, tc, yrKey, exactKey, anyYearKey, legacySeriesKey, legacySeriesAnyKey };
+  }
+
+  async function findExistingMediaInD1BeforeExternalSearch(env, parsed, telegramFileId = null) {
+    const rawSearchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
+    const tc = parsed?.isSeries ? "s" : "m";
+    const yr = parsed?.year ? Number(parsed.year) : null;
+
+    // 1. Prüfe zuerst, ob exakt diese telegram_file_id bereits in D1 (movie_files / episode_files) liegt -> 0 externe API-Requests!
+    const cleanFid = String(telegramFileId || "").trim();
+    if (cleanFid && scoreTelegramFileIdValidity(cleanFid) > 0) {
+      const fidRamHit = memoryFallback.get(`d1_fid_lookup_${cleanFid}`);
+      if (fidRamHit && fidRamHit.tmdbId) {
+        return fidRamHit;
+      }
+      const db = await ensureD1Schema(env);
+      if (db) {
+        try {
+          trackStat("d1Reads");
+          if (tc === "s") {
+            const epRow = await db.prepare("SELECT series_id, season_number, episode_number FROM episode_files WHERE telegram_file_id = ?1 LIMIT 1").bind(cleanFid).first();
+            if (epRow && epRow.series_id) {
+              const hit = {
+                matchedBy: "file_id",
+                typeCode: "s",
+                tmdbId: Number(epRow.series_id),
+                season: Number(epRow.season_number || parsed?.season || 1),
+                episode: Number(epRow.episode_number || parsed?.episode || 1),
+                confidence: 100,
+                source: "D1 (Datei-ID)"
+              };
+              memoryFallback.set(`d1_fid_lookup_${cleanFid}`, hit);
+              return hit;
+            }
+          } else {
+            const movRow = await db.prepare("SELECT movie_id FROM movie_files WHERE telegram_file_id = ?1 LIMIT 1").bind(cleanFid).first();
+            if (movRow && movRow.movie_id) {
+              const hit = {
+                matchedBy: "file_id",
+                typeCode: "m",
+                tmdbId: Number(movRow.movie_id),
+                confidence: 100,
+                source: "D1 (Datei-ID)"
+              };
+              memoryFallback.set(`d1_fid_lookup_${cleanFid}`, hit);
+              return hit;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    const keys = buildTitleResolutionCacheKeys(rawSearchTitle, yr, tc);
+    if (!keys) return null;
+
+    // 2. Prüfe RAM + D1 entity_cache auf bereits aufgelöste Titel (inkl. TMDb, alle 7 Fallback-APIs >= 8000000 UND Negativ-Cache für unauffindbare Titel!)
+    const ramHit =
+      memoryFallback.get(keys.exactKey) ||
+      (keys.legacySeriesKey ? memoryFallback.get(keys.legacySeriesKey) : null) ||
+      (tc === "s" ? (memoryFallback.get(keys.anyYearKey) || memoryFallback.get(keys.legacySeriesAnyKey)) : null) ||
+      (!yr ? memoryFallback.get(keys.anyYearKey) : null);
+
+    if (ramHit) {
+      if (ramHit.notFound) {
+        return {
+          matchedBy: "negative_cache",
+          notFound: true,
+          reviewReasonCode: ramHit.reviewReasonCode || "TMDB_NOT_FOUND",
+          candidates: ramHit.candidates || []
+        };
+      }
+      if (ramHit.tmdbId) {
+        return {
+          matchedBy: "title_cache",
+          typeCode: ramHit.typeCode || tc,
+          tmdbId: Number(ramHit.tmdbId),
+          confidence: Number(ramHit.confidence || 92),
+          source: ramHit.source || "TMDb (RAM-Cache)",
+          details: ramHit.details || null,
+          candidates: ramHit.candidates || []
+        };
+      }
+    }
+
+    // D1 entity_cache prüfen (persistenter Schutz über Batch- und Worker-Isolate-Grenzen hinweg)
+    const d1Exact = await getEntityFromD1(env, keys.exactKey, D1_MOVIE_TTL_MS);
+    const d1SeriesFallback = (!d1Exact && tc === "s")
+      ? (await getEntityFromD1(env, keys.anyYearKey, D1_MOVIE_TTL_MS) || (keys.legacySeriesKey ? await getEntityFromD1(env, keys.legacySeriesKey, D1_MOVIE_TTL_MS) : null))
+      : null;
+    const d1Hit = d1Exact || d1SeriesFallback;
+    if (d1Hit) {
+      memoryFallback.set(keys.exactKey, d1Hit);
+      if (d1Hit.notFound) {
+        return {
+          matchedBy: "negative_cache",
+          notFound: true,
+          reviewReasonCode: d1Hit.reviewReasonCode || "TMDB_NOT_FOUND",
+          candidates: d1Hit.candidates || []
+        };
+      }
+      if (d1Hit.tmdbId) {
+        return {
+          matchedBy: "title_cache",
+          typeCode: d1Hit.typeCode || tc,
+          tmdbId: Number(d1Hit.tmdbId),
+          confidence: Number(d1Hit.confidence || 92),
+          source: d1Hit.source || "TMDb (D1-Cache)",
+          details: d1Hit.details || null,
+          candidates: d1Hit.candidates || []
+        };
+      }
+    }
+
+    // 3. Prüfe den lokalen D1-Katalog (movies / series Tabellen) per In-Memory-Titel-Index (0 externe API-Requests bei bereits vorhandenen Filmen/Serien!)
+    const catalogMap = await ensureLocalD1CatalogTitleMapLoaded(env);
+    if (catalogMap instanceof Map && catalogMap.size > 0) {
+      const catExact = yr ? catalogMap.get(`${tc}_${keys.normT}_${yr}`) : null;
+      const catAny = catalogMap.get(`${tc}_${keys.normT}_any`);
+      const catCandidate = catExact || catAny;
+      if (catCandidate && catCandidate.tmdbId) {
+        const yearAcceptable = !yr || !catCandidate.year || Math.abs(yr - Number(catCandidate.year)) <= 2 || tc === "s";
+        if (yearAcceptable) {
+          return {
+            matchedBy: "d1_catalog",
+            typeCode: catCandidate.typeCode || tc,
+            tmdbId: Number(catCandidate.tmdbId),
+            confidence: catExact ? 98 : 92,
+            source: "D1-Katalog"
+          };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async function saveTitleResolutionCacheToD1(env, parsed, resolvedTypeCode, payload) {
+    if (!parsed || !payload) return;
+    const rawSearchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
+    const tc = resolvedTypeCode || (parsed?.isSeries ? "s" : "m");
+    const yr = parsed?.year ? Number(parsed.year) : null;
+    const keys = buildTitleResolutionCacheKeys(rawSearchTitle, yr, tc);
+    if (!keys) return;
+
+    const record = {
+      ...payload,
+      typeCode: tc,
+      updatedAt: Date.now()
+    };
+
+    memoryFallback.set(keys.exactKey, record);
+    if (!yr || tc === "s") {
+      memoryFallback.set(keys.anyYearKey, record);
+    }
+    if (keys.legacySeriesKey && record.tmdbId) {
+      memoryFallback.set(keys.legacySeriesKey, record);
+      memoryFallback.set(keys.legacySeriesAnyKey, record);
+    }
+    if (record.title && record.tmdbId) {
+      const canonKeys = buildTitleResolutionCacheKeys(record.title, yr, tc);
+      if (canonKeys) {
+        memoryFallback.set(canonKeys.exactKey, record);
+        if (!yr || tc === "s") memoryFallback.set(canonKeys.anyYearKey, record);
+      }
+    }
+
+    await saveEntityToD1(env, keys.exactKey, record.notFound ? "title_neg" : "title_res", record);
+    if (tc === "s" && keys.anyYearKey !== keys.exactKey && !record.notFound) {
+      await saveEntityToD1(env, keys.anyYearKey, "title_res", record);
+    }
+  }
+
+  async function invalidateOrUpdateTitleResolutionCacheInD1(env, rawTitle, year, typeCode, newPayload = null) {
+    const keys = buildTitleResolutionCacheKeys(rawTitle, year, typeCode);
+    if (!keys) return;
+    if (newPayload && newPayload.tmdbId) {
+      await saveTitleResolutionCacheToD1(env, { cleanTitle: rawTitle, year, isSeries: typeCode === "s" }, typeCode, newPayload);
+      return;
+    }
+    memoryFallback.delete(keys.exactKey);
+    memoryFallback.delete(keys.anyYearKey);
+    memoryFallback.delete(`d1_entity_${keys.exactKey}`);
+    memoryFallback.delete(`d1_entity_${keys.anyYearKey}`);
+    if (keys.legacySeriesKey) {
+      memoryFallback.delete(keys.legacySeriesKey);
+      memoryFallback.delete(keys.legacySeriesAnyKey);
+    }
   }
 
   async function getD1DatabaseStats(env) {
@@ -11062,11 +11352,11 @@
     return { results: results || [] };
   }
 
-  let currentInvocationSubrequests = 0;
+  var currentInvocationSubrequests = 0;
   function resetSubrequestBudget() {
     currentInvocationSubrequests = 0;
   }
-  function hasSubrequestBudget(limit = 38) {
+  function hasSubrequestBudget(limit = 36) {
     return currentInvocationSubrequests < limit;
   }
 
@@ -11075,47 +11365,20 @@
     const memHit = getCachedTmdb(memKey);
     if (memHit) return memHit;
 
-    const canUseEdgeCache = typeof caches !== "undefined" && caches && caches.default && (!options.method || options.method === "GET");
-    let cacheKeyReq = null;
-    if (canUseEdgeCache) {
-      try {
-        cacheKeyReq = new Request(url, { method: "GET" });
-        const edgeHit = await caches.default.match(cacheKeyReq);
-        if (edgeHit) {
-          const parsed = await edgeHit.json();
-          return setCachedTmdb(memKey, parsed);
-        }
-      } catch (e) {}
-    }
-
-    if (!hasSubrequestBudget(42)) {
+    if (!hasSubrequestBudget(40)) {
       return null;
     }
 
     try {
       currentInvocationSubrequests++;
-      const res = await fetchWithTimeout(url, options, timeoutMs);
+      const res = await fetchWithTimeout(url, { ...options, _countedSubrequest: true }, timeoutMs);
       if (!res || !res.ok) return null;
-      const contentType = String(res.headers.get("content-type") || "");
       const text = await res.text();
       if (!text || text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
         return null;
       }
       const data = JSON.parse(text);
       setCachedTmdb(memKey, data);
-
-      if (canUseEdgeCache && cacheKeyReq && data) {
-        try {
-          const edgeRes = new Response(JSON.stringify(data), {
-            status: 200,
-            headers: {
-              "Content-Type": contentType || "application/json",
-              "Cache-Control": `public, max-age=${ttlSeconds}`
-            }
-          });
-          await caches.default.put(cacheKeyReq, edgeRes);
-        } catch (e) {}
-      }
       return data;
     } catch (e) {
       return null;
@@ -19139,7 +19402,16 @@
       return 0;
     };
 
-    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (inkl. Römischer Doppelpunkt-Variante, Umlaut-Normalisierung ae/oe/ue & cleanMovieQuery)
+    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (mit SOFORT-STOPP ab >= 85% Trefferquote!)
+    const getBestPrimaryConf = () => {
+      let best = 0;
+      for (const item of rawPool) {
+        const c = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsed, item, item._typeCode);
+        if (c > best) best = c;
+      }
+      return best;
+    };
+
     const hasAsciiUmlauts = /(?:ae|oe|ue)/i.test(searchTitle) && !/[äöüß]/i.test(searchTitle);
     const umlautVariant = hasAsciiUmlauts
       ? searchTitle
@@ -19147,39 +19419,41 @@
           .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
       : searchTitle;
     const romanMovieVariant = cleanMovieQuery(searchTitle);
-    if (searchTitle && searchTitle !== "Unbekannt") {
-      const hitsWithYear = await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle);
-      if (!parsed.year || hitsWithYear < 2) {
+    if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < 85) {
+      const hitsWithYear = parsed.year
+        ? await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle)
+        : 0;
+      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= 85% geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
+      if (getBestPrimaryConf() < 85 && (!parsed.year || hitsWithYear === 0)) {
         await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
       }
-      if (rawSearchTitle !== searchTitle && hitsWithYear === 0) {
+      if (getBestPrimaryConf() < 85 && rawSearchTitle !== searchTitle && hitsWithYear === 0) {
         const rawHitsYear = await runTmdbQuery(primaryType, rawSearchTitle, parsed.year, searchTitle);
-        if (parsed.year && rawHitsYear === 0) await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
+        if (getBestPrimaryConf() < 85 && parsed.year && rawHitsYear === 0) {
+          await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
+        }
       }
-      if (romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
+      if (getBestPrimaryConf() < 85 && romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
         const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null, romanMovieVariant);
-        if (parsed.year && rHits === 0) await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
+        if (getBestPrimaryConf() < 85 && parsed.year && rHits === 0) {
+          await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
+        }
       }
-      // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen"):
-      // IMMER ausführen, wenn ae/oe/ue (ohne äöüß) im Titel vorkommt – auch wenn die ASCII-Suche ohne Jahr bereits falsche Jahrzehnte (z.B. 2005) geliefert hat!
-      if (umlautVariant !== searchTitle) {
+      // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
+      if (umlautVariant !== searchTitle && getBestPrimaryConf() < 85) {
         const uHits = await runTmdbQuery(primaryType, umlautVariant, parsed.year || null, umlautVariant);
-        if (parsed.year && uHits === 0) {
+        if (getBestPrimaryConf() < 85 && parsed.year && uHits === 0) {
           await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
         }
       }
     }
 
-    // Stufe 3B: Suche mit Originaltitel (falls im Steckbrief angegeben)
-    if (parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
+    // Stufe 3B: Suche mit Originaltitel (nur falls noch kein sicherer Treffer >= 85% vorliegt)
+    if (getBestPrimaryConf() < 85 && parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
       await runTmdbQuery(primaryType, parsed.originalTitle, parsed.year || null);
     }
 
-    let bestPrimaryConf = 0;
-    for (const item of rawPool) {
-      const c = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsed, item, item._typeCode);
-      if (c > bestPrimaryConf) bestPrimaryConf = c;
-    }
+    let bestPrimaryConf = getBestPrimaryConf();
 
     // Eiserne Sperre NUR, wenn bereits ein sicherer Film-Treffer (bestPrimaryConf >= 78) mit Jahreszahl vorliegt (z.B. "Iron Man 3 (2013)").
     // Hat die TMDb-Filmsuche hingegen KEINEN sicheren Treffer geliefert (< 78%), MUSS zwingend auf Serien-Suche (/search/tv + Stufe 5 Episoden-Fallback) gewechselt werden!
@@ -19771,26 +20045,47 @@
     let bestConfidence = explicitTmdbId ? 100 : 0;
     let metadataSource = "TMDb";
 
-    // 2-Stufen-Serien-Cache (Stufe 1: RAM seriesCache + Stufe 2: D1 entity_cache):
-    // Sobald eine Serie (z.B. "Squid Game" oder "Breaking Bad") einmal aufgelöst wurde, kosten S01E02 bis S01E09 exakt 0 externe TMDb-Subrequests!
+    // STUFE 0: D1-First Vorab-Check & Universeller Titel-Cache (RAM + D1 entity_cache + D1 movies/series Katalog):
+    // Prüft vor jedem externen API-Call, ob die Datei-ID oder der normalisierte Titel (egal ob Film, Serie, Fallback >= 8000000
+    // oder bereits als "Nicht erkannt" geprüfter Titel) schon bekannt ist -> 0 externe API-Requests bei gleichem Titel!
     const normSeriesCacheKey = (parsed.isSeries && searchTitle)
       ? `series_res_${normalizeCompareString(searchTitle)}_${parsed.year || "any"}`
       : null;
-    if (!targetId && normSeriesCacheKey) {
-      const ramHit = memoryFallback.get(normSeriesCacheKey) || memoryFallback.get(`series_res_${normalizeCompareString(searchTitle)}_any`);
-      if (ramHit && ramHit.tmdbId) {
-        targetId = Number(ramHit.tmdbId);
-        resolvedTypeCode = "s";
-        bestConfidence = Number(ramHit.confidence || 96);
-        metadataSource = ramHit.source || "TMDb (Cache)";
-      } else {
-        const d1Hit = await getEntityFromD1(env, normSeriesCacheKey, D1_MOVIE_TTL_MS);
-        if (d1Hit && d1Hit.tmdbId) {
-          targetId = Number(d1Hit.tmdbId);
-          resolvedTypeCode = "s";
-          bestConfidence = Number(d1Hit.confidence || 96);
-          metadataSource = d1Hit.source || "TMDb (D1-Cache)";
-          memoryFallback.set(normSeriesCacheKey, d1Hit);
+    if (!targetId && !forceTypeCode && typeof findExistingMediaInD1BeforeExternalSearch === "function") {
+      const d1PreHit = await findExistingMediaInD1BeforeExternalSearch(env, parsed, effectiveFileMeta?.fileId || null);
+      if (d1PreHit) {
+        if (d1PreHit.notFound && !options?.bypassNegativeTitleCache) {
+          return options?.returnUnmatched
+            ? {
+                ok: false,
+                unmatched: true,
+                ingestStatus: "failed",
+                reviewReasonCode: d1PreHit.reviewReasonCode || "TMDB_NOT_FOUND",
+                confidence: 0,
+                rawInput: rawName,
+                parsed,
+                candidates: d1PreHit.candidates || [],
+                fromNegativeCache: true
+              }
+            : null;
+        }
+        if (d1PreHit.tmdbId) {
+          targetId = Number(d1PreHit.tmdbId);
+          resolvedTypeCode = d1PreHit.typeCode || resolvedTypeCode;
+          bestConfidence = Number(d1PreHit.confidence || 94);
+          metadataSource = d1PreHit.source || "D1-Cache";
+          if (Array.isArray(d1PreHit.candidates) && d1PreHit.candidates.length > 0) {
+            candidates = d1PreHit.candidates;
+          }
+          if (d1PreHit.season && resolvedTypeCode === "s" && !parsed.season) {
+            parsed.season = Number(d1PreHit.season);
+          }
+          if (d1PreHit.episode && resolvedTypeCode === "s" && !parsed.episode) {
+            parsed.episode = Number(d1PreHit.episode);
+          }
+          if (d1PreHit.details && typeof d1PreHit.details === "object") {
+            setCachedTmdb(resolvedTypeCode === "s" ? `tv_${targetId}` : `movie_${targetId}`, d1PreHit.details);
+          }
         }
       }
     }
@@ -19944,6 +20239,14 @@
       }
 
       if (!seriesDetails) {
+        // Nur dann negativ cachen, wenn noch genügend Subrequest-Budget vorhanden war (kein Abbruch mitten in der Kaskade!)
+        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+          await saveTitleResolutionCacheToD1(env, parsed, "s", {
+            notFound: true,
+            reviewReasonCode: "TMDB_NOT_FOUND",
+            candidates: (candidates || []).slice(0, 5)
+          });
+        }
         return options?.returnUnmatched
           ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
@@ -19955,21 +20258,20 @@
       if (Number(seriesDetails.id) >= 8000000) {
         try {
           const normTargetSeriesTitle = normalizeCompareString(seriesDetails.title || parsed.cleanTitle || searchTitle);
-          const dbCheck = await ensureD1Schema(env);
-          if (dbCheck && normTargetSeriesTitle) {
-            const existingRows = await dbCheck.prepare("SELECT tmdb_id, title FROM series WHERE tmdb_id < 8000000").all().catch(() => ({ results: [] }));
-            const matchedExisting = (existingRows?.results || []).find(r => normalizeCompareString(r.title || "") === normTargetSeriesTitle);
-            if (matchedExisting && matchedExisting.tmdb_id) {
-              const upgradedDetails = await fetchSeriesDetails(env, Number(matchedExisting.tmdb_id));
-              if (upgradedDetails && upgradedDetails.id) {
-                targetId = Number(upgradedDetails.id);
-                seriesDetails = upgradedDetails;
-                metadataSource = "TMDb";
-              }
+          const catalogMap = typeof ensureLocalD1CatalogTitleMapLoaded === "function"
+            ? await ensureLocalD1CatalogTitleMapLoaded(env)
+            : null;
+          const matchedExisting = catalogMap instanceof Map ? catalogMap.get(`s_${normTargetSeriesTitle}_any`) : null;
+          if (matchedExisting && matchedExisting.tmdbId && Number(matchedExisting.tmdbId) < 8000000) {
+            const upgradedDetails = await fetchSeriesDetails(env, Number(matchedExisting.tmdbId));
+            if (upgradedDetails && upgradedDetails.id) {
+              targetId = Number(upgradedDetails.id);
+              seriesDetails = upgradedDetails;
+              metadataSource = "TMDb";
             }
           }
-          if (Number(seriesDetails.id) >= 8000000 && env.TMDB_BEARER_TOKEN) {
-            const qTitle = String(seriesDetails.title || parsed.cleanTitle || searchTitle).trim();
+          if (Number(seriesDetails.id) >= 8000000 && env.TMDB_BEARER_TOKEN && normalizeCompareString(seriesDetails.title) !== normalizeCompareString(searchTitle)) {
+            const qTitle = String(seriesDetails.title || "").trim();
             const tvRes = await cachedExternalFetchJson(
               `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(qTitle)}&language=de-DE&page=1`,
               { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } }
@@ -19991,22 +20293,18 @@
         } catch (e) {}
       }
 
-      // 2-Stufen-Serien-Cache befüllen (RAM + D1), damit alle weiteren Episoden dieser Serie 0 TMDb-Subrequests benötigen!
-      const effectiveSeriesCacheKey = `series_res_${normalizeCompareString(seriesDetails.title || parsed.cleanTitle || searchTitle)}_${parsed.year || "any"}`;
-      if (seriesDetails?.id) {
-        const cachePayload = {
+      // Universellen Serien-Titel-Cache befüllen (RAM + D1 entity_cache, inkl. Fallback-Serien >= 8000000!),
+      // damit alle weiteren Episoden dieser Serie garantiert 0 externe Such-Requests benötigen!
+      if (seriesDetails?.id && typeof saveTitleResolutionCacheToD1 === "function") {
+        await saveTitleResolutionCacheToD1(env, parsed, "s", {
           tmdbId: Number(seriesDetails.id),
+          typeCode: "s",
           title: seriesDetails.title,
           confidence: Math.max(bestConfidence, 85),
-          source: metadataSource || "TMDb"
-        };
-        if (normSeriesCacheKey) memoryFallback.set(normSeriesCacheKey, cachePayload);
-        memoryFallback.set(effectiveSeriesCacheKey, cachePayload);
-        memoryFallback.set(`series_res_${normalizeCompareString(searchTitle)}_any`, cachePayload);
-        memoryFallback.set(`series_res_${normalizeCompareString(seriesDetails.title)}_any`, cachePayload);
-        if (!preExistingSeries && hasValidSeriesVideoFile && Number(seriesDetails.id) < 8000000) {
-          await saveEntityToD1(env, effectiveSeriesCacheKey, "series_res", cachePayload);
-        }
+          source: metadataSource || "TMDb",
+          details: Number(seriesDetails.id) >= 8000000 ? seriesDetails : null,
+          candidates: (candidates || []).slice(0, 5)
+        });
       }
 
       const seasonNum = parsed.season || 1;
@@ -20024,71 +20322,80 @@
         detectedRuntimeMin: durationSec ? Math.round(durationSec / 60) : null
       };
 
-      // Serien-Versions-Erkennung via TMDb episode_groups ZUERST prüfen (BEVOR fetchSeasonDetails aufgerufen wird!),
-      // damit bei Serien mit aktiver Episode-Group (z.B. "Haus des Geldes" -> 13 Folgen statt 15) niemals S01E14/S01E15 angelegt werden!
+      // Serien-Versions-Erkennung via TMDb episode_groups (1x pro Serie+Staffel cachen statt bei jeder einzelnen Episode neu auszuführen!):
       if (seriesDetails.id < 8000000) {
-        try {
-          const resolvedVer = await resolveSeriesVersionOnTMDb(
-            seriesDetails.id,
-            { season: seasonNum, episode: epNum, durationSec },
-            env
-          );
-          if (resolvedVer) {
-            if (resolvedVer.versionInfo) versionInfo = resolvedVer.versionInfo;
-            if (resolvedVer.episode) {
-              epObj = resolvedVer.episode;
-            }
-            if (resolvedVer.versionInfo?.isAlternativeOrder && resolvedVer.series?.seasons) {
-              seriesDetails.seasons = resolvedVer.series.seasons;
-              seriesDetails.numberOfSeasons = resolvedVer.series.number_of_seasons || resolvedVer.series.seasons.length;
-              seriesDetails.numberOfEpisodes = resolvedVer.series.number_of_episodes || resolvedVer.series.seasons.reduce((sum, s) => sum + Number(s.episode_count || 0), 0);
-              seriesDetails.number_of_seasons = seriesDetails.numberOfSeasons;
-              seriesDetails.number_of_episodes = seriesDetails.numberOfEpisodes;
-              seriesDetails.versionInfo = resolvedVer.versionInfo;
-              setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
-
-              const groupSavedKey = `d1_group_seasons_saved_${seriesDetails.id}_${resolvedVer.versionInfo.groupId || "alt"}`;
-              const alreadySavedGroupSeasons = Boolean(memoryFallback.get(groupSavedKey));
-              if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
-                await saveSeriesToD1(env, seriesDetails);
+        const verCacheKey = `series_ver_resolved_${seriesDetails.id}_${seasonNum}`;
+        const cachedVer = memoryFallback.get(verCacheKey);
+        const stdSeasonMeta = (seriesDetails.seasons || []).find(s => Number(s?.season_number) === Number(seasonNum));
+        const epExceedsStdSeason = Boolean(stdSeasonMeta && Number(stdSeasonMeta.episode_count || 0) > 0 && epNum > Number(stdSeasonMeta.episode_count));
+        if (cachedVer && !epExceedsStdSeason) {
+          if (cachedVer.versionInfo) versionInfo = cachedVer.versionInfo;
+          seasonData = getCachedTmdb(`tv_season_${seriesDetails.id}_${seasonNum}`);
+        } else {
+          try {
+            const resolvedVer = await resolveSeriesVersionOnTMDb(
+              seriesDetails.id,
+              { season: seasonNum, episode: epNum, durationSec },
+              env
+            );
+            if (resolvedVer) {
+              if (resolvedVer.versionInfo) versionInfo = resolvedVer.versionInfo;
+              if (resolvedVer.episode) {
+                epObj = resolvedVer.episode;
               }
+              if (resolvedVer.versionInfo?.isAlternativeOrder && resolvedVer.series?.seasons) {
+                seriesDetails.seasons = resolvedVer.series.seasons;
+                seriesDetails.numberOfSeasons = resolvedVer.series.number_of_seasons || resolvedVer.series.seasons.length;
+                seriesDetails.numberOfEpisodes = resolvedVer.series.number_of_episodes || resolvedVer.series.seasons.reduce((sum, s) => sum + Number(s.episode_count || 0), 0);
+                seriesDetails.number_of_seasons = seriesDetails.numberOfSeasons;
+                seriesDetails.number_of_episodes = seriesDetails.numberOfEpisodes;
+                seriesDetails.versionInfo = resolvedVer.versionInfo;
+                setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
 
-              if (Array.isArray(resolvedVer.series._normalizedGroupSeasons)) {
-                for (const gSeason of resolvedVer.series._normalizedGroupSeasons) {
-                  const gNum = Number(gSeason.season_number || 1);
-                  const normalizedSeasonObj = {
-                    id: gSeason.id || `${seriesDetails.id}_${gNum}`,
-                    season_number: gNum,
-                    name: gSeason.name || `Staffel ${gNum}`,
-                    seasonEpisodeCount: gSeason.episode_count,
-                    isEpisodeGroup: true,
-                    versionLabel: resolvedVer.versionInfo.versionLabel,
-                    episodes: (gSeason.episodes || []).map(ep => ({
-                      id: ep.id,
-                      episode_number: ep.episode_number,
+                const groupSavedKey = `d1_group_seasons_saved_${seriesDetails.id}_${resolvedVer.versionInfo.groupId || "alt"}`;
+                const alreadySavedGroupSeasons = Boolean(memoryFallback.get(groupSavedKey));
+                if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
+                  await saveSeriesToD1(env, seriesDetails);
+                }
+
+                if (Array.isArray(resolvedVer.series._normalizedGroupSeasons)) {
+                  for (const gSeason of resolvedVer.series._normalizedGroupSeasons) {
+                    const gNum = Number(gSeason.season_number || 1);
+                    const normalizedSeasonObj = {
+                      id: gSeason.id || `${seriesDetails.id}_${gNum}`,
                       season_number: gNum,
-                      name: ep.name || `Folge ${ep.episode_number}`,
-                      air_date: ep.air_date || "",
-                      runtime: ep.runtime ? `${ep.runtime} Min.` : "",
-                      vote_average: ep.vote_average || 0,
-                      overview: ep.overview || ""
-                    }))
-                  };
-                  setCachedTmdb(`tv_season_${seriesDetails.id}_${gNum}`, normalizedSeasonObj);
-                  if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
-                    await saveSeasonToD1(env, seriesDetails.id, gNum, normalizedSeasonObj);
+                      name: gSeason.name || `Staffel ${gNum}`,
+                      seasonEpisodeCount: gSeason.episode_count,
+                      isEpisodeGroup: true,
+                      versionLabel: resolvedVer.versionInfo.versionLabel,
+                      episodes: (gSeason.episodes || []).map(ep => ({
+                        id: ep.id,
+                        episode_number: ep.episode_number,
+                        season_number: gNum,
+                        name: ep.name || `Folge ${ep.episode_number}`,
+                        air_date: ep.air_date || "",
+                        runtime: ep.runtime ? `${ep.runtime} Min.` : "",
+                        vote_average: ep.vote_average || 0,
+                        overview: ep.overview || ""
+                      }))
+                    };
+                    setCachedTmdb(`tv_season_${seriesDetails.id}_${gNum}`, normalizedSeasonObj);
+                    if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
+                      await saveSeasonToD1(env, seriesDetails.id, gNum, normalizedSeasonObj);
+                    }
+                    if (gNum === Number(seasonNum)) {
+                      seasonData = normalizedSeasonObj;
+                    }
                   }
-                  if (gNum === Number(seasonNum)) {
-                    seasonData = normalizedSeasonObj;
+                  if (hasValidSeriesVideoFile || preExistingSeries) {
+                    memoryFallback.set(groupSavedKey, true);
                   }
-                }
-                if (hasValidSeriesVideoFile || preExistingSeries) {
-                  memoryFallback.set(groupSavedKey, true);
                 }
               }
+              memoryFallback.set(verCacheKey, { versionInfo });
             }
-          }
-        } catch (verErr) {}
+          } catch (verErr) {}
+        }
       }
 
       if (!seasonData && seriesDetails.id < 8000000) {
@@ -20326,9 +20633,28 @@
       }
 
       if (!movieDetails) {
+        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+          await saveTitleResolutionCacheToD1(env, parsed, "m", {
+            notFound: true,
+            reviewReasonCode: "TMDB_NOT_FOUND",
+            candidates: (candidates || []).slice(0, 5)
+          });
+        }
         return options?.returnUnmatched
           ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
+      }
+
+      if (movieDetails?.id && typeof saveTitleResolutionCacheToD1 === "function") {
+        await saveTitleResolutionCacheToD1(env, parsed, "m", {
+          tmdbId: Number(movieDetails.id),
+          typeCode: "m",
+          title: movieDetails.title,
+          confidence: Math.max(bestConfidence, 85),
+          source: metadataSource || "TMDb",
+          details: Number(movieDetails.id) >= 8000000 ? movieDetails : null,
+          candidates: (candidates || []).slice(0, 5)
+        });
       }
 
       const hasValidMovieVideoFile = Boolean(
@@ -21134,9 +21460,9 @@
 
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
       // CLOUDFLARE 50-SUBREQUESTS-LIMIT SCHUTZSCHILD:
-      // Stoppt den Batch kontrolliert bereits ab >= 30 externen Subrequests VOR Beginn eines Paares und liefert PARTIAL_BATCH + nextStartIndex zurück,
-      // damit niemals ein Paar mitten in der Auflösung bei Subrequest #42 in einen falschen 0% CONFLICT_? läuft!
-      if (!hasSubrequestBudget(30) && i > 0) {
+      // Da jetzt jeder externe Fetch (inkl. Details & Fallbacks) exakt gezählt wird, stoppen wir kontrolliert bereits ab >= 26 externen Subrequests
+      // und liefern PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Limit erreicht wird!
+      if (!hasSubrequestBudget(26) && i > 0) {
         partialBatch = true;
         nextStartIndex = i;
         pauseReason = "SUBREQUEST_LIMIT_GUARD";
@@ -21163,10 +21489,10 @@
       let abortBatchIndex = i;
 
       // Sequenzielle Abarbeitung innerhalb des Mini-Batches:
-      // Dadurch befüllt Episode 1 (z.B. Squid Game S01E01 oder Axel! S01E01) sofort den RAM/D1-Serien-Cache,
-      // sodass Episode 2 (S01E02) 0 TMDb-Such-Subrequests benötigt!
+      // Dadurch befüllt der 1. Eintrag eines Titels (Film, Serie oder auch Nicht erkannt) sofort den RAM/D1-Titel-Cache,
+      // sodass alle weiteren Einträge gleichen Titels 0 externe API-Requests benötigen!
       for (let bStep = 0; bStep < batch.length; bStep++) {
-        if (!hasSubrequestBudget(34) && (i + bStep) > 0) {
+        if (!hasSubrequestBudget(28) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
@@ -21197,9 +21523,9 @@
             error: String(itemErr?.message || itemErr || "Unbekannter Fehler")
           };
         }
-        // Falls das Element während der Auflösung ans Subrequest-Limit (>= 38) gestoßen ist und deshalb keinen Treffer fand:
+        // Falls das Element während der Auflösung ans Subrequest-Limit (>= 32) gestoßen ist und deshalb keinen Treffer fand (und nicht aus dem Negativ-Cache kam):
         // NICHT als 0% CONFLICT_? fehlschlagen lassen, sondern diesen Index sauber für den nächsten Batch vormerken!
-        if ((!stepRes || stepRes.unmatched) && !hasSubrequestBudget(38) && (i + bStep) > 0) {
+        if ((!stepRes || stepRes.unmatched) && !stepRes?.fromNegativeCache && !hasSubrequestBudget(32) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
@@ -29873,6 +30199,7 @@
         state.currentView = "person";
 
         state.currentPersonId = personId;
+
         state.currentPersonName = personName || "Person";
         state.searchQuery = personName || "";
         state.filtersCollapsedInSearch = false;
@@ -35444,6 +35771,7 @@
 
               neighborEnriched: true,
               neighborOffset: offset
+
             };
           }
           let finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
@@ -38797,29 +39125,33 @@
             } else {
               hadRateWarning = true;
               const errMsg = String(r?.error || "Kurze Pause...");
-              backupImportJob.cursorRetries[backupImportJob.cursor] = curRetryCount + 1;
-              if (curRetryCount + 1 >= 2) {
+              const nextRetry = curRetryCount + 1;
+              backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
+              if (nextRetry >= 3) {
                 isolateFailedEntryAtCursor(errMsg);
               } else {
                 saveBackupCheckpointClient();
-                backupImportJob.recentLog.push("⏳ Einzel-Prüfung bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
-                await new Promise(res => setTimeout(res, 1200));
+                const waitMs = 1800 * nextRetry;
+                backupImportJob.recentLog.push("⏳ Einzel-Prüfung (" + nextRetry + "/2) bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
+                await new Promise(res => setTimeout(res, waitMs));
               }
             }
           } catch (e) {
             hadRateWarning = true;
             const errMsg = String(e?.message || e || "Netzwerkfehler");
-            backupImportJob.cursorRetries[backupImportJob.cursor] = curRetryCount + 1;
-            if (curRetryCount + 1 >= 2) {
+            const nextRetry = curRetryCount + 1;
+            backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
+            if (nextRetry >= 3) {
               isolateFailedEntryAtCursor(errMsg);
             } else {
               saveBackupCheckpointClient();
-              backupImportJob.recentLog.push("⏳ Rate-Limit / Einzel-Isolierung bei #" + backupImportJob.cursor + ": " + errMsg);
-              await new Promise(res => setTimeout(res, 1500));
+              const waitMs = 2200 * nextRetry;
+              backupImportJob.recentLog.push("⏳ Rate-Limit / Einzel-Isolierung (" + nextRetry + "/2) bei #" + backupImportJob.cursor + ": " + errMsg);
+              await new Promise(res => setTimeout(res, waitMs));
             }
           }
           renderBackupImportBoxDom();
-          await new Promise(res => setTimeout(res, hadRateWarning ? 500 : 380));
+          await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
         }
 
         backupImportJob.running = false;
@@ -41758,11 +42090,26 @@
             isSeries: newTypeCode === "s",
             ...(newTypeCode === "s" && manualSeason ? { season: manualSeason, manualSeason } : {}),
             ...(newTypeCode === "s" && manualEpisode ? { episode: manualEpisode, manualEpisode } : {})
-          }, entryFileMeta, { registerAsVipStream });
+          }, entryFileMeta, { registerAsVipStream, bypassNegativeTitleCache: true });
 
           if (!resolved || !resolved.ok) {
             return new Response(JSON.stringify({ ok: false, error: "TMDb-Eintrag konnte nicht geladen werden." }), { status: 404, headers: corsHeaders });
           }
+
+          await invalidateOrUpdateTitleResolutionCacheInD1(
+            env,
+            rawEntry.cleanTitle || rawEntry.filename || rawEntry.raw_file_name || resolved.cleanTitle || "",
+            rawEntry.year || resolved.year,
+            newTypeCode,
+            {
+              tmdbId: Number(resolved.tmdbId),
+              typeCode: resolved.typeCode,
+              title: resolved.cleanTitle,
+              confidence: 100,
+              source: resolved.metadataSource || "Admin-Remap",
+              notFound: false
+            }
+          );
 
           // 3. In Ziel-Playlist eintragen
           if (playlistFolderId && (playlistMode === "watchlist" || playlistMode === "both" || targetChatId === "bot_vip")) {

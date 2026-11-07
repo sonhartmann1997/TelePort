@@ -1,4 +1,3 @@
-        state.currentPersonId = personId;
         state.currentPersonName = personName || "Person";
         state.searchQuery = personName || "";
         state.filtersCollapsedInSearch = false;
@@ -5567,3 +5566,6 @@
               ...parsedVideo,
               year: parsedVideo.year || neighborYear,
               contextOverview: rawText.trim(),
+
+              neighborEnriched: true,
+              neighborOffset: offset

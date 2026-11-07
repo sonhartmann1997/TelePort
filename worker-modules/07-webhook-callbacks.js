@@ -344,7 +344,16 @@
       return 0;
     };
 
-    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (inkl. Römischer Doppelpunkt-Variante, Umlaut-Normalisierung ae/oe/ue & cleanMovieQuery)
+    // Stufe 2 & 3A: Suche mit Jahr, danach ohne Jahr (mit SOFORT-STOPP ab >= 85% Trefferquote!)
+    const getBestPrimaryConf = () => {
+      let best = 0;
+      for (const item of rawPool) {
+        const c = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsed, item, item._typeCode);
+        if (c > best) best = c;
+      }
+      return best;
+    };
+
     const hasAsciiUmlauts = /(?:ae|oe|ue)/i.test(searchTitle) && !/[äöüß]/i.test(searchTitle);
     const umlautVariant = hasAsciiUmlauts
       ? searchTitle
@@ -352,39 +361,41 @@
           .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
       : searchTitle;
     const romanMovieVariant = cleanMovieQuery(searchTitle);
-    if (searchTitle && searchTitle !== "Unbekannt") {
-      const hitsWithYear = await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle);
-      if (!parsed.year || hitsWithYear < 2) {
+    if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < 85) {
+      const hitsWithYear = parsed.year
+        ? await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle)
+        : 0;
+      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= 85% geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
+      if (getBestPrimaryConf() < 85 && (!parsed.year || hitsWithYear === 0)) {
         await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
       }
-      if (rawSearchTitle !== searchTitle && hitsWithYear === 0) {
+      if (getBestPrimaryConf() < 85 && rawSearchTitle !== searchTitle && hitsWithYear === 0) {
         const rawHitsYear = await runTmdbQuery(primaryType, rawSearchTitle, parsed.year, searchTitle);
-        if (parsed.year && rawHitsYear === 0) await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
+        if (getBestPrimaryConf() < 85 && parsed.year && rawHitsYear === 0) {
+          await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
+        }
       }
-      if (romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
+      if (getBestPrimaryConf() < 85 && romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
         const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null, romanMovieVariant);
-        if (parsed.year && rHits === 0) await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
+        if (getBestPrimaryConf() < 85 && parsed.year && rHits === 0) {
+          await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
+        }
       }
-      // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen"):
-      // IMMER ausführen, wenn ae/oe/ue (ohne äöüß) im Titel vorkommt – auch wenn die ASCII-Suche ohne Jahr bereits falsche Jahrzehnte (z.B. 2005) geliefert hat!
-      if (umlautVariant !== searchTitle) {
+      // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
+      if (umlautVariant !== searchTitle && getBestPrimaryConf() < 85) {
         const uHits = await runTmdbQuery(primaryType, umlautVariant, parsed.year || null, umlautVariant);
-        if (parsed.year && uHits === 0) {
+        if (getBestPrimaryConf() < 85 && parsed.year && uHits === 0) {
           await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
         }
       }
     }
 
-    // Stufe 3B: Suche mit Originaltitel (falls im Steckbrief angegeben)
-    if (parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
+    // Stufe 3B: Suche mit Originaltitel (nur falls noch kein sicherer Treffer >= 85% vorliegt)
+    if (getBestPrimaryConf() < 85 && parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
       await runTmdbQuery(primaryType, parsed.originalTitle, parsed.year || null);
     }
 
-    let bestPrimaryConf = 0;
-    for (const item of rawPool) {
-      const c = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsed, item, item._typeCode);
-      if (c > bestPrimaryConf) bestPrimaryConf = c;
-    }
+    let bestPrimaryConf = getBestPrimaryConf();
 
     // Eiserne Sperre NUR, wenn bereits ein sicherer Film-Treffer (bestPrimaryConf >= 78) mit Jahreszahl vorliegt (z.B. "Iron Man 3 (2013)").
     // Hat die TMDb-Filmsuche hingegen KEINEN sicheren Treffer geliefert (< 78%), MUSS zwingend auf Serien-Suche (/search/tv + Stufe 5 Episoden-Fallback) gewechselt werden!
@@ -976,26 +987,47 @@
     let bestConfidence = explicitTmdbId ? 100 : 0;
     let metadataSource = "TMDb";
 
-    // 2-Stufen-Serien-Cache (Stufe 1: RAM seriesCache + Stufe 2: D1 entity_cache):
-    // Sobald eine Serie (z.B. "Squid Game" oder "Breaking Bad") einmal aufgelöst wurde, kosten S01E02 bis S01E09 exakt 0 externe TMDb-Subrequests!
+    // STUFE 0: D1-First Vorab-Check & Universeller Titel-Cache (RAM + D1 entity_cache + D1 movies/series Katalog):
+    // Prüft vor jedem externen API-Call, ob die Datei-ID oder der normalisierte Titel (egal ob Film, Serie, Fallback >= 8000000
+    // oder bereits als "Nicht erkannt" geprüfter Titel) schon bekannt ist -> 0 externe API-Requests bei gleichem Titel!
     const normSeriesCacheKey = (parsed.isSeries && searchTitle)
       ? `series_res_${normalizeCompareString(searchTitle)}_${parsed.year || "any"}`
       : null;
-    if (!targetId && normSeriesCacheKey) {
-      const ramHit = memoryFallback.get(normSeriesCacheKey) || memoryFallback.get(`series_res_${normalizeCompareString(searchTitle)}_any`);
-      if (ramHit && ramHit.tmdbId) {
-        targetId = Number(ramHit.tmdbId);
-        resolvedTypeCode = "s";
-        bestConfidence = Number(ramHit.confidence || 96);
-        metadataSource = ramHit.source || "TMDb (Cache)";
-      } else {
-        const d1Hit = await getEntityFromD1(env, normSeriesCacheKey, D1_MOVIE_TTL_MS);
-        if (d1Hit && d1Hit.tmdbId) {
-          targetId = Number(d1Hit.tmdbId);
-          resolvedTypeCode = "s";
-          bestConfidence = Number(d1Hit.confidence || 96);
-          metadataSource = d1Hit.source || "TMDb (D1-Cache)";
-          memoryFallback.set(normSeriesCacheKey, d1Hit);
+    if (!targetId && !forceTypeCode && typeof findExistingMediaInD1BeforeExternalSearch === "function") {
+      const d1PreHit = await findExistingMediaInD1BeforeExternalSearch(env, parsed, effectiveFileMeta?.fileId || null);
+      if (d1PreHit) {
+        if (d1PreHit.notFound && !options?.bypassNegativeTitleCache) {
+          return options?.returnUnmatched
+            ? {
+                ok: false,
+                unmatched: true,
+                ingestStatus: "failed",
+                reviewReasonCode: d1PreHit.reviewReasonCode || "TMDB_NOT_FOUND",
+                confidence: 0,
+                rawInput: rawName,
+                parsed,
+                candidates: d1PreHit.candidates || [],
+                fromNegativeCache: true
+              }
+            : null;
+        }
+        if (d1PreHit.tmdbId) {
+          targetId = Number(d1PreHit.tmdbId);
+          resolvedTypeCode = d1PreHit.typeCode || resolvedTypeCode;
+          bestConfidence = Number(d1PreHit.confidence || 94);
+          metadataSource = d1PreHit.source || "D1-Cache";
+          if (Array.isArray(d1PreHit.candidates) && d1PreHit.candidates.length > 0) {
+            candidates = d1PreHit.candidates;
+          }
+          if (d1PreHit.season && resolvedTypeCode === "s" && !parsed.season) {
+            parsed.season = Number(d1PreHit.season);
+          }
+          if (d1PreHit.episode && resolvedTypeCode === "s" && !parsed.episode) {
+            parsed.episode = Number(d1PreHit.episode);
+          }
+          if (d1PreHit.details && typeof d1PreHit.details === "object") {
+            setCachedTmdb(resolvedTypeCode === "s" ? `tv_${targetId}` : `movie_${targetId}`, d1PreHit.details);
+          }
         }
       }
     }
@@ -1149,6 +1181,14 @@
       }
 
       if (!seriesDetails) {
+        // Nur dann negativ cachen, wenn noch genügend Subrequest-Budget vorhanden war (kein Abbruch mitten in der Kaskade!)
+        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+          await saveTitleResolutionCacheToD1(env, parsed, "s", {
+            notFound: true,
+            reviewReasonCode: "TMDB_NOT_FOUND",
+            candidates: (candidates || []).slice(0, 5)
+          });
+        }
         return options?.returnUnmatched
           ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
@@ -1160,21 +1200,20 @@
       if (Number(seriesDetails.id) >= 8000000) {
         try {
           const normTargetSeriesTitle = normalizeCompareString(seriesDetails.title || parsed.cleanTitle || searchTitle);
-          const dbCheck = await ensureD1Schema(env);
-          if (dbCheck && normTargetSeriesTitle) {
-            const existingRows = await dbCheck.prepare("SELECT tmdb_id, title FROM series WHERE tmdb_id < 8000000").all().catch(() => ({ results: [] }));
-            const matchedExisting = (existingRows?.results || []).find(r => normalizeCompareString(r.title || "") === normTargetSeriesTitle);
-            if (matchedExisting && matchedExisting.tmdb_id) {
-              const upgradedDetails = await fetchSeriesDetails(env, Number(matchedExisting.tmdb_id));
-              if (upgradedDetails && upgradedDetails.id) {
-                targetId = Number(upgradedDetails.id);
-                seriesDetails = upgradedDetails;
-                metadataSource = "TMDb";
-              }
+          const catalogMap = typeof ensureLocalD1CatalogTitleMapLoaded === "function"
+            ? await ensureLocalD1CatalogTitleMapLoaded(env)
+            : null;
+          const matchedExisting = catalogMap instanceof Map ? catalogMap.get(`s_${normTargetSeriesTitle}_any`) : null;
+          if (matchedExisting && matchedExisting.tmdbId && Number(matchedExisting.tmdbId) < 8000000) {
+            const upgradedDetails = await fetchSeriesDetails(env, Number(matchedExisting.tmdbId));
+            if (upgradedDetails && upgradedDetails.id) {
+              targetId = Number(upgradedDetails.id);
+              seriesDetails = upgradedDetails;
+              metadataSource = "TMDb";
             }
           }
-          if (Number(seriesDetails.id) >= 8000000 && env.TMDB_BEARER_TOKEN) {
-            const qTitle = String(seriesDetails.title || parsed.cleanTitle || searchTitle).trim();
+          if (Number(seriesDetails.id) >= 8000000 && env.TMDB_BEARER_TOKEN && normalizeCompareString(seriesDetails.title) !== normalizeCompareString(searchTitle)) {
+            const qTitle = String(seriesDetails.title || "").trim();
             const tvRes = await cachedExternalFetchJson(
               `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(qTitle)}&language=de-DE&page=1`,
               { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } }
@@ -1196,22 +1235,18 @@
         } catch (e) {}
       }
 
-      // 2-Stufen-Serien-Cache befüllen (RAM + D1), damit alle weiteren Episoden dieser Serie 0 TMDb-Subrequests benötigen!
-      const effectiveSeriesCacheKey = `series_res_${normalizeCompareString(seriesDetails.title || parsed.cleanTitle || searchTitle)}_${parsed.year || "any"}`;
-      if (seriesDetails?.id) {
-        const cachePayload = {
+      // Universellen Serien-Titel-Cache befüllen (RAM + D1 entity_cache, inkl. Fallback-Serien >= 8000000!),
+      // damit alle weiteren Episoden dieser Serie garantiert 0 externe Such-Requests benötigen!
+      if (seriesDetails?.id && typeof saveTitleResolutionCacheToD1 === "function") {
+        await saveTitleResolutionCacheToD1(env, parsed, "s", {
           tmdbId: Number(seriesDetails.id),
+          typeCode: "s",
           title: seriesDetails.title,
           confidence: Math.max(bestConfidence, 85),
-          source: metadataSource || "TMDb"
-        };
-        if (normSeriesCacheKey) memoryFallback.set(normSeriesCacheKey, cachePayload);
-        memoryFallback.set(effectiveSeriesCacheKey, cachePayload);
-        memoryFallback.set(`series_res_${normalizeCompareString(searchTitle)}_any`, cachePayload);
-        memoryFallback.set(`series_res_${normalizeCompareString(seriesDetails.title)}_any`, cachePayload);
-        if (!preExistingSeries && hasValidSeriesVideoFile && Number(seriesDetails.id) < 8000000) {
-          await saveEntityToD1(env, effectiveSeriesCacheKey, "series_res", cachePayload);
-        }
+          source: metadataSource || "TMDb",
+          details: Number(seriesDetails.id) >= 8000000 ? seriesDetails : null,
+          candidates: (candidates || []).slice(0, 5)
+        });
       }
 
       const seasonNum = parsed.season || 1;
@@ -1229,71 +1264,80 @@
         detectedRuntimeMin: durationSec ? Math.round(durationSec / 60) : null
       };
 
-      // Serien-Versions-Erkennung via TMDb episode_groups ZUERST prüfen (BEVOR fetchSeasonDetails aufgerufen wird!),
-      // damit bei Serien mit aktiver Episode-Group (z.B. "Haus des Geldes" -> 13 Folgen statt 15) niemals S01E14/S01E15 angelegt werden!
+      // Serien-Versions-Erkennung via TMDb episode_groups (1x pro Serie+Staffel cachen statt bei jeder einzelnen Episode neu auszuführen!):
       if (seriesDetails.id < 8000000) {
-        try {
-          const resolvedVer = await resolveSeriesVersionOnTMDb(
-            seriesDetails.id,
-            { season: seasonNum, episode: epNum, durationSec },
-            env
-          );
-          if (resolvedVer) {
-            if (resolvedVer.versionInfo) versionInfo = resolvedVer.versionInfo;
-            if (resolvedVer.episode) {
-              epObj = resolvedVer.episode;
-            }
-            if (resolvedVer.versionInfo?.isAlternativeOrder && resolvedVer.series?.seasons) {
-              seriesDetails.seasons = resolvedVer.series.seasons;
-              seriesDetails.numberOfSeasons = resolvedVer.series.number_of_seasons || resolvedVer.series.seasons.length;
-              seriesDetails.numberOfEpisodes = resolvedVer.series.number_of_episodes || resolvedVer.series.seasons.reduce((sum, s) => sum + Number(s.episode_count || 0), 0);
-              seriesDetails.number_of_seasons = seriesDetails.numberOfSeasons;
-              seriesDetails.number_of_episodes = seriesDetails.numberOfEpisodes;
-              seriesDetails.versionInfo = resolvedVer.versionInfo;
-              setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
-
-              const groupSavedKey = `d1_group_seasons_saved_${seriesDetails.id}_${resolvedVer.versionInfo.groupId || "alt"}`;
-              const alreadySavedGroupSeasons = Boolean(memoryFallback.get(groupSavedKey));
-              if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
-                await saveSeriesToD1(env, seriesDetails);
+        const verCacheKey = `series_ver_resolved_${seriesDetails.id}_${seasonNum}`;
+        const cachedVer = memoryFallback.get(verCacheKey);
+        const stdSeasonMeta = (seriesDetails.seasons || []).find(s => Number(s?.season_number) === Number(seasonNum));
+        const epExceedsStdSeason = Boolean(stdSeasonMeta && Number(stdSeasonMeta.episode_count || 0) > 0 && epNum > Number(stdSeasonMeta.episode_count));
+        if (cachedVer && !epExceedsStdSeason) {
+          if (cachedVer.versionInfo) versionInfo = cachedVer.versionInfo;
+          seasonData = getCachedTmdb(`tv_season_${seriesDetails.id}_${seasonNum}`);
+        } else {
+          try {
+            const resolvedVer = await resolveSeriesVersionOnTMDb(
+              seriesDetails.id,
+              { season: seasonNum, episode: epNum, durationSec },
+              env
+            );
+            if (resolvedVer) {
+              if (resolvedVer.versionInfo) versionInfo = resolvedVer.versionInfo;
+              if (resolvedVer.episode) {
+                epObj = resolvedVer.episode;
               }
+              if (resolvedVer.versionInfo?.isAlternativeOrder && resolvedVer.series?.seasons) {
+                seriesDetails.seasons = resolvedVer.series.seasons;
+                seriesDetails.numberOfSeasons = resolvedVer.series.number_of_seasons || resolvedVer.series.seasons.length;
+                seriesDetails.numberOfEpisodes = resolvedVer.series.number_of_episodes || resolvedVer.series.seasons.reduce((sum, s) => sum + Number(s.episode_count || 0), 0);
+                seriesDetails.number_of_seasons = seriesDetails.numberOfSeasons;
+                seriesDetails.number_of_episodes = seriesDetails.numberOfEpisodes;
+                seriesDetails.versionInfo = resolvedVer.versionInfo;
+                setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
 
-              if (Array.isArray(resolvedVer.series._normalizedGroupSeasons)) {
-                for (const gSeason of resolvedVer.series._normalizedGroupSeasons) {
-                  const gNum = Number(gSeason.season_number || 1);
-                  const normalizedSeasonObj = {
-                    id: gSeason.id || `${seriesDetails.id}_${gNum}`,
-                    season_number: gNum,
-                    name: gSeason.name || `Staffel ${gNum}`,
-                    seasonEpisodeCount: gSeason.episode_count,
-                    isEpisodeGroup: true,
-                    versionLabel: resolvedVer.versionInfo.versionLabel,
-                    episodes: (gSeason.episodes || []).map(ep => ({
-                      id: ep.id,
-                      episode_number: ep.episode_number,
+                const groupSavedKey = `d1_group_seasons_saved_${seriesDetails.id}_${resolvedVer.versionInfo.groupId || "alt"}`;
+                const alreadySavedGroupSeasons = Boolean(memoryFallback.get(groupSavedKey));
+                if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
+                  await saveSeriesToD1(env, seriesDetails);
+                }
+
+                if (Array.isArray(resolvedVer.series._normalizedGroupSeasons)) {
+                  for (const gSeason of resolvedVer.series._normalizedGroupSeasons) {
+                    const gNum = Number(gSeason.season_number || 1);
+                    const normalizedSeasonObj = {
+                      id: gSeason.id || `${seriesDetails.id}_${gNum}`,
                       season_number: gNum,
-                      name: ep.name || `Folge ${ep.episode_number}`,
-                      air_date: ep.air_date || "",
-                      runtime: ep.runtime ? `${ep.runtime} Min.` : "",
-                      vote_average: ep.vote_average || 0,
-                      overview: ep.overview || ""
-                    }))
-                  };
-                  setCachedTmdb(`tv_season_${seriesDetails.id}_${gNum}`, normalizedSeasonObj);
-                  if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
-                    await saveSeasonToD1(env, seriesDetails.id, gNum, normalizedSeasonObj);
+                      name: gSeason.name || `Staffel ${gNum}`,
+                      seasonEpisodeCount: gSeason.episode_count,
+                      isEpisodeGroup: true,
+                      versionLabel: resolvedVer.versionInfo.versionLabel,
+                      episodes: (gSeason.episodes || []).map(ep => ({
+                        id: ep.id,
+                        episode_number: ep.episode_number,
+                        season_number: gNum,
+                        name: ep.name || `Folge ${ep.episode_number}`,
+                        air_date: ep.air_date || "",
+                        runtime: ep.runtime ? `${ep.runtime} Min.` : "",
+                        vote_average: ep.vote_average || 0,
+                        overview: ep.overview || ""
+                      }))
+                    };
+                    setCachedTmdb(`tv_season_${seriesDetails.id}_${gNum}`, normalizedSeasonObj);
+                    if (!alreadySavedGroupSeasons && (hasValidSeriesVideoFile || preExistingSeries)) {
+                      await saveSeasonToD1(env, seriesDetails.id, gNum, normalizedSeasonObj);
+                    }
+                    if (gNum === Number(seasonNum)) {
+                      seasonData = normalizedSeasonObj;
+                    }
                   }
-                  if (gNum === Number(seasonNum)) {
-                    seasonData = normalizedSeasonObj;
+                  if (hasValidSeriesVideoFile || preExistingSeries) {
+                    memoryFallback.set(groupSavedKey, true);
                   }
-                }
-                if (hasValidSeriesVideoFile || preExistingSeries) {
-                  memoryFallback.set(groupSavedKey, true);
                 }
               }
+              memoryFallback.set(verCacheKey, { versionInfo });
             }
-          }
-        } catch (verErr) {}
+          } catch (verErr) {}
+        }
       }
 
       if (!seasonData && seriesDetails.id < 8000000) {
@@ -1531,9 +1575,28 @@
       }
 
       if (!movieDetails) {
+        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+          await saveTitleResolutionCacheToD1(env, parsed, "m", {
+            notFound: true,
+            reviewReasonCode: "TMDB_NOT_FOUND",
+            candidates: (candidates || []).slice(0, 5)
+          });
+        }
         return options?.returnUnmatched
           ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
+      }
+
+      if (movieDetails?.id && typeof saveTitleResolutionCacheToD1 === "function") {
+        await saveTitleResolutionCacheToD1(env, parsed, "m", {
+          tmdbId: Number(movieDetails.id),
+          typeCode: "m",
+          title: movieDetails.title,
+          confidence: Math.max(bestConfidence, 85),
+          source: metadataSource || "TMDb",
+          details: Number(movieDetails.id) >= 8000000 ? movieDetails : null,
+          candidates: (candidates || []).slice(0, 5)
+        });
       }
 
       const hasValidMovieVideoFile = Boolean(
@@ -2339,9 +2402,9 @@
 
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
       // CLOUDFLARE 50-SUBREQUESTS-LIMIT SCHUTZSCHILD:
-      // Stoppt den Batch kontrolliert bereits ab >= 30 externen Subrequests VOR Beginn eines Paares und liefert PARTIAL_BATCH + nextStartIndex zurück,
-      // damit niemals ein Paar mitten in der Auflösung bei Subrequest #42 in einen falschen 0% CONFLICT_? läuft!
-      if (!hasSubrequestBudget(30) && i > 0) {
+      // Da jetzt jeder externe Fetch (inkl. Details & Fallbacks) exakt gezählt wird, stoppen wir kontrolliert bereits ab >= 26 externen Subrequests
+      // und liefern PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Limit erreicht wird!
+      if (!hasSubrequestBudget(26) && i > 0) {
         partialBatch = true;
         nextStartIndex = i;
         pauseReason = "SUBREQUEST_LIMIT_GUARD";
@@ -2368,10 +2431,10 @@
       let abortBatchIndex = i;
 
       // Sequenzielle Abarbeitung innerhalb des Mini-Batches:
-      // Dadurch befüllt Episode 1 (z.B. Squid Game S01E01 oder Axel! S01E01) sofort den RAM/D1-Serien-Cache,
-      // sodass Episode 2 (S01E02) 0 TMDb-Such-Subrequests benötigt!
+      // Dadurch befüllt der 1. Eintrag eines Titels (Film, Serie oder auch Nicht erkannt) sofort den RAM/D1-Titel-Cache,
+      // sodass alle weiteren Einträge gleichen Titels 0 externe API-Requests benötigen!
       for (let bStep = 0; bStep < batch.length; bStep++) {
-        if (!hasSubrequestBudget(34) && (i + bStep) > 0) {
+        if (!hasSubrequestBudget(28) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
@@ -2402,9 +2465,9 @@
             error: String(itemErr?.message || itemErr || "Unbekannter Fehler")
           };
         }
-        // Falls das Element während der Auflösung ans Subrequest-Limit (>= 38) gestoßen ist und deshalb keinen Treffer fand:
+        // Falls das Element während der Auflösung ans Subrequest-Limit (>= 32) gestoßen ist und deshalb keinen Treffer fand (und nicht aus dem Negativ-Cache kam):
         // NICHT als 0% CONFLICT_? fehlschlagen lassen, sondern diesen Index sauber für den nächsten Batch vormerken!
-        if ((!stepRes || stepRes.unmatched) && !hasSubrequestBudget(38) && (i + bStep) > 0) {
+        if ((!stepRes || stepRes.unmatched) && !stepRes?.fromNegativeCache && !hasSubrequestBudget(32) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;

@@ -471,11 +471,11 @@
     return { results: results || [] };
   }
 
-  let currentInvocationSubrequests = 0;
+  var currentInvocationSubrequests = 0;
   function resetSubrequestBudget() {
     currentInvocationSubrequests = 0;
   }
-  function hasSubrequestBudget(limit = 38) {
+  function hasSubrequestBudget(limit = 36) {
     return currentInvocationSubrequests < limit;
   }
 
@@ -484,47 +484,20 @@
     const memHit = getCachedTmdb(memKey);
     if (memHit) return memHit;
 
-    const canUseEdgeCache = typeof caches !== "undefined" && caches && caches.default && (!options.method || options.method === "GET");
-    let cacheKeyReq = null;
-    if (canUseEdgeCache) {
-      try {
-        cacheKeyReq = new Request(url, { method: "GET" });
-        const edgeHit = await caches.default.match(cacheKeyReq);
-        if (edgeHit) {
-          const parsed = await edgeHit.json();
-          return setCachedTmdb(memKey, parsed);
-        }
-      } catch (e) {}
-    }
-
-    if (!hasSubrequestBudget(42)) {
+    if (!hasSubrequestBudget(40)) {
       return null;
     }
 
     try {
       currentInvocationSubrequests++;
-      const res = await fetchWithTimeout(url, options, timeoutMs);
+      const res = await fetchWithTimeout(url, { ...options, _countedSubrequest: true }, timeoutMs);
       if (!res || !res.ok) return null;
-      const contentType = String(res.headers.get("content-type") || "");
       const text = await res.text();
       if (!text || text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
         return null;
       }
       const data = JSON.parse(text);
       setCachedTmdb(memKey, data);
-
-      if (canUseEdgeCache && cacheKeyReq && data) {
-        try {
-          const edgeRes = new Response(JSON.stringify(data), {
-            status: 200,
-            headers: {
-              "Content-Type": contentType || "application/json",
-              "Cache-Control": `public, max-age=${ttlSeconds}`
-            }
-          });
-          await caches.default.put(cacheKeyReq, edgeRes);
-        } catch (e) {}
-      }
       return data;
     } catch (e) {
       return null;
