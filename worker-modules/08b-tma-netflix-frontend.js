@@ -1938,7 +1938,7 @@
 
           // Edle einzeilige Metadaten-Elemente mit Trennpunkten (Apple TV+ / Netflix Stil)
           const cleanStatusLabel = (type === 's' && d.statusText && d.statusText !== 'Unbekannt')
-            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\s*/, '').trim()
+            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\\s*/, '').trim()
             : '';
           const heroMetaParts = [
             (d.vote && d.vote !== '0.0') ? ('<span class="modal-meta-item modal-meta-rating">★ ' + esc(d.vote) + '</span>') : '',
@@ -2190,7 +2190,7 @@
         const groupsMap = new Map();
         for (const f of allFiles) {
           if (!f) continue;
-          const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+          const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
           const vLbl = isRar ? "📦 RAR-Archiv" : (String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung");
           if (!groupsMap.has(vLbl)) groupsMap.set(vLbl, []);
           groupsMap.get(vLbl).push(f);
@@ -2216,7 +2216,7 @@
                   const eNum = Number(f.episode_number || 1);
                   const epCode = type === 's' ? ('S' + String(sNum).padStart(2, '0') + 'E' + String(eNum).padStart(2, '0')) : '';
                   const sizeStr = formatFileSizeClient(f.file_size);
-                  const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+                  const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
                   const partStr = String(f.part || "").trim();
                   const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
                   const qualStr = [f.quality || '1080p', f.codec || '', partStr ? ('• ' + partStr) : '', sizeStr ? ('• ' + sizeStr) : ''].filter(Boolean).join(' ');
@@ -2340,7 +2340,7 @@
         const origFilename = firstFile.raw_filename || d.rawFilename || d.title || "";
         const origCaption = firstFile.raw_caption || "";
         const origSeedQuery = origFilename
-          ? origFilename.replace(/\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, "").replace(/[._]+/g, " ")
+          ? origFilename.replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, "").replace(/[._]+/g, " ")
           : (d.title || "");
 
         const filesMetaHtml = allFiles.length > 0 ? (
@@ -2358,7 +2358,7 @@
                   '<div style="word-break:break-all;color:#e2e8f0;flex:1">' + epTag + '<code>' + esc(fn) + '</code>' + (cap ? '<span style="color:#94a3b8">' + esc(cap) + '</span>' : '') + '</div>' +
                   '<div style="display:flex;gap:5px;align-items:center">' +
                     (mLink ? '<a class="btn blue" style="padding:2px 7px;font-size:10.5px" href="' + esc(mLink) + '" target="_blank" rel="noopener noreferrer">🔗 Original-Post</a>' : '') +
-                    '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="document.getElementById(\\'modalRemapSearchInp\\').value=\\'' + esc(fn.replace(/\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, '')) + '\\';searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Als Suchtitel</button>' +
+                    '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="document.getElementById(\\'modalRemapSearchInp\\').value=\\'' + esc(fn.replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, '')) + '\\';searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Als Suchtitel</button>' +
                   '</div>' +
                 '</div>';
               }).join("") +
@@ -3069,10 +3069,10 @@
         const pStr = String(rawPart || "").trim();
         if (!pStr && !rawFilename) return "";
         if (/^RAR/i.test(pStr)) return pStr.toUpperCase();
-        const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*([1-9]\d?)$/i);
+        const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\\s._-]*0*([1-9]\\d?)$/i);
         if (m) return "CD " + parseInt(m[1], 10);
         if (!pStr && rawFilename) {
-          const fnSplit = String(rawFilename).match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
+          const fnSplit = String(rawFilename).match(/-00([1-9])(?:\\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
           if (fnSplit) return "CD " + parseInt(fnSplit[1], 10);
         }
         return pStr;
@@ -3080,16 +3080,16 @@
 
       function extractClientPartNumber(partStr) {
         if (!partStr) return 0;
-        const m = String(partStr).match(/(\d+)/);
+        const m = String(partStr).match(/(\\d+)/);
         return m ? parseInt(m[1], 10) : 0;
       }
 
       function cleanUserVisibleStreamTagsClient(rawTags = "") {
         if (!rawTags) return "";
         return String(rawTags)
-          .split(/\s*[·•|]\s*/)
+          .split(/\\s*[·•|]\\s*/)
           .map(t => t.trim())
-          .filter(t => t && !/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*\d+$/i.test(t) && !/^Originalfassung$/i.test(t))
+          .filter(t => t && !/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\\s._-]*0*\\d+$/i.test(t) && !/^Originalfassung$/i.test(t))
           .filter((v, i, a) => a.indexOf(v) === i)
           .join(" · ");
       }
@@ -3097,7 +3097,7 @@
       function buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) {
         const rawFiles = Array.isArray(d.files) ? d.files.filter(f => f && f.telegram_file_id) : [];
         const normalizedFiles = rawFiles.map(f => {
-          const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+          const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
           const normPart = normalizeClientPartLabel(f.part, f.raw_filename || "");
           const partNum = extractClientPartNumber(normPart);
           const cleanTags = isRarFile ? "📦 RAR-Archiv" : cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
@@ -3201,7 +3201,7 @@
               const sizeLabel = formatFileSizeClient(f.file_size);
               const isRarFile = f._isRar;
               const tagsLabel = f._cleanTags;
-              const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsLabel);
+              const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\\b/i.test(tagsLabel);
               const partLabel = f._normPart;
               const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
               return '<div class="ep-row" style="margin-bottom:0;' + (isPrereleaseTag ? 'border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.06);' : '') + '">' +
@@ -3499,7 +3499,7 @@
                   const rawTagsStr = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
                   const fSubs = Array.isArray(f.subtitles) ? f.subtitles : [];
                   const tagsStr = rawTagsStr
-                    .split(/\s*·\s*/)
+                    .split(/\\s*·\\s*/)
                     .map(t => {
                       const tl = t.toLowerCase();
                       if (tl.includes("netflix") || tl.includes("edited") || tl.includes("stream") || tl.includes("original parts")) return "Netflix-Fassung";
@@ -3510,7 +3510,7 @@
                     .filter(Boolean)
                     .filter((v, i, arr) => arr.indexOf(v) === i)
                     .join(" · ");
-                  const isPrereleaseEp = tagsStr.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsStr);
+                  const isPrereleaseEp = tagsStr.includes("Vorabversion") || /\\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\\b/i.test(tagsStr);
                   const partPrefix = f._normPart ? (f._normPart + ' · ') : '';
                   const btnMeta = [partPrefix + (f.quality || '1080p'), f.codec || '', sizeStr ? ('· ' + sizeStr) : '', tagsStr ? ('· ' + tagsStr) : ''].filter(Boolean).join(' ');
                   return '<button class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name + (f._normPart ? ' (' + f._normPart + ')' : ''))+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sizeStr)+'\\',tags:\\''+esc(tagsStr)+'\\'})">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>' +

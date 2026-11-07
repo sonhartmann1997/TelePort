@@ -216,6 +216,10 @@ export default function App() {
     [workerCode, requestData, envVars, kvNamespace]
   );
 
+  const handleAppendLogs = useCallback((newLogs: ConsoleLogEntry[]) => {
+    setLogs((prev) => [...newLogs, ...prev].slice(0, 50));
+  }, []);
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#090c14] text-slate-100 overflow-hidden font-sans select-none">
       <Header
@@ -233,7 +237,7 @@ export default function App() {
               workerCode={workerCode}
               envVars={envVars}
               kvNamespace={kvNamespace}
-              onAppendLogs={(newLogs) => setLogs((prev) => [...newLogs, ...prev].slice(0, 50))}
+              onAppendLogs={handleAppendLogs}
             />
           </Suspense>
         )}

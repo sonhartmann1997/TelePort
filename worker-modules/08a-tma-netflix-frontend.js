@@ -3468,8 +3468,8 @@
           .replace(/ü/g, "ue")
           .replace(/ß/g, "ss")
           .replace(/&/g, " and ")
-          .replace(/[^a-z0-9\s]/g, " ")
-          .replace(/\s+/g, " ")
+          .replace(/[^a-z0-9\\s]/g, " ")
+          .replace(/\\s+/g, " ")
           .trim();
       }
       window.normalizeCompareString = normalizeCompareString;
@@ -4324,7 +4324,7 @@
         const inp = document.getElementById("verifyTotpSetupInp");
         const fb = document.getElementById("totpFeedback");
         const code = (inp ? inp.value : "").trim();
-        if (!/^\d{6}$/.test(code)) {
+        if (!/^\\d{6}$/.test(code)) {
           if (fb) { fb.style.color = "#f87171"; fb.textContent = "⚠️ Bitte einen gültigen 6-stelligen Zahlencode eingeben."; }
           return;
         }

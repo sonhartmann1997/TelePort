@@ -203,6 +203,7 @@
             msg_id TEXT,
             stage TEXT NOT NULL,
             status TEXT NOT NULL,
+            review_reason_code TEXT,
             reason TEXT,
             file_name TEXT,
             text_preview TEXT,
@@ -247,7 +248,8 @@
             ["episode_files", "raw_filename", "ALTER TABLE episode_files ADD COLUMN raw_filename TEXT"],
             ["episode_files", "raw_caption", "ALTER TABLE episode_files ADD COLUMN raw_caption TEXT"],
             ["episode_files", "message_link", "ALTER TABLE episode_files ADD COLUMN message_link TEXT"],
-            ["episode_files", "subtitles_json", "ALTER TABLE episode_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"]
+            ["episode_files", "subtitles_json", "ALTER TABLE episode_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"],
+            ["import_diagnostic_logs", "review_reason_code", "ALTER TABLE import_diagnostic_logs ADD COLUMN review_reason_code TEXT"]
           ];
           const alterStmts = [];
           for (const [tbl, col, ddl] of requiredCols) {
@@ -271,6 +273,40 @@
     return db;
   }
 
+  function inferReviewReasonCodeFromLogItem(item) {
+    if (!item || typeof item !== "object") return "";
+    const explicit = String(
+      item.reviewReasonCode ||
+      item.review_reason_code ||
+      item.details?.reviewReasonCode ||
+      item.details?.review_reason_code ||
+      ""
+    ).trim().toUpperCase();
+    if (explicit) return explicit;
+    const st = String(item.status || "").trim().toUpperCase();
+    const rText = String(item.reason || item.errorReason || "").trim();
+    if (st === "OK" || st.startsWith("SKIPPED_")) return "";
+    if (st === "TMDB_NOT_FOUND" || /kein(?: passender)?\s+tmdb[-\s]*treffer|kein treffer auf tmdb|kein passender tmdb-eintrag|not[_\s-]*found/i.test(rText)) {
+      return "TMDB_NOT_FOUND";
+    }
+    if (st === "API_ERROR" || /nach wiederholungsversuch isoliert|api[_\s-]*error|timeout/i.test(rText)) {
+      return "API_ERROR";
+    }
+    if (/staffel-konflikt|staffel\s+\d+.*hat nur\s+\d+\s+staffel/i.test(rText)) {
+      return "SEASON_CONFLICT";
+    }
+    if (/jahres-konflikt|jahres-\/kontext-sperre|jahre\s+abweichung/i.test(rText)) {
+      return "YEAR_CONFLICT";
+    }
+    if (/fortsetzungs-\/teil-konflikt|teil-konflikt|sequel/i.test(rText)) {
+      return "SEQUEL_CONFLICT";
+    }
+    if (st === "CONFLICT_?" || st === "CONFLICT" || /niedrige treffer-sicherheit|unsichere zuordnung|kontext-konflikt|mehrdeutig/i.test(rText)) {
+      return "PARSER_AMBIGUITY";
+    }
+    return "";
+  }
+
   // Persistentes Diagnose-Log (D1 + Memory-Fallback) für das Admin-Dashboard [ 🛠️ Diagnose-Log ]
   async function saveImportDiagnosticLogsToD1(env, logsArray, options = {}) {
     if (!Array.isArray(logsArray) || logsArray.length === 0) return;
@@ -282,11 +318,17 @@
       const normMsgId = Number.isFinite(rawMsgNum) && rawMsgNum > 0
         ? rawMsgNum
         : (item.msgId !== undefined && item.msgId !== null && String(item.msgId).trim() !== "" ? String(item.msgId).trim() : "");
+      const resolvedReasonCode = inferReviewReasonCodeFromLogItem(item);
+      const rawDetails = item.details && typeof item.details === "object" ? { ...item.details } : {};
+      if (resolvedReasonCode && !rawDetails.reviewReasonCode) {
+        rawDetails.reviewReasonCode = resolvedReasonCode;
+      }
       return {
         id: item.id || (now * 100 + idx),
         msgId: normMsgId,
         stage: String(item.stage || "IMPORT"),
         status: String(item.status || "OK"),
+        reviewReasonCode: resolvedReasonCode || null,
         reason: String(item.reason || ""),
         fileName: String(item.fileName || ""),
         textPreview: String(item.textPreview || "").slice(0, 260),
@@ -297,7 +339,7 @@
         tmdbResult: String(item.tmdbResult || ""),
         tmdbId: item.tmdbId ? Number(item.tmdbId) : null,
         typeCode: item.typeCode ? String(item.typeCode) : null,
-        details: item.details && typeof item.details === "object" ? item.details : {},
+        details: rawDetails,
         timestamp: Number(item.timestamp || now)
       };
     });
@@ -319,12 +361,13 @@
         const slice = d1ToPersist.slice(i, i + chunkSize);
         const stmts = slice.map(l =>
           db.prepare(`INSERT INTO import_diagnostic_logs (
-            msg_id, stage, status, reason, file_name, text_preview, parsed_title,
+            msg_id, stage, status, review_reason_code, reason, file_name, text_preview, parsed_title,
             season, episode, tmdb_query, tmdb_result, tmdb_id, type_code, details_json, created_at
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`).bind(
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)`).bind(
             l.msgId,
             l.stage,
             l.status,
+            l.reviewReasonCode || null,
             l.reason,
             l.fileName,
             l.textPreview,
@@ -364,11 +407,18 @@
             try {
               if (r.details_json) details = JSON.parse(r.details_json);
             } catch (e) {}
+            const inferredCode = inferReviewReasonCodeFromLogItem({
+              reviewReasonCode: r.review_reason_code || details.reviewReasonCode,
+              status: r.status,
+              reason: r.reason,
+              details
+            });
             return {
               id: r.id,
-              msgId: r.msg_id || "",
+              msgId: r.msg_id && Number.isFinite(Number(r.msg_id)) ? Number(r.msg_id) : (r.msg_id || ""),
               stage: r.stage || "IMPORT",
               status: r.status || "OK",
+              reviewReasonCode: inferredCode || null,
               reason: r.reason || "",
               fileName: r.file_name || "",
               textPreview: r.text_preview || "",
@@ -392,6 +442,9 @@
     const mergedMap = new Map();
     for (const r of [...memRows, ...d1Rows]) {
       if (!r) continue;
+      if (!r.reviewReasonCode) {
+        r.reviewReasonCode = inferReviewReasonCodeFromLogItem(r) || null;
+      }
       const dedupeKey = `${r.msgId || ""}|${r.fileName || ""}|${r.parsedTitle || ""}|${r.season || ""}|${r.episode || ""}`;
       if (!mergedMap.has(dedupeKey)) {
         mergedMap.set(dedupeKey, r);
@@ -405,7 +458,15 @@
       skipped: 0,
       notFound: 0,
       conflict: 0,
-      pause: 0
+      pause: 0,
+      byReasonCode: {
+        TMDB_NOT_FOUND: 0,
+        YEAR_CONFLICT: 0,
+        PARSER_AMBIGUITY: 0,
+        SEASON_CONFLICT: 0,
+        SEQUEL_CONFLICT: 0,
+        API_ERROR: 0
+      }
     };
     for (const r of rows) {
       const st = String(r.status || "OK");
@@ -414,6 +475,9 @@
       else if (st === "TMDB_NOT_FOUND") counts.notFound++;
       else if (st === "CONFLICT_?" || st === "CONFLICT") counts.conflict++;
       else if (st === "SUBREQUEST_PAUSE" || st === "API_ERROR") counts.pause++;
+      if (r.reviewReasonCode && counts.byReasonCode[r.reviewReasonCode] !== undefined) {
+        counts.byReasonCode[r.reviewReasonCode]++;
+      }
     }
 
     let filtered = rows;

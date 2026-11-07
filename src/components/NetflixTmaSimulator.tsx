@@ -186,6 +186,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   );
 
   const [activeWorkerCode, setActiveWorkerCode] = useState<string>(workerCode);
+  const onAppendLogsRef = useRef(onAppendLogs);
+  useEffect(() => {
+    onAppendLogsRef.current = onAppendLogs;
+  }, [onAppendLogs]);
 
   useEffect(() => {
     setActiveWorkerCode(workerCode);
@@ -227,8 +231,8 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         },
       };
       const res = await executeWorkerSandbox(codeToRun, req, envMap, kvNamespace);
-      if (onAppendLogs && res.logs.length > 0) {
-        onAppendLogs(res.logs);
+      if (onAppendLogsRef.current && res.logs.length > 0) {
+        onAppendLogsRef.current(res.logs);
       }
       setLastApiRoute('GET /app');
       setLastDurationMs(res.response.durationMs);
@@ -245,7 +249,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     } finally {
       setIsLoading(false);
     }
-  }, [activeWorkerCode, workerCode, buildEnvMap, kvNamespace, onAppendLogs, buildInjectedMiniAppHtml, authPersona]);
+  }, [activeWorkerCode, workerCode, buildEnvMap, kvNamespace, buildInjectedMiniAppHtml, authPersona]);
 
   useEffect(() => {
     loadMiniApp(false);
@@ -314,8 +318,8 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
       };
 
       const res = await executeWorkerSandbox(activeWorkerCode || workerCode, reqData, envMap, kvNamespace);
-      if (onAppendLogs && res.logs.length > 0) {
-        onAppendLogs(res.logs);
+      if (onAppendLogsRef.current && res.logs.length > 0) {
+        onAppendLogsRef.current(res.logs);
       }
       setLastApiRoute(`${reqData.method} ${reqData.url.split('?')[0]}`);
       setLastDurationMs(Math.round(performance.now() - startMs));
@@ -334,7 +338,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [activeWorkerCode, workerCode, buildEnvMap, kvNamespace, onAppendLogs]);
+  }, [activeWorkerCode, workerCode, buildEnvMap, kvNamespace]);
 
   return (
     <div

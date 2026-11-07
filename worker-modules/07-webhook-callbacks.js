@@ -966,7 +966,7 @@
     const searchTitle = parsed.cleanTitle;
     if (!searchTitle && !explicitTmdbId && !parsed.imdbId) {
       return options?.returnUnmatched
-        ? { ok: false, unmatched: true, ingestStatus: "failed", confidence: 0, rawInput: rawName, parsed, candidates: [] }
+        ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "PARSER_AMBIGUITY", confidence: 0, rawInput: rawName, parsed, candidates: [] }
         : null;
     }
 
@@ -1150,7 +1150,7 @@
 
       if (!seriesDetails) {
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
@@ -1409,6 +1409,15 @@
       // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2) oder Staffel-Konflikt vorliegt, immer als Konflikt markieren!
       const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch || seasonOverflowConflict));
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
+      const reviewReasonCode = contextError
+        ? (seasonOverflowConflict
+            ? "SEASON_CONFLICT"
+            : (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88))
+              ? "YEAR_CONFLICT"
+              : sequelMismatch
+                ? "SEQUEL_CONFLICT"
+                : "PARSER_AMBIGUITY")
+        : (isUncertain ? "PARSER_AMBIGUITY" : null);
       const errorReason = contextError
         ? (seasonOverflowConflict
             ? `Staffel-Konflikt: Datei verlangt Staffel ${seasonNum} von "${parsed.cleanTitle}", aber TMDb-Treffer "${seriesDetails.title}" (${tmdbYearNum || "?"}) hat nur ${maxTmdbSeasons} Staffel(n). Bitte im Konflikt-Tab die richtige TMDb-ID zuweisen!`
@@ -1432,8 +1441,8 @@
           seasonNumber: seasonNum,
           episodeNumber: epNum,
           telegramFileId: effectiveFileMeta?.fileId || "",
-          reasonCode: "wrong_tmdb",
-          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          reasonCode: reviewReasonCode || "wrong_tmdb",
+          reasonLabel: `⚠️ Auto-Konflikt [${reviewReasonCode || "CONFLICT"}]`,
           note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
         }).catch(() => {});
       }
@@ -1448,6 +1457,7 @@
         status: contextError ? "?" : "ok",
         needsReview: Boolean(contextError),
         contextError,
+        reviewReasonCode,
         errorReason,
         typeCode: "s",
         tmdbId: seriesDetails.id,
@@ -1522,7 +1532,7 @@
 
       if (!movieDetails) {
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
@@ -1578,6 +1588,13 @@
       // darf dieser Treffer NIEMALS automatisch als "ok" übernommen werden!
       const contextError = Boolean(!explicitTmdbId && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
+      const reviewReasonCode = contextError
+        ? ((yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88))
+            ? "YEAR_CONFLICT"
+            : sequelMismatch
+              ? "SEQUEL_CONFLICT"
+              : "PARSER_AMBIGUITY")
+        : (isUncertain ? "PARSER_AMBIGUITY" : null);
       const errorReason = contextError
         ? (yearDiff > 2
             ? `Jahres-Konflikt: Datei/Post nennt Jahr ${parsed.year}, aber TMDb-Treffer "${movieDetails.title}" ist von ${tmdbYearNum || "?"} (${yearDiff} Jahre Abweichung). Bitte prüfen!`
@@ -1598,8 +1615,8 @@
           seasonNumber: 0,
           episodeNumber: 0,
           telegramFileId: effectiveFileMeta?.fileId || "",
-          reasonCode: "wrong_tmdb",
-          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          reasonCode: reviewReasonCode || "wrong_tmdb",
+          reasonLabel: `⚠️ Auto-Konflikt [${reviewReasonCode || "CONFLICT"}]`,
           note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
         }).catch(() => {});
       }
@@ -1611,6 +1628,7 @@
         status: contextError ? "?" : "ok",
         needsReview: Boolean(contextError),
         contextError,
+        reviewReasonCode,
         errorReason,
         typeCode: "m",
         tmdbId: movieDetails.id,
@@ -2426,12 +2444,14 @@
 
         if (!res || res.unmatched) {
           failedItems.push(String(rawLabel).slice(0, 45));
+          const failReasonCode = res?.error ? "API_ERROR" : (res?.reviewReasonCode || "TMDB_NOT_FOUND");
           const failReasonText = res?.error || `Kein passender TMDb-Eintrag für "${res?.parsed?.cleanTitle || rawLabel}" gefunden – bitte manuell suchen oder TMDb-ID zuweisen.`;
           const failItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
             status: "?",
             contextError: true,
+            reviewReasonCode: failReasonCode,
             errorReason: failReasonText,
             reason: failReasonText,
             isUncertain: true,
@@ -2455,6 +2475,7 @@
             msgId: contextDiagnostics.msgId ?? "",
             stage: "TMDB_LOOKUP",
             status: res?.error ? "API_ERROR" : "TMDB_NOT_FOUND",
+            reviewReasonCode: failReasonCode,
             reason: res?.error || `Kein TMDb-Treffer für "${res?.parsed?.cleanTitle || rawLabel}"`,
             fileName: contextDiagnostics.rawFileName || String(rawLabel),
             textPreview: String(contextDiagnostics.rawText || "").slice(0, 220),
@@ -2465,7 +2486,7 @@
             tmdbResult: "Kein Treffer",
             tmdbId: null,
             typeCode: res?.parsed?.isSeries ? "s" : "m",
-            details: { rawEntry: failItemObj.rawEntry, candidates: (res?.candidates || []).slice(0, 5) }
+            details: { reviewReasonCode: failReasonCode, rawEntry: failItemObj.rawEntry, candidates: (res?.candidates || []).slice(0, 5) }
           });
         } else {
           resolvedObjects.push(res);
@@ -2481,6 +2502,9 @@
             moviesAdded.push(`${res.cleanTitle} (${qualLabel}${res.codec}${res.part ? ` ${res.part}` : ""})`);
           }
 
+          const resolvedReasonCode = res.reviewReasonCode || (
+            res.contextError || res.isUncertain ? "PARSER_AMBIGUITY" : null
+          );
           const resolvedReviewReason = res.errorReason || (
             res.isUncertain
               ? `Niedrige Treffer-Sicherheit (${Number(res.confidence || 0)}% Match): "${rawEntry?.cleanTitle || rawLabel}" wurde vorläufig "${res.cleanTitle}" (${res.year || "k.A."}) zugeordnet.`
@@ -2491,6 +2515,7 @@
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
             status: res.contextError ? "?" : (res.isUncertain ? "uncertain" : (res.ingestStatus || "added")),
             contextError: Boolean(res.contextError),
+            reviewReasonCode: resolvedReasonCode,
             errorReason: resolvedReviewReason,
             reason: resolvedReviewReason,
             ingestStatus: res.ingestStatus || "added",
@@ -2530,6 +2555,7 @@
             msgId: contextDiagnostics.msgId ?? "",
             stage: "SAVED_D1",
             status: diagStatus,
+            reviewReasonCode: resolvedReasonCode,
             reason: resolvedReviewReason || (
               res.ingestStatus === "skipped_prerelease"
                 ? "Vorabversion / TS / MD übersprungen (reguläre Version bereits in D1 vorhanden)"
@@ -2546,7 +2572,7 @@
             tmdbResult: `${res.cleanTitle} (${res.year || "k.A."})${sEpBadge} [TMDb #${res.tmdbId}]`,
             tmdbId: res.tmdbId,
             typeCode: res.typeCode,
-            details: { rawEntry: okItemObj.rawEntry, candidates: (res.candidates || []).slice(0, 5) }
+            details: { reviewReasonCode: resolvedReasonCode, rawEntry: okItemObj.rawEntry, candidates: (res.candidates || []).slice(0, 5) }
           });
         }
       }

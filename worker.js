@@ -6256,6 +6256,7 @@
             msg_id TEXT,
             stage TEXT NOT NULL,
             status TEXT NOT NULL,
+            review_reason_code TEXT,
             reason TEXT,
             file_name TEXT,
             text_preview TEXT,
@@ -6300,7 +6301,8 @@
             ["episode_files", "raw_filename", "ALTER TABLE episode_files ADD COLUMN raw_filename TEXT"],
             ["episode_files", "raw_caption", "ALTER TABLE episode_files ADD COLUMN raw_caption TEXT"],
             ["episode_files", "message_link", "ALTER TABLE episode_files ADD COLUMN message_link TEXT"],
-            ["episode_files", "subtitles_json", "ALTER TABLE episode_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"]
+            ["episode_files", "subtitles_json", "ALTER TABLE episode_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"],
+            ["import_diagnostic_logs", "review_reason_code", "ALTER TABLE import_diagnostic_logs ADD COLUMN review_reason_code TEXT"]
           ];
           const alterStmts = [];
           for (const [tbl, col, ddl] of requiredCols) {
@@ -6324,6 +6326,40 @@
     return db;
   }
 
+  function inferReviewReasonCodeFromLogItem(item) {
+    if (!item || typeof item !== "object") return "";
+    const explicit = String(
+      item.reviewReasonCode ||
+      item.review_reason_code ||
+      item.details?.reviewReasonCode ||
+      item.details?.review_reason_code ||
+      ""
+    ).trim().toUpperCase();
+    if (explicit) return explicit;
+    const st = String(item.status || "").trim().toUpperCase();
+    const rText = String(item.reason || item.errorReason || "").trim();
+    if (st === "OK" || st.startsWith("SKIPPED_")) return "";
+    if (st === "TMDB_NOT_FOUND" || /kein(?: passender)?\s+tmdb[-\s]*treffer|kein treffer auf tmdb|kein passender tmdb-eintrag|not[_\s-]*found/i.test(rText)) {
+      return "TMDB_NOT_FOUND";
+    }
+    if (st === "API_ERROR" || /nach wiederholungsversuch isoliert|api[_\s-]*error|timeout/i.test(rText)) {
+      return "API_ERROR";
+    }
+    if (/staffel-konflikt|staffel\s+\d+.*hat nur\s+\d+\s+staffel/i.test(rText)) {
+      return "SEASON_CONFLICT";
+    }
+    if (/jahres-konflikt|jahres-\/kontext-sperre|jahre\s+abweichung/i.test(rText)) {
+      return "YEAR_CONFLICT";
+    }
+    if (/fortsetzungs-\/teil-konflikt|teil-konflikt|sequel/i.test(rText)) {
+      return "SEQUEL_CONFLICT";
+    }
+    if (st === "CONFLICT_?" || st === "CONFLICT" || /niedrige treffer-sicherheit|unsichere zuordnung|kontext-konflikt|mehrdeutig/i.test(rText)) {
+      return "PARSER_AMBIGUITY";
+    }
+    return "";
+  }
+
   // Persistentes Diagnose-Log (D1 + Memory-Fallback) für das Admin-Dashboard [ 🛠️ Diagnose-Log ]
   async function saveImportDiagnosticLogsToD1(env, logsArray, options = {}) {
     if (!Array.isArray(logsArray) || logsArray.length === 0) return;
@@ -6335,11 +6371,17 @@
       const normMsgId = Number.isFinite(rawMsgNum) && rawMsgNum > 0
         ? rawMsgNum
         : (item.msgId !== undefined && item.msgId !== null && String(item.msgId).trim() !== "" ? String(item.msgId).trim() : "");
+      const resolvedReasonCode = inferReviewReasonCodeFromLogItem(item);
+      const rawDetails = item.details && typeof item.details === "object" ? { ...item.details } : {};
+      if (resolvedReasonCode && !rawDetails.reviewReasonCode) {
+        rawDetails.reviewReasonCode = resolvedReasonCode;
+      }
       return {
         id: item.id || (now * 100 + idx),
         msgId: normMsgId,
         stage: String(item.stage || "IMPORT"),
         status: String(item.status || "OK"),
+        reviewReasonCode: resolvedReasonCode || null,
         reason: String(item.reason || ""),
         fileName: String(item.fileName || ""),
         textPreview: String(item.textPreview || "").slice(0, 260),
@@ -6350,7 +6392,7 @@
         tmdbResult: String(item.tmdbResult || ""),
         tmdbId: item.tmdbId ? Number(item.tmdbId) : null,
         typeCode: item.typeCode ? String(item.typeCode) : null,
-        details: item.details && typeof item.details === "object" ? item.details : {},
+        details: rawDetails,
         timestamp: Number(item.timestamp || now)
       };
     });
@@ -6372,12 +6414,13 @@
         const slice = d1ToPersist.slice(i, i + chunkSize);
         const stmts = slice.map(l =>
           db.prepare(`INSERT INTO import_diagnostic_logs (
-            msg_id, stage, status, reason, file_name, text_preview, parsed_title,
+            msg_id, stage, status, review_reason_code, reason, file_name, text_preview, parsed_title,
             season, episode, tmdb_query, tmdb_result, tmdb_id, type_code, details_json, created_at
-          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)`).bind(
+          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)`).bind(
             l.msgId,
             l.stage,
             l.status,
+            l.reviewReasonCode || null,
             l.reason,
             l.fileName,
             l.textPreview,
@@ -6417,11 +6460,18 @@
             try {
               if (r.details_json) details = JSON.parse(r.details_json);
             } catch (e) {}
+            const inferredCode = inferReviewReasonCodeFromLogItem({
+              reviewReasonCode: r.review_reason_code || details.reviewReasonCode,
+              status: r.status,
+              reason: r.reason,
+              details
+            });
             return {
               id: r.id,
-              msgId: r.msg_id || "",
+              msgId: r.msg_id && Number.isFinite(Number(r.msg_id)) ? Number(r.msg_id) : (r.msg_id || ""),
               stage: r.stage || "IMPORT",
               status: r.status || "OK",
+              reviewReasonCode: inferredCode || null,
               reason: r.reason || "",
               fileName: r.file_name || "",
               textPreview: r.text_preview || "",
@@ -6445,6 +6495,9 @@
     const mergedMap = new Map();
     for (const r of [...memRows, ...d1Rows]) {
       if (!r) continue;
+      if (!r.reviewReasonCode) {
+        r.reviewReasonCode = inferReviewReasonCodeFromLogItem(r) || null;
+      }
       const dedupeKey = `${r.msgId || ""}|${r.fileName || ""}|${r.parsedTitle || ""}|${r.season || ""}|${r.episode || ""}`;
       if (!mergedMap.has(dedupeKey)) {
         mergedMap.set(dedupeKey, r);
@@ -6458,7 +6511,15 @@
       skipped: 0,
       notFound: 0,
       conflict: 0,
-      pause: 0
+      pause: 0,
+      byReasonCode: {
+        TMDB_NOT_FOUND: 0,
+        YEAR_CONFLICT: 0,
+        PARSER_AMBIGUITY: 0,
+        SEASON_CONFLICT: 0,
+        SEQUEL_CONFLICT: 0,
+        API_ERROR: 0
+      }
     };
     for (const r of rows) {
       const st = String(r.status || "OK");
@@ -6467,6 +6528,9 @@
       else if (st === "TMDB_NOT_FOUND") counts.notFound++;
       else if (st === "CONFLICT_?" || st === "CONFLICT") counts.conflict++;
       else if (st === "SUBREQUEST_PAUSE" || st === "API_ERROR") counts.pause++;
+      if (r.reviewReasonCode && counts.byReasonCode[r.reviewReasonCode] !== undefined) {
+        counts.byReasonCode[r.reviewReasonCode]++;
+      }
     }
 
     let filtered = rows;
@@ -10542,7 +10606,7 @@
    */
   async function findOnTMDbWithValidation(parsedItem, tmdbApiKeyOrEnv, customCachedFetchJson = null) {
     if (!parsedItem) {
-      return { status: "?", tmdbMatch: null, contextError: true, errorReason: "Kein Eintrag übergeben" };
+      return { status: "?", tmdbMatch: null, contextError: true, reviewReasonCode: "PARSER_AMBIGUITY", errorReason: "Kein Eintrag übergeben" };
     }
     const baseUrl = "https://api.themoviedb.org/3";
     const type = (parsedItem.mediaType === "tv" || parsedItem.isSeries || parsedItem.typeCode === "s") ? "tv" : "movie";
@@ -10715,6 +10779,7 @@
         status: "?",
         tmdbMatch: null,
         contextError: true,
+        reviewReasonCode: "TMDB_NOT_FOUND",
         errorReason: "Kein Treffer auf TMDb gefunden"
       };
     }
@@ -10732,10 +10797,12 @@
     const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && yearDiff >= 1);
 
     if (yearDiff > 2 || yearDiff >= 2 || sequelMismatch) {
+      const reasonCode = (sequelMismatch && yearDiff < 2) ? "SEQUEL_CONFLICT" : "YEAR_CONFLICT";
       return {
         status: "?",
         tmdbMatch: tmdbHit,
         contextError: true,
+        reviewReasonCode: reasonCode,
         errorReason: `Jahres-/Kontext-Sperre: Post nennt "${queryTitle} (${parsedItem.year || "o.J."})", aber TMDb-Treffer "${tmdbHit.title || tmdbHit.name}" ist von ${tmdbYear || "unbekannt"} (Abweichung: ${yearDiff} Jahre).`
       };
     }
@@ -10744,6 +10811,7 @@
       status: "OK",
       tmdbMatch: tmdbHit,
       contextError: false,
+      reviewReasonCode: null,
       errorReason: null
     };
   }
@@ -18819,7 +18887,7 @@
     const searchTitle = parsed.cleanTitle;
     if (!searchTitle && !explicitTmdbId && !parsed.imdbId) {
       return options?.returnUnmatched
-        ? { ok: false, unmatched: true, ingestStatus: "failed", confidence: 0, rawInput: rawName, parsed, candidates: [] }
+        ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "PARSER_AMBIGUITY", confidence: 0, rawInput: rawName, parsed, candidates: [] }
         : null;
     }
 
@@ -19003,7 +19071,7 @@
 
       if (!seriesDetails) {
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
@@ -19262,6 +19330,15 @@
       // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2) oder Staffel-Konflikt vorliegt, immer als Konflikt markieren!
       const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch || seasonOverflowConflict));
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
+      const reviewReasonCode = contextError
+        ? (seasonOverflowConflict
+            ? "SEASON_CONFLICT"
+            : (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88))
+              ? "YEAR_CONFLICT"
+              : sequelMismatch
+                ? "SEQUEL_CONFLICT"
+                : "PARSER_AMBIGUITY")
+        : (isUncertain ? "PARSER_AMBIGUITY" : null);
       const errorReason = contextError
         ? (seasonOverflowConflict
             ? `Staffel-Konflikt: Datei verlangt Staffel ${seasonNum} von "${parsed.cleanTitle}", aber TMDb-Treffer "${seriesDetails.title}" (${tmdbYearNum || "?"}) hat nur ${maxTmdbSeasons} Staffel(n). Bitte im Konflikt-Tab die richtige TMDb-ID zuweisen!`
@@ -19285,8 +19362,8 @@
           seasonNumber: seasonNum,
           episodeNumber: epNum,
           telegramFileId: effectiveFileMeta?.fileId || "",
-          reasonCode: "wrong_tmdb",
-          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          reasonCode: reviewReasonCode || "wrong_tmdb",
+          reasonLabel: `⚠️ Auto-Konflikt [${reviewReasonCode || "CONFLICT"}]`,
           note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
         }).catch(() => {});
       }
@@ -19301,6 +19378,7 @@
         status: contextError ? "?" : "ok",
         needsReview: Boolean(contextError),
         contextError,
+        reviewReasonCode,
         errorReason,
         typeCode: "s",
         tmdbId: seriesDetails.id,
@@ -19375,7 +19453,7 @@
 
       if (!movieDetails) {
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
@@ -19431,6 +19509,13 @@
       // darf dieser Treffer NIEMALS automatisch als "ok" übernommen werden!
       const contextError = Boolean(!explicitTmdbId && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
+      const reviewReasonCode = contextError
+        ? ((yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88))
+            ? "YEAR_CONFLICT"
+            : sequelMismatch
+              ? "SEQUEL_CONFLICT"
+              : "PARSER_AMBIGUITY")
+        : (isUncertain ? "PARSER_AMBIGUITY" : null);
       const errorReason = contextError
         ? (yearDiff > 2
             ? `Jahres-Konflikt: Datei/Post nennt Jahr ${parsed.year}, aber TMDb-Treffer "${movieDetails.title}" ist von ${tmdbYearNum || "?"} (${yearDiff} Jahre Abweichung). Bitte prüfen!`
@@ -19451,8 +19536,8 @@
           seasonNumber: 0,
           episodeNumber: 0,
           telegramFileId: effectiveFileMeta?.fileId || "",
-          reasonCode: "wrong_tmdb",
-          reasonLabel: "⚠️ Automatischer Import-Konflikt (needsReview)",
+          reasonCode: reviewReasonCode || "wrong_tmdb",
+          reasonLabel: `⚠️ Auto-Konflikt [${reviewReasonCode || "CONFLICT"}]`,
           note: `${errorReason} [Datei: ${rawName || parsed.cleanTitle}]`
         }).catch(() => {});
       }
@@ -19464,6 +19549,7 @@
         status: contextError ? "?" : "ok",
         needsReview: Boolean(contextError),
         contextError,
+        reviewReasonCode,
         errorReason,
         typeCode: "m",
         tmdbId: movieDetails.id,
@@ -20279,12 +20365,14 @@
 
         if (!res || res.unmatched) {
           failedItems.push(String(rawLabel).slice(0, 45));
+          const failReasonCode = res?.error ? "API_ERROR" : (res?.reviewReasonCode || "TMDB_NOT_FOUND");
           const failReasonText = res?.error || `Kein passender TMDb-Eintrag für "${res?.parsed?.cleanTitle || rawLabel}" gefunden – bitte manuell suchen oder TMDb-ID zuweisen.`;
           const failItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
             status: "?",
             contextError: true,
+            reviewReasonCode: failReasonCode,
             errorReason: failReasonText,
             reason: failReasonText,
             isUncertain: true,
@@ -20308,6 +20396,7 @@
             msgId: contextDiagnostics.msgId ?? "",
             stage: "TMDB_LOOKUP",
             status: res?.error ? "API_ERROR" : "TMDB_NOT_FOUND",
+            reviewReasonCode: failReasonCode,
             reason: res?.error || `Kein TMDb-Treffer für "${res?.parsed?.cleanTitle || rawLabel}"`,
             fileName: contextDiagnostics.rawFileName || String(rawLabel),
             textPreview: String(contextDiagnostics.rawText || "").slice(0, 220),
@@ -20318,7 +20407,7 @@
             tmdbResult: "Kein Treffer",
             tmdbId: null,
             typeCode: res?.parsed?.isSeries ? "s" : "m",
-            details: { rawEntry: failItemObj.rawEntry, candidates: (res?.candidates || []).slice(0, 5) }
+            details: { reviewReasonCode: failReasonCode, rawEntry: failItemObj.rawEntry, candidates: (res?.candidates || []).slice(0, 5) }
           });
         } else {
           resolvedObjects.push(res);
@@ -20334,6 +20423,9 @@
             moviesAdded.push(`${res.cleanTitle} (${qualLabel}${res.codec}${res.part ? ` ${res.part}` : ""})`);
           }
 
+          const resolvedReasonCode = res.reviewReasonCode || (
+            res.contextError || res.isUncertain ? "PARSER_AMBIGUITY" : null
+          );
           const resolvedReviewReason = res.errorReason || (
             res.isUncertain
               ? `Niedrige Treffer-Sicherheit (${Number(res.confidence || 0)}% Match): "${rawEntry?.cleanTitle || rawLabel}" wurde vorläufig "${res.cleanTitle}" (${res.year || "k.A."}) zugeordnet.`
@@ -20344,6 +20436,7 @@
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
             status: res.contextError ? "?" : (res.isUncertain ? "uncertain" : (res.ingestStatus || "added")),
             contextError: Boolean(res.contextError),
+            reviewReasonCode: resolvedReasonCode,
             errorReason: resolvedReviewReason,
             reason: resolvedReviewReason,
             ingestStatus: res.ingestStatus || "added",
@@ -20383,6 +20476,7 @@
             msgId: contextDiagnostics.msgId ?? "",
             stage: "SAVED_D1",
             status: diagStatus,
+            reviewReasonCode: resolvedReasonCode,
             reason: resolvedReviewReason || (
               res.ingestStatus === "skipped_prerelease"
                 ? "Vorabversion / TS / MD übersprungen (reguläre Version bereits in D1 vorhanden)"
@@ -20399,7 +20493,7 @@
             tmdbResult: `${res.cleanTitle} (${res.year || "k.A."})${sEpBadge} [TMDb #${res.tmdbId}]`,
             tmdbId: res.tmdbId,
             typeCode: res.typeCode,
-            details: { rawEntry: okItemObj.rawEntry, candidates: (res.candidates || []).slice(0, 5) }
+            details: { reviewReasonCode: resolvedReasonCode, rawEntry: okItemObj.rawEntry, candidates: (res.candidates || []).slice(0, 5) }
           });
         }
       }
@@ -26808,8 +26902,8 @@
           .replace(/ü/g, "ue")
           .replace(/ß/g, "ss")
           .replace(/&/g, " and ")
-          .replace(/[^a-z0-9\s]/g, " ")
-          .replace(/\s+/g, " ")
+          .replace(/[^a-z0-9\\s]/g, " ")
+          .replace(/\\s+/g, " ")
           .trim();
       }
       window.normalizeCompareString = normalizeCompareString;
@@ -27664,7 +27758,7 @@
         const inp = document.getElementById("verifyTotpSetupInp");
         const fb = document.getElementById("totpFeedback");
         const code = (inp ? inp.value : "").trim();
-        if (!/^\d{6}$/.test(code)) {
+        if (!/^\\d{6}$/.test(code)) {
           if (fb) { fb.style.color = "#f87171"; fb.textContent = "⚠️ Bitte einen gültigen 6-stelligen Zahlencode eingeben."; }
           return;
         }
@@ -30648,7 +30742,7 @@
 
           // Edle einzeilige Metadaten-Elemente mit Trennpunkten (Apple TV+ / Netflix Stil)
           const cleanStatusLabel = (type === 's' && d.statusText && d.statusText !== 'Unbekannt')
-            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\s*/, '').trim()
+            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\\s*/, '').trim()
             : '';
           const heroMetaParts = [
             (d.vote && d.vote !== '0.0') ? ('<span class="modal-meta-item modal-meta-rating">★ ' + esc(d.vote) + '</span>') : '',
@@ -30900,7 +30994,7 @@
         const groupsMap = new Map();
         for (const f of allFiles) {
           if (!f) continue;
-          const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+          const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
           const vLbl = isRar ? "📦 RAR-Archiv" : (String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung");
           if (!groupsMap.has(vLbl)) groupsMap.set(vLbl, []);
           groupsMap.get(vLbl).push(f);
@@ -30926,7 +31020,7 @@
                   const eNum = Number(f.episode_number || 1);
                   const epCode = type === 's' ? ('S' + String(sNum).padStart(2, '0') + 'E' + String(eNum).padStart(2, '0')) : '';
                   const sizeStr = formatFileSizeClient(f.file_size);
-                  const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+                  const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
                   const partStr = String(f.part || "").trim();
                   const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
                   const qualStr = [f.quality || '1080p', f.codec || '', partStr ? ('• ' + partStr) : '', sizeStr ? ('• ' + sizeStr) : ''].filter(Boolean).join(' ');
@@ -31050,7 +31144,7 @@
         const origFilename = firstFile.raw_filename || d.rawFilename || d.title || "";
         const origCaption = firstFile.raw_caption || "";
         const origSeedQuery = origFilename
-          ? origFilename.replace(/\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, "").replace(/[._]+/g, " ")
+          ? origFilename.replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, "").replace(/[._]+/g, " ")
           : (d.title || "");
 
         const filesMetaHtml = allFiles.length > 0 ? (
@@ -31068,7 +31162,7 @@
                   '<div style="word-break:break-all;color:#e2e8f0;flex:1">' + epTag + '<code>' + esc(fn) + '</code>' + (cap ? '<span style="color:#94a3b8">' + esc(cap) + '</span>' : '') + '</div>' +
                   '<div style="display:flex;gap:5px;align-items:center">' +
                     (mLink ? '<a class="btn blue" style="padding:2px 7px;font-size:10.5px" href="' + esc(mLink) + '" target="_blank" rel="noopener noreferrer">🔗 Original-Post</a>' : '') +
-                    '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="document.getElementById(\\'modalRemapSearchInp\\').value=\\'' + esc(fn.replace(/\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, '')) + '\\';searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Als Suchtitel</button>' +
+                    '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="document.getElementById(\\'modalRemapSearchInp\\').value=\\'' + esc(fn.replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, '')) + '\\';searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Als Suchtitel</button>' +
                   '</div>' +
                 '</div>';
               }).join("") +
@@ -31779,10 +31873,10 @@
         const pStr = String(rawPart || "").trim();
         if (!pStr && !rawFilename) return "";
         if (/^RAR/i.test(pStr)) return pStr.toUpperCase();
-        const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*([1-9]\d?)$/i);
+        const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\\s._-]*0*([1-9]\\d?)$/i);
         if (m) return "CD " + parseInt(m[1], 10);
         if (!pStr && rawFilename) {
-          const fnSplit = String(rawFilename).match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
+          const fnSplit = String(rawFilename).match(/-00([1-9])(?:\\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
           if (fnSplit) return "CD " + parseInt(fnSplit[1], 10);
         }
         return pStr;
@@ -31790,16 +31884,16 @@
 
       function extractClientPartNumber(partStr) {
         if (!partStr) return 0;
-        const m = String(partStr).match(/(\d+)/);
+        const m = String(partStr).match(/(\\d+)/);
         return m ? parseInt(m[1], 10) : 0;
       }
 
       function cleanUserVisibleStreamTagsClient(rawTags = "") {
         if (!rawTags) return "";
         return String(rawTags)
-          .split(/\s*[·•|]\s*/)
+          .split(/\\s*[·•|]\\s*/)
           .map(t => t.trim())
-          .filter(t => t && !/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\s._-]*0*\d+$/i.test(t) && !/^Originalfassung$/i.test(t))
+          .filter(t => t && !/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\\s._-]*0*\\d+$/i.test(t) && !/^Originalfassung$/i.test(t))
           .filter((v, i, a) => a.indexOf(v) === i)
           .join(" · ");
       }
@@ -31807,7 +31901,7 @@
       function buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) {
         const rawFiles = Array.isArray(d.files) ? d.files.filter(f => f && f.telegram_file_id) : [];
         const normalizedFiles = rawFiles.map(f => {
-          const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\.rar$/i.test(String(f.raw_filename || ""));
+          const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
           const normPart = normalizeClientPartLabel(f.part, f.raw_filename || "");
           const partNum = extractClientPartNumber(normPart);
           const cleanTags = isRarFile ? "📦 RAR-Archiv" : cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
@@ -31911,7 +32005,7 @@
               const sizeLabel = formatFileSizeClient(f.file_size);
               const isRarFile = f._isRar;
               const tagsLabel = f._cleanTags;
-              const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsLabel);
+              const isPrereleaseTag = tagsLabel.includes("Vorabversion") || /\\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\\b/i.test(tagsLabel);
               const partLabel = f._normPart;
               const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
               return '<div class="ep-row" style="margin-bottom:0;' + (isPrereleaseTag ? 'border-color:rgba(245,158,11,0.45);background:rgba(245,158,11,0.06);' : '') + '">' +
@@ -32209,7 +32303,7 @@
                   const rawTagsStr = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
                   const fSubs = Array.isArray(f.subtitles) ? f.subtitles : [];
                   const tagsStr = rawTagsStr
-                    .split(/\s*·\s*/)
+                    .split(/\\s*·\\s*/)
                     .map(t => {
                       const tl = t.toLowerCase();
                       if (tl.includes("netflix") || tl.includes("edited") || tl.includes("stream") || tl.includes("original parts")) return "Netflix-Fassung";
@@ -32220,7 +32314,7 @@
                     .filter(Boolean)
                     .filter((v, i, arr) => arr.indexOf(v) === i)
                     .join(" · ");
-                  const isPrereleaseEp = tagsStr.includes("Vorabversion") || /\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\b/i.test(tagsStr);
+                  const isPrereleaseEp = tagsStr.includes("Vorabversion") || /\\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\\b/i.test(tagsStr);
                   const partPrefix = f._normPart ? (f._normPart + ' · ') : '';
                   const btnMeta = [partPrefix + (f.quality || '1080p'), f.codec || '', sizeStr ? ('· ' + sizeStr) : '', tagsStr ? ('· ' + tagsStr) : ''].filter(Boolean).join(' ');
                   return '<button class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name + (f._normPart ? ' (' + f._normPart + ')' : ''))+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sizeStr)+'\\',tags:\\''+esc(tagsStr)+'\\'})">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>' +
@@ -33834,7 +33928,7 @@
             season = 1;
             episode = parseInt(epOnly[1], 10) || 1;
             if (typeof epOnly.index === "number" && epOnly.index > 1) cutIdx = Math.min(cutIdx, epOnly.index);
-          } else if (!pInfo?.isMultiPart && !/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[\(\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\)\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
+          } else if (!pInfo?.isMultiPart && !/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
             // Fall "05 Ein Star ist geboren" / "13 Hochzeitspläne": Anführende 2- oder 3-stellige Zahl + Leerzeichen/Bindestrich bei < 4200s
             const leadEpNumMatch = withoutExt.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/);
             const numberedMovieGuardRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
@@ -33896,7 +33990,7 @@
         }
 
         let year = null;
-        const parenYm = (" " + withoutExt + " ").match(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[\(\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\)\]]/i);
+        const parenYm = (" " + withoutExt + " ").match(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i);
         const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
         if (ym) {
           year = parseInt(ym[1], 10);
@@ -35555,6 +35649,9 @@
         }
         backupImportJob.activeSubTab = tab === "review" ? "review" : "dashboard";
         renderBackupImportBoxDom();
+        if (backupImportJob.activeSubTab === "review") {
+          syncReviewItemsFromD1MetadataClient(true);
+        }
       }
 
       function setBackupReviewFilter(f) {
@@ -35873,6 +35970,194 @@
         }
       }
 
+      function inferClientReviewReasonCode(item) {
+        if (!item || typeof item !== "object") return "PARSER_AMBIGUITY";
+        const explicit = String(
+          item.reviewReasonCode ||
+          item.review_reason_code ||
+          item.rawEntry?.reviewReasonCode ||
+          item.rawEntry?.review_reason_code ||
+          item.details?.reviewReasonCode ||
+          item.details?.review_reason_code ||
+          ""
+        ).trim().toUpperCase();
+        if (explicit) return explicit;
+        const st = String(item.status || "").trim().toUpperCase();
+        const rText = String(item.errorReason || item.reason || "").trim();
+        if (st === "FAILED" || st === "TMDB_NOT_FOUND" || (!item.tmdbId && st !== "OK" && st !== "ADDED" && st !== "UPDATED") || /kein(?: passender)?\\s+tmdb|kein treffer auf tmdb|nicht erkannt|not[_\\s-]*found/i.test(rText)) {
+          return "TMDB_NOT_FOUND";
+        }
+        if (st === "API_ERROR" || /nach wiederholungsversuch isoliert|api[_\\s-]*error|timeout/i.test(rText)) {
+          return "API_ERROR";
+        }
+        if (/staffel-konflikt|staffel\\s+\\d+.*hat nur\\s+\\d+\\s+staffel/i.test(rText)) {
+          return "SEASON_CONFLICT";
+        }
+        if (/jahres-konflikt|jahres-\\/kontext-sperre|jahre\\s+abweichung/i.test(rText)) {
+          return "YEAR_CONFLICT";
+        }
+        if (/fortsetzungs-\\/teil-konflikt|teil-konflikt|sequel/i.test(rText)) {
+          return "SEQUEL_CONFLICT";
+        }
+        return "PARSER_AMBIGUITY";
+      }
+
+      function resolveClientReviewReasonMeta(item) {
+        const code = inferClientReviewReasonCode(item);
+        const catalog = {
+          TMDB_NOT_FOUND: {
+            code: "TMDB_NOT_FOUND",
+            icon: "❌",
+            label: "Kein TMDb-Treffer",
+            badgeStyle: "background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.5)",
+            boxStyle: "background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.38);color:#fecaca"
+          },
+          YEAR_CONFLICT: {
+            code: "YEAR_CONFLICT",
+            icon: "📅",
+            label: "Jahres-Konflikt",
+            badgeStyle: "background:rgba(245,158,11,0.22);color:#fde68a;border:1px solid rgba(245,158,11,0.5)",
+            boxStyle: "background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.38);color:#fde68a"
+          },
+          PARSER_AMBIGUITY: {
+            code: "PARSER_AMBIGUITY",
+            icon: "🔀",
+            label: "Parser-/Titel-Mehrdeutigkeit",
+            badgeStyle: "background:rgba(168,85,247,0.22);color:#e9d5ff;border:1px solid rgba(168,85,247,0.5)",
+            boxStyle: "background:rgba(168,85,247,0.12);border:1px solid rgba(168,85,247,0.38);color:#e9d5ff"
+          },
+          SEASON_CONFLICT: {
+            code: "SEASON_CONFLICT",
+            icon: "📺",
+            label: "Staffel-Konflikt",
+            badgeStyle: "background:rgba(14,165,233,0.22);color:#bae6fd;border:1px solid rgba(56,189,248,0.5)",
+            boxStyle: "background:rgba(14,165,233,0.12);border:1px solid rgba(56,189,248,0.38);color:#bae6fd"
+          },
+          SEQUEL_CONFLICT: {
+            code: "SEQUEL_CONFLICT",
+            icon: "🎬",
+            label: "Fortsetzungs-Konflikt",
+            badgeStyle: "background:rgba(236,72,153,0.22);color:#fbcfe8;border:1px solid rgba(236,72,153,0.5)",
+            boxStyle: "background:rgba(236,72,153,0.12);border:1px solid rgba(236,72,153,0.38);color:#fbcfe8"
+          },
+          API_ERROR: {
+            code: "API_ERROR",
+            icon: "🔥",
+            label: "API-/Timeout-Fehler",
+            badgeStyle: "background:rgba(239,68,68,0.25);color:#fecaca;border:1px solid rgba(248,113,113,0.55)",
+            boxStyle: "background:rgba(239,68,68,0.14);border:1px solid rgba(239,68,68,0.42);color:#fecaca"
+          }
+        };
+        return catalog[code] || catalog.PARSER_AMBIGUITY;
+      }
+
+      async function syncReviewItemsFromD1MetadataClient(silent = true) {
+        try {
+          if (!silent) setBusyState(true, "🔄 Lade Konflikt-Metadaten & Review-Flags aus D1...");
+          const r = await apiFetchJson(API_BASE + "/admin/import-logs?status=PROBLEMS&limit=600");
+          if (r && r.ok && Array.isArray(r.logs)) {
+            appendClientDiagnosticLogs(r.logs, false);
+          }
+          loadClientDiagnosticLogsFromStorage();
+          const diagLogs = clientDiagnosticLogState.logs || [];
+          if (!Array.isArray(backupImportJob.reviewItems)) {
+            backupImportJob.reviewItems = [];
+          }
+          const reviewByKey = new Map();
+          for (const rev of backupImportJob.reviewItems) {
+            if (!rev) continue;
+            const mId = rev.msgId || rev.messageId || rev.rawEntry?.msg_id || rev.rawEntry?.message_id || "";
+            const fName = rev.rawFileName || rev.rawEntry?.raw_file_name || rev.rawEntry?.filename || rev.rawInput || "";
+            if (mId) reviewByKey.set("msg:" + String(mId), rev);
+            if (fName) reviewByKey.set("fn:" + String(fName).toLowerCase(), rev);
+          }
+
+          let enrichedOrAdded = 0;
+          for (const log of diagLogs) {
+            if (!log) continue;
+            const st = String(log.status || "").toUpperCase();
+            if (st !== "TMDB_NOT_FOUND" && st !== "CONFLICT_?" && st !== "CONFLICT" && st !== "API_ERROR") continue;
+            const mId = log.msgId ? Number(log.msgId) : null;
+            const fName = String(log.fileName || log.parsedTitle || "").trim();
+            const existingRev = (mId && reviewByKey.get("msg:" + String(mId))) ||
+                                (fName && reviewByKey.get("fn:" + fName.toLowerCase())) ||
+                                null;
+            const dbReasonCode = inferClientReviewReasonCode(log);
+            if (existingRev) {
+              if (!existingRev.reviewReasonCode && dbReasonCode) {
+                existingRev.reviewReasonCode = dbReasonCode;
+                enrichedOrAdded++;
+              }
+              if (!existingRev.errorReason && log.reason) {
+                existingRev.errorReason = log.reason;
+                existingRev.reason = log.reason;
+                enrichedOrAdded++;
+              }
+              if ((!Array.isArray(existingRev.candidates) || existingRev.candidates.length === 0) && Array.isArray(log.details?.candidates)) {
+                existingRev.candidates = log.details.candidates;
+              }
+            } else {
+              const rawEntryObj = (log.rawEntry && typeof log.rawEntry === "object")
+                ? log.rawEntry
+                : (log.details?.rawEntry && typeof log.details.rawEntry === "object"
+                    ? log.details.rawEntry
+                    : {
+                        filename: fName || "Unbekannt",
+                        raw_file_name: fName || "",
+                        raw_text: log.rawText || log.textPreview || "",
+                        msg_id: mId,
+                        message_id: mId
+                      });
+              const hydratedItem = {
+                id: "rev_d1_" + (log.id || mId || Math.random().toString(36).slice(2, 8)),
+                rawInput: fName || log.parsedTitle || "Unbekannt",
+                rawEntry: rawEntryObj,
+                status: st === "TMDB_NOT_FOUND" || !log.tmdbId ? "failed" : "?",
+                contextError: st === "CONFLICT_?" || st === "CONFLICT" || st === "TMDB_NOT_FOUND",
+                isUncertain: true,
+                reviewReasonCode: dbReasonCode,
+                errorReason: log.reason || "",
+                reason: log.reason || "",
+                confidence: st === "TMDB_NOT_FOUND" ? 0 : 55,
+                typeCode: (log.typeCode === "s" || log.detectedType === "series" || log.seasonNumber || log.season) ? "s" : "m",
+                tmdbId: log.tmdbId ? Number(log.tmdbId) : null,
+                cleanTitle: log.parsedTitle || fName || "Unbekannt",
+                year: rawEntryObj?.year || "k.A.",
+                poster: "",
+                quality: rawEntryObj?.quality || "1080p",
+                codec: rawEntryObj?.codec || "x264",
+                season: log.seasonNumber ?? log.season ?? rawEntryObj?.season ?? null,
+                episode: log.episodeNumber ?? log.episode ?? rawEntryObj?.episode ?? null,
+                metadataSource: "D1-Metadaten",
+                msgId: mId,
+                messageId: mId,
+                messageLink: rawEntryObj?.message_link || rawEntryObj?.messageLink || "",
+                rawFileName: fName,
+                rawText: log.rawText || log.textPreview || rawEntryObj?.raw_text || "",
+                parsedFrom: rawEntryObj?.parsed_from || "D1-Import-Log",
+                languages: Array.isArray(rawEntryObj?.languages) ? rawEntryObj.languages : ["de"],
+                prevMessages: Array.isArray(rawEntryObj?.prev_messages) ? rawEntryObj.prev_messages : [],
+                candidates: Array.isArray(log.details?.candidates) ? log.details.candidates : []
+              };
+              backupImportJob.reviewItems.push(hydratedItem);
+              if (mId) reviewByKey.set("msg:" + String(mId), hydratedItem);
+              if (fName) reviewByKey.set("fn:" + fName.toLowerCase(), hydratedItem);
+              enrichedOrAdded++;
+            }
+          }
+          if (enrichedOrAdded > 0 && backupImportJob.activeSubTab === "review") {
+            renderBackupImportBoxDom();
+          }
+          if (!silent) {
+            showHudToast("✅ Konflikt-Metadaten & Review-Flags aus D1 synchronisiert (" + backupImportJob.reviewItems.length + " Einträge)");
+          }
+        } catch (e) {
+          if (!silent) showHudToast("⚠️ D1-Synchronisierung fehlgeschlagen");
+        } finally {
+          if (!silent) setBusyState(false);
+        }
+      }
+
       function renderSingleBackupReviewCardHtml(item, allItems) {
         const isFailed = item.status === "failed" || !item.tmdbId;
         const isResolved = Boolean(item.resolvedByAdmin);
@@ -35880,16 +36165,18 @@
           ? (" • S" + String(item.season).padStart(2, "0") + "E" + String(item.episode || 1).padStart(2, "0") + (item.episodeTitle ? (" – " + item.episodeTitle) : ""))
           : "";
         const rawEntry = item.rawEntry || {};
-        const msgId = item.messageId || rawEntry.message_id || rawEntry.msg_id || null;
+        const msgId = item.messageId || item.msgId || rawEntry.message_id || rawEntry.msg_id || null;
         const msgLink = item.messageLink || rawEntry.message_link || "";
         const rawFileName = item.rawFileName || rawEntry.raw_file_name || rawEntry.filename || "";
         const metaSrc = item.metadataSource || "TMDb";
+        const reasonMeta = resolveClientReviewReasonMeta(item);
 
         // KOMPAKTE GRÜNE ZEILE AN ORT UND STELLE: Sobald bestätigt/korrigiert, klappt die Karte platzsparend zusammen (ohne Scroll-Sprung!)
         if (isResolved && !item.expandedAfterResolve) {
           return '<div id="revCard_' + esc(item.id) + '" style="background:rgba(16,185,129,0.09);border:1px solid rgba(16,185,129,0.42);border-radius:10px;padding:9px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
             '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:220px;flex:1">' +
               '<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,0.22);color:#34d399;border:1px solid rgba(16,185,129,0.45)">✅ In D1 gespeichert</span>' +
+              '<span style="font-family:monospace;font-size:10px;font-weight:800;padding:2px 6px;border-radius:5px;background:rgba(16,185,129,0.14);color:#6ee7b7;border:1px solid rgba(16,185,129,0.3)" title="Ursprünglicher Prüfgrund behoben">✓ ' + esc(reasonMeta.code) + '</span>' +
               '<span style="font-size:12.5px;font-weight:800;color:#fff">' +
                 esc(item.cleanTitle || item.rawInput) + ' (' + esc(item.year || 'k.A.') + ')' +
               '</span>' +
@@ -35945,14 +36232,14 @@
                 ? "Kontext-, Staffel- oder Jahres-Konflikt zwischen Dateiname/Post und TMDb-Treffer erkannt."
                 : ("Unsichere automatische Zuordnung (" + Number(item.confidence || 0) + "% Match-Sicherheit) – bitte kurz prüfen oder bestätigen.")))
         ).trim();
-        const reasonBoxStyle = isFailed
-          ? "background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.38);color:#fecaca"
-          : "background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.38);color:#fde68a";
 
         return '<div id="revCard_' + esc(item.id) + '" style="background:#101015;border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:12px">' +
           '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
             '<div style="flex:1;min-width:220px">' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">' +
+                '<span title="Datenbank Review-Reason-Flag (' + esc(reasonMeta.code) + ')" style="font-family:monospace;font-size:10.5px;font-weight:900;padding:2px 8px;border-radius:5px;letter-spacing:0.03em;' + reasonMeta.badgeStyle + '">' +
+                  reasonMeta.icon + ' ' + esc(reasonMeta.code) + ' • ' + esc(reasonMeta.label) +
+                '</span>' +
                 '<span style="font-size:10.5px;background:#1e293b;color:#38bdf8;padding:2px 7px;border-radius:5px;font-weight:700">🔎 Quelle: ' + esc(parsedFrom) + '</span>' +
                 '<span style="font-size:10.5px;background:#1e293b;color:#a78bfa;padding:2px 7px;border-radius:5px;font-weight:700">🌐 Audio: ' + esc(langs) + '</span>' +
                 (msgId ? '<span style="font-size:10.5px;background:#1e293b;color:#cbd5e1;padding:2px 7px;border-radius:5px">💬 Msg #' + esc(String(msgId)) + '</span>' : '') +
@@ -35972,9 +36259,9 @@
               (isResolved ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="collapseResolvedReviewCard(\\'' + esc(item.id) + '\\')">🔼 Einklappen</button>' : '') +
             '</div>' +
           '</div>' +
-          '<div style="' + reasonBoxStyle + ';border-radius:8px;padding:7px 10px;margin-bottom:8px;font-size:11.5px;display:flex;align-items:center;gap:7px;line-height:1.35">' +
-            '<span style="font-weight:900;white-space:nowrap">' + (isFailed ? '❌ Prüfgrund:' : '⚠️ Prüfgrund:') + '</span>' +
-            '<span style="font-weight:700">' + esc(reviewReasonText) + '</span>' +
+          '<div style="' + reasonMeta.boxStyle + ';border-radius:8px;padding:7px 10px;margin-bottom:8px;font-size:11.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;line-height:1.35">' +
+            '<span style="font-family:monospace;font-size:10.5px;font-weight:900;padding:2px 7px;border-radius:4px;' + reasonMeta.badgeStyle + ';white-space:nowrap">' + reasonMeta.icon + ' ' + esc(reasonMeta.code) + '</span>' +
+            '<span style="font-weight:700;flex:1;min-width:180px">' + esc(reviewReasonText) + '</span>' +
           '</div>' +
           '<div style="background:#15151e;border:1px solid rgba(255,255,255,0.09);border-radius:8px;padding:9px;margin-bottom:8px;font-size:11.5px;display:flex;flex-direction:column;gap:5px">' +
             (rawFileName ? '<div><b style="color:#94a3b8">💾 Dateiname (file_name):</b> <code style="color:#f1f5f9;background:#0c0c12;padding:2px 6px;border-radius:4px;word-break:break-all">' + esc(rawFileName) + '</code></div>' : '') +
@@ -36051,32 +36338,72 @@
 
       function renderBackupReviewTabHtml(j) {
         const allItems = j.reviewItems || [];
-        const needsAttentionOpenCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain)).length;
-        const uncertainOpenCount = allItems.filter(x => !x.resolvedByAdmin && x.isUncertain && x.status !== "failed").length;
-        const failedOpenCount = allItems.filter(x => !x.resolvedByAdmin && x.status === "failed").length;
+        const openConflictItems = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain || x.contextError || !x.tmdbId));
+        const needsAttentionOpenCount = openConflictItems.length;
+        const uncertainOpenCount = allItems.filter(x => !x.resolvedByAdmin && x.isUncertain && x.status !== "failed" && x.tmdbId).length;
+        const failedOpenCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || !x.tmdbId)).length;
+
+        const flagCounts = {
+          TMDB_NOT_FOUND: 0,
+          YEAR_CONFLICT: 0,
+          PARSER_AMBIGUITY: 0,
+          SEASON_CONFLICT: 0,
+          SEQUEL_CONFLICT: 0,
+          API_ERROR: 0
+        };
+        for (const it of openConflictItems) {
+          const code = inferClientReviewReasonCode(it);
+          if (flagCounts[code] !== undefined) flagCounts[code]++;
+        }
 
         // Damit bestätigte Karten an Ort und Stelle grün eingeklappt stehen bleiben (statt die Liste unter dem Mauszeiger wegzuziehen!),
         // behalten wir bereits in dieser Sitzung bestätigte Einträge (x.resolvedByAdmin) als kompakte grüne Zeile in der Liste.
-        let visibleList = allItems.filter(x => x.status === "failed" || x.isUncertain || x.resolvedByAdmin);
-        if (j.reviewFilter === "uncertain") visibleList = allItems.filter(x => (x.isUncertain && x.status !== "failed") || x.resolvedByAdmin);
-        else if (j.reviewFilter === "failed") visibleList = allItems.filter(x => x.status === "failed");
+        let visibleList = allItems.filter(x => x.status === "failed" || x.isUncertain || x.contextError || !x.tmdbId || x.resolvedByAdmin);
+        if (j.reviewFilter === "uncertain") visibleList = allItems.filter(x => (x.isUncertain && x.status !== "failed" && x.tmdbId) || x.resolvedByAdmin);
+        else if (j.reviewFilter === "failed") visibleList = allItems.filter(x => x.status === "failed" || !x.tmdbId);
         else if (j.reviewFilter === "all") visibleList = allItems;
+        else if (String(j.reviewFilter || "").startsWith("flag:")) {
+          const targetFlag = String(j.reviewFilter).slice(5);
+          visibleList = allItems.filter(x => (!x.resolvedByAdmin && inferClientReviewReasonCode(x) === targetFlag) || (x.resolvedByAdmin && inferClientReviewReasonCode(x) === targetFlag));
+        }
+
+        const flagFilterButtons = [
+          { code: "TMDB_NOT_FOUND", icon: "❌", col: "#fca5a5", bg: "rgba(239,68,68,0.18)" },
+          { code: "YEAR_CONFLICT", icon: "📅", col: "#fde68a", bg: "rgba(245,158,11,0.18)" },
+          { code: "PARSER_AMBIGUITY", icon: "🔀", col: "#e9d5ff", bg: "rgba(168,85,247,0.18)" },
+          { code: "SEASON_CONFLICT", icon: "📺", col: "#bae6fd", bg: "rgba(14,165,233,0.18)" },
+          { code: "SEQUEL_CONFLICT", icon: "🎬", col: "#fbcfe8", bg: "rgba(236,72,153,0.18)" },
+          { code: "API_ERROR", icon: "🔥", col: "#fecaca", bg: "rgba(239,68,68,0.22)" }
+        ];
 
         return '<div style="margin-top:10px">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
               '<button id="revBtnNeeds" class="btn ' + (j.reviewFilter === 'needs_attention' ? 'amber' : '') + '" onclick="setBackupReviewFilter(\\'needs_attention\\')">⚠️ Prüfbedarf (' + needsAttentionOpenCount + ')</button>' +
               '<button id="revBtnUncertain" class="btn ' + (j.reviewFilter === 'uncertain' ? 'amber' : '') + '" onclick="setBackupReviewFilter(\\'uncertain\\')">🔎 Unsichere Treffer (' + uncertainOpenCount + ')</button>' +
               '<button id="revBtnFailed" class="btn ' + (j.reviewFilter === 'failed' ? 'red' : '') + '" onclick="setBackupReviewFilter(\\'failed\\')">❌ Nicht erkannt (' + failedOpenCount + ')</button>' +
               '<button id="revBtnAll" class="btn ' + (j.reviewFilter === 'all' ? 'green' : '') + '" onclick="setBackupReviewFilter(\\'all\\')">📋 Alle importierten (' + allItems.length + ')</button>' +
             '</div>' +
-            '<span style="font-size:11.5px;color:#94a3b8">💡 Bestätigte Karten klappen grün an Ort & Stelle zusammen (kein Listen-Springen!)</span>' +
+            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+              '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="syncReviewItemsFromD1MetadataClient(false)">🔄 Konflikte aus D1 laden</button>' +
+              '<span style="font-size:11.5px;color:#94a3b8">💡 Bestätigte Karten klappen grün an Ort & Stelle zusammen</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:7px 9px;background:#12121a;border:1px solid rgba(255,255,255,0.08);border-radius:8px">' +
+            '<span style="font-size:11px;font-weight:800;color:#94a3b8;margin-right:2px">🏷️ Review-Reason-Filter (DB-Flags):</span>' +
+            flagFilterButtons.map(fb => {
+              const active = j.reviewFilter === ("flag:" + fb.code);
+              const cnt = flagCounts[fb.code] || 0;
+              return '<button type="button" onclick="setBackupReviewFilter(\\'' + (active ? 'needs_attention' : ('flag:' + fb.code)) + '\\')" style="cursor:pointer;font-family:monospace;font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:6px;background:' + (active ? fb.bg : '#181824') + ';color:' + fb.col + ';border:1px solid ' + (active ? fb.col : 'rgba(255,255,255,0.12)') + '">' +
+                fb.icon + ' ' + fb.code + ' (' + cnt + ')' +
+              '</button>';
+            }).join("") +
           '</div>' +
           (visibleList.length === 0 ? (
             '<div style="background:#101016;border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:16px;text-align:center;color:#34d399;font-size:12.5px">' +
               (allItems.length === 0
-                ? 'ℹ️ Starte zuerst den Smart-Import, um Zuordnungen live zu prüfen oder zu korrigieren.'
-                : '🎉 Perfekt! Keine offenen unsicheren oder fehlerhaften Einträge in dieser Ansicht.') +
+                ? 'ℹ️ Starte zuerst den Smart-Import oder klicke oben auf <b>🔄 Konflikte aus D1 laden</b>, um Zuordnungen zu prüfen.'
+                : '🎉 Perfekt! Keine offenen Einträge für diesen Review-Reason-Filter.') +
             '</div>'
           ) : (
             '<div id="backupReviewScrollContainer" style="display:flex;flex-direction:column;gap:12px;max-height:640px;overflow-y:auto;padding-right:4px">' +
@@ -36403,13 +36730,15 @@
             fileName: String(raw.fileName || raw.file_name || raw.rawFileName || "Unbekannt").slice(0, 260),
             rawText: String(raw.rawText || raw.raw_text || "").slice(0, 500),
             status: String(raw.status || "OK").toUpperCase(),
+            reviewReasonCode: raw.reviewReasonCode || raw.review_reason_code || raw.details?.reviewReasonCode || null,
             reason: String(raw.reason || "").slice(0, 360),
             detectedType: String(raw.detectedType || raw.detected_type || "auto"),
             parsedTitle: String(raw.parsedTitle || raw.parsed_title || raw.cleanTitle || ""),
             seasonNumber: raw.seasonNumber ?? raw.season_number ?? raw.season ?? null,
             episodeNumber: raw.episodeNumber ?? raw.episode_number ?? raw.episode ?? null,
             tmdbId: raw.tmdbId ?? raw.tmdb_id ?? null,
-            rawEntry: raw.rawEntry || (raw.raw_entry_json ? (() => { try { return JSON.parse(raw.raw_entry_json); } catch (_) { return null; } })() : null),
+            details: raw.details && typeof raw.details === "object" ? raw.details : null,
+            rawEntry: raw.rawEntry || raw.details?.rawEntry || (raw.raw_entry_json ? (() => { try { return JSON.parse(raw.raw_entry_json); } catch (_) { return null; } })() : null),
             createdAt: Number(raw.createdAt || raw.created_at || Date.now())
           };
           const dedupeKey = String(entry.msgId || "") + "|" + entry.fileName;
@@ -36705,6 +37034,7 @@
                 const origIdx = logs.indexOf(item);
                 const badge = statusBadgeMap[item.status] || { bg: "rgba(148,163,184,0.2)", col: "#cbd5e1", label: item.status };
                 const isFixable = item.status === "TMDB_NOT_FOUND" || item.status === "CONFLICT_?" || item.status === "CONFLICT" || item.status === "API_ERROR";
+                const itemReasonMeta = isFixable ? resolveClientReviewReasonMeta(item) : null;
                 const seLabel = item.seasonNumber
                   ? (' • <b style="color:#38bdf8">S' + String(item.seasonNumber).padStart(2, '0') + 'E' + String(item.episodeNumber || 1).padStart(2, '0') + '</b>')
                   : '';
@@ -36713,6 +37043,7 @@
                     '<div style="min-width:0;flex:1">' +
                       '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
                         '<span style="font-size:10.5px;font-weight:800;padding:2px 7px;border-radius:999px;background:' + badge.bg + ';color:' + badge.col + '">' + esc(badge.label) + '</span>' +
+                        (itemReasonMeta ? '<span style="font-family:monospace;font-size:10px;font-weight:900;padding:2px 7px;border-radius:5px;' + itemReasonMeta.badgeStyle + '">' + itemReasonMeta.icon + ' ' + esc(itemReasonMeta.code) + '</span>' : '') +
                         (item.msgId ? '<span style="font-family:monospace;font-size:11px;background:#0f172a;color:#38bdf8;padding:2px 6px;border-radius:5px;border:1px solid rgba(56,189,248,0.3)">Msg #' + esc(item.msgId) + '</span>' : '') +
                         '<span style="font-size:11px;color:#94a3b8">[' + esc(item.detectedType || 'auto') + ']</span>' +
                         '<b style="font-size:12.5px;color:#fff">' + esc(item.fileName || item.parsedTitle || 'Eintrag') + '</b>' +
@@ -36789,6 +37120,7 @@
             season: badEntry.season || null,
             episode: badEntry.episode || null,
             metadataSource: "Prüfung",
+            reviewReasonCode: "API_ERROR",
             errorReason: "Nach Wiederholungsversuch isoliert: " + String(reasonMsg || "Unbekannter Fehler"),
             reason: "Nach Wiederholungsversuch isoliert: " + String(reasonMsg || "Unbekannter Fehler"),
             msgId: (badEntry.msg_id || badEntry.messageId || badEntry.message_id) ? Number(badEntry.msg_id || badEntry.messageId || badEntry.message_id) : null,
@@ -36809,6 +37141,7 @@
             fileName: fallbackItem.rawFileName,
             rawText: fallbackItem.rawText,
             status: "API_ERROR",
+            reviewReasonCode: "API_ERROR",
             reason: "Nach Wiederholungsversuch isoliert: " + String(reasonMsg || "Unbekannter Fehler"),
             detectedType: fallbackItem.typeCode === "s" ? "series" : "movie",
             parsedTitle: fallbackItem.cleanTitle,
@@ -36890,8 +37223,10 @@
                           : bItem.ingestStatus === "updated"
                             ? "Bestehender Episoden-/Film-Slot per UPSERT mit neuer Datei verknüpft → " + (bItem.cleanTitle || "")
                             : "Erfolgreich zugeordnet → " + (bItem.cleanTitle || "") + (bItem.tmdbId ? " (TMDb #" + bItem.tmdbId + ")" : "") + (Number(bItem.replacedPrereleaseCount || 0) > 0 ? (" [🧹 " + bItem.replacedPrereleaseCount + " Vorabversion ersetzt!]") : ""));
+                  const computedReasonCode = bItem.reviewReasonCode || ((bItem.status === "failed" || !bItem.tmdbId) ? "TMDB_NOT_FOUND" : (bItem.isUncertain ? inferClientReviewReasonCode({ ...bItem, errorReason: computedReason }) : null));
                   const itemObj = {
                     ...bItem,
+                    reviewReasonCode: computedReasonCode,
                     errorReason: bItem.errorReason || (bItem.status === "failed" || bItem.isUncertain ? computedReason : null),
                     reason: computedReason,
                     msgId: bItem.msgId ? Number(bItem.msgId) : null,
@@ -36915,6 +37250,7 @@
                     fileName: bItem.rawFileName || bItem.rawInput || bItem.cleanTitle || "Unbekannt",
                     rawText: bItem.rawText || "",
                     status: diagStatus,
+                    reviewReasonCode: computedReasonCode,
                     reason: computedReason,
                     detectedType: bItem.typeCode === "s" ? "series" : "movie",
                     parsedTitle: bItem.cleanTitle || "",

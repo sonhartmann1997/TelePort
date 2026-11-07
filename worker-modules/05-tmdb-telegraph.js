@@ -889,7 +889,7 @@
    */
   async function findOnTMDbWithValidation(parsedItem, tmdbApiKeyOrEnv, customCachedFetchJson = null) {
     if (!parsedItem) {
-      return { status: "?", tmdbMatch: null, contextError: true, errorReason: "Kein Eintrag übergeben" };
+      return { status: "?", tmdbMatch: null, contextError: true, reviewReasonCode: "PARSER_AMBIGUITY", errorReason: "Kein Eintrag übergeben" };
     }
     const baseUrl = "https://api.themoviedb.org/3";
     const type = (parsedItem.mediaType === "tv" || parsedItem.isSeries || parsedItem.typeCode === "s") ? "tv" : "movie";
@@ -1062,6 +1062,7 @@
         status: "?",
         tmdbMatch: null,
         contextError: true,
+        reviewReasonCode: "TMDB_NOT_FOUND",
         errorReason: "Kein Treffer auf TMDb gefunden"
       };
     }
@@ -1079,10 +1080,12 @@
     const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && yearDiff >= 1);
 
     if (yearDiff > 2 || yearDiff >= 2 || sequelMismatch) {
+      const reasonCode = (sequelMismatch && yearDiff < 2) ? "SEQUEL_CONFLICT" : "YEAR_CONFLICT";
       return {
         status: "?",
         tmdbMatch: tmdbHit,
         contextError: true,
+        reviewReasonCode: reasonCode,
         errorReason: `Jahres-/Kontext-Sperre: Post nennt "${queryTitle} (${parsedItem.year || "o.J."})", aber TMDb-Treffer "${tmdbHit.title || tmdbHit.name}" ist von ${tmdbYear || "unbekannt"} (Abweichung: ${yearDiff} Jahre).`
       };
     }
@@ -1091,6 +1094,7 @@
       status: "OK",
       tmdbMatch: tmdbHit,
       contextError: false,
+      reviewReasonCode: null,
       errorReason: null
     };
   }
