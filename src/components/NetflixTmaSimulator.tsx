@@ -60,51 +60,66 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
             ? { id: 55443322, first_name: 'Max', username: 'kino_fan', language_code: 'de' }
             : null;
 
+      const simulatedInitData = personaUser
+        ? `user=${encodeURIComponent(JSON.stringify(personaUser))}&auth_date=${Math.floor(Date.now() / 1000)}&hash=sim_valid_hmac`
+        : '';
+
       const bridgeScript = `
 <script>
 (function() {
   const PERSONA = ${JSON.stringify(persona)};
   const PERSONA_USER = ${JSON.stringify(personaUser)};
+  const SIM_INIT_DATA = ${JSON.stringify(simulatedInitData)};
+
+  // Clear stale session token when persona changes so initAuthSession() always authenticates the active persona
+  try {
+    const prevPersona = sessionStorage.getItem("__tma_sim_active_persona__");
+    if (prevPersona !== PERSONA || !PERSONA_USER) {
+      localStorage.removeItem("tma_session_token");
+      sessionStorage.setItem("__tma_sim_active_persona__", PERSONA);
+    }
+  } catch (e) {}
 
   // Provide simulated Telegram.WebApp object before app scripts run
   if (PERSONA_USER) {
-    window.Telegram = {
-      WebApp: {
-        initData: "user=" + encodeURIComponent(JSON.stringify(PERSONA_USER)) + "&auth_date=" + Math.floor(Date.now() / 1000) + "&hash=sim_valid_hmac",
-        initDataUnsafe: { user: PERSONA_USER },
-        platform: ${JSON.stringify(viewportPreset === 'mobile' ? 'android' : 'tdesktop')},
-        colorScheme: "dark",
-        version: "7.10",
-        isExpanded: true,
-        viewportHeight: window.innerHeight,
-        viewportStableHeight: window.innerHeight,
-        ready: function() {},
-        expand: function() {},
-        close: function() {},
-        openTelegramLink: function(url) { window.open(url, "_blank"); },
-        openLink: function(url) { window.open(url, "_blank"); },
-        HapticFeedback: {
-          impactOccurred: function() {},
-          notificationOccurred: function() {},
-          selectionChanged: function() {}
-        },
-        MainButton: {
-          text: "",
-          isVisible: false,
-          show: function() { this.isVisible = true; },
-          hide: function() { this.isVisible = false; },
-          onClick: function() {},
-          offClick: function() {}
-        },
-        BackButton: {
-          isVisible: false,
-          show: function() { this.isVisible = true; },
-          hide: function() { this.isVisible = false; },
-          onClick: function() {},
-          offClick: function() {}
-        }
+    const webAppObj = {
+      initData: SIM_INIT_DATA,
+      initDataUnsafe: { user: PERSONA_USER },
+      platform: ${JSON.stringify(viewportPreset === 'mobile' ? 'android' : 'tdesktop')},
+      colorScheme: "dark",
+      version: "7.10",
+      isExpanded: true,
+      viewportHeight: window.innerHeight,
+      viewportStableHeight: window.innerHeight,
+      ready: function() {},
+      expand: function() {},
+      close: function() {},
+      openTelegramLink: function(url) { window.open(url, "_blank"); },
+      openLink: function(url) { window.open(url, "_blank"); },
+      HapticFeedback: {
+        impactOccurred: function() {},
+        notificationOccurred: function() {},
+        selectionChanged: function() {}
+      },
+      MainButton: {
+        text: "",
+        isVisible: false,
+        show: function() { this.isVisible = true; },
+        hide: function() { this.isVisible = false; },
+        onClick: function() {},
+        offClick: function() {}
+      },
+      BackButton: {
+        isVisible: false,
+        show: function() { this.isVisible = true; },
+        hide: function() { this.isVisible = false; },
+        onClick: function() {},
+        offClick: function() {}
       }
     };
+    window.Telegram = { WebApp: webAppObj };
+  } else {
+    window.Telegram = { WebApp: { initData: "", initDataUnsafe: {}, ready: function() {}, expand: function() {} } };
   }
 
   const pendingRequests = new Map();
@@ -159,6 +174,9 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         Object.assign(headersObj, init.headers);
       }
     }
+    if (SIM_INIT_DATA && !headersObj["X-Telegram-Init-Data"] && !headersObj["x-telegram-init-data"]) {
+      headersObj["X-Telegram-Init-Data"] = SIM_INIT_DATA;
+    }
     const bodyStr = (init && typeof init.body === "string") ? init.body : "";
 
     return new Promise(function(resolve, reject) {
@@ -177,10 +195,16 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
 })();
 </script>`;
 
-      if (rawHtml.includes('<head>')) {
-        return rawHtml.replace('<head>', `<head>${bridgeScript}`);
+      // Remove external telegram-web-app.js script tag in simulator iframe so it cannot overwrite window.Telegram.WebApp.initData
+      const sanitizedHtml = rawHtml.replace(
+        /<script\s+src=["']https:\/\/telegram\.org\/js\/telegram-web-app\.js["']\s*><\/script>/gi,
+        ''
+      );
+
+      if (sanitizedHtml.includes('<head>')) {
+        return sanitizedHtml.replace('<head>', `<head>${bridgeScript}`);
       }
-      return `${bridgeScript}${rawHtml}`;
+      return `${bridgeScript}${sanitizedHtml}`;
     },
     [viewportPreset]
   );
@@ -261,44 +285,8 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
       const data = event.data;
       if (!data || data.type !== 'TMA_SANDBOX_FETCH_REQUEST') return;
 
-      const { reqId, url, method, headers, body, persona } = data;
+      const { reqId, url, method, headers, body } = data;
       const envMap = buildEnvMap();
-
-      // Intercept /api/tma/auth/init or /api/tma/auth/me in sandbox when persona is selected
-      if (url.startsWith('/api/tma/auth/init') || url.startsWith('/api/tma/auth/me')) {
-        if (persona === 'admin_vip' || persona === 'standard_user') {
-          const isVipOrAdmin = persona === 'admin_vip';
-          const userPayload = {
-            telegramId: isVipOrAdmin ? '100998877' : '55443322',
-            tgUsername: isVipOrAdmin ? 'streamflix_admin' : 'kino_fan',
-            customUsername: isVipOrAdmin ? 'admin' : 'kinofan',
-            firstName: isVipOrAdmin ? 'Admin (VIP)' : 'Max',
-            isVip: true,
-            isAdmin: isVipOrAdmin,
-            hasPassword: true,
-            totpEnabled: false,
-            authMethod: 'initData',
-          };
-          event.source?.postMessage(
-            {
-              type: 'TMA_SANDBOX_FETCH_RESPONSE',
-              reqId,
-              status: 200,
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                ok: true,
-                isAuthenticated: true,
-                isGuest: false,
-                hasInitData: true,
-                user: userPayload,
-                sessionToken: 'sim_session_token_valid',
-              }),
-            },
-            { targetOrigin: '*' }
-          );
-          return;
-        }
-      }
 
       const startMs = performance.now();
       const reqData: WorkerRequestData = {

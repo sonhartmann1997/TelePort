@@ -1,194 +1,3 @@
-        state.searchMatchedStudios = [];
-        state.searchEntitiesExpanded = false;
-        document.body.classList.remove("search-active-dim");
-        closeAutocomplete();
-        if (state.isSearchMode) goHome();
-      }
-
-      function onSearchInputFocus() {
-        updateSearchClearBtnVisibility();
-        state.searchFocused = true;
-      }
-
-      function onSearchInputBlur() {
-        setTimeout(() => {
-          const inp = document.getElementById("searchInput");
-          const val = (inp ? inp.value : "").trim();
-          updateSearchClearBtnVisibility();
-          if (!val && !state.isSearchMode) {
-            state.searchFocused = false;
-          }
-          closeAutocomplete();
-        }, 220);
-      }
-
-      function closeAutocomplete() {
-        const box = document.getElementById("searchAutocompleteBox");
-        if (box) {
-          box.classList.remove("open");
-          box.innerHTML = "";
-        }
-      }
-
-      function onSearchScopeChange(newScope) {
-        const selEl = document.getElementById("searchScopeSelect");
-        const resolvedScope = newScope || (selEl && selEl.value) || "all";
-        state.searchScope = resolvedScope;
-        const inp = document.getElementById("searchInput");
-        if (inp && inp.value.trim()) {
-          runSearch(false, inp.value.trim(), state.searchScope);
-        } else if (state.isSearchMode && state.searchQuery) {
-          runSearch(false, state.searchQuery, state.searchScope);
-        }
-      }
-
-      function toggleSearchDetectedEntities() {
-        state.searchEntitiesExpanded = !state.searchEntitiesExpanded;
-        const box = document.getElementById("searchDetectedEntitiesBody");
-        const iconEl = document.getElementById("searchDetectedEntitiesToggleIcon") || document.getElementById("searchDetectedEntitiesChevron");
-        if (box) {
-          box.style.display = state.searchEntitiesExpanded ? "flex" : "none";
-        }
-        if (iconEl) {
-          iconEl.textContent = state.searchEntitiesExpanded ? "Ausblenden ▴" : "Anzeigen ▾";
-        }
-      }
-
-      let liveSearchReqSeq = 0;
-
-      function onSearchInputLive(rawVal) {
-        updateSearchClearBtnVisibility();
-        const q = String(rawVal || "").trim();
-        state.searchFocused = true;
-        if (liveSearchDebounceTimer) clearTimeout(liveSearchDebounceTimer);
-        if (!q) {
-          closeAutocomplete();
-          return;
-        }
-        const mySeq = ++liveSearchReqSeq;
-        liveSearchDebounceTimer = setTimeout(async () => {
-          try {
-            const res = await apiFetchJson(
-              API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-              "&q=" + encodeURIComponent(q) +
-              "&scope=" + encodeURIComponent(state.searchScope || "all") +
-              "&sort=" + encodeURIComponent(state.sort)
-            );
-            if (mySeq !== liveSearchReqSeq || !res || !res.ok) return;
-            state.searchMatchedCollections = res.collections || [];
-            state.searchMatchedUniverses = res.universes || [];
-            state.searchMatchedPersons = res.persons || [];
-            state.searchMatchedStudios = res.studios || [];
-            state.searchEntitiesExpanded = false;
-            renderAutocompleteSuggestions(q, res);
-            // Live-Ergebnisse direkt aktualisieren, während man tippt!
-            state.isSearchMode = true;
-            state.searchQuery = q;
-            state.startPage = 1;
-            state.page = 1;
-            state.totalPages = Math.max(1, Number(res.totalPages) || 1);
-            state.hasMorePages = Boolean(res.hasMore ?? (state.page < state.totalPages));
-            state.filtersCollapsedInSearch = false;
-            state.items = res.items || [];
-            state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
-            renderDiscover("🔍 Live-Suche: " + q);
-          } catch (e) {}
-        }, 280);
-      }
-
-      function renderAutocompleteSuggestions(q, res) {
-        const box = document.getElementById("searchAutocompleteBox");
-        if (!box) return;
-        const cols = (res.collections || []).slice(0, 4);
-        const unis = (res.universes || []).slice(0, 3);
-        const studs = (res.studios || []).slice(0, 4);
-        const pers = (res.persons || []).slice(0, 4);
-        const media = (res.items || []).slice(0, 5);
-        if (!cols.length && !unis.length && !studs.length && !pers.length && !media.length) {
-          closeAutocomplete();
-          return;
-        }
-        let html = "";
-        if (cols.length || unis.length || studs.length) {
-          html += '<div class="ac-group-title">🍿 Reihen, 🌌 Universen & 🏢 Filmstudios (Automatisch erkannt)</div>';
-          unis.forEach(u => {
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openUniverseView(\\'' + esc(u.id) + '\\')">' +
-              '<span>' + esc(u.icon || '🌌') + ' <b>' + esc(u.name) + '</b></span>' +
-              '<span style="font-size:11px;color:#34d399">Universum öffnen ➔</span>' +
-            '</div>';
-          });
-          cols.forEach(c => {
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openCollectionView(' + Number(c.id) + ')">' +
-              '<span>🍿 <b>' + esc(c.name) + '</b></span>' +
-              '<span style="font-size:11px;color:#a78bfa">Filmreihe öffnen ➔</span>' +
-            '</div>';
-          });
-          studs.forEach(st => {
-            const cid = st.companyIds || st.id;
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openStudioView(\\'' + esc(String(cid)) + '\\',\\'' + esc(st.name) + '\\',\\'' + esc(st.presetStudioId || '') + '\\')">' +
-              '<span>' + esc(st.icon || '🏢') + ' <b>' + esc(st.name) + '</b></span>' +
-              '<span style="font-size:11px;color:#f59e0b">Studio-Katalog ➔</span>' +
-            '</div>';
-          });
-        }
-        if (pers.length) {
-          html += '<div class="ac-group-title">🌟 Personen (Schauspieler & Regie)</div>';
-          pers.forEach(p => {
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')">' +
-              '<span>🌟 <b>' + esc(p.name) + '</b>' + (p.known_for ? ' <span style="color:#94a3b8;font-size:11px">(' + esc(p.known_for) + ')</span>' : '') + '</span>' +
-              '<span style="font-size:11px;color:#38bdf8">Filmografie ➔</span>' +
-            '</div>';
-          });
-        }
-        if (media.length) {
-          html += '<div class="ac-group-title">🎬 Filme & 📺 Serien (Mit aktiven Filtern)</div>';
-          media.forEach(m => {
-            const tc = m.media_type === "tv" ? "s" : "m";
-            const yr = (m.release_date || m.first_air_date || "").slice(0, 4);
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openDetails(\\'' + tc + '\\',' + Number(m.id) + ',false)">' +
-              '<span>' + (tc === 's' ? '📺' : '🎬') + ' <b>' + esc(m.title || m.name) + '</b>' + (yr ? ' <span style="color:#94a3b8">(' + esc(yr) + ')</span>' : '') + '</span>' +
-              '<span style="font-size:11px;color:#fbbf24">⭐ ' + (m.vote_average ? m.vote_average.toFixed(1) : '–') + '</span>' +
-            '</div>';
-          });
-        }
-        box.innerHTML = html;
-        box.classList.add("open");
-      }
-
-      async function openStudioView(companyId, companyName, presetStudioId = "") {
-        document.getElementById("modalRoot").innerHTML = "";
-        closeAutocomplete();
-        if (presetStudioId) {
-          prepareDiscoverContextFromModal();
-          await setDirectFilter("studio", presetStudioId, "force_include");
-          return;
-        }
-        state.isSearchMode = false;
-        state.searchFocused = false;
-        state.searchQuery = "";
-        state.currentView = "discover";
-        state.currentCollectionId = null;
-        state.currentUniverseId = null;
-        state.currentPersonId = null;
-        state.currentCompanyId = String(companyId || "").trim();
-        state.currentCompanyName = String(companyName || "Filmstudio").trim();
-        const inp = document.getElementById("searchInput");
-        if (inp) inp.value = "";
-        updateSearchClearBtnVisibility();
-        await loadDiscover(state.type || "m", state.genreId || "all", "pop", state.sort || "default", false, true, 1);
-      }
-
-      function clearStudioView() {
-        state.currentCompanyId = null;
-        state.currentCompanyName = "";
-        loadDiscover(state.type || "m", state.genreId || "all", state.mode || "trend", state.sort || "default", false, false, 1);
-      }
-
-      async function openPersonView(personId, personName) {
-        document.getElementById("modalRoot").innerHTML = "";
-        closeAutocomplete();
-        state.isSearchMode = true;
-        state.currentView = "person";
         state.currentPersonId = personId;
         state.currentPersonName = personName || "Person";
         state.searchQuery = personName || "";
@@ -3843,8 +3652,24 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
+          if (st.reportId) {
+            if (Array.isArray(window._adminReportsCache)) {
+              window._adminReportsCache = window._adminReportsCache.map(rep =>
+                rep && Number(rep.id) === Number(st.reportId)
+                  ? { ...rep, status: "resolved", resolved_at: Date.now() }
+                  : rep
+              );
+            }
+            if (window._lastAdminOverviewCache && Array.isArray(window._lastAdminOverviewCache.reports)) {
+              window._lastAdminOverviewCache.reports = window._adminReportsCache;
+              window._lastAdminOverviewCache.openReportsCount = (window._adminReportsCache || []).filter(rep => rep && rep.status === "open").length;
+            }
+          }
           if (!r || !r.ok) {
             showHudToast("⚠️ " + (r?.error || "Korrektur konnte nicht gespeichert werden."));
+            if (st.reportId && state.currentView === "admin") {
+              await loadAdminPanelView(true);
+            }
             return;
           }
           clearClientMediaCaches();
@@ -3860,7 +3685,7 @@
             await openDetails("m", st.tmdbId, false);
           }
           if (state.currentView === "admin") {
-            loadAdminPanelView();
+            await loadAdminPanelView(true);
           }
         } finally {
           setBusyState(false);
@@ -4004,16 +3829,36 @@
         await openDetails(tc, tid, false, reportObj.title || "", "", tc === "s" ? sNum : null);
       }
 
+      function syncAdminReportsCacheClient(reportsList) {
+        const cleanList = Array.isArray(reportsList) ? reportsList : [];
+        window._adminReportsCache = cleanList;
+        if (window._lastAdminOverviewCache && typeof window._lastAdminOverviewCache === "object") {
+          window._lastAdminOverviewCache.reports = cleanList;
+          window._lastAdminOverviewCache.openReportsCount = cleanList.filter(rep => rep && rep.status === "open").length;
+        }
+      }
+
       async function adminResolveMediaReportClient(reportId) {
         setBusyState(true, "✅ Markiere Meldung als gelöst...");
         try {
-          await apiFetchJson(API_BASE + "/admin/reports", {
+          const r = await apiFetchJson(API_BASE + "/admin/reports", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "resolve", reportId: Number(reportId) })
           });
+          if (r && Array.isArray(r.reports)) {
+            syncAdminReportsCacheClient(r.reports);
+          } else if (Array.isArray(window._adminReportsCache)) {
+            syncAdminReportsCacheClient(
+              window._adminReportsCache.map(rep =>
+                rep && (Number(rep.id) === Number(reportId) || Number(rep.created_at) === Number(reportId))
+                  ? { ...rep, status: "resolved", resolved_at: Date.now() }
+                  : rep
+              )
+            );
+          }
           showHudToast("✅ Meldung #" + reportId + " als gelöst markiert.");
-          loadAdminPanelView();
+          await loadAdminPanelView(true);
         } finally {
           setBusyState(false);
         }
@@ -4022,13 +3867,43 @@
       async function adminDeleteMediaReportClient(reportId) {
         setBusyState(true, "🗑️ Lösche Meldung...");
         try {
-          await apiFetchJson(API_BASE + "/admin/reports", {
+          const r = await apiFetchJson(API_BASE + "/admin/reports", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "delete", reportId: Number(reportId) })
           });
+          if (r && Array.isArray(r.reports)) {
+            syncAdminReportsCacheClient(r.reports);
+          } else if (Array.isArray(window._adminReportsCache)) {
+            syncAdminReportsCacheClient(
+              window._adminReportsCache.filter(rep => rep && Number(rep.id) !== Number(reportId) && Number(rep.created_at) !== Number(reportId))
+            );
+          }
           showHudToast("🗑️ Meldung gelöscht.");
-          loadAdminPanelView();
+          await loadAdminPanelView(true);
+        } finally {
+          setBusyState(false);
+        }
+      }
+
+      async function adminClearAllMediaReportsClient(onlyResolved = false) {
+        const label = onlyResolved ? "alle bereits gelösten Fehlermeldungen" : "ALLE Fehlermeldungen (offene & gelöste)";
+        const ok = await showCustomConfirm("Möchtest du wirklich " + label + " unwiderruflich aus D1 löschen?", "🗑️ Jetzt löschen");
+        if (!ok) return;
+        setBusyState(true, "🗑️ Bereinige Fehlermeldungen in D1...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/reports", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: onlyResolved ? "clear_resolved" : "clear_all" })
+          });
+          if (r && Array.isArray(r.reports)) {
+            syncAdminReportsCacheClient(r.reports);
+          } else {
+            syncAdminReportsCacheClient(onlyResolved ? (window._adminReportsCache || []).filter(rep => rep && rep.status !== "resolved") : []);
+          }
+          showHudToast(onlyResolved ? "🧹 Alle gelösten Meldungen entfernt." : "🗑️ Alle Fehlermeldungen komplett zurückgesetzt.");
+          await loadAdminPanelView(true);
         } finally {
           setBusyState(false);
         }
@@ -5118,3 +4993,577 @@
           }
         } else {
           const epOnly = withoutExt.match(/\\b(?:Folge|Episode|Ep\\.?)\\s*0*(\\d{1,3})\\b/i);
+
+          if (epOnly) {
+            isSeries = true;
+            season = 1;
+            episode = parseInt(epOnly[1], 10) || 1;
+            if (typeof epOnly.index === "number" && epOnly.index > 1) cutIdx = Math.min(cutIdx, epOnly.index);
+          } else if (!pInfo?.isMultiPart && !/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
+            // Fall "05 Ein Star ist geboren" / "13 Hochzeitspläne": Anführende 2- oder 3-stellige Zahl + Leerzeichen/Bindestrich bei < 4200s
+            const leadEpNumMatch = withoutExt.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/);
+            const numberedMovieGuardRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
+            const leadEpVal = leadEpNumMatch ? parseInt(leadEpNumMatch[1], 10) : 0;
+            if (leadEpNumMatch && leadEpVal >= 1 && leadEpVal <= 399 && !numberedMovieGuardRe.test(withoutExt) && !/\\b(?:19[2-9]\\d|20[0-2]\\d)\\b/.test(withoutExt)) {
+              isSeries = true;
+              season = Number(msgObj?.pre_context?.season || 1);
+              episode = leadEpVal;
+              episodeTitle = cleanClientMediaTitle(leadEpNumMatch[2]);
+              explicitTitle = (msgObj?.pre_context?.seriesHeader || msgObj?.pre_context?.title || episodeTitle);
+            }
+            // Fall Black Box 1 bis 6, Spuk im Hochhaus 1..7 & Pippi Langstrumpf 1 Pippi zieht...:
+            const strippedTrailingQual = !isSeries ? withoutExt
+              .replace(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/gi, " ")
+              .replace(/\\b(?:1080p|720p|2160p|480p|4k|uhd|x264|x265|h264|h265|hevc|ger|deu|german|deutsch|web-dl|webrip|bluray|hd|mp4|mkv|avi)\\b/gi, " ")
+              .replace(/\\s+/g, " ")
+              .trim() : "";
+            const franchiseGuardRe = /^(?:iron man|thor|avengers|matrix|john wick|shrek|toy story|cars|fast|furious|hangover|rambo|rocky|creed|mad max|spider man|batman|superman|deadpool|guardians|men in black|rush hour|bad boys|oceans|expendables|transporter|taken|equalizer|punisher|blade|underworld|resident evil|alien|predator|terminator|jurassic|indiana jones|star wars|harry potter|herr der ringe|hobbit|fluch der karibik|mission impossible|james bond|bourne|twilight|tribute von panem|maze runner|divergent|pitch perfect|step up|scary movie|american pie|final destination|saw|scream|conjuring|insidious|paranormal|purge|halloween|freitag der|nightmare|hellraiser|chucky|annabelle|nun|sinister|troll|ip man|ong bak|raid|undisputed|goal|hooligans|manta|fack ju|ostwind|bibi|conni|schule der magischen|vorstadtkrokodile|wilde kerle|fünf freunde|tkkg|drei fragezeichen|deep blue sea|deep blue|sharknado|sector|ghettogangz|banlieue|burg schreckenstein|fifty shades|jumanji|hotel transsilvanien|ich einfach unverbesserlich|minions|ice age|madagascar|kung fu panda|drachenzähmen|rio|sing|pets|zoomania|vaiana|frozen|eiskönigin|ralph reichts|incredibles|unglaublichen|findet nemo|findet dorie|monster ag|monster uni|wall e|oben|coco|soul|luca|encanto)\\b/i;
+            const isKnownClassicSeriesRe = /^(?:pippi langstrumpf|zur see|spuk im hochhaus|spuk unterm riesenrad|spuk von draußen|black box|das schloss im nebel|gormenghast|archiv des todes|front ohne gnade|feuerdrachen|gefährliche fahndung|treffpunkt flughafen|rote bergsteiger)\\b/i;
+            const ctxSeriesHeader = msgObj && msgObj.pre_context && msgObj.pre_context.seriesHeader
+              ? normalizeClientCompareTitle(msgObj.pre_context.seriesHeader)
+              : "";
+            const midNumMatch = strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|[1-9]\\d)\\s+([A-Za-zÄÖÜäöüß].{3,})$/);
+            const trailingNumMatch = !midNumMatch ? strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|1\\d|2[0-9]|30)\\s*$/) : null;
+            if (midNumMatch && !/^(?:part|teil|cd|disc|dvd|hd|uhd|4k|1080p|720p|german|deutsch)\\b/i.test(midNumMatch[3])) {
+              const candBase = cleanClientMediaTitle(midNumMatch[1]);
+              const normCand = normalizeClientCompareTitle(candBase);
+              const matchesCtxSeries = Boolean(ctxSeriesHeader && normCand && (normCand === ctxSeriesHeader || normCand.startsWith(ctxSeriesHeader + " ")));
+              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase) && (matchesCtxSeries || isKnownClassicSeriesRe.test(candBase))) {
+                isSeries = true;
+                season = 1;
+                episode = parseInt(midNumMatch[2], 10) || 1;
+                episodeTitle = cleanClientMediaTitle(midNumMatch[3]);
+                explicitTitle = candBase;
+              }
+            } else if (trailingNumMatch && !/\\b(?:part|teil|cd|disc|dvd)\\b/i.test(strippedTrailingQual)) {
+              const candBase = cleanClientMediaTitle(trailingNumMatch[1]);
+              const normCand = normalizeClientCompareTitle(candBase);
+              const matchesCtxSeries = Boolean(ctxSeriesHeader && normCand && (normCand === ctxSeriesHeader || normCand.startsWith(ctxSeriesHeader + " ")));
+              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase) && (matchesCtxSeries || isKnownClassicSeriesRe.test(candBase))) {
+                isSeries = true;
+                season = 1;
+                episode = parseInt(trailingNumMatch[2], 10) || 1;
+                explicitTitle = candBase;
+              }
+            }
+          }
+        }
+        // Dateiname hat Vorrang vor Caption-Tippfehlern (z.B. "Queen of the South S01E13.mp4" vs Caption "S01E3")
+        if (fileExplicitSeMatch) {
+          const isEpStaffelOrder = /^(?:Episode|Folge)/i.test(fileExplicitSeMatch[0]);
+          const fSeason = parseInt(isEpStaffelOrder ? fileExplicitSeMatch[2] : fileExplicitSeMatch[1], 10) || 1;
+          const fEpisode = parseInt(isEpStaffelOrder ? fileExplicitSeMatch[1] : fileExplicitSeMatch[2], 10) || 1;
+          if (!isSeries || episode !== fEpisode || !season) {
+            isSeries = true;
+            season = fSeason;
+            episode = fEpisode;
+          }
+        }
+
+        let year = null;
+        const parenYm = (" " + withoutExt + " ").match(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i);
+        const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+        if (ym) {
+          year = parseInt(ym[1], 10);
+          if (!explicitTitle && typeof ym.index === "number" && ym.index >= 2) cutIdx = Math.min(cutIdx, ym.index - 1);
+        }
+
+        let titleCand = explicitTitle ? explicitTitle : (withoutExt.slice(0, cutIdx).trim() || withoutExt);
+        if (year) {
+          titleCand = titleCand
+            .replace(new RegExp("[(\\\\[]\\\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\\\s+)?" + year + "\\\\s*[)\\\\]]", "gi"), " ")
+            .replace(new RegExp("\\\\b" + year + "\\\\b", "g"), " ");
+        }
+        let cleanTitle = cleanClientMediaTitle(titleCand) || "Unbekannt";
+        if (cleanTitle && cleanTitle.length > 50) {
+          cleanTitle = cleanTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+        }
+        const jacobMatch = cleanTitle.match(/^(Jacob\\s*2[\\s/_]*2)\\s+(und\\s+.+)$/i);
+        if (jacobMatch) cleanTitle = "Jacob 2/2";
+
+        return { cleanTitle, year, isSeries, isArchive: isRarArchive, season, episode, episodeTitle, quality, codec, part };
+      }
+
+      function repairAndParseClientBackupJson(rawText) {
+        const repairNotes = [];
+        let text = String(rawText || "").replace(/^\\uFEFF/, "").replace(/\\0/g, "").trim();
+        if (!text) return { ok: false, parsed: null, repaired: false, repairNotes: ["Datei ist leer"] };
+
+        // Stufe 1: Direktes JSON.parse
+        try {
+          return { ok: true, parsed: JSON.parse(text), repaired: false, repairNotes: [] };
+        } catch (firstErr) {
+          let cleaned = text;
+          const firstBracket = cleaned.search(/[\\{\\[]/);
+          const lastBrace = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
+          if (firstBracket > 0 || (lastBrace !== -1 && lastBrace < cleaned.length - 1)) {
+            cleaned = cleaned.slice(Math.max(0, firstBracket), lastBrace !== -1 ? lastBrace + 1 : cleaned.length);
+            repairNotes.push("Überflüssiger Text vor/nach JSON entfernt");
+          }
+          const noTrailingCommas = cleaned.replace(/,\\s*([\\}\\]])/g, "$1");
+          if (noTrailingCommas !== cleaned) {
+            repairNotes.push("Trailing Commas korrigiert");
+          }
+          try {
+            return { ok: true, parsed: JSON.parse(noTrailingCommas), repaired: true, repairNotes };
+          } catch (e2) {}
+
+          // Stufe 2: Multi-Block / Concatenated JSON Splitter
+          const blocks = [];
+          let depth = 0;
+          let startIdx = -1;
+          let inStr = false;
+          let escNext = false;
+          for (let i = 0; i < noTrailingCommas.length; i++) {
+            const ch = noTrailingCommas[i];
+            if (escNext) { escNext = false; continue; }
+            if (ch === "\\\\" && inStr) { escNext = true; continue; }
+            if (ch === '"') { inStr = !inStr; continue; }
+            if (!inStr) {
+              if (ch === "{" || ch === "[") {
+                if (depth === 0) startIdx = i;
+                depth++;
+              } else if (ch === "}" || ch === "]") {
+                depth--;
+                if (depth === 0 && startIdx !== -1) {
+                  const blockStr = noTrailingCommas.slice(startIdx, i + 1);
+                  try { blocks.push(JSON.parse(blockStr)); } catch (eb) {}
+                  startIdx = -1;
+                } else if (depth < 0) {
+                  depth = 0;
+                  startIdx = -1;
+                }
+              }
+            }
+          }
+
+          if (blocks.length > 0) {
+            repairNotes.push("Mehrteilige JSON-Blöcke (" + blocks.length + " Segmente) zusammengeführt");
+            if (blocks.length === 1) {
+              return { ok: true, parsed: blocks[0], repaired: true, repairNotes };
+            }
+            const combinedMessages = [];
+            const combinedItems = [];
+            let combinedChatName = "";
+            for (const blk of blocks) {
+              if (Array.isArray(blk?.messages)) {
+                if (!combinedChatName && (blk.name || blk.title)) combinedChatName = String(blk.name || blk.title);
+                for (const m of blk.messages) combinedMessages.push(m);
+              } else if (Array.isArray(blk?.chats?.list)) {
+                for (const ch of blk.chats.list) {
+                  if (!combinedChatName && ch?.name) combinedChatName = String(ch.name);
+                  if (Array.isArray(ch?.messages)) {
+                    for (const m of ch.messages) combinedMessages.push(m);
+                  }
+                }
+              } else if (Array.isArray(blk)) {
+                for (const item of blk) {
+                  if (item && (item.type === "message" || item.file_name || item.text || item.media_type)) combinedMessages.push(item);
+                  else combinedItems.push(item);
+                }
+              } else if (blk && typeof blk === "object") {
+                if (blk.type === "message" || blk.file_name || (blk.id && blk.text)) combinedMessages.push(blk);
+                else combinedItems.push(blk);
+              }
+            }
+            if (combinedMessages.length > 0) {
+              return { ok: true, parsed: { name: combinedChatName || "Telegram Export (Repariert)", messages: combinedMessages }, repaired: true, repairNotes };
+            }
+            return { ok: true, parsed: combinedItems, repaired: true, repairNotes };
+          }
+
+          // Stufe 3: NDJSON / Zeilenweises JSON
+          const lines = text.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
+          const lineObjs = [];
+          for (const line of lines) {
+            const cleanLine = line.replace(/,$/, "").trim();
+            if ((cleanLine.startsWith("{") && cleanLine.endsWith("}")) || (cleanLine.startsWith("[") && cleanLine.endsWith("]"))) {
+              try {
+                const o = JSON.parse(cleanLine);
+                if (Array.isArray(o)) lineObjs.push(...o);
+                else lineObjs.push(o);
+              } catch (el) {}
+            }
+          }
+          if (lineObjs.length > 0) {
+            repairNotes.push("Zeilenweises JSON / NDJSON (" + lineObjs.length + " Zeilen) repariert");
+            const looksLikeTg = lineObjs.some(o => o && (o.type === "message" || o.file_name || o.media_type || o.text));
+            return {
+              ok: true,
+              parsed: looksLikeTg ? { name: "Telegram Export (NDJSON)", messages: lineObjs } : lineObjs,
+              repaired: true,
+              repairNotes
+            };
+          }
+
+          // Stufe 4: Notfall-Objekt-Scanner für abgeschnittene result.json Dateien
+          const nameMatch = text.match(/"name"\\s*:\\s*"([^"]+)"/);
+          const recoveredChatName = nameMatch ? nameMatch[1] : "Repariertes Telegram-Backup";
+          const recoveredMsgs = [];
+          const msgRegex = /\\{[^{}]*"(?:file_name|file|text|title|filename|media_type)"[^{}]*\\}/g;
+          let mMatch;
+          while ((mMatch = msgRegex.exec(noTrailingCommas)) !== null) {
+            try { recoveredMsgs.push(JSON.parse(mMatch[0])); } catch (em) {}
+          }
+          if (recoveredMsgs.length > 0) {
+            repairNotes.push("Beschädigte JSON-Struktur repariert (" + recoveredMsgs.length + " Nachrichten rekonstruiert)");
+            return { ok: true, parsed: { name: recoveredChatName, messages: recoveredMsgs }, repaired: true, repairNotes };
+          }
+
+          return { ok: false, parsed: null, repaired: false, repairNotes: [firstErr.message] };
+        }
+      }
+
+      async function deduplicateAndClassifyClientEntries(rawCandidates, statusEl = null) {
+        const entries = [];
+        const seenExactKeys = new Set();
+        const seenFileIds = new Set();
+        const seenWorkKeys = new Set();
+        let duplicatesSkippedInFile = 0;
+        let qualityVariantsInFile = 0;
+        let detectedMoviesCount = 0;
+        let detectedSeriesCount = 0;
+        const previewSamples = [];
+        const totalRaw = rawCandidates.length;
+
+        for (let i = 0; i < totalRaw; i++) {
+          if (i > 0 && i % 400 === 0) {
+            if (statusEl) {
+              const pct = Math.min(100, Math.round((i / totalRaw) * 100));
+              statusEl.textContent =
+                "⏳ Gruppiere & prüfe Duplikate: " +
+                i.toLocaleString("de-DE") + " / " + totalRaw.toLocaleString("de-DE") +
+                " (" + pct + "%)...";
+            }
+            await new Promise(r => setTimeout(r, 0));
+          }
+          const item = rawCandidates[i];
+          if (!item) continue;
+          const rawStr = typeof item === "string"
+            ? item
+            : String(item.filename || item.file_name || item.title || item.name || "").trim();
+          if (!rawStr || rawStr.length < 2) continue;
+
+          // .rar und .partXX.rar sind als eigene Kategorie ("📦 RAR-Archiv") erlaubt!
+          if (/\\.(zip|7z|tar|gz|iso|exe|apk|pdf|txt|nfo|srt|sub|webp|tgs|gif|mp3|m4a|flac|ogg|wav)$/i.test(rawStr) || /\\.gif\\.mp4$/i.test(rawStr)) {
+            continue;
+          }
+
+          const durationSec = (typeof item === "object" && item !== null)
+            ? Number(item.duration_sec || item.duration_seconds || item.duration || 0)
+            : 0;
+          const parsed = parseClientMediaPreview(rawStr, durationSec, typeof item === "object" ? item : null);
+          if (typeof item === "object" && item !== null) {
+            if (item.cleanTitle && item.cleanTitle !== "Unbekannt") {
+              parsed.cleanTitle = item.neighborEnriched
+                ? String(item.cleanTitle).trim()
+                : (cleanClientMediaTitle(String(item.cleanTitle)) || String(item.cleanTitle));
+            }
+            if (item.type === "series" || item.type === "tv" || item.isSeries || item.season || item.episode) {
+              parsed.isSeries = true;
+              parsed.season = Number(item.season || parsed.season || 1);
+              parsed.episode = Number(item.episode || parsed.episode || 1);
+            }
+            if (item.episodeTitle) parsed.episodeTitle = String(item.episodeTitle);
+            if (item.year) parsed.year = Number(item.year);
+            if (item.width || item.height) {
+              parsed.quality = detectClientVideoQuality(item, item.raw_text || "", rawStr);
+            } else if (item.quality !== undefined) {
+              parsed.quality = item.quality ? String(item.quality) : null;
+            }
+            if (item.part) parsed.part = String(item.part);
+            if (item.codec) parsed.codec = String(item.codec);
+            if (item.isArchive) parsed.isArchive = true;
+          }
+
+          const normTitle = normalizeClientCompareTitle(parsed.cleanTitle);
+          if (!normTitle || normTitle === "unbekannt") continue;
+
+          const fileId = (typeof item === "object" && (item.telegram_file_id || item.file_id || item.fileId))
+            ? String(item.telegram_file_id || item.file_id || item.fileId)
+            : "";
+          if (fileId && seenFileIds.has(fileId)) {
+            duplicatesSkippedInFile++;
+            continue;
+          }
+
+          const fileSizeBytes = (typeof item === "object" && item !== null)
+            ? Number(item.file_size || item.fileSize || 0)
+            : 0;
+          const rawFileNameKey = (typeof item === "object" && item !== null)
+            ? String(item.raw_file_name || item.file_name || item.rawInput || rawStr).trim().toLowerCase()
+            : rawStr.trim().toLowerCase();
+          const partSuffix = String(parsed.part || "").toUpperCase();
+
+          const workKey = normTitle + "|" + (parsed.year || "") + "|" + (parsed.isSeries ? ("s_" + (parsed.season || 1) + "_" + (parsed.episode || 1)) : "m");
+          // Ohne Telegram file_id gilt ein Eintrag NUR als exaktes Duplikat, wenn Dateigröße + Dauer + Dateiname + Part 100% übereinstimmen (CD2 & RAR-PART2 werden nie verworfen!)
+          const exactKey = (fileSizeBytes > 0 || durationSec > 0)
+            ? ("file|" + rawFileNameKey + "|sz:" + fileSizeBytes + "|dur:" + durationSec + "|part:" + partSuffix)
+            : (workKey + "|" + String(parsed.quality || "UNBEKANNT").toUpperCase() + "|" + String(parsed.codec || "x264").toUpperCase() + "|part:" + partSuffix + "|" + rawFileNameKey);
+
+          if (seenExactKeys.has(exactKey)) {
+            duplicatesSkippedInFile++;
+            continue;
+          }
+          seenExactKeys.add(exactKey);
+          if (fileId) seenFileIds.add(fileId);
+
+          const isQualityVariant = seenWorkKeys.has(workKey);
+          if (isQualityVariant) {
+            qualityVariantsInFile++;
+          } else {
+            seenWorkKeys.add(workKey);
+            if (parsed.isSeries) detectedSeriesCount++;
+            else detectedMoviesCount++;
+          }
+
+          const entryObj = typeof item === "object" && item !== null
+            ? {
+                ...item,
+                filename: rawStr,
+                rawInput: item.rawInput || rawStr,
+                cleanTitle: parsed.cleanTitle,
+                year: parsed.year,
+                isSeries: parsed.isSeries,
+                isArchive: Boolean(parsed.isArchive || item.isArchive),
+                season: parsed.season,
+                episode: parsed.episode,
+                episodeTitle: parsed.episodeTitle || item.episodeTitle || "",
+                quality: parsed.quality,
+                codec: parsed.codec,
+                part: parsed.part,
+                tags: parsed.isArchive ? "📦 RAR-Archiv" : (item.tags || ""),
+                contextOverview: item.contextOverview || "",
+                neighborEnriched: Boolean(item.neighborEnriched),
+                isQualityVariant
+              }
+            : {
+                filename: rawStr,
+                rawInput: rawStr,
+                cleanTitle: parsed.cleanTitle,
+                year: parsed.year,
+                isSeries: parsed.isSeries,
+                isArchive: Boolean(parsed.isArchive),
+                season: parsed.season,
+                episode: parsed.episode,
+                episodeTitle: parsed.episodeTitle || "",
+                quality: parsed.quality,
+                codec: parsed.codec,
+                part: parsed.part,
+                tags: parsed.isArchive ? "📦 RAR-Archiv" : "",
+                contextOverview: "",
+                neighborEnriched: false,
+                isQualityVariant
+              };
+
+          entries.push(entryObj);
+          if (previewSamples.length < 8) {
+            previewSamples.push({
+              cleanTitle: parsed.cleanTitle,
+              year: parsed.year || "k.A.",
+              isSeries: parsed.isSeries,
+              season: parsed.season,
+              episode: parsed.episode,
+              quality: parsed.isArchive ? "📦 RAR" : (parsed.quality || "Auto"),
+              isQualityVariant
+            });
+          }
+        }
+
+        return {
+          entries,
+          duplicatesSkippedInFile,
+          qualityVariantsInFile,
+          detectedMoviesCount,
+          detectedSeriesCount,
+          previewSamples
+        };
+      }
+
+      function buildClientPrevMsgSummary(m) {
+        if (!m || typeof m !== "object") return null;
+        const txt = flattenClientTgText(m.text || m.caption || m.text_entities);
+        const fName = String(m.file_name || "").trim();
+        const combined = [txt, fName].filter(Boolean).join(" | ").slice(0, 320);
+        if (!combined && !m.photo) return null;
+        let tmdbId = null;
+        let mediaType = null;
+        const tmdbMatch = combined.match(/themoviedb\\.org\\/(movie|tv)\\/(\\d+)/i);
+        if (tmdbMatch) {
+          mediaType = tmdbMatch[1].toLowerCase() === "tv" ? "tv" : "movie";
+          tmdbId = parseInt(tmdbMatch[2], 10);
+        }
+        const firstLine = (txt.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean)[0] || fName || "").slice(0, 120);
+        const parsedGuess = parseClientMediaPreview(firstLine, 0, m);
+        return {
+          msgId: m.id || null,
+          date: m.date || null,
+          hasPhoto: Boolean(m.photo),
+          text: combined || (m.photo ? "[Poster / Bild-Nachricht]" : ""),
+          titleGuess: parsedGuess.cleanTitle && parsedGuess.cleanTitle !== "Unbekannt" ? parsedGuess.cleanTitle : "",
+          yearGuess: parsedGuess.year || null,
+          tmdbId,
+          mediaType
+        };
+      }
+
+      function extractClientPreContextFromMsg(msg, currentPre) {
+        if (isClientJunkOrSticker(msg)) return currentPre || {};
+        const isPhoto = Boolean(msg.photo || msg.media_type === "photo" || /^image\\//i.test(msg.mime_type || ""));
+        const txt = normalizeClientEpisodeText(flattenClientTgText(msg.text || msg.caption || msg.text_entities));
+        const hasLinks = Array.isArray(msg.text_entities) && msg.text_entities.some(e => e && (e.href || e.url || e.type === "link"));
+        // Fall 1 (Frontier ID 111): Leeres Foto setzt den vorherigen Serien-/Film-Kontext zurück!
+        if (isPhoto && !txt && !hasLinks) {
+          return { lastMessageId: Number(msg.id || 0) };
+        }
+        const ctx = (isPhoto && txt)
+          ? { lastMessageId: Number(msg.id || 0) }
+          : (currentPre ? { ...currentPre, lastMessageId: Number(msg.id || currentPre.lastMessageId || 0) } : { lastMessageId: Number(msg.id || 0) });
+        if (!txt && !hasLinks) return ctx;
+
+        if (Array.isArray(msg.text_entities)) {
+          for (const ent of msg.text_entities) {
+            const href = ent.href || (ent.type === "link" ? ent.text : "") || "";
+            const tm = String(href).match(/themoviedb\\.org\\/(movie|tv)\\/(\\d+)/i);
+            if (tm) {
+              ctx.mediaType = tm[1].toLowerCase() === "tv" ? "tv" : "movie";
+              ctx.tmdbId = parseInt(tm[2], 10);
+              if (ctx.mediaType === "movie") delete ctx.seriesHeader;
+            }
+            const im = String(href).match(/imdb\\.com\\/title\\/(tt\\d+)/i);
+            if (im) ctx.imdbId = im[1];
+            if (String(href).includes("vorschauserien")) ctx.isSeriesHeader = true;
+          }
+        }
+        const rawTm = txt.match(/themoviedb\\.org\\/(movie|tv)\\/(\\d+)/i);
+        if (rawTm && !ctx.tmdbId) {
+          ctx.mediaType = rawTm[1].toLowerCase() === "tv" ? "tv" : "movie";
+          ctx.tmdbId = parseInt(rawTm[2], 10);
+        }
+        const rawIm = txt.match(/imdb\\.com\\/title\\/(tt\\d+)/i);
+        if (rawIm && !ctx.imdbId) ctx.imdbId = rawIm[1];
+
+        const seasonHeaderMatch = txt.match(/\\bStaffel[\\s._-]*0*(\\d{1,2})\\b/i);
+        if (seasonHeaderMatch) {
+          ctx.season = parseInt(seasonHeaderMatch[1], 10) || 1;
+          ctx.isSeriesHeader = true;
+        }
+
+        const tMatch = txt.match(/(?:🎬\\s*)?(?:Titel|Title|Film|Serie)\\s*:\\s*([^\\n]+)/i);
+        if (tMatch) {
+          ctx.title = cleanClientMediaTitle(tMatch[1]);
+          if (!seasonHeaderMatch && !ctx.isSeriesHeader) {
+            delete ctx.seriesHeader;
+          }
+        }
+        const oMatch = txt.match(/Originaltitel\\s*:\\s*([^\\n]+)/i);
+        if (oMatch) ctx.originalTitle = cleanClientMediaTitle(oMatch[1]);
+        const yMatch = txt.match(/(?:Erscheinungsjahr|Jahr|Release)\\s*:\\s*.*?(19\\d{2}|20[0-2]\\d)/i);
+        if (yMatch) ctx.year = parseInt(yMatch[1], 10);
+
+        const lines = getCleanClientContentLines(txt);
+        // Video schlägt Header (Breaking Bad S03E01 Fix): Auch wenn msg.media_type === "video_file", Serien-/Staffel-Header in den Kontext übernehmen!
+        if (lines.length >= 1 && !tMatch) {
+          const firstLine = lines[0];
+          const isYoutubeOrUrlOnly = /^(?:https?:\\/\\/|www\\.|youtu\\.be\\/|youtube\\.com\\/)/i.test(firstLine.trim()) || /(?:youtu\\.be\\/|youtube\\.com\\/watch)/i.test(firstLine);
+          if (isYoutubeOrUrlOnly) {
+            return ctx;
+          }
+          if (/\\b\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel/i.test(firstLine) && ctx.seriesHeader) {
+            return ctx;
+          }
+          if (ctx.isSeriesHeader || /\\b(?:Staffel\\s+\\d+|Miniserie|\\d+\\/\\d+\\s*Folgen|\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel)/i.test(txt)) {
+            const ymHeader = (" " + txt.slice(0, 120) + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+            if (ymHeader && !ctx.year) ctx.year = parseInt(ymHeader[1], 10);
+            const hClean = cleanClientMediaTitle(firstLine.replace(/Staffel\\s*\\d+.*/i, "").replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
+            if (hClean && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(hClean)) {
+              ctx.seriesHeader = hClean;
+              ctx.isSeriesHeader = true;
+              delete ctx.title;
+              delete ctx.tmdbId;
+            }
+          } else if (!msg.file_name && msg.media_type !== "video_file") {
+            const isCollectionHeaderLine = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\b\\d+\\s*-\\s*\\d+\\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
+            if (!isCollectionHeaderLine) {
+              const headSlice = txt.slice(0, 110);
+              const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+              if (ym && ym.index >= 2) {
+                ctx.year = parseInt(ym[1], 10);
+                const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
+                if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
+                  ctx.title = tGuess;
+                  if (ctx.isSeriesHeader) {
+                    ctx.seriesHeader = tGuess;
+                  } else {
+                    delete ctx.seriesHeader;
+                  }
+                }
+              }
+            }
+          }
+        }
+        return ctx;
+      }
+
+      // Stufe 1 (Arielle 2023 & Kurztitel): Nachbar-Post (+1 / -1 / +2 / -2) auf passenden Voll-Titel & Beschreibungstext prüfen
+      function enrichClientVideoFromNeighborPost(messages, currentIndex, parsedVideo) {
+        if (!parsedVideo || !parsedVideo.title) return parsedVideo;
+
+        const baseWord = String(parsedVideo.title)
+          .toLowerCase()
+          .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\\s+/i, "")
+          .split(/[\\s:,\\-–_.]+/)[0];
+
+        if (!baseWord || baseWord.length < 3) return parsedVideo;
+
+        // Prüfe zuerst den Post direkt DARUNTER (+1), dann darüber (-1), dann +2 / -2
+        for (const offset of [1, -1, 2, -2]) {
+          const neighbor = messages[currentIndex + offset];
+          if (!neighbor || neighbor.media_type === "video_file" || neighbor.video) continue;
+          const nFile = String(neighbor.file_name || neighbor.file || "").toLowerCase();
+          if (/\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|srt|vtt|sub|ass|ssa)$/i.test(nFile)) continue;
+
+          const rawText = flattenClientTgText(neighbor.text || neighbor.caption || neighbor.text_entities);
+          const lines = rawText.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
+          if (lines.length === 0) continue;
+
+          const firstLine = lines[0]
+            .replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\\s]+/gu, "")
+            .replace(/^(?:(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*)?(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\\s+/i, "")
+            .replace(/^(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*/i, "")
+            .trim();
+
+          // Sicherheits-Check: Die erste Zeile des Nachbarn MUSS das Basiswort ("arielle") enthalten!
+          // Dadurch wird "Tin & Tina 2023" (-1) sofort ausgeschlossen!
+          if (!firstLine.toLowerCase().includes(baseWord)) continue;
+
+          const yearMatch = rawText.match(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/);
+          const neighborYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+          if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
+
+          // Collection-Header & Detailtitel-Schutz ("Der König der Löwen 2 - Simbas Königreich (1998)" vs. "König der Löwen teil 1 bis 3"):
+          // 1. Wenn der Titel des Nachbar-Posts Wörter wie "teil 1 bis 3", "1-3", "collection", "trilogie" oder "box" enthält, darf er NIEMALS parsedVideo.title überschreiben!
+          // 2. Wenn das aktuelle Video bereits einen eigenen ausführlichen Titel mit Fortsetzungs-Nummer ([1-9]) oder Bindestrich ("-") besitzt,
+          //    ist der eigene Titel hochwertiger als jeder Nachbar-Post und darf nicht überschrieben werden!
+          const neighborTitleLower = firstLine.toLowerCase();
+          const isCollectionHeader = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\d+\\s*-\\s*\\d+|collection|trilogie|trilogy|quadrilogie|box)/i.test(neighborTitleLower);
+          const videoHasDetailedTitle = Boolean(parsedVideo.title && (/[1-9]/.test(parsedVideo.title) || parsedVideo.title.includes("-") || parsedVideo.title.includes("–") || parsedVideo.title.includes(":")));
+
+          if (isCollectionHeader || videoHasDetailedTitle) {
+            return {
+              ...parsedVideo,
+              contextOverview: lines.slice(1).join(" ").trim() || parsedVideo.contextOverview || ""
+            };
+          }
+
+          const cleanedNeighborTitle = firstLine
+            .replace(/\\s*[(\\[\\-–]*\\s*\\b(19[2-9]\\d|20[0-2]\\d)\\b\\s*[)\\]]*\\s*$/, "")
+            .trim();
+          // "Cocaine Bear"- & "Ted Bundy"-Schutz (Max. Titellänge 60 Zeichen):
+          // Wenn die erste Zeile des Nachbar-Posts länger als 60 Zeichen ist, ist es eine Filmbeschreibung!
+          if (cleanedNeighborTitle.length > 60) {
+            return {
+              ...parsedVideo,
+              year: parsedVideo.year || neighborYear,
+              contextOverview: rawText.trim(),

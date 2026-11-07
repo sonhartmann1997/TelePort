@@ -2449,7 +2449,7 @@
           const failItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
-            status: "?",
+            status: "failed",
             contextError: true,
             reviewReasonCode: failReasonCode,
             errorReason: failReasonText,

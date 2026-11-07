@@ -1,107 +1,76 @@
-# 100 % D1-Datenbank-Architektur für 180k+ JSON-Importe & Reload-Sicherheit
+# Implementierungsplan: Admin/VIP-Zugang im Simulator, End-to-End JSON-Import-Simulation & Reparatur der Fehlermeldungen
 
-Dieser überarbeitete Plan stellt sicher, dass **alle importierten Filme, Serien, Episoden, Stream-Dateien, Prüflisten und Import-Playlists dauerhaft und ausschließlich in Cloudflare D1 (SQL)** gespeichert werden – **nicht in Cloudflare KV** – und dass nach einem Seiten-Reload (F5) sowohl das Import-Cockpit als auch die Darstellung auf der **Hauptseite**, im **Detail-Modal** und in den **Playlists** vollständig intakt bleiben.
+## 1. Ursache & Behebung des Admin/VIP-Zugangsproblems im Simulator
 
----
+### Identifizierte Ursachen
+1. **Überschreiben von `window.Telegram.WebApp.initData` durch `telegram-web-app.js`:**
+   - `NetflixTmaSimulator.tsx` injiziert das Persona-Bridge-Skript direkt nach `<head>`.
+   - Wenige Zeilen später lädt `08a-tma-netflix-frontend.js` das externe Skript `<script src="https://telegram.org/js/telegram-web-app.js"></script>`. Da im Simulator-Iframe keine echten Telegram-Hash-Parameter in der URL stehen, überschreibt das offizielle Skript `window.Telegram.WebApp` und setzt `initData = ""`.
+   - Beim App-Start ist `rawInitData` dadurch leer (`""`) und die Mini-App landet im **Gast-Modus (`👤 Gast • Login`)**, ohne `/api/tma/auth/init` aufzurufen.
+2. **Ablehnung der Simulator-Signatur im Worker-Backend (`resolveTmaAuthContext`):**
+   - Selbst wenn das Frontend im Simulator `sessionToken = "sim_session_token_valid"` oder `hash=sim_valid_hmac` sendet, schlagen `verifyTmaSessionToken` und `verifyTelegramInitDataHmac` in `08a-tma-netflix-frontend.js` bei nachfolgenden Backend-Requests (`/api/tma/admin/overview`, `/api/tma/admin/import-batch`, `/api/tma/admin/validate-channel`, `/api/tma/admin/reports`) fehl. Der Worker stuft den Request als `guest` ein (`403 Zugriff verweigert`).
+3. **Veraltetes `localStorage`-Token beim Rollenwechsel:**
+   - Beim Umschalten zwischen `Admin & VIP`, `Telegram User` und `Gast / Browser` in der oberen Leiste blieb ein zuvor gespeichertes `tma_session_token` im Iframe bestehen.
 
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> **Antwort auf deine Frage: „Und die Einträge landen am Ende in KV und nicht in D1? Ist das schlau?“**
-> **Nein – 180.000 Einträge in KV zu speichern wäre überhaupt nicht schlau!**
-> - Cloudflare KV ist nur für kleine Key-Value-Daten gedacht (max. 1.000 Schreibzugriffe/Tag im Free-Tarif, 25 MB Limit, hohes CPU-Limit-Risiko beim `JSON.parse()` großer Listen).
-> - **Cloudflare D1 (SQLite)** hingegen ist für hunderttausende Datensätze gebaut (Millionen Zeilen, schnelle SQL-Indizes, kein 1.000-Writes-Deckel).
-> - **Neue Architektur-Entscheidung**: Die importierten Einträge und Import-Playlists landen **weder währenddessen noch am Ende in KV**, sondern **zu 100 % in D1**! KV wird beim JSON-Import überhaupt nicht mehr beschrieben (0 KV-Writes).
-
-- **Bestätigte Entscheidung 1 (100 % D1 statt KV für alle Importe & Playlists)**:
-  - Filme (`movies`, `movie_files`), Serien & Episoden (`series`, `series_episodes`, `episode_files`), Import-Playlists (`d1_playlists`, `d1_playlist_items`), der Server-Checkpoint (`d1_import_checkpoints`) und das Diagnose-Log (`import_diagnostic_logs`) liegen **komplett in D1**.
-- **Bestätigte Entscheidung 2 (Garantierter Erhalt der Hauptseite & UI-Darstellung)**:
-  - Wir haben alle UI-Endpunkte geprüft:
-    1. **Hauptseite (`/api/tma/discover`) & Suche (`/api/tma/search`)**: Lesen die VIP-Stream-Badges (`1080p`, `4K`, Stream-Anzahl) über `attachVipQualitiesToMediaList` und `applyVipStreamsOnlyFilterIfActive` **bereits direkt per SQL `WHERE movie_id IN (...)` aus D1** (`movie_files` & `episode_files`). Zusätzlich ergänzen wir im Modus „🌟 Nur VIP-Streams“ eine direkte D1-Katalog-Abfrage, damit alle in D1 importierten Filme & Serien sofort auf der Hauptseite erscheinen.
-    2. **Detail-Modal (`/api/tma/details`) & Staffel-Ansicht (`/api/tma/season`)**: Laden alle Schnittfassungen, Episoden und Stream-Buttons direkt aus den D1-Tabellen `movie_files` und `episode_files`.
-    3. **Playlists & Admin-Übersicht (`/api/tma/wishlist`, `/api/tma/admin/overview`)**: Laden die JSON-Import-Playlists und den `bot_vip`-Katalog direkt aus **D1** statt aus einem überladenen KV-Array. Dadurch bleibt das UI optisch und funktional zu 100 % identisch, stürzt aber auch bei 180.000 Einträgen niemals ab.
-
----
-
-## 1. Overview & Core Concept
-
-- **Was wird gelöst**:
-  1. **Kein einziger KV-Schreibzugriff mehr beim JSON-Import (100 % D1)**: Sämtliche Daten eines JSON-Imports – inklusive der Zuordnung zur gewählten Ziel-Playlist und des Fortschritts-Checkpoints – werden per SQL `INSERT OR REPLACE` direkt in **D1** gespeichert. Damit entfällt das Cloudflare KV-Limit (1.000 Writes/Tag) für den Import komplett.
-  2. **Sofortige Wiederherstellung nach Seiten-Reload (F5)**:
-     - Im Browser speichert **IndexedDB** (`tma_backup_job_idb_v1`) die geparste 180k-Eintragsliste lokal zwischen, während **D1** den Server-Checkpoint, alle bereits gespeicherten Filme/Serien und alle offenen Prüffälle hält.
-     - Nach F5 wird das Import-Dashboard (Fortschrittsbalken, Zähler, **„🛠️ Prüfen & Korrigieren“** mit Review-Reason-Badges, **„🛠️ Diagnose-Log“** und **„▶️ Weiter“**-Button) sofort wieder angezeigt, ohne dass die `.json`-Datei neu ausgewählt werden muss.
-  3. **Intakte Hauptseite & schnelle Katalog-Darstellung**:
-     - Die Hauptseite zeigt weiterhin alle Cover, Bewertungen, Filter und VIP-Qualitäts-Badges (`4K`, `1080p`, Episoden-Zähler) direkt aus D1 an.
-     - Auch in der **AI Studio Vorschau** werden die simulierte D1-Datenbank und KV-Einstellungen im Browser-Speicher persistiert, sodass F5 in der Vorschau ebenfalls nichts mehr löscht.
+### Geplante Lösung (Auto-Login über normales Mini-App-Menü)
+- **`src/components/NetflixTmaSimulator.tsx`:**
+  - Beim Injizieren der Simulator-Bridge wird `<script src="https://telegram.org/js/telegram-web-app.js"></script>` im Simulator-Iframe neutralisiert bzw. `window.Telegram.WebApp` gegen Überschreiben geschützt, sodass `initData` und `initDataUnsafe` der gewählten Rolle (`admin_vip` oder `standard_user`) stabil erhalten bleiben.
+  - Beim Wechsel der Rolle in der oberen Simulator-Leiste wird `localStorage` für `tma_session_token` automatisch synchronisiert, sodass sofort der Auto-Login als **Admin & VIP** (`🟢 @streamflix_admin 🌟VIP 👑`) greift und das Admin-Panel regulär über das Mini-App-Menü (Sidebar oder Account-Modal) geöffnet werden kann.
+  - Die `/api/tma/auth/init`- und `/api/tma/auth/me`-Requests werden direkt durch die echte Worker-Sandbox (`executeWorkerSandbox`) geleitet, die ein echtes, kryptografisch signiertes Session-Token ausstellt und den Admin-User in der D1-Sandbox (`users`-Tabelle) anlegt.
+- **`worker-modules/08a-tma-netflix-frontend.js`:**
+  - `verifyTelegramInitDataHmac` unterstützt neben der regulären HMAC-SHA256-Signatur auch verifizierte Simulator-Payloads (`hash=sim_valid_hmac`), sofern die User-ID mit der konfigurierten Simulator-Persona übereinstimmt. Dadurch durchlaufen **alle** nachfolgenden `/api/tma/admin/*`-Routen exakt denselben D1-Auth-Pfad wie in Produktion.
 
 ---
 
-## 2. User Experience & Visual Design
+## 2. Ursache & Reparatur der VIP/Admin-Fehlermeldungen („🚨 Meldungen“)
 
-- **Hauptseite (`Discover`), Suche & Detail-Modal**:
-  - **Unverändertes STREAMFLIX-Design**: Hero-Banner, Poster-Grid, Qualitäts-Badges (`1080p`, `4K`, `🎞️ Fassungen`), Filter-Cockpit und Detail-Modal bleiben optisch und funktional exakt erhalten.
-  - **Verbesserter VIP-Stream-Filter auf der Hauptseite**: Wenn der Filter **„🌟 Nur VIP-Streams“** aktiv ist, speist sich die Hauptseite direkt aus den in **D1** vorhandenen Filmen und Serien (mit echten `movie_files` / `episode_files`), sodass deine importierten Titel immer zuverlässig auf der Hauptseite auftauchen.
-- **Admin-Panel (`Backup / JSON-Import` & `Prüfen & Korrigieren`)**:
-  - Bleibt auch nach einem Seiten-Reload (F5) vollständig geöffnet und zeigt alle aus D1 geladenen Konflikte mit ihren **Review-Reason-Badges** (`TMDB_NOT_FOUND`, `YEAR_CONFLICT`, `PARSER_AMBIGUITY`, `SEASON_CONFLICT`, `SEQUEL_CONFLICT`, `API_ERROR`).
+### Identifizierte Ursachen (warum Meldungen beim Bestätigen, Löschen und DB-Reset nicht verschwinden)
+1. **`media_reports` fehlte komplett beim Datenbank-Reset (`04-d1-database.js` Zeile 2580):**
+   - `resetAllMediaAndPlaylistsInD1AndKv(env)` löschte nur 9 Tabellen (`episode_files`, `series_episodes`, `series_seasons`, `series`, `movie_files`, `movies`, `search_cache`, `entity_cache`, `import_queue`), ließ aber **`media_reports`** (sowie `import_diagnostic_logs`, `d1_playlists`, `d1_playlist_items`, `d1_import_checkpoints`) in D1 unangetastet!
+   - Zusätzlich wurden in `resetAllD1MediaAdmin` (`08c-tma-netflix-frontend.js` Zeile 1785) die Client-Caches `window._adminReportsCache` und `window._lastAdminOverviewCache` nicht geleert.
+2. **Stale Client-Cache nach „Als gelöst markieren“ & „Löschen“ (`08b-tma-netflix-frontend.js` Zeilen 4007–4035 & `08c` Zeile 4036):**
+   - `adminResolveMediaReportClient` und `adminDeleteMediaReportClient` riefen zwar `POST /api/tma/admin/reports` auf, ignorierten aber die vom Server zurückgegebene aktualisierte `reports`-Liste und aktualisierten weder `window._adminReportsCache` noch `window._lastAdminOverviewCache`.
+   - Anschließend riefen sie `loadAdminPanelView()` mit `forceNetworkRefresh = false` auf, wodurch das Admin-Panel die alten gecachten Meldungen aus `window._lastAdminOverviewCache` / `window._adminReportsCache` wieder anzeigte.
+3. **ID-Abweichung zwischen `memoryFallback` (`Date.now()`) und SQLite `AUTOINCREMENT` (`04-d1-database.js` Zeile 1116 & 1141):**
+   - Beim Erstellen einer Meldung (`createMediaReportInD1`) wurde `entry.id = Date.now()` gesetzt, während `INSERT INTO media_reports` die `id`-Spalte wegließ. Wenn `res.meta.last_row_id` abwich oder aus dem Memory-Cache gelesen wurde, passte `WHERE id = ?1` beim Löschen/Bestätigen nicht zur gespeicherten ID.
+4. **Fehlende Auto-Auflösung bei Korrektur ohne vorhandene Quelldatei oder bei Titel-Neu-Zuordnung (`09-tma-api-worker-export.js` Zeilen 1005 & 1212):**
+   - Wenn eine gemeldete Folge bereits verschoben/gelöscht war, brach `/api/tma/admin/reassign-episode` mit `404` ab, **bevor** `resolveMatchingMediaReportsInD1` aufgerufen wurde.
+   - Ebenso löste `/api/tma/admin/remap-media` (Titel komplett neu zuordnen) offene Meldungen zum alten `tmdbId` nicht automatisch auf.
+
+### Geplante Lösung für die Fehlermeldungen
+- **`worker-modules/04-d1-database.js`:**
+  - **Datenbank-Reset (`resetAllMediaAndPlaylistsInD1AndKv`):** Löscht ab sofort auch `DELETE FROM media_reports`, `DELETE FROM import_diagnostic_logs`, `DELETE FROM d1_playlist_items`, `DELETE FROM d1_playlists` und `DELETE FROM d1_import_checkpoints` sowie `memoryFallback.delete("d1_media_reports")`.
+  - **Konsistente Report-IDs & sicheres Löschen/Bestätigen:** `resolveMediaReportInD1` und `deleteMediaReportFromD1` matchen sowohl über `id = ?1` als auch über `created_at = ?1`. Zusätzlich wird eine Funktion `clearAllMediaReportsInD1(env, onlyResolved = false)` ergänzt.
+- **`worker-modules/09-tma-api-worker-export.js`:**
+  - `/api/tma/admin/reports` unterstützt neben `resolve` und `delete` auch `clear_all` (alle Meldungen löschen) und `clear_resolved` (alle gelösten Meldungen löschen).
+  - `/api/tma/admin/reassign-episode`, `/api/tma/admin/remap-media` und `deleteMediaFromD1` lösen verknüpfte Meldungen (`reportId` bzw. `tmdbId`) immer zuverlässig auf – selbst wenn die alte Quelldatei bereits entfernt wurde.
+- **`worker-modules/08b-tma-netflix-frontend.js` & `08c-tma-netflix-frontend.js`:**
+  - `adminResolveMediaReportClient`, `adminDeleteMediaReportClient`, `submitAdminEpisodeReassign` und `resetAllD1MediaAdmin` aktualisieren sofort `window._adminReportsCache` und `window._lastAdminOverviewCache` mit den frischen Server-Daten und erzwingen `loadAdminPanelView(true)`.
+  - Im Tab **„🚨 Meldungen“** wird zusätzlich ein Button **„🗑️ Alle Meldungen löschen“** (sowie **„🧹 Gelöste entfernen“**) eingebaut.
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
+## 3. Aufgedeckte Logikfehler in der JSON-Import-Pipeline (werden direkt behoben)
 
-- **Entscheidung 1: 100 % D1 für Medien, Import-Playlists & Checkpoints (0 % KV beim Import)**
-  - *Gewählter Ansatz*: Anlage/Nutzung schlanker D1-Tabellen (`d1_playlists`, `d1_playlist_items`, `d1_import_checkpoints`) neben `movies`, `movie_files`, `series`, `series_episodes`, `episode_files` und `import_diagnostic_logs`.
-  - *Warum*: D1 verkraftet 180.000+ Einträge mühelos per indiziertem SQL, während KV bei großen JSON-Listen an das 1.000-Writes/Tag-Limit und das Worker-CPU-Zeitlimit stößt. KV bleibt ausschließlich für winzige User-Settings reserviert.
-- **Entscheidung 2: IndexedDB im Browser + D1 auf dem Server für nahtloses F5-Resume**
-  - *Gewählter Ansatz*: Die beim Datei-Upload geparsten Roh-Einträge (`entries[]`) werden einmalig in der Browser-IndexedDB abgelegt; der Fortschritt (`cursor`), die Ergebnisse und die Prüfliste (`reviewItems`) liegen synchron in D1 und IndexedDB.
-  - *Warum*: Nach F5 muss eine 50–150 MB große `result.json` nicht erneut hochgeladen und geparst werden – ein Klick auf **„▶️ Weiter“** setzt direkt beim letzten D1-Checkpoint fort.
-- **Entscheidung 3: Paginierte D1-Abfragen für Playlists & Admin-Übersicht**
-  - *Gewählter Ansatz*: Statt bei 180.000 Einträgen alle Titel auf einmal in den Arbeitsspeicher zu laden, lädt die Playlist-/Admin-Ansicht die Einträge sauber aus D1 nach, während die Hauptseite gezielt nur für die aktuell sichtbaren 20 Karten per `WHERE movie_id IN (...)` die Stream-Qualitäten aus D1 abfragt.
-  - *Warum*: Garantierte Antwortzeiten unter 50 ms auf der Hauptseite, egal ob 100 oder 180.000 Einträge in D1 liegen.
+Bei der Analyse des JSON-Import-Datenflusses (`08c-tma-netflix-frontend.js`, `07-webhook-callbacks.js`, `09-tma-api-worker-export.js`) wurden **4 konkrete Logikfehler** gefunden:
+
+1. **Logikfehler 1 – Nicht erkannte Titel (`unmatched`) wurden als `"?"` statt `"failed"` markiert (`07-webhook-callbacks.js` Zeile 2452):**
+   - **Problem:** Wenn `resolveAndIngestMediaEntry` keinen TMDb-Treffer findet (`res.unmatched === true`), setzte `processEntriesBatchWithLimit` das Feld `status: "?"` statt `status: "failed"`.
+   - **Auswirkung:** Im Tab **„🛠️ Prüfen & Korrigieren“** stand der Zähler **„❌ Nicht erkannt (0)“** immer auf `0`, und alle nicht gefundenen Filme/Serien landeten fälschlich unter **„🔎 Unsichere Treffer“** mit Diagnose-Status `CONFLICT_?` statt `TMDB_NOT_FOUND`.
+   - **Fix:** `failItemObj.status` in `07-webhook-callbacks.js` wird sauber auf `"failed"` gesetzt; in `08c-tma-netflix-frontend.js` wird konsistent auf `(x.status === "failed" || !x.tmdbId)` geprüft.
+2. **Logikfehler 2 – Fehlerhafter Checkpoint-Cursor bei `PARTIAL_BATCH` (40-Subrequest-Guard) (`09-tma-api-worker-export.js` Zeile 587 & `08c` Zeile 3491):**
+   - **Problem:** Der Client schickte vor Batch-Start `cursor: backupImportJob.cursor + slice.length` mit, und der Server speicherte diesen Wert ungeprüft in D1 (`d1_import_checkpoints`). Bei `PARTIAL_BATCH` würden nach einem Reload die restlichen Einträge des Teil-Batches übersprungen.
+   - **Fix:** `/api/tma/admin/import-batch` berechnet den D1-Checkpoint erst **nach** `processEntriesBatchWithLimit` anhand des tatsächlichen `nextStartIndex` (`batchStartCursor + nextStartIndex`) und addiert die tatsächlich gespeicherten Zähler exakt auf.
+3. **Logikfehler 3 – Doppelte Zählung bei `isolateFailedEntryAtCursor` (`08c-tma-netflix-frontend.js` Zeile 3452):**
+   - **Problem:** Isolierte Fehleinträge erhöhten gleichzeitig `failedCount += 1` **und** `uncertainCount += 1`, beim Auflösen wurde aber nur `failedCount` reduziert.
+   - **Fix:** Isolierte Fehleinträge erhöhen nur `failedCount`.
+4. **Logikfehler 4 – Kanal-Verifizierung (`/api/tma/admin/validate-channel`) prüfte auf `env.BOT_TOKEN` statt `env.TELEGRAM_BOT_TOKEN` (`09-tma-api-worker-export.js` Zeile 269):**
+   - **Fix:** Nutzung von `env.TELEGRAM_BOT_TOKEN` mit automatischer Simulator-Erkennung, inklusive Speicherung des verifizierten Quell-Kanals in D1 und Memory.
 
 ---
 
-## 4. Technical Architecture & Data Strategy
+## 4. Echter End-to-End JSON-Import-Testlauf mit Test-Generator & Prüfbericht im Simulator
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                   STREAMFLIX MINI-APP UI (08a / 08b / 08c)                 │
-│                                                                            │
-│  ┌──────────────────────────┐  ┌─────────────────────┐  ┌───────────────┐  │
-│  │ Hauptseite & Suche       │  │ Playlists & Details │  │ JSON-Importer │  │
-│  │ • Poster-Grid & Filter   │  │ • Staffeln & Folgen │  │ • IndexedDB   │  │
-│  │ • VIP-Badges direkt      │  │ • Schnittfassungen  │  │   Auto-Resume │  │
-│  │   aus D1 SQL-Abfrage     │  │   direkt aus D1     │  │ • D1-Review   │  │
-│  └────────────┬─────────────┘  └──────────┬──────────┘  └───────┬───────┘  │
-└───────────────┼───────────────────────────┼─────────────────────┼──────────┘
-                │                           │                     │
-                ▼                           ▼                     ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│                CLOUDFLARE WORKER + D1 SQL DATENBANK (04, 07, 09)           │
-│                                                                            │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │ Cloudflare D1 (100 % Single Source of Truth – 0 KV-Writes beim Import)│  │
-│  │                                                                      │  │
-│  │  • movies / movie_files        ──► Hauptseite VIP-Badges & Streams   │  │
-│  │  • series / episode_files      ──► Staffel-/Folgen-Modal & Versionen │  │
-│  │  • d1_playlists / items        ──► Import-Playlists & Bot-VIP-Ordner │  │
-│  │  • import_diagnostic_logs      ──► Prüfen & Korrigieren + Badges     │  │
-│  │  • d1_import_checkpoints       ──► F5-sicherer Fortschritts-Stand    │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Geplante Umsetzungsschritte im Detail
-
-1. **D1-Tabellen für Import-Playlists & Checkpoints (`04-d1-database.js`)**:
-   - Erweiterung von `ensureD1Schema(env)` um `d1_playlists`, `d1_playlist_items` und `d1_import_checkpoints`.
-   - Bereitstellung schneller D1-Helfer (`savePlaylistFolderToD1`, `batchSavePlaylistItemsToD1`, `getPlaylistsAndItemsFromD1`, `saveImportCheckpointToD1`, `getImportCheckpointFromD1`), damit beim JSON-Import **0 KV-Schreibzugriffe** stattfinden und alle Einträge dauerhaft in D1 landen.
-2. **Umstellung der JSON-Import-Pipeline auf 100 % D1 (`03-telegram-kv-engine.js`, `07-webhook-callbacks.js`, `09-tma-api-worker-export.js`)**:
-   - `processEntriesBatchWithLimit` schreibt Filme, Serien, Episoden, Playlist-Zuordnungen und Diagnose-Logs ausschließlich in **D1**.
-   - `getFolders` / `getSavedList` / `/api/tma/admin/overview` lesen Import- und `bot_vip`-Playlists direkt aus D1 (mit Abwärtskompatibilität für bestehende Einträge), sodass im Admin-Panel und in der Merkliste sofort alle importierten D1-Titel sichtbar sind.
-3. **Hauptseiten-Integrität & D1-Katalog-Anbindung (`04-d1-database.js`, `09-tma-api-worker-export.js`)**:
-   - Sicherstellen, dass `/api/tma/discover` (Hauptseite), `/api/tma/search` und `/api/tma/details` alle VIP-Qualitäten, Cover-Fallbacks und Stream-Buttons direkt aus D1 (`movies`, `movie_files`, `series`, `episode_files`) beziehen und bei aktivem Filter **„🌟 Nur VIP-Streams“** auch direkt aus dem D1-Bestand paginieren können.
-4. **IndexedDB Auto-Restore & immer sichtbare Prüf-Tabs nach F5 (`08c-tma-netflix-frontend.js`)**:
-   - Speicherung des aktiven `backupImportJob` (inkl. geparster `entries[]` und `reviewItems[]`) in der Browser-IndexedDB (`tma_backup_job_idb_v1`) plus Synchronisation mit dem D1-Checkpoint (`/api/tma/admin/import-checkpoint`) und den D1-Prüfeinträgen (`/api/tma/admin/review-items`).
-   - Entfernen der frühen `if (!j.fileName) return;`-Blockade in `renderBackupImportBoxDom()`, damit nach F5 das komplette Import-Cockpit sowie **„🛠️ Prüfen & Korrigieren“** und **„🛠️ Diagnose-Log“** sofort angezeigt werden.
-5. **Persistente D1- & KV-Simulation in der AI Studio Vorschau (`src/utils/workerSandbox.ts`)**:
-   - Spiegelung des Sandbox-Speichers (`memoryFallback` für D1-Tabellen sowie `SimulatedKVNamespace`) im Browser-Storage der Vorschau, damit auch im Simulator nach F5 alle importierten Einträge erhalten bleiben.
+Im Admin-Panel unter **„📦 Backup-Import (100k+)“** integrieren wir eine direkt ausführbare **End-to-End Simulations- & Diagnose-Suite** (`🧪 E2E JSON-Import Simulation starten`):
+- Generiert ein realistisches Telegram-Backup (`result.json`-Struktur mit Kanal `-1001987654321`) mit allen 7 Praxisfällen (1080p Film, TS-Vorabversion + 1080p-Upgrade, Exaktes Duplikat, Serie `S01E01`/`S01E02`/`S01E04` inkl. Lücken-Erkennung für `E03`, Jahres-Konflikt `YEAR_CONFLICT`, Unbekannter Titel `TMDB_NOT_FOUND`, Kanal-Header ohne Video).
+- Durchläuft die echte Pipeline (Kanal-Verifizierung → JSON-Parser & Datei-ID-Injektion → `/api/tma/admin/import-batch` → D1-Katalog-, Playlist-, Checkpoint-, Meldungs-Reset- und Hauptseiten-Prüfung) und zeigt einen detaillierten **Prüfbericht (Pass/Fail-Checkliste)** direkt im Admin-Dashboard an.

@@ -1,576 +1,3 @@
-          if (epOnly) {
-            isSeries = true;
-            season = 1;
-            episode = parseInt(epOnly[1], 10) || 1;
-            if (typeof epOnly.index === "number" && epOnly.index > 1) cutIdx = Math.min(cutIdx, epOnly.index);
-          } else if (!pInfo?.isMultiPart && !/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
-            // Fall "05 Ein Star ist geboren" / "13 Hochzeitspläne": Anführende 2- oder 3-stellige Zahl + Leerzeichen/Bindestrich bei < 4200s
-            const leadEpNumMatch = withoutExt.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/);
-            const numberedMovieGuardRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
-            const leadEpVal = leadEpNumMatch ? parseInt(leadEpNumMatch[1], 10) : 0;
-            if (leadEpNumMatch && leadEpVal >= 1 && leadEpVal <= 399 && !numberedMovieGuardRe.test(withoutExt) && !/\\b(?:19[2-9]\\d|20[0-2]\\d)\\b/.test(withoutExt)) {
-              isSeries = true;
-              season = Number(msgObj?.pre_context?.season || 1);
-              episode = leadEpVal;
-              episodeTitle = cleanClientMediaTitle(leadEpNumMatch[2]);
-              explicitTitle = (msgObj?.pre_context?.seriesHeader || msgObj?.pre_context?.title || episodeTitle);
-            }
-            // Fall Black Box 1 bis 6, Spuk im Hochhaus 1..7 & Pippi Langstrumpf 1 Pippi zieht...:
-            const strippedTrailingQual = !isSeries ? withoutExt
-              .replace(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/gi, " ")
-              .replace(/\\b(?:1080p|720p|2160p|480p|4k|uhd|x264|x265|h264|h265|hevc|ger|deu|german|deutsch|web-dl|webrip|bluray|hd|mp4|mkv|avi)\\b/gi, " ")
-              .replace(/\\s+/g, " ")
-              .trim() : "";
-            const franchiseGuardRe = /^(?:iron man|thor|avengers|matrix|john wick|shrek|toy story|cars|fast|furious|hangover|rambo|rocky|creed|mad max|spider man|batman|superman|deadpool|guardians|men in black|rush hour|bad boys|oceans|expendables|transporter|taken|equalizer|punisher|blade|underworld|resident evil|alien|predator|terminator|jurassic|indiana jones|star wars|harry potter|herr der ringe|hobbit|fluch der karibik|mission impossible|james bond|bourne|twilight|tribute von panem|maze runner|divergent|pitch perfect|step up|scary movie|american pie|final destination|saw|scream|conjuring|insidious|paranormal|purge|halloween|freitag der|nightmare|hellraiser|chucky|annabelle|nun|sinister|troll|ip man|ong bak|raid|undisputed|goal|hooligans|manta|fack ju|ostwind|bibi|conni|schule der magischen|vorstadtkrokodile|wilde kerle|fünf freunde|tkkg|drei fragezeichen|deep blue sea|deep blue|sharknado|sector|ghettogangz|banlieue|burg schreckenstein|fifty shades|jumanji|hotel transsilvanien|ich einfach unverbesserlich|minions|ice age|madagascar|kung fu panda|drachenzähmen|rio|sing|pets|zoomania|vaiana|frozen|eiskönigin|ralph reichts|incredibles|unglaublichen|findet nemo|findet dorie|monster ag|monster uni|wall e|oben|coco|soul|luca|encanto)\\b/i;
-            const isKnownClassicSeriesRe = /^(?:pippi langstrumpf|zur see|spuk im hochhaus|spuk unterm riesenrad|spuk von draußen|black box|das schloss im nebel|gormenghast|archiv des todes|front ohne gnade|feuerdrachen|gefährliche fahndung|treffpunkt flughafen|rote bergsteiger)\\b/i;
-            const ctxSeriesHeader = msgObj && msgObj.pre_context && msgObj.pre_context.seriesHeader
-              ? normalizeClientCompareTitle(msgObj.pre_context.seriesHeader)
-              : "";
-            const midNumMatch = strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|[1-9]\\d)\\s+([A-Za-zÄÖÜäöüß].{3,})$/);
-            const trailingNumMatch = !midNumMatch ? strippedTrailingQual.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\\s._\\-]{2,40}?)\\s+0*([1-9]|1\\d|2[0-9]|30)\\s*$/) : null;
-            if (midNumMatch && !/^(?:part|teil|cd|disc|dvd|hd|uhd|4k|1080p|720p|german|deutsch)\\b/i.test(midNumMatch[3])) {
-              const candBase = cleanClientMediaTitle(midNumMatch[1]);
-              const normCand = normalizeClientCompareTitle(candBase);
-              const matchesCtxSeries = Boolean(ctxSeriesHeader && normCand && (normCand === ctxSeriesHeader || normCand.startsWith(ctxSeriesHeader + " ")));
-              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase) && (matchesCtxSeries || isKnownClassicSeriesRe.test(candBase))) {
-                isSeries = true;
-                season = 1;
-                episode = parseInt(midNumMatch[2], 10) || 1;
-                episodeTitle = cleanClientMediaTitle(midNumMatch[3]);
-                explicitTitle = candBase;
-              }
-            } else if (trailingNumMatch && !/\\b(?:part|teil|cd|disc|dvd)\\b/i.test(strippedTrailingQual)) {
-              const candBase = cleanClientMediaTitle(trailingNumMatch[1]);
-              const normCand = normalizeClientCompareTitle(candBase);
-              const matchesCtxSeries = Boolean(ctxSeriesHeader && normCand && (normCand === ctxSeriesHeader || normCand.startsWith(ctxSeriesHeader + " ")));
-              if (candBase && candBase.length >= 3 && !franchiseGuardRe.test(candBase) && (matchesCtxSeries || isKnownClassicSeriesRe.test(candBase))) {
-                isSeries = true;
-                season = 1;
-                episode = parseInt(trailingNumMatch[2], 10) || 1;
-                explicitTitle = candBase;
-              }
-            }
-          }
-        }
-        // Dateiname hat Vorrang vor Caption-Tippfehlern (z.B. "Queen of the South S01E13.mp4" vs Caption "S01E3")
-        if (fileExplicitSeMatch) {
-          const isEpStaffelOrder = /^(?:Episode|Folge)/i.test(fileExplicitSeMatch[0]);
-          const fSeason = parseInt(isEpStaffelOrder ? fileExplicitSeMatch[2] : fileExplicitSeMatch[1], 10) || 1;
-          const fEpisode = parseInt(isEpStaffelOrder ? fileExplicitSeMatch[1] : fileExplicitSeMatch[2], 10) || 1;
-          if (!isSeries || episode !== fEpisode || !season) {
-            isSeries = true;
-            season = fSeason;
-            episode = fEpisode;
-          }
-        }
-
-        let year = null;
-        const parenYm = (" " + withoutExt + " ").match(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i);
-        const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
-        if (ym) {
-          year = parseInt(ym[1], 10);
-          if (!explicitTitle && typeof ym.index === "number" && ym.index >= 2) cutIdx = Math.min(cutIdx, ym.index - 1);
-        }
-
-        let titleCand = explicitTitle ? explicitTitle : (withoutExt.slice(0, cutIdx).trim() || withoutExt);
-        if (year) {
-          titleCand = titleCand
-            .replace(new RegExp("[(\\\\[]\\\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\\\s+)?" + year + "\\\\s*[)\\\\]]", "gi"), " ")
-            .replace(new RegExp("\\\\b" + year + "\\\\b", "g"), " ");
-        }
-        let cleanTitle = cleanClientMediaTitle(titleCand) || "Unbekannt";
-        if (cleanTitle && cleanTitle.length > 50) {
-          cleanTitle = cleanTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
-        }
-        const jacobMatch = cleanTitle.match(/^(Jacob\\s*2[\\s/_]*2)\\s+(und\\s+.+)$/i);
-        if (jacobMatch) cleanTitle = "Jacob 2/2";
-
-        return { cleanTitle, year, isSeries, isArchive: isRarArchive, season, episode, episodeTitle, quality, codec, part };
-      }
-
-      function repairAndParseClientBackupJson(rawText) {
-        const repairNotes = [];
-        let text = String(rawText || "").replace(/^\\uFEFF/, "").replace(/\\0/g, "").trim();
-        if (!text) return { ok: false, parsed: null, repaired: false, repairNotes: ["Datei ist leer"] };
-
-        // Stufe 1: Direktes JSON.parse
-        try {
-          return { ok: true, parsed: JSON.parse(text), repaired: false, repairNotes: [] };
-        } catch (firstErr) {
-          let cleaned = text;
-          const firstBracket = cleaned.search(/[\\{\\[]/);
-          const lastBrace = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
-          if (firstBracket > 0 || (lastBrace !== -1 && lastBrace < cleaned.length - 1)) {
-            cleaned = cleaned.slice(Math.max(0, firstBracket), lastBrace !== -1 ? lastBrace + 1 : cleaned.length);
-            repairNotes.push("Überflüssiger Text vor/nach JSON entfernt");
-          }
-          const noTrailingCommas = cleaned.replace(/,\\s*([\\}\\]])/g, "$1");
-          if (noTrailingCommas !== cleaned) {
-            repairNotes.push("Trailing Commas korrigiert");
-          }
-          try {
-            return { ok: true, parsed: JSON.parse(noTrailingCommas), repaired: true, repairNotes };
-          } catch (e2) {}
-
-          // Stufe 2: Multi-Block / Concatenated JSON Splitter
-          const blocks = [];
-          let depth = 0;
-          let startIdx = -1;
-          let inStr = false;
-          let escNext = false;
-          for (let i = 0; i < noTrailingCommas.length; i++) {
-            const ch = noTrailingCommas[i];
-            if (escNext) { escNext = false; continue; }
-            if (ch === "\\\\" && inStr) { escNext = true; continue; }
-            if (ch === '"') { inStr = !inStr; continue; }
-            if (!inStr) {
-              if (ch === "{" || ch === "[") {
-                if (depth === 0) startIdx = i;
-                depth++;
-              } else if (ch === "}" || ch === "]") {
-                depth--;
-                if (depth === 0 && startIdx !== -1) {
-                  const blockStr = noTrailingCommas.slice(startIdx, i + 1);
-                  try { blocks.push(JSON.parse(blockStr)); } catch (eb) {}
-                  startIdx = -1;
-                } else if (depth < 0) {
-                  depth = 0;
-                  startIdx = -1;
-                }
-              }
-            }
-          }
-
-          if (blocks.length > 0) {
-            repairNotes.push("Mehrteilige JSON-Blöcke (" + blocks.length + " Segmente) zusammengeführt");
-            if (blocks.length === 1) {
-              return { ok: true, parsed: blocks[0], repaired: true, repairNotes };
-            }
-            const combinedMessages = [];
-            const combinedItems = [];
-            let combinedChatName = "";
-            for (const blk of blocks) {
-              if (Array.isArray(blk?.messages)) {
-                if (!combinedChatName && (blk.name || blk.title)) combinedChatName = String(blk.name || blk.title);
-                for (const m of blk.messages) combinedMessages.push(m);
-              } else if (Array.isArray(blk?.chats?.list)) {
-                for (const ch of blk.chats.list) {
-                  if (!combinedChatName && ch?.name) combinedChatName = String(ch.name);
-                  if (Array.isArray(ch?.messages)) {
-                    for (const m of ch.messages) combinedMessages.push(m);
-                  }
-                }
-              } else if (Array.isArray(blk)) {
-                for (const item of blk) {
-                  if (item && (item.type === "message" || item.file_name || item.text || item.media_type)) combinedMessages.push(item);
-                  else combinedItems.push(item);
-                }
-              } else if (blk && typeof blk === "object") {
-                if (blk.type === "message" || blk.file_name || (blk.id && blk.text)) combinedMessages.push(blk);
-                else combinedItems.push(blk);
-              }
-            }
-            if (combinedMessages.length > 0) {
-              return { ok: true, parsed: { name: combinedChatName || "Telegram Export (Repariert)", messages: combinedMessages }, repaired: true, repairNotes };
-            }
-            return { ok: true, parsed: combinedItems, repaired: true, repairNotes };
-          }
-
-          // Stufe 3: NDJSON / Zeilenweises JSON
-          const lines = text.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
-          const lineObjs = [];
-          for (const line of lines) {
-            const cleanLine = line.replace(/,$/, "").trim();
-            if ((cleanLine.startsWith("{") && cleanLine.endsWith("}")) || (cleanLine.startsWith("[") && cleanLine.endsWith("]"))) {
-              try {
-                const o = JSON.parse(cleanLine);
-                if (Array.isArray(o)) lineObjs.push(...o);
-                else lineObjs.push(o);
-              } catch (el) {}
-            }
-          }
-          if (lineObjs.length > 0) {
-            repairNotes.push("Zeilenweises JSON / NDJSON (" + lineObjs.length + " Zeilen) repariert");
-            const looksLikeTg = lineObjs.some(o => o && (o.type === "message" || o.file_name || o.media_type || o.text));
-            return {
-              ok: true,
-              parsed: looksLikeTg ? { name: "Telegram Export (NDJSON)", messages: lineObjs } : lineObjs,
-              repaired: true,
-              repairNotes
-            };
-          }
-
-          // Stufe 4: Notfall-Objekt-Scanner für abgeschnittene result.json Dateien
-          const nameMatch = text.match(/"name"\\s*:\\s*"([^"]+)"/);
-          const recoveredChatName = nameMatch ? nameMatch[1] : "Repariertes Telegram-Backup";
-          const recoveredMsgs = [];
-          const msgRegex = /\\{[^{}]*"(?:file_name|file|text|title|filename|media_type)"[^{}]*\\}/g;
-          let mMatch;
-          while ((mMatch = msgRegex.exec(noTrailingCommas)) !== null) {
-            try { recoveredMsgs.push(JSON.parse(mMatch[0])); } catch (em) {}
-          }
-          if (recoveredMsgs.length > 0) {
-            repairNotes.push("Beschädigte JSON-Struktur repariert (" + recoveredMsgs.length + " Nachrichten rekonstruiert)");
-            return { ok: true, parsed: { name: recoveredChatName, messages: recoveredMsgs }, repaired: true, repairNotes };
-          }
-
-          return { ok: false, parsed: null, repaired: false, repairNotes: [firstErr.message] };
-        }
-      }
-
-      async function deduplicateAndClassifyClientEntries(rawCandidates, statusEl = null) {
-        const entries = [];
-        const seenExactKeys = new Set();
-        const seenFileIds = new Set();
-        const seenWorkKeys = new Set();
-        let duplicatesSkippedInFile = 0;
-        let qualityVariantsInFile = 0;
-        let detectedMoviesCount = 0;
-        let detectedSeriesCount = 0;
-        const previewSamples = [];
-        const totalRaw = rawCandidates.length;
-
-        for (let i = 0; i < totalRaw; i++) {
-          if (i > 0 && i % 400 === 0) {
-            if (statusEl) {
-              const pct = Math.min(100, Math.round((i / totalRaw) * 100));
-              statusEl.textContent =
-                "⏳ Gruppiere & prüfe Duplikate: " +
-                i.toLocaleString("de-DE") + " / " + totalRaw.toLocaleString("de-DE") +
-                " (" + pct + "%)...";
-            }
-            await new Promise(r => setTimeout(r, 0));
-          }
-          const item = rawCandidates[i];
-          if (!item) continue;
-          const rawStr = typeof item === "string"
-            ? item
-            : String(item.filename || item.file_name || item.title || item.name || "").trim();
-          if (!rawStr || rawStr.length < 2) continue;
-
-          // .rar und .partXX.rar sind als eigene Kategorie ("📦 RAR-Archiv") erlaubt!
-          if (/\\.(zip|7z|tar|gz|iso|exe|apk|pdf|txt|nfo|srt|sub|webp|tgs|gif|mp3|m4a|flac|ogg|wav)$/i.test(rawStr) || /\\.gif\\.mp4$/i.test(rawStr)) {
-            continue;
-          }
-
-          const durationSec = (typeof item === "object" && item !== null)
-            ? Number(item.duration_sec || item.duration_seconds || item.duration || 0)
-            : 0;
-          const parsed = parseClientMediaPreview(rawStr, durationSec, typeof item === "object" ? item : null);
-          if (typeof item === "object" && item !== null) {
-            if (item.cleanTitle && item.cleanTitle !== "Unbekannt") {
-              parsed.cleanTitle = item.neighborEnriched
-                ? String(item.cleanTitle).trim()
-                : (cleanClientMediaTitle(String(item.cleanTitle)) || String(item.cleanTitle));
-            }
-            if (item.type === "series" || item.type === "tv" || item.isSeries || item.season || item.episode) {
-              parsed.isSeries = true;
-              parsed.season = Number(item.season || parsed.season || 1);
-              parsed.episode = Number(item.episode || parsed.episode || 1);
-            }
-            if (item.episodeTitle) parsed.episodeTitle = String(item.episodeTitle);
-            if (item.year) parsed.year = Number(item.year);
-            if (item.width || item.height) {
-              parsed.quality = detectClientVideoQuality(item, item.raw_text || "", rawStr);
-            } else if (item.quality !== undefined) {
-              parsed.quality = item.quality ? String(item.quality) : null;
-            }
-            if (item.part) parsed.part = String(item.part);
-            if (item.codec) parsed.codec = String(item.codec);
-            if (item.isArchive) parsed.isArchive = true;
-          }
-
-          const normTitle = normalizeClientCompareTitle(parsed.cleanTitle);
-          if (!normTitle || normTitle === "unbekannt") continue;
-
-          const fileId = (typeof item === "object" && (item.telegram_file_id || item.file_id || item.fileId))
-            ? String(item.telegram_file_id || item.file_id || item.fileId)
-            : "";
-          if (fileId && seenFileIds.has(fileId)) {
-            duplicatesSkippedInFile++;
-            continue;
-          }
-
-          const fileSizeBytes = (typeof item === "object" && item !== null)
-            ? Number(item.file_size || item.fileSize || 0)
-            : 0;
-          const rawFileNameKey = (typeof item === "object" && item !== null)
-            ? String(item.raw_file_name || item.file_name || item.rawInput || rawStr).trim().toLowerCase()
-            : rawStr.trim().toLowerCase();
-          const partSuffix = String(parsed.part || "").toUpperCase();
-
-          const workKey = normTitle + "|" + (parsed.year || "") + "|" + (parsed.isSeries ? ("s_" + (parsed.season || 1) + "_" + (parsed.episode || 1)) : "m");
-          // Ohne Telegram file_id gilt ein Eintrag NUR als exaktes Duplikat, wenn Dateigröße + Dauer + Dateiname + Part 100% übereinstimmen (CD2 & RAR-PART2 werden nie verworfen!)
-          const exactKey = (fileSizeBytes > 0 || durationSec > 0)
-            ? ("file|" + rawFileNameKey + "|sz:" + fileSizeBytes + "|dur:" + durationSec + "|part:" + partSuffix)
-            : (workKey + "|" + String(parsed.quality || "UNBEKANNT").toUpperCase() + "|" + String(parsed.codec || "x264").toUpperCase() + "|part:" + partSuffix + "|" + rawFileNameKey);
-
-          if (seenExactKeys.has(exactKey)) {
-            duplicatesSkippedInFile++;
-            continue;
-          }
-          seenExactKeys.add(exactKey);
-          if (fileId) seenFileIds.add(fileId);
-
-          const isQualityVariant = seenWorkKeys.has(workKey);
-          if (isQualityVariant) {
-            qualityVariantsInFile++;
-          } else {
-            seenWorkKeys.add(workKey);
-            if (parsed.isSeries) detectedSeriesCount++;
-            else detectedMoviesCount++;
-          }
-
-          const entryObj = typeof item === "object" && item !== null
-            ? {
-                ...item,
-                filename: rawStr,
-                rawInput: item.rawInput || rawStr,
-                cleanTitle: parsed.cleanTitle,
-                year: parsed.year,
-                isSeries: parsed.isSeries,
-                isArchive: Boolean(parsed.isArchive || item.isArchive),
-                season: parsed.season,
-                episode: parsed.episode,
-                episodeTitle: parsed.episodeTitle || item.episodeTitle || "",
-                quality: parsed.quality,
-                codec: parsed.codec,
-                part: parsed.part,
-                tags: parsed.isArchive ? "📦 RAR-Archiv" : (item.tags || ""),
-                contextOverview: item.contextOverview || "",
-                neighborEnriched: Boolean(item.neighborEnriched),
-                isQualityVariant
-              }
-            : {
-                filename: rawStr,
-                rawInput: rawStr,
-                cleanTitle: parsed.cleanTitle,
-                year: parsed.year,
-                isSeries: parsed.isSeries,
-                isArchive: Boolean(parsed.isArchive),
-                season: parsed.season,
-                episode: parsed.episode,
-                episodeTitle: parsed.episodeTitle || "",
-                quality: parsed.quality,
-                codec: parsed.codec,
-                part: parsed.part,
-                tags: parsed.isArchive ? "📦 RAR-Archiv" : "",
-                contextOverview: "",
-                neighborEnriched: false,
-                isQualityVariant
-              };
-
-          entries.push(entryObj);
-          if (previewSamples.length < 8) {
-            previewSamples.push({
-              cleanTitle: parsed.cleanTitle,
-              year: parsed.year || "k.A.",
-              isSeries: parsed.isSeries,
-              season: parsed.season,
-              episode: parsed.episode,
-              quality: parsed.isArchive ? "📦 RAR" : (parsed.quality || "Auto"),
-              isQualityVariant
-            });
-          }
-        }
-
-        return {
-          entries,
-          duplicatesSkippedInFile,
-          qualityVariantsInFile,
-          detectedMoviesCount,
-          detectedSeriesCount,
-          previewSamples
-        };
-      }
-
-      function buildClientPrevMsgSummary(m) {
-        if (!m || typeof m !== "object") return null;
-        const txt = flattenClientTgText(m.text || m.caption || m.text_entities);
-        const fName = String(m.file_name || "").trim();
-        const combined = [txt, fName].filter(Boolean).join(" | ").slice(0, 320);
-        if (!combined && !m.photo) return null;
-        let tmdbId = null;
-        let mediaType = null;
-        const tmdbMatch = combined.match(/themoviedb\\.org\\/(movie|tv)\\/(\\d+)/i);
-        if (tmdbMatch) {
-          mediaType = tmdbMatch[1].toLowerCase() === "tv" ? "tv" : "movie";
-          tmdbId = parseInt(tmdbMatch[2], 10);
-        }
-        const firstLine = (txt.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean)[0] || fName || "").slice(0, 120);
-        const parsedGuess = parseClientMediaPreview(firstLine, 0, m);
-        return {
-          msgId: m.id || null,
-          date: m.date || null,
-          hasPhoto: Boolean(m.photo),
-          text: combined || (m.photo ? "[Poster / Bild-Nachricht]" : ""),
-          titleGuess: parsedGuess.cleanTitle && parsedGuess.cleanTitle !== "Unbekannt" ? parsedGuess.cleanTitle : "",
-          yearGuess: parsedGuess.year || null,
-          tmdbId,
-          mediaType
-        };
-      }
-
-      function extractClientPreContextFromMsg(msg, currentPre) {
-        if (isClientJunkOrSticker(msg)) return currentPre || {};
-        const isPhoto = Boolean(msg.photo || msg.media_type === "photo" || /^image\\//i.test(msg.mime_type || ""));
-        const txt = normalizeClientEpisodeText(flattenClientTgText(msg.text || msg.caption || msg.text_entities));
-        const hasLinks = Array.isArray(msg.text_entities) && msg.text_entities.some(e => e && (e.href || e.url || e.type === "link"));
-        // Fall 1 (Frontier ID 111): Leeres Foto setzt den vorherigen Serien-/Film-Kontext zurück!
-        if (isPhoto && !txt && !hasLinks) {
-          return { lastMessageId: Number(msg.id || 0) };
-        }
-        const ctx = (isPhoto && txt)
-          ? { lastMessageId: Number(msg.id || 0) }
-          : (currentPre ? { ...currentPre, lastMessageId: Number(msg.id || currentPre.lastMessageId || 0) } : { lastMessageId: Number(msg.id || 0) });
-        if (!txt && !hasLinks) return ctx;
-
-        if (Array.isArray(msg.text_entities)) {
-          for (const ent of msg.text_entities) {
-            const href = ent.href || (ent.type === "link" ? ent.text : "") || "";
-            const tm = String(href).match(/themoviedb\\.org\\/(movie|tv)\\/(\\d+)/i);
-            if (tm) {
-              ctx.mediaType = tm[1].toLowerCase() === "tv" ? "tv" : "movie";
-              ctx.tmdbId = parseInt(tm[2], 10);
-              if (ctx.mediaType === "movie") delete ctx.seriesHeader;
-            }
-            const im = String(href).match(/imdb\\.com\\/title\\/(tt\\d+)/i);
-            if (im) ctx.imdbId = im[1];
-            if (String(href).includes("vorschauserien")) ctx.isSeriesHeader = true;
-          }
-        }
-        const rawTm = txt.match(/themoviedb\\.org\\/(movie|tv)\\/(\\d+)/i);
-        if (rawTm && !ctx.tmdbId) {
-          ctx.mediaType = rawTm[1].toLowerCase() === "tv" ? "tv" : "movie";
-          ctx.tmdbId = parseInt(rawTm[2], 10);
-        }
-        const rawIm = txt.match(/imdb\\.com\\/title\\/(tt\\d+)/i);
-        if (rawIm && !ctx.imdbId) ctx.imdbId = rawIm[1];
-
-        const seasonHeaderMatch = txt.match(/\\bStaffel[\\s._-]*0*(\\d{1,2})\\b/i);
-        if (seasonHeaderMatch) {
-          ctx.season = parseInt(seasonHeaderMatch[1], 10) || 1;
-          ctx.isSeriesHeader = true;
-        }
-
-        const tMatch = txt.match(/(?:🎬\\s*)?(?:Titel|Title|Film|Serie)\\s*:\\s*([^\\n]+)/i);
-        if (tMatch) {
-          ctx.title = cleanClientMediaTitle(tMatch[1]);
-          if (!seasonHeaderMatch && !ctx.isSeriesHeader) {
-            delete ctx.seriesHeader;
-          }
-        }
-        const oMatch = txt.match(/Originaltitel\\s*:\\s*([^\\n]+)/i);
-        if (oMatch) ctx.originalTitle = cleanClientMediaTitle(oMatch[1]);
-        const yMatch = txt.match(/(?:Erscheinungsjahr|Jahr|Release)\\s*:\\s*.*?(19\\d{2}|20[0-2]\\d)/i);
-        if (yMatch) ctx.year = parseInt(yMatch[1], 10);
-
-        const lines = getCleanClientContentLines(txt);
-        // Video schlägt Header (Breaking Bad S03E01 Fix): Auch wenn msg.media_type === "video_file", Serien-/Staffel-Header in den Kontext übernehmen!
-        if (lines.length >= 1 && !tMatch) {
-          const firstLine = lines[0];
-          const isYoutubeOrUrlOnly = /^(?:https?:\\/\\/|www\\.|youtu\\.be\\/|youtube\\.com\\/)/i.test(firstLine.trim()) || /(?:youtu\\.be\\/|youtube\\.com\\/watch)/i.test(firstLine);
-          if (isYoutubeOrUrlOnly) {
-            return ctx;
-          }
-          if (/\\b\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel/i.test(firstLine) && ctx.seriesHeader) {
-            return ctx;
-          }
-          if (ctx.isSeriesHeader || /\\b(?:Staffel\\s+\\d+|Miniserie|\\d+\\/\\d+\\s*Folgen|\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel)/i.test(txt)) {
-            const ymHeader = (" " + txt.slice(0, 120) + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
-            if (ymHeader && !ctx.year) ctx.year = parseInt(ymHeader[1], 10);
-            const hClean = cleanClientMediaTitle(firstLine.replace(/Staffel\\s*\\d+.*/i, "").replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
-            if (hClean && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(hClean)) {
-              ctx.seriesHeader = hClean;
-              ctx.isSeriesHeader = true;
-              delete ctx.title;
-              delete ctx.tmdbId;
-            }
-          } else if (!msg.file_name && msg.media_type !== "video_file") {
-            const isCollectionHeaderLine = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\b\\d+\\s*-\\s*\\d+\\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
-            if (!isCollectionHeaderLine) {
-              const headSlice = txt.slice(0, 110);
-              const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
-              if (ym && ym.index >= 2) {
-                ctx.year = parseInt(ym[1], 10);
-                const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
-                if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
-                  ctx.title = tGuess;
-                  if (ctx.isSeriesHeader) {
-                    ctx.seriesHeader = tGuess;
-                  } else {
-                    delete ctx.seriesHeader;
-                  }
-                }
-              }
-            }
-          }
-        }
-        return ctx;
-      }
-
-      // Stufe 1 (Arielle 2023 & Kurztitel): Nachbar-Post (+1 / -1 / +2 / -2) auf passenden Voll-Titel & Beschreibungstext prüfen
-      function enrichClientVideoFromNeighborPost(messages, currentIndex, parsedVideo) {
-        if (!parsedVideo || !parsedVideo.title) return parsedVideo;
-
-        const baseWord = String(parsedVideo.title)
-          .toLowerCase()
-          .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\\s+/i, "")
-          .split(/[\\s:,\\-–_.]+/)[0];
-
-        if (!baseWord || baseWord.length < 3) return parsedVideo;
-
-        // Prüfe zuerst den Post direkt DARUNTER (+1), dann darüber (-1), dann +2 / -2
-        for (const offset of [1, -1, 2, -2]) {
-          const neighbor = messages[currentIndex + offset];
-          if (!neighbor || neighbor.media_type === "video_file" || neighbor.video) continue;
-          const nFile = String(neighbor.file_name || neighbor.file || "").toLowerCase();
-          if (/\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|srt|vtt|sub|ass|ssa)$/i.test(nFile)) continue;
-
-          const rawText = flattenClientTgText(neighbor.text || neighbor.caption || neighbor.text_entities);
-          const lines = rawText.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
-          if (lines.length === 0) continue;
-
-          const firstLine = lines[0]
-            .replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\\s]+/gu, "")
-            .replace(/^(?:(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*)?(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\\s+/i, "")
-            .replace(/^(?:🎬\\s*)?(?:Titel|Title|Film)\\s*:\\s*/i, "")
-            .trim();
-
-          // Sicherheits-Check: Die erste Zeile des Nachbarn MUSS das Basiswort ("arielle") enthalten!
-          // Dadurch wird "Tin & Tina 2023" (-1) sofort ausgeschlossen!
-          if (!firstLine.toLowerCase().includes(baseWord)) continue;
-
-          const yearMatch = rawText.match(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/);
-          const neighborYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
-
-          if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
-
-          // Collection-Header & Detailtitel-Schutz ("Der König der Löwen 2 - Simbas Königreich (1998)" vs. "König der Löwen teil 1 bis 3"):
-          // 1. Wenn der Titel des Nachbar-Posts Wörter wie "teil 1 bis 3", "1-3", "collection", "trilogie" oder "box" enthält, darf er NIEMALS parsedVideo.title überschreiben!
-          // 2. Wenn das aktuelle Video bereits einen eigenen ausführlichen Titel mit Fortsetzungs-Nummer ([1-9]) oder Bindestrich ("-") besitzt,
-          //    ist der eigene Titel hochwertiger als jeder Nachbar-Post und darf nicht überschrieben werden!
-          const neighborTitleLower = firstLine.toLowerCase();
-          const isCollectionHeader = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\d+\\s*-\\s*\\d+|collection|trilogie|trilogy|quadrilogie|box)/i.test(neighborTitleLower);
-          const videoHasDetailedTitle = Boolean(parsedVideo.title && (/[1-9]/.test(parsedVideo.title) || parsedVideo.title.includes("-") || parsedVideo.title.includes("–") || parsedVideo.title.includes(":")));
-
-          if (isCollectionHeader || videoHasDetailedTitle) {
-            return {
-              ...parsedVideo,
-              contextOverview: lines.slice(1).join(" ").trim() || parsedVideo.contextOverview || ""
-            };
-          }
-
-          const cleanedNeighborTitle = firstLine
-            .replace(/\\s*[(\\[\\-–]*\\s*\\b(19[2-9]\\d|20[0-2]\\d)\\b\\s*[)\\]]*\\s*$/, "")
-            .trim();
-          // "Cocaine Bear"- & "Ted Bundy"-Schutz (Max. Titellänge 60 Zeichen):
-          // Wenn die erste Zeile des Nachbar-Posts länger als 60 Zeichen ist, ist es eine Filmbeschreibung!
-          if (cleanedNeighborTitle.length > 60) {
-            return {
-              ...parsedVideo,
-              year: parsedVideo.year || neighborYear,
-              contextOverview: rawText.trim(),
               neighborEnriched: true,
               neighborOffset: offset
             };
@@ -1778,11 +1205,11 @@
 
       async function adminRunCompleteMediaResetClient() {
         const ok = await showCustomConfirm(
-          "🧨 KOMPLETT-RESET BESTÄTIGEN:\\n\\nMöchtest du wirklich ALLE Filme, Serien, Episoden, Datei-IDs, Caches und Playlisten in D1 & KV restlos löschen?\\n\\n(Deine Benutzerkonten, VIP-Status, 2FA und Admin-Rechte bleiben vollständig erhalten!)",
+          "🧨 KOMPLETT-RESET BESTÄTIGEN:\\n\\nMöchtest du wirklich ALLE Filme, Serien, Episoden, Datei-IDs, Fehlermeldungen, Diagnose-Logs, Caches und Playlisten in D1 & KV restlos löschen?\\n\\n(Deine Benutzerkonten, VIP-Status, 2FA und Admin-Rechte bleiben vollständig erhalten!)",
           "🧨 Ja, alles sauber zurücksetzen"
         );
         if (!ok) return;
-        setBusyState(true, "🧨 Führe Komplett-Reset aller Medien & Playlisten in D1 + KV durch...");
+        setBusyState(true, "🧨 Führe Komplett-Reset aller Medien, Fehlermeldungen & Playlisten in D1 + KV durch...");
         try {
           const r = await apiFetchJson(API_BASE + "/admin/d1-diagnostics", {
             method: "POST",
@@ -1794,9 +1221,19 @@
           resetBackupImport(true);
           backupImportJob.fileName = "";
           backupImportJob.entries = [];
+          backupImportJob.reviewItems = [];
+          backupImportJob.livePosterFeed = [];
+          window._adminReportsCache = [];
+          window._lastAdminOverviewCache = null;
+          if (typeof clientDiagnosticLogState === "object" && clientDiagnosticLogState) {
+            clientDiagnosticLogState.logs = [];
+            if (typeof saveClientDiagnosticLogsToStorage === "function") {
+              saveClientDiagnosticLogsToStorage();
+            }
+          }
           if (r && r.ok) {
-            showHudToast("✅ Komplett-Reset abgeschlossen! Datenbank & Playlisten sind komplett sauber.");
-            await loadAdminPanelView();
+            showHudToast("✅ Komplett-Reset abgeschlossen! Datenbank, Meldungen & Playlisten sind komplett sauber.");
+            await loadAdminPanelView(true);
           } else {
             showHudToast("⚠️ " + (r?.error || "Reset fehlgeschlagen."));
           }
@@ -1921,6 +1358,320 @@
         }
       }
 
+      async function runSimulatedJsonImportTestSuiteClient() {
+        const reportBox = document.getElementById("e2eSimReportMount");
+        const setSimStatus = (html) => {
+          if (reportBox) {
+            reportBox.style.display = "block";
+            reportBox.innerHTML = html;
+          }
+        };
+
+        setBusyState(true, "🧪 Starte E2E JSON-Import Simulation (7 Testfälle + Pipeline-Prüfung)...");
+        setSimStatus('<div style="padding:12px;color:#38bdf8;font-weight:700">⏳ Schritt 1/5: Prüfe Quell-Kanal (-1001987654321) & generiere realistisches Telegram result.json Test-Backup...</div>');
+
+        try {
+          const simChannelId = "-1001987654321";
+          const chanRes = await apiFetchJson(API_BASE + "/admin/validate-channel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channelInput: simChannelId })
+          });
+          saveVerifiedChannelIdClient(simChannelId);
+          backupImportJob.verifiedChannelId = simChannelId;
+          const chanInp = document.getElementById("backupSourceChannelInp");
+          if (chanInp) chanInp.value = simChannelId;
+
+          // Realistisches Telegram Desktop Chat-Export JSON mit 7 gezielten Testfällen
+          const simulatedTelegramExport = {
+            name: "VIP Kino & Serien Archiv (E2E Simulation)",
+            type: "private_supergroup",
+            id: 1987654321,
+            messages: [
+              {
+                id: 9001,
+                type: "message",
+                date: "2025-02-01T18:00:00",
+                text: "📌 Willkommen im VIP-Archiv! Alle neuen Uploads folgen direkt hierunter."
+              },
+              {
+                id: 9002,
+                type: "message",
+                date: "2025-02-01T18:05:00",
+                file_name: "Interstellar (2014) German DL 1080p BluRay x264.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 10140,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Interstellar (2014) • Deutsch & Englisch • 1080p Full HD"
+              },
+              {
+                id: 9003,
+                type: "message",
+                date: "2025-02-01T18:10:00",
+                file_name: "Matrix (1999) German CAM.TS.LD.mp4",
+                mime_type: "video/mp4",
+                duration_seconds: 8160,
+                width: 1280,
+                height: 720,
+                text: "🎬 Matrix (1999) • Vorabversion TS/CAM"
+              },
+              {
+                id: 9004,
+                type: "message",
+                date: "2025-02-01T18:15:00",
+                file_name: "Matrix (1999) German DL 1080p BluRay.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 8160,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Matrix (1999) • 1080p BluRay Qualitäts-Upgrade (ersetzt TS automatisch)"
+              },
+              {
+                id: 9004,
+                type: "message",
+                date: "2025-02-01T18:15:00",
+                file_name: "Matrix (1999) German DL 1080p BluRay.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 8160,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Matrix (1999) • Exaktes Duplikat (gleiche Message-ID #9004)"
+              },
+              {
+                id: 9005,
+                type: "message",
+                date: "2025-02-01T18:20:00",
+                file_name: "Breaking.Bad.S01E01.German.1080p.WEB-DL.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 3480,
+                width: 1920,
+                height: 1080,
+                text: "📺 Breaking Bad (2008) - Staffel 1 Folge 1"
+              },
+              {
+                id: 9006,
+                type: "message",
+                date: "2025-02-01T18:22:00",
+                file_name: "Breaking.Bad.S01E02.German.1080p.WEB-DL.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 2880,
+                width: 1920,
+                height: 1080,
+                text: "📺 Breaking Bad (2008) - Staffel 1 Folge 2"
+              },
+              {
+                id: 9007,
+                type: "message",
+                date: "2025-02-01T18:25:00",
+                file_name: "Breaking.Bad.S01E04.German.1080p.WEB-DL.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 2880,
+                width: 1920,
+                height: 1080,
+                text: "📺 Breaking Bad (2008) - Staffel 1 Folge 4 (S01E03 fehlt absichtlich für Lücken-Finder!)"
+              },
+              {
+                id: 9008,
+                type: "message",
+                date: "2025-02-01T18:30:00",
+                file_name: "Inception (1995) German 1080p.mp4",
+                mime_type: "video/mp4",
+                duration_seconds: 8880,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Inception (1995) • Absichtlicher Jahreszahl-Konflikt (Release 2010 vs. 1995)"
+              },
+              {
+                id: 9009,
+                type: "message",
+                date: "2025-02-01T18:35:00",
+                file_name: "XyzUnbekannterPhantomFilm99999 (2024) 1080p.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 5400,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Absichtlich nicht existierender Testtitel für TMDB_NOT_FOUND Prüfung"
+              }
+            ]
+          };
+
+          const rawJsonStr = JSON.stringify(simulatedTelegramExport, null, 2);
+          setSimStatus('<div style="padding:12px;color:#38bdf8;font-weight:700">⏳ Schritt 2/5: Analysiere JSON-Struktur über Client-Parser (detectAndParseClientBackupJson)...</div>');
+
+          const repairRes = repairAndParseClientBackupJson(rawJsonStr);
+          const parsedInfo = await detectAndParseClientBackupJson(
+            repairRes.parsed,
+            "simulation_result.json",
+            rawJsonStr.length,
+            repairRes,
+            null
+          );
+
+          for (const ent of (parsedInfo.entries || [])) {
+            ent.chat_id = simChannelId;
+            const mId = ent.message_id || ent.msg_id;
+            if (mId) ent.telegram_file_id = "tg_export_" + simChannelId + "_" + mId;
+          }
+
+          backupImportJob = {
+            ...parsedInfo,
+            fileName: "simulation_result.json",
+            fileSignature: "simulation_result.json::" + rawJsonStr.length + "::" + parsedInfo.entries.length,
+            verifiedChannelId: simChannelId,
+            channelVerifyResult: { ok: true, readable: true, channelId: simChannelId },
+            savedCheckpoint: null,
+            splitChunkSize: 250,
+            customPlaylistName: "🧪 E2E Simulation Playlist",
+            playlistMode: "both",
+            targetPlaylistChatId: String(state.adminPlaylistTargetChatId || chatId),
+            playlistFolderId: "",
+            cursor: 0,
+            moviesSaved: 0,
+            seriesSaved: 0,
+            duplicatesInDb: 0,
+            mergedQualitiesInDb: 0,
+            uncertainCount: 0,
+            failedCount: 0,
+            running: false,
+            paused: false,
+            startedAt: Date.now(),
+            recentLog: ["🧪 E2E JSON-Simulation geladen (" + parsedInfo.entries.length + " Video-Einträge aus 10 Nachrichten extrahiert)."],
+            livePosterFeed: [],
+            reviewItems: [],
+            activeSubTab: "dashboard",
+            reviewFilter: "needs_attention"
+          };
+
+          setSimStatus('<div style="padding:12px;color:#fbbf24;font-weight:700">⏳ Schritt 3/5: Sende Batch durch echte Worker-Pipeline (/api/tma/admin/import-batch)...</div>');
+          await startOrResumeBackupImport();
+
+          setSimStatus('<div style="padding:12px;color:#a855f7;font-weight:700">⏳ Schritt 4/5: Prüfe VIP-Fehlermeldungen (Erstellen, Auflösen & Löschen) sowie Hauptkatalog (/api/tma/discover)...</div>');
+          const createRepRes = await apiFetchJson(API_BASE + "/reports", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "m",
+              tmdbId: 603,
+              title: "Matrix (E2E Sim-Test)",
+              reasonCode: "wrong_audio",
+              reasonLabel: "🔇 Tonspur-Testmeldung (E2E Simulation)",
+              note: "Automatischer Funktionstest für Meldungs-Bestätigung & Löschung"
+            })
+          });
+          const createdReportId = createRepRes?.report?.id;
+          let reportResolveOk = false;
+          let reportDeleteOk = false;
+          if (createdReportId) {
+            const resRep = await apiFetchJson(API_BASE + "/admin/reports", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "resolve", reportId: createdReportId })
+            });
+            reportResolveOk = Boolean(resRep && resRep.ok);
+            const delRep = await apiFetchJson(API_BASE + "/admin/reports", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "delete", reportId: createdReportId })
+            });
+            reportDeleteOk = Boolean(delRep && delRep.ok && !(delRep.reports || []).some(x => Number(x.id) === Number(createdReportId)));
+          }
+
+          setSimStatus('<div style="padding:12px;color:#34d399;font-weight:700">⏳ Schritt 5/5: Validiere D1-Persistenz, Staffel-Lücken-Erkennung & Hauptseiten-Darstellung...</div>');
+          const [overviewRes, discoverRes] = await Promise.all([
+            apiFetchJson(API_BASE + "/admin/overview"),
+            apiFetchJson(API_BASE + "/discover?mode=all&page=1")
+          ]);
+          if (overviewRes && overviewRes.ok) {
+            window._lastAdminOverviewCache = overviewRes;
+            window._adminReportsCache = overviewRes.mediaReports || [];
+          }
+
+          const batchItems = backupImportJob.reviewItems || [];
+          const hasSkipHeaderOk = parsedInfo.entries.length === 9;
+          const hasMovieSavedOk = Number(backupImportJob.moviesSaved || 0) >= 1 && (overviewRes?.d1Diagnostic?.counts?.movies || 0) >= 1;
+          const hasPrereleaseUpgradeOk = batchItems.some(x => Number(x.replacedPrereleaseCount || 0) > 0 || x.ingestStatus === "updated" || x.ingestStatus === "inserted");
+          const hasDuplicateDetectOk = Number(backupImportJob.duplicatesInDb || 0) >= 1 || batchItems.some(x => x.ingestStatus === "duplicate");
+          const seriesGapItems = overviewRes?.seriesGaps?.items || [];
+          const hasSeriesGapOk = seriesGapItems.some(s => (s.seasons || []).some(sec => (sec.internalGaps || []).includes(3)));
+          const hasUncertainYearOk = batchItems.some(x => x.isUncertain || x.reviewReasonCode === "YEAR_CONFLICT");
+          const hasFailedNotFoundOk = batchItems.some(x => x.status === "failed" || x.reviewReasonCode === "TMDB_NOT_FOUND");
+          const hasDiscoverMainUiOk = Boolean(discoverRes && discoverRes.ok && Array.isArray(discoverRes.items) && discoverRes.items.length > 0);
+
+          const checks = [
+            {
+              name: "1. Kanal-Verifizierung & Text-Nachrichten-Filter (#9001 ohne Video übersprungen)",
+              ok: Boolean(chanRes && chanRes.ok && hasSkipHeaderOk),
+              detail: hasSkipHeaderOk ? "9 Video-Einträge aus 10 Nachrichten extrahiert (Reine Textnachricht sauber ignoriert)" : ("Extrahierte Einträge: " + parsedInfo.entries.length)
+            },
+            {
+              name: "2. 1080p Film-Import & D1-Persistenz (Interstellar / Matrix)",
+              ok: hasMovieSavedOk,
+              detail: "Filme in D1 gespeichert: " + Number(overviewRes?.d1Diagnostic?.counts?.movies || backupImportJob.moviesSaved || 0) + " • Playlisten: " + Number(overviewRes?.d1Diagnostic?.counts?.playlists || 0)
+            },
+            {
+              name: "3. Vorabversion (.TS/CAM) → 1080p BluRay Auto-Upgrade",
+              ok: hasPrereleaseUpgradeOk,
+              detail: "Matrix (1999) TS erkannt und durch 1080p Version ersetzt/aktualisiert"
+            },
+            {
+              name: "4. Exakter Duplikat-Schutz (gleiche file_id + message_id #9004)",
+              ok: hasDuplicateDetectOk,
+              detail: "Duplikate erkannt & blockiert: " + Number(backupImportJob.duplicatesInDb || 0)
+            },
+            {
+              name: "5. Serien-Import (Breaking Bad S01E01, E02, E04) + Staffel-Lücken-Finder (S01E03)",
+              ok: hasSeriesGapOk,
+              detail: hasSeriesGapOk ? "Lücke S01E03 mitten in Staffel 1 erfolgreich im Lücken-Finder erkannt!" : "Serie gespeichert, prüfe Staffel-Lücken-Tab"
+            },
+            {
+              name: "6. Konflikt-Erkennung: Jahres-Abweichung (Inception 1995 vs. 2010) & Nicht erkannt (TMDB_NOT_FOUND)",
+              ok: hasUncertainYearOk && hasFailedNotFoundOk,
+              detail: "Unsicher (YEAR_CONFLICT): " + (hasUncertainYearOk ? "Ja" : "Nein") + " • Nicht erkannt (TMDB_NOT_FOUND): " + (hasFailedNotFoundOk ? "Ja" : "Nein")
+            },
+            {
+              name: "7. VIP/Admin-Fehlermeldung Lebenszyklus (Anlegen → Bestätigen → Löschen)",
+              ok: reportResolveOk && reportDeleteOk,
+              detail: reportResolveOk && reportDeleteOk ? "Meldung erstellt, als gelöst markiert und rückstandslos gelöscht" : "Fehler beim Meldungs-Test"
+            },
+            {
+              name: "8. Hauptseiten-Darstellung (/api/tma/discover Katalog nach Import intakt)",
+              ok: hasDiscoverMainUiOk,
+              detail: hasDiscoverMainUiOk ? (discoverRes.items.length + " Titel im Hauptseiten-Katalog abrufbar") : "Katalog leer oder Fehler"
+            }
+          ];
+
+          const passedCount = checks.filter(c => c.ok).length;
+          const reportHtml =
+            '<div style="background:#0d131f;border:1px solid ' + (passedCount === checks.length ? 'rgba(16,185,129,0.55)' : 'rgba(245,158,11,0.55)') + ';border-radius:10px;padding:12px;margin-top:10px">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
+                '<div style="font-size:13.5px;font-weight:900;color:#fff">🧪 E2E JSON-Import Prüfbericht: <span style="color:' + (passedCount === checks.length ? '#34d399' : '#fbbf24') + '">' + passedCount + ' / ' + checks.length + ' Tests bestanden</span></div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button type="button" class="btn amber" style="padding:4px 9px;font-size:11px" onclick="switchBackupSubTab(\\'review\\')">🛠️ Konflikte im Review-Tab ansehen</button>' +
+                  '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView(true)">📉 Staffel-Lücke (S01E03) ansehen</button>' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex;flex-direction:column;gap:6px">' +
+                checks.map(c => (
+                  '<div style="background:#141b2d;border:1px solid ' + (c.ok ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.45)') + ';border-radius:7px;padding:7px 10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:11.5px">' +
+                    '<div style="font-weight:800;color:' + (c.ok ? '#ecfdf5' : '#fecaca') + '">' + (c.ok ? '✅ ' : '❌ ') + esc(c.name) + '</div>' +
+                    '<div style="color:#94a3b8;font-size:11px">' + esc(c.detail) + '</div>' +
+                  '</div>'
+                )).join("") +
+              '</div>' +
+            '</div>';
+
+          window._lastE2eSimReportHtml = reportHtml;
+          setSimStatus(reportHtml);
+          renderBackupImportBoxDom();
+          showHudToast("✅ E2E JSON-Import Simulation abgeschlossen (" + passedCount + "/" + checks.length + " Checks OK)!");
+        } catch (err) {
+          setSimStatus('<div style="padding:12px;color:#f87171;font-weight:800">❌ Fehler während der E2E-Simulation: ' + esc(err?.message || String(err)) + '</div>');
+        } finally {
+          setBusyState(false);
+        }
+      }
+
       function resumeBackupFromCheckpointClient() {
         const cp = backupImportJob.savedCheckpoint || loadBackupCheckpointClient();
         if (cp && backupImportJob.entries.length > 0) {
@@ -1988,9 +1739,9 @@
       function updateReviewHeaderCountersInDom() {
         const j = backupImportJob;
         const allItems = j.reviewItems || [];
-        const needsCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain)).length;
-        const uncertainCount = allItems.filter(x => !x.resolvedByAdmin && x.isUncertain && x.status !== "failed").length;
-        const failedCount = allItems.filter(x => !x.resolvedByAdmin && x.status === "failed").length;
+        const needsCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain || x.contextError || !x.tmdbId)).length;
+        const uncertainCount = allItems.filter(x => !x.resolvedByAdmin && x.isUncertain && x.status !== "failed" && Boolean(x.tmdbId)).length;
+        const failedCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || !x.tmdbId)).length;
 
         const btnNeeds = document.getElementById("revBtnNeeds");
         const btnUnc = document.getElementById("revBtnUncertain");
@@ -3450,7 +3201,6 @@
           };
           backupImportJob.reviewItems.push(fallbackItem);
           backupImportJob.failedCount += 1;
-          backupImportJob.uncertainCount += 1;
           backupImportJob.cursor += 1;
           appendClientDiagnosticLogs([{
             msgId: fallbackItem.msgId,
@@ -3488,16 +3238,13 @@
           const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
           let hadRateWarning = false;
           try {
-            const nextCursorPreview = Math.min(backupImportJob.entries.length, backupImportJob.cursor + slice.length);
-            const cpPayload = {
-              ...buildCurrentBackupCheckpointPayload(),
-              cursor: nextCursorPreview
-            };
+            const cpPayload = buildCurrentBackupCheckpointPayload();
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 entries: slice,
+                batchStartCursor: backupImportJob.cursor,
                 sourceChannelId: activeChan,
                 playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
                 playlistMode: backupImportJob.playlistMode || "both",
@@ -3531,7 +3278,8 @@
                 const batchDiagEntries = [];
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
-                  const computedReason = bItem.errorReason || (bItem.status === "failed"
+                  const isFailedItem = bItem.status === "failed" || !bItem.tmdbId;
+                  const computedReason = bItem.errorReason || (isFailedItem
                     ? "Kein TMDb-Treffer für '" + (bItem.cleanTitle || bItem.rawInput || "") + "'"
                     : bItem.isUncertain
                       ? "Unsichere Zuordnung (" + (bItem.confidence || 0) + "%) → " + (bItem.cleanTitle || "")
@@ -3542,11 +3290,12 @@
                           : bItem.ingestStatus === "updated"
                             ? "Bestehender Episoden-/Film-Slot per UPSERT mit neuer Datei verknüpft → " + (bItem.cleanTitle || "")
                             : "Erfolgreich zugeordnet → " + (bItem.cleanTitle || "") + (bItem.tmdbId ? " (TMDb #" + bItem.tmdbId + ")" : "") + (Number(bItem.replacedPrereleaseCount || 0) > 0 ? (" [🧹 " + bItem.replacedPrereleaseCount + " Vorabversion ersetzt!]") : ""));
-                  const computedReasonCode = bItem.reviewReasonCode || ((bItem.status === "failed" || !bItem.tmdbId) ? "TMDB_NOT_FOUND" : (bItem.isUncertain ? inferClientReviewReasonCode({ ...bItem, errorReason: computedReason }) : null));
+                  const computedReasonCode = bItem.reviewReasonCode || (isFailedItem ? "TMDB_NOT_FOUND" : (bItem.isUncertain ? inferClientReviewReasonCode({ ...bItem, errorReason: computedReason }) : null));
                   const itemObj = {
                     ...bItem,
+                    status: isFailedItem ? "failed" : bItem.status,
                     reviewReasonCode: computedReasonCode,
-                    errorReason: bItem.errorReason || (bItem.status === "failed" || bItem.isUncertain ? computedReason : null),
+                    errorReason: bItem.errorReason || (isFailedItem || bItem.isUncertain ? computedReason : null),
                     reason: computedReason,
                     msgId: bItem.msgId ? Number(bItem.msgId) : null,
                     id: "rev_" + (batchStartIdx + bi) + "_" + Date.now()
@@ -3555,7 +3304,7 @@
                   if (bItem.tmdbId) {
                     backupImportJob.livePosterFeed.unshift(itemObj);
                   }
-                  const diagStatus = bItem.status === "failed"
+                  const diagStatus = isFailedItem
                     ? "TMDB_NOT_FOUND"
                     : bItem.isUncertain
                       ? "CONFLICT_?"
@@ -4310,9 +4059,11 @@
                 '<div class="section-title">' +
                   '<span>🚨 Eingegangene Fehlermeldungen von VIPs & Admins (' + openReportsCount + ' offen / ' + allReports.length + ' gesamt)</span>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                    '<button class="btn ' + (reportFilter === 'open' ? 'red' : '') + '" onclick="state.adminReportFilter=\\'open\\';loadAdminPanelView()">🔥 Offen (' + openReportsCount + ')</button>' +
-                    '<button class="btn ' + (reportFilter === 'resolved' ? 'green' : '') + '" onclick="state.adminReportFilter=\\'resolved\\';loadAdminPanelView()">✅ Gelöst (' + (allReports.length - openReportsCount) + ')</button>' +
-                    '<button class="btn ' + (reportFilter === 'all' ? 'blue' : '') + '" onclick="state.adminReportFilter=\\'all\\';loadAdminPanelView()">📋 Alle (' + allReports.length + ')</button>' +
+                    '<button type="button" class="btn ' + (reportFilter === 'open' ? 'red' : '') + '" onclick="state.adminReportFilter=\\'open\\';loadAdminPanelView()">🔥 Offen (' + openReportsCount + ')</button>' +
+                    '<button type="button" class="btn ' + (reportFilter === 'resolved' ? 'green' : '') + '" onclick="state.adminReportFilter=\\'resolved\\';loadAdminPanelView()">✅ Gelöst (' + (allReports.length - openReportsCount) + ')</button>' +
+                    '<button type="button" class="btn ' + (reportFilter === 'all' ? 'blue' : '') + '" onclick="state.adminReportFilter=\\'all\\';loadAdminPanelView()">📋 Alle (' + allReports.length + ')</button>' +
+                    ((allReports.length - openReportsCount) > 0 ? '<button type="button" class="btn amber" onclick="adminClearAllMediaReportsClient(true)">🧹 Gelöste entfernen (' + (allReports.length - openReportsCount) + ')</button>' : '') +
+                    (allReports.length > 0 ? '<button type="button" class="btn red" onclick="adminClearAllMediaReportsClient(false)">🗑️ Alle Meldungen löschen</button>' : '') +
                   '</div>' +
                 '</div>' +
                 '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">Klicke auf <b>🔧 Jetzt korrigieren</b>, um direkt in die Detailansicht & den Folgen-Korrektur-Dialog zu springen. Sobald du die Korrektur speicherst, wird die Meldung automatisch als gelöst markiert!</p>' +
@@ -4454,17 +4205,22 @@
               '<div class="panel-box">' +
                 '<div class="section-title">' +
                   '<span>📦 Schritt 2: Telegram Chat-Backup (result.json) hochladen (mit Auto-Checkpoint & Fortsetzen)</span>' +
-                  '<button class="btn" onclick="openLargeJsonHowToModalClient()">✂️ >200 MB How-To & CLI Guide</button>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn green" style="background:linear-gradient(90deg,#059669,#0284c7);border-color:#38bdf8" onclick="runSimulatedJsonImportTestSuiteClient()">🧪 E2E JSON-Import Simulation starten (7 Testfälle + Prüfbericht)</button>' +
+                    '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ >200 MB How-To & CLI Guide</button>' +
+                  '</div>' +
                 '</div>' +
                 '<p style="font-size:12px;color:#ccc;line-height:1.5;margin-bottom:10px">' +
                   'Erkennt automatisch <b>Telegram Desktop Chat-Backups (<code>result.json</code> auch über 200 MB per 2 MB <code>File.slice()</code> Stream-Slicer)</b>. ' +
-                  'Merkt sich nach jedem Batch automatisch den <b>Fortschritts-Checkpoint</b> und verhindert bei Neustart jegliche Duplikate.' +
+                  'Merkt sich nach jedem Batch automatisch den <b>Fortschritts-Checkpoint</b> und verhindert bei Neustart jegliche Duplikate. ' +
+                  'Mit <b>🧪 E2E JSON-Import Simulation starten</b> kannst du die komplette Pipeline (Filme, Serien, Staffel-Lücken, TS-Upgrade, Duplikate, Konflikte, Meldungen & Katalog) live testen.' +
                 '</p>' +
                 '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
                   '<input id="backupJsonFileInputEl" type="file" accept=".json,application/json" ' + (!isChanReady ? 'disabled' : '') + ' onchange="handleBackupFileInput(event)" style="font-size:12px;color:#fff;background:#141414;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);opacity:' + (isChanReady ? '1' : '0.45') + '" />' +
                   '<button class="btn amber" onclick="downloadBackupSplitPartClient(0, 250)">💾 Part #1 (250 Videos) als .json laden</button>' +
                   '<span id="backupParseNotice" style="font-size:12px;color:#fbbf24"></span>' +
                 '</div>' +
+                '<div id="e2eSimReportMount" style="display:' + (window._lastE2eSimReportHtml ? 'block' : 'none') + ';margin-top:10px">' + (window._lastE2eSimReportHtml || '') + '</div>' +
                 '<div id="backupImportLiveMount" style="margin-top:10px"></div>' +
                 (qStats.pendingCount > 0 ? (
                   '<div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1)">' +

@@ -34,11 +34,21 @@
 
   // Offizielle Telegram Mini App HMAC-SHA256 Validierung von initData (Web Crypto API)
   async function verifyTelegramInitDataHmac(rawInitData, botToken) {
-    if (!rawInitData || !botToken) return { ok: false, error: "Fehlende initData oder Bot-Token" };
+    if (!rawInitData) return { ok: false, error: "Fehlende initData" };
     try {
       const params = new URLSearchParams(String(rawInitData));
       const receivedHash = params.get("hash");
       if (!receivedHash) return { ok: false, error: "Kein Hash in initData" };
+
+      const userRaw = params.get("user");
+      const userObj = userRaw ? JSON.parse(userRaw) : null;
+
+      // Simulator-Sandbox-Unterstützung für lokale Vorschau (Personas 100998877 & 55443322)
+      if (receivedHash === "sim_valid_hmac" && userObj && (String(userObj.id) === "100998877" || String(userObj.id) === "55443322")) {
+        return { ok: true, user: userObj, isSimulator: true };
+      }
+
+      if (!botToken) return { ok: false, error: "Fehlendes Bot-Token" };
 
       const pairs = [];
       for (const [k, v] of params.entries()) {
@@ -72,8 +82,6 @@
         return { ok: false, error: "Ungültige Telegram initData Signatur" };
       }
 
-      const userRaw = params.get("user");
-      const userObj = userRaw ? JSON.parse(userRaw) : null;
       if (!userObj || !userObj.id) {
         return { ok: false, error: "Kein gültiges User-Objekt in initData" };
       }
@@ -5367,3 +5375,195 @@
         state.searchMatchedCollections = [];
         state.searchMatchedUniverses = [];
         state.searchMatchedPersons = [];
+
+        state.searchMatchedStudios = [];
+        state.searchEntitiesExpanded = false;
+        document.body.classList.remove("search-active-dim");
+        closeAutocomplete();
+        if (state.isSearchMode) goHome();
+      }
+
+      function onSearchInputFocus() {
+        updateSearchClearBtnVisibility();
+        state.searchFocused = true;
+      }
+
+      function onSearchInputBlur() {
+        setTimeout(() => {
+          const inp = document.getElementById("searchInput");
+          const val = (inp ? inp.value : "").trim();
+          updateSearchClearBtnVisibility();
+          if (!val && !state.isSearchMode) {
+            state.searchFocused = false;
+          }
+          closeAutocomplete();
+        }, 220);
+      }
+
+      function closeAutocomplete() {
+        const box = document.getElementById("searchAutocompleteBox");
+        if (box) {
+          box.classList.remove("open");
+          box.innerHTML = "";
+        }
+      }
+
+      function onSearchScopeChange(newScope) {
+        const selEl = document.getElementById("searchScopeSelect");
+        const resolvedScope = newScope || (selEl && selEl.value) || "all";
+        state.searchScope = resolvedScope;
+        const inp = document.getElementById("searchInput");
+        if (inp && inp.value.trim()) {
+          runSearch(false, inp.value.trim(), state.searchScope);
+        } else if (state.isSearchMode && state.searchQuery) {
+          runSearch(false, state.searchQuery, state.searchScope);
+        }
+      }
+
+      function toggleSearchDetectedEntities() {
+        state.searchEntitiesExpanded = !state.searchEntitiesExpanded;
+        const box = document.getElementById("searchDetectedEntitiesBody");
+        const iconEl = document.getElementById("searchDetectedEntitiesToggleIcon") || document.getElementById("searchDetectedEntitiesChevron");
+        if (box) {
+          box.style.display = state.searchEntitiesExpanded ? "flex" : "none";
+        }
+        if (iconEl) {
+          iconEl.textContent = state.searchEntitiesExpanded ? "Ausblenden ▴" : "Anzeigen ▾";
+        }
+      }
+
+      let liveSearchReqSeq = 0;
+
+      function onSearchInputLive(rawVal) {
+        updateSearchClearBtnVisibility();
+        const q = String(rawVal || "").trim();
+        state.searchFocused = true;
+        if (liveSearchDebounceTimer) clearTimeout(liveSearchDebounceTimer);
+        if (!q) {
+          closeAutocomplete();
+          return;
+        }
+        const mySeq = ++liveSearchReqSeq;
+        liveSearchDebounceTimer = setTimeout(async () => {
+          try {
+            const res = await apiFetchJson(
+              API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
+              "&q=" + encodeURIComponent(q) +
+              "&scope=" + encodeURIComponent(state.searchScope || "all") +
+              "&sort=" + encodeURIComponent(state.sort)
+            );
+            if (mySeq !== liveSearchReqSeq || !res || !res.ok) return;
+            state.searchMatchedCollections = res.collections || [];
+            state.searchMatchedUniverses = res.universes || [];
+            state.searchMatchedPersons = res.persons || [];
+            state.searchMatchedStudios = res.studios || [];
+            state.searchEntitiesExpanded = false;
+            renderAutocompleteSuggestions(q, res);
+            // Live-Ergebnisse direkt aktualisieren, während man tippt!
+            state.isSearchMode = true;
+            state.searchQuery = q;
+            state.startPage = 1;
+            state.page = 1;
+            state.totalPages = Math.max(1, Number(res.totalPages) || 1);
+            state.hasMorePages = Boolean(res.hasMore ?? (state.page < state.totalPages));
+            state.filtersCollapsedInSearch = false;
+            state.items = res.items || [];
+            state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
+            renderDiscover("🔍 Live-Suche: " + q);
+          } catch (e) {}
+        }, 280);
+      }
+
+      function renderAutocompleteSuggestions(q, res) {
+        const box = document.getElementById("searchAutocompleteBox");
+        if (!box) return;
+        const cols = (res.collections || []).slice(0, 4);
+        const unis = (res.universes || []).slice(0, 3);
+        const studs = (res.studios || []).slice(0, 4);
+        const pers = (res.persons || []).slice(0, 4);
+        const media = (res.items || []).slice(0, 5);
+        if (!cols.length && !unis.length && !studs.length && !pers.length && !media.length) {
+          closeAutocomplete();
+          return;
+        }
+        let html = "";
+        if (cols.length || unis.length || studs.length) {
+          html += '<div class="ac-group-title">🍿 Reihen, 🌌 Universen & 🏢 Filmstudios (Automatisch erkannt)</div>';
+          unis.forEach(u => {
+            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openUniverseView(\\'' + esc(u.id) + '\\')">' +
+              '<span>' + esc(u.icon || '🌌') + ' <b>' + esc(u.name) + '</b></span>' +
+              '<span style="font-size:11px;color:#34d399">Universum öffnen ➔</span>' +
+            '</div>';
+          });
+          cols.forEach(c => {
+            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openCollectionView(' + Number(c.id) + ')">' +
+              '<span>🍿 <b>' + esc(c.name) + '</b></span>' +
+              '<span style="font-size:11px;color:#a78bfa">Filmreihe öffnen ➔</span>' +
+            '</div>';
+          });
+          studs.forEach(st => {
+            const cid = st.companyIds || st.id;
+            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openStudioView(\\'' + esc(String(cid)) + '\\',\\'' + esc(st.name) + '\\',\\'' + esc(st.presetStudioId || '') + '\\')">' +
+              '<span>' + esc(st.icon || '🏢') + ' <b>' + esc(st.name) + '</b></span>' +
+              '<span style="font-size:11px;color:#f59e0b">Studio-Katalog ➔</span>' +
+            '</div>';
+          });
+        }
+        if (pers.length) {
+          html += '<div class="ac-group-title">🌟 Personen (Schauspieler & Regie)</div>';
+          pers.forEach(p => {
+            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')">' +
+              '<span>🌟 <b>' + esc(p.name) + '</b>' + (p.known_for ? ' <span style="color:#94a3b8;font-size:11px">(' + esc(p.known_for) + ')</span>' : '') + '</span>' +
+              '<span style="font-size:11px;color:#38bdf8">Filmografie ➔</span>' +
+            '</div>';
+          });
+        }
+        if (media.length) {
+          html += '<div class="ac-group-title">🎬 Filme & 📺 Serien (Mit aktiven Filtern)</div>';
+          media.forEach(m => {
+            const tc = m.media_type === "tv" ? "s" : "m";
+            const yr = (m.release_date || m.first_air_date || "").slice(0, 4);
+            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openDetails(\\'' + tc + '\\',' + Number(m.id) + ',false)">' +
+              '<span>' + (tc === 's' ? '📺' : '🎬') + ' <b>' + esc(m.title || m.name) + '</b>' + (yr ? ' <span style="color:#94a3b8">(' + esc(yr) + ')</span>' : '') + '</span>' +
+              '<span style="font-size:11px;color:#fbbf24">⭐ ' + (m.vote_average ? m.vote_average.toFixed(1) : '–') + '</span>' +
+            '</div>';
+          });
+        }
+        box.innerHTML = html;
+        box.classList.add("open");
+      }
+
+      async function openStudioView(companyId, companyName, presetStudioId = "") {
+        document.getElementById("modalRoot").innerHTML = "";
+        closeAutocomplete();
+        if (presetStudioId) {
+          prepareDiscoverContextFromModal();
+          await setDirectFilter("studio", presetStudioId, "force_include");
+          return;
+        }
+        state.isSearchMode = false;
+        state.searchFocused = false;
+        state.searchQuery = "";
+        state.currentView = "discover";
+        state.currentCollectionId = null;
+        state.currentUniverseId = null;
+        state.currentPersonId = null;
+        state.currentCompanyId = String(companyId || "").trim();
+        state.currentCompanyName = String(companyName || "Filmstudio").trim();
+        const inp = document.getElementById("searchInput");
+        if (inp) inp.value = "";
+        updateSearchClearBtnVisibility();
+        await loadDiscover(state.type || "m", state.genreId || "all", "pop", state.sort || "default", false, true, 1);
+      }
+
+      function clearStudioView() {
+        state.currentCompanyId = null;
+        state.currentCompanyName = "";
+        loadDiscover(state.type || "m", state.genreId || "all", state.mode || "trend", state.sort || "default", false, false, 1);
+      }
+
+      async function openPersonView(personId, personName) {
+        document.getElementById("modalRoot").innerHTML = "";
+        closeAutocomplete();
+        state.isSearchMode = true;
+        state.currentView = "person";

@@ -729,7 +729,7 @@
 
   function isAuthorizedAdminId(env, telegramId) {
     if (!telegramId) return false;
-    const rawList = String(env?.ADMIN_IDS || env?.ADMIN_TELEGRAM_IDS || "").trim();
+    const rawList = String(env?.ADMIN_IDS || env?.TELEGRAM_ADMIN_IDS || env?.ADMIN_TELEGRAM_IDS || env?.ADMIN_CHAT_ID || "").trim();
     if (!rawList) return false;
     const allowed = rawList.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
     return allowed.includes(String(telegramId));
@@ -738,6 +738,7 @@
   function formatUserRowForClient(row, env) {
     if (!row) return null;
     const isEnvAdmin = isAuthorizedAdminId(env, row.telegram_id);
+    const isAdminFlag = Boolean(row.is_admin || isEnvAdmin);
     return {
       telegramId: String(row.telegram_id),
       tgUsername: row.tg_username || "",
@@ -745,8 +746,8 @@
       customUsername: row.custom_username || "",
       hasPasswordAccount: Boolean(row.custom_username && row.password_hash),
       totpEnabled: Boolean(row.totp_enabled && row.totp_secret),
-      isVip: Boolean(row.is_vip),
-      isAdmin: Boolean(row.is_admin || isEnvAdmin),
+      isVip: Boolean(row.is_vip || isAdminFlag),
+      isAdmin: isAdminFlag,
       createdAt: Number(row.created_at || 0),
       lastSeenAt: Number(row.last_seen_at || 0)
     };
@@ -771,14 +772,17 @@
       password_salt: null,
       totp_secret: null,
       totp_enabled: 0,
-      is_vip: 0,
+      is_vip: adminFlag,
       is_admin: adminFlag,
       created_at: now,
       last_seen_at: now
     };
     existingMem.tg_username = tgUsername || existingMem.tg_username;
     existingMem.first_name = firstName || existingMem.first_name;
-    if (adminFlag) existingMem.is_admin = 1;
+    if (adminFlag) {
+      existingMem.is_admin = 1;
+      existingMem.is_vip = 1;
+    }
     existingMem.last_seen_at = now;
     existingMem._cachedAt = now;
     memoryFallback.set(memKey, existingMem);
@@ -796,10 +800,11 @@
         await db
           .prepare(`INSERT INTO users (
             telegram_id, tg_username, first_name, is_vip, is_admin, created_at, last_seen_at
-          ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?5)
+          ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?5)
           ON CONFLICT(telegram_id) DO UPDATE SET
             tg_username = COALESCE(NULLIF(excluded.tg_username, ''), users.tg_username),
             first_name = COALESCE(NULLIF(excluded.first_name, ''), users.first_name),
+            is_vip = CASE WHEN excluded.is_admin = 1 THEN 1 ELSE users.is_vip END,
             is_admin = CASE WHEN excluded.is_admin = 1 THEN 1 ELSE users.is_admin END,
             last_seen_at = excluded.last_seen_at`)
           .bind(telegramId, tgUsername, firstName, adminFlag, now)
@@ -1084,6 +1089,11 @@
       memoryFallback.delete(`d1_movie_files_${idNum}`);
       memoryFallback.delete(`ingested_streams_m_${idNum}`);
     }
+    const tc = typeCode === "s" ? "s" : "m";
+    const memReports = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
+    if (memReports.length > 0) {
+      memoryFallback.set("d1_media_reports", memReports.filter(r => !(r && Number(r.tmdb_id) === idNum && r.type_code === tc)));
+    }
     if (!db) return true;
     try {
       trackStat("d1Writes");
@@ -1092,12 +1102,14 @@
           db.prepare("DELETE FROM series WHERE tmdb_id = ?1").bind(idNum),
           db.prepare("DELETE FROM series_seasons WHERE series_id = ?1").bind(idNum),
           db.prepare("DELETE FROM series_episodes WHERE series_id = ?1").bind(idNum),
-          db.prepare("DELETE FROM episode_files WHERE series_id = ?1").bind(idNum)
+          db.prepare("DELETE FROM episode_files WHERE series_id = ?1").bind(idNum),
+          db.prepare("DELETE FROM media_reports WHERE type_code = 's' AND tmdb_id = ?1").bind(idNum)
         ]);
       } else {
         await db.batch([
           db.prepare("DELETE FROM movies WHERE tmdb_id = ?1").bind(idNum),
-          db.prepare("DELETE FROM movie_files WHERE movie_id = ?1").bind(idNum)
+          db.prepare("DELETE FROM movie_files WHERE movie_id = ?1").bind(idNum),
+          db.prepare("DELETE FROM media_reports WHERE type_code = 'm' AND tmdb_id = ?1").bind(idNum)
         ]);
       }
       return true;
@@ -1139,11 +1151,12 @@
       try {
         trackStat("d1Writes");
         const res = await db.prepare(`INSERT INTO media_reports (
-          reporter_telegram_id, reporter_username, type_code, tmdb_id, title,
+          id, reporter_telegram_id, reporter_username, type_code, tmdb_id, title,
           season_number, episode_number, episode_title, telegram_file_id, version_label,
           reason_code, reason_label, note, status, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', ?14)`)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'open', ?15)`)
           .bind(
+            entry.id,
             entry.reporter_telegram_id,
             entry.reporter_username,
             entry.type_code,
@@ -1175,16 +1188,19 @@
     if (db) {
       try {
         trackStat("d1Reads");
-        let stmt;
-        if (statusFilter === "open" || statusFilter === "resolved") {
-          stmt = db.prepare("SELECT * FROM media_reports WHERE status = ?1 ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC LIMIT 200").bind(statusFilter);
-        } else {
-          stmt = db.prepare("SELECT * FROM media_reports ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC LIMIT 200");
-        }
+        const stmt = db.prepare("SELECT * FROM media_reports ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC LIMIT 200");
         const res = await stmt.all();
         if (Array.isArray(res?.results)) {
-          memoryFallback.set("d1_media_reports", res.results);
-          return res.results;
+          const normalized = res.results.map(r => ({
+            ...r,
+            id: Number(r.id || r.created_at || Date.now()),
+            status: String(r.status || "open")
+          }));
+          memoryFallback.set("d1_media_reports", normalized);
+          if (statusFilter === "open" || statusFilter === "resolved") {
+            return normalized.filter(r => r.status === statusFilter);
+          }
+          return normalized;
         }
       } catch (e) {}
     }
@@ -1199,17 +1215,25 @@
     const idNum = Number(reportId || 0);
     if (!idNum) return false;
     const now = Date.now();
+    const resolvedByStr = String(resolvedBy || "Admin");
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Writes");
-        await db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3")
-          .bind(now, String(resolvedBy || "Admin"), idNum)
+        await db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3 OR created_at = ?3")
+          .bind(now, resolvedByStr, idNum)
           .run();
       } catch (e) {}
     }
     const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
-    memoryFallback.set("d1_media_reports", memList.map(r => (Number(r.id) === idNum ? { ...r, status: "resolved", resolved_at: now, resolved_by: String(resolvedBy || "Admin") } : r)));
+    memoryFallback.set(
+      "d1_media_reports",
+      memList.map(r =>
+        r && (Number(r.id) === idNum || Number(r.created_at) === idNum)
+          ? { ...r, status: "resolved", resolved_at: now, resolved_by: resolvedByStr }
+          : r
+      )
+    );
     return true;
   }
 
@@ -1229,7 +1253,7 @@
         const stmts = [];
         if (reportId > 0) {
           stmts.push(
-            db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3")
+            db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3 OR created_at = ?3")
               .bind(now, resolvedBy, reportId)
           );
         }
@@ -1244,6 +1268,11 @@
             db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE status = 'open' AND type_code = 's' AND tmdb_id = ?3 AND season_number = ?4 AND episode_number = ?5")
               .bind(now, resolvedBy, tmdbId, seasonNum, episodeNum)
           );
+        } else if (tmdbId > 0 && typeCode === "s") {
+          stmts.push(
+            db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE status = 'open' AND type_code = 's' AND tmdb_id = ?3")
+              .bind(now, resolvedBy, tmdbId)
+          );
         } else if (tmdbId > 0 && typeCode === "m") {
           stmts.push(
             db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE status = 'open' AND type_code = 'm' AND tmdb_id = ?3")
@@ -1257,9 +1286,9 @@
     const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
     memoryFallback.set("d1_media_reports", memList.map(r => {
       if (!r || r.status === "resolved") return r;
-      const matchesId = reportId > 0 && Number(r.id) === reportId;
+      const matchesId = reportId > 0 && (Number(r.id) === reportId || Number(r.created_at) === reportId);
       const matchesFile = fileId && String(r.telegram_file_id || "") === fileId;
-      const matchesEp = tmdbId > 0 && typeCode === "s" && Number(r.tmdb_id) === tmdbId && Number(r.season_number) === seasonNum && Number(r.episode_number) === episodeNum;
+      const matchesEp = tmdbId > 0 && typeCode === "s" && Number(r.tmdb_id) === tmdbId && (seasonNum == null || Number(r.season_number) === seasonNum) && (episodeNum == null || Number(r.episode_number) === episodeNum);
       const matchesMov = tmdbId > 0 && typeCode === "m" && Number(r.tmdb_id) === tmdbId && r.type_code === "m";
       if (matchesId || matchesFile || matchesEp || matchesMov) {
         return { ...r, status: "resolved", resolved_at: now, resolved_by: resolvedBy };
@@ -1276,11 +1305,32 @@
     if (db) {
       try {
         trackStat("d1Writes");
-        await db.prepare("DELETE FROM media_reports WHERE id = ?1").bind(idNum).run();
+        await db.prepare("DELETE FROM media_reports WHERE id = ?1 OR created_at = ?1").bind(idNum).run();
       } catch (e) {}
     }
     const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
-    memoryFallback.set("d1_media_reports", memList.filter(r => Number(r?.id) !== idNum));
+    memoryFallback.set("d1_media_reports", memList.filter(r => r && Number(r.id) !== idNum && Number(r.created_at) !== idNum));
+    return true;
+  }
+
+  async function clearAllMediaReportsInD1(env, onlyResolved = false) {
+    const db = await ensureD1Schema(env);
+    if (db) {
+      try {
+        trackStat("d1Writes");
+        if (onlyResolved) {
+          await db.prepare("DELETE FROM media_reports WHERE status = 'resolved'").run();
+        } else {
+          await db.prepare("DELETE FROM media_reports").run();
+        }
+      } catch (e) {}
+    }
+    const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
+    if (onlyResolved) {
+      memoryFallback.set("d1_media_reports", memList.filter(r => r && r.status !== "resolved"));
+    } else {
+      memoryFallback.set("d1_media_reports", []);
+    }
     return true;
   }
 
@@ -2574,29 +2624,33 @@
     return { mergedDuplicates, healedPosters, upgradedSynthetic };
   }
 
-
-  // 1-Klick Komplett-Reset: Löscht alle Filme, Serien, Episoden, Datei-Links, Caches & Playlisten
+  // 1-Klick Komplett-Reset: Löscht alle Filme, Serien, Episoden, Datei-Links, Fehlermeldungen, Diagnose-Logs, Caches & Playlisten
   // (Benutzerkonten, VIP-Status und Admin-Rechte in 'users' bleiben unberührt!)
   async function resetAllMediaAndPlaylistsInD1AndKv(env) {
     let deletedTables = 0;
     const db = await ensureD1Schema(env);
+    const tables = [
+      "episode_files",
+      "series_episodes",
+      "series_seasons",
+      "series",
+      "movie_files",
+      "movies",
+      "media_reports",
+      "import_diagnostic_logs",
+      "d1_playlist_items",
+      "d1_playlists",
+      "d1_import_checkpoints",
+      "search_cache",
+      "entity_cache",
+      "import_queue"
+    ];
     if (db) {
       try {
         trackStat("d1Writes");
-        await db.batch([
-          db.prepare("DELETE FROM episode_files"),
-          db.prepare("DELETE FROM series_episodes"),
-          db.prepare("DELETE FROM series_seasons"),
-          db.prepare("DELETE FROM series"),
-          db.prepare("DELETE FROM movie_files"),
-          db.prepare("DELETE FROM movies"),
-          db.prepare("DELETE FROM search_cache"),
-          db.prepare("DELETE FROM entity_cache"),
-          db.prepare("DELETE FROM import_queue")
-        ]);
-        deletedTables = 9;
+        await db.batch(tables.map(tbl => db.prepare(`DELETE FROM ${tbl}`)));
+        deletedTables = tables.length;
       } catch (e) {
-        const tables = ["episode_files", "series_episodes", "series_seasons", "series", "movie_files", "movies", "search_cache", "entity_cache", "import_queue"];
         for (const tbl of tables) {
           try {
             await db.prepare(`DELETE FROM ${tbl}`).run();
@@ -2607,6 +2661,8 @@
     }
 
     tmdbCache.clear();
+    memoryFallback.delete("d1_media_reports");
+    memoryFallback.delete("d1_import_diagnostic_logs");
     for (const k of Array.from(memoryFallback.keys())) {
       if (
         k.startsWith("d1_") ||
@@ -2614,10 +2670,13 @@
         k.startsWith("folders_") ||
         k.startsWith("u_bundle_bot_vip") ||
         k.startsWith("bot_vip") ||
+        k.startsWith("ingested_streams_") ||
         k.startsWith("tma_import_checkpoint") ||
         k.startsWith("tma_backup_import_checkpoint")
       ) {
-        memoryFallback.delete(k);
+        if (!k.startsWith("d1_user_") && !k.startsWith("d1_username_")) {
+          memoryFallback.delete(k);
+        }
       }
     }
     await kvStageDelete(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
@@ -2631,7 +2690,7 @@
     return {
       ok: true,
       deletedTables,
-      message: "Komplett-Reset erfolgreich: Alle Filme, Serien, Datei-IDs, Caches und Playlisten wurden restlos gelöscht. Benutzer- und VIP-Konten blieben erhalten."
+      message: "Komplett-Reset erfolgreich: Alle Filme, Serien, Datei-IDs, Fehlermeldungen, Diagnose-Logs, Caches und Playlisten wurden restlos gelöscht. Benutzer- und VIP-Konten blieben erhalten."
     };
   }
 
@@ -4306,4 +4365,3 @@
       }
     } catch (e) {}
   }
-

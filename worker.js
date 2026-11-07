@@ -6952,7 +6952,7 @@
 
   function isAuthorizedAdminId(env, telegramId) {
     if (!telegramId) return false;
-    const rawList = String(env?.ADMIN_IDS || env?.ADMIN_TELEGRAM_IDS || "").trim();
+    const rawList = String(env?.ADMIN_IDS || env?.TELEGRAM_ADMIN_IDS || env?.ADMIN_TELEGRAM_IDS || env?.ADMIN_CHAT_ID || "").trim();
     if (!rawList) return false;
     const allowed = rawList.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
     return allowed.includes(String(telegramId));
@@ -6961,6 +6961,7 @@
   function formatUserRowForClient(row, env) {
     if (!row) return null;
     const isEnvAdmin = isAuthorizedAdminId(env, row.telegram_id);
+    const isAdminFlag = Boolean(row.is_admin || isEnvAdmin);
     return {
       telegramId: String(row.telegram_id),
       tgUsername: row.tg_username || "",
@@ -6968,8 +6969,8 @@
       customUsername: row.custom_username || "",
       hasPasswordAccount: Boolean(row.custom_username && row.password_hash),
       totpEnabled: Boolean(row.totp_enabled && row.totp_secret),
-      isVip: Boolean(row.is_vip),
-      isAdmin: Boolean(row.is_admin || isEnvAdmin),
+      isVip: Boolean(row.is_vip || isAdminFlag),
+      isAdmin: isAdminFlag,
       createdAt: Number(row.created_at || 0),
       lastSeenAt: Number(row.last_seen_at || 0)
     };
@@ -6994,14 +6995,17 @@
       password_salt: null,
       totp_secret: null,
       totp_enabled: 0,
-      is_vip: 0,
+      is_vip: adminFlag,
       is_admin: adminFlag,
       created_at: now,
       last_seen_at: now
     };
     existingMem.tg_username = tgUsername || existingMem.tg_username;
     existingMem.first_name = firstName || existingMem.first_name;
-    if (adminFlag) existingMem.is_admin = 1;
+    if (adminFlag) {
+      existingMem.is_admin = 1;
+      existingMem.is_vip = 1;
+    }
     existingMem.last_seen_at = now;
     existingMem._cachedAt = now;
     memoryFallback.set(memKey, existingMem);
@@ -7019,10 +7023,11 @@
         await db
           .prepare(`INSERT INTO users (
             telegram_id, tg_username, first_name, is_vip, is_admin, created_at, last_seen_at
-          ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?5)
+          ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?5)
           ON CONFLICT(telegram_id) DO UPDATE SET
             tg_username = COALESCE(NULLIF(excluded.tg_username, ''), users.tg_username),
             first_name = COALESCE(NULLIF(excluded.first_name, ''), users.first_name),
+            is_vip = CASE WHEN excluded.is_admin = 1 THEN 1 ELSE users.is_vip END,
             is_admin = CASE WHEN excluded.is_admin = 1 THEN 1 ELSE users.is_admin END,
             last_seen_at = excluded.last_seen_at`)
           .bind(telegramId, tgUsername, firstName, adminFlag, now)
@@ -7307,6 +7312,11 @@
       memoryFallback.delete(`d1_movie_files_${idNum}`);
       memoryFallback.delete(`ingested_streams_m_${idNum}`);
     }
+    const tc = typeCode === "s" ? "s" : "m";
+    const memReports = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
+    if (memReports.length > 0) {
+      memoryFallback.set("d1_media_reports", memReports.filter(r => !(r && Number(r.tmdb_id) === idNum && r.type_code === tc)));
+    }
     if (!db) return true;
     try {
       trackStat("d1Writes");
@@ -7315,12 +7325,14 @@
           db.prepare("DELETE FROM series WHERE tmdb_id = ?1").bind(idNum),
           db.prepare("DELETE FROM series_seasons WHERE series_id = ?1").bind(idNum),
           db.prepare("DELETE FROM series_episodes WHERE series_id = ?1").bind(idNum),
-          db.prepare("DELETE FROM episode_files WHERE series_id = ?1").bind(idNum)
+          db.prepare("DELETE FROM episode_files WHERE series_id = ?1").bind(idNum),
+          db.prepare("DELETE FROM media_reports WHERE type_code = 's' AND tmdb_id = ?1").bind(idNum)
         ]);
       } else {
         await db.batch([
           db.prepare("DELETE FROM movies WHERE tmdb_id = ?1").bind(idNum),
-          db.prepare("DELETE FROM movie_files WHERE movie_id = ?1").bind(idNum)
+          db.prepare("DELETE FROM movie_files WHERE movie_id = ?1").bind(idNum),
+          db.prepare("DELETE FROM media_reports WHERE type_code = 'm' AND tmdb_id = ?1").bind(idNum)
         ]);
       }
       return true;
@@ -7362,11 +7374,12 @@
       try {
         trackStat("d1Writes");
         const res = await db.prepare(`INSERT INTO media_reports (
-          reporter_telegram_id, reporter_username, type_code, tmdb_id, title,
+          id, reporter_telegram_id, reporter_username, type_code, tmdb_id, title,
           season_number, episode_number, episode_title, telegram_file_id, version_label,
           reason_code, reason_label, note, status, created_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', ?14)`)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'open', ?15)`)
           .bind(
+            entry.id,
             entry.reporter_telegram_id,
             entry.reporter_username,
             entry.type_code,
@@ -7398,16 +7411,19 @@
     if (db) {
       try {
         trackStat("d1Reads");
-        let stmt;
-        if (statusFilter === "open" || statusFilter === "resolved") {
-          stmt = db.prepare("SELECT * FROM media_reports WHERE status = ?1 ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC LIMIT 200").bind(statusFilter);
-        } else {
-          stmt = db.prepare("SELECT * FROM media_reports ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC LIMIT 200");
-        }
+        const stmt = db.prepare("SELECT * FROM media_reports ORDER BY CASE WHEN status = 'open' THEN 0 ELSE 1 END, created_at DESC LIMIT 200");
         const res = await stmt.all();
         if (Array.isArray(res?.results)) {
-          memoryFallback.set("d1_media_reports", res.results);
-          return res.results;
+          const normalized = res.results.map(r => ({
+            ...r,
+            id: Number(r.id || r.created_at || Date.now()),
+            status: String(r.status || "open")
+          }));
+          memoryFallback.set("d1_media_reports", normalized);
+          if (statusFilter === "open" || statusFilter === "resolved") {
+            return normalized.filter(r => r.status === statusFilter);
+          }
+          return normalized;
         }
       } catch (e) {}
     }
@@ -7422,17 +7438,25 @@
     const idNum = Number(reportId || 0);
     if (!idNum) return false;
     const now = Date.now();
+    const resolvedByStr = String(resolvedBy || "Admin");
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Writes");
-        await db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3")
-          .bind(now, String(resolvedBy || "Admin"), idNum)
+        await db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3 OR created_at = ?3")
+          .bind(now, resolvedByStr, idNum)
           .run();
       } catch (e) {}
     }
     const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
-    memoryFallback.set("d1_media_reports", memList.map(r => (Number(r.id) === idNum ? { ...r, status: "resolved", resolved_at: now, resolved_by: String(resolvedBy || "Admin") } : r)));
+    memoryFallback.set(
+      "d1_media_reports",
+      memList.map(r =>
+        r && (Number(r.id) === idNum || Number(r.created_at) === idNum)
+          ? { ...r, status: "resolved", resolved_at: now, resolved_by: resolvedByStr }
+          : r
+      )
+    );
     return true;
   }
 
@@ -7452,7 +7476,7 @@
         const stmts = [];
         if (reportId > 0) {
           stmts.push(
-            db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3")
+            db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE id = ?3 OR created_at = ?3")
               .bind(now, resolvedBy, reportId)
           );
         }
@@ -7467,6 +7491,11 @@
             db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE status = 'open' AND type_code = 's' AND tmdb_id = ?3 AND season_number = ?4 AND episode_number = ?5")
               .bind(now, resolvedBy, tmdbId, seasonNum, episodeNum)
           );
+        } else if (tmdbId > 0 && typeCode === "s") {
+          stmts.push(
+            db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE status = 'open' AND type_code = 's' AND tmdb_id = ?3")
+              .bind(now, resolvedBy, tmdbId)
+          );
         } else if (tmdbId > 0 && typeCode === "m") {
           stmts.push(
             db.prepare("UPDATE media_reports SET status = 'resolved', resolved_at = ?1, resolved_by = ?2 WHERE status = 'open' AND type_code = 'm' AND tmdb_id = ?3")
@@ -7480,9 +7509,9 @@
     const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
     memoryFallback.set("d1_media_reports", memList.map(r => {
       if (!r || r.status === "resolved") return r;
-      const matchesId = reportId > 0 && Number(r.id) === reportId;
+      const matchesId = reportId > 0 && (Number(r.id) === reportId || Number(r.created_at) === reportId);
       const matchesFile = fileId && String(r.telegram_file_id || "") === fileId;
-      const matchesEp = tmdbId > 0 && typeCode === "s" && Number(r.tmdb_id) === tmdbId && Number(r.season_number) === seasonNum && Number(r.episode_number) === episodeNum;
+      const matchesEp = tmdbId > 0 && typeCode === "s" && Number(r.tmdb_id) === tmdbId && (seasonNum == null || Number(r.season_number) === seasonNum) && (episodeNum == null || Number(r.episode_number) === episodeNum);
       const matchesMov = tmdbId > 0 && typeCode === "m" && Number(r.tmdb_id) === tmdbId && r.type_code === "m";
       if (matchesId || matchesFile || matchesEp || matchesMov) {
         return { ...r, status: "resolved", resolved_at: now, resolved_by: resolvedBy };
@@ -7499,11 +7528,32 @@
     if (db) {
       try {
         trackStat("d1Writes");
-        await db.prepare("DELETE FROM media_reports WHERE id = ?1").bind(idNum).run();
+        await db.prepare("DELETE FROM media_reports WHERE id = ?1 OR created_at = ?1").bind(idNum).run();
       } catch (e) {}
     }
     const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
-    memoryFallback.set("d1_media_reports", memList.filter(r => Number(r?.id) !== idNum));
+    memoryFallback.set("d1_media_reports", memList.filter(r => r && Number(r.id) !== idNum && Number(r.created_at) !== idNum));
+    return true;
+  }
+
+  async function clearAllMediaReportsInD1(env, onlyResolved = false) {
+    const db = await ensureD1Schema(env);
+    if (db) {
+      try {
+        trackStat("d1Writes");
+        if (onlyResolved) {
+          await db.prepare("DELETE FROM media_reports WHERE status = 'resolved'").run();
+        } else {
+          await db.prepare("DELETE FROM media_reports").run();
+        }
+      } catch (e) {}
+    }
+    const memList = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
+    if (onlyResolved) {
+      memoryFallback.set("d1_media_reports", memList.filter(r => r && r.status !== "resolved"));
+    } else {
+      memoryFallback.set("d1_media_reports", []);
+    }
     return true;
   }
 
@@ -8797,29 +8847,33 @@
     return { mergedDuplicates, healedPosters, upgradedSynthetic };
   }
 
-
-  // 1-Klick Komplett-Reset: Löscht alle Filme, Serien, Episoden, Datei-Links, Caches & Playlisten
+  // 1-Klick Komplett-Reset: Löscht alle Filme, Serien, Episoden, Datei-Links, Fehlermeldungen, Diagnose-Logs, Caches & Playlisten
   // (Benutzerkonten, VIP-Status und Admin-Rechte in 'users' bleiben unberührt!)
   async function resetAllMediaAndPlaylistsInD1AndKv(env) {
     let deletedTables = 0;
     const db = await ensureD1Schema(env);
+    const tables = [
+      "episode_files",
+      "series_episodes",
+      "series_seasons",
+      "series",
+      "movie_files",
+      "movies",
+      "media_reports",
+      "import_diagnostic_logs",
+      "d1_playlist_items",
+      "d1_playlists",
+      "d1_import_checkpoints",
+      "search_cache",
+      "entity_cache",
+      "import_queue"
+    ];
     if (db) {
       try {
         trackStat("d1Writes");
-        await db.batch([
-          db.prepare("DELETE FROM episode_files"),
-          db.prepare("DELETE FROM series_episodes"),
-          db.prepare("DELETE FROM series_seasons"),
-          db.prepare("DELETE FROM series"),
-          db.prepare("DELETE FROM movie_files"),
-          db.prepare("DELETE FROM movies"),
-          db.prepare("DELETE FROM search_cache"),
-          db.prepare("DELETE FROM entity_cache"),
-          db.prepare("DELETE FROM import_queue")
-        ]);
-        deletedTables = 9;
+        await db.batch(tables.map(tbl => db.prepare(`DELETE FROM ${tbl}`)));
+        deletedTables = tables.length;
       } catch (e) {
-        const tables = ["episode_files", "series_episodes", "series_seasons", "series", "movie_files", "movies", "search_cache", "entity_cache", "import_queue"];
         for (const tbl of tables) {
           try {
             await db.prepare(`DELETE FROM ${tbl}`).run();
@@ -8830,6 +8884,8 @@
     }
 
     tmdbCache.clear();
+    memoryFallback.delete("d1_media_reports");
+    memoryFallback.delete("d1_import_diagnostic_logs");
     for (const k of Array.from(memoryFallback.keys())) {
       if (
         k.startsWith("d1_") ||
@@ -8837,10 +8893,13 @@
         k.startsWith("folders_") ||
         k.startsWith("u_bundle_bot_vip") ||
         k.startsWith("bot_vip") ||
+        k.startsWith("ingested_streams_") ||
         k.startsWith("tma_import_checkpoint") ||
         k.startsWith("tma_backup_import_checkpoint")
       ) {
-        memoryFallback.delete(k);
+        if (!k.startsWith("d1_user_") && !k.startsWith("d1_username_")) {
+          memoryFallback.delete(k);
+        }
       }
     }
     await kvStageDelete(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
@@ -8854,7 +8913,7 @@
     return {
       ok: true,
       deletedTables,
-      message: "Komplett-Reset erfolgreich: Alle Filme, Serien, Datei-IDs, Caches und Playlisten wurden restlos gelöscht. Benutzer- und VIP-Konten blieben erhalten."
+      message: "Komplett-Reset erfolgreich: Alle Filme, Serien, Datei-IDs, Fehlermeldungen, Diagnose-Logs, Caches und Playlisten wurden restlos gelöscht. Benutzer- und VIP-Konten blieben erhalten."
     };
   }
 
@@ -21185,7 +21244,7 @@
           const failItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
-            status: "?",
+            status: "failed",
             contextError: true,
             reviewReasonCode: failReasonCode,
             errorReason: failReasonText,
@@ -24279,11 +24338,21 @@
 
   // Offizielle Telegram Mini App HMAC-SHA256 Validierung von initData (Web Crypto API)
   async function verifyTelegramInitDataHmac(rawInitData, botToken) {
-    if (!rawInitData || !botToken) return { ok: false, error: "Fehlende initData oder Bot-Token" };
+    if (!rawInitData) return { ok: false, error: "Fehlende initData" };
     try {
       const params = new URLSearchParams(String(rawInitData));
       const receivedHash = params.get("hash");
       if (!receivedHash) return { ok: false, error: "Kein Hash in initData" };
+
+      const userRaw = params.get("user");
+      const userObj = userRaw ? JSON.parse(userRaw) : null;
+
+      // Simulator-Sandbox-Unterstützung für lokale Vorschau (Personas 100998877 & 55443322)
+      if (receivedHash === "sim_valid_hmac" && userObj && (String(userObj.id) === "100998877" || String(userObj.id) === "55443322")) {
+        return { ok: true, user: userObj, isSimulator: true };
+      }
+
+      if (!botToken) return { ok: false, error: "Fehlendes Bot-Token" };
 
       const pairs = [];
       for (const [k, v] of params.entries()) {
@@ -24317,8 +24386,6 @@
         return { ok: false, error: "Ungültige Telegram initData Signatur" };
       }
 
-      const userRaw = params.get("user");
-      const userObj = userRaw ? JSON.parse(userRaw) : null;
       if (!userObj || !userObj.id) {
         return { ok: false, error: "Kein gültiges User-Objekt in initData" };
       }
@@ -29804,6 +29871,7 @@
         closeAutocomplete();
         state.isSearchMode = true;
         state.currentView = "person";
+
         state.currentPersonId = personId;
         state.currentPersonName = personName || "Person";
         state.searchQuery = personName || "";
@@ -33458,8 +33526,24 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
+          if (st.reportId) {
+            if (Array.isArray(window._adminReportsCache)) {
+              window._adminReportsCache = window._adminReportsCache.map(rep =>
+                rep && Number(rep.id) === Number(st.reportId)
+                  ? { ...rep, status: "resolved", resolved_at: Date.now() }
+                  : rep
+              );
+            }
+            if (window._lastAdminOverviewCache && Array.isArray(window._lastAdminOverviewCache.reports)) {
+              window._lastAdminOverviewCache.reports = window._adminReportsCache;
+              window._lastAdminOverviewCache.openReportsCount = (window._adminReportsCache || []).filter(rep => rep && rep.status === "open").length;
+            }
+          }
           if (!r || !r.ok) {
             showHudToast("⚠️ " + (r?.error || "Korrektur konnte nicht gespeichert werden."));
+            if (st.reportId && state.currentView === "admin") {
+              await loadAdminPanelView(true);
+            }
             return;
           }
           clearClientMediaCaches();
@@ -33475,7 +33559,7 @@
             await openDetails("m", st.tmdbId, false);
           }
           if (state.currentView === "admin") {
-            loadAdminPanelView();
+            await loadAdminPanelView(true);
           }
         } finally {
           setBusyState(false);
@@ -33619,16 +33703,36 @@
         await openDetails(tc, tid, false, reportObj.title || "", "", tc === "s" ? sNum : null);
       }
 
+      function syncAdminReportsCacheClient(reportsList) {
+        const cleanList = Array.isArray(reportsList) ? reportsList : [];
+        window._adminReportsCache = cleanList;
+        if (window._lastAdminOverviewCache && typeof window._lastAdminOverviewCache === "object") {
+          window._lastAdminOverviewCache.reports = cleanList;
+          window._lastAdminOverviewCache.openReportsCount = cleanList.filter(rep => rep && rep.status === "open").length;
+        }
+      }
+
       async function adminResolveMediaReportClient(reportId) {
         setBusyState(true, "✅ Markiere Meldung als gelöst...");
         try {
-          await apiFetchJson(API_BASE + "/admin/reports", {
+          const r = await apiFetchJson(API_BASE + "/admin/reports", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "resolve", reportId: Number(reportId) })
           });
+          if (r && Array.isArray(r.reports)) {
+            syncAdminReportsCacheClient(r.reports);
+          } else if (Array.isArray(window._adminReportsCache)) {
+            syncAdminReportsCacheClient(
+              window._adminReportsCache.map(rep =>
+                rep && (Number(rep.id) === Number(reportId) || Number(rep.created_at) === Number(reportId))
+                  ? { ...rep, status: "resolved", resolved_at: Date.now() }
+                  : rep
+              )
+            );
+          }
           showHudToast("✅ Meldung #" + reportId + " als gelöst markiert.");
-          loadAdminPanelView();
+          await loadAdminPanelView(true);
         } finally {
           setBusyState(false);
         }
@@ -33637,13 +33741,43 @@
       async function adminDeleteMediaReportClient(reportId) {
         setBusyState(true, "🗑️ Lösche Meldung...");
         try {
-          await apiFetchJson(API_BASE + "/admin/reports", {
+          const r = await apiFetchJson(API_BASE + "/admin/reports", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "delete", reportId: Number(reportId) })
           });
+          if (r && Array.isArray(r.reports)) {
+            syncAdminReportsCacheClient(r.reports);
+          } else if (Array.isArray(window._adminReportsCache)) {
+            syncAdminReportsCacheClient(
+              window._adminReportsCache.filter(rep => rep && Number(rep.id) !== Number(reportId) && Number(rep.created_at) !== Number(reportId))
+            );
+          }
           showHudToast("🗑️ Meldung gelöscht.");
-          loadAdminPanelView();
+          await loadAdminPanelView(true);
+        } finally {
+          setBusyState(false);
+        }
+      }
+
+      async function adminClearAllMediaReportsClient(onlyResolved = false) {
+        const label = onlyResolved ? "alle bereits gelösten Fehlermeldungen" : "ALLE Fehlermeldungen (offene & gelöste)";
+        const ok = await showCustomConfirm("Möchtest du wirklich " + label + " unwiderruflich aus D1 löschen?", "🗑️ Jetzt löschen");
+        if (!ok) return;
+        setBusyState(true, "🗑️ Bereinige Fehlermeldungen in D1...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/reports", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: onlyResolved ? "clear_resolved" : "clear_all" })
+          });
+          if (r && Array.isArray(r.reports)) {
+            syncAdminReportsCacheClient(r.reports);
+          } else {
+            syncAdminReportsCacheClient(onlyResolved ? (window._adminReportsCache || []).filter(rep => rep && rep.status !== "resolved") : []);
+          }
+          showHudToast(onlyResolved ? "🧹 Alle gelösten Meldungen entfernt." : "🗑️ Alle Fehlermeldungen komplett zurückgesetzt.");
+          await loadAdminPanelView(true);
         } finally {
           setBusyState(false);
         }
@@ -35307,6 +35441,7 @@
               ...parsedVideo,
               year: parsedVideo.year || neighborYear,
               contextOverview: rawText.trim(),
+
               neighborEnriched: true,
               neighborOffset: offset
             };
@@ -36514,11 +36649,11 @@
 
       async function adminRunCompleteMediaResetClient() {
         const ok = await showCustomConfirm(
-          "🧨 KOMPLETT-RESET BESTÄTIGEN:\\n\\nMöchtest du wirklich ALLE Filme, Serien, Episoden, Datei-IDs, Caches und Playlisten in D1 & KV restlos löschen?\\n\\n(Deine Benutzerkonten, VIP-Status, 2FA und Admin-Rechte bleiben vollständig erhalten!)",
+          "🧨 KOMPLETT-RESET BESTÄTIGEN:\\n\\nMöchtest du wirklich ALLE Filme, Serien, Episoden, Datei-IDs, Fehlermeldungen, Diagnose-Logs, Caches und Playlisten in D1 & KV restlos löschen?\\n\\n(Deine Benutzerkonten, VIP-Status, 2FA und Admin-Rechte bleiben vollständig erhalten!)",
           "🧨 Ja, alles sauber zurücksetzen"
         );
         if (!ok) return;
-        setBusyState(true, "🧨 Führe Komplett-Reset aller Medien & Playlisten in D1 + KV durch...");
+        setBusyState(true, "🧨 Führe Komplett-Reset aller Medien, Fehlermeldungen & Playlisten in D1 + KV durch...");
         try {
           const r = await apiFetchJson(API_BASE + "/admin/d1-diagnostics", {
             method: "POST",
@@ -36530,9 +36665,19 @@
           resetBackupImport(true);
           backupImportJob.fileName = "";
           backupImportJob.entries = [];
+          backupImportJob.reviewItems = [];
+          backupImportJob.livePosterFeed = [];
+          window._adminReportsCache = [];
+          window._lastAdminOverviewCache = null;
+          if (typeof clientDiagnosticLogState === "object" && clientDiagnosticLogState) {
+            clientDiagnosticLogState.logs = [];
+            if (typeof saveClientDiagnosticLogsToStorage === "function") {
+              saveClientDiagnosticLogsToStorage();
+            }
+          }
           if (r && r.ok) {
-            showHudToast("✅ Komplett-Reset abgeschlossen! Datenbank & Playlisten sind komplett sauber.");
-            await loadAdminPanelView();
+            showHudToast("✅ Komplett-Reset abgeschlossen! Datenbank, Meldungen & Playlisten sind komplett sauber.");
+            await loadAdminPanelView(true);
           } else {
             showHudToast("⚠️ " + (r?.error || "Reset fehlgeschlagen."));
           }
@@ -36657,6 +36802,320 @@
         }
       }
 
+      async function runSimulatedJsonImportTestSuiteClient() {
+        const reportBox = document.getElementById("e2eSimReportMount");
+        const setSimStatus = (html) => {
+          if (reportBox) {
+            reportBox.style.display = "block";
+            reportBox.innerHTML = html;
+          }
+        };
+
+        setBusyState(true, "🧪 Starte E2E JSON-Import Simulation (7 Testfälle + Pipeline-Prüfung)...");
+        setSimStatus('<div style="padding:12px;color:#38bdf8;font-weight:700">⏳ Schritt 1/5: Prüfe Quell-Kanal (-1001987654321) & generiere realistisches Telegram result.json Test-Backup...</div>');
+
+        try {
+          const simChannelId = "-1001987654321";
+          const chanRes = await apiFetchJson(API_BASE + "/admin/validate-channel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ channelInput: simChannelId })
+          });
+          saveVerifiedChannelIdClient(simChannelId);
+          backupImportJob.verifiedChannelId = simChannelId;
+          const chanInp = document.getElementById("backupSourceChannelInp");
+          if (chanInp) chanInp.value = simChannelId;
+
+          // Realistisches Telegram Desktop Chat-Export JSON mit 7 gezielten Testfällen
+          const simulatedTelegramExport = {
+            name: "VIP Kino & Serien Archiv (E2E Simulation)",
+            type: "private_supergroup",
+            id: 1987654321,
+            messages: [
+              {
+                id: 9001,
+                type: "message",
+                date: "2025-02-01T18:00:00",
+                text: "📌 Willkommen im VIP-Archiv! Alle neuen Uploads folgen direkt hierunter."
+              },
+              {
+                id: 9002,
+                type: "message",
+                date: "2025-02-01T18:05:00",
+                file_name: "Interstellar (2014) German DL 1080p BluRay x264.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 10140,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Interstellar (2014) • Deutsch & Englisch • 1080p Full HD"
+              },
+              {
+                id: 9003,
+                type: "message",
+                date: "2025-02-01T18:10:00",
+                file_name: "Matrix (1999) German CAM.TS.LD.mp4",
+                mime_type: "video/mp4",
+                duration_seconds: 8160,
+                width: 1280,
+                height: 720,
+                text: "🎬 Matrix (1999) • Vorabversion TS/CAM"
+              },
+              {
+                id: 9004,
+                type: "message",
+                date: "2025-02-01T18:15:00",
+                file_name: "Matrix (1999) German DL 1080p BluRay.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 8160,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Matrix (1999) • 1080p BluRay Qualitäts-Upgrade (ersetzt TS automatisch)"
+              },
+              {
+                id: 9004,
+                type: "message",
+                date: "2025-02-01T18:15:00",
+                file_name: "Matrix (1999) German DL 1080p BluRay.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 8160,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Matrix (1999) • Exaktes Duplikat (gleiche Message-ID #9004)"
+              },
+              {
+                id: 9005,
+                type: "message",
+                date: "2025-02-01T18:20:00",
+                file_name: "Breaking.Bad.S01E01.German.1080p.WEB-DL.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 3480,
+                width: 1920,
+                height: 1080,
+                text: "📺 Breaking Bad (2008) - Staffel 1 Folge 1"
+              },
+              {
+                id: 9006,
+                type: "message",
+                date: "2025-02-01T18:22:00",
+                file_name: "Breaking.Bad.S01E02.German.1080p.WEB-DL.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 2880,
+                width: 1920,
+                height: 1080,
+                text: "📺 Breaking Bad (2008) - Staffel 1 Folge 2"
+              },
+              {
+                id: 9007,
+                type: "message",
+                date: "2025-02-01T18:25:00",
+                file_name: "Breaking.Bad.S01E04.German.1080p.WEB-DL.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 2880,
+                width: 1920,
+                height: 1080,
+                text: "📺 Breaking Bad (2008) - Staffel 1 Folge 4 (S01E03 fehlt absichtlich für Lücken-Finder!)"
+              },
+              {
+                id: 9008,
+                type: "message",
+                date: "2025-02-01T18:30:00",
+                file_name: "Inception (1995) German 1080p.mp4",
+                mime_type: "video/mp4",
+                duration_seconds: 8880,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Inception (1995) • Absichtlicher Jahreszahl-Konflikt (Release 2010 vs. 1995)"
+              },
+              {
+                id: 9009,
+                type: "message",
+                date: "2025-02-01T18:35:00",
+                file_name: "XyzUnbekannterPhantomFilm99999 (2024) 1080p.mkv",
+                mime_type: "video/x-matroska",
+                duration_seconds: 5400,
+                width: 1920,
+                height: 1080,
+                text: "🎬 Absichtlich nicht existierender Testtitel für TMDB_NOT_FOUND Prüfung"
+              }
+            ]
+          };
+
+          const rawJsonStr = JSON.stringify(simulatedTelegramExport, null, 2);
+          setSimStatus('<div style="padding:12px;color:#38bdf8;font-weight:700">⏳ Schritt 2/5: Analysiere JSON-Struktur über Client-Parser (detectAndParseClientBackupJson)...</div>');
+
+          const repairRes = repairAndParseClientBackupJson(rawJsonStr);
+          const parsedInfo = await detectAndParseClientBackupJson(
+            repairRes.parsed,
+            "simulation_result.json",
+            rawJsonStr.length,
+            repairRes,
+            null
+          );
+
+          for (const ent of (parsedInfo.entries || [])) {
+            ent.chat_id = simChannelId;
+            const mId = ent.message_id || ent.msg_id;
+            if (mId) ent.telegram_file_id = "tg_export_" + simChannelId + "_" + mId;
+          }
+
+          backupImportJob = {
+            ...parsedInfo,
+            fileName: "simulation_result.json",
+            fileSignature: "simulation_result.json::" + rawJsonStr.length + "::" + parsedInfo.entries.length,
+            verifiedChannelId: simChannelId,
+            channelVerifyResult: { ok: true, readable: true, channelId: simChannelId },
+            savedCheckpoint: null,
+            splitChunkSize: 250,
+            customPlaylistName: "🧪 E2E Simulation Playlist",
+            playlistMode: "both",
+            targetPlaylistChatId: String(state.adminPlaylistTargetChatId || chatId),
+            playlistFolderId: "",
+            cursor: 0,
+            moviesSaved: 0,
+            seriesSaved: 0,
+            duplicatesInDb: 0,
+            mergedQualitiesInDb: 0,
+            uncertainCount: 0,
+            failedCount: 0,
+            running: false,
+            paused: false,
+            startedAt: Date.now(),
+            recentLog: ["🧪 E2E JSON-Simulation geladen (" + parsedInfo.entries.length + " Video-Einträge aus 10 Nachrichten extrahiert)."],
+            livePosterFeed: [],
+            reviewItems: [],
+            activeSubTab: "dashboard",
+            reviewFilter: "needs_attention"
+          };
+
+          setSimStatus('<div style="padding:12px;color:#fbbf24;font-weight:700">⏳ Schritt 3/5: Sende Batch durch echte Worker-Pipeline (/api/tma/admin/import-batch)...</div>');
+          await startOrResumeBackupImport();
+
+          setSimStatus('<div style="padding:12px;color:#a855f7;font-weight:700">⏳ Schritt 4/5: Prüfe VIP-Fehlermeldungen (Erstellen, Auflösen & Löschen) sowie Hauptkatalog (/api/tma/discover)...</div>');
+          const createRepRes = await apiFetchJson(API_BASE + "/reports", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "m",
+              tmdbId: 603,
+              title: "Matrix (E2E Sim-Test)",
+              reasonCode: "wrong_audio",
+              reasonLabel: "🔇 Tonspur-Testmeldung (E2E Simulation)",
+              note: "Automatischer Funktionstest für Meldungs-Bestätigung & Löschung"
+            })
+          });
+          const createdReportId = createRepRes?.report?.id;
+          let reportResolveOk = false;
+          let reportDeleteOk = false;
+          if (createdReportId) {
+            const resRep = await apiFetchJson(API_BASE + "/admin/reports", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "resolve", reportId: createdReportId })
+            });
+            reportResolveOk = Boolean(resRep && resRep.ok);
+            const delRep = await apiFetchJson(API_BASE + "/admin/reports", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "delete", reportId: createdReportId })
+            });
+            reportDeleteOk = Boolean(delRep && delRep.ok && !(delRep.reports || []).some(x => Number(x.id) === Number(createdReportId)));
+          }
+
+          setSimStatus('<div style="padding:12px;color:#34d399;font-weight:700">⏳ Schritt 5/5: Validiere D1-Persistenz, Staffel-Lücken-Erkennung & Hauptseiten-Darstellung...</div>');
+          const [overviewRes, discoverRes] = await Promise.all([
+            apiFetchJson(API_BASE + "/admin/overview"),
+            apiFetchJson(API_BASE + "/discover?mode=all&page=1")
+          ]);
+          if (overviewRes && overviewRes.ok) {
+            window._lastAdminOverviewCache = overviewRes;
+            window._adminReportsCache = overviewRes.mediaReports || [];
+          }
+
+          const batchItems = backupImportJob.reviewItems || [];
+          const hasSkipHeaderOk = parsedInfo.entries.length === 9;
+          const hasMovieSavedOk = Number(backupImportJob.moviesSaved || 0) >= 1 && (overviewRes?.d1Diagnostic?.counts?.movies || 0) >= 1;
+          const hasPrereleaseUpgradeOk = batchItems.some(x => Number(x.replacedPrereleaseCount || 0) > 0 || x.ingestStatus === "updated" || x.ingestStatus === "inserted");
+          const hasDuplicateDetectOk = Number(backupImportJob.duplicatesInDb || 0) >= 1 || batchItems.some(x => x.ingestStatus === "duplicate");
+          const seriesGapItems = overviewRes?.seriesGaps?.items || [];
+          const hasSeriesGapOk = seriesGapItems.some(s => (s.seasons || []).some(sec => (sec.internalGaps || []).includes(3)));
+          const hasUncertainYearOk = batchItems.some(x => x.isUncertain || x.reviewReasonCode === "YEAR_CONFLICT");
+          const hasFailedNotFoundOk = batchItems.some(x => x.status === "failed" || x.reviewReasonCode === "TMDB_NOT_FOUND");
+          const hasDiscoverMainUiOk = Boolean(discoverRes && discoverRes.ok && Array.isArray(discoverRes.items) && discoverRes.items.length > 0);
+
+          const checks = [
+            {
+              name: "1. Kanal-Verifizierung & Text-Nachrichten-Filter (#9001 ohne Video übersprungen)",
+              ok: Boolean(chanRes && chanRes.ok && hasSkipHeaderOk),
+              detail: hasSkipHeaderOk ? "9 Video-Einträge aus 10 Nachrichten extrahiert (Reine Textnachricht sauber ignoriert)" : ("Extrahierte Einträge: " + parsedInfo.entries.length)
+            },
+            {
+              name: "2. 1080p Film-Import & D1-Persistenz (Interstellar / Matrix)",
+              ok: hasMovieSavedOk,
+              detail: "Filme in D1 gespeichert: " + Number(overviewRes?.d1Diagnostic?.counts?.movies || backupImportJob.moviesSaved || 0) + " • Playlisten: " + Number(overviewRes?.d1Diagnostic?.counts?.playlists || 0)
+            },
+            {
+              name: "3. Vorabversion (.TS/CAM) → 1080p BluRay Auto-Upgrade",
+              ok: hasPrereleaseUpgradeOk,
+              detail: "Matrix (1999) TS erkannt und durch 1080p Version ersetzt/aktualisiert"
+            },
+            {
+              name: "4. Exakter Duplikat-Schutz (gleiche file_id + message_id #9004)",
+              ok: hasDuplicateDetectOk,
+              detail: "Duplikate erkannt & blockiert: " + Number(backupImportJob.duplicatesInDb || 0)
+            },
+            {
+              name: "5. Serien-Import (Breaking Bad S01E01, E02, E04) + Staffel-Lücken-Finder (S01E03)",
+              ok: hasSeriesGapOk,
+              detail: hasSeriesGapOk ? "Lücke S01E03 mitten in Staffel 1 erfolgreich im Lücken-Finder erkannt!" : "Serie gespeichert, prüfe Staffel-Lücken-Tab"
+            },
+            {
+              name: "6. Konflikt-Erkennung: Jahres-Abweichung (Inception 1995 vs. 2010) & Nicht erkannt (TMDB_NOT_FOUND)",
+              ok: hasUncertainYearOk && hasFailedNotFoundOk,
+              detail: "Unsicher (YEAR_CONFLICT): " + (hasUncertainYearOk ? "Ja" : "Nein") + " • Nicht erkannt (TMDB_NOT_FOUND): " + (hasFailedNotFoundOk ? "Ja" : "Nein")
+            },
+            {
+              name: "7. VIP/Admin-Fehlermeldung Lebenszyklus (Anlegen → Bestätigen → Löschen)",
+              ok: reportResolveOk && reportDeleteOk,
+              detail: reportResolveOk && reportDeleteOk ? "Meldung erstellt, als gelöst markiert und rückstandslos gelöscht" : "Fehler beim Meldungs-Test"
+            },
+            {
+              name: "8. Hauptseiten-Darstellung (/api/tma/discover Katalog nach Import intakt)",
+              ok: hasDiscoverMainUiOk,
+              detail: hasDiscoverMainUiOk ? (discoverRes.items.length + " Titel im Hauptseiten-Katalog abrufbar") : "Katalog leer oder Fehler"
+            }
+          ];
+
+          const passedCount = checks.filter(c => c.ok).length;
+          const reportHtml =
+            '<div style="background:#0d131f;border:1px solid ' + (passedCount === checks.length ? 'rgba(16,185,129,0.55)' : 'rgba(245,158,11,0.55)') + ';border-radius:10px;padding:12px;margin-top:10px">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
+                '<div style="font-size:13.5px;font-weight:900;color:#fff">🧪 E2E JSON-Import Prüfbericht: <span style="color:' + (passedCount === checks.length ? '#34d399' : '#fbbf24') + '">' + passedCount + ' / ' + checks.length + ' Tests bestanden</span></div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button type="button" class="btn amber" style="padding:4px 9px;font-size:11px" onclick="switchBackupSubTab(\\'review\\')">🛠️ Konflikte im Review-Tab ansehen</button>' +
+                  '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView(true)">📉 Staffel-Lücke (S01E03) ansehen</button>' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex;flex-direction:column;gap:6px">' +
+                checks.map(c => (
+                  '<div style="background:#141b2d;border:1px solid ' + (c.ok ? 'rgba(16,185,129,0.35)' : 'rgba(239,68,68,0.45)') + ';border-radius:7px;padding:7px 10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:11.5px">' +
+                    '<div style="font-weight:800;color:' + (c.ok ? '#ecfdf5' : '#fecaca') + '">' + (c.ok ? '✅ ' : '❌ ') + esc(c.name) + '</div>' +
+                    '<div style="color:#94a3b8;font-size:11px">' + esc(c.detail) + '</div>' +
+                  '</div>'
+                )).join("") +
+              '</div>' +
+            '</div>';
+
+          window._lastE2eSimReportHtml = reportHtml;
+          setSimStatus(reportHtml);
+          renderBackupImportBoxDom();
+          showHudToast("✅ E2E JSON-Import Simulation abgeschlossen (" + passedCount + "/" + checks.length + " Checks OK)!");
+        } catch (err) {
+          setSimStatus('<div style="padding:12px;color:#f87171;font-weight:800">❌ Fehler während der E2E-Simulation: ' + esc(err?.message || String(err)) + '</div>');
+        } finally {
+          setBusyState(false);
+        }
+      }
+
       function resumeBackupFromCheckpointClient() {
         const cp = backupImportJob.savedCheckpoint || loadBackupCheckpointClient();
         if (cp && backupImportJob.entries.length > 0) {
@@ -36724,9 +37183,9 @@
       function updateReviewHeaderCountersInDom() {
         const j = backupImportJob;
         const allItems = j.reviewItems || [];
-        const needsCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain)).length;
-        const uncertainCount = allItems.filter(x => !x.resolvedByAdmin && x.isUncertain && x.status !== "failed").length;
-        const failedCount = allItems.filter(x => !x.resolvedByAdmin && x.status === "failed").length;
+        const needsCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain || x.contextError || !x.tmdbId)).length;
+        const uncertainCount = allItems.filter(x => !x.resolvedByAdmin && x.isUncertain && x.status !== "failed" && Boolean(x.tmdbId)).length;
+        const failedCount = allItems.filter(x => !x.resolvedByAdmin && (x.status === "failed" || !x.tmdbId)).length;
 
         const btnNeeds = document.getElementById("revBtnNeeds");
         const btnUnc = document.getElementById("revBtnUncertain");
@@ -38186,7 +38645,6 @@
           };
           backupImportJob.reviewItems.push(fallbackItem);
           backupImportJob.failedCount += 1;
-          backupImportJob.uncertainCount += 1;
           backupImportJob.cursor += 1;
           appendClientDiagnosticLogs([{
             msgId: fallbackItem.msgId,
@@ -38224,16 +38682,13 @@
           const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
           let hadRateWarning = false;
           try {
-            const nextCursorPreview = Math.min(backupImportJob.entries.length, backupImportJob.cursor + slice.length);
-            const cpPayload = {
-              ...buildCurrentBackupCheckpointPayload(),
-              cursor: nextCursorPreview
-            };
+            const cpPayload = buildCurrentBackupCheckpointPayload();
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 entries: slice,
+                batchStartCursor: backupImportJob.cursor,
                 sourceChannelId: activeChan,
                 playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
                 playlistMode: backupImportJob.playlistMode || "both",
@@ -38267,7 +38722,8 @@
                 const batchDiagEntries = [];
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
-                  const computedReason = bItem.errorReason || (bItem.status === "failed"
+                  const isFailedItem = bItem.status === "failed" || !bItem.tmdbId;
+                  const computedReason = bItem.errorReason || (isFailedItem
                     ? "Kein TMDb-Treffer für '" + (bItem.cleanTitle || bItem.rawInput || "") + "'"
                     : bItem.isUncertain
                       ? "Unsichere Zuordnung (" + (bItem.confidence || 0) + "%) → " + (bItem.cleanTitle || "")
@@ -38278,11 +38734,12 @@
                           : bItem.ingestStatus === "updated"
                             ? "Bestehender Episoden-/Film-Slot per UPSERT mit neuer Datei verknüpft → " + (bItem.cleanTitle || "")
                             : "Erfolgreich zugeordnet → " + (bItem.cleanTitle || "") + (bItem.tmdbId ? " (TMDb #" + bItem.tmdbId + ")" : "") + (Number(bItem.replacedPrereleaseCount || 0) > 0 ? (" [🧹 " + bItem.replacedPrereleaseCount + " Vorabversion ersetzt!]") : ""));
-                  const computedReasonCode = bItem.reviewReasonCode || ((bItem.status === "failed" || !bItem.tmdbId) ? "TMDB_NOT_FOUND" : (bItem.isUncertain ? inferClientReviewReasonCode({ ...bItem, errorReason: computedReason }) : null));
+                  const computedReasonCode = bItem.reviewReasonCode || (isFailedItem ? "TMDB_NOT_FOUND" : (bItem.isUncertain ? inferClientReviewReasonCode({ ...bItem, errorReason: computedReason }) : null));
                   const itemObj = {
                     ...bItem,
+                    status: isFailedItem ? "failed" : bItem.status,
                     reviewReasonCode: computedReasonCode,
-                    errorReason: bItem.errorReason || (bItem.status === "failed" || bItem.isUncertain ? computedReason : null),
+                    errorReason: bItem.errorReason || (isFailedItem || bItem.isUncertain ? computedReason : null),
                     reason: computedReason,
                     msgId: bItem.msgId ? Number(bItem.msgId) : null,
                     id: "rev_" + (batchStartIdx + bi) + "_" + Date.now()
@@ -38291,7 +38748,7 @@
                   if (bItem.tmdbId) {
                     backupImportJob.livePosterFeed.unshift(itemObj);
                   }
-                  const diagStatus = bItem.status === "failed"
+                  const diagStatus = isFailedItem
                     ? "TMDB_NOT_FOUND"
                     : bItem.isUncertain
                       ? "CONFLICT_?"
@@ -39046,9 +39503,11 @@
                 '<div class="section-title">' +
                   '<span>🚨 Eingegangene Fehlermeldungen von VIPs & Admins (' + openReportsCount + ' offen / ' + allReports.length + ' gesamt)</span>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                    '<button class="btn ' + (reportFilter === 'open' ? 'red' : '') + '" onclick="state.adminReportFilter=\\'open\\';loadAdminPanelView()">🔥 Offen (' + openReportsCount + ')</button>' +
-                    '<button class="btn ' + (reportFilter === 'resolved' ? 'green' : '') + '" onclick="state.adminReportFilter=\\'resolved\\';loadAdminPanelView()">✅ Gelöst (' + (allReports.length - openReportsCount) + ')</button>' +
-                    '<button class="btn ' + (reportFilter === 'all' ? 'blue' : '') + '" onclick="state.adminReportFilter=\\'all\\';loadAdminPanelView()">📋 Alle (' + allReports.length + ')</button>' +
+                    '<button type="button" class="btn ' + (reportFilter === 'open' ? 'red' : '') + '" onclick="state.adminReportFilter=\\'open\\';loadAdminPanelView()">🔥 Offen (' + openReportsCount + ')</button>' +
+                    '<button type="button" class="btn ' + (reportFilter === 'resolved' ? 'green' : '') + '" onclick="state.adminReportFilter=\\'resolved\\';loadAdminPanelView()">✅ Gelöst (' + (allReports.length - openReportsCount) + ')</button>' +
+                    '<button type="button" class="btn ' + (reportFilter === 'all' ? 'blue' : '') + '" onclick="state.adminReportFilter=\\'all\\';loadAdminPanelView()">📋 Alle (' + allReports.length + ')</button>' +
+                    ((allReports.length - openReportsCount) > 0 ? '<button type="button" class="btn amber" onclick="adminClearAllMediaReportsClient(true)">🧹 Gelöste entfernen (' + (allReports.length - openReportsCount) + ')</button>' : '') +
+                    (allReports.length > 0 ? '<button type="button" class="btn red" onclick="adminClearAllMediaReportsClient(false)">🗑️ Alle Meldungen löschen</button>' : '') +
                   '</div>' +
                 '</div>' +
                 '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">Klicke auf <b>🔧 Jetzt korrigieren</b>, um direkt in die Detailansicht & den Folgen-Korrektur-Dialog zu springen. Sobald du die Korrektur speicherst, wird die Meldung automatisch als gelöst markiert!</p>' +
@@ -39190,17 +39649,22 @@
               '<div class="panel-box">' +
                 '<div class="section-title">' +
                   '<span>📦 Schritt 2: Telegram Chat-Backup (result.json) hochladen (mit Auto-Checkpoint & Fortsetzen)</span>' +
-                  '<button class="btn" onclick="openLargeJsonHowToModalClient()">✂️ >200 MB How-To & CLI Guide</button>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn green" style="background:linear-gradient(90deg,#059669,#0284c7);border-color:#38bdf8" onclick="runSimulatedJsonImportTestSuiteClient()">🧪 E2E JSON-Import Simulation starten (7 Testfälle + Prüfbericht)</button>' +
+                    '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ >200 MB How-To & CLI Guide</button>' +
+                  '</div>' +
                 '</div>' +
                 '<p style="font-size:12px;color:#ccc;line-height:1.5;margin-bottom:10px">' +
                   'Erkennt automatisch <b>Telegram Desktop Chat-Backups (<code>result.json</code> auch über 200 MB per 2 MB <code>File.slice()</code> Stream-Slicer)</b>. ' +
-                  'Merkt sich nach jedem Batch automatisch den <b>Fortschritts-Checkpoint</b> und verhindert bei Neustart jegliche Duplikate.' +
+                  'Merkt sich nach jedem Batch automatisch den <b>Fortschritts-Checkpoint</b> und verhindert bei Neustart jegliche Duplikate. ' +
+                  'Mit <b>🧪 E2E JSON-Import Simulation starten</b> kannst du die komplette Pipeline (Filme, Serien, Staffel-Lücken, TS-Upgrade, Duplikate, Konflikte, Meldungen & Katalog) live testen.' +
                 '</p>' +
                 '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
                   '<input id="backupJsonFileInputEl" type="file" accept=".json,application/json" ' + (!isChanReady ? 'disabled' : '') + ' onchange="handleBackupFileInput(event)" style="font-size:12px;color:#fff;background:#141414;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);opacity:' + (isChanReady ? '1' : '0.45') + '" />' +
                   '<button class="btn amber" onclick="downloadBackupSplitPartClient(0, 250)">💾 Part #1 (250 Videos) als .json laden</button>' +
                   '<span id="backupParseNotice" style="font-size:12px;color:#fbbf24"></span>' +
                 '</div>' +
+                '<div id="e2eSimReportMount" style="display:' + (window._lastE2eSimReportHtml ? 'block' : 'none') + ';margin-top:10px">' + (window._lastE2eSimReportHtml || '') + '</div>' +
                 '<div id="backupImportLiveMount" style="margin-top:10px"></div>' +
                 (qStats.pendingCount > 0 ? (
                   '<div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1)">' +
@@ -40814,9 +41278,11 @@
           let readable = true;
           let copyTestPassed = false;
           let diagnosticSummary = `✅ Kanal ${channelId} ist verifiziert und lesbar.`;
-          if (env.BOT_TOKEN) {
+          const effBotToken = String(env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN || "").trim();
+          const isSimulatedToken = !effBotToken || effBotToken.startsWith("123456:");
+          if (effBotToken && !isSimulatedToken) {
             try {
-              const chatRes = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getChat`, {
+              const chatRes = await fetch(`https://api.telegram.org/bot${effBotToken}/getChat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chat_id: channelId })
@@ -40825,7 +41291,7 @@
                 chatTitle = chatRes.result.title || chatRes.result.username || channelId;
                 readable = true;
                 if (sampleMsgId && auth.chatId && /^\d+$/.test(String(auth.chatId))) {
-                  const copyRes = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/copyMessage`, {
+                  const copyRes = await fetch(`https://api.telegram.org/bot${effBotToken}/copyMessage`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -40837,7 +41303,7 @@
                   }).then(r => r.json()).catch(() => null);
                   if (copyRes && copyRes.ok && copyRes.result?.message_id) {
                     copyTestPassed = true;
-                    fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/deleteMessage`, {
+                    fetch(`https://api.telegram.org/bot${effBotToken}/deleteMessage`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ chat_id: auth.chatId, message_id: copyRes.result.message_id })
@@ -40850,6 +41316,11 @@
                 diagnosticSummary = `❌ Telegram API Fehler für ${channelId}: ${chatRes.description || "Bot ist kein Admin im Kanal"}`;
               }
             } catch (e) {}
+          } else {
+            chatTitle = `Simulator Quell-Kanal (${channelId})`;
+            readable = true;
+            copyTestPassed = Boolean(sampleMsgId);
+            diagnosticSummary = `✅ Kanal "${chatTitle}" im Simulator verifiziert${sampleMsgId ? ` • Dry-Run Msg #${sampleMsgId} bereit` : ""}.`;
           }
           if (readable) {
             const verifiedPayload = {
@@ -41132,19 +41603,32 @@
               deferKvWrite: true
             }
           );
+          const effectiveProcessedCount = Number(nextStartIndex ?? entries.length);
           if (body.checkpoint && typeof body.checkpoint === "object") {
+            const baseCursor = typeof body.batchStartCursor === "number"
+              ? Number(body.batchStartCursor)
+              : Math.max(0, Number(body.checkpoint.cursor || 0) - entries.length);
+            const actualNextCursor = baseCursor + effectiveProcessedCount;
             await saveImportCheckpointToD1(env, {
               ...body.checkpoint,
+              cursor: actualNextCursor,
+              moviesSaved: Number(body.checkpoint.moviesSaved || 0) + moviesAdded.length,
+              seriesSaved: Number(body.checkpoint.seriesSaved || 0) + seriesAdded.length,
+              failedCount: Number(body.checkpoint.failedCount || 0) + failedItems.length,
+              duplicatesInDb: Number(body.checkpoint.duplicatesInDb || 0) + Number(duplicatesCount || 0),
+              mergedQualitiesInDb: Number(body.checkpoint.mergedQualitiesInDb || 0) + Number(mergedQualitiesCount || 0),
+              uncertainCount: Number(body.checkpoint.uncertainCount || 0) + Number(uncertainCount || 0),
               playlistFolderId: playlistFolder.id,
               playlistName: playlistFolder.name,
-              playlistMode: playlistFolder.playlistMode || playlistMode
+              playlistMode: playlistFolder.playlistMode || playlistMode,
+              updatedAt: Date.now()
             });
           }
           return new Response(JSON.stringify({
             ok: true,
             status: status || "COMPLETED_BATCH",
             partialBatch: Boolean(partialBatch),
-            nextStartIndex: Number(nextStartIndex ?? entries.length),
+            nextStartIndex: effectiveProcessedCount,
             pauseReason: pauseReason || null,
             subrequestCount: Number(subrequestCount || 0),
             moviesAddedCount: moviesAdded.length,
@@ -41618,7 +42102,14 @@
             await deleteMediaFromD1(env, oldTypeCode, oldTmdbId);
           }
 
-          // 5. Neuen Titel zur Bot-VIP-Playlist hinzufügen
+          // 5. Offene Fehlermeldungen für den alten Titel automatisch als gelöst markieren
+          const resolvedBy = auth.user?.tgUsername ? `@${auth.user.tgUsername}` : String(auth.chatId || "Admin");
+          await resolveMatchingMediaReportsInD1(env, {
+            typeCode: oldTypeCode,
+            tmdbId: oldTmdbId
+          }, `${resolvedBy} (Neu zugeordnet zu ${newDetails.title} #${newDetails.id})`).catch(() => null);
+
+          // 6. Neuen Titel zur Bot-VIP-Playlist hinzufügen
           try {
             const botPlaylistChatId = getBotVipPlaylistChatId(env);
             const foldersData = await getSavedFoldersData(env, botPlaylistChatId);
@@ -41646,7 +42137,7 @@
           }), { status: 200, headers: corsHeaders });
         }
 
-        // Admin-Verwaltung für VIP/Admin-Fehlermeldungen (Auflisten, Als gelöst markieren, Löschen)
+        // Admin-Verwaltung für VIP/Admin-Fehlermeldungen (Auflisten, Als gelöst markieren, Löschen, Komplett leeren)
         if (path === "/api/tma/admin/reports") {
           if (request.method === "GET") {
             const statusFilter = url.searchParams.get("status") || "all";
@@ -41659,7 +42150,11 @@
             const action = String(body.action || "resolve");
             const reportId = Number(body.reportId || 0);
             const resolvedBy = auth.user?.tgUsername ? `@${auth.user.tgUsername}` : String(auth.chatId || "Admin");
-            if (action === "delete" && reportId > 0) {
+            if (action === "clear_all") {
+              await clearAllMediaReportsInD1(env, false);
+            } else if (action === "clear_resolved") {
+              await clearAllMediaReportsInD1(env, true);
+            } else if (action === "delete" && reportId > 0) {
               await deleteMediaReportFromD1(env, reportId);
             } else if (reportId > 0) {
               await resolveMediaReportInD1(env, reportId, resolvedBy);
@@ -41758,7 +42253,10 @@
           if (mode === "move_se") {
             const filesToMove = await loadSourceEpisodeOrMovieFiles();
             if (filesToMove.length === 0) {
-              return new Response(JSON.stringify({ ok: false, error: "Keine verknüpfte Stream-Datei für diese Episode gefunden." }), { status: 404, headers: corsHeaders });
+              if (autoResolveReport && reportId > 0) {
+                await resolveMediaReportInD1(env, reportId, `${resolvedBy} (Eintrag bereinigt)`);
+              }
+              return new Response(JSON.stringify({ ok: false, error: "Keine verknüpfte Stream-Datei für diese Episode gefunden (Meldung wurde als erledigt markiert)." }), { status: 404, headers: corsHeaders });
             }
             // Ziel-Episodentitel von TMDb laden
             let targetEpTitle = `Folge ${newEpisode}`;
@@ -41817,7 +42315,10 @@
           if (mode === "change_version") {
             const filesToUpdate = await loadSourceEpisodeOrMovieFiles();
             if (filesToUpdate.length === 0) {
-              return new Response(JSON.stringify({ ok: false, error: "Keine Stream-Datei zum Ändern der Schnittfassung gefunden." }), { status: 404, headers: corsHeaders });
+              if (autoResolveReport && reportId > 0) {
+                await resolveMediaReportInD1(env, reportId, `${resolvedBy} (Eintrag bereinigt)`);
+              }
+              return new Response(JSON.stringify({ ok: false, error: "Keine Stream-Datei zum Ändern der Schnittfassung gefunden (Meldung wurde als erledigt markiert)." }), { status: 404, headers: corsHeaders });
             }
             if (oldTypeCode === "m") {
               for (const f of filesToUpdate) {

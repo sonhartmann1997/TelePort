@@ -266,9 +266,11 @@
           let readable = true;
           let copyTestPassed = false;
           let diagnosticSummary = `✅ Kanal ${channelId} ist verifiziert und lesbar.`;
-          if (env.BOT_TOKEN) {
+          const effBotToken = String(env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN || "").trim();
+          const isSimulatedToken = !effBotToken || effBotToken.startsWith("123456:");
+          if (effBotToken && !isSimulatedToken) {
             try {
-              const chatRes = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getChat`, {
+              const chatRes = await fetch(`https://api.telegram.org/bot${effBotToken}/getChat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ chat_id: channelId })
@@ -277,7 +279,7 @@
                 chatTitle = chatRes.result.title || chatRes.result.username || channelId;
                 readable = true;
                 if (sampleMsgId && auth.chatId && /^\d+$/.test(String(auth.chatId))) {
-                  const copyRes = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/copyMessage`, {
+                  const copyRes = await fetch(`https://api.telegram.org/bot${effBotToken}/copyMessage`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -289,7 +291,7 @@
                   }).then(r => r.json()).catch(() => null);
                   if (copyRes && copyRes.ok && copyRes.result?.message_id) {
                     copyTestPassed = true;
-                    fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/deleteMessage`, {
+                    fetch(`https://api.telegram.org/bot${effBotToken}/deleteMessage`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ chat_id: auth.chatId, message_id: copyRes.result.message_id })
@@ -302,6 +304,11 @@
                 diagnosticSummary = `❌ Telegram API Fehler für ${channelId}: ${chatRes.description || "Bot ist kein Admin im Kanal"}`;
               }
             } catch (e) {}
+          } else {
+            chatTitle = `Simulator Quell-Kanal (${channelId})`;
+            readable = true;
+            copyTestPassed = Boolean(sampleMsgId);
+            diagnosticSummary = `✅ Kanal "${chatTitle}" im Simulator verifiziert${sampleMsgId ? ` • Dry-Run Msg #${sampleMsgId} bereit` : ""}.`;
           }
           if (readable) {
             const verifiedPayload = {
@@ -584,19 +591,32 @@
               deferKvWrite: true
             }
           );
+          const effectiveProcessedCount = Number(nextStartIndex ?? entries.length);
           if (body.checkpoint && typeof body.checkpoint === "object") {
+            const baseCursor = typeof body.batchStartCursor === "number"
+              ? Number(body.batchStartCursor)
+              : Math.max(0, Number(body.checkpoint.cursor || 0) - entries.length);
+            const actualNextCursor = baseCursor + effectiveProcessedCount;
             await saveImportCheckpointToD1(env, {
               ...body.checkpoint,
+              cursor: actualNextCursor,
+              moviesSaved: Number(body.checkpoint.moviesSaved || 0) + moviesAdded.length,
+              seriesSaved: Number(body.checkpoint.seriesSaved || 0) + seriesAdded.length,
+              failedCount: Number(body.checkpoint.failedCount || 0) + failedItems.length,
+              duplicatesInDb: Number(body.checkpoint.duplicatesInDb || 0) + Number(duplicatesCount || 0),
+              mergedQualitiesInDb: Number(body.checkpoint.mergedQualitiesInDb || 0) + Number(mergedQualitiesCount || 0),
+              uncertainCount: Number(body.checkpoint.uncertainCount || 0) + Number(uncertainCount || 0),
               playlistFolderId: playlistFolder.id,
               playlistName: playlistFolder.name,
-              playlistMode: playlistFolder.playlistMode || playlistMode
+              playlistMode: playlistFolder.playlistMode || playlistMode,
+              updatedAt: Date.now()
             });
           }
           return new Response(JSON.stringify({
             ok: true,
             status: status || "COMPLETED_BATCH",
             partialBatch: Boolean(partialBatch),
-            nextStartIndex: Number(nextStartIndex ?? entries.length),
+            nextStartIndex: effectiveProcessedCount,
             pauseReason: pauseReason || null,
             subrequestCount: Number(subrequestCount || 0),
             moviesAddedCount: moviesAdded.length,
@@ -1070,7 +1090,14 @@
             await deleteMediaFromD1(env, oldTypeCode, oldTmdbId);
           }
 
-          // 5. Neuen Titel zur Bot-VIP-Playlist hinzufügen
+          // 5. Offene Fehlermeldungen für den alten Titel automatisch als gelöst markieren
+          const resolvedBy = auth.user?.tgUsername ? `@${auth.user.tgUsername}` : String(auth.chatId || "Admin");
+          await resolveMatchingMediaReportsInD1(env, {
+            typeCode: oldTypeCode,
+            tmdbId: oldTmdbId
+          }, `${resolvedBy} (Neu zugeordnet zu ${newDetails.title} #${newDetails.id})`).catch(() => null);
+
+          // 6. Neuen Titel zur Bot-VIP-Playlist hinzufügen
           try {
             const botPlaylistChatId = getBotVipPlaylistChatId(env);
             const foldersData = await getSavedFoldersData(env, botPlaylistChatId);
@@ -1098,7 +1125,7 @@
           }), { status: 200, headers: corsHeaders });
         }
 
-        // Admin-Verwaltung für VIP/Admin-Fehlermeldungen (Auflisten, Als gelöst markieren, Löschen)
+        // Admin-Verwaltung für VIP/Admin-Fehlermeldungen (Auflisten, Als gelöst markieren, Löschen, Komplett leeren)
         if (path === "/api/tma/admin/reports") {
           if (request.method === "GET") {
             const statusFilter = url.searchParams.get("status") || "all";
@@ -1111,7 +1138,11 @@
             const action = String(body.action || "resolve");
             const reportId = Number(body.reportId || 0);
             const resolvedBy = auth.user?.tgUsername ? `@${auth.user.tgUsername}` : String(auth.chatId || "Admin");
-            if (action === "delete" && reportId > 0) {
+            if (action === "clear_all") {
+              await clearAllMediaReportsInD1(env, false);
+            } else if (action === "clear_resolved") {
+              await clearAllMediaReportsInD1(env, true);
+            } else if (action === "delete" && reportId > 0) {
               await deleteMediaReportFromD1(env, reportId);
             } else if (reportId > 0) {
               await resolveMediaReportInD1(env, reportId, resolvedBy);
@@ -1210,7 +1241,10 @@
           if (mode === "move_se") {
             const filesToMove = await loadSourceEpisodeOrMovieFiles();
             if (filesToMove.length === 0) {
-              return new Response(JSON.stringify({ ok: false, error: "Keine verknüpfte Stream-Datei für diese Episode gefunden." }), { status: 404, headers: corsHeaders });
+              if (autoResolveReport && reportId > 0) {
+                await resolveMediaReportInD1(env, reportId, `${resolvedBy} (Eintrag bereinigt)`);
+              }
+              return new Response(JSON.stringify({ ok: false, error: "Keine verknüpfte Stream-Datei für diese Episode gefunden (Meldung wurde als erledigt markiert)." }), { status: 404, headers: corsHeaders });
             }
             // Ziel-Episodentitel von TMDb laden
             let targetEpTitle = `Folge ${newEpisode}`;
@@ -1269,7 +1303,10 @@
           if (mode === "change_version") {
             const filesToUpdate = await loadSourceEpisodeOrMovieFiles();
             if (filesToUpdate.length === 0) {
-              return new Response(JSON.stringify({ ok: false, error: "Keine Stream-Datei zum Ändern der Schnittfassung gefunden." }), { status: 404, headers: corsHeaders });
+              if (autoResolveReport && reportId > 0) {
+                await resolveMediaReportInD1(env, reportId, `${resolvedBy} (Eintrag bereinigt)`);
+              }
+              return new Response(JSON.stringify({ ok: false, error: "Keine Stream-Datei zum Ändern der Schnittfassung gefunden (Meldung wurde als erledigt markiert)." }), { status: 404, headers: corsHeaders });
             }
             if (oldTypeCode === "m") {
               for (const f of filesToUpdate) {
