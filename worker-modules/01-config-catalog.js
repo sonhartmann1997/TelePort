@@ -750,7 +750,74 @@
 
   // @ANCHOR: CACHE_STATS
   // In-Memory Cache & State-Speicher (minimiert Cloudflare KV & TMDB API Calls drastisch!)
-  const memoryFallback = new Map();
+  // Im Browser-Simulator (AI Studio Vorschau) werden D1-/Playlist-/Import-Einträge automatisch über F5-Reloads hinweg persistiert.
+  const SANDBOX_MEM_STORAGE_KEY = "__tma_sandbox_d1_memory_v1__";
+  const memoryFallback = (() => {
+    const map = new Map();
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    if (!isBrowserSandbox) return map;
+
+    const shouldPersistKey = (k) => {
+      const s = String(k || "");
+      return (
+        s.startsWith("d1_") ||
+        s.startsWith("user_") ||
+        s.startsWith("folders_") ||
+        s.startsWith("u_bundle_") ||
+        s.startsWith("settings_") ||
+        s.startsWith("json_import_") ||
+        s.startsWith("tma_")
+      ) && !s.endsWith("_ts") && !s.includes("_saved_ts_") && !s.includes("_lookup_cache");
+    };
+
+    try {
+      const raw = localStorage.getItem(SANDBOX_MEM_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const [k, v] of parsed) {
+            map.set(k, v);
+          }
+        }
+      }
+    } catch (e) {}
+
+    let saveTimer = null;
+    const scheduleSandboxPersist = () => {
+      if (saveTimer) return;
+      saveTimer = setTimeout(() => {
+        saveTimer = null;
+        try {
+          const entriesToSave = [];
+          for (const [k, v] of map.entries()) {
+            if (shouldPersistKey(k) && !(v instanceof Set) && !(v instanceof Map)) {
+              entriesToSave.push([k, v]);
+            }
+          }
+          localStorage.setItem(SANDBOX_MEM_STORAGE_KEY, JSON.stringify(entriesToSave));
+        } catch (e) {}
+      }, 250);
+    };
+
+    const origSet = map.set.bind(map);
+    const origDelete = map.delete.bind(map);
+    const origClear = map.clear.bind(map);
+    map.set = (k, v) => {
+      const res = origSet(k, v);
+      if (shouldPersistKey(k)) scheduleSandboxPersist();
+      return res;
+    };
+    map.delete = (k) => {
+      const res = origDelete(k);
+      if (shouldPersistKey(k)) scheduleSandboxPersist();
+      return res;
+    };
+    map.clear = () => {
+      origClear();
+      try { localStorage.removeItem(SANDBOX_MEM_STORAGE_KEY); } catch (e) {}
+    };
+    return map;
+  })();
   const tmdbCache = new Map();
   const tmdbMemoryCache = tmdbCache;
   const externalFallbackCache = new Map();
@@ -782,6 +849,7 @@
   if (typeof globalThis !== "undefined") {
     globalThis.normalizeCompareString = normalizeCompareString;
     globalThis.externalFallbackCache = externalFallbackCache;
+    globalThis.__workerMemoryFallback = memoryFallback;
   }
 
   function getCachedTmdb(key) {

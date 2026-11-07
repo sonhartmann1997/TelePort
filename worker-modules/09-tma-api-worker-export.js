@@ -341,14 +341,19 @@
         }
         if (path === "/api/tma/admin/import-checkpoint") {
           if (request.method === "GET") {
-            let checkpoint = memoryFallback.get("tma_backup_import_checkpoint_v1") || null;
+            let checkpoint = await getImportCheckpointFromD1(env);
             if (!checkpoint) {
-              const rawCp = await kvCachedGetRaw(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
-              if (rawCp) {
-                try {
-                  checkpoint = JSON.parse(rawCp);
-                  if (checkpoint) memoryFallback.set("tma_backup_import_checkpoint_v1", checkpoint);
-                } catch (e) {}
+              checkpoint = memoryFallback.get("tma_backup_import_checkpoint_v1") || null;
+              if (!checkpoint) {
+                const rawCp = await kvCachedGetRaw(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
+                if (rawCp) {
+                  try {
+                    checkpoint = JSON.parse(rawCp);
+                  } catch (e) {}
+                }
+              }
+              if (checkpoint) {
+                checkpoint = await saveImportCheckpointToD1(env, checkpoint);
               }
             }
             return new Response(JSON.stringify({ ok: true, checkpoint }), { status: 200, headers: corsHeaders });
@@ -358,18 +363,12 @@
             if (body.action === "clear" || body.clear === true) {
               memoryFallback.delete("tma_backup_import_checkpoint_v1");
               memoryFallback.delete("tma_backup_import_checkpoint_kv_cnt");
-              await kvStageDelete(env, "tma_backup_import_checkpoint_v1", "MOVIE_SAVED");
+              await clearImportCheckpointInD1(env);
               return new Response(JSON.stringify({ ok: true, cleared: true }), { status: 200, headers: corsHeaders });
             }
             if (body.checkpoint) {
-              memoryFallback.set("tma_backup_import_checkpoint_v1", body.checkpoint);
-              const forceKv = Boolean(body.forceKv);
-              await kvStageWrite(env, "tma_backup_import_checkpoint_v1", body.checkpoint, {
-                bindingName: "MOVIE_SAVED",
-                periodicOnly: !forceKv,
-                forceKvWrite: forceKv,
-                flushNow: forceKv
-              });
+              const savedCp = await saveImportCheckpointToD1(env, body.checkpoint);
+              memoryFallback.set("tma_backup_import_checkpoint_v1", savedCp);
             }
             return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
           }
@@ -582,9 +581,17 @@
               folderId: playlistFolder.id,
               playlistName: playlistFolder.name,
               playlistMode: playlistFolder.playlistMode || playlistMode,
-              deferKvWrite: Boolean(body.deferKvWrite)
+              deferKvWrite: true
             }
           );
+          if (body.checkpoint && typeof body.checkpoint === "object") {
+            await saveImportCheckpointToD1(env, {
+              ...body.checkpoint,
+              playlistFolderId: playlistFolder.id,
+              playlistName: playlistFolder.name,
+              playlistMode: playlistFolder.playlistMode || playlistMode
+            });
+          }
           return new Response(JSON.stringify({
             ok: true,
             status: status || "COMPLETED_BATCH",

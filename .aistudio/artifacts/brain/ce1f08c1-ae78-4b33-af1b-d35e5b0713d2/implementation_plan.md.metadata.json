@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for (1) displaying explicit conflict/review reasons in the Prüfen & Korrigieren tab, (2) eliminating empty VIP stream covers without valid file_ids from catalog/playlists and cleaning up orphan D1 entries, (3) replacing false SKIPPED_DUPLICATE rejections with smart Episode/Movie UPSERT while preserving multi-quality stream selection, and (4) prioritizing filename episode numbers over caption typos (e.g. Queen of the South S01E13.mp4 vs S01E3) with numeric message_id normalization.",
-  "updatedAt": "2026-11-06T13:19:41.426410544Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Überarbeiteter Architekturplan: 100 % D1-Speicherung für alle 180k+ JSON-Import-Einträge & Import-Playlists (keine Speicherung der Medienkataloge in KV!), IndexedDB-Reload-Schutz im Browser und vollständiger Erhalt aller UI-Ansichten (Hauptseite, VIP-Badges, Detail-Modal, Playlists & Prüfen/Korrigieren).",
+  "updatedAt":  "2026-11-07T11:05:20.287397300Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

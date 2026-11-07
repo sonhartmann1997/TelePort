@@ -1338,6 +1338,228 @@
       }
 
       const BACKUP_CHECKPOINT_STORAGE_KEY = "tma_backup_import_checkpoint_v1";
+      const BACKUP_IDB_NAME = "tma_backup_job_idb_v1";
+      const BACKUP_IDB_STORE = "backup_jobs";
+      const BACKUP_IDB_KEY = "active_job";
+      let _backupIdbPromise = null;
+      let _backupIdbSaveTimer = null;
+      let _backupSessionRestorePromise = null;
+
+      function openBackupJobIndexedDbClient() {
+        if (typeof indexedDB === "undefined") return Promise.resolve(null);
+        if (_backupIdbPromise) return _backupIdbPromise;
+        _backupIdbPromise = new Promise((resolve) => {
+          try {
+            const req = indexedDB.open(BACKUP_IDB_NAME, 1);
+            req.onupgradeneeded = (ev) => {
+              try {
+                const db = ev.target.result;
+                if (!db.objectStoreNames.contains(BACKUP_IDB_STORE)) {
+                  db.createObjectStore(BACKUP_IDB_STORE);
+                }
+              } catch (e) {}
+            };
+            req.onsuccess = (ev) => resolve(ev.target.result || null);
+            req.onerror = () => {
+              _backupIdbPromise = null;
+              resolve(null);
+            };
+          } catch (e) {
+            _backupIdbPromise = null;
+            resolve(null);
+          }
+        });
+        return _backupIdbPromise;
+      }
+
+      async function saveBackupJobToIndexedDbClient(immediate = false) {
+        if (!backupImportJob || (!backupImportJob.fileName && (!Array.isArray(backupImportJob.entries) || backupImportJob.entries.length === 0))) {
+          return;
+        }
+        const doSave = async () => {
+          try {
+            const db = await openBackupJobIndexedDbClient();
+            if (!db) return;
+            const snapshot = {
+              fileName: backupImportJob.fileName || "",
+              fileSizeMb: backupImportJob.fileSizeMb || "0.00",
+              fileSignature: backupImportJob.fileSignature || "",
+              isTelegramBackup: Boolean(backupImportJob.isTelegramBackup),
+              backupChatName: backupImportJob.backupChatName || "",
+              backupChatId: backupImportJob.backupChatId || "",
+              verifiedChannelId: backupImportJob.verifiedChannelId || getSavedVerifiedChannelIdClient(),
+              rawMessageCount: Number(backupImportJob.rawMessageCount || 0),
+              detectedMoviesCount: Number(backupImportJob.detectedMoviesCount || 0),
+              detectedSeriesCount: Number(backupImportJob.detectedSeriesCount || 0),
+              duplicatesSkippedInFile: Number(backupImportJob.duplicatesSkippedInFile || 0),
+              qualityVariantsInFile: Number(backupImportJob.qualityVariantsInFile || 0),
+              previewSamples: Array.isArray(backupImportJob.previewSamples) ? backupImportJob.previewSamples.slice(0, 12) : [],
+              entries: Array.isArray(backupImportJob.entries) ? backupImportJob.entries : [],
+              customPlaylistName: backupImportJob.customPlaylistName || "",
+              playlistMode: backupImportJob.playlistMode || "both",
+              targetPlaylistChatId: backupImportJob.targetPlaylistChatId || String(chatId || ""),
+              playlistFolderId: backupImportJob.playlistFolderId || "",
+              cursor: Number(backupImportJob.cursor || 0),
+              moviesSaved: Number(backupImportJob.moviesSaved || 0),
+              seriesSaved: Number(backupImportJob.seriesSaved || 0),
+              duplicatesInDb: Number(backupImportJob.duplicatesInDb || 0),
+              mergedQualitiesInDb: Number(backupImportJob.mergedQualitiesInDb || 0),
+              uncertainCount: Number(backupImportJob.uncertainCount || 0),
+              failedCount: Number(backupImportJob.failedCount || 0),
+              recentLog: Array.isArray(backupImportJob.recentLog) ? backupImportJob.recentLog.slice(-40) : [],
+              livePosterFeed: Array.isArray(backupImportJob.livePosterFeed) ? backupImportJob.livePosterFeed.slice(0, 16) : [],
+              reviewItems: Array.isArray(backupImportJob.reviewItems) ? backupImportJob.reviewItems.slice(-1500) : [],
+              activeSubTab: backupImportJob.activeSubTab || "dashboard",
+              reviewFilter: backupImportJob.reviewFilter || "needs_attention",
+              updatedAt: Date.now()
+            };
+            await new Promise((resolve) => {
+              try {
+                const tx = db.transaction(BACKUP_IDB_STORE, "readwrite");
+                const store = tx.objectStore(BACKUP_IDB_STORE);
+                store.put(snapshot, BACKUP_IDB_KEY);
+                tx.oncomplete = () => resolve(true);
+                tx.onerror = () => resolve(false);
+              } catch (e) {
+                resolve(false);
+              }
+            });
+          } catch (e) {}
+        };
+        if (immediate) {
+          if (_backupIdbSaveTimer) {
+            clearTimeout(_backupIdbSaveTimer);
+            _backupIdbSaveTimer = null;
+          }
+          await doSave();
+        } else if (!_backupIdbSaveTimer) {
+          _backupIdbSaveTimer = setTimeout(() => {
+            _backupIdbSaveTimer = null;
+            doSave();
+          }, 1200);
+        }
+      }
+
+      async function loadBackupJobFromIndexedDbClient() {
+        try {
+          const db = await openBackupJobIndexedDbClient();
+          if (!db) return null;
+          return await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(BACKUP_IDB_STORE, "readonly");
+              const store = tx.objectStore(BACKUP_IDB_STORE);
+              const getReq = store.get(BACKUP_IDB_KEY);
+              getReq.onsuccess = () => resolve(getReq.result || null);
+              getReq.onerror = () => resolve(null);
+            } catch (e) {
+              resolve(null);
+            }
+          });
+        } catch (e) {
+          return null;
+        }
+      }
+
+      async function clearBackupJobFromIndexedDbClient() {
+        if (_backupIdbSaveTimer) {
+          clearTimeout(_backupIdbSaveTimer);
+          _backupIdbSaveTimer = null;
+        }
+        try {
+          const db = await openBackupJobIndexedDbClient();
+          if (!db) return;
+          await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(BACKUP_IDB_STORE, "readwrite");
+              tx.objectStore(BACKUP_IDB_STORE).delete(BACKUP_IDB_KEY);
+              tx.oncomplete = () => resolve(true);
+              tx.onerror = () => resolve(false);
+            } catch (e) {
+              resolve(false);
+            }
+          });
+        } catch (e) {}
+      }
+
+      async function restoreBackupImportSessionAfterReload() {
+        if (_backupSessionRestorePromise) return _backupSessionRestorePromise;
+        _backupSessionRestorePromise = (async () => {
+          try {
+            const [idbJob, serverCpRes] = await Promise.all([
+              loadBackupJobFromIndexedDbClient(),
+              apiFetchJson(API_BASE + "/admin/import-checkpoint").catch(() => null)
+            ]);
+            const serverCp = (serverCpRes && serverCpRes.ok && serverCpRes.checkpoint) ? serverCpRes.checkpoint : null;
+            const localCp = loadBackupCheckpointClient();
+            const bestCp = (serverCp && Number(serverCp.cursor || 0) >= Number(localCp?.cursor || 0))
+              ? serverCp
+              : (localCp || serverCp);
+
+            if (bestCp) {
+              const normCp = {
+                ...bestCp,
+                cursor: Number(bestCp.cursor || 0),
+                totalEntries: Number(bestCp.totalEntries || bestCp.total || idbJob?.entries?.length || 0),
+                moviesSaved: Number(bestCp.moviesSaved || bestCp.savedMovies || 0),
+                seriesSaved: Number(bestCp.seriesSaved || bestCp.savedEpisodes || 0),
+                duplicatesInDb: Number(bestCp.duplicatesInDb || bestCp.skipped || 0),
+                uncertainCount: Number(bestCp.uncertainCount || bestCp.conflicts || 0),
+                failedCount: Number(bestCp.failedCount || bestCp.errors || 0),
+                customPlaylistName: bestCp.customPlaylistName || bestCp.playlistName || "",
+                playlistFolderId: bestCp.playlistFolderId || "",
+                playlistMode: bestCp.playlistMode || "both",
+                verifiedChannelId: bestCp.verifiedChannelId || getSavedVerifiedChannelIdClient()
+              };
+              backupImportJob.savedCheckpoint = normCp;
+              try {
+                localStorage.setItem(BACKUP_CHECKPOINT_STORAGE_KEY, JSON.stringify(normCp));
+              } catch (e) {}
+            }
+
+            if (idbJob && (!backupImportJob.entries || backupImportJob.entries.length === 0)) {
+              const cpToApply = backupImportJob.savedCheckpoint;
+              const sameFile = !cpToApply || !cpToApply.fileName || cpToApply.fileName === idbJob.fileName;
+              backupImportJob = {
+                ...backupImportJob,
+                ...idbJob,
+                running: false,
+                paused: true,
+                cursor: (sameFile && cpToApply) ? Math.max(Number(idbJob.cursor || 0), Number(cpToApply.cursor || 0)) : Number(idbJob.cursor || 0),
+                moviesSaved: (sameFile && cpToApply) ? Math.max(Number(idbJob.moviesSaved || 0), Number(cpToApply.moviesSaved || 0)) : Number(idbJob.moviesSaved || 0),
+                seriesSaved: (sameFile && cpToApply) ? Math.max(Number(idbJob.seriesSaved || 0), Number(cpToApply.seriesSaved || 0)) : Number(idbJob.seriesSaved || 0),
+                duplicatesInDb: (sameFile && cpToApply) ? Math.max(Number(idbJob.duplicatesInDb || 0), Number(cpToApply.duplicatesInDb || 0)) : Number(idbJob.duplicatesInDb || 0),
+                uncertainCount: (sameFile && cpToApply) ? Math.max(Number(idbJob.uncertainCount || 0), Number(cpToApply.uncertainCount || 0)) : Number(idbJob.uncertainCount || 0),
+                failedCount: (sameFile && cpToApply) ? Math.max(Number(idbJob.failedCount || 0), Number(cpToApply.failedCount || 0)) : Number(idbJob.failedCount || 0),
+                playlistFolderId: idbJob.playlistFolderId || cpToApply?.playlistFolderId || "",
+                customPlaylistName: idbJob.customPlaylistName || cpToApply?.customPlaylistName || "🎵 JSON-Import",
+                verifiedChannelId: idbJob.verifiedChannelId || cpToApply?.verifiedChannelId || getSavedVerifiedChannelIdClient()
+              };
+            } else if (backupImportJob.savedCheckpoint && !backupImportJob.fileName) {
+              const cp = backupImportJob.savedCheckpoint;
+              backupImportJob.fileName = cp.fileName || "result.json";
+              backupImportJob.cursor = Number(cp.cursor || 0);
+              backupImportJob.rawMessageCount = Number(cp.totalEntries || cp.total || 0);
+              backupImportJob.moviesSaved = Number(cp.moviesSaved || 0);
+              backupImportJob.seriesSaved = Number(cp.seriesSaved || 0);
+              backupImportJob.duplicatesInDb = Number(cp.duplicatesInDb || 0);
+              backupImportJob.uncertainCount = Number(cp.uncertainCount || 0);
+              backupImportJob.failedCount = Number(cp.failedCount || 0);
+              backupImportJob.customPlaylistName = cp.customPlaylistName || "🎵 JSON-Import";
+              backupImportJob.playlistFolderId = cp.playlistFolderId || "";
+              backupImportJob.playlistMode = cp.playlistMode || "both";
+              if (cp.verifiedChannelId) backupImportJob.verifiedChannelId = cp.verifiedChannelId;
+            }
+
+            // Lade persistente Prüf-Karten & Diagnose-Logs aus D1 nach Seiten-Reload (F5)
+            await Promise.all([
+              typeof syncDiagnosticLogsFromD1Client === "function" ? syncDiagnosticLogsFromD1Client(true) : Promise.resolve(),
+              typeof syncReviewItemsFromD1MetadataClient === "function" ? syncReviewItemsFromD1MetadataClient(true) : Promise.resolve()
+            ]);
+            renderBackupImportBoxDom();
+          } catch (e) {}
+        })();
+        return _backupSessionRestorePromise;
+      }
 
       function getSavedVerifiedChannelIdClient() {
         try {
@@ -1374,43 +1596,57 @@
           const raw = localStorage.getItem(BACKUP_CHECKPOINT_STORAGE_KEY);
           if (!raw) return null;
           const cp = JSON.parse(raw);
-          if (cp && typeof cp === "object" && Number(cp.cursor) > 0 && Number(cp.totalEntries) > 0) {
+          if (cp && typeof cp === "object" && (Number(cp.cursor) > 0 || Number(cp.totalEntries || cp.total) > 0)) {
             return cp;
           }
         } catch (e) {}
         return null;
       }
 
-      function saveBackupCheckpointClient(forceServerSync = false) {
-        if (!backupImportJob.entries || !backupImportJob.entries.length) return;
-        const cp = {
-          fileSignature: backupImportJob.fileSignature || (backupImportJob.fileName + "::" + backupImportJob.entries.length),
+      function buildCurrentBackupCheckpointPayload() {
+        const totalNum = (Array.isArray(backupImportJob.entries) && backupImportJob.entries.length > 0)
+          ? backupImportJob.entries.length
+          : Number(backupImportJob.savedCheckpoint?.totalEntries || backupImportJob.savedCheckpoint?.total || backupImportJob.rawMessageCount || 0);
+        return {
+          fileSignature: backupImportJob.fileSignature || ((backupImportJob.fileName || "result.json") + "::" + totalNum),
           fileName: backupImportJob.fileName || "result.json",
           cursor: Number(backupImportJob.cursor || 0),
-          totalEntries: Number(backupImportJob.entries.length || 0),
+          total: totalNum,
+          totalEntries: totalNum,
           verifiedChannelId: backupImportJob.verifiedChannelId || getSavedVerifiedChannelIdClient(),
+          playlistName: backupImportJob.customPlaylistName || "",
           customPlaylistName: backupImportJob.customPlaylistName || "",
           playlistFolderId: backupImportJob.playlistFolderId || "",
           playlistMode: backupImportJob.playlistMode || "both",
+          savedMovies: Number(backupImportJob.moviesSaved || 0),
           moviesSaved: Number(backupImportJob.moviesSaved || 0),
+          savedEpisodes: Number(backupImportJob.seriesSaved || 0),
           seriesSaved: Number(backupImportJob.seriesSaved || 0),
+          skipped: Number(backupImportJob.duplicatesInDb || 0),
           duplicatesInDb: Number(backupImportJob.duplicatesInDb || 0),
           mergedQualitiesInDb: Number(backupImportJob.mergedQualitiesInDb || 0),
+          conflicts: Number(backupImportJob.uncertainCount || 0),
           uncertainCount: Number(backupImportJob.uncertainCount || 0),
+          errors: Number(backupImportJob.failedCount || 0),
           failedCount: Number(backupImportJob.failedCount || 0),
           updatedAt: Date.now()
         };
+      }
+
+      function saveBackupCheckpointClient(forceServerSync = false) {
+        const cp = buildCurrentBackupCheckpointPayload();
         backupImportJob.savedCheckpoint = cp;
         try {
           localStorage.setItem(BACKUP_CHECKPOINT_STORAGE_KEY, JSON.stringify(cp));
         } catch (e) {}
+        saveBackupJobToIndexedDbClient(Boolean(forceServerSync));
         backupImportJob._cpSyncStep = Number(backupImportJob._cpSyncStep || 0) + 1;
-        const shouldSyncServer = Boolean(forceServerSync) || (backupImportJob._cpSyncStep % 20 === 0) || (cp.cursor >= cp.totalEntries);
+        const shouldSyncServer = Boolean(forceServerSync) || (backupImportJob._cpSyncStep % 5 === 0) || (cp.totalEntries > 0 && cp.cursor >= cp.totalEntries);
         if (shouldSyncServer) {
           apiFetchJson(API_BASE + "/admin/import-checkpoint", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ checkpoint: cp, forceKv: Boolean(forceServerSync) })
+            body: JSON.stringify({ checkpoint: cp })
           }).catch(() => {});
         }
       }
@@ -1420,6 +1656,7 @@
         try {
           localStorage.removeItem(BACKUP_CHECKPOINT_STORAGE_KEY);
         } catch (e) {}
+        clearBackupJobFromIndexedDbClient();
         apiFetchJson(API_BASE + "/admin/import-checkpoint", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1662,10 +1899,12 @@
               ? ["📌 Gespeicherter Checkpoint geladen: Fortsetzung bei Eintrag #" + matchingCp.cursor + " / " + info.entries.length + " bereit."]
               : [],
             livePosterFeed: [],
-            reviewItems: [],
+            reviewItems: Array.isArray(backupImportJob.reviewItems) ? backupImportJob.reviewItems : [],
             activeSubTab: "dashboard",
             reviewFilter: "needs_attention"
           };
+          saveBackupJobToIndexedDbClient(true);
+          saveBackupCheckpointClient(true);
           if (statusEl) {
             statusEl.style.color = matchingCp ? "#fbbf24" : (info.repaired ? "#38bdf8" : "#34d399");
             const chunksCount = Math.max(1, Math.ceil(info.entries.length / 250));
@@ -2571,8 +2810,9 @@
           fileInp.style.opacity = isChanVerified ? "1" : "0.45";
         }
 
-        const total = j.entries.length;
-        const done = j.cursor;
+        const savedCp = j.savedCheckpoint || loadBackupCheckpointClient();
+        const total = j.entries.length > 0 ? j.entries.length : Number(savedCp?.totalEntries || savedCp?.total || j.rawMessageCount || 0);
+        const done = j.cursor > 0 ? j.cursor : Number(savedCp?.cursor || 0);
         const pct = total > 0 ? ((done / total) * 100).toFixed(1) : "0.0";
         const elapsedSec = j.startedAt ? Math.max(1, (Date.now() - j.startedAt) / 1000) : 1;
         const speedPerSec = done > 0 ? (done / elapsedSec).toFixed(1) : "0.0";
@@ -2584,22 +2824,22 @@
             ? (Math.floor(etaSec / 60) + "m " + (etaSec % 60) + "s")
             : (etaSec + "s");
 
-        if (!j.fileName) {
-          const savedCp = loadBackupCheckpointClient();
-          const cpHintHtml = (savedCp && Number(savedCp.cursor) > 0 && Number(savedCp.totalEntries) > 0)
-            ? ('<div style="background:rgba(245,158,11,0.14);border:1px solid rgba(251,191,36,0.45);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;color:#fde68a">' +
-                '📌 <b>Gespeicherter Import-Checkpoint gefunden:</b> Datei <b>' + esc(savedCp.fileName || 'result.json') + '</b> bei Eintrag <b>#' + Number(savedCp.cursor).toLocaleString('de-DE') + ' / ' + Number(savedCp.totalEntries).toLocaleString('de-DE') + '</b> (' + Math.round((savedCp.cursor / savedCp.totalEntries) * 100) + '%).<br/>' +
-                '<span style="color:#cbd5e1;font-size:11.5px">👉 Wähle oben dieselbe <code>.json</code> Datei erneut aus, um nahtlos an dieser Stelle weiterzumachen oder ab 0 (ohne Duplikate) neu zu starten!</span>' +
-              '</div>')
-            : '';
+        const hasRestoredOrActiveData = Boolean(
+          j.fileName ||
+          (savedCp && (Number(savedCp.cursor) > 0 || Number(savedCp.totalEntries || savedCp.total) > 0)) ||
+          (Array.isArray(j.reviewItems) && j.reviewItems.length > 0) ||
+          getDiagnosticLogTotalCountClient() > 0
+        );
 
-          mount.innerHTML = cpHintHtml + '<div style="font-size:12px;color:#94a3b8">' +
+        if (!hasRestoredOrActiveData) {
+          mount.innerHTML = '<div style="font-size:12px;color:#94a3b8">' +
             (isChanVerified
               ? ('✅ Quell-Kanal <code>' + esc(activeChan) + '</code> ist verifiziert. Bitte wähle jetzt oben deine <code>result.json</code> Datei aus.')
               : '🔒 <b>JSON-Upload gesperrt:</b> Bitte gib zuerst in Schritt 1 die Telegram Kanal-ID (<code>-100...</code>) oder einen Nachrichten-Link ein und klicke auf <b>🔍 Kanal prüfen & freischalten</b>.') +
             '</div>';
           return;
         }
+        const effectiveFileName = j.fileName || savedCp?.fileName || "D1-Import-Sitzung (wiederhergestellt)";
 
         const openReviewCount = (j.reviewItems || []).filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain)).length;
         const totalDeduplicated = Number(j.duplicatesSkippedInFile || 0) + Number(j.duplicatesInDb || 0);
@@ -2633,14 +2873,15 @@
                 '</span>' +
                 '<span style="font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;background:rgba(16,185,129,0.2);color:#34d399;margin-left:6px">📡 Kanal: ' + esc(activeChan || 'Verifiziert') + '</span>' +
                 '<div style="font-size:12px;color:#ccc;margin-top:6px">' +
-                  'Datei: <b>' + esc(j.fileName) + '</b> (' + j.fileSizeMb + ' MB) • Roh-Nachrichten: <b>' + j.rawMessageCount.toLocaleString('de-DE') + '</b> ➔ Zu verarbeitende Einträge: <b style="color:#fbbf24">' + total.toLocaleString('de-DE') + '</b>' +
+                  'Datei: <b>' + esc(effectiveFileName) + '</b>' + (j.fileSizeMb ? (' (' + j.fileSizeMb + ' MB)') : '') + ' • Roh-Nachrichten: <b>' + Number(j.rawMessageCount || total).toLocaleString('de-DE') + '</b> ➔ Zu verarbeitende Einträge: <b style="color:#fbbf24">' + total.toLocaleString('de-DE') + '</b>' +
+                  (j.entries.length === 0 && total > 0 ? ' <span style="color:#38bdf8;font-size:11px">(📌 D1-Checkpoint aktiv – zum Weiterlaufen bitte Datei oben kurz auswählen, Prüfen & Logs sind sofort verfügbar!)</span>' : '') +
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                (!j.running && done < total ? '<button class="btn green" onclick="startOrResumeBackupImport()">🚀 ' + (done > 0 ? ('Fortsetzen ab #' + done.toLocaleString('de-DE')) : ('Smart-Import starten (' + total.toLocaleString('de-DE') + ')')) + '</button>' : '') +
+                (!j.running && j.entries.length > 0 && done < total ? '<button class="btn green" onclick="startOrResumeBackupImport()">🚀 ' + (done > 0 ? ('Fortsetzen ab #' + done.toLocaleString('de-DE')) : ('Smart-Import starten (' + total.toLocaleString('de-DE') + ')')) + '</button>' : '') +
                 (j.running ? '<button class="btn amber" onclick="pauseBackupImport()">⏸️ Pausieren (Checkpoint speichern)</button>' : '') +
-                (done > 0 && !j.running ? '<button class="btn amber" onclick="restartBackupFromZeroNoDupesClient()">🔄 Ab 0 neu starten (ohne Duplikate)</button>' : '') +
-                (done > 0 ? '<button class="btn red" onclick="resetBackupImport(true)">↺ Zurücksetzen</button>' : '') +
+                (done > 0 && !j.running && j.entries.length > 0 ? '<button class="btn amber" onclick="restartBackupFromZeroNoDupesClient()">🔄 Ab 0 neu starten (ohne Duplikate)</button>' : '') +
+                ((done > 0 || (j.reviewItems && j.reviewItems.length > 0)) ? '<button class="btn red" onclick="resetBackupImport(true)">↺ Zurücksetzen</button>' : '') +
               '</div>' +
             '</div>' +
 
@@ -3167,7 +3408,7 @@
         if (!backupImportJob.startedAt) backupImportJob.startedAt = Date.now();
         renderBackupImportBoxDom();
 
-        const DEFAULT_BATCH_SIZE = 4;
+        const DEFAULT_BATCH_SIZE = 10;
         if (!backupImportJob.cursorRetries) backupImportJob.cursorRetries = {};
 
         const isolateFailedEntryAtCursor = (reasonMsg) => {
@@ -3245,11 +3486,13 @@
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
           const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
           const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
-          const isFinalBatch = (backupImportJob.cursor + effectiveBatchSize) >= backupImportJob.entries.length;
-          const batchSeqNum = Math.floor(backupImportJob.cursor / DEFAULT_BATCH_SIZE) + 1;
-          const deferKvWrite = !isFinalBatch && (batchSeqNum % 15 !== 0);
           let hadRateWarning = false;
           try {
+            const nextCursorPreview = Math.min(backupImportJob.entries.length, backupImportJob.cursor + slice.length);
+            const cpPayload = {
+              ...buildCurrentBackupCheckpointPayload(),
+              cursor: nextCursorPreview
+            };
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -3261,7 +3504,8 @@
                 playlistFolderId: backupImportJob.playlistFolderId || null,
                 targetChatId: backupImportJob.targetPlaylistChatId || chatId,
                 sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
-                deferKvWrite
+                deferKvWrite: true,
+                checkpoint: cpPayload
               })
             });
             if (r && r.ok) {
@@ -3387,8 +3631,9 @@
 
         backupImportJob.running = false;
         if (backupImportJob.cursor >= backupImportJob.entries.length && backupImportJob.entries.length > 0) {
-          clearBackupCheckpointClient();
-          showHudToast("🎉 Smart-Import 100% abgeschlossen!");
+          saveBackupCheckpointClient(true);
+          clearClientMediaCaches();
+          showHudToast("🎉 Smart-Import 100% abgeschlossen! Alle Einträge sind dauerhaft in D1 gespeichert.");
         }
         renderBackupImportBoxDom();
       }
@@ -3849,7 +4094,7 @@
           window._adminReportsCache = allReports;
           if (!clientDiagnosticLogState.loadedFromD1Once && !backupImportJob.running) {
             clientDiagnosticLogState.loadedFromD1Once = true;
-            syncDiagnosticLogsFromD1Client(true);
+            restoreBackupImportSessionAfterReload();
           }
           const openReportsCount = Number(r.openReportsCount ?? allReports.filter(rep => rep && rep.status === "open").length);
           const reportFilter = state.adminReportFilter || "open";
@@ -5554,7 +5799,12 @@
 
       window.__TELEPORT_BOOTED__ = true;
       initAuthSession();
-      setTimeout(() => { if (typeof pollAntiSpamQueueClient === "function") pollAntiSpamQueueClient(true); }, 900);
+      setTimeout(() => {
+        if (typeof pollAntiSpamQueueClient === "function") pollAntiSpamQueueClient(true);
+        if (state.authUser?.isAdmin || loadBackupCheckpointClient()) {
+          restoreBackupImportSessionAfterReload();
+        }
+      }, 900);
     </script>
   </body>
   </html>`;

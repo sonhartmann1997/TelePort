@@ -1278,9 +1278,34 @@
   }
 
   async function getSavedList(env, chatId) {
-    const bundle = await getUserBundle(env, chatId);
-    bundle.savedList = normalizeSavedItems(bundle.savedList);
-    memoryFallback.set(`user_${chatId}`, bundle.savedList);
+    const cleanId = String(chatId || "").trim();
+    const bundle = await getUserBundle(env, cleanId);
+    const kvItems = normalizeSavedItems(bundle.savedList);
+    let d1Items = [];
+    try {
+      d1Items = await getPlaylistItemsFromD1(env, cleanId);
+    } catch (e) {}
+    if (Array.isArray(d1Items) && d1Items.length > 0) {
+      const byUid = new Map();
+      for (const it of kvItems) {
+        if (it && it.uid) byUid.set(String(it.uid), it);
+      }
+      for (const dIt of d1Items) {
+        if (!dIt || !dIt.uid) continue;
+        const existing = byUid.get(String(dIt.uid));
+        byUid.set(String(dIt.uid), existing ? { ...dIt, ...existing, poster: existing.poster || dIt.poster_path } : {
+          ...dIt,
+          poster: dIt.poster || dIt.poster_path || null,
+          quality: dIt.vipQuality || dIt.quality || "1080p",
+          allQualities: dIt.vipQuality || dIt.allQualities || "1080p",
+          streamCount: Number(dIt.vipStreamCount || dIt.streamCount || 1)
+        });
+      }
+      bundle.savedList = normalizeSavedItems(Array.from(byUid.values()));
+    } else {
+      bundle.savedList = kvItems;
+    }
+    memoryFallback.set(`user_${cleanId}`, bundle.savedList);
     return bundle.savedList;
   }
 
@@ -1301,6 +1326,7 @@
         };
       }
       return {
+        ...item,
         uid: item.uid || `${item.contentType === "series" ? "s" : item.contentType === "episode" ? "ep" : "m"}_${item.tmdbId || idx}`,
         tmdbId: item.tmdbId || null,
         contentType: item.contentType || "movie",
@@ -1321,20 +1347,53 @@
   }
 
   async function saveRawList(env, chatId, list, options = {}) {
-    const bundle = await getUserBundle(env, chatId);
+    const cleanId = String(chatId || "").trim();
+    const bundle = await getUserBundle(env, cleanId);
     bundle.savedList = Array.isArray(list) ? list : [];
-    await stageUserBundleWrite(env, chatId, bundle, options);
+    syncUserBundleToMemoryMirrors(cleanId, bundle);
+    // Für bot_vip oder explizites skipKvWrite (z.B. JSON-Import in D1) niemals KV-Writes auslösen!
+    if (cleanId === "bot_vip" || options.skipKvWrite) {
+      return;
+    }
+    await stageUserBundleWrite(env, cleanId, bundle, options);
   }
 
   async function getFolders(env, chatId) {
-    const bundle = await getUserBundle(env, chatId);
+    const cleanId = String(chatId || "").trim();
+    const bundle = await getUserBundle(env, cleanId);
+    const kvFolders = Array.isArray(bundle.folders) ? bundle.folders : [];
+    let d1Folders = [];
+    try {
+      d1Folders = await getPlaylistFoldersFromD1(env, cleanId);
+    } catch (e) {}
+    if (Array.isArray(d1Folders) && d1Folders.length > 0) {
+      const byId = new Map();
+      for (const f of kvFolders) {
+        if (f && f.id) byId.set(String(f.id), f);
+      }
+      for (const df of d1Folders) {
+        if (df && df.id) byId.set(String(df.id), { ...(byId.get(String(df.id)) || {}), ...df });
+      }
+      bundle.folders = Array.from(byId.values());
+      memoryFallback.set(`folders_${cleanId}`, bundle.folders);
+    }
     return Array.isArray(bundle.folders) ? bundle.folders : [];
   }
 
   async function saveFolders(env, chatId, folders, options = {}) {
-    const bundle = await getUserBundle(env, chatId);
+    const cleanId = String(chatId || "").trim();
+    const bundle = await getUserBundle(env, cleanId);
     bundle.folders = Array.isArray(folders) ? folders : [];
-    await stageUserBundleWrite(env, chatId, bundle, options);
+    syncUserBundleToMemoryMirrors(cleanId, bundle);
+    for (const f of bundle.folders) {
+      if (f && f.id && (f.isJsonPlaylist || f.type === "playlist" || cleanId === "bot_vip")) {
+        try { await upsertPlaylistFolderInD1(env, cleanId, f); } catch (e) {}
+      }
+    }
+    if (cleanId === "bot_vip" || options.skipKvWrite) {
+      return;
+    }
+    await stageUserBundleWrite(env, cleanId, bundle, options);
   }
 
   // Löscht automatisch alle Ordner, die leer sind (0 gespeicherte Filme/Serien),
@@ -1415,7 +1474,8 @@
   }
 
   async function createCustomFolder(env, chatId, folderName, extraProps = {}) {
-    const folders = await getFolders(env, chatId);
+    const cleanId = String(chatId || "").trim();
+    const folders = await getFolders(env, cleanId);
     const cleanName = String(folderName || "Neue Playlist").trim().slice(0, 48);
     const existing = folders.find(f => f.name.toLowerCase() === cleanName.toLowerCase());
     if (existing) {
@@ -1427,7 +1487,11 @@
         if (extraProps.playlistMode && existing.playlistMode !== extraProps.playlistMode) { existing.playlistMode = extraProps.playlistMode; changed = true; }
         if (existing.enabled === undefined) { existing.enabled = true; changed = true; }
         if (changed) {
-          await saveFolders(env, chatId, folders, { deferKvWrite: Boolean(extraProps.deferKvWrite) });
+          await upsertPlaylistFolderInD1(env, cleanId, existing);
+          await saveFolders(env, cleanId, folders, {
+            deferKvWrite: Boolean(extraProps.deferKvWrite),
+            skipKvWrite: Boolean(extraProps.isJsonPlaylist || cleanId === "bot_vip")
+          });
         }
       }
       return existing;
@@ -1448,7 +1512,11 @@
       createdAt: Date.now()
     };
     folders.push(newFolder);
-    await saveFolders(env, chatId, folders);
+    await upsertPlaylistFolderInD1(env, cleanId, newFolder);
+    await saveFolders(env, cleanId, folders, {
+      deferKvWrite: Boolean(extraProps.deferKvWrite),
+      skipKvWrite: Boolean(extraProps.isJsonPlaylist || cleanId === "bot_vip")
+    });
     return newFolder;
   }
 
@@ -1968,10 +2036,11 @@
     const safeLimit = useBatch ? Math.max(1, Math.min(50, Number(options?.limit || 25))) : allCatalogEntries.length;
     const sliceEntries = useBatch ? allCatalogEntries.slice(safeOffset, safeOffset + safeLimit) : allCatalogEntries;
 
+    const newlyAddedForD1 = [];
     for (const [mapKey, d1Item] of sliceEntries) {
       if (existingKeySet.has(mapKey)) continue;
       if (hiddenSet.has(mapKey)) continue;
-      list.push({
+      const newEntry = {
         uid: `${d1Item.prefix}_${d1Item.tmdbId}_${mainFolder.id}`,
         tmdbId: d1Item.tmdbId,
         contentType: d1Item.contentType,
@@ -1981,22 +2050,30 @@
         fsk: d1Item.fsk,
         genres: d1Item.genres,
         poster: d1Item.poster,
+        poster_path: d1Item.poster,
         quality: d1Item.quality,
+        vipQuality: d1Item.quality,
         allQualities: d1Item.allQualities,
         streamCount: d1Item.streamCount,
+        vipStreamCount: d1Item.streamCount,
         episodes: d1Item.contentType === "series" ? (d1Item.episodes || []) : undefined,
         syncedFromD1: true,
         playlistMode: "vip_stream",
         folderId: mainFolder.id,
         addedAt: d1Item.updatedAt || Date.now()
-      });
+      };
+      list.push(newEntry);
+      newlyAddedForD1.push(newEntry);
       existingKeySet.add(mapKey);
       syncedAddedCount++;
       changed = true;
     }
 
+    if (newlyAddedForD1.length > 0) {
+      await batchUpsertPlaylistItemsInD1(env, "bot_vip", mainFolder.id, newlyAddedForD1);
+    }
     if (changed) {
-      await saveRawList(env, "bot_vip", list);
+      await saveRawList(env, "bot_vip", list, { skipKvWrite: true });
     }
     memoryFallback.set("last_bot_vip_sync_ts", Date.now());
 
@@ -2379,6 +2456,7 @@
     });
 
     const removedItemsCount = Math.max(0, beforeCount - list.length);
+    await deletePlaylistFolderFromD1(env, chatId, folderId);
     await saveRawList(env, chatId, list);
     folders = folders.filter(f => String(f.id) !== String(folderId));
     await saveFolders(env, chatId, folders);
@@ -2392,11 +2470,11 @@
     const modeStr = typeof playlistMode === "object" && playlistMode !== null
       ? String(playlistMode.playlistMode || "both")
       : String(playlistMode || "both");
-    const deferKvWrite = Boolean(typeof playlistMode === "object" && playlistMode !== null && playlistMode.deferKvWrite);
     try {
       let list = await getSavedList(env, chatId);
       let addedCount = 0;
       let changedAny = false;
+      const itemsToPersistInD1 = [];
       for (const res of resolvedResults) {
         if (!res || !res.tmdbId) continue;
         // Für VIP-Stream-Playlisten (bot_vip / vip_stream) niemals leere Cover ohne gültige Videodatei (file_id) anlegen!
@@ -2452,10 +2530,16 @@
             existingItem.allQualities = Array.from(quals).join(", ");
             changedAny = true;
           }
+          itemsToPersistInD1.push({
+            ...existingItem,
+            poster_path: existingItem.poster || posterUrl,
+            vipQuality: existingItem.quality || res.quality || "1080p",
+            vipStreamCount: existingItem.streamCount || 1
+          });
           continue;
         }
 
-        list.push({
+        const newItem = {
           uid: `${prefix}_${res.tmdbId}_${folderId}`,
           tmdbId: res.tmdbId,
           contentType,
@@ -2465,20 +2549,29 @@
           fsk: d.fsk || "K. A.",
           genres: d.genres || (contentType === "series" ? "Serie" : "Film"),
           poster: posterUrl,
+          poster_path: posterUrl,
           quality: res.quality || "1080p",
+          vipQuality: res.quality || "1080p",
           allQualities: res.quality || "1080p",
           streamCount: 1,
+          vipStreamCount: 1,
           episodes: contentType === "series" && epEntry ? [epEntry] : undefined,
           metadataSource: res.metadataSource || d.metadata_source || "TMDb",
           playlistMode: modeStr,
           folderId,
           addedAt: Date.now()
-        });
+        };
+        list.push(newItem);
+        itemsToPersistInD1.push(newItem);
         addedCount++;
         changedAny = true;
       }
+      // 100% D1-First: Speichere alle importierten Playlist-Einträge direkt in D1 (0 KV-Writes!)
+      if (itemsToPersistInD1.length > 0) {
+        await batchUpsertPlaylistItemsInD1(env, chatId, folderId, itemsToPersistInD1);
+      }
       if (changedAny) {
-        await saveRawList(env, chatId, list, { deferKvWrite });
+        await saveRawList(env, chatId, list, { skipKvWrite: true });
       }
       return addedCount;
     } catch (e) {
@@ -2503,12 +2596,16 @@
       const uid = targetFolder ? `${prefix}_${baseId}_${targetFolder}` : `${prefix}_${baseId}`;
 
       if (sameFolderIdx === -1) {
-        list.push({
+        const newEntry = {
           ...itemObj,
           uid,
           folderId: targetFolder,
           addedAt: Date.now()
-        });
+        };
+        list.push(newEntry);
+        if (targetFolder) {
+          await batchUpsertPlaylistItemsInD1(env, chatId, targetFolder, [newEntry]);
+        }
         await saveRawList(env, chatId, list);
         await cleanupEmptyFolders(env, chatId);
         return { saved: true, updatedFolder: false };
@@ -2533,6 +2630,9 @@
           list.splice(numIdx, 1);
         }
       }
+      if (removedItem && removedItem.uid) {
+        await deletePlaylistItemFromD1(env, chatId, removedItem.uid, removedItem.folderId || null);
+      }
       // Wenn eine Serie aus der Merkliste gelöscht wird, auch alle gemerkten Episoden dieser Serie löschen
       if (removedItem && removedItem.contentType === "series" && removedItem.tmdbId) {
         const sId = String(removedItem.tmdbId);
@@ -2541,6 +2641,7 @@
           if (i.contentType === "series" && String(i.tmdbId) === sId) return false;
           return true;
         });
+        await deletePlaylistItemFromD1(env, chatId, sId, null);
       }
       await saveRawList(env, chatId, list);
       await cleanupEmptyFolders(env, chatId);
@@ -2560,6 +2661,7 @@
         if (contentType === "series" && i.contentType === "episode" && String(i.seriesId) === String(itemId)) return false;
         return true;
       });
+      await deletePlaylistItemFromD1(env, chatId, String(itemId), null);
       if (list.length !== beforeLen) {
         await saveRawList(env, chatId, list);
         await cleanupEmptyFolders(env, chatId);

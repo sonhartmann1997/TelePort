@@ -2617,7 +2617,6 @@
 
     let playlistSavedCount = 0;
     if (playlistContext && playlistContext.chatId && playlistContext.folderId && resolvedObjects.length > 0) {
-      const deferKvWrite = Boolean(playlistContext.deferKvWrite);
       try {
         if (playlistMode === "watchlist" || playlistMode === "both" || String(playlistContext.chatId) === "bot_vip") {
           playlistSavedCount = await batchSaveIngestedItemsToPlaylist(
@@ -2625,13 +2624,10 @@
             playlistContext.chatId,
             playlistContext.folderId,
             resolvedObjects,
-            { playlistMode, deferKvWrite }
+            { playlistMode, deferKvWrite: true }
           );
-          if (!deferKvWrite) {
-            await flushUserSession(env, playlistContext.chatId);
-          }
         }
-        // Wenn als VIP-Stream oder Beides gewählt, zusätzlich in der globalen Bot-VIP-Playlist ("bot_vip") synchronisieren
+        // Wenn als VIP-Stream oder Beides gewählt, zusätzlich in der globalen Bot-VIP-Playlist ("bot_vip") in D1 synchronisieren (0 KV-Writes!)
         if (shouldRegisterVipStream && String(playlistContext.chatId) !== "bot_vip") {
           const botVipFolder = await createOrGetJsonPlaylistFolder(
             env,
@@ -2645,7 +2641,7 @@
             "bot_vip",
             botVipFolder.id,
             resolvedObjects,
-            { playlistMode: "vip_stream", deferKvWrite }
+            { playlistMode: "vip_stream", deferKvWrite: true }
           );
           if (!playlistSavedCount) playlistSavedCount = syncedCount;
         }

@@ -217,6 +217,61 @@
             details_json TEXT,
             created_at INTEGER NOT NULL
           )`),
+          db.prepare(`CREATE TABLE IF NOT EXISTS d1_playlists (
+            folder_id TEXT PRIMARY KEY,
+            chat_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            type TEXT DEFAULT 'playlist',
+            is_json_playlist INTEGER DEFAULT 1,
+            playlist_mode TEXT DEFAULT 'both',
+            source_label TEXT,
+            enabled INTEGER DEFAULT 1,
+            keep_when_empty INTEGER DEFAULT 1,
+            tmdb_ref_id TEXT,
+            original_name TEXT,
+            linked INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          )`),
+          db.prepare(`CREATE TABLE IF NOT EXISTS d1_playlist_items (
+            uid TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            folder_id TEXT NOT NULL,
+            tmdb_id INTEGER NOT NULL,
+            content_type TEXT NOT NULL,
+            title TEXT NOT NULL,
+            year TEXT,
+            fsk TEXT,
+            genres TEXT,
+            poster_path TEXT,
+            backdrop_path TEXT,
+            vote_average REAL DEFAULT 0,
+            vip_quality TEXT,
+            vip_stream_count INTEGER DEFAULT 0,
+            series_id INTEGER,
+            series_title TEXT,
+            season_number INTEGER,
+            episode_number INTEGER,
+            added_at INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, uid)
+          )`),
+          db.prepare(`CREATE TABLE IF NOT EXISTS d1_import_checkpoints (
+            job_key TEXT PRIMARY KEY,
+            file_name TEXT,
+            cursor INTEGER DEFAULT 0,
+            total INTEGER DEFAULT 0,
+            saved_movies INTEGER DEFAULT 0,
+            saved_episodes INTEGER DEFAULT 0,
+            skipped INTEGER DEFAULT 0,
+            conflicts INTEGER DEFAULT 0,
+            errors INTEGER DEFAULT 0,
+            playlist_name TEXT,
+            playlist_mode TEXT,
+            playlist_folder_id TEXT,
+            playlist_items_added INTEGER DEFAULT 0,
+            verified_channel_id TEXT,
+            updated_at INTEGER NOT NULL
+          )`),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_movie_id ON movie_files(movie_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_fid ON movie_files(telegram_file_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_episode_files_series_ep ON episode_files(series_id, season_number, episode_number)"),
@@ -224,7 +279,10 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_series_episodes_series ON series_episodes(series_id, season_number)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_media_reports_status ON media_reports(status, created_at)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_status ON import_diagnostic_logs(status, id)"),
-          db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_msg ON import_diagnostic_logs(msg_id)")
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_msg ON import_diagnostic_logs(msg_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlists_chat ON d1_playlists(chat_id, created_at)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_folder ON d1_playlist_items(chat_id, folder_id, added_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_tmdb ON d1_playlist_items(tmdb_id, content_type)")
         ]);
         // Subrequest-sparende Auto-Migration: Prüfe in 1 einziger Abfrage sqlite_master und führe fehlende Spalten gebündelt per db.batch aus
         try {
@@ -3169,16 +3227,172 @@
     });
   }
 
+  // Lädt direkt aus D1 (und Memory-Fallback) vorhandene VIP-Filme/-Serien für die Hauptseite (Discover),
+  // damit bei aktiviertem "Nur VIP-Streams"-Filter oder nach einem JSON-Import alle D1-Einträge sofort sichtbar sind.
+  async function getD1VipCatalogCardsForDiscover(env, fallbackTypeCode = "m", limit = 24) {
+    const wantSeries = fallbackTypeCode === "s";
+    const results = [];
+    const seenIds = new Set();
+
+    // 1. Aus Memory-Fallback prüfen (für Sandbox & frisch importierte Einträge)
+    try {
+      for (const [k, val] of memoryFallback.entries()) {
+        if (!val || typeof val !== "object") continue;
+        if (!wantSeries && k.startsWith("d1_catalog_movie_")) {
+          const mid = Number(val.id || k.replace("d1_catalog_movie_", ""));
+          if (!mid || seenIds.has(mid)) continue;
+          const mFiles = memoryFallback.get(`d1_movie_files_${mid}`);
+          const validFiles = Array.isArray(mFiles)
+            ? mFiles.filter(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0)
+            : [];
+          if (validFiles.length > 0) {
+            const top = sortAndDedupeStreamFiles(validFiles)[0];
+            seenIds.add(mid);
+            results.push({
+              id: mid,
+              media_type: "movie",
+              title: val.title || "Unbekannt",
+              release_date: val.releaseDate || val.release_date || "",
+              vote_average: Number(val.vote_average || 0),
+              poster_path: val.poster_path || val.external_poster_url || null,
+              backdrop_path: val.backdrop_path || null,
+              overview: val.overview || "",
+              vipQuality: `${top?.quality || "1080p"}${top?.codec ? " " + top.codec : ""}`.trim(),
+              vipStreamCount: validFiles.length
+            });
+          }
+        } else if (wantSeries && k.startsWith("d1_catalog_series_")) {
+          const sid = Number(val.id || k.replace("d1_catalog_series_", ""));
+          if (!sid || seenIds.has(sid)) continue;
+          const bestQ = memoryFallback.get(`d1_series_best_quality_${sid}`);
+          if (bestQ) {
+            seenIds.add(sid);
+            results.push({
+              id: sid,
+              media_type: "tv",
+              name: val.title || val.name || "Unbekannt",
+              title: val.title || val.name || "Unbekannt",
+              first_air_date: val.releaseDate || val.first_air_date || "",
+              vote_average: Number(val.vote_average || 0),
+              poster_path: val.poster_path || val.external_poster_url || null,
+              backdrop_path: val.backdrop_path || null,
+              overview: val.overview || "",
+              vipQuality: String(bestQ),
+              vipStreamCount: 1
+            });
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 2. Aus D1 SQL-Tabellen (movies + movie_files / series + episode_files) abfragen
+    const db = await ensureD1Schema(env);
+    if (db && results.length < limit) {
+      try {
+        if (!wantSeries) {
+          const mRes = await db.prepare(`
+            SELECT m.tmdb_id, m.title, m.release_date, m.vote_average, m.poster_path, m.backdrop_path, m.overview, m.details_json,
+                   mf.quality, mf.codec, mf.telegram_file_id
+            FROM movies m
+            INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+            WHERE mf.telegram_file_id IS NOT NULL
+              AND mf.telegram_file_id != ''
+              AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
+              AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
+            ORDER BY m.updated_at DESC
+            LIMIT 80
+          `).all();
+          for (const row of (mRes?.results || [])) {
+            const mid = Number(row.tmdb_id);
+            if (!mid || seenIds.has(mid)) continue;
+            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
+            seenIds.add(mid);
+            let pVal = row.poster_path || "";
+            if (!pVal && row.details_json) {
+              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
+            }
+            results.push({
+              id: mid,
+              media_type: "movie",
+              title: row.title || "Unbekannt",
+              release_date: row.release_date || "",
+              vote_average: Number(row.vote_average || 0),
+              poster_path: pVal || null,
+              backdrop_path: row.backdrop_path || null,
+              overview: row.overview || "",
+              vipQuality: `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim(),
+              vipStreamCount: 1
+            });
+            if (results.length >= limit) break;
+          }
+        } else {
+          const sRes = await db.prepare(`
+            SELECT s.tmdb_id, s.title, s.release_date, s.vote_average, s.poster_path, s.backdrop_path, s.overview, s.details_json,
+                   ef.quality, ef.codec, ef.telegram_file_id
+            FROM series s
+            INNER JOIN episode_files ef ON ef.series_id = s.tmdb_id
+            WHERE ef.telegram_file_id IS NOT NULL
+              AND ef.telegram_file_id != ''
+              AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
+              AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+            ORDER BY s.updated_at DESC
+            LIMIT 80
+          `).all();
+          for (const row of (sRes?.results || [])) {
+            const sid = Number(row.tmdb_id);
+            if (!sid || seenIds.has(sid)) continue;
+            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
+            seenIds.add(sid);
+            let pVal = row.poster_path || "";
+            if (!pVal && row.details_json) {
+              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
+            }
+            results.push({
+              id: sid,
+              media_type: "tv",
+              name: row.title || "Unbekannt",
+              title: row.title || "Unbekannt",
+              first_air_date: row.release_date || "",
+              vote_average: Number(row.vote_average || 0),
+              poster_path: pVal || null,
+              backdrop_path: row.backdrop_path || null,
+              overview: row.overview || "",
+              vipQuality: `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim(),
+              vipStreamCount: 1
+            });
+            if (results.length >= limit) break;
+          }
+        }
+      } catch (e) {}
+    }
+
+    return results.slice(0, limit);
+  }
+
   // Exklusiver VIP-Stream-Filter (#13):
   // Wenn `onlyVipStreams` in den Einstellungen aktiviert ist UND der Nutzer VIP-Zugriff hat,
-  // werden nur Filme/Serien behalten, für die tatsächlich mindestens ein Stream in D1 hinterlegt ist.
+  // werden nur Filme/Serien behalten, für die tatsächlich mindestens ein Stream in D1 hinterlegt ist,
+  // und bei Bedarf direkt mit den in D1 gespeicherten VIP-Titeln aufgefüllt.
   async function applyVipStreamsOnlyFilterIfActive(env, items, fallbackTypeCode = "m", settingsObj = null, hasVipStreamAccess = false) {
-    if (!Array.isArray(items) || items.length === 0) return [];
-    const withVip = await attachVipQualitiesToMediaList(env, items, fallbackTypeCode, hasVipStreamAccess);
+    const withVip = Array.isArray(items) && items.length > 0
+      ? await attachVipQualitiesToMediaList(env, items, fallbackTypeCode, hasVipStreamAccess)
+      : [];
     if (!hasVipStreamAccess || !settingsObj || !settingsObj.onlyVipStreams) {
       return withVip;
     }
-    return withVip.filter(it => Boolean(it && it.vipQuality));
+    const filtered = withVip.filter(it => Boolean(it && it.vipQuality));
+    if (filtered.length >= 16) return filtered;
+    try {
+      const d1Extra = await getD1VipCatalogCardsForDiscover(env, fallbackTypeCode, 24);
+      const existingIds = new Set(filtered.map(it => Number(it.id)));
+      for (const extra of d1Extra) {
+        if (!existingIds.has(Number(extra.id))) {
+          existingIds.add(Number(extra.id));
+          filtered.push(extra);
+        }
+      }
+    } catch (e) {}
+    return filtered;
   }
 
   async function getMovieFromD1(env, movieId) {
@@ -3644,7 +3858,15 @@
 
   async function getD1DatabaseStats(env) {
     const db = await ensureD1Schema(env);
-    if (!db) return { enabled: false, moviesCount: 0, seriesCount: 0, searchesCount: 0 };
+    if (!db) {
+      let memMovies = 0;
+      let memSeries = 0;
+      for (const k of memoryFallback.keys()) {
+        if (k.startsWith("d1_catalog_movie_")) memMovies++;
+        else if (k.startsWith("d1_catalog_series_")) memSeries++;
+      }
+      return { enabled: false, moviesCount: memMovies, seriesCount: memSeries, searchesCount: 0 };
+    }
     try {
       const [mRow, sRow, qRow] = await Promise.all([
         db.prepare("SELECT COUNT(*) AS cnt FROM movies").first(),
@@ -3661,3 +3883,427 @@
       return { enabled: true, moviesCount: 0, seriesCount: 0, searchesCount: 0 };
     }
   }
+
+  // ============================================================================
+  // D1-FIRST PLAYLISTS & IMPORT CHECKPOINTS (0 KV-Writes beim 180k JSON-Import!)
+  // ============================================================================
+
+  async function saveImportCheckpointToD1(env, checkpointObj, jobKey = "default") {
+    if (!checkpointObj || typeof checkpointObj !== "object") return null;
+    const cleanKey = String(jobKey || "default").trim() || "default";
+    const normalized = {
+      jobKey: cleanKey,
+      fileName: String(checkpointObj.fileName || ""),
+      cursor: Math.max(0, Number(checkpointObj.cursor || 0)),
+      total: Math.max(0, Number(checkpointObj.total || 0)),
+      savedMovies: Math.max(0, Number(checkpointObj.savedMovies || 0)),
+      savedEpisodes: Math.max(0, Number(checkpointObj.savedEpisodes || 0)),
+      skipped: Math.max(0, Number(checkpointObj.skipped || 0)),
+      conflicts: Math.max(0, Number(checkpointObj.conflicts || 0)),
+      errors: Math.max(0, Number(checkpointObj.errors || 0)),
+      playlistName: String(checkpointObj.playlistName || ""),
+      playlistMode: String(checkpointObj.playlistMode || "both"),
+      playlistFolderId: checkpointObj.playlistFolderId ? String(checkpointObj.playlistFolderId) : null,
+      playlistItemsAdded: Math.max(0, Number(checkpointObj.playlistItemsAdded || 0)),
+      verifiedChannelId: checkpointObj.verifiedChannelId ? String(checkpointObj.verifiedChannelId) : null,
+      updatedAt: Number(checkpointObj.updatedAt || Date.now())
+    };
+    memoryFallback.set(`d1_import_checkpoint_${cleanKey}`, normalized);
+    memoryFallback.set("json_import_active_checkpoint", normalized);
+
+    const db = await ensureD1Schema(env);
+    if (!db) return normalized;
+    try {
+      trackStat("d1Writes");
+      await db.prepare(`
+        INSERT OR REPLACE INTO d1_import_checkpoints (
+          job_key, file_name, cursor, total, saved_movies, saved_episodes,
+          skipped, conflicts, errors, playlist_name, playlist_mode,
+          playlist_folder_id, playlist_items_added, verified_channel_id, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+      `).bind(
+        normalized.jobKey,
+        normalized.fileName,
+        normalized.cursor,
+        normalized.total,
+        normalized.savedMovies,
+        normalized.savedEpisodes,
+        normalized.skipped,
+        normalized.conflicts,
+        normalized.errors,
+        normalized.playlistName,
+        normalized.playlistMode,
+        normalized.playlistFolderId,
+        normalized.playlistItemsAdded,
+        normalized.verifiedChannelId,
+        normalized.updatedAt
+      ).run();
+    } catch (e) {}
+    return normalized;
+  }
+
+  async function getImportCheckpointFromD1(env, jobKey = "default") {
+    const cleanKey = String(jobKey || "default").trim() || "default";
+    const db = await ensureD1Schema(env);
+    if (db) {
+      try {
+        trackStat("d1Reads");
+        const row = await db
+          .prepare("SELECT * FROM d1_import_checkpoints WHERE job_key = ?1")
+          .bind(cleanKey)
+          .first();
+        if (row && (row.file_name || Number(row.total || 0) > 0 || Number(row.cursor || 0) > 0)) {
+          trackStat("d1Hits");
+          const parsed = {
+            jobKey: String(row.job_key || cleanKey),
+            fileName: String(row.file_name || ""),
+            cursor: Number(row.cursor || 0),
+            total: Number(row.total || 0),
+            savedMovies: Number(row.saved_movies || 0),
+            savedEpisodes: Number(row.saved_episodes || 0),
+            skipped: Number(row.skipped || 0),
+            conflicts: Number(row.conflicts || 0),
+            errors: Number(row.errors || 0),
+            playlistName: String(row.playlist_name || ""),
+            playlistMode: String(row.playlist_mode || "both"),
+            playlistFolderId: row.playlist_folder_id ? String(row.playlist_folder_id) : null,
+            playlistItemsAdded: Number(row.playlist_items_added || 0),
+            verifiedChannelId: row.verified_channel_id ? String(row.verified_channel_id) : null,
+            updatedAt: Number(row.updated_at || Date.now())
+          };
+          memoryFallback.set(`d1_import_checkpoint_${cleanKey}`, parsed);
+          memoryFallback.set("json_import_active_checkpoint", parsed);
+          return parsed;
+        }
+      } catch (e) {}
+    }
+    const mem = memoryFallback.get(`d1_import_checkpoint_${cleanKey}`) || memoryFallback.get("json_import_active_checkpoint");
+    return mem && typeof mem === "object" ? mem : null;
+  }
+
+  async function clearImportCheckpointInD1(env, jobKey = "default") {
+    const cleanKey = String(jobKey || "default").trim() || "default";
+    memoryFallback.delete(`d1_import_checkpoint_${cleanKey}`);
+    memoryFallback.delete("json_import_active_checkpoint");
+    const db = await ensureD1Schema(env);
+    if (!db) return;
+    try {
+      trackStat("d1Writes");
+      await db.prepare("DELETE FROM d1_import_checkpoints WHERE job_key = ?1").bind(cleanKey).run();
+    } catch (e) {}
+  }
+
+  async function upsertPlaylistFolderInD1(env, chatId, folderObj) {
+    if (!chatId || !folderObj || !folderObj.id) return folderObj;
+    const cleanChatId = String(chatId).trim();
+    const now = Date.now();
+    const normFolder = {
+      id: String(folderObj.id),
+      name: String(folderObj.name || "Playlist").slice(0, 64),
+      type: String(folderObj.type || (folderObj.isJsonPlaylist ? "playlist" : "custom")),
+      isJsonPlaylist: Boolean(folderObj.isJsonPlaylist || folderObj.type === "playlist"),
+      playlistMode: String(folderObj.playlistMode || "both"),
+      sourceLabel: folderObj.sourceLabel ? String(folderObj.sourceLabel) : null,
+      enabled: folderObj.enabled !== false,
+      keepWhenEmpty: folderObj.keepWhenEmpty !== false,
+      tmdbRefId: folderObj.tmdbRefId ? String(folderObj.tmdbRefId) : null,
+      originalName: String(folderObj.originalName || folderObj.name || "Playlist"),
+      linked: Boolean(folderObj.linked),
+      createdAt: Number(folderObj.createdAt || now),
+      updatedAt: now
+    };
+
+    const memKey = `d1_playlists_${cleanChatId}`;
+    const memList = Array.isArray(memoryFallback.get(memKey)) ? [...memoryFallback.get(memKey)] : [];
+    const existingIdx = memList.findIndex(f => String(f.id) === normFolder.id);
+    if (existingIdx >= 0) memList[existingIdx] = normFolder;
+    else memList.push(normFolder);
+    memoryFallback.set(memKey, memList);
+
+    const db = await ensureD1Schema(env);
+    if (!db) return normFolder;
+    try {
+      trackStat("d1Writes");
+      await db.prepare(`
+        INSERT OR REPLACE INTO d1_playlists (
+          folder_id, chat_id, name, type, is_json_playlist, playlist_mode,
+          source_label, enabled, keep_when_empty, tmdb_ref_id, original_name,
+          linked, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+      `).bind(
+        normFolder.id,
+        cleanChatId,
+        normFolder.name,
+        normFolder.type,
+        normFolder.isJsonPlaylist ? 1 : 0,
+        normFolder.playlistMode,
+        normFolder.sourceLabel,
+        normFolder.enabled ? 1 : 0,
+        normFolder.keepWhenEmpty ? 1 : 0,
+        normFolder.tmdbRefId,
+        normFolder.originalName,
+        normFolder.linked ? 1 : 0,
+        normFolder.createdAt,
+        normFolder.updatedAt
+      ).run();
+    } catch (e) {}
+    return normFolder;
+  }
+
+  async function getPlaylistFoldersFromD1(env, chatId) {
+    if (!chatId) return [];
+    const cleanChatId = String(chatId).trim();
+    const memKey = `d1_playlists_${cleanChatId}`;
+    const memList = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
+
+    const db = await ensureD1Schema(env);
+    if (!db) return memList;
+    try {
+      trackStat("d1Reads");
+      const res = await db
+        .prepare("SELECT * FROM d1_playlists WHERE chat_id = ?1 ORDER BY created_at ASC")
+        .bind(cleanChatId)
+        .all();
+      const rows = Array.isArray(res?.results) ? res.results : [];
+      if (rows.length === 0) return memList;
+      trackStat("d1Hits");
+      const byId = new Map();
+      for (const f of memList) {
+        if (f && f.id) byId.set(String(f.id), f);
+      }
+      for (const r of rows) {
+        const mapped = {
+          id: String(r.folder_id),
+          name: String(r.name || "Playlist"),
+          type: String(r.type || "playlist"),
+          isJsonPlaylist: Number(r.is_json_playlist) === 1,
+          playlistMode: String(r.playlist_mode || "both"),
+          sourceLabel: r.source_label ? String(r.source_label) : null,
+          enabled: Number(r.enabled) !== 0,
+          keepWhenEmpty: Number(r.keep_when_empty) !== 0,
+          tmdbRefId: r.tmdb_ref_id ? String(r.tmdb_ref_id) : null,
+          originalName: String(r.original_name || r.name || "Playlist"),
+          linked: Number(r.linked) === 1,
+          createdAt: Number(r.created_at || Date.now())
+        };
+        byId.set(mapped.id, mapped);
+      }
+      const merged = Array.from(byId.values());
+      memoryFallback.set(memKey, merged);
+      return merged;
+    } catch (e) {
+      return memList;
+    }
+  }
+
+  async function deletePlaylistFolderFromD1(env, chatId, folderId) {
+    if (!chatId || !folderId) return;
+    const cleanChatId = String(chatId).trim();
+    const cleanFolderId = String(folderId).trim();
+    const memKey = `d1_playlists_${cleanChatId}`;
+    const memList = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
+    memoryFallback.set(memKey, memList.filter(f => String(f.id) !== cleanFolderId));
+
+    const itemsMemKey = `d1_playlist_items_${cleanChatId}`;
+    const memItems = Array.isArray(memoryFallback.get(itemsMemKey)) ? memoryFallback.get(itemsMemKey) : [];
+    memoryFallback.set(itemsMemKey, memItems.filter(it => String(it.folderId) !== cleanFolderId));
+
+    const db = await ensureD1Schema(env);
+    if (!db) return;
+    try {
+      trackStat("d1Writes");
+      await db.batch([
+        db.prepare("DELETE FROM d1_playlists WHERE chat_id = ?1 AND folder_id = ?2").bind(cleanChatId, cleanFolderId),
+        db.prepare("DELETE FROM d1_playlist_items WHERE chat_id = ?1 AND folder_id = ?2").bind(cleanChatId, cleanFolderId)
+      ]);
+    } catch (e) {}
+  }
+
+  async function batchUpsertPlaylistItemsInD1(env, chatId, folderId, itemsArray) {
+    if (!chatId || !Array.isArray(itemsArray) || itemsArray.length === 0) return 0;
+    const cleanChatId = String(chatId).trim();
+    const defaultFolderId = String(folderId || "bot_vip_auto");
+    const now = Date.now();
+
+    const normalizedItems = [];
+    for (let i = 0; i < itemsArray.length; i++) {
+      const it = itemsArray[i];
+      if (!it || !it.tmdbId) continue;
+      const contentType = it.contentType === "series" ? "series" : "movie";
+      const typePrefix = contentType === "series" ? "s" : "m";
+      const targetFolderId = String(it.folderId || defaultFolderId);
+      const uid = String(it.uid || `${typePrefix}_${it.tmdbId}_${targetFolderId}`);
+      normalizedItems.push({
+        uid,
+        chatId: cleanChatId,
+        folderId: targetFolderId,
+        tmdbId: Number(it.tmdbId),
+        contentType,
+        title: String(it.title || "Unbekannt"),
+        year: String(it.year || "K. A."),
+        fsk: String(it.fsk || "FSK Keine Angabe"),
+        genres: String(it.genres || "K. A."),
+        poster_path: it.poster_path ? String(it.poster_path) : null,
+        backdrop_path: it.backdrop_path ? String(it.backdrop_path) : null,
+        vote_average: Number(it.vote_average || 0),
+        vipQuality: it.vipQuality ? String(it.vipQuality) : null,
+        vipStreamCount: Number(it.vipStreamCount || 0),
+        seriesId: it.seriesId ? Number(it.seriesId) : null,
+        seriesTitle: it.seriesTitle ? String(it.seriesTitle) : null,
+        seasonNumber: it.seasonNumber ? Number(it.seasonNumber) : null,
+        episodeNumber: it.episodeNumber ? Number(it.episodeNumber) : null,
+        addedAt: Number(it.addedAt || (now + i))
+      });
+    }
+    if (normalizedItems.length === 0) return 0;
+
+    // Memory-Mirror aktualisieren
+    const itemsMemKey = `d1_playlist_items_${cleanChatId}`;
+    const existingMem = Array.isArray(memoryFallback.get(itemsMemKey)) ? memoryFallback.get(itemsMemKey) : [];
+    const byUid = new Map();
+    for (const oldIt of existingMem) {
+      if (oldIt && oldIt.uid) byUid.set(String(oldIt.uid), oldIt);
+    }
+    for (const newIt of normalizedItems) {
+      byUid.set(newIt.uid, newIt);
+    }
+    memoryFallback.set(itemsMemKey, Array.from(byUid.values()));
+
+    const db = await ensureD1Schema(env);
+    if (!db) return normalizedItems.length;
+    try {
+      trackStat("d1Writes");
+      const CHUNK_SIZE = 50;
+      for (let offset = 0; offset < normalizedItems.length; offset += CHUNK_SIZE) {
+        const chunk = normalizedItems.slice(offset, offset + CHUNK_SIZE);
+        const stmts = chunk.map(it =>
+          db.prepare(`
+            INSERT OR REPLACE INTO d1_playlist_items (
+              uid, chat_id, folder_id, tmdb_id, content_type, title, year, fsk, genres,
+              poster_path, backdrop_path, vote_average, vip_quality, vip_stream_count,
+              series_id, series_title, season_number, episode_number, added_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+          `).bind(
+            it.uid,
+            it.chatId,
+            it.folderId,
+            it.tmdbId,
+            it.contentType,
+            it.title,
+            it.year,
+            it.fsk,
+            it.genres,
+            it.poster_path,
+            it.backdrop_path,
+            it.vote_average,
+            it.vipQuality,
+            it.vipStreamCount,
+            it.seriesId,
+            it.seriesTitle,
+            it.seasonNumber,
+            it.episodeNumber,
+            it.addedAt
+          )
+        );
+        await db.batch(stmts);
+      }
+    } catch (e) {}
+    return normalizedItems.length;
+  }
+
+  async function getPlaylistItemsFromD1(env, chatId, folderId = null, limit = 5000) {
+    if (!chatId) return [];
+    const cleanChatId = String(chatId).trim();
+    const itemsMemKey = `d1_playlist_items_${cleanChatId}`;
+    const memItems = Array.isArray(memoryFallback.get(itemsMemKey)) ? memoryFallback.get(itemsMemKey) : [];
+
+    const db = await ensureD1Schema(env);
+    if (!db) {
+      return folderId
+        ? memItems.filter(it => String(it.folderId) === String(folderId)).slice(0, limit)
+        : memItems.slice(0, limit);
+    }
+    try {
+      trackStat("d1Reads");
+      const query = folderId
+        ? db.prepare("SELECT * FROM d1_playlist_items WHERE chat_id = ?1 AND folder_id = ?2 ORDER BY added_at DESC LIMIT ?3").bind(cleanChatId, String(folderId), Number(limit))
+        : db.prepare("SELECT * FROM d1_playlist_items WHERE chat_id = ?1 ORDER BY added_at DESC LIMIT ?2").bind(cleanChatId, Number(limit));
+      const res = await query.all();
+      const rows = Array.isArray(res?.results) ? res.results : [];
+      if (rows.length === 0) {
+        return folderId
+          ? memItems.filter(it => String(it.folderId) === String(folderId)).slice(0, limit)
+          : memItems.slice(0, limit);
+      }
+      trackStat("d1Hits");
+      const byUid = new Map();
+      for (const m of memItems) {
+        if (m && m.uid && (!folderId || String(m.folderId) === String(folderId))) {
+          byUid.set(String(m.uid), m);
+        }
+      }
+      for (const r of rows) {
+        const mapped = {
+          uid: String(r.uid),
+          tmdbId: Number(r.tmdb_id),
+          contentType: String(r.content_type || "movie"),
+          title: String(r.title || "Unbekannt"),
+          year: String(r.year || "K. A."),
+          fsk: String(r.fsk || "FSK Keine Angabe"),
+          genres: String(r.genres || "K. A."),
+          poster_path: r.poster_path ? String(r.poster_path) : null,
+          backdrop_path: r.backdrop_path ? String(r.backdrop_path) : null,
+          vote_average: Number(r.vote_average || 0),
+          vipQuality: r.vip_quality ? String(r.vip_quality) : null,
+          vipStreamCount: Number(r.vip_stream_count || 0),
+          folderId: String(r.folder_id),
+          seriesId: r.series_id ? Number(r.series_id) : null,
+          seriesTitle: r.series_title ? String(r.series_title) : null,
+          seasonNumber: r.season_number ? Number(r.season_number) : null,
+          episodeNumber: r.episode_number ? Number(r.episode_number) : null,
+          addedAt: Number(r.added_at || Date.now())
+        };
+        byUid.set(mapped.uid, mapped);
+      }
+      const merged = Array.from(byUid.values());
+      if (!folderId) {
+        memoryFallback.set(itemsMemKey, merged);
+      }
+      return merged;
+    } catch (e) {
+      return folderId
+        ? memItems.filter(it => String(it.folderId) === String(folderId)).slice(0, limit)
+        : memItems.slice(0, limit);
+    }
+  }
+
+  async function deletePlaylistItemFromD1(env, chatId, uidOrTmdbId, folderId = null) {
+    if (!chatId || !uidOrTmdbId) return;
+    const cleanChatId = String(chatId).trim();
+    const targetStr = String(uidOrTmdbId).trim();
+    const itemsMemKey = `d1_playlist_items_${cleanChatId}`;
+    const memItems = Array.isArray(memoryFallback.get(itemsMemKey)) ? memoryFallback.get(itemsMemKey) : [];
+    memoryFallback.set(
+      itemsMemKey,
+      memItems.filter(it => {
+        if (folderId && String(it.folderId) !== String(folderId)) return true;
+        return String(it.uid) !== targetStr && String(it.tmdbId) !== targetStr;
+      })
+    );
+
+    const db = await ensureD1Schema(env);
+    if (!db) return;
+    try {
+      trackStat("d1Writes");
+      if (folderId) {
+        await db.prepare(
+          "DELETE FROM d1_playlist_items WHERE chat_id = ?1 AND folder_id = ?2 AND (uid = ?3 OR CAST(tmdb_id AS TEXT) = ?3)"
+        ).bind(cleanChatId, String(folderId), targetStr).run();
+      } else {
+        await db.prepare(
+          "DELETE FROM d1_playlist_items WHERE chat_id = ?1 AND (uid = ?2 OR CAST(tmdb_id AS TEXT) = ?2)"
+        ).bind(cleanChatId, targetStr).run();
+      }
+    } catch (e) {}
+  }
+

@@ -893,6 +893,8 @@ function createSandboxFetch(envVars: Record<string, string>): typeof fetch {
   };
 }
 
+const SANDBOX_KV_STORAGE_KEY = '__tma_sandbox_kv_store_v1__';
+
 export class SimulatedKVNamespace {
   private store: Map<string, KVItem> = new Map();
   private onChange?: () => void;
@@ -908,6 +910,42 @@ export class SimulatedKVNamespace {
         });
       }
     }
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(SANDBOX_KV_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (item && typeof item.key === 'string' && typeof item.value === 'string') {
+                this.store.set(item.key, {
+                  key: item.key,
+                  value: item.value,
+                  expirationTtl: item.expirationTtl,
+                  createdAt: Number(item.createdAt || Date.now()),
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
+  private persistToStorage() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(
+          SANDBOX_KV_STORAGE_KEY,
+          JSON.stringify(Array.from(this.store.values()))
+        );
+      }
+    } catch {
+      // Ignore quota errors
+    }
+    this.onChange?.();
   }
 
   async get(key: string, type: 'text' | 'json' | 'arrayBuffer' = 'text'): Promise<any> {
@@ -918,7 +956,7 @@ export class SimulatedKVNamespace {
       const ageSec = (Date.now() - item.createdAt) / 1000;
       if (ageSec > item.expirationTtl) {
         this.store.delete(key);
-        this.onChange?.();
+        this.persistToStorage();
         return null;
       }
     }
@@ -948,12 +986,12 @@ export class SimulatedKVNamespace {
       expirationTtl: options?.expirationTtl,
       createdAt: Date.now(),
     });
-    this.onChange?.();
+    this.persistToStorage();
   }
 
   async delete(key: string): Promise<boolean> {
     const deleted = this.store.delete(key);
-    if (deleted) this.onChange?.();
+    if (deleted) this.persistToStorage();
     return deleted;
   }
 
@@ -994,16 +1032,21 @@ export class SimulatedKVNamespace {
       expirationTtl,
       createdAt: Date.now(),
     });
-    this.onChange?.();
+    this.persistToStorage();
   }
 
   deleteItemDirect(key: string) {
     this.store.delete(key);
-    this.onChange?.();
+    this.persistToStorage();
   }
 
   clear() {
     this.store.clear();
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(SANDBOX_KV_STORAGE_KEY);
+      }
+    } catch {}
     this.onChange?.();
   }
 }
@@ -1023,6 +1066,19 @@ export function stripEsModuleExportsForSandbox(rawCode: string): string {
 // Cache compiled worker instance so in-memory state (memoryFallback, tmdbCache, etc.) persists across requests
 let cachedCodeKey = '';
 let cachedFactory: any = null;
+let cachedWorkerModule: any = null;
+let activeSandboxConsole: any = console;
+let activeSandboxFetch: any = fetch;
+
+const delegatingConsole = {
+  log: (...args: any[]) => activeSandboxConsole.log(...args),
+  info: (...args: any[]) => activeSandboxConsole.info(...args),
+  warn: (...args: any[]) => activeSandboxConsole.warn(...args),
+  error: (...args: any[]) => activeSandboxConsole.error(...args),
+};
+
+const delegatingFetch = (input: RequestInfo | URL, init?: RequestInit) =>
+  activeSandboxFetch(input, init);
 
 export async function executeWorkerSandbox(
   code: string,
@@ -1138,6 +1194,8 @@ export async function executeWorkerSandbox(
   };
 
   const sandboxFetch = createSandboxFetch(env);
+  activeSandboxConsole = customConsole;
+  activeSandboxFetch = sandboxFetch;
 
   try {
     let responseObj: Response | null = null;
@@ -1194,7 +1252,7 @@ export async function executeWorkerSandbox(
         }
       });
     } else {
-      if (cachedCodeKey !== code || !cachedFactory) {
+      if (cachedCodeKey !== code || !cachedFactory || !cachedWorkerModule) {
         const transformedCode = stripEsModuleExportsForSandbox(code);
         const wrappedCode = `
           return function(console, Request, Response, Headers, fetch) {
@@ -1202,16 +1260,17 @@ export async function executeWorkerSandbox(
           }
         `;
         cachedFactory = new Function(wrappedCode)();
+        cachedWorkerModule = cachedFactory(
+          delegatingConsole,
+          Request,
+          Response,
+          Headers,
+          delegatingFetch
+        );
         cachedCodeKey = code;
       }
 
-      const workerModule = cachedFactory(
-        customConsole,
-        Request,
-        Response,
-        Headers,
-        sandboxFetch
-      );
+      const workerModule = cachedWorkerModule;
 
       if (!workerModule || typeof workerModule.fetch !== 'function') {
         throw new Error(
