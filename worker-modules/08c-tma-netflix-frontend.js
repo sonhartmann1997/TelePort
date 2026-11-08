@@ -3222,6 +3222,17 @@
           );
         };
 
+        if (!backupImportJob.resolvedTitlesCache || typeof backupImportJob.resolvedTitlesCache !== "object") {
+          backupImportJob.resolvedTitlesCache = {};
+        }
+        const normClientTitleKey = (t) => String(t || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\\u0300-\\u036f]/g, "")
+          .replace(/&/g, "and")
+          .replace(/[^a-z0-9]+/g, "")
+          .trim();
+
         while (backupImportJob.running && !backupImportJob.paused && backupImportJob.cursor < backupImportJob.entries.length) {
           // Wenn der Admin gerade aktiv eine Übersicht lädt, kurz warten, damit es keinen HTTP 503 Konflikt gibt
           let waitGuard = 0;
@@ -3233,7 +3244,35 @@
 
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
           const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
-          const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
+          const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
+          // Browser-Titel-Cache: Bereits im Lauf aufgelöste Serien/Filme direkt mit ihrer TMDb-ID annotieren (0 Such-Calls im Worker!)
+          const slice = rawSlice.map(entry => {
+            if (!entry || typeof entry !== "object") return entry;
+            if (entry.tmdb_id || entry.tmdbId || entry.knownUnmatched) return entry;
+            const rawTitle = entry.cleanTitle || entry.title || "";
+            const nKey = normClientTitleKey(rawTitle);
+            if (!nKey || nKey === "unbekannt" || nKey.length < 2) return entry;
+            const tCode = (entry.typeCode === "s" || entry.isSeries || entry.season || entry.episode) ? "s" : "m";
+            const yKey = entry.year && entry.year !== "k.A." ? String(entry.year) : "any";
+            const cachedHit = backupImportJob.resolvedTitlesCache[tCode + "_" + nKey + "_" + yKey]
+              || (tCode === "s" ? backupImportJob.resolvedTitlesCache["s_" + nKey + "_any"] : null)
+              || (yKey === "any" ? backupImportJob.resolvedTitlesCache[tCode + "_" + nKey + "_any"] : null);
+            if (!cachedHit) return entry;
+            if (cachedHit.knownUnmatched) {
+              return { ...entry, knownUnmatched: true };
+            }
+            if (cachedHit.tmdbId) {
+              return {
+                ...entry,
+                tmdb_id: cachedHit.tmdbId,
+                typeCode: cachedHit.typeCode || tCode,
+                isSeries: (cachedHit.typeCode || tCode) === "s",
+                cleanTitle: cachedHit.cleanTitle || entry.cleanTitle,
+                external_poster_url: entry.external_poster_url || cachedHit.poster || ""
+              };
+            }
+            return entry;
+          });
           let hadRateWarning = false;
           try {
             const cpPayload = buildCurrentBackupCheckpointPayload();
@@ -3277,6 +3316,38 @@
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
                   const isFailedItem = bItem.status === "failed" || !bItem.tmdbId;
+                  // Browser-Titel-Cache aktualisieren (positiv ab 75% Sicherheit + negativ bei TMDB_NOT_FOUND)
+                  const origEntry = rawSlice[bi] || bItem.rawEntry || {};
+                  const rawInTitle = origEntry.cleanTitle || origEntry.title || bItem.cleanTitle || "";
+                  const normInKey = normClientTitleKey(rawInTitle);
+                  const normResKey = normClientTitleKey(bItem.cleanTitle || "");
+                  const itemTypeCode = bItem.typeCode === "s" ? "s" : "m";
+                  const itemYearKey = (origEntry.year && origEntry.year !== "k.A.") ? String(origEntry.year) : ((bItem.year && bItem.year !== "k.A.") ? String(bItem.year) : "any");
+                  if (bItem.tmdbId && Number(bItem.confidence || 100) >= 75) {
+                    const cacheVal = {
+                      tmdbId: Number(bItem.tmdbId),
+                      typeCode: itemTypeCode,
+                      cleanTitle: bItem.cleanTitle || rawInTitle,
+                      poster: bItem.poster || ""
+                    };
+                    if (normInKey && normInKey !== "unbekannt") {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = cacheVal;
+                      if (itemTypeCode === "s" || itemYearKey === "any") {
+                        backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = cacheVal;
+                      }
+                    }
+                    if (normResKey && normResKey !== "unbekannt") {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_" + itemYearKey] = cacheVal;
+                      if (itemTypeCode === "s" || itemYearKey === "any") {
+                        backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_any"] = cacheVal;
+                      }
+                    }
+                  } else if (isFailedItem && bItem.reviewReasonCode === "TMDB_NOT_FOUND" && normInKey && normInKey !== "unbekannt") {
+                    backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = { knownUnmatched: true };
+                    if (itemTypeCode === "s" || itemYearKey === "any") {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = { knownUnmatched: true };
+                    }
+                  }
                   const computedReason = bItem.errorReason || (isFailedItem
                     ? "Kein TMDb-Treffer für '" + (bItem.cleanTitle || bItem.rawInput || "") + "'"
                     : bItem.isUncertain

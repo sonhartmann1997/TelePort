@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementierungsplan für checkDatabaseForExistingTitle(title) in handleDispatchWorkerImportBatch und der Splitter-Modal-Pipeline mit 85%-Confidence-Sofort-Stopp und Vorab-TMDb-ID-Bindung.",
-  "updatedAt":  "2026-11-07T13:55:39.802494141Z",
+  "summary":  "Implementierungsplan zur Eliminierung von HTTP 503 beim Massen-Import durch D1-Bulk-Bündelung (1 db.batch für Reads & Writes), vollständiges Subrequest-Tracking (HTTP + D1 + KV) und persistenten Browser-Titel-Cache in der Mini-App.",
+  "updatedAt":  "2026-11-08T18:50:38.765871459Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

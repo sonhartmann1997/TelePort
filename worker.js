@@ -6233,12 +6233,122 @@
   // ============================================================================
   let d1SchemaInitialized = false;
   let d1SchemaInitPromise = null;
+  let activeD1WriteBuffer = null;
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
-  function getD1Binding(env) {
+  function countD1Subrequest() {
+    if (typeof currentInvocationSubrequests === "number") {
+      currentInvocationSubrequests++;
+    }
+  }
+
+  function getRawD1Binding(env) {
     if (!env) return null;
     return env.DB || env.MOVIE_DB || null;
+  }
+
+  function wrapD1Stmt(rawStmt, sqlStr) {
+    if (!rawStmt) return rawStmt;
+    const isWriteStmt = /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(String(sqlStr || ""));
+    return {
+      _rawStmt: rawStmt,
+      _isWriteStmt: isWriteStmt,
+      _sql: sqlStr,
+      bind(...args) {
+        const boundRaw = rawStmt.bind(...args);
+        return wrapD1Stmt(boundRaw, sqlStr);
+      },
+      async first(...args) {
+        countD1Subrequest();
+        return await rawStmt.first(...args);
+      },
+      async all(...args) {
+        countD1Subrequest();
+        return await rawStmt.all(...args);
+      },
+      async raw(...args) {
+        countD1Subrequest();
+        return await rawStmt.raw(...args);
+      },
+      async run(...args) {
+        if (Array.isArray(activeD1WriteBuffer) && isWriteStmt) {
+          activeD1WriteBuffer.push(rawStmt);
+          return { success: true, buffered: true, meta: { changes: 1 } };
+        }
+        countD1Subrequest();
+        return await rawStmt.run(...args);
+      }
+    };
+  }
+
+  function getD1Binding(env) {
+    const rawDb = getRawD1Binding(env);
+    if (!rawDb) return null;
+    if (rawDb._trackedWrapper) return rawDb._trackedWrapper;
+    const wrapper = {
+      _rawDb: rawDb,
+      prepare(sql) {
+        return wrapD1Stmt(rawDb.prepare(sql), sql);
+      },
+      async batch(stmts) {
+        if (!Array.isArray(stmts) || stmts.length === 0) return [];
+        const allWrites = stmts.every(s => Boolean(s && s._isWriteStmt));
+        const rawStmts = stmts.map(s => (s && s._rawStmt) ? s._rawStmt : s);
+        if (Array.isArray(activeD1WriteBuffer) && allWrites) {
+          for (const rs of rawStmts) {
+            activeD1WriteBuffer.push(rs);
+          }
+          return rawStmts.map(() => ({ success: true, buffered: true }));
+        }
+        countD1Subrequest();
+        return await rawDb.batch(rawStmts);
+      },
+      async exec(sql) {
+        countD1Subrequest();
+        return await rawDb.exec(sql);
+      }
+    };
+    try {
+      rawDb._trackedWrapper = wrapper;
+    } catch (e) {}
+    return wrapper;
+  }
+
+  function beginD1BatchBuffer() {
+    if (!Array.isArray(activeD1WriteBuffer)) {
+      activeD1WriteBuffer = [];
+    }
+  }
+
+  async function flushD1BatchBuffer(env) {
+    const pending = activeD1WriteBuffer;
+    activeD1WriteBuffer = null;
+    if (!Array.isArray(pending) || pending.length === 0) return 0;
+    const rawDb = getRawD1Binding(env);
+    if (!rawDb) return 0;
+    let flushedCount = 0;
+    const CHUNK_SIZE = 80;
+    for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
+      const chunk = pending.slice(i, i + CHUNK_SIZE);
+      try {
+        countD1Subrequest();
+        await rawDb.batch(chunk);
+        flushedCount += chunk.length;
+      } catch (batchErr) {
+        // Fallback: falls ein einzelnes Statement im Sammel-Batch fehlschlägt, teile den Chunk auf
+        for (const singleStmt of chunk) {
+          try {
+            if (!hasSubrequestBudget || hasSubrequestBudget(44)) {
+              countD1Subrequest();
+              await singleStmt.run();
+              flushedCount++;
+            }
+          } catch (singleErr) {}
+        }
+      }
+    }
+    return flushedCount;
   }
 
   async function ensureD1Schema(env) {
@@ -6248,9 +6358,11 @@
       await d1SchemaInitPromise;
       return db;
     }
+    const rawDb = getRawD1Binding(env) || db;
     d1SchemaInitPromise = (async () => {
       try {
-        await db.batch([
+        countD1Subrequest();
+        await rawDb.batch([
           db.prepare(`CREATE TABLE IF NOT EXISTS movies (
             tmdb_id INTEGER PRIMARY KEY,
             title TEXT NOT NULL,
@@ -7944,14 +8056,16 @@
     let existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
     const db = await ensureD1Schema(env);
     let existingDbRows = [];
-    const memFresh = existingMem.length > 0 && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 180000;
-    if (db && !memFresh) {
+    const memFresh = memoryFallback.has(memLoadedTsKey) && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 300000;
+    if (db && !memFresh && (!Array.isArray(activeD1WriteBuffer) || hasSubrequestBudget(32))) {
       try {
         const res = await db
           .prepare("SELECT id, telegram_file_id, quality, codec, part, tags, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id = ?1")
           .bind(mid)
           .all();
         existingDbRows = Array.isArray(res?.results) ? res.results : [];
+        memoryFallback.set(memKey, existingDbRows);
+        memoryFallback.set(memLoadedTsKey, Date.now());
       } catch (e) {}
     }
 
@@ -8146,21 +8260,31 @@
     const incomingIsPrerelease = isPrereleaseOrMicDub(rawCaption, rawFilename, fileInfo.tags || fileInfo.versionLabel || "");
 
     const memKey = `d1_ep_files_${sid}_${sNum}`;
-    const memEpTsKey = `d1_ep_files_ts_${sid}_${sNum}_${eNum}`;
+    const memSeasonTsKey = `d1_ep_files_season_ts_${sid}_${sNum}`;
     let existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
-    const memEpRows = existingMem.filter(x => x && Number(x.episode_number) === eNum);
-    const memEpFresh = memEpRows.length > 0 && (Date.now() - Number(memoryFallback.get(memEpTsKey) || 0)) < 180000;
+    const memSeasonFresh = memoryFallback.has(memSeasonTsKey) && (Date.now() - Number(memoryFallback.get(memSeasonTsKey) || 0)) < 300000;
     const db = await ensureD1Schema(env);
-    let existingDbRows = [];
-    if (db && !memEpFresh) {
+    if (db && !memSeasonFresh && (!Array.isArray(activeD1WriteBuffer) || hasSubrequestBudget(32))) {
       try {
+        // Lade alle vorhandenen Episoden-Dateien dieser Staffel in 1 einziger Abfrage (statt 1 Abfrage pro Folge!)
         const res = await db
-          .prepare("SELECT id, telegram_file_id, quality, codec, part, tags, version_label, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3")
-          .bind(sid, sNum, eNum)
+          .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, quality, codec, part, tags, version_label, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id = ?1 AND season_number = ?2")
+          .bind(sid, sNum)
           .all();
-        existingDbRows = Array.isArray(res?.results) ? res.results : [];
+        const loadedSeasonRows = Array.isArray(res?.results) ? res.results : [];
+        const mergedById = new Map();
+        for (const r of [...loadedSeasonRows, ...existingMem]) {
+          if (r && r.telegram_file_id) {
+            mergedById.set(`${Number(r.episode_number || 1)}_${r.telegram_file_id}`, r);
+          }
+        }
+        existingMem = Array.from(mergedById.values());
+        memoryFallback.set(memKey, existingMem);
+        memoryFallback.set(memSeasonTsKey, Date.now());
       } catch (e) {}
     }
+    const memEpRows = existingMem.filter(x => x && Number(x.episode_number) === eNum);
+    const existingDbRows = [];
 
     const allExistingEpRows = [
       ...existingDbRows,
@@ -8247,7 +8371,7 @@
     ]);
     const otherEps = existingMem.filter(x => x && Number(x.episode_number) !== eNum);
     memoryFallback.set(memKey, [...sameEpDeduped, ...otherEps]);
-    memoryFallback.set(memEpTsKey, Date.now());
+    memoryFallback.set(memSeasonTsKey, Date.now());
     memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
     memoryFallback.delete("d1_series_gaps_cache");
 
@@ -10135,8 +10259,9 @@
     if (!cacheKey) return null;
     const memKey = `d1_entity_${cacheKey}`;
     const memEntry = memoryFallback.get(memKey);
-    if (memEntry && memEntry.data && (Date.now() - Number(memEntry.ts || 0) <= ttlMs)) {
-      return memEntry.data;
+    if (memEntry && (Date.now() - Number(memEntry.ts || 0) <= ttlMs)) {
+      if (memEntry.notInD1) return null;
+      if (memEntry.data) return memEntry.data;
     }
     const db = await ensureD1Schema(env);
     if (!db) return null;
@@ -10146,7 +10271,10 @@
         .prepare("SELECT data_json, updated_at FROM entity_cache WHERE cache_key = ?1")
         .bind(String(cacheKey))
         .first();
-      if (!row || !row.data_json) return null;
+      if (!row || !row.data_json) {
+        memoryFallback.set(memKey, { notInD1: true, ts: Date.now() });
+        return null;
+      }
       if (Date.now() - Number(row.updated_at || 0) > ttlMs) return null;
       const parsed = JSON.parse(row.data_json);
       if (parsed) {
@@ -10203,7 +10331,7 @@
   async function ensureLocalD1CatalogTitleMapLoaded(env) {
     const lastLoadedTs = Number(memoryFallback.get("d1_local_catalog_title_map_ts") || 0);
     let map = memoryFallback.get("d1_local_catalog_title_map");
-    if (map instanceof Map && (Date.now() - lastLoadedTs) < 180000) {
+    if (map instanceof Map && (Date.now() - lastLoadedTs) < 300000) {
       return map;
     }
     if (!(map instanceof Map)) {
@@ -10211,12 +10339,14 @@
       memoryFallback.set("d1_local_catalog_title_map", map);
     }
     const db = await ensureD1Schema(env);
-    if (db) {
+    const rawDb = getRawD1Binding(env);
+    if (db && rawDb) {
       try {
         trackStat("d1Reads");
-        const [mRows, sRows] = await Promise.all([
-          db.prepare("SELECT tmdb_id, title, release_year FROM movies").all().catch(() => ({ results: [] })),
-          db.prepare("SELECT tmdb_id, title, release_year FROM series").all().catch(() => ({ results: [] }))
+        countD1Subrequest();
+        const [mRows, sRows] = await rawDb.batch([
+          rawDb.prepare("SELECT tmdb_id, title, release_year FROM movies"),
+          rawDb.prepare("SELECT tmdb_id, title, release_year FROM series")
         ]);
         for (const r of (mRows?.results || [])) {
           registerLocalD1CatalogTitleInRam("m", r.tmdb_id, r.title, r.release_year);
@@ -10242,6 +10372,137 @@
     return { normT, tc, yrKey, exactKey, anyYearKey, legacySeriesKey, legacySeriesAnyKey };
   }
 
+  // Bündelt alle D1-Lesezugriffe (file_ids + entity_cache Keys) eines Import-Batches in 1 einzigen db.batch()-Subrequest!
+  async function prefetchBatchMediaFromD1(env, entriesList) {
+    if (!Array.isArray(entriesList) || entriesList.length === 0) return;
+    await ensureD1Schema(env);
+    await ensureLocalD1CatalogTitleMapLoaded(env);
+    const rawDb = getRawD1Binding(env);
+    if (!rawDb) return;
+
+    const fidsToCheck = new Set();
+    const entityKeysToCheck = new Set();
+
+    for (const item of entriesList) {
+      if (!item) continue;
+      const fid = typeof item === "object" ? String(item.telegram_file_id || item.file_id || item.fileId || "").trim() : "";
+      if (fid && scoreTelegramFileIdValidity(fid) > 0) {
+        if (!memoryFallback.has(`d1_fid_lookup_${fid}`) && !memoryFallback.has(`d1_fid_miss_${fid}`)) {
+          fidsToCheck.add(fid);
+        }
+      }
+      const rawTitle = typeof item === "string"
+        ? item
+        : String(item.cleanTitle || item.title || item.filename || item.file_name || item.rawInput || "").trim();
+      const isSer = typeof item === "object" && Boolean(item.isSeries || item.type === "series" || item.typeCode === "s" || item.season || item.episode);
+      const yr = typeof item === "object" && item.year ? Number(item.year) : null;
+      if (rawTitle) {
+        const parsedGuess = parseMediaFilename(rawTitle, item?.raw_text || item?.rawText || "");
+        const effTitle = (typeof item === "object" && item.cleanTitle && item.cleanTitle !== "Unbekannt") ? item.cleanTitle : parsedGuess.cleanTitle;
+        const effTc = (isSer || parsedGuess.isSeries) ? "s" : "m";
+        const effYr = yr || parsedGuess.year || null;
+        const keys = buildTitleResolutionCacheKeys(effTitle, effYr, effTc);
+        if (keys) {
+          for (const k of [keys.exactKey, keys.anyYearKey, keys.legacySeriesKey, keys.legacySeriesAnyKey]) {
+            if (k && !memoryFallback.has(k) && !memoryFallback.has(`d1_entity_${k}`)) {
+              entityKeysToCheck.add(k);
+            }
+          }
+        }
+      }
+    }
+
+    const fidArr = Array.from(fidsToCheck).slice(0, 30);
+    const entArr = Array.from(entityKeysToCheck).slice(0, 45);
+    if (fidArr.length === 0 && entArr.length === 0) return;
+
+    const batchStmts = [];
+    let movFidStmtIdx = -1;
+    let epFidStmtIdx = -1;
+    let entStmtIdx = -1;
+
+    if (fidArr.length > 0) {
+      const placeholders = fidArr.map((_, i) => `?${i + 1}`).join(",");
+      movFidStmtIdx = batchStmts.length;
+      batchStmts.push(rawDb.prepare(`SELECT telegram_file_id, movie_id FROM movie_files WHERE telegram_file_id IN (${placeholders})`).bind(...fidArr));
+      epFidStmtIdx = batchStmts.length;
+      batchStmts.push(rawDb.prepare(`SELECT telegram_file_id, series_id, season_number, episode_number FROM episode_files WHERE telegram_file_id IN (${placeholders})`).bind(...fidArr));
+    }
+
+    if (entArr.length > 0) {
+      const placeholders = entArr.map((_, i) => `?${i + 1}`).join(",");
+      entStmtIdx = batchStmts.length;
+      batchStmts.push(rawDb.prepare(`SELECT cache_key, data_json, updated_at FROM entity_cache WHERE cache_key IN (${placeholders})`).bind(...entArr));
+    }
+
+    if (batchStmts.length === 0) return;
+    try {
+      trackStat("d1Reads");
+      countD1Subrequest();
+      const batchRes = await rawDb.batch(batchStmts);
+      const foundFids = new Set();
+      if (movFidStmtIdx >= 0 && Array.isArray(batchRes[movFidStmtIdx]?.results)) {
+        for (const r of batchRes[movFidStmtIdx].results) {
+          if (r && r.telegram_file_id && r.movie_id) {
+            const f = String(r.telegram_file_id);
+            foundFids.add(f);
+            memoryFallback.set(`d1_fid_lookup_${f}`, {
+              matchedBy: "file_id",
+              typeCode: "m",
+              tmdbId: Number(r.movie_id),
+              confidence: 100,
+              source: "D1 (Datei-ID)"
+            });
+          }
+        }
+      }
+      if (epFidStmtIdx >= 0 && Array.isArray(batchRes[epFidStmtIdx]?.results)) {
+        for (const r of batchRes[epFidStmtIdx].results) {
+          if (r && r.telegram_file_id && r.series_id) {
+            const f = String(r.telegram_file_id);
+            foundFids.add(f);
+            memoryFallback.set(`d1_fid_lookup_${f}`, {
+              matchedBy: "file_id",
+              typeCode: "s",
+              tmdbId: Number(r.series_id),
+              season: Number(r.season_number || 1),
+              episode: Number(r.episode_number || 1),
+              confidence: 100,
+              source: "D1 (Datei-ID)"
+            });
+          }
+        }
+      }
+      for (const f of fidArr) {
+        if (!foundFids.has(f)) {
+          memoryFallback.set(`d1_fid_miss_${f}`, true);
+        }
+      }
+
+      const foundEntKeys = new Set();
+      if (entStmtIdx >= 0 && Array.isArray(batchRes[entStmtIdx]?.results)) {
+        for (const r of batchRes[entStmtIdx].results) {
+          if (r && r.cache_key && r.data_json) {
+            try {
+              const parsed = JSON.parse(r.data_json);
+              if (parsed) {
+                foundEntKeys.add(String(r.cache_key));
+                memoryFallback.set(String(r.cache_key), parsed);
+                memoryFallback.set(`d1_entity_${r.cache_key}`, { data: parsed, ts: Number(r.updated_at || Date.now()) });
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      const nowTs = Date.now();
+      for (const k of entArr) {
+        if (!foundEntKeys.has(k)) {
+          memoryFallback.set(`d1_entity_${k}`, { notInD1: true, ts: nowTs });
+        }
+      }
+    } catch (e) {}
+  }
+
   async function findExistingMediaInD1BeforeExternalSearch(env, parsed, telegramFileId = null) {
     const rawSearchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
     const tc = parsed?.isSeries ? "s" : "m";
@@ -10254,40 +10515,43 @@
       if (fidRamHit && fidRamHit.tmdbId) {
         return fidRamHit;
       }
-      const db = await ensureD1Schema(env);
-      if (db) {
-        try {
-          trackStat("d1Reads");
-          if (tc === "s") {
-            const epRow = await db.prepare("SELECT series_id, season_number, episode_number FROM episode_files WHERE telegram_file_id = ?1 LIMIT 1").bind(cleanFid).first();
-            if (epRow && epRow.series_id) {
-              const hit = {
-                matchedBy: "file_id",
-                typeCode: "s",
-                tmdbId: Number(epRow.series_id),
-                season: Number(epRow.season_number || parsed?.season || 1),
-                episode: Number(epRow.episode_number || parsed?.episode || 1),
-                confidence: 100,
-                source: "D1 (Datei-ID)"
-              };
-              memoryFallback.set(`d1_fid_lookup_${cleanFid}`, hit);
-              return hit;
+      if (!memoryFallback.has(`d1_fid_miss_${cleanFid}`)) {
+        const db = await ensureD1Schema(env);
+        if (db) {
+          try {
+            trackStat("d1Reads");
+            if (tc === "s") {
+              const epRow = await db.prepare("SELECT series_id, season_number, episode_number FROM episode_files WHERE telegram_file_id = ?1 LIMIT 1").bind(cleanFid).first();
+              if (epRow && epRow.series_id) {
+                const hit = {
+                  matchedBy: "file_id",
+                  typeCode: "s",
+                  tmdbId: Number(epRow.series_id),
+                  season: Number(epRow.season_number || parsed?.season || 1),
+                  episode: Number(epRow.episode_number || parsed?.episode || 1),
+                  confidence: 100,
+                  source: "D1 (Datei-ID)"
+                };
+                memoryFallback.set(`d1_fid_lookup_${cleanFid}`, hit);
+                return hit;
+              }
+            } else {
+              const movRow = await db.prepare("SELECT movie_id FROM movie_files WHERE telegram_file_id = ?1 LIMIT 1").bind(cleanFid).first();
+              if (movRow && movRow.movie_id) {
+                const hit = {
+                  matchedBy: "file_id",
+                  typeCode: "m",
+                  tmdbId: Number(movRow.movie_id),
+                  confidence: 100,
+                  source: "D1 (Datei-ID)"
+                };
+                memoryFallback.set(`d1_fid_lookup_${cleanFid}`, hit);
+                return hit;
+              }
             }
-          } else {
-            const movRow = await db.prepare("SELECT movie_id FROM movie_files WHERE telegram_file_id = ?1 LIMIT 1").bind(cleanFid).first();
-            if (movRow && movRow.movie_id) {
-              const hit = {
-                matchedBy: "file_id",
-                typeCode: "m",
-                tmdbId: Number(movRow.movie_id),
-                confidence: 100,
-                source: "D1 (Datei-ID)"
-              };
-              memoryFallback.set(`d1_fid_lookup_${cleanFid}`, hit);
-              return hit;
-            }
-          }
-        } catch (e) {}
+            memoryFallback.set(`d1_fid_miss_${cleanFid}`, true);
+          } catch (e) {}
+        }
       }
     }
 
@@ -10323,7 +10587,7 @@
       }
     }
 
-    // D1 entity_cache prüfen (persistenter Schutz über Batch- und Worker-Isolate-Grenzen hinweg)
+    // D1 entity_cache prüfen (falls nicht bereits durch prefetchBatchMediaFromD1 als Miss markiert)
     const d1Exact = await getEntityFromD1(env, keys.exactKey, D1_MOVIE_TTL_MS);
     const d1SeriesFallback = (!d1Exact && tc === "s")
       ? (await getEntityFromD1(env, keys.anyYearKey, D1_MOVIE_TTL_MS) || (keys.legacySeriesKey ? await getEntityFromD1(env, keys.legacySeriesKey, D1_MOVIE_TTL_MS) : null))
@@ -10383,6 +10647,10 @@
     const keys = buildTitleResolutionCacheKeys(rawSearchTitle, yr, tc);
     if (!keys) return;
 
+    const prevExisting = memoryFallback.get(keys.exactKey);
+    const alreadySavedToD1Key = `d1_title_res_saved_${keys.exactKey}`;
+    const alreadySavedTs = Number(memoryFallback.get(alreadySavedToD1Key) || 0);
+
     const record = {
       ...payload,
       typeCode: tc,
@@ -10405,6 +10673,12 @@
       }
     }
 
+    // Wenn exakt derselbe Titel in den letzten 10 Minuten bereits in D1 entity_cache gespeichert wurde, spare redundante D1-Statements!
+    if (alreadySavedTs > 0 && (Date.now() - alreadySavedTs) < 600000 && prevExisting && prevExisting.tmdbId === record.tmdbId && Boolean(prevExisting.notFound) === Boolean(record.notFound)) {
+      return;
+    }
+    memoryFallback.set(alreadySavedToD1Key, Date.now());
+
     await saveEntityToD1(env, keys.exactKey, record.notFound ? "title_neg" : "title_res", record);
     if (tc === "s" && keys.anyYearKey !== keys.exactKey && !record.notFound) {
       await saveEntityToD1(env, keys.anyYearKey, "title_res", record);
@@ -10414,6 +10688,7 @@
   async function invalidateOrUpdateTitleResolutionCacheInD1(env, rawTitle, year, typeCode, newPayload = null) {
     const keys = buildTitleResolutionCacheKeys(rawTitle, year, typeCode);
     if (!keys) return;
+    memoryFallback.delete(`d1_title_res_saved_${keys.exactKey}`);
     if (newPayload && newPayload.tmdbId) {
       await saveTitleResolutionCacheToD1(env, { cleanTitle: rawTitle, year, isSeries: typeCode === "s" }, typeCode, newPayload);
       return;
@@ -12987,7 +13262,7 @@
       let fallbackExternalPoster = "";
       const lookupTitle = data.original_name || data.name || "";
       const lookupYear = (data.first_air_date || "").slice(0, 4);
-      const needsTvMazeFallback = !posterPath || !overview || !data.episode_run_time?.[0] || statusText === "Unbekannt" || !(data.seasons && data.seasons.length > 0);
+      const needsTvMazeFallback = (!posterPath && !overview) || !(data.seasons && data.seasons.length > 0);
       if (needsTvMazeFallback) {
         tvMazeData = await fetchTvMazeSeriesFallback(lookupTitle, lookupYear);
         if (!tvMazeData && data.name && data.name !== lookupTitle) {
@@ -13189,8 +13464,8 @@
         }));
       }
 
-      // TVMaze Episoden-Fallback nutzen, wenn TMDB keine Episoden oder leere Episoden-Texte liefert
-      const hasMissingEpInfo = episodes.length === 0 || episodes.some(e => !e.overview || !e.runtime);
+      // TVMaze Episoden-Fallback nur nutzen, wenn TMDB gar keine Episoden für die Staffel liefert
+      const hasMissingEpInfo = episodes.length === 0;
       if (hasMissingEpInfo) {
         const sDetails = getCachedTmdb(`tv_${seriesId}`) || await fetchSeriesDetails(env, seriesId);
         const lookupTitle = sDetails?.original_name || sDetails?.title || "";
@@ -20033,6 +20308,21 @@
       ? Number(rawEntry.tmdb_id || rawEntry.tmdbId)
       : (parsed.tmdbId ? Number(parsed.tmdbId) : null);
     const searchTitle = parsed.cleanTitle;
+    if (!explicitTmdbId && typeof rawEntry === "object" && rawEntry?.knownUnmatched && !options?.bypassNegativeTitleCache) {
+      return options?.returnUnmatched
+        ? {
+            ok: false,
+            unmatched: true,
+            ingestStatus: "failed",
+            reviewReasonCode: "TMDB_NOT_FOUND",
+            confidence: 0,
+            rawInput: rawName,
+            parsed,
+            candidates: [],
+            fromNegativeCache: true
+          }
+        : null;
+    }
     if (!searchTitle && !explicitTmdbId && !parsed.imdbId) {
       return options?.returnUnmatched
         ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "PARSER_AMBIGUITY", confidence: 0, rawInput: rawName, parsed, candidates: [] }
@@ -21442,6 +21732,12 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     resetSubrequestBudget();
+    if (typeof prefetchBatchMediaFromD1 === "function") {
+      await prefetchBatchMediaFromD1(env, entriesList);
+    }
+    if (typeof beginD1BatchBuffer === "function") {
+      beginD1BatchBuffer();
+    }
     const moviesAdded = [];
     const seriesAdded = [];
     const failedItems = [];
@@ -21774,6 +22070,11 @@
     // Automatische DB-Bereinigung am Ende jedes Imports: Entfernt alle Serien mit 0 gültigen Episoden-Videos
     if (!partialBatch) {
       await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
+    }
+
+    // Alle gepufferten D1-Writes des gesamten Batches in einer einzigen db.batch()-Transaktion committen (nur 1 D1-Subrequest!)
+    if (typeof flushD1BatchBuffer === "function") {
+      await flushD1BatchBuffer(env);
     }
 
     return {
@@ -38996,6 +39297,17 @@
           );
         };
 
+        if (!backupImportJob.resolvedTitlesCache || typeof backupImportJob.resolvedTitlesCache !== "object") {
+          backupImportJob.resolvedTitlesCache = {};
+        }
+        const normClientTitleKey = (t) => String(t || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\\u0300-\\u036f]/g, "")
+          .replace(/&/g, "and")
+          .replace(/[^a-z0-9]+/g, "")
+          .trim();
+
         while (backupImportJob.running && !backupImportJob.paused && backupImportJob.cursor < backupImportJob.entries.length) {
           // Wenn der Admin gerade aktiv eine Übersicht lädt, kurz warten, damit es keinen HTTP 503 Konflikt gibt
           let waitGuard = 0;
@@ -39007,7 +39319,35 @@
 
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
           const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
-          const slice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
+          const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
+          // Browser-Titel-Cache: Bereits im Lauf aufgelöste Serien/Filme direkt mit ihrer TMDb-ID annotieren (0 Such-Calls im Worker!)
+          const slice = rawSlice.map(entry => {
+            if (!entry || typeof entry !== "object") return entry;
+            if (entry.tmdb_id || entry.tmdbId || entry.knownUnmatched) return entry;
+            const rawTitle = entry.cleanTitle || entry.title || "";
+            const nKey = normClientTitleKey(rawTitle);
+            if (!nKey || nKey === "unbekannt" || nKey.length < 2) return entry;
+            const tCode = (entry.typeCode === "s" || entry.isSeries || entry.season || entry.episode) ? "s" : "m";
+            const yKey = entry.year && entry.year !== "k.A." ? String(entry.year) : "any";
+            const cachedHit = backupImportJob.resolvedTitlesCache[tCode + "_" + nKey + "_" + yKey]
+              || (tCode === "s" ? backupImportJob.resolvedTitlesCache["s_" + nKey + "_any"] : null)
+              || (yKey === "any" ? backupImportJob.resolvedTitlesCache[tCode + "_" + nKey + "_any"] : null);
+            if (!cachedHit) return entry;
+            if (cachedHit.knownUnmatched) {
+              return { ...entry, knownUnmatched: true };
+            }
+            if (cachedHit.tmdbId) {
+              return {
+                ...entry,
+                tmdb_id: cachedHit.tmdbId,
+                typeCode: cachedHit.typeCode || tCode,
+                isSeries: (cachedHit.typeCode || tCode) === "s",
+                cleanTitle: cachedHit.cleanTitle || entry.cleanTitle,
+                external_poster_url: entry.external_poster_url || cachedHit.poster || ""
+              };
+            }
+            return entry;
+          });
           let hadRateWarning = false;
           try {
             const cpPayload = buildCurrentBackupCheckpointPayload();
@@ -39051,6 +39391,38 @@
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
                   const isFailedItem = bItem.status === "failed" || !bItem.tmdbId;
+                  // Browser-Titel-Cache aktualisieren (positiv ab 75% Sicherheit + negativ bei TMDB_NOT_FOUND)
+                  const origEntry = rawSlice[bi] || bItem.rawEntry || {};
+                  const rawInTitle = origEntry.cleanTitle || origEntry.title || bItem.cleanTitle || "";
+                  const normInKey = normClientTitleKey(rawInTitle);
+                  const normResKey = normClientTitleKey(bItem.cleanTitle || "");
+                  const itemTypeCode = bItem.typeCode === "s" ? "s" : "m";
+                  const itemYearKey = (origEntry.year && origEntry.year !== "k.A.") ? String(origEntry.year) : ((bItem.year && bItem.year !== "k.A.") ? String(bItem.year) : "any");
+                  if (bItem.tmdbId && Number(bItem.confidence || 100) >= 75) {
+                    const cacheVal = {
+                      tmdbId: Number(bItem.tmdbId),
+                      typeCode: itemTypeCode,
+                      cleanTitle: bItem.cleanTitle || rawInTitle,
+                      poster: bItem.poster || ""
+                    };
+                    if (normInKey && normInKey !== "unbekannt") {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = cacheVal;
+                      if (itemTypeCode === "s" || itemYearKey === "any") {
+                        backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = cacheVal;
+                      }
+                    }
+                    if (normResKey && normResKey !== "unbekannt") {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_" + itemYearKey] = cacheVal;
+                      if (itemTypeCode === "s" || itemYearKey === "any") {
+                        backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_any"] = cacheVal;
+                      }
+                    }
+                  } else if (isFailedItem && bItem.reviewReasonCode === "TMDB_NOT_FOUND" && normInKey && normInKey !== "unbekannt") {
+                    backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = { knownUnmatched: true };
+                    if (itemTypeCode === "s" || itemYearKey === "any") {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = { knownUnmatched: true };
+                    }
+                  }
                   const computedReason = bItem.errorReason || (isFailedItem
                     ? "Kein TMDb-Treffer für '" + (bItem.cleanTitle || bItem.rawInput || "") + "'"
                     : bItem.isUncertain
@@ -41955,6 +42327,9 @@
               playlistMode: playlistFolder.playlistMode || playlistMode,
               updatedAt: Date.now()
             });
+          }
+          if (typeof flushD1BatchBuffer === "function") {
+            await flushD1BatchBuffer(env);
           }
           return new Response(JSON.stringify({
             ok: true,

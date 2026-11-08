@@ -2106,7 +2106,7 @@
       let fallbackExternalPoster = "";
       const lookupTitle = data.original_name || data.name || "";
       const lookupYear = (data.first_air_date || "").slice(0, 4);
-      const needsTvMazeFallback = !posterPath || !overview || !data.episode_run_time?.[0] || statusText === "Unbekannt" || !(data.seasons && data.seasons.length > 0);
+      const needsTvMazeFallback = (!posterPath && !overview) || !(data.seasons && data.seasons.length > 0);
       if (needsTvMazeFallback) {
         tvMazeData = await fetchTvMazeSeriesFallback(lookupTitle, lookupYear);
         if (!tvMazeData && data.name && data.name !== lookupTitle) {
@@ -2308,8 +2308,8 @@
         }));
       }
 
-      // TVMaze Episoden-Fallback nutzen, wenn TMDB keine Episoden oder leere Episoden-Texte liefert
-      const hasMissingEpInfo = episodes.length === 0 || episodes.some(e => !e.overview || !e.runtime);
+      // TVMaze Episoden-Fallback nur nutzen, wenn TMDB gar keine Episoden für die Staffel liefert
+      const hasMissingEpInfo = episodes.length === 0;
       if (hasMissingEpInfo) {
         const sDetails = getCachedTmdb(`tv_${seriesId}`) || await fetchSeriesDetails(env, seriesId);
         const lookupTitle = sDetails?.original_name || sDetails?.title || "";

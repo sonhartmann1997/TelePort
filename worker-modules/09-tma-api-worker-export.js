@@ -612,6 +612,9 @@
               updatedAt: Date.now()
             });
           }
+          if (typeof flushD1BatchBuffer === "function") {
+            await flushD1BatchBuffer(env);
+          }
           return new Response(JSON.stringify({
             ok: true,
             status: status || "COMPLETED_BATCH",

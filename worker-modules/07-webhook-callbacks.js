@@ -975,6 +975,21 @@
       ? Number(rawEntry.tmdb_id || rawEntry.tmdbId)
       : (parsed.tmdbId ? Number(parsed.tmdbId) : null);
     const searchTitle = parsed.cleanTitle;
+    if (!explicitTmdbId && typeof rawEntry === "object" && rawEntry?.knownUnmatched && !options?.bypassNegativeTitleCache) {
+      return options?.returnUnmatched
+        ? {
+            ok: false,
+            unmatched: true,
+            ingestStatus: "failed",
+            reviewReasonCode: "TMDB_NOT_FOUND",
+            confidence: 0,
+            rawInput: rawName,
+            parsed,
+            candidates: [],
+            fromNegativeCache: true
+          }
+        : null;
+    }
     if (!searchTitle && !explicitTmdbId && !parsed.imdbId) {
       return options?.returnUnmatched
         ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "PARSER_AMBIGUITY", confidence: 0, rawInput: rawName, parsed, candidates: [] }
@@ -2384,6 +2399,12 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     resetSubrequestBudget();
+    if (typeof prefetchBatchMediaFromD1 === "function") {
+      await prefetchBatchMediaFromD1(env, entriesList);
+    }
+    if (typeof beginD1BatchBuffer === "function") {
+      beginD1BatchBuffer();
+    }
     const moviesAdded = [];
     const seriesAdded = [];
     const failedItems = [];
@@ -2716,6 +2737,11 @@
     // Automatische DB-Bereinigung am Ende jedes Imports: Entfernt alle Serien mit 0 gültigen Episoden-Videos
     if (!partialBatch) {
       await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
+    }
+
+    // Alle gepufferten D1-Writes des gesamten Batches in einer einzigen db.batch()-Transaktion committen (nur 1 D1-Subrequest!)
+    if (typeof flushD1BatchBuffer === "function") {
+      await flushD1BatchBuffer(env);
     }
 
     return {

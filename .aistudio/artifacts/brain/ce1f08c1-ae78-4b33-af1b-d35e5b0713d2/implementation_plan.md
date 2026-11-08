@@ -1,91 +1,102 @@
-# Lokaler D1-Vorab-Check (`checkDatabaseForExistingTitle`) mit 85%-Stop-Limit in `handleDispatchWorkerImportBatch`
+# Eliminierung von `HTTP 503` beim Massen-Import durch D1-Bulk-Bündelung (`db.batch`) & Browser-Titel-Cache
 
-Erweiterung der Batch-Import-Pipeline um einen lokalen `checkDatabaseForExistingTitle(title)`-Helper in `handleDispatchWorkerImportBatch` sowie im JSON-Backup-Splitter-Modal, der vor jeglichen externen API-Aufrufen (TMDb, OMDb und 8-API-Fallbacks) die D1-Datenbank bzw. den lokalen D1-Katalog prüft und ab 85 % Übereinstimmung die gefundene TMDb-ID direkt vorab setzt.
+Behebung des Cloudflare-Fehlers `⏳ Rate-Limit / Einzel-Isolierung bei #5469: API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP 503)` durch Zusammenfassung aller D1-Lese- und Schreiboperationen eines Import-Batches in gesammelte `db.batch()`-Transaktionen, lückenlose Zählung aller D1-/KV-/HTTP-Subrequests sowie einen persistenten Browser-Titel-Cache im Mini-App-Importer.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Beide Architekturentscheidungen wurden durch deine Rückmeldung bestätigt und sind verbindlich eingeplant:
+> Beide Optimierungsstrategien wurden durch deine Auswahl bestätigt und sind verbindlich eingeplant:
 
-- **Bestätigte Entscheidung 1 (Vorab-TMDb-ID statt Überspringen bei $\ge 85\,\%$ D1-Treffer)**: Findet `checkDatabaseForExistingTitle(title)` einen bestehenden D1-Eintrag mit mindestens 85 % Übereinstimmung, wird die aufgelöste `tmdb_id`, der Medientyp (`movie` / `series`), das Poster sowie die Metadaten-Quelle direkt im Batch-Eintrag vorab gesetzt. Dadurch speichert der Worker neue Stream-/Qualitätsdateien oder neue Serienfolgen mit **0 externen API-Calls** in D1.
-- **Bestätigte Entscheidung 2 (Browser-OMDb-Vorabsuche ebenfalls stoppen)**: Das JSON-Backup-Splitter-Modal (`enrichBatchEntriesWithOmdbFallback`) nutzt denselben D1-Vorab-Check, sodass für bereits in D1 vorhandene Titel ($\ge 85\,\%$) auch im Browser keinerlei OMDb-Requests mehr ausgelöst werden.
+- **Bestätigte Entscheidung 1 (D1-Bulk-Bündelung per `db.batch` + D1-Subrequest-Zählung)**: Da Cloudflare jede einzelne D1-Abfrage (`first`, `all`, `run`, `batch`) und jeden KV-Aufruf auf das harte 50-Subrequest-Limit pro Worker-Aufruf anrechnet, werden sämtliche D1-Vorab-Checks am Batch-Anfang in **1 einzigen `db.batch()`-Read** und sämtliche D1-Speicheroperationen am Batch-Ende in **1 einzigen `db.batch()`-Write** gebündelt. Zusätzlich zählt ein transparenter D1/KV-Tracker jede reale Datenbankabfrage im Subrequest-Budget mit.
+- **Bestätigte Entscheidung 2 (Browser-Titel-Cache im Mini-App-Importer)**: Der JSON-Importer der Mini-App merkt sich jeden einmal aufgelösten Serien- und Filmtitel im Browser-Speicher (`resolvedTitlesCache`) und übergibt bei allen nachfolgenden Episoden oder Qualitätsstufen desselben Titels direkt die fertige `tmdb_id` an den Worker (`0 Such-Requests`).
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **Was diese Änderung bewirkt**: Bevor ein JSON-Import-Batch über `handleDispatchWorkerImportBatch` an den Worker gesendet oder im Splitter-Modal mit OMDb-Postern angereichert wird, prüft `checkDatabaseForExistingTitle(title)` lokal gegen den D1-Bestand (über den D1-Katalog, die gespeicherten Entitäten und einen leichtgewichtigen Worker-D1-Lookup), ob der Titel bereits mit $\ge 85\,\%$ Sicherheit bekannt ist.
-- **Zielgruppe & Kontext**: Admins beim Import großer Telegram-JSON-Archive (100.000+ / 180.000 Einträge) über den Stream-Splitter und die Worker-Batch-Pipeline.
-- **Mehrwert**: Verhindert redundante externe HTTP-Requests im Browser (OMDb) und im Worker (TMDb + 8-API-Kaskade), beschleunigt Serien- und Mehrqualitäts-Importe massiv und schützt zuverlässig vor `HTTP 503` / Rate-Limits.
+- **Ursache des `HTTP 503` bei `#5469`**: In Cloudflare Workers zählen nicht nur externe `fetch()`-Aufrufe, sondern auch jede einzelne D1-SQL-Abfrage und jeder KV-Zugriff als Subrequest (Limit: 50 pro Request). Bisher löste ein 10er-Batch rund 70 bis 90 einzelne D1-Abfragen aus (pro Eintrag 4 einzelne `SELECT`-Checks, 2–4 `entity_cache`-Writes sowie separate `SELECT`/`INSERT`-Aufrufe für `movie_files`, `episode_files`, `movies`, `series`, Playlists und Checkpoints). Sobald die Summe aus D1-Abfragen und API-Fetches 50 erreichte, brach Cloudflare den Worker hart mit `HTTP 503` ab.
+- **Lösung**:
+  1. **Vom Einzel-SQL zum Sammel-`db.batch`**: Reduktion der D1-Subrequests pro 10er-Batch von ~80 auf **2–4 gebündelte `db.batch`-Aufrufe**.
+  2. **Echtes Subrequest-Tracking (HTTP + D1 + KV)**: Der Subrequest-Zähler überwacht alle drei Subrequest-Quellen gemeinsam und teilt einen Batch rechtzeitig (`PARTIAL_BATCH`), bevor Cloudflare je an die 50er-Grenze stößt.
+  3. **Browser-Titel-Cache in der Mini-App**: Verhindert wiederholte Titelsuchen bereits auf Client-Seite über alle Chunks hinweg.
 
 ---
 
 ## 2. User Experience & Visual Design
 
 - **Key User Flows**:
-  1. **Batch-Versand über `handleDispatchWorkerImportBatch`**: Für jeden Eintrag im Batch extrahiert der Helper den bereinigten Titel (inkl. Jahr und Serien-/Film-Erkennung) und ruft `checkDatabaseForExistingTitle(title)` auf.
-  2. **Sofort-Stopp ab 85 % Übereinstimmung**: Erreicht ein D1-Eintrag einen Ähnlichkeits-Score von $\ge 85\,\%$, bricht die Suche sofort ab. Der Eintrag erhält `tmdb_id`, `typeCode`, `cleanTitle`, `external_poster_url` und `preResolvedFromD1: true`.
-  3. **Transparentes Feedback im Konsolen- & Splitter-Status**: Die Konsole und die Batch-Zusammenfassung weisen aus, wie viele Einträge des Chunks bereits lokal über `checkDatabaseForExistingTitle` ($\ge 85\,\%$) in D1 erkannt wurden (`0 API-Calls`).
+  1. **Vorab-Anreicherung im Browser vor jedem Batch**: Bevor der Mini-App-Importer die nächsten 10 Einträge an den Worker sendet, prüft er seinen lokalen `resolvedTitlesCache`. Ist eine Serie (z. B. Folge 1 aus einem früheren Batch) oder ein Film bereits bekannt, wird die `tmdb_id` direkt an den Eintrag geheftet.
+  2. **1-Subrequest D1-Bulk-Prefetch im Worker**: Der Worker lädt zu Beginn des Batches alle benötigten `movie_files`-, `episode_files`- und `entity_cache`-Einträge für alle 10 Elemente in **einem einzigen `db.batch()`-Aufruf** in den RAM.
+  3. **1-Subrequest D1-Bulk-Commit am Batch-Ende**: Während die 10 Einträge verarbeitet werden, sammelt eine D1-Write-Queue alle SQL-Statements (`movies`, `series`, `movie_files`, `episode_files`, `series_episodes`, `entity_cache`, `d1_playlist_items`, `import_diagnostic_logs`, `d1_import_checkpoints`) und schreibt sie am Ende gemeinsam in **einem einzigen `db.batch()`-Aufruf** in D1.
+  4. **Transparente Live-Anzeige**: Im Import-Log und Fortschrittsbalken sieht der Admin jederzeit die exakte Anzahl der genutzten Gesamt-Subrequests (inkl. D1) sowie die Anzahl der lokal aus dem Browser-/D1-Cache bedienten Titel.
 - **Visual Identity & Theme**:
-  - *Aesthetic Direction*: Dunkles Developer- & Streaming-Cockpit (`#090c14` / `#101016`) mit klaren Status-Indikatoren und tabellarischen Zählern (`tabular-nums`).
-  - *Color Palette & Mood*: Smaragdgrün (`#10b981`) für D1-Cache-Treffer ($\ge 85\,\%$), Cyan (`#38bdf8`) für aktive Batch-Verarbeitung, Amber (`#f59e0b`) für Prüf-Kandidaten.
-  - *Typography & Hierarchy*: Klare Sans-Serif-Hierarchie kombiniert mit Monospace-Metriken für Trefferquoten, Confidence-Prozentwerte und Subrequest-Zähler.
+  - *Aesthetic Direction*: Dunkles Streaming- & Admin-Cockpit (`#101016` / `#090c14`) mit flüssigem Echtzeit-Fortschrittsbalken ohne Gateway-Aussetzer.
+  - *Color Palette & Mood*: Smaragdgrün (`#10b981`) für gebündelte D1-Commits und Cache-Treffer, Cyan (`#38bdf8`) für `PARTIAL_BATCH`-Fortsetzungen, Amber (`#f59e0b`) für manuelle Prüf-Kandidaten.
+  - *Typography & Hierarchy*: Tabellarische Zähler (`tabular-nums`) und Monospace-Metriken für Subrequest-Budget und Batch-Durchsatz.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Entscheidung 1: Zweistufige lokale D1-Prüfung (`checkDatabaseForExistingTitle`) mit 85%-Stop-Limit**
-  - *Gewählter Ansatz*: `checkDatabaseForExistingTitle(title)` bereinigt Dateinamen/Roh-Titel von Release-Tags (`1080p`, `S01E02`, `GERMAN`, etc.), gleicht den Titel gegen die in D1/KV persistierten Katalog- und Cache-Einträge sowie den Worker-D1-Bestand ab und berechnet den Confidence-Score (0–100 %). Sobald ein Treffer $\ge 85\,\%$ erreicht, wird die Prüfung für diesen Titel sofort beendet (`85% stop-limit`) und das Ergebnis im Batch-Speicher hinterlegt.
-  - *Warum*: Bei Serien mit vielen Episoden oder Filmen in mehreren Auflösungen wird derselbe Titel oft dutzende Male hintereinander importiert. Der sofortige Abbruch ab 85 % spart sowohl Datenbank-Vergleiche als auch 100 % der externen API-Aufrufe.
-- **Entscheidung 2: Vorab-Injektion von `tmdb_id` statt Herausfiltern**
-  - *Gewählter Ansatz*: Bekannte Titel werden nicht verworfen, sondern mit ihrer bestätigten `tmdb_id` und dem Medientyp an den Worker übergeben.
-  - *Warum*: So werden neue Episoden (`S01E02`, `S01E03`) oder neue Qualitätsstufen (`2160p`, `1080p`) zuverlässig in den D1-Tabellen (`episode_files`, `movie_files`) und in der Ziel-Playlist verknüpft, ohne dass der Worker erneut bei TMDb oder den Fallback-APIs suchen muss.
+- **Entscheidung 1: Transparenter D1-Subrequest-Proxy + Write-Behind-Queue pro Batch**
+  - *Gewählter Ansatz*: Das D1-Binding wird mit einem leichtgewichtigen Proxy ummantelt, der jeden tatsächlichen `.first()`-, `.all()`-, `.run()`- und `.batch()`-Aufruf in `currentInvocationSubrequests` mitzählt. Gleichzeitig werden während eines Import-Batches alle Schreibbefehle in einer Batch-Transaktionsliste (`pendingD1BatchStatements`) gesammelt und am Ende in einem einzigen `db.batch()` ausgeführt.
+  - *Warum*: Ein `db.batch()` mit 40 SQL-Statements zählt bei Cloudflare als **nur 1 einziger Subrequest** statt 40. Damit sinkt die D1-Last pro Batch um über 90 %.
+- **Entscheidung 2: Client-seitiger `resolvedTitlesCache` im Mini-App-Importer**
+  - *Gewählter Ansatz*: Der Browser speichert für jeden erfolgreich verarbeiteten oder bereits als `TMDB_NOT_FOUND` eingestuften Titel den normalisierten Titel-Key im RAM und in `localStorage`. Kommen im weiteren Verlauf (z. B. bei `#5469`) weitere Folgen derselben Serie oder Duplikate vor, sendet der Browser `tmdb_id` bzw. das Negativ-Flag direkt mit.
+  - *Warum*: Spart sowohl im Browser als auch im Worker sämtliche Such-Kaskaden für bereits bekannte Titel über alle 180.000 Einträge hinweg.
 
 ---
 
 ## 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
-### Architecture & Data Flow Diagram
+### Architecture & Batch Pipeline Diagram
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                 JSON Backup Splitter Modal / Batch Dispatcher                │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ 1. checkDatabaseForExistingTitle(title, options)                       │  │
-│  │    • Bereinigt Dateinamen & extrahiert Titel, Jahr & Serien-Indikator  │  │
-│  │    • Prüft D1-Katalog, Titel-Resolution-Cache & Sandbox-D1-Bestand     │  │
-│  │    • Berechnet Match-Confidence (Exakt / Token-Overlap / Jahres-Bonus) │  │
-│  │    • 85%-Stop-Limit: Sofortiger Abbruch beim ersten Treffer >= 85 %    │  │
-│  └───────────────────────────────────┬────────────────────────────────────┘  │
-│                                      │                                       │
-│                   ┌──────────────────┴──────────────────┐                    │
-│                   ▼                                     ▼                    │
-│     [Treffer >= 85 % in D1]                [Kein Treffer < 85 % in D1]       │
-│  • Überspringt Browser-OMDb-Fetch       • Optionaler Browser-OMDb-Fallback   │
-│  • Setzt tmdb_id, typeCode, Poster      • Übergibt Roh-Eintrag an Worker     │
-│  • Markiert preResolvedFromD1 = true    • Worker prüft D1 & 8-API-Kaskade    │
-│                   │                                     │                    │
-│                   └──────────────────┬──────────────────┘                    │
-│                                      ▼                                       │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ 2. handleDispatchWorkerImportBatch -> POST /api/import-json            │  │
-│  │    • Worker erkennt vorhandene tmdb_id -> 0 externe API-Subrequests    │  │
-│  │    • Speichert Datei/Stream & Playlist-Verknüpfung direkt in D1        │  │
-│  │    • Aktualisiert lokalen D1-Titel-Index für nachfolgende Chunks       │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                  Mini-App JSON-Importer (Browser-Client)                       │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │ 1. Client-Side resolvedTitlesCache (RAM + localStorage)                  │  │
+│  │    • Prüft jeden Eintrag im 10er-Slice vor dem Senden                    │  │
+│  │    • Bekannter Titel (>= 85 %): Setzt tmdb_id, typeCode, Poster vorab    │  │
+│  │    • Bekannter Negativ-Titel: Markiert knownUnmatched = true (0 APIs)    │  │
+│  └────────────────────────────────────┬─────────────────────────────────────┘  │
+└───────────────────────────────────────┼────────────────────────────────────────┘
+                                        │ POST /api/tma/admin/import-batch
+                                        ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                   Cloudflare Worker Import-Pipeline (Server)                   │
+│                                                                                │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │ 2. Bulk D1 Prefetch (1 einziger db.batch() = 1 Subrequest)               │  │
+│  │    • Lädt alle file_ids, entity_cache-Keys & vorhandene Serien/Filme     │  │
+│  │      für den gesamten Batch in einem einzigen D1-Roundtrip in den RAM    │  │
+│  └────────────────────────────────────┬─────────────────────────────────────┘  │
+│                                       ▼                                        │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │ 3. Sequenzielle Auflösung mit Unified Subrequest-Guard (HTTP + D1 + KV)  │  │
+│  │    • Jede echte HTTP-, D1- und KV-Operation erhöht subrequestCount       │  │
+│  │    • Alle D1-Writes (movies, series, episode_files, entity_cache)        │  │
+│  │      aktualisieren sofort den RAM und landen in pendingD1BatchStatements │  │
+│  │    • Ab 32 Gesamt-Subrequests: Sauberer Stopp -> PARTIAL_BATCH           │  │
+│  └────────────────────────────────────┬─────────────────────────────────────┘  │
+│                                       ▼                                        │
+│  ┌──────────────────────────────────────────────────────────────────────────┐  │
+│  │ 4. Bulk D1 Flush am Batch-Ende (1 einziger db.batch() = 1 Subrequest)    │  │
+│  │    • Schreibt alle gesammelten Statements + Playlist-Items +             │  │
+│  │      Diagnose-Logs + Import-Checkpoint gemeinsam in 1 D1-Transaktion     │  │
+│  └──────────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Model & State Mapping
 
-- **Titel-Normalisierung & Confidence-Berechnung (`checkDatabaseForExistingTitle`)**:
-  - Entfernt Dateiendungen (`.mp4`, `.mkv`), Episoden-Marker (`S01E01`, `Staffel 1`), Jahreszahlen und Release-/Qualitäts-Tags.
-  - Vergleicht den normalisierten Suchtitel mit den D1-Einträgen (`movies`, `series`, `entity_cache` / `title_res_*`, gespeicherte Listen in `kvNamespace` sowie dem Worker-Endpunkt `/api/tma/d1-check-titles`).
-  - Sobald während der Iteration ein Kandidat `confidence >= 85` erreicht, stoppt die Suche sofort (`break`) und gibt `{ matched: true, confidence, tmdbId, typeCode, title, year, posterUrl, source: 'D1' }` zurück.
-- **Integration in `handleDispatchWorkerImportBatch`**:
-  - Durchläuft vor dem `executeWorkerSandbox`-Aufruf alle `payload.entries`, führt `checkDatabaseForExistingTitle(entryTitle)` aus und reichert Treffer ($\ge 85\,\%$) direkt mit `tmdb_id`, `typeCode`, `isSeries` und `external_poster_url` an.
-  - Nach jedem erfolgreichen Worker-Batch werden neu aufgelöste Titel sofort in den lokalen D1-Titel-Index aufgenommen, sodass schon der nächste Chunk im selben Durchlauf davon profitiert.
-- **Integration in `enrichBatchEntriesWithOmdbFallback` & Splitter-Modal**:
-  - Überspringt für jeden Eintrag, bei dem `checkDatabaseForExistingTitle(rawTitle)` bereits einen D1-Treffer mit $\ge 85\,\%$ liefert, den externen OMDb-HTTP-Request komplett und übernimmt stattdessen die D1-Metadaten.
+- **Unified Subrequest Counter (`currentInvocationSubrequests`)**:
+  - Zählt jeden `fetchWithTimeout`-Aufruf (+1), jeden echten D1-Roundtrip über den D1-Binding-Proxy (`.first()`, `.all()`, `.run()`, `.batch()` je +1) und jeden KV-Aufruf (`kvCachedGetRaw` bei Cache-Miss +1).
+  - `ensureD1Schema` wird pro Worker-Isolate nur 1x ausgeführt; zudem wird bei bereits initialisierten Tabellen der zweite `sqlite_master`-Roundtrip eingespart.
+- **Bulk D1 Prefetch (`prefetchBatchMediaFromD1`)**:
+  - Sammelt vor der Batch-Schleife alle `telegram_file_id`s und `title_res_*`-Cache-Keys der 10 Einträge und führt deren `SELECT`-Abfragen gebündelt in einem einzigen `db.batch()` aus, der direkt `memoryFallback` befüllt. Damit benötigt `findExistingMediaInD1BeforeExternalSearch` innerhalb der Schleife **0 zusätzliche D1-Subrequests**.
+- **Buffered D1 Batch Commit (`beginD1BatchBuffer` / `flushD1BatchBuffer`)**:
+  - Während `processEntriesBatchWithLimit` aktiv ist, reihen `saveMovieToD1`, `saveSeriesToD1`, `saveSeasonToD1`, `saveMovieFileToD1`, `saveEpisodeFileToD1`, `saveEntityToD1`, `saveSearchCacheToD1`, `saveImportDiagnosticLogsToD1`, `batchUpsertPlaylistItemsInD1` und `saveImportCheckpointToD1` ihre vorbereiteten SQL-Statements in den Batch-Buffer ein und führen am Ende von `/api/tma/admin/import-batch` (bzw. `/api/import-json`) einen einzigen gesammelten `db.batch()` aus.
+- **Client-Side Title Cache (`clientResolvedTitleCache` in der Mini-App)**:
+  - Speichert nach jedem Batch alle aufgelösten `batchItems` (sowie `TMDB_NOT_FOUND`-Titel derselben Import-Sitzung) unter ihrem normalisierten Titel+Jahr-Schlüssel, sodass nachfolgende Episoden oder Duplikate im Browser vorab mit `tmdb_id` versehen werden.
