@@ -1465,7 +1465,7 @@
   const EDITION_CUT_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\s._-]*duper[\s._-]*cut|extended[\s._-]*director'?s?[\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\s._-]*matte|international|rough|workprint)[\s._-]*(?:cut|edition|version|fassung|ed\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\s._-]*(?:fassung|version|edition|cut)|(?:4k[\s._-]*)?(?:digitally[\s._-]*)?(?:remastered|restored)|mastered[\s._-]*in[\s._-]*4k|open[\s._-]*matte)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Erweiterter Cleaner-Regex mit Umlaut-sicheren Wortgrenzen (schützt "Geisterjäger", "Jäger", "Bürger", "World Wide Web" & "Grundkurs Spanish"):
-  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|dvdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3|aac|6ch|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
+  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\.?1|5\.1|7\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Volle Datumsangaben (DD.MM.YYYY wie 21.07.2012 oder 01.12.2018) erkennen & schützen (Regel 6 / Fall 17)
   const FULL_DATE_REGEX = /\b\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\b/g;
@@ -1646,8 +1646,12 @@
     s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/gi, " ");
     s = s.replace(FULL_DATE_REGEX, " ");
 
-    if (!s.includes(" ") && ((s.match(/\./g) || []).length >= 2 || /[A-Za-zÄÖÜäöüß]{2,}\.[A-Za-zÄÖÜäöüß]{2,}/.test(s))) {
-      s = s.replace(/\./g, " ");
+    // Scene-Audio & Release-Group-Kombinationen (z. B. "AC3D.5.1", "BDRiP.XViD-HaN") vor dem Punkt-Splitter bereinigen
+    s = s.replace(/\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\s._-]*(?:5\.1|7\.1|2\.0)\b/gi, " ");
+    s = s.replace(/\b(?:XViD|DivX|x264|x265|H\.?264|H\.?265|HEVC|BDRiP|BRRiP|DVDRiP|WEBRiP|WEB-DL)-[A-Za-z0-9]{2,12}\b/gi, " ");
+    if (((s.match(/\./g) || []).length >= 2 || /[A-Za-zÄÖÜäöüß]{2,}\.[A-Za-zÄÖÜäöüß0-9]{2,}/.test(s)) && !/^(?:e\.t\.?|a\.d\.?|o\.c\.?|l\.a\.?|k\.o\.?|s\.h\.i\.e\.l\.d\.?)$/i.test(s.trim())) {
+      s = s.replace(/(?<=[A-Za-zÄÖÜäöüß0-9]{2})\.(?=[A-Za-zÄÖÜäöüß0-9])/g, " ")
+           .replace(/(?<=[A-Za-zÄÖÜäöüß0-9])\.(?=[A-Za-zÄÖÜäöüß0-9]{2})/g, " ");
     }
 
     // Flaggen, Deko-Klammern 《》«»⟨⟩, führende Deko-Emojis & Inline-Emojis (wie 🐉 in "DRAGON 🐉 BALL DAIMA") restlos entfernen
@@ -4429,6 +4433,20 @@
       }
     }
 
+    // Für bot_vip niemals KV lesen – bot_vip lebt zu 100% in D1 (d1_playlist_folders / d1_playlist_items)
+    if (cleanId === "bot_vip") {
+      const botVipBundle = {
+        v: 2,
+        updatedAt: Date.now(),
+        savedList: [],
+        folders: [],
+        settings: { ...DEFAULT_USER_SETTINGS_TEMPLATE },
+        session: {}
+      };
+      syncUserBundleToMemoryMirrors(cleanId, botVipBundle);
+      return botVipBundle;
+    }
+
     try {
       const rawBundle = await kvCachedGetRaw(env, bundleKey, "MOVIE_SAVED");
       if (rawBundle) {
@@ -4448,40 +4466,44 @@
       }
     } catch (e) {}
 
-    // Automatische Lazy-Migration bestehender Legacy-KV-Keys (1-malig beim ersten Laden)
+    // Automatische Lazy-Migration bestehender Legacy-KV-Keys (nur 1-malig pro Chat-ID prüfen, spart 4 KV-Reads bei neuen Usern!)
     let migratedFromLegacy = false;
     let savedList = [];
     let folders = [];
     let settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE };
     let session = {};
+    const legacyCheckedKey = `u_legacy_checked_${cleanId}`;
 
-    try {
-      const [rawUser, rawFolders, rawSettings, rawSess] = await Promise.all([
-        kvCachedGetRaw(env, `user_${cleanId}`, "MOVIE_SAVED"),
-        kvCachedGetRaw(env, `folders_${cleanId}`, "MOVIE_SAVED"),
-        kvCachedGetRaw(env, `settings_${cleanId}`, "MOVIE_SAVED"),
-        kvCachedGetRaw(env, `sess_${cleanId}`, "MOVIE_SAVED")
-      ]);
-      if (rawUser) {
-        savedList = normalizeSavedItems(JSON.parse(rawUser));
-        migratedFromLegacy = true;
-      }
-      if (rawFolders) {
-        const pf = JSON.parse(rawFolders);
-        if (Array.isArray(pf)) folders = pf;
-        migratedFromLegacy = true;
-      }
-      if (rawSettings) {
-        const ps = JSON.parse(rawSettings);
-        if (ps && typeof ps === "object") settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...ps };
-        migratedFromLegacy = true;
-      }
-      if (rawSess) {
-        const pss = JSON.parse(rawSess);
-        if (pss && typeof pss === "object") session = pss;
-        migratedFromLegacy = true;
-      }
-    } catch (e) {}
+    if (!memoryFallback.has(legacyCheckedKey) && cleanId !== "guest") {
+      memoryFallback.set(legacyCheckedKey, true);
+      try {
+        const [rawUser, rawFolders, rawSettings, rawSess] = await Promise.all([
+          kvCachedGetRaw(env, `user_${cleanId}`, "MOVIE_SAVED"),
+          kvCachedGetRaw(env, `folders_${cleanId}`, "MOVIE_SAVED"),
+          kvCachedGetRaw(env, `settings_${cleanId}`, "MOVIE_SAVED"),
+          kvCachedGetRaw(env, `sess_${cleanId}`, "MOVIE_SAVED")
+        ]);
+        if (rawUser) {
+          savedList = normalizeSavedItems(JSON.parse(rawUser));
+          migratedFromLegacy = true;
+        }
+        if (rawFolders) {
+          const pf = JSON.parse(rawFolders);
+          if (Array.isArray(pf)) folders = pf;
+          migratedFromLegacy = true;
+        }
+        if (rawSettings) {
+          const ps = JSON.parse(rawSettings);
+          if (ps && typeof ps === "object") settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...ps };
+          migratedFromLegacy = true;
+        }
+        if (rawSess) {
+          const pss = JSON.parse(rawSess);
+          if (pss && typeof pss === "object") session = pss;
+          migratedFromLegacy = true;
+        }
+      } catch (e) {}
+    }
 
     const bundle = {
       v: 2,
@@ -4609,7 +4631,12 @@
     syncUserBundleToMemoryMirrors(cleanId, bundle);
     for (const f of bundle.folders) {
       if (f && f.id && (f.isJsonPlaylist || f.type === "playlist" || cleanId === "bot_vip")) {
-        try { await upsertPlaylistFolderInD1(env, cleanId, f); } catch (e) {}
+        const fSigKey = `d1_folder_sig_${cleanId}_${f.id}`;
+        const nextFSig = JSON.stringify({ name: f.name, enabled: f.enabled !== false, playlistMode: f.playlistMode || "both", sourceLabel: f.sourceLabel || "" });
+        if (memoryFallback.get(fSigKey) !== nextFSig) {
+          memoryFallback.set(fSigKey, nextFSig);
+          try { await upsertPlaylistFolderInD1(env, cleanId, f); } catch (e) {}
+        }
       }
     }
     if (cleanId === "bot_vip" || options.skipKvWrite) {
@@ -5908,6 +5935,9 @@
       await flushDirtyKvBatch(env, { force: Boolean(options?.force) });
       return;
     }
+    if (String(chatId) === "bot_vip") {
+      return;
+    }
     const bundle = await getUserBundle(env, chatId);
     const sess = bundle.session || memoryFallback.get(`sess_${chatId}`);
     if (sess && sess._dirty) {
@@ -6325,6 +6355,7 @@
     const pending = activeD1WriteBuffer;
     activeD1WriteBuffer = null;
     if (!Array.isArray(pending) || pending.length === 0) return 0;
+    memoryFallback.delete("d1_series_gaps_cache");
     const rawDb = getRawD1Binding(env);
     if (!rawDb) return 0;
     let flushedCount = 0;
@@ -8246,6 +8277,7 @@
   async function saveEpisodeFileToD1(env, seriesId, seasonNumber, episodeNumber, fileInfo) {
     const rawFid = fileInfo?.fileId || fileInfo?.telegram_file_id;
     if (!seriesId || !rawFid) return false;
+    memoryFallback.delete("d1_series_gaps_cache");
     const sid = Number(seriesId);
     const sNum = Number(seasonNumber || 1);
     const eNum = Number(episodeNumber || 1);
@@ -9107,32 +9139,38 @@
     return { seasonCounts, episodeTitleMap };
   }
 
-  // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03; Priorität 2: Fehlende Folgen bis Staffelende)
+  // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03 sowie komplett fehlende Zwischen-Staffeln; Priorität 2: Fehlende Folgen bis Staffelende)
   async function computeSeriesGapsOverview(env, forceRefresh = false) {
     const cachedGaps = memoryFallback.get("d1_series_gaps_cache");
-    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 180000) {
+    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 60000) {
       return cachedGaps.data;
     }
     const db = await ensureD1Schema(env);
+    const rawDb = getRawD1Binding(env) || db;
     const seriesMap = new Map();
     const seasonMetaBySeries = new Map();
     const uploadedBySeriesSeason = new Map();
+    const allCheckedSeriesIds = new Set();
 
-    if (db) {
+    if (rawDb) {
       try {
         trackStat("d1Reads");
-        const [sRes, ssRes, efRes] = await db.batch([
-          db.prepare("SELECT tmdb_id, title, release_year, poster_path, number_of_seasons, number_of_episodes, details_json FROM series"),
-          db.prepare("SELECT series_id, season_number, episodes_json FROM series_seasons"),
-          db.prepare("SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags FROM episode_files")
+        if (typeof countD1Subrequest === "function") countD1Subrequest();
+        const [sRes, ssRes, seCountRes, efRes] = await rawDb.batch([
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, number_of_seasons, number_of_episodes, details_json FROM series"),
+          rawDb.prepare("SELECT series_id, season_number, episodes_json FROM series_seasons"),
+          rawDb.prepare("SELECT series_id, season_number, COUNT(*) AS ep_count, MAX(episode_number) AS max_ep FROM series_episodes GROUP BY series_id, season_number"),
+          rawDb.prepare("SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags FROM episode_files")
         ]);
         for (const r of (sRes?.results || [])) {
           if (!r || !r.tmdb_id) continue;
+          const sid = Number(r.tmdb_id);
+          allCheckedSeriesIds.add(sid);
           let details = null;
           try { details = r.details_json ? JSON.parse(r.details_json) : null; } catch (_) {}
-          seriesMap.set(Number(r.tmdb_id), {
-            tmdbId: Number(r.tmdb_id),
-            title: r.title || details?.title || `Serie #${r.tmdb_id}`,
+          seriesMap.set(sid, {
+            tmdbId: sid,
+            title: r.title || details?.title || `Serie #${sid}`,
             year: r.release_year || (details?.releaseDate ? String(details.releaseDate).split("-")[0] : "k.A."),
             poster: resolvePosterUrl(r.poster_path || details?.poster_path, "w185", details?.external_poster_url || ""),
             numberOfSeasons: Number(r.number_of_seasons || details?.numberOfSeasons || 1),
@@ -9143,6 +9181,7 @@
           const sid = Number(sr?.series_id || 0);
           const sNum = Number(sr?.season_number || 0);
           if (!sid || !sNum) continue;
+          allCheckedSeriesIds.add(sid);
           let epCount = 0;
           try {
             const parsed = JSON.parse(sr.episodes_json || "{}");
@@ -9152,11 +9191,22 @@
           if (!seasonMetaBySeries.has(sid)) seasonMetaBySeries.set(sid, new Map());
           if (epCount > 0) seasonMetaBySeries.get(sid).set(sNum, epCount);
         }
+        for (const secRow of (seCountRes?.results || [])) {
+          const sid = Number(secRow?.series_id || 0);
+          const sNum = Number(secRow?.season_number || 0);
+          const cnt = Math.max(Number(secRow?.ep_count || 0), Number(secRow?.max_ep || 0));
+          if (!sid || !sNum || cnt <= 0) continue;
+          allCheckedSeriesIds.add(sid);
+          if (!seasonMetaBySeries.has(sid)) seasonMetaBySeries.set(sid, new Map());
+          const prevCnt = seasonMetaBySeries.get(sid).get(sNum) || 0;
+          if (cnt > prevCnt) seasonMetaBySeries.get(sid).set(sNum, cnt);
+        }
         for (const ef of (efRes?.results || [])) {
           const sid = Number(ef?.series_id || 0);
           const sNum = Number(ef?.season_number || 1);
           const eNum = Number(ef?.episode_number || 0);
           if (!sid || !sNum || eNum <= 0) continue;
+          allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
           if (!uploadedBySeriesSeason.has(key)) uploadedBySeriesSeason.set(key, new Map());
           const epMap = uploadedBySeriesSeason.get(key);
@@ -9173,6 +9223,7 @@
     for (const [k, v] of memoryFallback.entries()) {
       if (k.startsWith("d1_series_") && !k.startsWith("d1_series_best_quality_") && v && typeof v === "object" && v.id) {
         const sid = Number(v.id);
+        allCheckedSeriesIds.add(sid);
         if (!seriesMap.has(sid)) {
           seriesMap.set(sid, {
             tmdbId: sid,
@@ -9188,6 +9239,7 @@
         const sid = Number(parts[0] || 0);
         const sNum = Number(parts[1] || 1);
         if (sid > 0 && sNum > 0) {
+          allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
           if (!uploadedBySeriesSeason.has(key)) uploadedBySeriesSeason.set(key, new Map());
           const epMap = uploadedBySeriesSeason.get(key);
@@ -9204,134 +9256,200 @@
       }
     }
 
-    const seriesGapsList = [];
-    let totalSeriesWithInternalGaps = 0;
-    let totalInternalMissingEpisodes = 0;
-    let totalTrailingMissingEpisodes = 0;
-
+    // Bestimme pro Serie die höchste hochgeladene Staffelnummer, um auch komplett fehlende Zwischen-Staffeln (z.B. S01 & S03 vorhanden, S02 fehlt komplett) zu prüfen!
+    const maxSeasonBySeries = new Map();
+    const seasonsToInspectBySeries = new Map();
     for (const [key, epMap] of uploadedBySeriesSeason.entries()) {
       if (!epMap || epMap.size === 0) continue;
       const [sidStr, sNumStr] = key.split("_");
       const sid = Number(sidStr);
       const sNum = Number(sNumStr);
+      if (!sid || !sNum) continue;
+      const curMax = maxSeasonBySeries.get(sid) || 0;
+      if (sNum > curMax) maxSeasonBySeries.set(sid, sNum);
+      if (!seasonsToInspectBySeries.has(sid)) seasonsToInspectBySeries.set(sid, new Set());
+      seasonsToInspectBySeries.get(sid).add(sNum);
+    }
+    for (const [sid, maxS] of maxSeasonBySeries.entries()) {
+      const sSet = seasonsToInspectBySeries.get(sid);
+      for (let s = 1; s <= maxS; s++) {
+        sSet.add(s);
+      }
+    }
+
+    const seriesGapsList = [];
+    let totalSeriesWithInternalGaps = 0;
+    let totalInternalMissingEpisodes = 0;
+    let totalTrailingMissingEpisodes = 0;
+    let totalPrereleaseOnlyEpisodes = 0;
+
+    for (const [sid, seasonSet] of seasonsToInspectBySeries.entries()) {
+      const maxUploadedSeason = maxSeasonBySeries.get(sid) || 1;
       const sMeta = seriesMap.get(sid) || {
         tmdbId: sid,
         title: memoryFallback.get(`title_cache_s_${sid}`) || `Serie #${sid}`,
         year: "k.A.",
         poster: "",
-        numberOfSeasons: sNum,
+        numberOfSeasons: maxUploadedSeason,
         detailsSeasons: []
       };
 
-      const presentEps = Array.from(epMap.keys()).sort((a, b) => a - b);
-      const maxUploadedEp = presentEps[presentEps.length - 1] || 0;
-      const prereleaseEps = Array.from(epMap.values()).filter(x => x.isPrerelease).map(x => x.episode);
+      const sortedSeasonNums = Array.from(seasonSet).sort((a, b) => a - b);
+      for (const sNum of sortedSeasonNums) {
+        const epMap = uploadedBySeriesSeason.get(`${sid}_${sNum}`) || new Map();
+        const presentEps = Array.from(epMap.keys()).sort((a, b) => a - b);
+        const maxUploadedEp = presentEps[presentEps.length - 1] || 0;
+        const prereleaseEps = Array.from(epMap.values()).filter(x => x.isPrerelease).map(x => x.episode);
 
-      let officialCount = seasonMetaBySeries.get(sid)?.get(sNum) || 0;
-      if (!officialCount && Array.isArray(sMeta.detailsSeasons)) {
-        const foundSeason = sMeta.detailsSeasons.find(s => Number(s?.season_number) === sNum);
-        if (foundSeason && Number(foundSeason.episode_count) > 0) {
-          officialCount = Number(foundSeason.episode_count);
+        let officialCount = seasonMetaBySeries.get(sid)?.get(sNum) || 0;
+        if (!officialCount && Array.isArray(sMeta.detailsSeasons)) {
+          const foundSeason = sMeta.detailsSeasons.find(s => Number(s?.season_number) === sNum);
+          if (foundSeason && Number(foundSeason.episode_count) > 0) {
+            officialCount = Number(foundSeason.episode_count);
+          }
         }
-      }
-      const effectiveTotalExpected = Math.max(officialCount || 0, maxUploadedEp);
 
-      // Priorität 1: Interne Lücken innerhalb der Staffel (1 .. maxUploadedEp, z.B. Folge 1+2 fehlt während Folge 3 vorhanden ist!)
-      const missingInternal = [];
-      for (let ep = 1; ep <= maxUploadedEp; ep++) {
-        if (!epMap.has(ep)) missingInternal.push(ep);
-      }
+        // Spezialfall: Komplett fehlende Zwischen-Staffel (z.B. Staffel 2 hat 0 Folgen, aber Staffel 3 hat Folgen!)
+        const isCompletelyMissingIntermediateSeason = presentEps.length === 0 && sNum < maxUploadedSeason;
+        const effectiveTotalExpected = isCompletelyMissingIntermediateSeason
+          ? Math.max(officialCount || 10, 1)
+          : Math.max(officialCount || 0, maxUploadedEp);
 
-      // Zusammenhängende Lücken-Blöcke (insb. Multi-Episode-Gaps wie "Episode 1 & 2 missing, 3 exists") berechnen
-      const internalGapRanges = [];
-      const gapHighlights = [];
-      let hasMultiEpisodeGap = false;
-      if (missingInternal.length > 0) {
-        let rangeStart = missingInternal[0];
-        let rangeEnd = missingInternal[0];
-        for (let idx = 1; idx <= missingInternal.length; idx++) {
-          const cur = missingInternal[idx];
-          if (cur === rangeEnd + 1) {
-            rangeEnd = cur;
-          } else {
-            const count = rangeEnd - rangeStart + 1;
-            const nextExisting = presentEps.find(p => p > rangeEnd) || (rangeEnd + 1);
-            const isMulti = count >= 2;
-            if (isMulti) hasMultiEpisodeGap = true;
-            const labelDe = count === 1
-              ? `Folge ${rangeStart} fehlt (Folge ${nextExisting} vorhanden)`
-              : count === 2
-                ? `Folge ${rangeStart} & ${rangeEnd} fehlen (Folge ${nextExisting} vorhanden)`
-                : `Folge ${rangeStart}–${rangeEnd} fehlen (${count} Folgen vor Folge ${nextExisting})`;
-            const labelEn = count === 1
-              ? `Episode ${rangeStart} missing, ${nextExisting} exists`
-              : count === 2
-                ? `Episode ${rangeStart} & ${rangeEnd} missing, ${nextExisting} exists`
-                : `Episodes ${rangeStart}–${rangeEnd} missing, ${nextExisting} exists`;
-            internalGapRanges.push({
-              startEpisode: rangeStart,
-              endEpisode: rangeEnd,
-              count,
-              nextExistingEpisode: nextExisting,
-              isMultiEpisodeGap: isMulti,
-              labelDe,
-              labelEn
-            });
-            gapHighlights.push(labelDe);
-            if (cur !== undefined) {
-              rangeStart = cur;
+        // Priorität 1: Interne Lücken innerhalb der Staffel (1 .. maxUploadedEp) ODER komplett fehlende Zwischen-Staffel!
+        const missingInternal = [];
+        if (isCompletelyMissingIntermediateSeason) {
+          for (let ep = 1; ep <= Math.min(effectiveTotalExpected, 100); ep++) {
+            missingInternal.push(ep);
+          }
+        } else {
+          for (let ep = 1; ep <= maxUploadedEp; ep++) {
+            if (!epMap.has(ep)) missingInternal.push(ep);
+          }
+        }
+
+        // Zusammenhängende Lücken-Blöcke (insb. Multi-Episode-Gaps wie "Episode 1 & 2 missing, 3 exists") berechnen
+        const internalGapRanges = [];
+        const gapHighlights = [];
+        let hasMultiEpisodeGap = false;
+        if (isCompletelyMissingIntermediateSeason) {
+          hasMultiEpisodeGap = true;
+          const labelDe = `Komplette Staffel ${sNum} fehlt (vor Staffel ${maxUploadedSeason})`;
+          const labelEn = `Entire Season ${sNum} missing (before Season ${maxUploadedSeason})`;
+          internalGapRanges.push({
+            startEpisode: 1,
+            endEpisode: effectiveTotalExpected,
+            count: effectiveTotalExpected,
+            nextExistingEpisode: 1,
+            isMultiEpisodeGap: true,
+            isMissingSeason: true,
+            labelDe,
+            labelEn
+          });
+          gapHighlights.push(labelDe);
+        } else if (missingInternal.length > 0) {
+          let rangeStart = missingInternal[0];
+          let rangeEnd = missingInternal[0];
+          for (let idx = 1; idx <= missingInternal.length; idx++) {
+            const cur = missingInternal[idx];
+            if (cur === rangeEnd + 1) {
               rangeEnd = cur;
+            } else {
+              const count = rangeEnd - rangeStart + 1;
+              const nextExisting = presentEps.find(p => p > rangeEnd) || (rangeEnd + 1);
+              const isMulti = count >= 2;
+              if (isMulti) hasMultiEpisodeGap = true;
+              const labelDe = count === 1
+                ? `Folge ${rangeStart} fehlt (Folge ${nextExisting} vorhanden)`
+                : count === 2
+                  ? `Folge ${rangeStart} & ${rangeEnd} fehlen (Folge ${nextExisting} vorhanden)`
+                  : `Folge ${rangeStart}–${rangeEnd} fehlen (${count} Folgen vor Folge ${nextExisting})`;
+              const labelEn = count === 1
+                ? `Episode ${rangeStart} missing, ${nextExisting} exists`
+                : count === 2
+                  ? `Episode ${rangeStart} & ${rangeEnd} missing, ${nextExisting} exists`
+                  : `Episodes ${rangeStart}–${rangeEnd} missing, ${nextExisting} exists`;
+              internalGapRanges.push({
+                startEpisode: rangeStart,
+                endEpisode: rangeEnd,
+                count,
+                nextExistingEpisode: nextExisting,
+                isMultiEpisodeGap: isMulti,
+                labelDe,
+                labelEn
+              });
+              gapHighlights.push(labelDe);
+              if (cur !== undefined) {
+                rangeStart = cur;
+                rangeEnd = cur;
+              }
             }
           }
         }
-      }
 
-      // Priorität 2: Fehlende Folgen am Staffelende (maxUploadedEp + 1 .. effectiveTotalExpected)
-      const missingTrailing = [];
-      if (effectiveTotalExpected > maxUploadedEp) {
-        for (let ep = maxUploadedEp + 1; ep <= Math.min(effectiveTotalExpected, 250); ep++) {
-          missingTrailing.push(ep);
+        // Priorität 2: Fehlende Folgen am Staffelende (maxUploadedEp + 1 .. effectiveTotalExpected)
+        const missingTrailing = [];
+        if (!isCompletelyMissingIntermediateSeason && effectiveTotalExpected > maxUploadedEp) {
+          for (let ep = maxUploadedEp + 1; ep <= Math.min(effectiveTotalExpected, 250); ep++) {
+            missingTrailing.push(ep);
+          }
         }
-      }
 
-      if (missingInternal.length === 0 && missingTrailing.length === 0 && prereleaseEps.length === 0) {
-        continue;
-      }
+        if (missingInternal.length === 0 && missingTrailing.length === 0 && prereleaseEps.length === 0) {
+          continue;
+        }
 
-      totalInternalMissingEpisodes += missingInternal.length;
-      totalTrailingMissingEpisodes += missingTrailing.length;
+        totalInternalMissingEpisodes += missingInternal.length;
+        totalTrailingMissingEpisodes += missingTrailing.length;
+        totalPrereleaseOnlyEpisodes += prereleaseEps.length;
 
-      let seriesObj = seriesGapsList.find(x => x.tmdbId === sid);
-      if (!seriesObj) {
-        seriesObj = {
-          tmdbId: sid,
-          title: sMeta.title,
-          year: sMeta.year,
-          poster: sMeta.poster,
-          hasInternalGaps: false,
-          hasMultiEpisodeGap: false,
-          internalMissingCount: 0,
-          trailingMissingCount: 0,
-          seasons: []
-        };
-        seriesGapsList.push(seriesObj);
+        let seriesObj = seriesGapsList.find(x => x.tmdbId === sid);
+        if (!seriesObj) {
+          seriesObj = {
+            tmdbId: sid,
+            seriesId: sid,
+            title: sMeta.title,
+            year: sMeta.year,
+            poster: sMeta.poster,
+            hasInternalGaps: false,
+            hasPriorityInternalGaps: false,
+            hasMultiEpisodeGap: false,
+            internalMissingCount: 0,
+            totalInternalMissing: 0,
+            trailingMissingCount: 0,
+            totalTrailingMissing: 0,
+            totalPrerelease: 0,
+            seasons: []
+          };
+          seriesGapsList.push(seriesObj);
+        }
+        if (missingInternal.length > 0) {
+          seriesObj.hasInternalGaps = true;
+          seriesObj.hasPriorityInternalGaps = true;
+        }
+        if (hasMultiEpisodeGap) seriesObj.hasMultiEpisodeGap = true;
+        seriesObj.internalMissingCount += missingInternal.length;
+        seriesObj.totalInternalMissing += missingInternal.length;
+        seriesObj.trailingMissingCount += missingTrailing.length;
+        seriesObj.totalTrailingMissing += missingTrailing.length;
+        seriesObj.totalPrerelease += prereleaseEps.length;
+        seriesObj.seasons.push({
+          seasonNumber: sNum,
+          presentEpisodes: presentEps,
+          uploadedEpisodes: presentEps,
+          uploadedCount: presentEps.length,
+          prereleaseEpisodes: prereleaseEps,
+          maxUploadedEp: isCompletelyMissingIntermediateSeason ? effectiveTotalExpected : maxUploadedEp,
+          expectedTotalEpisodes: effectiveTotalExpected,
+          missingInternal,
+          internalGaps: missingInternal,
+          missingTrailing,
+          trailingMissing: missingTrailing,
+          isCompletelyMissingSeason: isCompletelyMissingIntermediateSeason,
+          hasMultiEpisodeGap,
+          internalGapRanges,
+          gapHighlights
+        });
       }
-      if (missingInternal.length > 0) seriesObj.hasInternalGaps = true;
-      if (hasMultiEpisodeGap) seriesObj.hasMultiEpisodeGap = true;
-      seriesObj.internalMissingCount += missingInternal.length;
-      seriesObj.trailingMissingCount += missingTrailing.length;
-      seriesObj.seasons.push({
-        seasonNumber: sNum,
-        presentEpisodes: presentEps,
-        prereleaseEpisodes: prereleaseEps,
-        maxUploadedEp,
-        expectedTotalEpisodes: effectiveTotalExpected,
-        missingInternal,
-        missingTrailing,
-        hasMultiEpisodeGap,
-        internalGapRanges,
-        gapHighlights
-      });
     }
 
     let totalSeriesWithMultiEpisodeGaps = 0;
@@ -9341,7 +9459,7 @@
       if (s.hasMultiEpisodeGap) totalSeriesWithMultiEpisodeGaps++;
     }
 
-    // Sortiere Serien mit Multi-Episode-Gaps (z.B. E01+E02 fehlt vor E03) und internen Staffel-Lücken immer ganz nach oben!
+    // Sortiere Serien mit Multi-Episode-Gaps (z.B. E01+E02 fehlt vor E03 oder fehlende Zwischen-Staffel) und internen Staffel-Lücken immer ganz nach oben!
     seriesGapsList.sort((a, b) => {
       if (a.hasMultiEpisodeGap !== b.hasMultiEpisodeGap) return a.hasMultiEpisodeGap ? -1 : 1;
       if (a.hasInternalGaps !== b.hasInternalGaps) return a.hasInternalGaps ? -1 : 1;
@@ -9350,7 +9468,17 @@
       return String(a.title || "").localeCompare(String(b.title || ""), "de");
     });
 
+    const totalCheckedCount = Math.max(allCheckedSeriesIds.size, seasonsToInspectBySeries.size, seriesGapsList.length);
     const resultObj = {
+      // Felder für TMA Admin-Panel (08c-tma-netflix-frontend.js)
+      totalSeriesChecked: totalCheckedCount,
+      seriesWithGapsCount: seriesGapsList.length,
+      seriesWithInternalGapsCount: totalSeriesWithInternalGaps,
+      totalMissingInternal: totalInternalMissingEpisodes,
+      totalMissingTrailing: totalTrailingMissingEpisodes,
+      totalPrereleaseOnly: totalPrereleaseOnlyEpisodes,
+      items: seriesGapsList,
+      // Felder für SeriesHealth Studio-Modul & Abwärtskompatibilität
       totalSeriesWithGaps: seriesGapsList.length,
       totalSeriesWithInternalGaps,
       totalSeriesWithMultiEpisodeGaps,
@@ -9810,6 +9938,78 @@
     return filtered;
   }
 
+  // Vergibt für manuell ohne TMDb-ID bestätigte Filme & Serien eine garantiert kollisionsfreie synthetische ID im exklusiven 900.000.000-Bereich.
+  // Prüft vorab in D1 (movies UND series), ob die ID frei ist oder bereits exakt zu demselben Titel gehört, damit sich zwei unterschiedliche Titel NIEMALS überschreiben!
+  async function allocateCollisionFreeManualSyntheticId(env, typeCode = "m", title = "", year = "") {
+    const tc = typeCode === "s" ? "s" : "m";
+    const normT = normalizeCompareString(title || "unbekannt") || "unbekannt";
+    const cleanY = String(year || "").match(/\d{4}/)?.[0] || "";
+
+    // 1. Prüfe im lokalen D1-Katalog-RAM-Cache, ob dieser manuelle Titel bereits existiert (wichtig für Folge-Episoden derselben Serie!)
+    try {
+      const catMap = await ensureLocalD1CatalogTitleMapLoaded(env);
+      if (catMap instanceof Map) {
+        const hitExact = cleanY ? catMap.get(`${tc}_${normT}_${cleanY}`) : null;
+        const hitAny = catMap.get(`${tc}_${normT}_any`);
+        const existingHit = hitExact || hitAny;
+        if (existingHit && Number(existingHit.tmdbId) >= 900000000) {
+          return Number(existingHit.tmdbId);
+        }
+      }
+    } catch (e) {}
+
+    // 2. Deterministische Start-ID im getrennten 900M-Raum (Filme: 900.000.000..944.999.999, Serien: 945.000.000..989.999.999)
+    const baseOffset = tc === "s" ? 945000000 : 900000000;
+    let h = 2166136261;
+    const seedStr = `manual_${tc}_${normT}_${cleanY}`;
+    for (let i = 0; i < seedStr.length; i++) {
+      h ^= seedStr.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    const baseCandidateId = baseOffset + ((h >>> 0) % 44000000);
+
+    // 3. Aktive D1-Kollisionsprüfung über `movies` UND `series`
+    const db = await ensureD1Schema(env);
+    if (!db) return baseCandidateId;
+    try {
+      const rawDb = db._rawDb || db;
+      const upperCheckId = baseCandidateId + 25;
+      const [mRes, sRes] = await rawDb.batch([
+        rawDb.prepare("SELECT tmdb_id, title, release_year FROM movies WHERE tmdb_id >= ?1 AND tmdb_id <= ?2").bind(baseCandidateId, upperCheckId),
+        rawDb.prepare("SELECT tmdb_id, title, release_year FROM series WHERE tmdb_id >= ?1 AND tmdb_id <= ?2").bind(baseCandidateId, upperCheckId)
+      ]);
+      const occupiedMovies = new Map();
+      for (const r of (mRes?.results || [])) {
+        occupiedMovies.set(Number(r.tmdb_id), r);
+      }
+      const occupiedSeries = new Map();
+      for (const r of (sRes?.results || [])) {
+        occupiedSeries.set(Number(r.tmdb_id), r);
+      }
+
+      for (let offset = 0; offset <= 25; offset++) {
+        const candidateId = baseCandidateId + offset;
+        const mRow = occupiedMovies.get(candidateId);
+        const sRow = occupiedSeries.get(candidateId);
+        if (!mRow && !sRow) {
+          return candidateId;
+        }
+        // Falls derselbe Typ und derselbe normalisierte Titel bereits unter dieser ID gespeichert ist -> wiederverwenden!
+        if (tc === "m" && mRow && !sRow && normalizeCompareString(mRow.title) === normT) {
+          if (!cleanY || !mRow.release_year || String(mRow.release_year) === cleanY) {
+            return candidateId;
+          }
+        }
+        if (tc === "s" && sRow && !mRow && normalizeCompareString(sRow.title) === normT) {
+          if (!cleanY || !sRow.release_year || String(sRow.release_year) === cleanY) {
+            return candidateId;
+          }
+        }
+      }
+    } catch (e) {}
+    return baseCandidateId;
+  }
+
   async function getMovieFromD1(env, movieId) {
     if (!movieId) return null;
     const mid = Number(movieId);
@@ -9826,13 +10026,15 @@
         .bind(mid)
         .first();
       if (!row || !row.details_json) return null;
-      if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
+      // Externe & manuelle IDs (>= 8000000) niemals per TMDb-TTL verfallen lassen!
+      if (mid < 8000000 && (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS)) return null;
       const parsed = JSON.parse(row.details_json);
       if (parsed && parsed.title) {
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
         memoryFallback.set(`d1_catalog_movie_${mid}`, parsed);
+        memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
         trackStat("d1Hits");
         return parsed;
       }
@@ -9850,8 +10052,8 @@
       ? parseInt(String(movieObj.releaseDate).split("-")[0], 10) || null
       : null;
     registerLocalD1CatalogTitleInRam("m", mid, movieObj.title, releaseYearForIdx);
-    // Wenn derselbe Film in den letzten 10 Minuten bereits in D1 gespeichert wurde und sich das Poster nicht geändert hat, spare den redundanten D1-Write!
-    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevMovie && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
+    // Wenn derselbe Film in den letzten 30 Minuten bereits in D1 gespeichert wurde und sich Titel/Poster nicht geändert haben, spare den redundanten D1-Write!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 1800000 && prevMovie && prevMovie.title === movieObj.title && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
       return;
     }
     const db = await ensureD1Schema(env);
@@ -9915,13 +10117,15 @@
         .bind(sid)
         .first();
       if (!row || !row.details_json) return null;
-      if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
+      // Externe & manuelle Serien-IDs (>= 8000000) niemals per TMDb-TTL verfallen lassen!
+      if (sid < 8000000 && (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS)) return null;
       const parsed = JSON.parse(row.details_json);
       if (parsed && parsed.title) {
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
         memoryFallback.set(`d1_catalog_series_${sid}`, parsed);
+        memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
         trackStat("d1Hits");
         return parsed;
       }
@@ -9974,9 +10178,9 @@
       ? parseInt(String(seriesObj.releaseDate).split("-")[0], 10) || null
       : null;
     registerLocalD1CatalogTitleInRam("s", sid, seriesObj.title, releaseYearForIdx);
-    // Wenn dieselbe Serie in den letzten 10 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E03)
-    // und sich weder Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
-    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevSeries && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
+    // Wenn dieselbe Serie in den letzten 30 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E24)
+    // und sich weder Titel, Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 1800000 && prevSeries && prevSeries.title === seriesObj.title && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
       return;
     }
     const db = await ensureD1Schema(env);
@@ -10023,8 +10227,9 @@
           )
       ];
 
-      // Bestehende Karteileichen (episode_number > seasonEpisodeCount) gebündelt im selben db.batch bereinigen (1 Subrequest statt N!)
-      if (Array.isArray(seriesObj.seasons)) {
+      // Karteileichen-Bereinigung nur ausführen, wenn eine alternative Schnittfassung / Episode-Group aktiv ist (spart N D1-Statements bei Standard-Serien!)
+      const needsEpisodeGroupPrune = Boolean(FORCE_EPISODE_GROUP_SERIES.has(sid) || seriesObj.versionInfo?.isAlternativeOrder);
+      if (needsEpisodeGroupPrune && Array.isArray(seriesObj.seasons)) {
         for (const s of seriesObj.seasons) {
           const sNum = Number(s?.season_number || 0);
           const maxEp = Number(s?.episode_count || 0);
@@ -10558,7 +10763,27 @@
     const keys = buildTitleResolutionCacheKeys(rawSearchTitle, yr, tc);
     if (!keys) return null;
 
-    // 2. Prüfe RAM + D1 entity_cache auf bereits aufgelöste Titel (inkl. TMDb, alle 7 Fallback-APIs >= 8000000 UND Negativ-Cache für unauffindbare Titel!)
+    // 2. Prüfe zuerst den lokalen D1-Katalog (movies / series Tabellen) per In-Memory-Titel-Index (0 externe API-Requests bei bereits vorhandenen Filmen/Serien, überstimmt auch alte Negativ-Cache-Einträge!)
+    const catalogMap = await ensureLocalD1CatalogTitleMapLoaded(env);
+    if (catalogMap instanceof Map && catalogMap.size > 0) {
+      const catExact = yr ? catalogMap.get(`${tc}_${keys.normT}_${yr}`) : null;
+      const catAny = catalogMap.get(`${tc}_${keys.normT}_any`);
+      const catCandidate = catExact || catAny;
+      if (catCandidate && catCandidate.tmdbId) {
+        const yearAcceptable = !yr || !catCandidate.year || Math.abs(yr - Number(catCandidate.year)) <= 2 || tc === "s";
+        if (yearAcceptable) {
+          return {
+            matchedBy: "d1_catalog",
+            typeCode: catCandidate.typeCode || tc,
+            tmdbId: Number(catCandidate.tmdbId),
+            confidence: catExact ? 98 : 92,
+            source: "D1-Katalog"
+          };
+        }
+      }
+    }
+
+    // 3. Prüfe RAM + D1 entity_cache auf bereits aufgelöste Titel (inkl. TMDb, alle 7 Fallback-APIs >= 8000000 UND Negativ-Cache für unauffindbare Titel!)
     const ramHit =
       memoryFallback.get(keys.exactKey) ||
       (keys.legacySeriesKey ? memoryFallback.get(keys.legacySeriesKey) : null) ||
@@ -10613,26 +10838,6 @@
           details: d1Hit.details || null,
           candidates: d1Hit.candidates || []
         };
-      }
-    }
-
-    // 3. Prüfe den lokalen D1-Katalog (movies / series Tabellen) per In-Memory-Titel-Index (0 externe API-Requests bei bereits vorhandenen Filmen/Serien!)
-    const catalogMap = await ensureLocalD1CatalogTitleMapLoaded(env);
-    if (catalogMap instanceof Map && catalogMap.size > 0) {
-      const catExact = yr ? catalogMap.get(`${tc}_${keys.normT}_${yr}`) : null;
-      const catAny = catalogMap.get(`${tc}_${keys.normT}_any`);
-      const catCandidate = catExact || catAny;
-      if (catCandidate && catCandidate.tmdbId) {
-        const yearAcceptable = !yr || !catCandidate.year || Math.abs(yr - Number(catCandidate.year)) <= 2 || tc === "s";
-        if (yearAcceptable) {
-          return {
-            matchedBy: "d1_catalog",
-            typeCode: catCandidate.typeCode || tc,
-            tmdbId: Number(catCandidate.tmdbId),
-            confidence: catExact ? 98 : 92,
-            source: "D1-Katalog"
-          };
-        }
       }
     }
 
@@ -11628,8 +11833,10 @@
   }
 
   var currentInvocationSubrequests = 0;
+  var subrequestBudgetExhausted = false;
   function resetSubrequestBudget() {
     currentInvocationSubrequests = 0;
+    subrequestBudgetExhausted = false;
   }
   function hasSubrequestBudget(limit = 36) {
     return currentInvocationSubrequests < limit;
@@ -11641,6 +11848,7 @@
     if (memHit) return memHit;
 
     if (!hasSubrequestBudget(40)) {
+      subrequestBudgetExhausted = true;
       return null;
     }
 
@@ -11660,14 +11868,124 @@
     }
   }
 
-  function hashStringToPositiveInt(str, offsetBase = 8000000) {
+  function hashStringToPositiveInt(str, offsetBase = 900000000, moduloRange = 89999999) {
     let h = 2166136261;
     const s = String(str || "");
     for (let i = 0; i < s.length; i++) {
       h ^= s.charCodeAt(i);
       h = Math.imul(h, 16777619);
     }
-    return offsetBase + (Math.abs(h) % 290000);
+    const cleanMod = Math.max(1000000, Number(moduloRange) || 89999999);
+    return offsetBase + ((h >>> 0) % cleanMod);
+  }
+
+  // Löst externe IDs (IMDb tt..., TheTVDB, Wikidata Q...) direkt über TMDb /3/find/ in offizielle TMDb-IDs (1..99.999.999) auf,
+  // damit Serien und Filme wann immer möglich ihre echte TMDb-ID statt einer Fallback-ID erhalten!
+  async function resolveExternalIdToTmdb(env, externalId, externalSource = "imdb_id", preferredTypeCode = null) {
+    const extId = String(externalId || "").trim();
+    if (!extId || !env?.TMDB_BEARER_TOKEN) return null;
+    const findUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(extId)}?external_source=${encodeURIComponent(externalSource)}&language=de-DE`;
+    const findData = await cachedExternalFetchJson(findUrl, {
+      headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` }
+    }, 3500);
+    if (!findData || typeof findData !== "object") return null;
+
+    const trySeriesFirst = preferredTypeCode === "s";
+    const tvHit = Array.isArray(findData.tv_results) && findData.tv_results.length > 0 ? findData.tv_results[0] : null;
+    const movieHit = Array.isArray(findData.movie_results) && findData.movie_results.length > 0 ? findData.movie_results[0] : null;
+
+    if (trySeriesFirst && tvHit?.id) {
+      const det = await fetchSeriesDetails(env, Number(tvHit.id));
+      if (det && det.id) {
+        const yr = String(det.releaseDate || "").split("-")[0] || "k.A.";
+        return {
+          source: `TMDb (via ${externalSource})`,
+          id: Number(det.id),
+          tmdbId: Number(det.id),
+          typeCode: "s",
+          title: det.title,
+          originalTitle: det.title,
+          year: yr,
+          releaseDate: det.releaseDate || "Keine Angabe",
+          fsk: det.fsk || "FSK Keine Angabe",
+          statusText: det.statusText || "Unbekannt",
+          runtime: det.runtime || "Keine Angabe",
+          genres: det.genres || "Serie",
+          directors: det.directors || "Keine Angabe",
+          casts: det.casts || "Keine Angabe",
+          country: det.country || "k.A.",
+          overview: det.overview || "",
+          poster: det.poster_path ? `https://image.tmdb.org/t/p/w185${det.poster_path}` : (det.external_poster_url || ""),
+          external_poster_url: det.external_poster_url || "",
+          vote_average: det.vote_average || 0,
+          numberOfSeasons: det.numberOfSeasons || 1,
+          numberOfEpisodes: det.numberOfEpisodes || 0,
+          seasons: det.seasons || [],
+          confidence: 94
+        };
+      }
+    }
+
+    if (movieHit?.id && preferredTypeCode !== "s") {
+      const det = await fetchMovieDetails(env, Number(movieHit.id));
+      if (det && det.id) {
+        const yr = String(det.releaseDate || "").split("-")[0] || "k.A.";
+        return {
+          source: `TMDb (via ${externalSource})`,
+          id: Number(det.id),
+          tmdbId: Number(det.id),
+          typeCode: "m",
+          title: det.title,
+          originalTitle: det.title,
+          year: yr,
+          releaseDate: det.releaseDate || "Keine Angabe",
+          fsk: det.fsk || "FSK Keine Angabe",
+          runtime: det.runtime || "Keine Angabe",
+          genres: det.genres || "Film",
+          directors: det.directors || "Keine Angabe",
+          casts: det.casts || "Keine Angabe",
+          country: det.country || "k.A.",
+          overview: det.overview || "",
+          poster: det.poster_path ? `https://image.tmdb.org/t/p/w185${det.poster_path}` : (det.external_poster_url || ""),
+          external_poster_url: det.external_poster_url || "",
+          vote_average: det.vote_average || 0,
+          confidence: 94
+        };
+      }
+    }
+
+    if (!trySeriesFirst && tvHit?.id && !preferredTypeCode) {
+      const det = await fetchSeriesDetails(env, Number(tvHit.id));
+      if (det && det.id) {
+        const yr = String(det.releaseDate || "").split("-")[0] || "k.A.";
+        return {
+          source: `TMDb (via ${externalSource})`,
+          id: Number(det.id),
+          tmdbId: Number(det.id),
+          typeCode: "s",
+          title: det.title,
+          originalTitle: det.title,
+          year: yr,
+          releaseDate: det.releaseDate || "Keine Angabe",
+          fsk: det.fsk || "FSK Keine Angabe",
+          statusText: det.statusText || "Unbekannt",
+          runtime: det.runtime || "Keine Angabe",
+          genres: det.genres || "Serie",
+          directors: det.directors || "Keine Angabe",
+          casts: det.casts || "Keine Angabe",
+          country: det.country || "k.A.",
+          overview: det.overview || "",
+          poster: det.poster_path ? `https://image.tmdb.org/t/p/w185${det.poster_path}` : (det.external_poster_url || ""),
+          external_poster_url: det.external_poster_url || "",
+          vote_average: det.vote_average || 0,
+          numberOfSeasons: det.numberOfSeasons || 1,
+          numberOfEpisodes: det.numberOfEpisodes || 0,
+          seasons: det.seasons || [],
+          confidence: 92
+        };
+      }
+    }
+    return null;
   }
 
   const EPISODE_GROUP_TYPES = {
@@ -12419,24 +12737,36 @@
     }
     if (!data || data.Response === "False" || !data.Title) return null;
 
-    const syntheticId = data.imdbID
-      ? (8000000 + (parseInt(String(data.imdbID).replace(/\D/g, ""), 10) % 390000))
-      : hashStringToPositiveInt(`omdb_${data.Title}_${data.Year}`, 8000000);
+    const resolvedTc = data.Type === "series" ? "s" : typeCode;
+    // Zuerst versuchen, die gefundene IMDb-ID direkt in eine echte TMDb-ID (1..99.999.999) aufzulösen!
+    if (data.imdbID && env?.TMDB_BEARER_TOKEN) {
+      const tmdbBridged = await resolveExternalIdToTmdb(env, data.imdbID, "imdb_id", resolvedTc).catch(() => null);
+      if (tmdbBridged && tmdbBridged.id && tmdbBridged.id < 8000000) {
+        return tmdbBridged;
+      }
+    }
+
+    // Disjunkter 100M-Block für OMDb/IMDb (100.000.000 .. 199.999.999) OHNE Modulo-390k-Kürzung!
+    // IMDb-IDs sind global über Filme und Serien hinweg eindeutig (tt1234567 -> 101234567).
+    const rawImdbDigits = data.imdbID ? parseInt(String(data.imdbID).replace(/\D/g, ""), 10) : 0;
+    const omdbId = rawImdbDigits > 0
+      ? (100000000 + (rawImdbDigits % 99999999))
+      : hashStringToPositiveInt(`omdb_${resolvedTc}_${data.Title}_${data.Year}`, 190000000, 9999999);
     const parsedYear = String(data.Year || "").match(/\d{4}/)?.[0] || (year ? String(year) : "k.A.");
     const posterUrl = data.Poster && data.Poster !== "N/A" ? String(data.Poster) : "";
     const voteAvg = parseFloat(data.imdbRating) || 0;
 
     return {
       source: "OMDb",
-      id: syntheticId,
+      id: omdbId,
       imdbId: data.imdbID || null,
-      typeCode: data.Type === "series" ? "s" : typeCode,
+      typeCode: resolvedTc,
       title: String(data.Title).trim(),
       originalTitle: String(data.Title).trim(),
       year: parsedYear,
       releaseDate: parsedYear !== "k.A." ? `${parsedYear}-01-01` : "Keine Angabe",
       runtime: data.Runtime && data.Runtime !== "N/A" ? data.Runtime.replace("min", "Min.") : "Keine Angabe",
-      genres: data.Genre && data.Genre !== "N/A" ? data.Genre : (typeCode === "s" ? "Serie" : "Film"),
+      genres: data.Genre && data.Genre !== "N/A" ? data.Genre : (resolvedTc === "s" ? "Serie" : "Film"),
       directors: data.Director && data.Director !== "N/A" ? data.Director : "Keine Angabe",
       casts: data.Actors && data.Actors !== "N/A" ? data.Actors : "Keine Angabe",
       country: data.Country && data.Country !== "N/A" ? data.Country : "k.A.",
@@ -12566,6 +12896,16 @@
           }
         }
 
+        // Prüfe P345 (IMDb-ID in Wikidata) -> Brücke auf echte TMDb-ID!
+        const imdbClaim = claims.P345?.[0]?.mainsnak?.datavalue?.value;
+        if (imdbClaim && /^tt\d+$/i.test(String(imdbClaim).trim()) && env?.TMDB_BEARER_TOKEN) {
+          const isTvDescPrelim = /(?:serie|fernsehserie|miniserie|staffel|tv series|television series)/i.test(descDe);
+          const bridged = await resolveExternalIdToTmdb(env, String(imdbClaim).trim(), "imdb_id", isTvDescPrelim ? "s" : typeCode).catch(() => null);
+          if (bridged && bridged.id && bridged.id < 8000000) {
+            return bridged;
+          }
+        }
+
         // Falls keine TMDb-ID verknüpft ist, nur zulassen wenn P577 (Veröffentlichungsdatum), P57 (Regisseur), P136 (Genre) oder P345 (IMDb) existiert
         const hasMediaClaims = Boolean(claims.P577 || claims.P57 || claims.P136 || claims.P161 || claims.P345);
         if (!hasMediaClaims) continue;
@@ -12577,11 +12917,13 @@
           ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(String(commonsFile))}?width=400`
           : "";
         const isTvDesc = /(?:serie|fernsehserie|miniserie|staffel|tv series|television series)/i.test(descDe);
-        const syntheticId = 8400000 + (parseInt(String(entityId).replace(/\D/g, ""), 10) % 290000);
+        // Disjunkter 500M-Block für Wikidata (500.000.000 .. 599.999.999) OHNE Modulo-290k-Kürzung!
+        const qDigits = parseInt(String(entityId).replace(/\D/g, ""), 10) || hashStringToPositiveInt(labelDe, 0, 99999999);
+        const wikidataIdNum = 500000000 + (qDigits % 99999999);
 
         return {
           source: "Wikidata",
-          id: syntheticId,
+          id: wikidataIdNum,
           wikidataId: entityId,
           typeCode: isTvDesc ? "s" : typeCode,
           title: String(labelDe).trim(),
@@ -12649,12 +12991,17 @@
           .trim();
         const yrInExtract = extract.match(/\b(19[2-9]\d|20[0-3]\d)\b/)?.[1] || (year ? String(year) : "k.A.");
         const posterUrl = p.thumbnail?.source || p.original?.source || "";
-        const syntheticId = 8700000 + (Number(p.pageid || hashStringToPositiveInt(cleanedWikiTitle, 0)) % 290000);
+        // Disjunkter 600M-Block für Wikipedia DE (600M..649M) und EN (650M..699M) OHNE Modulo-290k-Kürzung!
+        const wikiBase = w.host.startsWith("de.") ? 600000000 : 650000000;
+        const pageIdNum = Number(p.pageid) > 0
+          ? (Number(p.pageid) % 49999999)
+          : hashStringToPositiveInt(cleanedWikiTitle, 0, 49999999);
+        const wikiId = wikiBase + pageIdNum;
         const isTv = /(?:fernsehserie|miniserie|staffel|episoden|television series|tv series)/i.test(`${p.title} ${extract}`);
 
         return {
           source: `MediaWiki (${w.host.split(".")[0].toUpperCase()})`,
-          id: syntheticId,
+          id: wikiId,
           pageId: p.pageid,
           typeCode: isTv ? "s" : typeCode,
           title: cleanedWikiTitle || cleanQ,
@@ -12703,10 +13050,13 @@
       const highResArt = item.artworkUrl100
         ? String(item.artworkUrl100).replace(/100x100bb/i, "600x900bb")
         : "";
-      const syntheticId = 8500000 + (Number(item.collectionId || item.trackId || 0) % 400000 || hashStringToPositiveInt(`itunes_${rawName}`, 400000));
+      // Disjunkter 700M..899M-Block für Apple iTunes DE (getrennt für Film 700M..799M und Serie 800M..899M)
+      const itunesBase = typeCode === "s" ? 800000000 : 700000000;
+      const rawItunesId = Number(item.collectionId || item.trackId || 0);
+      const itunesId = itunesBase + (rawItunesId > 0 ? (rawItunesId % 99999999) : hashStringToPositiveInt(`itunes_${typeCode}_${rawName}`, 0, 99999999));
       return {
         source: "Apple iTunes DE",
-        id: syntheticId,
+        id: itunesId,
         typeCode: typeCode === "s" ? "s" : "m",
         title: rawName,
         originalTitle: String(item.trackCensoredName || rawName),
@@ -12786,9 +13136,10 @@
           .trim();
         const bestTitle = String(m.title?.english || m.title?.romaji || matchedTitle).trim();
         const posterUrl = m.coverImage?.extraLarge || m.coverImage?.large || "";
+        // Disjunkter 300M-Block für AniList (300.000.000 .. 399.999.999) mit 1:1 nativer AniList-ID
         const resultObj = {
           source: "AniList Anime",
-          id: 9500000 + Number(m.id || hashStringToPositiveInt(bestTitle, 200000)),
+          id: 300000000 + (Number(m.id || hashStringToPositiveInt(bestTitle, 0, 99999999)) % 99999999),
           typeCode: resolvedTc,
           title: bestTitle,
           originalTitle: String(m.title?.romaji || m.title?.native || bestTitle),
@@ -12846,9 +13197,10 @@
       const relYear = String(item.year || (item.aired?.from ? String(item.aired.from).split("-")[0] : "") || year || "k.A.");
       const posterUrl = item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || "";
       const bestTitle = String(item.title_german || item.title_english || item.title || matched).trim();
+      // Disjunkter 400M-Block für MyAnimeList / Jikan (400.000.000 .. 499.999.999) mit 1:1 nativer MAL-ID
       return {
         source: "MyAnimeList (Jikan)",
-        id: 9700000 + Number(item.mal_id || hashStringToPositiveInt(bestTitle, 200000)),
+        id: 400000000 + (Number(item.mal_id || hashStringToPositiveInt(bestTitle, 0, 99999999)) % 99999999),
         typeCode: resolvedTc,
         title: bestTitle,
         originalTitle: String(item.title_japanese || item.title || bestTitle),
@@ -12873,29 +13225,40 @@
   }
 
   // Führt die erweiterte 8-Stufen Multi-API Fallback-Kaskade aus:
-  // 1. OMDb -> 2. Apple iTunes DE -> 3. TVMaze (Serien) -> 4. AniList Anime -> 5. Jikan/MAL Anime -> 6. Wikidata (inkl. TMDb-ID Bridge & Q5 Personensperre) -> 7. MediaWiki (Wikipedia DE/EN)
+  // 1. OMDb (inkl. TMDb-Bridge) -> 2. TVMaze (inkl. TMDb-Bridge) -> 3. Wikidata (inkl. TMDb-Bridge) -> 4. Apple iTunes DE -> 5. AniList Anime -> 6. Jikan/MAL Anime -> 7. MediaWiki (Wikipedia DE/EN)
   async function fetchMultiApiFallbackCascade(env, parsed, forceTypeCode = null) {
     const searchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
     if (!searchTitle && !parsed?.imdbId) return null;
     const tc = forceTypeCode || (parsed?.isSeries ? "s" : "m");
     const yr = parsed?.year || null;
 
-    // 1. OMDb API Fallback
+    // 1. OMDb API Fallback (löst bei vorhandener IMDb-ID automatisch zuerst auf die echte TMDb-ID auf!)
     const omdbHit = await fetchOmdbFallback(env, searchTitle, yr, tc, parsed?.imdbId || null).catch(() => null);
-    if (omdbHit) return omdbHit;
+    if (omdbHit && omdbHit.id < 8000000) return omdbHit;
 
-    // 2. Apple iTunes Search API DE (Deutsche Filme & Serien + High-Res Cover)
-    const itunesHit = await fetchItunesFallback(env, searchTitle, yr, tc).catch(() => null);
-    if (itunesHit) return itunesHit;
-
-    // 3. TVMaze API Fallback (speziell für Serien & Episodenlisten)
+    // 2. TVMaze API Fallback (speziell für Serien & Episodenlisten – löst über IMDb/TheTVDB zuerst auf echte TMDb-ID auf!)
+    let tvmazeFallbackObj = null;
     if (tc === "s" || !forceTypeCode) {
       const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
       if (maze && maze.tvmazeId) {
+        if (env?.TMDB_BEARER_TOKEN) {
+          if (maze.imdbId) {
+            const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
+            if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
+          }
+          if (maze.tvdbId) {
+            const bridgedTvdb = await resolveExternalIdToTmdb(env, maze.tvdbId, "tvdb_id", "s").catch(() => null);
+            if (bridgedTvdb && bridgedTvdb.id && bridgedTvdb.id < 8000000) return bridgedTvdb;
+          }
+        }
         const mazeYear = String(maze.releaseDate || "").split("-")[0] || (yr ? String(yr) : "k.A.");
-        return {
+        // Disjunkter 200M-Block für TVMaze (200.000.000 .. 299.999.999) mit 1:1 nativer TVMaze-ID
+        tvmazeFallbackObj = {
           source: "TVMaze",
-          id: Number(maze.tvmazeId) + 9000000,
+          id: 200000000 + (Number(maze.tvmazeId) % 99999999),
+          tvmazeId: Number(maze.tvmazeId),
+          imdbId: maze.imdbId || null,
+          tvdbId: maze.tvdbId || null,
           typeCode: "s",
           title: maze.title,
           originalTitle: maze.title,
@@ -12913,14 +13276,23 @@
           vote_average: maze.vote_average || 0,
           numberOfSeasons: maze.seasons?.length || 1,
           numberOfEpisodes: maze.episodes?.length || 0,
+          seasons: maze.seasons || [],
           confidence: 80
         };
       }
     }
 
-    // 4. Wikidata API Fallback (inkl. P4947/P4983 TMDb-ID Bridge & strikter Q5 Schauspieler-Sperre!)
+    // 3. Wikidata API Fallback (inkl. P4947/P4983/P345 TMDb-ID Bridge & strikter Q5 Schauspieler-Sperre!)
     const wikidataHit = await fetchWikidataFallback(env, searchTitle, yr, tc).catch(() => null);
     if (wikidataHit && wikidataHit.id < 8000000) return wikidataHit;
+
+    // Falls keine echte TMDb-ID über die Brücken gefunden wurde, liefere den besten Zusatz-API-Treffer mit disjunkter 100M-ID:
+    if (omdbHit) return omdbHit;
+    if (tvmazeFallbackObj) return tvmazeFallbackObj;
+
+    // 4. Apple iTunes Search API DE (Deutsche Filme & Serien + High-Res Cover)
+    const itunesHit = await fetchItunesFallback(env, searchTitle, yr, tc).catch(() => null);
+    if (itunesHit) return itunesHit;
 
     // 5. AniList GraphQL API (Anime Filme & Serien)
     const anilistHit = await fetchAniListFallback(env, searchTitle, yr, tc).catch(() => null);
@@ -12930,10 +13302,10 @@
     const jikanHit = await fetchJikanAnimeFallback(env, searchTitle, yr, tc).catch(() => null);
     if (jikanHit) return jikanHit;
 
-    // 7. Wikidata Fallback (falls synthetische ID >= 8000000)
+    // 7. Wikidata Fallback (500M-Block)
     if (wikidataHit) return wikidataHit;
 
-    // 8. MediaWiki (Wikipedia DE/EN) API Fallback
+    // 8. MediaWiki (Wikipedia DE/EN 600M/650M-Block) API Fallback
     const mediaWikiHit = await fetchMediaWikiFallback(env, searchTitle, yr, tc).catch(() => null);
     if (mediaWikiHit) return mediaWikiHit;
 
@@ -12968,6 +13340,10 @@
     }
 
     // 3. Bei Cache-Miss: TMDB API abfragen (Videos direkt in append_to_response gebündelt)
+    if (!hasSubrequestBudget(42)) {
+      subrequestBudgetExhausted = true;
+      return null;
+    }
     const urlDe = `https://api.themoviedb.org/3/movie/${movieId}?append_to_response=credits,release_dates,images,watch/providers,videos&include_image_language=de,en,null&include_video_language=de,en,null&language=de-DE`;
     try {
       const res = await fetchWithTimeout(urlDe, {
@@ -13121,6 +13497,8 @@
 
       const out = {
         tvmazeId: show.id,
+        imdbId: show.externals?.imdb ? String(show.externals.imdb).trim() : null,
+        tvdbId: show.externals?.thetvdb ? Number(show.externals.thetvdb) : null,
         title: show.name || cleanTitle,
         overview: summary,
         runtime,
@@ -13166,6 +13544,10 @@
     }
 
     // 3. Bei Cache-Miss: TMDB API abfragen (+ automatischer TVMaze API Fallback für fehlende Serieninfos)
+    if (!hasSubrequestBudget(42)) {
+      subrequestBudgetExhausted = true;
+      return null;
+    }
     const urlDe = `https://api.themoviedb.org/3/tv/${seriesId}?append_to_response=credits,content_ratings,images,watch/providers,videos&include_image_language=de,en,null&include_video_language=de,en,null&language=de-DE`;
     try {
       const res = await fetchWithTimeout(urlDe, {
@@ -20307,6 +20689,9 @@
     const explicitTmdbId = (typeof rawEntry === "object" && (rawEntry?.tmdb_id || rawEntry?.tmdbId))
       ? Number(rawEntry.tmdb_id || rawEntry.tmdbId)
       : (parsed.tmdbId ? Number(parsed.tmdbId) : null);
+    if (typeof rawEntry === "object" && rawEntry?.bypassNegativeTitleCache) {
+      options = { ...(options || {}), bypassNegativeTitleCache: true };
+    }
     const searchTitle = parsed.cleanTitle;
     if (!explicitTmdbId && typeof rawEntry === "object" && rawEntry?.knownUnmatched && !options?.bypassNegativeTitleCache) {
       return options?.returnUnmatched
@@ -20472,35 +20857,42 @@
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : Number(fbHit.id);
           bestConfidence = Math.max(bestConfidence, fbHit.confidence || 76);
           metadataSource = fbHit.source || "Fallback";
-          seriesDetails = {
-            id: Number(targetId),
-            title: fbHit.title || "Unbekannt",
-            releaseDate: fbHit.releaseDate || (fbHit.year && fbHit.year !== "k.A." ? `${fbHit.year}-01-01` : "Keine Angabe"),
-            fsk: "FSK Keine Angabe",
-            statusText: fbHit.statusText || "Unbekannt",
-            vote_average: Number(fbHit.vote_average || 0),
-            runtime: fbHit.runtime || "Keine Angabe",
-            country: fbHit.country || "k.A.",
-            genres: fbHit.genres || "Serie",
-            directors: fbHit.directors || "Keine Angabe",
-            casts: fbHit.casts || "Keine Angabe",
-            overview: fbHit.overview || "Keine Beschreibung verfügbar.",
-            poster_path: null,
-            external_poster_url: fbHit.poster || fbHit.external_poster_url || "",
-            backdrop_path: null,
-            numberOfSeasons: 1,
-            numberOfEpisodes: 0,
-            seasons: [{ season_number: 1, name: "Staffel 1", episode_count: 0, air_date: "" }],
-            sourceFallback: fbHit.source || "Fallback"
-          };
-          setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
+          if (targetId < 8000000) {
+            seriesDetails = await fetchSeriesDetails(env, targetId);
+          }
+          if (!seriesDetails) {
+            seriesDetails = {
+              id: Number(targetId),
+              title: fbHit.title || "Unbekannt",
+              releaseDate: fbHit.releaseDate || (fbHit.year && fbHit.year !== "k.A." ? `${fbHit.year}-01-01` : "Keine Angabe"),
+              fsk: fbHit.fsk || "FSK Keine Angabe",
+              statusText: fbHit.statusText || "Unbekannt",
+              vote_average: Number(fbHit.vote_average || 0),
+              runtime: fbHit.runtime || "Keine Angabe",
+              country: fbHit.country || "k.A.",
+              genres: fbHit.genres || "Serie",
+              directors: fbHit.directors || "Keine Angabe",
+              casts: fbHit.casts || "Keine Angabe",
+              overview: fbHit.overview || "Keine Beschreibung verfügbar.",
+              poster_path: null,
+              external_poster_url: fbHit.poster || fbHit.external_poster_url || "",
+              backdrop_path: null,
+              numberOfSeasons: Number(fbHit.numberOfSeasons || fbHit.seasons?.length || 1),
+              numberOfEpisodes: Number(fbHit.numberOfEpisodes || 0),
+              seasons: Array.isArray(fbHit.seasons) && fbHit.seasons.length > 0
+                ? fbHit.seasons
+                : [{ season_number: 1, name: "Staffel 1", episode_count: 0, air_date: "" }],
+              sourceFallback: targetId >= 8000000 ? (fbHit.source || "Fallback") : null
+            };
+            setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
+          }
         }
       }
 
       if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
         const maze = await fetchTvMazeSeriesFallback(searchTitle, parsed.year || "");
         if (maze && maze.tvmazeId) {
-          targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : (Number(maze.tvmazeId) + 9000000);
+          targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : (200000000 + (Number(maze.tvmazeId) % 99999999));
           bestConfidence = 68;
           metadataSource = "TVMaze";
           seriesDetails = {
@@ -20529,8 +20921,9 @@
       }
 
       if (!seriesDetails) {
+        const hitSubreqLimit = Boolean((typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34));
         // Nur dann negativ cachen, wenn noch genügend Subrequest-Budget vorhanden war (kein Abbruch mitten in der Kaskade!)
-        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+        if (!hitSubreqLimit && typeof saveTitleResolutionCacheToD1 === "function") {
           await saveTitleResolutionCacheToD1(env, parsed, "s", {
             notFound: true,
             reviewReasonCode: "TMDB_NOT_FOUND",
@@ -20538,14 +20931,14 @@
           });
         }
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, abortedDueToSubrequestBudget: hitSubreqLimit, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
       // DUPLIKAT-SPERRE FÜR SERIEN:
       // Falls eine synthetische Fallback-ID (>= 8000000) aufgelöst wurde, prüfe zuerst, ob in D1 bereits eine offizielle TMDb-Serie (< 8000000)
       // mit demselben Titel existiert (verhindert doppelte Karten wie bei "Generation Kill"!), oder ob TMDb die Serie unter dem kanonischen Titel kennt!
-      if (Number(seriesDetails.id) >= 8000000) {
+      if (Number(seriesDetails.id) >= 8000000 && !options?.confirmManualWithoutTmdb) {
         try {
           const normTargetSeriesTitle = normalizeCompareString(seriesDetails.title || parsed.cleanTitle || searchTitle);
           const catalogMap = typeof ensureLocalD1CatalogTitleMapLoaded === "function"
@@ -20771,8 +21164,8 @@
         seriesDetails.external_poster_url = candidates[0].poster;
       }
 
-      // Erst JETZT (wenn mindestens ein gültiges Episoden-Video gespeichert wurde oder die Serie bereits mit Episoden existiert) in D1 `series` schreiben!
-      if (savedAtLeastOneEpisodeVideo || preExistingSeries) {
+      // Erst JETZT (wenn mindestens ein gültiges Episoden-Video gespeichert wurde oder die Serie bereits mit Episoden existiert oder manuell bestätigt wurde) in D1 `series` schreiben!
+      if (savedAtLeastOneEpisodeVideo || preExistingSeries || options?.allowCreateWithoutVideoFile) {
         await saveSeriesToD1(env, seriesDetails);
       }
 
@@ -20923,7 +21316,8 @@
       }
 
       if (!movieDetails) {
-        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+        const hitSubreqLimit = Boolean((typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34));
+        if (!hitSubreqLimit && typeof saveTitleResolutionCacheToD1 === "function") {
           await saveTitleResolutionCacheToD1(env, parsed, "m", {
             notFound: true,
             reviewReasonCode: "TMDB_NOT_FOUND",
@@ -20931,7 +21325,7 @@
           });
         }
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, abortedDueToSubrequestBudget: hitSubreqLimit, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
@@ -20983,8 +21377,8 @@
       }
 
       // Kein leerer Film-Eintrag ohne gültige Videodatei in D1:
-      // Speichere `movies` in D1 erst dann, wenn tatsächlich eine gültige Videodatei gespeichert wurde (oder bereits existiert)!
-      if (savedMovieVideo || preExistingMovie) {
+      // Speichere `movies` in D1 erst dann, wenn tatsächlich eine gültige Videodatei gespeichert wurde (oder bereits existiert oder manuell bestätigt wurde)!
+      if (savedMovieVideo || preExistingMovie || options?.allowCreateWithoutVideoFile) {
         await saveMovieToD1(env, movieDetails);
       }
 
@@ -21731,6 +22125,8 @@
   }
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
+    const batchWallStartMs = Date.now();
+    const BATCH_WALL_CLOCK_LIMIT_MS = 8000;
     resetSubrequestBudget();
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
@@ -21753,21 +22149,33 @@
     const total = entriesList.length;
     const playlistMode = String(playlistContext?.playlistMode || "both");
     const shouldRegisterVipStream = playlistMode === "vip_stream" || playlistMode === "both";
+    const intraBatchResolvedMap = new Map();
+    const buildIntraBatchTitleKey = (rawObjOrStr) => {
+      if (!rawObjOrStr) return "";
+      const rawTitle = typeof rawObjOrStr === "string"
+        ? rawObjOrStr
+        : String(rawObjOrStr.cleanTitle || rawObjOrStr.series_title || rawObjOrStr.title || rawObjOrStr.filename || rawObjOrStr.file_name || "");
+      const stripped = rawTitle.replace(/\b(?:S\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Season\s*\d+|Folge\s*\d+|Episode\s*\d+)\b.*$/i, "").trim();
+      return normalizeTitleForConfidence(stripped || rawTitle);
+    };
 
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
-      // CLOUDFLARE 50-SUBREQUESTS-LIMIT SCHUTZSCHILD:
-      // Da jetzt jeder externe Fetch (inkl. Details & Fallbacks) exakt gezählt wird, stoppen wir kontrolliert bereits ab >= 26 externen Subrequests
-      // und liefern PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Limit erreicht wird!
-      if (!hasSubrequestBudget(26) && i > 0) {
+      // CLOUDFLARE 50-SUBREQUESTS-LIMIT & 8s-WALL-CLOCK-TIMEOUT SCHUTZSCHILD:
+      // Stoppt kontrolliert ab >= 26 Subrequests ODER >= 8000ms verstrichener Laufzeit
+      // und liefert PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Timeout erreicht wird!
+      const elapsedWallMs = Date.now() - batchWallStartMs;
+      if ((!hasSubrequestBudget(26) || elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && i > 0) {
         partialBatch = true;
         nextStartIndex = i;
-        pauseReason = "SUBREQUEST_LIMIT_GUARD";
+        pauseReason = elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
         const pausedEntry = entriesList[i];
         diagLogsToSave.push({
           msgId: pausedEntry?.msg_id || pausedEntry?.message_id || "",
           stage: "BATCH_GUARD",
           status: "SUBREQUEST_PAUSE",
-          reason: `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
+          reason: elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS
+            ? `Zeit-Guard nach ${elapsedWallMs}ms (>8000ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
+            : `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
           fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
           textPreview: String(pausedEntry?.raw_text || "").slice(0, 200),
           parsedTitle: pausedEntry?.cleanTitle || "",
@@ -21784,16 +22192,40 @@
       let abortedMidBatchDueToBudget = false;
       let abortBatchIndex = i;
 
-      // Sequenzielle Abarbeitung innerhalb des Mini-Batches:
-      // Dadurch befüllt der 1. Eintrag eines Titels (Film, Serie oder auch Nicht erkannt) sofort den RAM/D1-Titel-Cache,
-      // sodass alle weiteren Einträge gleichen Titels 0 externe API-Requests benötigen!
+      // Sequenzielle Abarbeitung innerhalb des Mini-Batches + Intra-Batch Serien-Vererbung:
+      // Sobald Folge 1 einer Serie (z.B. S01E01) im Batch aufgelöst wurde, erben alle nachfolgenden Folgen
+      // derselben Serie im selben Batch direkt deren tmdb_id (0 erneute Such-Aufrufe)!
       for (let bStep = 0; bStep < batch.length; bStep++) {
-        if (!hasSubrequestBudget(28) && (i + bStep) > 0) {
+        const stepElapsedWallMs = Date.now() - batchWallStartMs;
+        if ((!hasSubrequestBudget(28) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
         }
-        const entry = batch[bStep];
+        if (typeof subrequestBudgetExhausted !== "undefined") {
+          subrequestBudgetExhausted = false;
+        }
+        let entry = batch[bStep];
+        const entryNormKey = buildIntraBatchTitleKey(entry);
+        const isEntrySeriesHint = typeof entry === "object" && entry !== null && Boolean(
+          entry.isSeries || entry.typeCode === "s" || entry.type === "series" || entry.season || entry.episode ||
+          /\b(?:S\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(String(entry.filename || entry.file_name || entry.cleanTitle || ""))
+        );
+        if (typeof entry === "object" && entry !== null && !entry.tmdb_id && !entry.tmdbId && entryNormKey && entryNormKey !== "unbekannt") {
+          const inherited = intraBatchResolvedMap.get((isEntrySeriesHint ? "s::" : "m::") + entryNormKey)
+            || (isEntrySeriesHint ? intraBatchResolvedMap.get("any::" + entryNormKey) : null);
+          if (inherited && inherited.tmdbId) {
+            entry = {
+              ...entry,
+              tmdb_id: inherited.tmdbId,
+              typeCode: inherited.typeCode,
+              isSeries: inherited.typeCode === "s",
+              cleanTitle: inherited.cleanTitle || entry.cleanTitle,
+              external_poster_url: entry.external_poster_url || inherited.poster || ""
+            };
+            batch[bStep] = entry;
+          }
+        }
         const entryFileMeta = (typeof entry === "object" && entry?.telegram_file_id)
           ? { fileId: entry.telegram_file_id, fileUniqueId: entry.telegram_unique_id || null, fileSize: entry.file_size || null, mimeType: entry.mime_type || "video/mp4" }
           : null;
@@ -21819,12 +22251,35 @@
             error: String(itemErr?.message || itemErr || "Unbekannter Fehler")
           };
         }
-        // Falls das Element während der Auflösung ans Subrequest-Limit (>= 32) gestoßen ist und deshalb keinen Treffer fand (und nicht aus dem Negativ-Cache kam):
-        // NICHT als 0% CONFLICT_? fehlschlagen lassen, sondern diesen Index sauber für den nächsten Batch vormerken!
-        if ((!stepRes || stepRes.unmatched) && !stepRes?.fromNegativeCache && !hasSubrequestBudget(32) && (i + bStep) > 0) {
+        // Falls das Element während der Auflösung ans Subrequest-Limit gestoßen ist und deshalb keinen Treffer fand (und nicht aus dem Negativ-Cache kam):
+        // NICHT als TMDB_NOT_FOUND fehlschlagen lassen (Breaking Bad S01E01 Fix!), sondern diesen Index sauber für den nächsten Batch vormerken!
+        if (
+          (!stepRes || stepRes.unmatched) &&
+          !stepRes?.fromNegativeCache &&
+          (stepRes?.abortedDueToSubrequestBudget || (typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34)) &&
+          (i + bStep) > 0
+        ) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
+        }
+        // Intra-Batch Vererbungs-Cache aktualisieren, sobald ein Titel sicher (ab 80% ohne Konflikt) aufgelöst wurde:
+        if (stepRes && stepRes.ok && stepRes.tmdbId && !stepRes.contextError && Number(stepRes.confidence || 100) >= 80) {
+          const resolvedMeta = {
+            tmdbId: Number(stepRes.tmdbId),
+            typeCode: stepRes.typeCode === "s" ? "s" : "m",
+            cleanTitle: stepRes.cleanTitle || "",
+            poster: stepRes.poster || ""
+          };
+          if (entryNormKey && entryNormKey !== "unbekannt") {
+            intraBatchResolvedMap.set(resolvedMeta.typeCode + "::" + entryNormKey, resolvedMeta);
+            if (resolvedMeta.typeCode === "s") intraBatchResolvedMap.set("any::" + entryNormKey, resolvedMeta);
+          }
+          const resNormKey = buildIntraBatchTitleKey(stepRes.cleanTitle || "");
+          if (resNormKey && resNormKey !== "unbekannt") {
+            intraBatchResolvedMap.set(resolvedMeta.typeCode + "::" + resNormKey, resolvedMeta);
+            if (resolvedMeta.typeCode === "s") intraBatchResolvedMap.set("any::" + resNormKey, resolvedMeta);
+          }
         }
         batchResults.push(stepRes);
       }
@@ -35361,8 +35816,11 @@
           .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|json))+$/i, "");
         t = t.replace(/\\(\\s*\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\s*\\)/g, " ");
         t = t.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
-        if ((t.match(/\\./g) || []).length >= 2 && !t.includes(" ") && !/^e\\.t\\.?$/i.test(t.trim())) {
-          t = t.replace(/\\./g, " ");
+        t = t.replace(/\\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\\s._-]*(?:5\\.1|7\\.1|2\\.0)\\b/gi, " ");
+        t = t.replace(/\\b(?:XViD|DivX|x264|x265|H\\.?264|H\\.?265|HEVC|BDRiP|BRRiP|DVDRiP|WEBRiP|WEB-DL)-[A-Za-z0-9]{2,12}\\b/gi, " ");
+        if (((t.match(/\\./g) || []).length >= 2 || /[A-Za-zÄÖÜäöüß]{2,}\\.[A-Za-zÄÖÜäöüß0-9]{2,}/.test(t)) && !/^(?:e\\.t\\.?|a\\.d\\.?|o\\.c\\.?|l\\.a\\.?|k\\.o\\.?|s\\.h\\.i\\.e\\.l\\.d\\.?)$/i.test(t.trim())) {
+          t = t.replace(/(?<=[A-Za-zÄÖÜäöüß0-9]{2})\\.(?=[A-Za-zÄÖÜäöüß0-9])/g, " ")
+               .replace(/(?<=[A-Za-zÄÖÜäöüß0-9])\\.(?=[A-Za-zÄÖÜäöüß0-9]{2})/g, " ");
         }
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:ger|deu|eng|jap|jpn|fr|es|it|tr|ru)[\\s._-]+(?:sub|subs|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|japanisch|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:sub|subs|ut|untertitel|dub|dubbed|forced)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
@@ -35385,7 +35843,7 @@
         t = t.replace(/\\bS\\d{1,2}\\s*E\\d{0,3}(?=[A-Za-z]|\\b)/gi, " ");
         t = t.replace(/\\b\\d{3,4}\\s*[x×]\\s*\\d{3,4}\\b/g, "");
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\\s._-]*duper[\\s._-]*cut|extended[\\s._-]*director'?s?[\\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\\s._-]*matte|international|rough|workprint)[\\s._-]*(?:cut|edition|version|fassung|ed\\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\\s._-]*(?:fassung|version|edition|cut)|(?:4k[\\s._-]*)?(?:digitally[\\s._-]*)?(?:remastered|restored)|mastered[\\s._-]*in[\\s._-]*4k|open[\\s._-]*matte|3d|hsbs|sbs|hou)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
-        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|dvdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3|aac|6ch|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
+        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\\.?1|5\\.1|7\\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/[\\(\\[]\\s*(?:the\\s+)?(?:cut|dc|edition|version|fassung)\\s*[\\)\\]]/gi, " ");
         t = t.replace(/[\\(\\[]\\s*(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s*[\\)\\]]/gi, " ");
         t = t.replace(/^(.{2,}?)\\s+(?:[-–:]\\s*)?(?:the\\s+)?(?:cut|edition|version|fassung|redux)\\s*$/i, "$1");
@@ -35564,7 +36022,7 @@
 
         let year = null;
         const parenYm = (" " + withoutExt + " ").match(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i);
-        const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+        const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i);
         if (ym) {
           year = parseInt(ym[1], 10);
           if (!explicitTitle && typeof ym.index === "number" && ym.index >= 2) cutIdx = Math.min(cutIdx, ym.index - 1);
@@ -35975,7 +36433,7 @@
             return ctx;
           }
           if (ctx.isSeriesHeader || /\\b(?:Staffel\\s+\\d+|Miniserie|\\d+\\/\\d+\\s*Folgen|\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel)/i.test(txt)) {
-            const ymHeader = (" " + txt.slice(0, 120) + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+            const ymHeader = (" " + txt.slice(0, 120) + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i);
             if (ymHeader && !ctx.year) ctx.year = parseInt(ymHeader[1], 10);
             const hClean = cleanClientMediaTitle(firstLine.replace(/Staffel\\s*\\d+.*/i, "").replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
             if (hClean && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(hClean)) {
@@ -35988,7 +36446,7 @@
             const isCollectionHeaderLine = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\b\\d+\\s*-\\s*\\d+\\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
             if (!isCollectionHeaderLine) {
               const headSlice = txt.slice(0, 110);
-              const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i);
+              const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i);
               if (ym && ym.index >= 2) {
                 ctx.year = parseInt(ym[1], 10);
                 const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
@@ -36260,7 +36718,7 @@
             const firstTextLine = contentLines[0] || "";
 
             const safeTextForYear = flatText.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
-            const yearInText = (" " + safeTextForYear + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i)?.[1] || effectivePre.year || null;
+            const yearInText = (" " + safeTextForYear + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i)?.[1] || effectivePre.year || null;
             const seInFileRaw = normFileName ? normFileName.match(/\\bS(\\d{1,2})[\\s._-]*E(\\d{1,3})(?:[-–]E?(\\d{1,3}))?\\b/i) : null;
             const seInFile = seInFileRaw
               ? ("S" + String(parseInt(seInFileRaw[1], 10) || 1).padStart(2, "0") + "E" + String(parseInt(seInFileRaw[2], 10) || 1).padStart(2, "0"))
@@ -37141,7 +37599,10 @@
         } catch (e) {}
         saveBackupJobToIndexedDbClient(Boolean(forceServerSync));
         backupImportJob._cpSyncStep = Number(backupImportJob._cpSyncStep || 0) + 1;
-        const shouldSyncServer = Boolean(forceServerSync) || (backupImportJob._cpSyncStep % 5 === 0) || (cp.totalEntries > 0 && cp.cursor >= cp.totalEntries);
+        // Während der aktive Batch-Loop läuft, wird der Checkpoint bereits atomar in jedem /admin/import-batch Request in D1 gespeichert.
+        // Ein separater Server-POST erfolgt nur bei explizitem Pause-Klick (forceServerSync = true), außerhalb des Loops oder bei 100% Abschluss,
+        // damit niemals 2 parallele Worker-Requests kollidieren (Schutz vor HTTP 503).
+        const shouldSyncServer = Boolean(forceServerSync) || (!backupImportJob.running && (backupImportJob._cpSyncStep % 5 === 0)) || (cp.totalEntries > 0 && cp.cursor >= cp.totalEntries);
         if (shouldSyncServer) {
           apiFetchJson(API_BASE + "/admin/import-checkpoint", {
             method: "POST",
@@ -37877,15 +38338,357 @@
           await applyBackupCandidateRemap(itemId, it.tmdbId, it.typeCode || "m", { isConfirmAction: true });
           return;
         }
-        if (it.isUncertain && backupImportJob.uncertainCount > 0) {
-          backupImportJob.uncertainCount = Math.max(0, backupImportJob.uncertainCount - 1);
+        openManualNoTmdbConfirmForReviewItem(itemId);
+      }
+
+      let activeManualNoTmdbContext = null;
+
+      function closeManualNoTmdbConfirmModalClient() {
+        const el = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        if (el) el.style.display = "none";
+        activeManualNoTmdbContext = null;
+      }
+
+      function toggleManualNoTmdbSeriesFieldsClient() {
+        const typeSel = document.getElementById("manualNoTmdbTypeSel");
+        const seWrap = document.getElementById("manualNoTmdbSeriesRow");
+        if (seWrap && typeSel) {
+          seWrap.style.display = typeSel.value === "s" ? "grid" : "none";
         }
-        it.isUncertain = false;
-        it.status = "confirmed";
-        it.resolvedByAdmin = true;
-        it.expandedAfterResolve = false;
-        showHudToast("✅ Zuordnung bestätigt");
-        updateSingleReviewCardInDom(itemId);
+      }
+
+      function openManualNoTmdbConfirmModalClient(ctx) {
+        if (!ctx || typeof ctx !== "object") return;
+        activeManualNoTmdbContext = ctx;
+        let overlay = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        if (!overlay && document.body) {
+          overlay = document.createElement("div");
+          overlay.id = "manualNoTmdbConfirmModalOverlay";
+          overlay.style.cssText =
+            "position:fixed;inset:0;z-index:12000;background:rgba(5,6,12,0.84);backdrop-filter:blur(7px);" +
+            "display:flex;align-items:center;justify-content:center;padding:14px;";
+          document.body.appendChild(overlay);
+        }
+        if (!overlay) return;
+
+        const initType = ctx.typeCode === "s" ? "s" : "m";
+        const initTitle = String(ctx.title || "").trim();
+        const initYear = String(ctx.year && ctx.year !== "k.A." ? ctx.year : "").replace(/[^0-9]/g, "").slice(0, 4);
+        const initSeason = Math.max(1, parseInt(ctx.season, 10) || 1);
+        const initEpisode = Math.max(1, parseInt(ctx.episode, 10) || 1);
+        const initPoster = String(ctx.poster || "").trim();
+        const initGenres = String(ctx.genres || "Manuell bestätigt").trim();
+        const initOverview = String(ctx.overview || "").trim();
+        const sibCount = Number(ctx.siblingCount || 0);
+
+        overlay.style.display = "flex";
+        overlay.innerHTML =
+          '<div style="width:min(95vw,500px);background:#12131c;border:1px solid rgba(168,85,247,0.45);border-radius:14px;padding:16px;box-shadow:0 20px 50px rgba(0,0,0,0.85);color:#f8fafc;max-height:90vh;overflow-y:auto">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">' +
+              '<div>' +
+                '<div style="font-size:15px;font-weight:900;color:#fff">✨ Titel ohne TMDb-ID manuell bestätigen</div>' +
+                '<div style="font-size:11.5px;color:#cbd5e1;margin-top:2px">Erhält eine kollisionsfreie synthetische ID im exklusiven <b>900.000.000+</b> Bereich (überschreibt niemals TMDb- oder API-IDs).</div>' +
+              '</div>' +
+              '<button type="button" class="btn" style="padding:4px 9px;font-size:12px" onclick="closeManualNoTmdbConfirmModalClient()">✕</button>' +
+            '</div>' +
+            (ctx.rawFileName ? (
+              '<div style="background:#0b0c12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:11px;color:#94a3b8;word-break:break-all">' +
+                '📄 <b>Datei / Quelle:</b> <code style="color:#e2e8f0">' + esc(ctx.rawFileName) + '</code>' +
+              '</div>'
+            ) : '') +
+            '<div style="display:flex;flex-direction:column;gap:9px">' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#c084fc;margin-bottom:4px">🎬 Titel (Pflichtfeld)</label>' +
+                '<input id="manualNoTmdbTitleInp" value="' + esc(initTitle) + '" placeholder="z.B. Seltene Dokumentation / Eigenproduktion" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
+              '</div>' +
+              '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📂 Medientyp</label>' +
+                  '<select id="manualNoTmdbTypeSel" onchange="toggleManualNoTmdbSeriesFieldsClient()" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box">' +
+                    '<option value="m"' + (initType === 'm' ? ' selected' : '') + '>🎬 Film (900M–944M)</option>' +
+                    '<option value="s"' + (initType === 's' ? ' selected' : '') + '>📺 Serie (945M–989M)</option>' +
+                  '</select>' +
+                '</div>' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📅 Erscheinungsjahr (optional)</label>' +
+                  '<input id="manualNoTmdbYearInp" type="number" min="1900" max="2099" value="' + esc(initYear) + '" placeholder="z.B. 2024" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
+                '</div>' +
+              '</div>' +
+              '<div id="manualNoTmdbSeriesRow" style="display:' + (initType === 's' ? 'grid' : 'none') + ';grid-template-columns:1fr 1fr;gap:8px;background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.3);border-radius:8px;padding:8px">' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#e9d5ff;margin-bottom:3px">📺 Staffel (S)</label>' +
+                  '<input id="manualNoTmdbSeasonInp" type="number" min="1" max="99" value="' + initSeason + '" style="width:100%;padding:6px 8px;border-radius:6px;background:#12131c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+                '</div>' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#e9d5ff;margin-bottom:3px">🎞️ Episode (E)</label>' +
+                  '<input id="manualNoTmdbEpInp" type="number" min="1" max="999" value="' + initEpisode + '" style="width:100%;padding:6px 8px;border-radius:6px;background:#12131c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+                '</div>' +
+                (sibCount >= 2 ? (
+                  '<label style="grid-column:1 / -1;display:flex;align-items:center;gap:6px;font-size:11.5px;color:#38bdf8;cursor:pointer;margin-top:2px">' +
+                    '<input id="manualNoTmdbApplySiblingsChk" type="checkbox" checked />' +
+                    '<span>⚡ Alle <b>' + sibCount + ' offenen Folgen</b> dieser Serie gleich mit derselben Serien-ID verknüpfen</span>' +
+                  '</label>'
+                ) : '') +
+              '</div>' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">🖼️ Optionaler Poster-Link (HTTPS Bild-URL)</label>' +
+                '<input id="manualNoTmdbPosterInp" value="' + esc(initPoster) + '" placeholder="https://... (leer lassen für Standard-Cover)" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+              '</div>' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">🏷️ Genres (optional)</label>' +
+                '<input id="manualNoTmdbGenresInp" value="' + esc(initGenres) + '" placeholder="z.B. Dokumentation, Konzert, Eigenproduktion" style="width:100%;padding:7px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+              '</div>' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📝 Kurzbeschreibung (optional)</label>' +
+                '<textarea id="manualNoTmdbOverviewInp" rows="2" placeholder="Optionale Beschreibung für die Detailansicht..." style="width:100%;padding:7px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box;resize:vertical">' + esc(initOverview) + '</textarea>' +
+              '</div>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">' +
+              '<button type="button" class="btn" onclick="closeManualNoTmdbConfirmModalClient()">Abbrechen</button>' +
+              '<button type="button" class="btn green" style="background:linear-gradient(90deg,#7c3aed,#059669);border-color:#a855f7;font-weight:800" onclick="submitManualNoTmdbConfirmModalClient()">✨ Ohne TMDb-ID speichern & zuweisen</button>' +
+            '</div>' +
+          '</div>';
+      }
+
+      function openManualNoTmdbConfirmForReviewItem(itemId) {
+        const it = (backupImportJob.reviewItems || []).find(x => String(x.id) === String(itemId));
+        if (!it) return;
+        syncReviewCardDomInputsToItemState(it);
+        const searchInp = document.getElementById("revSearchInp_" + itemId);
+        const seasonInp = document.getElementById("revSeasonInp_" + itemId);
+        const epInp = document.getElementById("revEpInp_" + itemId);
+        const rawFileName = it.rawFileName || it.rawEntry?.raw_file_name || it.rawEntry?.filename || it.rawInput || "";
+        const siblings = getMatchingOpenSeriesSiblingItems(it, null);
+        const guessType = (it.typeCode === "s" || it.season || it.episode || /S\\d{1,2}E\\d{1,3}|Staffel|Folge|Episode/i.test(rawFileName)) ? "s" : "m";
+        openManualNoTmdbConfirmModalClient({
+          mode: "review",
+          itemId: it.id,
+          title: (searchInp && searchInp.value.trim()) ? searchInp.value.trim() : (it.cleanTitle || it.rawInput || "Unbekannter Titel"),
+          year: it.year && it.year !== "k.A." ? it.year : "",
+          typeCode: guessType,
+          season: seasonInp ? seasonInp.value : (it.season || 1),
+          episode: epInp ? epInp.value : (it.episode || 1),
+          poster: it.poster || "",
+          rawFileName,
+          siblingCount: siblings.length
+        });
+      }
+
+      function openManualNoTmdbConfirmForDiagItem(diagIdx) {
+        loadClientDiagnosticLogsFromStorage();
+        const item = clientDiagnosticLogState.logs[diagIdx];
+        if (!item) return;
+        const typeSel = document.getElementById("diagFixType_" + diagIdx);
+        const sInp = document.getElementById("diagFixSeason_" + diagIdx);
+        const eInp = document.getElementById("diagFixEp_" + diagIdx);
+        openManualNoTmdbConfirmModalClient({
+          mode: "diag",
+          diagIdx,
+          title: item.parsedTitle || item.fileName || "Unbekannter Titel",
+          year: "",
+          typeCode: (typeSel ? typeSel.value : (item.detectedType === "series" || item.seasonNumber ? "s" : "m")),
+          season: sInp ? sInp.value : (item.seasonNumber || 1),
+          episode: eInp ? eInp.value : (item.episodeNumber || 1),
+          poster: "",
+          rawFileName: item.fileName || item.rawText || ""
+        });
+      }
+
+      function openManualNoTmdbConfirmForCrudClient() {
+        const typeCode = document.getElementById("crudTypeSel")?.value || "m";
+        const title = document.getElementById("crudTitleInp")?.value.trim() || "";
+        const year = document.getElementById("crudYearInp")?.value.trim() || "";
+        openManualNoTmdbConfirmModalClient({
+          mode: "crud",
+          title,
+          year,
+          typeCode,
+          season: 1,
+          episode: 1,
+          poster: ""
+        });
+      }
+
+      async function submitManualNoTmdbConfirmModalClient() {
+        const ctx = activeManualNoTmdbContext;
+        if (!ctx) return;
+        const title = String(document.getElementById("manualNoTmdbTitleInp")?.value || "").trim();
+        const typeCode = document.getElementById("manualNoTmdbTypeSel")?.value === "s" ? "s" : "m";
+        const year = String(document.getElementById("manualNoTmdbYearInp")?.value || "").trim();
+        const season = Math.max(1, parseInt(document.getElementById("manualNoTmdbSeasonInp")?.value, 10) || 1);
+        const episode = Math.max(1, parseInt(document.getElementById("manualNoTmdbEpInp")?.value, 10) || 1);
+        const poster = String(document.getElementById("manualNoTmdbPosterInp")?.value || "").trim();
+        const genres = String(document.getElementById("manualNoTmdbGenresInp")?.value || "Manuell bestätigt").trim();
+        const overview = String(document.getElementById("manualNoTmdbOverviewInp")?.value || "").trim();
+        const applySiblings = Boolean(document.getElementById("manualNoTmdbApplySiblingsChk")?.checked);
+
+        if (!title) {
+          showHudToast("⚠️ Bitte einen Titel für die manuelle Bestätigung eingeben.");
+          return;
+        }
+
+        const manualCustomMeta = {
+          title,
+          originalTitle: title,
+          year: year || "k.A.",
+          poster,
+          genres: genres || "Manuell bestätigt",
+          overview: overview || "Manuell ohne TMDb-ID bestätigter Titel.",
+          source: "Manuell bestätigt"
+        };
+
+        closeManualNoTmdbConfirmModalClient();
+
+        if (ctx.mode === "review" && ctx.itemId) {
+          const baseItem = (backupImportJob.reviewItems || []).find(x => String(x.id) === String(ctx.itemId));
+          if (!baseItem) return;
+          const sInp = document.getElementById("revSeasonInp_" + ctx.itemId);
+          const eInp = document.getElementById("revEpInp_" + ctx.itemId);
+          if (sInp) sInp.value = String(season);
+          if (eInp) eInp.value = String(episode);
+          baseItem.season = season;
+          baseItem.episode = episode;
+          baseItem.cleanTitle = title;
+          if (year) baseItem.year = year;
+
+          const siblings = (typeCode === "s" && applySiblings)
+            ? getMatchingOpenSeriesSiblingItems(baseItem, null)
+            : [baseItem];
+          const targetList = siblings.length > 0 ? siblings : [baseItem];
+
+          setBusyState(true, "✨ Vergib kollisionsfreie 900M-ID & speichere „" + title + "“ in D1...");
+          try {
+            let sharedAllocatedId = 0;
+            let okCount = 0;
+            for (const sib of targetList) {
+              const ok = await applyBackupCandidateRemap(sib.id, sharedAllocatedId, typeCode, {
+                isConfirmAction: true,
+                confirmManualWithoutTmdb: true,
+                manualCustomMeta,
+                candidateMeta: manualCustomMeta,
+                silentBusy: true
+              });
+              if (ok) {
+                okCount++;
+                if (!sharedAllocatedId && sib.tmdbId) {
+                  sharedAllocatedId = Number(sib.tmdbId);
+                }
+              }
+            }
+            clearClientMediaCaches();
+            showHudToast("✨ Manuell ohne TMDb-ID gespeichert: " + title + (sharedAllocatedId ? (" (#" + sharedAllocatedId + ")") : "") + (targetList.length > 1 ? (" [" + okCount + " Folgen]") : ""));
+          } finally {
+            setBusyState(false);
+          }
+          return;
+        }
+
+        if (ctx.mode === "diag" && ctx.diagIdx !== undefined) {
+          loadClientDiagnosticLogsFromStorage();
+          const item = clientDiagnosticLogState.logs[ctx.diagIdx];
+          if (!item) return;
+          setBusyState(true, "✨ Weise Diagnose-Eintrag kollisionsfreie 900M-ID zu...");
+          try {
+            const rawEntry = item.rawEntry && typeof item.rawEntry === "object"
+              ? { ...item.rawEntry }
+              : {
+                  filename: item.fileName,
+                  raw_file_name: item.fileName,
+                  raw_text: item.rawText,
+                  msg_id: item.msgId,
+                  message_id: item.msgId
+                };
+            if (typeCode === "s") {
+              rawEntry.season = season;
+              rawEntry.episode = episode;
+              rawEntry.isSeries = true;
+            }
+            const r = await apiFetchJson(API_BASE + "/admin/remap-import-item", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                newTmdbId: 0,
+                newTypeCode: typeCode,
+                confirmManualWithoutTmdb: true,
+                manualCustomMeta,
+                season: typeCode === "s" ? season : null,
+                episode: typeCode === "s" ? episode : null,
+                oldTmdbId: item.tmdbId || null,
+                oldTypeCode: item.detectedType === "series" ? "s" : "m",
+                targetChatId: backupImportJob.targetPlaylistChatId || chatId,
+                playlistFolderId: backupImportJob.playlistFolderId || null,
+                playlistMode: backupImportJob.playlistMode || "both",
+                rawEntry
+              })
+            });
+            if (r && r.ok && r.matchedItem) {
+              item.status = "OK";
+              item.tmdbId = r.matchedItem.tmdbId;
+              item.detectedType = typeCode === "s" ? "series" : "movie";
+              item.seasonNumber = typeCode === "s" ? season : null;
+              item.episodeNumber = typeCode === "s" ? episode : null;
+              item.reason = "Manuell ohne TMDb-ID bestätigt → " + r.matchedItem.cleanTitle + " (#" + r.matchedItem.tmdbId + ")";
+              saveClientDiagnosticLogsToStorage();
+              await apiFetchJson(API_BASE + "/admin/import-logs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "resolve",
+                  id: item.id,
+                  msgId: item.msgId,
+                  tmdbId: r.matchedItem.tmdbId,
+                  reason: item.reason
+                })
+              }).catch(() => {});
+              clearClientMediaCaches();
+              showHudToast("✨ Manuell ohne TMDb-ID verknüpft: " + r.matchedItem.cleanTitle + " (#" + r.matchedItem.tmdbId + ")");
+              refreshDiagnosticLogMountDom();
+            } else {
+              showHudToast("⚠️ " + (r?.error || "Manuelle Zuweisung fehlgeschlagen"));
+            }
+          } finally {
+            setBusyState(false);
+          }
+          return;
+        }
+
+        if (ctx.mode === "crud") {
+          const fileId = document.getElementById("crudFileIdInp")?.value.trim() || "";
+          const quality = document.getElementById("crudQualityInp")?.value.trim() || "1080p";
+          const fileSize = document.getElementById("crudFileSizeInp")?.value.trim() || "";
+          const tags = document.getElementById("crudTagsInp")?.value.trim() || "";
+          setBusyState(true, "✨ Lege manuellen Titel ohne TMDb-ID in D1 an...");
+          try {
+            const r = await apiFetchJson(API_BASE + "/admin/media", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "upsert",
+                confirmManualWithoutTmdb: true,
+                typeCode,
+                tmdbId: 0,
+                title,
+                year,
+                poster,
+                genres,
+                overview,
+                season,
+                episode,
+                fileId,
+                quality,
+                fileSize,
+                tags
+              })
+            });
+            clearClientMediaCaches();
+            if (!r || !r.ok) showHudToast("⚠️ " + (r?.error || "Fehler beim Anlegen"));
+            else showHudToast("✨ Manuell angelegt: " + title + " (#" + (r.item?.id || r.item?.tmdbId || "") + ")");
+            state.adminMediaType = typeCode;
+            await loadAdminPanelView();
+          } finally {
+            setBusyState(false);
+          }
+        }
       }
 
       function usePrevMessageForReviewSearch(itemId, queryText) {
@@ -37913,7 +38716,8 @@
 
       async function applyBackupCandidateRemap(itemId, newTmdbId, newTypeCode, options = null) {
         const it = (backupImportJob.reviewItems || []).find(x => String(x.id) === String(itemId));
-        if (!it || !newTmdbId) return false;
+        const isManualNoTmdb = Boolean(options?.confirmManualWithoutTmdb);
+        if (!it || (!newTmdbId && !isManualNoTmdb)) return false;
         syncReviewCardDomInputsToItemState(it);
 
         const cands = Array.isArray(it.candidates) ? it.candidates : [];
@@ -37944,11 +38748,11 @@
           vote_average: Number(matchedCand.voteAverage || 0),
           source: matchedCand.source || it.metadataSource || "Fallback"
         } : {
-          id: Number(newTmdbId),
+          id: Number(newTmdbId || 0),
           title: it.cleanTitle || "Unbekannt",
           year: it.year || "k.A.",
           poster: it.poster || "",
-          source: it.metadataSource || "Fallback"
+          source: isManualNoTmdb ? "Manuell bestätigt" : (it.metadataSource || "Fallback")
         });
 
         const activeChan = backupImportJob.verifiedChannelId || getSavedVerifiedChannelIdClient();
@@ -37965,8 +38769,10 @@
               oldTypeCode: it.typeCode || "m",
               oldSeason: it.season || null,
               oldEpisode: it.episode || null,
-              newTmdbId: Number(newTmdbId),
+              newTmdbId: Number(newTmdbId || 0),
               newTypeCode: newTypeCode === "s" ? "s" : "m",
+              confirmManualWithoutTmdb: isManualNoTmdb,
+              manualCustomMeta: options?.manualCustomMeta || null,
               sourceChannelId: activeChan || "",
               messageId: it.messageId || it.rawEntry?.message_id || it.rawEntry?.msg_id || null,
               candidateMeta,
@@ -38393,6 +39199,7 @@
               '<span style="font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;background:' + badgeBg + '">' + badgeLabel + '</span>' +
               (item.tmdbId && !isResolved ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="confirmBackupReviewItem(\\'' + esc(item.id) + '\\')">✓ Passt so</button>' : '') +
               (seriesSiblings.length >= 2 && batchTmdbId > 0 ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px;background:linear-gradient(90deg,#059669,#0284c7);border-color:#38bdf8" onclick="confirmAllSeriesEpisodesInReview(\\'' + esc(item.id) + '\\',' + batchTmdbId + ',\\'s\\')" title="Speichert alle ' + seriesSiblings.length + ' offenen Folgen dieser Serie jeweils mit ihrer eigenen Staffel/Folge (z.B. S01E09, S01E10, S01E12) in D1">⚡ Alle ' + seriesSiblings.length + ' Folgen bestätigen</button>' : '') +
+              '<button type="button" class="btn purple" style="padding:4px 9px;font-size:11px;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + esc(item.id) + '\\')" title="Titel existiert nicht auf TMDb? Hier manuell mit eigener kollisionsfreier 900M-ID bestätigen">✨ Ohne TMDb-ID bestätigen</button>' +
               (item.tmdbId ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'' + (item.typeCode || 'm') + '\\',' + Number(item.tmdbId) + ',false)">👁️ Vorschau</button>' : '') +
               (isResolved ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="collapseResolvedReviewCard(\\'' + esc(item.id) + '\\')">🔼 Einklappen</button>' : '') +
             '</div>' +
@@ -38470,6 +39277,7 @@
             '</div>' +
             '<input id="revSearchInp_' + esc(item.id) + '" value="' + esc(item.manualSearchQuery || item.cleanTitle || '') + '" placeholder="Manueller Titel oder TMDb-ID (z.B. 603)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchManualCandidatesForReviewItem(\\'' + esc(item.id) + '\\')}" style="flex:1;min-width:160px;padding:5px 9px;border-radius:6px;background:#16161e;color:#fff;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
             '<button type="button" class="btn" style="padding:5px 10px;font-size:11.5px" onclick="searchManualCandidatesForReviewItem(\\'' + esc(item.id) + '\\')">🔍 Alle 8 APIs durchsuchen</button>' +
+            '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + esc(item.id) + '\\')">✨ Ohne TMDb-ID zuweisen</button>' +
           '</div>' +
         '</div>';
       }
@@ -38771,6 +39579,8 @@
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="switchBackupSubTab(\\'review\\')">⚠️ Unsicher / Prüfen: <b style="color:#f59e0b">' + j.uncertainCount.toLocaleString('de-DE') + '</b></div>' +
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="setBackupReviewFilter(\\'failed\\');switchBackupSubTab(\\'review\\')">❌ Nicht erkannt: <b style="color:#f87171">' + j.failedCount.toLocaleString('de-DE') + '</b></div>' +
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="switchBackupSubTab(\\'diaglog\\')">🛠️ Diagnose-Log: <b style="color:#60a5fa">' + getDiagnosticLogTotalCountClient() + '</b></div>' +
+                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🧠 D1-Pre-Seed: <b style="color:#34d399">' + Number(j.d1PreSeedCount || 0).toLocaleString('de-DE') + ' Titel</b>' + (Number(j.browserCacheHitsCount || 0) > 0 ? (' <span style="color:#38bdf8;font-size:10.5px">(⚡ ' + Number(j.browserCacheHitsCount).toLocaleString('de-DE') + ' Hits)</span>') : '') + '</div>' +
+                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🎛️ Modus: <b style="color:' + (j.currentBatchModeColor || '#38bdf8') + '">' + esc(j.currentBatchModeLabel || '⚡ Standard (10/Batch)') + '</b></div>' +
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px">⚡ Tempo: <b>' + speedPerSec + ' Titel/s</b>' + (j.running && etaSec > 0 ? ' (ETA ~' + etaStr + ')' : '') + '</div>' +
               '</div>' +
               (Array.isArray(j.livePosterFeed) && j.livePosterFeed.length > 0 ? (
@@ -39205,6 +40015,7 @@
                       '<input id="diagFixSeason_' + origIdx + '" type="number" value="' + esc(item.seasonNumber || 1) + '" placeholder="Staffel" style="width:68px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" title="Staffel" />' +
                       '<input id="diagFixEp_' + origIdx + '" type="number" value="' + esc(item.episodeNumber || 1) + '" placeholder="Folge" style="width:68px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" title="Folge" />' +
                       '<button type="button" class="btn green" style="padding:5px 9px;font-size:11px" onclick="quickAssignDiagLogEntryClient(' + origIdx + ')">💾 Jetzt verknüpfen</button>' +
+                      '<button type="button" class="btn purple" style="padding:5px 9px;font-size:11px;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForDiagItem(' + origIdx + ')">✨ Ohne TMDb-ID bestätigen</button>' +
                     '</div>'
                   ) : '') +
                 '</div>';
@@ -39308,6 +40119,43 @@
           .replace(/[^a-z0-9]+/g, "")
           .trim();
 
+        // D1-Katalog Pre-Seed: Einmalig beim Start alle bereits in D1 gespeicherten Filme & Serien in den Browser-Cache vorladen (0 Such-Calls ab Eintrag #1!)
+        if (!backupImportJob._d1CatalogPreSeeded) {
+          backupImportJob._d1CatalogPreSeeded = true;
+          backupImportJob.currentBatchModeLabel = "🧠 Lade D1-Pre-Seed...";
+          backupImportJob.currentBatchModeColor = "#38bdf8";
+          renderBackupImportBoxDom();
+          try {
+            const preRes = await apiFetchJson(API_BASE + "/admin/catalog-preseed", { method: "GET" });
+            if (preRes && preRes.ok && Array.isArray(preRes.items)) {
+              let preSeedAdded = 0;
+              for (const pItem of preRes.items) {
+                if (!pItem || !pItem.tmdbId || !pItem.title) continue;
+                const pNorm = normClientTitleKey(pItem.title);
+                if (!pNorm || pNorm === "unbekannt") continue;
+                const pType = pItem.typeCode === "s" ? "s" : "m";
+                const pYear = pItem.year ? String(pItem.year) : "any";
+                const cacheObj = {
+                  tmdbId: Number(pItem.tmdbId),
+                  typeCode: pType,
+                  cleanTitle: String(pItem.title),
+                  poster: pItem.poster || ""
+                };
+                backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
+                if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
+                  backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
+                }
+                preSeedAdded++;
+              }
+              backupImportJob.d1PreSeedCount = preSeedAdded;
+              if (preSeedAdded > 0) {
+                backupImportJob.recentLog.push("🧠 D1-Katalog Pre-Seed geladen: " + preSeedAdded.toLocaleString("de-DE") + " Filme & Serien vorab im Browser-Cache bereit (0 Such-Calls)!");
+              }
+            }
+          } catch (preErr) {}
+          renderBackupImportBoxDom();
+        }
+
         while (backupImportJob.running && !backupImportJob.paused && backupImportJob.cursor < backupImportJob.entries.length) {
           // Wenn der Admin gerade aktiv eine Übersicht lädt, kurz warten, damit es keinen HTTP 503 Konflikt gibt
           let waitGuard = 0;
@@ -39318,10 +40166,87 @@
           if (!backupImportJob.running || backupImportJob.paused) break;
 
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
-          const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
+          // Lookahead auf die nächsten 16 Einträge für adaptive Batch-Größe (🚀 Turbo bei bekannten D1-/Serien-Titeln, 🛡️ Gedrosselt nach Cooldown)
+          const lookaheadSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + 16);
+          let lookaheadCacheHits = 0;
+          for (const lkItem of lookaheadSlice) {
+            if (!lkItem || typeof lkItem !== "object") continue;
+            if (lkItem.tmdb_id || lkItem.tmdbId) {
+              lookaheadCacheHits++;
+              continue;
+            }
+            const lkKey = normClientTitleKey(lkItem.cleanTitle || lkItem.title || "");
+            if (!lkKey) continue;
+            const lkType = (lkItem.typeCode === "s" || lkItem.isSeries || lkItem.season || lkItem.episode) ? "s" : "m";
+            const lkYear = lkItem.year && lkItem.year !== "k.A." ? String(lkItem.year) : "any";
+            if (
+              backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_" + lkYear]?.tmdbId ||
+              backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_any"]?.tmdbId
+            ) {
+              lookaheadCacheHits++;
+            }
+          }
+
+          let effectiveBatchSize = DEFAULT_BATCH_SIZE;
+          if (curRetryCount > 0) {
+            effectiveBatchSize = 1;
+            backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
+            backupImportJob.currentBatchModeColor = "#fbbf24";
+          } else if (backupImportJob._lastBatchHadLatencyCooldown) {
+            effectiveBatchSize = 6;
+            backupImportJob._lastBatchHadLatencyCooldown = false;
+            backupImportJob.currentBatchModeLabel = "🛡️ Gedrosselt (6/Batch nach Pause)";
+            backupImportJob.currentBatchModeColor = "#f59e0b";
+          } else if (lookaheadCacheHits >= 8) {
+            effectiveBatchSize = 16;
+            backupImportJob.currentBatchModeLabel = "🚀 Turbo (16/Batch • Cache-Hits)";
+            backupImportJob.currentBatchModeColor = "#34d399";
+          } else {
+            effectiveBatchSize = DEFAULT_BATCH_SIZE;
+            backupImportJob.currentBatchModeLabel = "⚡ Standard (" + DEFAULT_BATCH_SIZE + "/Batch)";
+            backupImportJob.currentBatchModeColor = "#38bdf8";
+          }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
-          // Browser-Titel-Cache: Bereits im Lauf aufgelöste Serien/Filme direkt mit ihrer TMDb-ID annotieren (0 Such-Calls im Worker!)
-          const slice = rawSlice.map(entry => {
+
+          // 1. Set-basierte Deduplizierung identischer Payload-Einträge innerhalb des Batches VOR dem D1-/Worker-Check
+          const seenBatchItemKeys = new Set();
+          const dedupedRawSlice = [];
+          const dedupedOrigIndices = [];
+          let batchDedupDropped = 0;
+          for (let sIdx = 0; sIdx < rawSlice.length; sIdx++) {
+            const item = rawSlice[sIdx];
+            if (!item || typeof item !== "object") {
+              dedupedRawSlice.push(item);
+              dedupedOrigIndices.push(sIdx);
+              continue;
+            }
+            const rawTitle = String(item.cleanTitle || item.title || item.filename || item.file_name || item.raw_file_name || item.rawInput || "").trim();
+            const normTitle = normClientTitleKey(rawTitle);
+            const tgIdKey = String(item.telegram_unique_id || item.file_unique_id || item.telegram_file_id || item.file_id || item.msg_id || item.message_id || "").trim();
+            const seKey = (item.season || item.episode) ? ("s" + (item.season || 0) + "e" + (item.episode || 0)) : "";
+            const yKey = String(item.year || "").trim();
+            if (tgIdKey || normTitle) {
+              const compositeKey = tgIdKey + "::" + normTitle + "::" + seKey + "::" + yKey;
+              if (seenBatchItemKeys.has(compositeKey)) {
+                batchDedupDropped++;
+                continue;
+              }
+              seenBatchItemKeys.add(compositeKey);
+            }
+            dedupedRawSlice.push(item);
+            dedupedOrigIndices.push(sIdx);
+          }
+
+          if (dedupedRawSlice.length === 0) {
+            backupImportJob.cursor += rawSlice.length;
+            backupImportJob.duplicatesInDb += batchDedupDropped;
+            saveBackupCheckpointClient(false);
+            renderBackupImportBoxDom();
+            continue;
+          }
+
+          // 2. Browser-Titel-Cache: Bereits im Lauf oder per D1-Pre-Seed aufgelöste Serien/Filme direkt mit ihrer TMDb-ID annotieren (0 Such-Calls im Worker!)
+          const slice = dedupedRawSlice.map(entry => {
             if (!entry || typeof entry !== "object") return entry;
             if (entry.tmdb_id || entry.tmdbId || entry.knownUnmatched) return entry;
             const rawTitle = entry.cleanTitle || entry.title || "";
@@ -39337,6 +40262,7 @@
               return { ...entry, knownUnmatched: true };
             }
             if (cachedHit.tmdbId) {
+              backupImportJob.browserCacheHitsCount = Number(backupImportJob.browserCacheHitsCount || 0) + 1;
               return {
                 ...entry,
                 tmdb_id: cachedHit.tmdbId,
@@ -39349,8 +40275,10 @@
             return entry;
           });
           let hadRateWarning = false;
+          let batchLatencyMs = 0;
           try {
             const cpPayload = buildCurrentBackupCheckpointPayload();
+            const tBatchStartMs = Date.now();
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -39367,6 +40295,7 @@
                 checkpoint: cpPayload
               })
             });
+            batchLatencyMs = Date.now() - tBatchStartMs;
             if (r && r.ok) {
               delete backupImportJob.cursorRetries[backupImportJob.cursor];
               if (r.playlistFolder?.id) {
@@ -39374,20 +40303,25 @@
                 backupImportJob.customPlaylistName = r.playlistFolder.name;
               }
               const batchStartIdx = backupImportJob.cursor;
-              // 40-Subrequest-Guard: Wenn der Worker PARTIAL_BATCH meldet, rückt der Cursor exakt um nextStartIndex vor und macht nahtlos weiter!
-              const processedCount = (r.status === "PARTIAL_BATCH" && typeof r.nextStartIndex === "number" && r.nextStartIndex > 0)
+              // 40-Subrequest- & 8s-Zeit-Guard: Wenn der Worker PARTIAL_BATCH meldet, rückt der Cursor exakt zum nächsten unverarbeiteten Original-Index vor!
+              const processedSliceCount = (r.status === "PARTIAL_BATCH" && typeof r.nextStartIndex === "number" && r.nextStartIndex > 0)
                 ? r.nextStartIndex
                 : slice.length;
-              backupImportJob.cursor += processedCount;
+              const rawAdvanceCount = (r.status === "PARTIAL_BATCH" && processedSliceCount < dedupedOrigIndices.length)
+                ? dedupedOrigIndices[processedSliceCount]
+                : rawSlice.length;
+              const processedCount = processedSliceCount;
+              backupImportJob.cursor += rawAdvanceCount;
               backupImportJob.moviesSaved += Number(r.moviesAddedCount || 0);
               backupImportJob.seriesSaved += Number(r.seriesAddedCount || 0);
               backupImportJob.failedCount += Number(r.failedCount || 0);
-              backupImportJob.duplicatesInDb += Number(r.duplicatesCount || 0);
+              backupImportJob.duplicatesInDb += Number(r.duplicatesCount || 0) + batchDedupDropped;
               backupImportJob.mergedQualitiesInDb += Number(r.mergedQualitiesCount || 0);
               backupImportJob.uncertainCount += Number(r.uncertainCount || 0);
 
               if (Array.isArray(r.batchItems)) {
                 const batchDiagEntries = [];
+                const newlyResolvedSeriesMap = {};
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
                   const isFailedItem = bItem.status === "failed" || !bItem.tmdbId;
@@ -39410,17 +40344,21 @@
                       if (itemTypeCode === "s" || itemYearKey === "any") {
                         backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = cacheVal;
                       }
+                      newlyResolvedSeriesMap[itemTypeCode + "_" + normInKey] = cacheVal;
                     }
                     if (normResKey && normResKey !== "unbekannt") {
                       backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_" + itemYearKey] = cacheVal;
                       if (itemTypeCode === "s" || itemYearKey === "any") {
                         backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_any"] = cacheVal;
                       }
+                      newlyResolvedSeriesMap[itemTypeCode + "_" + normResKey] = cacheVal;
                     }
                   } else if (isFailedItem && bItem.reviewReasonCode === "TMDB_NOT_FOUND" && normInKey && normInKey !== "unbekannt") {
-                    backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = { knownUnmatched: true };
-                    if (itemTypeCode === "s" || itemYearKey === "any") {
-                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = { knownUnmatched: true };
+                    if (!backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"]?.tmdbId) {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = { knownUnmatched: true };
+                      if (itemTypeCode === "s" || itemYearKey === "any") {
+                        backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = { knownUnmatched: true };
+                      }
                     }
                   }
                   const computedReason = bItem.errorReason || (isFailedItem
@@ -39473,27 +40411,113 @@
                   });
                 }
                 if (r.status === "PARTIAL_BATCH") {
+                  const isTimeGuard = r.pauseReason === "TIME_LIMIT_GUARD";
                   batchDiagEntries.push({
                     msgId: null,
-                    fileName: "Subrequest-Guard (Pause bei Index +" + processedCount + ")",
+                    fileName: (isTimeGuard ? "8s-Zeit-Guard" : "Subrequest-Guard") + " (Pause bei Index +" + processedCount + ")",
                     rawText: "",
                     status: "SUBREQUEST_PAUSE",
-                    reason: "40-Subrequest-Schutz erreicht (" + (r.subrequestCount || 40) + " Subrequests) – nahtlose Fortsetzung im nächsten Batch",
+                    reason: isTimeGuard
+                      ? "8s-Laufzeit-Schutz erreicht (" + batchLatencyMs + "ms) – nahtlose Fortsetzung im nächsten Batch"
+                      : "Subrequest-Schutz erreicht (" + (r.subrequestCount || 26) + " Subrequests) – nahtlose Fortsetzung im nächsten Batch",
                     detectedType: "system",
                     parsedTitle: "PARTIAL_BATCH"
                   });
-                  backupImportJob.recentLog.push("🛡️ 40-Subrequest-Guard aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
+                  backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "8s-Zeit-Guard" : "Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
                 }
                 appendClientDiagnosticLogs(batchDiagEntries, false);
                 if (backupImportJob.livePosterFeed.length > 16) {
                   backupImportJob.livePosterFeed = backupImportJob.livePosterFeed.slice(0, 16);
+                }
+
+                // AUTO-NACHHEILUNG (Breaking Bad S01E01 Fix):
+                // Falls eine frühere Episode derselben Serie im aktuellen Lauf wegen Subrequest-Cutoff oder temporärem Timeout
+                // als TMDB_NOT_FOUND liegen geblieben ist, verknüpfe sie jetzt sofort automatisch mit der erkannten TMDb-ID!
+                if (Object.keys(newlyResolvedSeriesMap).length > 0 && Array.isArray(backupImportJob.reviewItems)) {
+                  const orphansToHeal = [];
+                  for (let ri = 0; ri < backupImportJob.reviewItems.length; ri++) {
+                    const prevRev = backupImportJob.reviewItems[ri];
+                    if (!prevRev || prevRev.status !== "failed" || prevRev.tmdbId || prevRev._autoHealed) continue;
+                    const pType = (prevRev.typeCode === "s" || prevRev.season || prevRev.episode) ? "s" : "m";
+                    const pNorm = normClientTitleKey(prevRev.cleanTitle || prevRev.rawEntry?.cleanTitle || "");
+                    const matchedResolved = pNorm ? newlyResolvedSeriesMap[pType + "_" + pNorm] : null;
+                    if (matchedResolved && matchedResolved.tmdbId) {
+                      prevRev._autoHealed = true;
+                      orphansToHeal.push({ revItem: prevRev, resolved: matchedResolved });
+                    }
+                  }
+                  if (orphansToHeal.length > 0) {
+                    try {
+                      const healEntries = orphansToHeal.map(o => ({
+                        ...(typeof o.revItem.rawEntry === "object" && o.revItem.rawEntry ? o.revItem.rawEntry : { filename: o.revItem.rawInput }),
+                        tmdb_id: o.resolved.tmdbId,
+                        typeCode: o.resolved.typeCode,
+                        isSeries: o.resolved.typeCode === "s",
+                        cleanTitle: o.resolved.cleanTitle || o.revItem.cleanTitle,
+                        external_poster_url: o.resolved.poster || "",
+                        bypassNegativeTitleCache: true
+                      }));
+                      const healRes = await apiFetchJson(API_BASE + "/admin/import-batch", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          entries: healEntries,
+                          sourceChannelId: activeChan,
+                          playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
+                          playlistMode: backupImportJob.playlistMode || "both",
+                          playlistFolderId: backupImportJob.playlistFolderId || null,
+                          targetChatId: backupImportJob.targetPlaylistChatId || chatId,
+                          sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
+                          deferKvWrite: true
+                        })
+                      });
+                      if (healRes && healRes.ok && Array.isArray(healRes.batchItems)) {
+                        for (let hi = 0; hi < orphansToHeal.length; hi++) {
+                          const healedItem = healRes.batchItems[hi];
+                          const targetRev = orphansToHeal[hi].revItem;
+                          if (healedItem && healedItem.tmdbId) {
+                            targetRev.status = healedItem.ingestStatus || "added";
+                            targetRev.isUncertain = false;
+                            targetRev.contextError = false;
+                            targetRev.reviewReasonCode = null;
+                            targetRev.errorReason = null;
+                            targetRev.tmdbId = healedItem.tmdbId;
+                            targetRev.cleanTitle = healedItem.cleanTitle || targetRev.cleanTitle;
+                            targetRev.year = healedItem.year || targetRev.year;
+                            targetRev.poster = healedItem.poster || orphansToHeal[hi].resolved.poster || "";
+                            targetRev.reason = "🩹 Automatisch nachgeheilt → " + targetRev.cleanTitle + " (TMDb #" + healedItem.tmdbId + ")";
+                            backupImportJob.failedCount = Math.max(0, Number(backupImportJob.failedCount || 0) - 1);
+                            if (healedItem.typeCode === "s") backupImportJob.seriesSaved++;
+                            else backupImportJob.moviesSaved++;
+                            if (Array.isArray(backupImportJob.clientDiagLogs)) {
+                              for (const dLog of backupImportJob.clientDiagLogs) {
+                                if (dLog && dLog.status === "TMDB_NOT_FOUND" &&
+                                    ((targetRev.msgId && Number(dLog.msgId) === Number(targetRev.msgId)) ||
+                                     dLog.fileName === (targetRev.rawFileName || targetRev.rawInput))) {
+                                  dLog.status = "OK";
+                                  dLog.reviewReasonCode = null;
+                                  dLog.tmdbId = healedItem.tmdbId;
+                                  dLog.parsedTitle = targetRev.cleanTitle;
+                                  dLog.reason = targetRev.reason;
+                                }
+                              }
+                            }
+                            const seLabel = targetRev.season
+                              ? (" S" + String(targetRev.season).padStart(2, "0") + "E" + String(targetRev.episode || 1).padStart(2, "0"))
+                              : "";
+                            backupImportJob.recentLog.push("🩹 Auto-Nachheilung: " + targetRev.cleanTitle + seLabel + " nachträglich mit TMDb #" + healedItem.tmdbId + " verknüpft!");
+                          }
+                        }
+                      }
+                    } catch (healErr) {}
+                  }
                 }
               }
 
               if (Array.isArray(r.sampleTitles) && r.sampleTitles.length > 0) {
                 backupImportJob.recentLog.push("✅ Batch #" + Math.ceil(backupImportJob.cursor / DEFAULT_BATCH_SIZE) + " [" + (backupImportJob.customPlaylistName || "Playlist") + "]: " + r.sampleTitles.slice(0, 3).join(", "));
               }
-              saveBackupCheckpointClient();
+              saveBackupCheckpointClient(false);
             } else {
               hadRateWarning = true;
               const errMsg = String(r?.error || "Kurze Pause...");
@@ -39502,7 +40526,7 @@
               if (nextRetry >= 3) {
                 isolateFailedEntryAtCursor(errMsg);
               } else {
-                saveBackupCheckpointClient();
+                saveBackupCheckpointClient(false);
                 const waitMs = 1800 * nextRetry;
                 backupImportJob.recentLog.push("⏳ Einzel-Prüfung (" + nextRetry + "/2) bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
                 await new Promise(res => setTimeout(res, waitMs));
@@ -39516,14 +40540,24 @@
             if (nextRetry >= 3) {
               isolateFailedEntryAtCursor(errMsg);
             } else {
-              saveBackupCheckpointClient();
+              saveBackupCheckpointClient(false);
               const waitMs = 2200 * nextRetry;
               backupImportJob.recentLog.push("⏳ Rate-Limit / Einzel-Isolierung (" + nextRetry + "/2) bei #" + backupImportJob.cursor + ": " + errMsg);
               await new Promise(res => setTimeout(res, waitMs));
             }
           }
           renderBackupImportBoxDom();
-          await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
+          // Auto-Pause (5s Cooldown), sobald die D1-/Worker-Batch-Latenz 2 Sekunden (2000ms) überschreitet, um HTTP 503 Gateway-Timeouts proaktiv zu verhindern
+          if (batchLatencyMs > 2000 && backupImportJob.running && !backupImportJob.paused) {
+            backupImportJob._lastBatchHadLatencyCooldown = true;
+            backupImportJob.currentBatchModeLabel = "⏳ Auto-Pause (5s Cooldown)";
+            backupImportJob.currentBatchModeColor = "#fbbf24";
+            backupImportJob.recentLog.push("⏳ Auto-Pause (5s Cooldown): D1-/Worker-Batch-Latenz (" + batchLatencyMs + "ms > 2000ms) – Schutz vor HTTP 503 Gateway-Timeout aktiv");
+            renderBackupImportBoxDom();
+            await new Promise(res => setTimeout(res, 5000));
+          } else {
+            await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
+          }
         }
 
         backupImportJob.running = false;
@@ -39953,7 +40987,8 @@
               r = await apiFetchJson(
                 API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
                 "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
-                "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "")
+                "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "") +
+                (forceNetworkRefresh ? "&refresh=1" : "")
               );
               if (r && r.ok) {
                 window._lastAdminOverviewCache = r;
@@ -39986,7 +41021,16 @@
           const mediaList = r.media || [];
           const qStats = r.queueStats || { pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 };
           const adminPlaylists = r.playlists || [];
-          const seriesGaps = r.seriesGaps || { totalSeriesChecked: 0, seriesWithGapsCount: 0, seriesWithInternalGapsCount: 0, totalMissingInternal: 0, totalMissingTrailing: 0, totalPrereleaseOnly: 0, items: [] };
+          const rawSeriesGaps = r.seriesGaps || {};
+          const seriesGaps = {
+            totalSeriesChecked: Number(rawSeriesGaps.totalSeriesChecked ?? (Array.isArray(rawSeriesGaps.items || rawSeriesGaps.series) ? (rawSeriesGaps.items || rawSeriesGaps.series).length : 0)),
+            seriesWithGapsCount: Number(rawSeriesGaps.seriesWithGapsCount ?? rawSeriesGaps.totalSeriesWithGaps ?? 0),
+            seriesWithInternalGapsCount: Number(rawSeriesGaps.seriesWithInternalGapsCount ?? rawSeriesGaps.totalSeriesWithInternalGaps ?? 0),
+            totalMissingInternal: Number(rawSeriesGaps.totalMissingInternal ?? rawSeriesGaps.totalInternalMissingEpisodes ?? 0),
+            totalMissingTrailing: Number(rawSeriesGaps.totalMissingTrailing ?? rawSeriesGaps.totalTrailingMissingEpisodes ?? 0),
+            totalPrereleaseOnly: Number(rawSeriesGaps.totalPrereleaseOnly ?? rawSeriesGaps.totalPrereleaseEpisodes ?? 0),
+            items: Array.isArray(rawSeriesGaps.items) ? rawSeriesGaps.items : (Array.isArray(rawSeriesGaps.series) ? rawSeriesGaps.series : [])
+          };
           const allReports = Array.isArray(r.reports) ? r.reports : (window._adminReportsCache || []);
           window._adminReportsCache = allReports;
           if (!clientDiagnosticLogState.loadedFromD1Once && !backupImportJob.running) {
@@ -40262,23 +41306,29 @@
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                     '<button class="btn ' + ((state.adminGapFilter || 'all') === 'all' ? 'amber' : '') + '" onclick="state.adminGapFilter=\\'all\\';loadAdminPanelView()">📋 Alle Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
                     '<button class="btn ' + (state.adminGapFilter === 'internal' ? 'red' : '') + '" onclick="state.adminGapFilter=\\'internal\\';loadAdminPanelView()">🚨 Nur Lücken mitten in der Staffel (' + Number(seriesGaps.seriesWithInternalGapsCount || 0) + ')</button>' +
+                    '<button class="btn green" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView(true)" title="Ignoriert den Cache und scannt alle Serien, Staffeln und Episoden in D1 sofort neu">🔄 Jetzt Lücken neu scannen</button>' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:8px;margin-bottom:12px;font-size:12px">' +
-                  '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(239,68,68,0.4)">🚨 <b>Lücken mitten in Staffel (Prio 1):</b> <span style="color:#f87171;font-weight:900">' + Number(seriesGaps.totalMissingInternal || 0) + ' Folgen</span> in ' + Number(seriesGaps.seriesWithInternalGapsCount || 0) + ' Serien</div>' +
+                  '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(239,68,68,0.4)">🚨 <b>Lücken mitten in Staffel/Serie (Prio 1):</b> <span style="color:#f87171;font-weight:900">' + Number(seriesGaps.totalMissingInternal || 0) + ' Folgen</span> in ' + Number(seriesGaps.seriesWithInternalGapsCount || 0) + ' Serien</div>' +
                   '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(56,189,248,0.35)">⏳ <b>Fehlend am Staffelende (Prio 2):</b> <span style="color:#38bdf8;font-weight:900">' + Number(seriesGaps.totalMissingTrailing || 0) + ' Folgen</span></div>' +
                   '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(245,158,11,0.4)">⚠️ <b>Nur als Vorabversion/TS/MD:</b> <span style="color:#fbbf24;font-weight:900">' + Number(seriesGaps.totalPrereleaseOnly || 0) + ' Folgen</span></div>' +
                 '</div>' +
-                '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">💡 <b>Besonders wichtig (rot markiert):</b> Wenn z.B. <code>Folge 1 + 2</code> fehlen, während <code>Folge 3</code> bereits vorhanden ist, steht diese Serie ganz oben, damit du die Lücken sofort gezielt füllen kannst.</p>' +
+                '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">💡 <b>Besonders wichtig (rot markiert):</b> Wenn z.B. <code>Folge 1 + 2</code> fehlen, während <code>Folge 3</code> bereits vorhanden ist, oder eine komplette Zwischen-Staffel (z.B. <code>Staffel 2</code> vor <code>Staffel 3</code>) fehlt, steht diese Serie ganz oben.</p>' +
                 ((() => {
-                  const gapItems = (seriesGaps.items || []).filter(item => state.adminGapFilter === "internal" ? item.hasPriorityInternalGaps : true);
+                  const gapItems = (seriesGaps.items || []).filter(item => state.adminGapFilter === "internal" ? (item.hasPriorityInternalGaps ?? item.hasInternalGaps) : true);
                   if (gapItems.length === 0) {
                     return '<div style="padding:18px;text-align:center;color:#34d399;font-size:12.5px;background:#101016;border-radius:8px;border:1px solid rgba(16,185,129,0.35)">🎉 Perfekt! Keine fehlenden Serienfolgen in dieser Ansicht gefunden.</div>';
                   }
                   return '<div style="display:flex;flex-direction:column;gap:10px;max-height:620px;overflow-y:auto;padding-right:4px">' +
                     gapItems.map(sItem => {
+                      const seriesIdVal = Number(sItem.seriesId ?? sItem.tmdbId ?? 0);
+                      const hasPrioInt = Boolean(sItem.hasPriorityInternalGaps ?? sItem.hasInternalGaps);
+                      const totInt = Number(sItem.totalInternalMissing ?? sItem.internalMissingCount ?? 0);
+                      const totTrail = Number(sItem.totalTrailingMissing ?? sItem.trailingMissingCount ?? 0);
+                      const totPre = Number(sItem.totalPrerelease ?? sItem.prereleaseCount ?? 0);
                       const pImg = resolvePosterUrlClient(sItem.poster, "w185", "");
-                      return '<div style="background:#12121a;border:1px solid ' + (sItem.hasPriorityInternalGaps ? 'rgba(239,68,68,0.55)' : 'rgba(255,255,255,0.14)') + ';border-radius:10px;padding:11px;display:flex;flex-direction:column;gap:8px">' +
+                      return '<div style="background:#12121a;border:1px solid ' + (hasPrioInt ? 'rgba(239,68,68,0.55)' : 'rgba(255,255,255,0.14)') + ';border-radius:10px;padding:11px;display:flex;flex-direction:column;gap:8px">' +
                         '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
                           '<div style="display:flex;align-items:center;gap:10px;min-width:200px;flex:1">' +
                             (pImg
@@ -40286,39 +41336,48 @@
                               : '<div style="width:38px;height:56px;background:#1e293b;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📺</div>') +
                             '<div>' +
                               '<div style="font-size:13.5px;font-weight:900;color:#fff;display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-                                esc(sItem.title) + ' <span style="color:#94a3b8;font-weight:600;font-size:12px">(' + esc(sItem.year || 'k.A.') + ' • TMDb #' + Number(sItem.seriesId) + ')</span>' +
-                                (sItem.hasPriorityInternalGaps ? '<span style="background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.5);padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800">🚨 LÜCKE MITTEN IN DER STAFFEL (' + Number(sItem.totalInternalMissing) + ' fehlt)</span>' : '') +
+                                esc(sItem.title) + ' <span style="color:#94a3b8;font-weight:600;font-size:12px">(' + esc(sItem.year || 'k.A.') + ' • TMDb #' + seriesIdVal + ')</span>' +
+                                (hasPrioInt ? '<span style="background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.5);padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800">🚨 LÜCKE MITTEN IN DER STAFFEL/SERIE (' + totInt + ' fehlt)</span>' : '') +
                               '</div>' +
                               '<div style="font-size:11.5px;color:#cbd5e1;margin-top:3px">' +
-                                'Innerhalb der Staffel fehlend: <b style="color:#f87171">' + Number(sItem.totalInternalMissing || 0) + '</b> • Am Staffelende offen: <b style="color:#38bdf8">' + Number(sItem.totalTrailingMissing || 0) + '</b>' +
-                                (Number(sItem.totalPrerelease || 0) > 0 ? (' • Nur Vorabversion/TS/MD: <b style="color:#fbbf24">' + Number(sItem.totalPrerelease) + '</b>') : '') +
+                                'Innerhalb der Staffel/Serie fehlend: <b style="color:#f87171">' + totInt + '</b> • Am Staffelende offen: <b style="color:#38bdf8">' + totTrail + '</b>' +
+                                (totPre > 0 ? (' • Nur Vorabversion/TS/MD: <b style="color:#fbbf24">' + totPre + '</b>') : '') +
                               '</div>' +
                             '</div>' +
                           '</div>' +
-                          '<button class="btn blue" onclick="openDetails(\\'s\\',' + Number(sItem.seriesId) + ',false)">📺 Serie öffnen</button>' +
+                          '<button class="btn blue" onclick="openDetails(\\'s\\',' + seriesIdVal + ',false)">📺 Serie öffnen</button>' +
                         '</div>' +
                         '<div style="display:flex;flex-direction:column;gap:6px">' +
                           (sItem.seasons || []).map(sec => {
-                            const intCodes = (sec.internalGaps || []).map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
-                            const trailCodes = (sec.trailingMissing || []).map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
-                            const preCodes = (sec.prereleaseEpisodes || []).map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
-                            const upCodes = (sec.uploadedEpisodes || []).map(epN => 'E' + String(epN).padStart(2, '0'));
-                            return '<div style="background:#181824;border:1px solid rgba(255,255,255,0.09);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+                            const intList = sec.internalGaps || sec.internalMissingEpisodes || [];
+                            const trailList = sec.trailingMissing || sec.trailingMissingEpisodes || [];
+                            const preList = sec.prereleaseEpisodes || [];
+                            const upList = sec.uploadedEpisodes || sec.presentEpisodes || [];
+                            const upCount = Number(sec.uploadedCount ?? sec.uploadedEpisodesCount ?? upList.length);
+                            const intCodes = intList.map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
+                            const trailCodes = trailList.map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
+                            const preCodes = preList.map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
+                            const upCodes = upList.map(epN => 'E' + String(epN).padStart(2, '0'));
+                            const isMissingWholeSeason = Boolean(sec.isCompletelyMissingSeason);
+                            return '<div style="background:#181824;border:1px solid ' + (isMissingWholeSeason ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.09)') + ';border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
                               '<div style="flex:1;min-width:210px;font-size:11.5px">' +
                                 '<div style="font-weight:800;color:#fff;margin-bottom:3px">' +
-                                  'Staffel ' + Number(sec.seasonNumber) + ' <span style="color:#34d399;font-weight:700">(' + Number(sec.uploadedCount) + ' / ' + Number(sec.expectedTotalEpisodes) + ' Folgen vorhanden: ' + esc(upCodes.slice(0, 12).join(', ')) + (upCodes.length > 12 ? '…' : '') + ')</span>' +
+                                  'Staffel ' + Number(sec.seasonNumber) +
+                                  (isMissingWholeSeason
+                                    ? ' <span style="color:#f87171;font-weight:800">(0 / ' + Number(sec.expectedTotalEpisodes) + ' Folgen vorhanden – komplette Zwischen-Staffel fehlt!)</span>'
+                                    : ' <span style="color:#34d399;font-weight:700">(' + upCount + ' / ' + Number(sec.expectedTotalEpisodes) + ' Folgen vorhanden: ' + esc(upCodes.slice(0, 12).join(', ')) + (upCodes.length > 12 ? '…' : '') + ')</span>') +
                                 '</div>' +
                                 (intCodes.length > 0 ? (
-                                  '<div style="color:#fca5a5;margin-top:2px">🚨 <b>Fehlt mitten in Staffel ' + Number(sec.seasonNumber) + ' (vor E' + String(sec.maxUploadedEp).padStart(2, '0') + '):</b> <code style="background:rgba(239,68,68,0.2);color:#fecaca;padding:1px 6px;border-radius:4px;font-weight:800">' + esc(intCodes.join(', ')) + '</code></div>'
+                                  '<div style="color:#fca5a5;margin-top:2px">🚨 <b>' + (isMissingWholeSeason ? ('Komplette Staffel ' + Number(sec.seasonNumber) + ' fehlt mitten in der Serie:') : ('Fehlt mitten in Staffel ' + Number(sec.seasonNumber) + ' (vor E' + String(sec.maxUploadedEp).padStart(2, '0') + '):')) + '</b> <code style="background:rgba(239,68,68,0.2);color:#fecaca;padding:1px 6px;border-radius:4px;font-weight:800">' + esc(intCodes.slice(0, 16).join(', ')) + (intCodes.length > 16 ? (' +' + (intCodes.length - 16) + ' weitere') : '') + '</code></div>'
                                 ) : '') +
                                 (trailCodes.length > 0 ? (
-                                  '<div style="color:#93c5fd;margin-top:2px">⏳ <b>Fehlt ab E' + String(sec.maxUploadedEp + 1).padStart(2, '0') + ' bis Staffelende:</b> <code style="background:rgba(56,189,248,0.14);color:#bae6fd;padding:1px 6px;border-radius:4px">' + esc(trailCodes.slice(0, 15).join(', ')) + (trailCodes.length > 15 ? (' +' + (trailCodes.length - 15) + ' weitere') : '') + '</code></div>'
+                                  '<div style="color:#93c5fd;margin-top:2px">⏳ <b>Fehlt ab E' + String(Number(sec.maxUploadedEp || 0) + 1).padStart(2, '0') + ' bis Staffelende:</b> <code style="background:rgba(56,189,248,0.14);color:#bae6fd;padding:1px 6px;border-radius:4px">' + esc(trailCodes.slice(0, 15).join(', ')) + (trailCodes.length > 15 ? (' +' + (trailCodes.length - 15) + ' weitere') : '') + '</code></div>'
                                 ) : '') +
                                 (preCodes.length > 0 ? (
                                   '<div style="color:#fde68a;margin-top:2px">⚠️ <b>Nur als Vorabversion / TS / MD vorhanden (wird bei gutem Upload automatisch ersetzt):</b> <code style="background:rgba(245,158,11,0.2);color:#fef08a;padding:1px 6px;border-radius:4px">' + esc(preCodes.join(', ')) + '</code></div>'
                                 ) : '') +
                               '</div>' +
-                              '<button class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'s\\',' + Number(sItem.seriesId) + ',false,\\'\\',\\'\\',' + Number(sec.seasonNumber) + ')">Staffel ' + Number(sec.seasonNumber) + ' öffnen</button>' +
+                              '<button class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'s\\',' + seriesIdVal + ',false,\\'\\',\\'\\',' + Number(sec.seasonNumber) + ')">Staffel ' + Number(sec.seasonNumber) + ' öffnen</button>' +
                             '</div>';
                           }).join("") +
                         '</div>' +
@@ -40399,6 +41458,7 @@
                 '</div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
                   '<button class="btn green" onclick="submitAdminMediaCrud()">💾 In D1 speichern / von TMDB synchronisieren</button>' +
+                  '<button class="btn purple" style="background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForCrudClient()">✨ Ohne TMDb-ID manuell anlegen</button>' +
                   '<button class="btn ' + (state.adminMediaType === 'm' ? 'active' : '') + '" onclick="state.adminMediaType=\\'m\\';loadAdminPanelView()">🎬 Filme in D1 zeigen</button>' +
                   '<button class="btn ' + (state.adminMediaType === 's' ? 'active' : '') + '" onclick="state.adminMediaType=\\'s\\';loadAdminPanelView()">📺 Serien in D1 zeigen</button>' +
                 '</div>' +
@@ -42111,7 +43171,17 @@
             getFolders(env, playlistChatId).catch(() => []),
             getSavedList(env, playlistChatId).catch(() => []),
             listMediaReportsFromD1(env, "all").catch(() => []),
-            computeSeriesGapsOverview(env).catch(() => ({ totalSeriesChecked: 0, incompleteSeriesCount: 0, totalMissingEpisodes: 0, seriesList: [] }))
+            computeSeriesGapsOverview(env, url.searchParams.get("refresh") === "1").catch(() => ({
+              totalSeriesChecked: 0,
+              seriesWithGapsCount: 0,
+              seriesWithInternalGapsCount: 0,
+              totalMissingInternal: 0,
+              totalMissingTrailing: 0,
+              totalPrereleaseOnly: 0,
+              items: [],
+              totalSeriesWithGaps: 0,
+              series: []
+            }))
           ]);
           const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || []);
           const playlists = (targetFolders || []).map(f => ({
@@ -42142,7 +43212,8 @@
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/series-gaps" && request.method === "GET") {
-          const seriesGaps = await computeSeriesGapsOverview(env);
+          const forceRefresh = url.searchParams.get("refresh") === "1";
+          const seriesGaps = await computeSeriesGapsOverview(env, forceRefresh);
           return new Response(JSON.stringify({ ok: true, seriesGaps }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/playlists" && request.method === "POST") {
@@ -42219,6 +43290,44 @@
             return new Response(JSON.stringify(res), { status: 200, headers: corsHeaders });
           }
           return new Response(JSON.stringify({ ok: false, error: "Unbekannte Playlist-Aktion." }), { status: 400, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/catalog-preseed" && (request.method === "GET" || request.method === "POST")) {
+          const items = [];
+          try {
+            await ensureD1Schema(env);
+            const rawDb = getRawD1Binding(env);
+            if (rawDb) {
+              trackStat("d1Reads");
+              if (typeof countD1Subrequest === "function") countD1Subrequest();
+              const [mRows, sRows] = await rawDb.batch([
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM movies"),
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series")
+              ]);
+              for (const r of (mRows?.results || [])) {
+                if (r?.tmdb_id && r?.title) {
+                  items.push({
+                    tmdbId: Number(r.tmdb_id),
+                    typeCode: "m",
+                    title: String(r.title),
+                    year: r.release_year ? String(r.release_year) : null,
+                    poster: r.poster_path || ""
+                  });
+                }
+              }
+              for (const r of (sRows?.results || [])) {
+                if (r?.tmdb_id && r?.title) {
+                  items.push({
+                    tmdbId: Number(r.tmdb_id),
+                    typeCode: "s",
+                    title: String(r.title),
+                    year: r.release_year ? String(r.release_year) : null,
+                    poster: r.poster_path || ""
+                  });
+                }
+              }
+            }
+          } catch (e) {}
+          return new Response(JSON.stringify({ ok: true, count: items.length, items }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
@@ -42418,7 +43527,7 @@
         }
         if (path === "/api/tma/admin/remap-import-item" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          const newTmdbId = Number(body.newTmdbId || 0);
+          let newTmdbId = Number(body.newTmdbId || 0);
           const newTypeCode = body.newTypeCode === "s" ? "s" : "m";
           const oldTmdbId = body.oldTmdbId ? Number(body.oldTmdbId) : null;
           const oldTypeCode = body.oldTypeCode === "s" ? "s" : "m";
@@ -42428,9 +43537,30 @@
             ? body.playlistMode
             : (targetChatId === "bot_vip" ? "vip_stream" : "both");
           const rawEntry = body.rawEntry && typeof body.rawEntry === "object" ? body.rawEntry : {};
+          const isManualWithoutTmdb = Boolean(body.confirmManualWithoutTmdb || (!newTmdbId && body.manualCustomMeta));
+          const manualCustomMeta = body.manualCustomMeta && typeof body.manualCustomMeta === "object" ? body.manualCustomMeta : null;
+
+          if (isManualWithoutTmdb && (!newTmdbId || newTmdbId < 900000000)) {
+            const manualTitle = String(
+              manualCustomMeta?.title ||
+              body.candidateMeta?.title ||
+              rawEntry.cleanTitle ||
+              rawEntry.title ||
+              rawEntry.filename ||
+              rawEntry.raw_file_name ||
+              "Unbekannter Titel"
+            ).trim();
+            const manualYear = String(
+              manualCustomMeta?.year ||
+              body.candidateMeta?.year ||
+              rawEntry.year ||
+              ""
+            ).trim();
+            newTmdbId = await allocateCollisionFreeManualSyntheticId(env, newTypeCode, manualTitle, manualYear);
+          }
 
           if (!newTmdbId) {
-            return new Response(JSON.stringify({ ok: false, error: "Ungültige Ziel-TMDb-ID." }), { status: 400, headers: corsHeaders });
+            return new Response(JSON.stringify({ ok: false, error: "Ungültige Ziel-ID (weder TMDb-ID noch manuelle Bestätigung)." }), { status: 400, headers: corsHeaders });
           }
 
           // 1. Falls zuvor ein falscher Treffer in der Playlist gespeichert wurde, diesen sauber aus der Ziel-Playlist entfernen
@@ -42457,18 +43587,41 @@
           const registerAsVipStream = playlistMode === "vip_stream" || playlistMode === "both";
           const manualSeason = body.season ? Math.max(1, parseInt(body.season, 10) || 1) : null;
           const manualEpisode = body.episode ? Math.max(1, parseInt(body.episode, 10) || 1) : null;
+          const effectiveCandidateMeta = isManualWithoutTmdb
+            ? {
+                id: newTmdbId,
+                title: String(manualCustomMeta?.title || body.candidateMeta?.title || rawEntry.cleanTitle || rawEntry.filename || "Unbekannter Titel").trim(),
+                originalTitle: String(manualCustomMeta?.originalTitle || manualCustomMeta?.title || "").trim(),
+                year: String(manualCustomMeta?.year || body.candidateMeta?.year || rawEntry.year || "k.A.").trim(),
+                poster: String(manualCustomMeta?.poster || body.candidateMeta?.poster || "").trim(),
+                genres: String(manualCustomMeta?.genres || body.candidateMeta?.genres || "Manuell bestätigt").trim(),
+                overview: String(manualCustomMeta?.overview || body.candidateMeta?.overview || "Manuell ohne TMDb-ID bestätigter Titel.").trim(),
+                vote_average: Number(manualCustomMeta?.vote_average || 0),
+                source: "Manuell bestätigt"
+              }
+            : (body.candidateMeta || null);
+
           const resolved = await resolveAndIngestMediaEntry(env, {
             ...rawEntry,
+            ...(effectiveCandidateMeta?.title ? { title: effectiveCandidateMeta.title, cleanTitle: effectiveCandidateMeta.title } : {}),
+            ...(effectiveCandidateMeta?.year && effectiveCandidateMeta.year !== "k.A." ? { year: effectiveCandidateMeta.year } : {}),
             tmdb_id: newTmdbId,
             typeCode: newTypeCode,
             type: newTypeCode === "s" ? "series" : "movie",
             isSeries: newTypeCode === "s",
             ...(newTypeCode === "s" && manualSeason ? { season: manualSeason, manualSeason } : {}),
             ...(newTypeCode === "s" && manualEpisode ? { episode: manualEpisode, manualEpisode } : {})
-          }, entryFileMeta, { registerAsVipStream, bypassNegativeTitleCache: true });
+          }, entryFileMeta, {
+            registerAsVipStream,
+            bypassNegativeTitleCache: true,
+            confirmManualWithoutTmdb: isManualWithoutTmdb,
+            allowCreateWithoutVideoFile: true,
+            candidateMeta: effectiveCandidateMeta,
+            sourceChannelId: body.sourceChannelId || ""
+          });
 
           if (!resolved || !resolved.ok) {
-            return new Response(JSON.stringify({ ok: false, error: "TMDb-Eintrag konnte nicht geladen werden." }), { status: 404, headers: corsHeaders });
+            return new Response(JSON.stringify({ ok: false, error: "Eintrag konnte nicht geladen oder gespeichert werden." }), { status: 404, headers: corsHeaders });
           }
 
           await invalidateOrUpdateTitleResolutionCacheInD1(
@@ -42481,7 +43634,7 @@
               typeCode: resolved.typeCode,
               title: resolved.cleanTitle,
               confidence: 100,
-              source: resolved.metadataSource || "Admin-Remap",
+              source: resolved.metadataSource || (isManualWithoutTmdb ? "Manuell bestätigt" : "Admin-Remap"),
               notFound: false
             }
           );
@@ -42505,7 +43658,7 @@
               part: resolved.part || null,
               season: resolved.season || null,
               episode: resolved.episode || null,
-              metadataSource: resolved.metadataSource || "TMDb",
+              metadataSource: resolved.metadataSource || (isManualWithoutTmdb ? "Manuell bestätigt" : "TMDb"),
               confidence: 100
             }
           }), { status: 200, headers: corsHeaders });
@@ -42564,13 +43717,17 @@
           if (body.action === "upsert") {
             let targetId = Number(body.tmdbId || 0);
             let details = null;
-            if (targetId) {
+            const confirmManual = Boolean(body.confirmManualWithoutTmdb);
+            if (!targetId && confirmManual && body.title) {
+              targetId = await allocateCollisionFreeManualSyntheticId(env, typeCode, String(body.title), body.year ? String(body.year) : "");
+            }
+            if (targetId && targetId < 8000000) {
               details = typeCode === "s" ? await fetchSeriesDetails(env, targetId) : await fetchMovieDetails(env, targetId);
               if (details) {
                 if (typeCode === "s") await saveSeriesToD1(env, details);
                 else await saveMovieToD1(env, details);
               }
-            } else if (body.title) {
+            } else if (!targetId && body.title && !confirmManual) {
               const ingested = await resolveAndIngestMediaEntry(env, {
                 title: String(body.title),
                 year: body.year ? String(body.year) : "",
@@ -42583,27 +43740,40 @@
               if (ingested?.ok) {
                 return new Response(JSON.stringify({ ok: true, item: ingested }), { status: 200, headers: corsHeaders });
               }
+              if (body.allowManualFallback !== false) {
+                targetId = await allocateCollisionFreeManualSyntheticId(env, typeCode, String(body.title), body.year ? String(body.year) : "");
+              }
             }
             if (!details && targetId && body.title) {
+              const cleanYear = body.year && /^\d{4}$/.test(String(body.year).trim()) ? String(body.year).trim() : "";
+              const customPoster = body.poster ? String(body.poster).trim() : null;
               details = {
                 id: targetId,
                 title: String(body.title).trim(),
-                releaseDate: body.year ? `${body.year}-01-01` : "Keine Angabe",
+                originalTitle: String(body.title).trim(),
+                releaseDate: cleanYear ? `${cleanYear}-01-01` : "Keine Angabe",
+                year: cleanYear || "k.A.",
                 fsk: "FSK Keine Angabe",
                 vote_average: 0,
                 runtime: "Keine Angabe",
                 country: "k.A.",
-                genres: "Keine Angabe",
+                genres: body.genres ? String(body.genres).trim() : "Manuell bestätigt",
                 directors: "Keine Angabe",
                 casts: "Keine Angabe",
-                overview: ""
+                overview: body.overview ? String(body.overview).trim() : "Manuell ohne TMDb-ID angelegter Titel.",
+                poster_path: null,
+                external_poster_url: customPoster,
+                metadataSource: "Manuell bestätigt",
+                ...(typeCode === "s" ? { totalSeasons: 1, totalEpisodes: 1, seasons: [{ season_number: 1, episode_count: 1 }] } : {})
               };
               if (typeCode === "s") await saveSeriesToD1(env, details);
               else await saveMovieToD1(env, details);
             }
             if (details && body.fileId) {
+              const sNum = Math.max(1, parseInt(body.season, 10) || 1);
+              const eNum = Math.max(1, parseInt(body.episode, 10) || 1);
               if (typeCode === "s") {
-                await saveEpisodeFileToD1(env, details.id, 1, 1, {
+                await saveEpisodeFileToD1(env, details.id, sNum, eNum, {
                   fileId: body.fileId,
                   quality: body.quality || "1080p",
                   fileSize: body.fileSize || null,

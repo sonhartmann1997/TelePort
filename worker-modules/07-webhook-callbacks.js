@@ -974,6 +974,9 @@
     const explicitTmdbId = (typeof rawEntry === "object" && (rawEntry?.tmdb_id || rawEntry?.tmdbId))
       ? Number(rawEntry.tmdb_id || rawEntry.tmdbId)
       : (parsed.tmdbId ? Number(parsed.tmdbId) : null);
+    if (typeof rawEntry === "object" && rawEntry?.bypassNegativeTitleCache) {
+      options = { ...(options || {}), bypassNegativeTitleCache: true };
+    }
     const searchTitle = parsed.cleanTitle;
     if (!explicitTmdbId && typeof rawEntry === "object" && rawEntry?.knownUnmatched && !options?.bypassNegativeTitleCache) {
       return options?.returnUnmatched
@@ -1139,35 +1142,42 @@
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : Number(fbHit.id);
           bestConfidence = Math.max(bestConfidence, fbHit.confidence || 76);
           metadataSource = fbHit.source || "Fallback";
-          seriesDetails = {
-            id: Number(targetId),
-            title: fbHit.title || "Unbekannt",
-            releaseDate: fbHit.releaseDate || (fbHit.year && fbHit.year !== "k.A." ? `${fbHit.year}-01-01` : "Keine Angabe"),
-            fsk: "FSK Keine Angabe",
-            statusText: fbHit.statusText || "Unbekannt",
-            vote_average: Number(fbHit.vote_average || 0),
-            runtime: fbHit.runtime || "Keine Angabe",
-            country: fbHit.country || "k.A.",
-            genres: fbHit.genres || "Serie",
-            directors: fbHit.directors || "Keine Angabe",
-            casts: fbHit.casts || "Keine Angabe",
-            overview: fbHit.overview || "Keine Beschreibung verfügbar.",
-            poster_path: null,
-            external_poster_url: fbHit.poster || fbHit.external_poster_url || "",
-            backdrop_path: null,
-            numberOfSeasons: 1,
-            numberOfEpisodes: 0,
-            seasons: [{ season_number: 1, name: "Staffel 1", episode_count: 0, air_date: "" }],
-            sourceFallback: fbHit.source || "Fallback"
-          };
-          setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
+          if (targetId < 8000000) {
+            seriesDetails = await fetchSeriesDetails(env, targetId);
+          }
+          if (!seriesDetails) {
+            seriesDetails = {
+              id: Number(targetId),
+              title: fbHit.title || "Unbekannt",
+              releaseDate: fbHit.releaseDate || (fbHit.year && fbHit.year !== "k.A." ? `${fbHit.year}-01-01` : "Keine Angabe"),
+              fsk: fbHit.fsk || "FSK Keine Angabe",
+              statusText: fbHit.statusText || "Unbekannt",
+              vote_average: Number(fbHit.vote_average || 0),
+              runtime: fbHit.runtime || "Keine Angabe",
+              country: fbHit.country || "k.A.",
+              genres: fbHit.genres || "Serie",
+              directors: fbHit.directors || "Keine Angabe",
+              casts: fbHit.casts || "Keine Angabe",
+              overview: fbHit.overview || "Keine Beschreibung verfügbar.",
+              poster_path: null,
+              external_poster_url: fbHit.poster || fbHit.external_poster_url || "",
+              backdrop_path: null,
+              numberOfSeasons: Number(fbHit.numberOfSeasons || fbHit.seasons?.length || 1),
+              numberOfEpisodes: Number(fbHit.numberOfEpisodes || 0),
+              seasons: Array.isArray(fbHit.seasons) && fbHit.seasons.length > 0
+                ? fbHit.seasons
+                : [{ season_number: 1, name: "Staffel 1", episode_count: 0, air_date: "" }],
+              sourceFallback: targetId >= 8000000 ? (fbHit.source || "Fallback") : null
+            };
+            setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
+          }
         }
       }
 
       if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
         const maze = await fetchTvMazeSeriesFallback(searchTitle, parsed.year || "");
         if (maze && maze.tvmazeId) {
-          targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : (Number(maze.tvmazeId) + 9000000);
+          targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : (200000000 + (Number(maze.tvmazeId) % 99999999));
           bestConfidence = 68;
           metadataSource = "TVMaze";
           seriesDetails = {
@@ -1196,8 +1206,9 @@
       }
 
       if (!seriesDetails) {
+        const hitSubreqLimit = Boolean((typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34));
         // Nur dann negativ cachen, wenn noch genügend Subrequest-Budget vorhanden war (kein Abbruch mitten in der Kaskade!)
-        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+        if (!hitSubreqLimit && typeof saveTitleResolutionCacheToD1 === "function") {
           await saveTitleResolutionCacheToD1(env, parsed, "s", {
             notFound: true,
             reviewReasonCode: "TMDB_NOT_FOUND",
@@ -1205,14 +1216,14 @@
           });
         }
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, abortedDueToSubrequestBudget: hitSubreqLimit, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
       // DUPLIKAT-SPERRE FÜR SERIEN:
       // Falls eine synthetische Fallback-ID (>= 8000000) aufgelöst wurde, prüfe zuerst, ob in D1 bereits eine offizielle TMDb-Serie (< 8000000)
       // mit demselben Titel existiert (verhindert doppelte Karten wie bei "Generation Kill"!), oder ob TMDb die Serie unter dem kanonischen Titel kennt!
-      if (Number(seriesDetails.id) >= 8000000) {
+      if (Number(seriesDetails.id) >= 8000000 && !options?.confirmManualWithoutTmdb) {
         try {
           const normTargetSeriesTitle = normalizeCompareString(seriesDetails.title || parsed.cleanTitle || searchTitle);
           const catalogMap = typeof ensureLocalD1CatalogTitleMapLoaded === "function"
@@ -1438,8 +1449,8 @@
         seriesDetails.external_poster_url = candidates[0].poster;
       }
 
-      // Erst JETZT (wenn mindestens ein gültiges Episoden-Video gespeichert wurde oder die Serie bereits mit Episoden existiert) in D1 `series` schreiben!
-      if (savedAtLeastOneEpisodeVideo || preExistingSeries) {
+      // Erst JETZT (wenn mindestens ein gültiges Episoden-Video gespeichert wurde oder die Serie bereits mit Episoden existiert oder manuell bestätigt wurde) in D1 `series` schreiben!
+      if (savedAtLeastOneEpisodeVideo || preExistingSeries || options?.allowCreateWithoutVideoFile) {
         await saveSeriesToD1(env, seriesDetails);
       }
 
@@ -1590,7 +1601,8 @@
       }
 
       if (!movieDetails) {
-        if (hasSubrequestBudget(32) && typeof saveTitleResolutionCacheToD1 === "function") {
+        const hitSubreqLimit = Boolean((typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34));
+        if (!hitSubreqLimit && typeof saveTitleResolutionCacheToD1 === "function") {
           await saveTitleResolutionCacheToD1(env, parsed, "m", {
             notFound: true,
             reviewReasonCode: "TMDB_NOT_FOUND",
@@ -1598,7 +1610,7 @@
           });
         }
         return options?.returnUnmatched
-          ? { ok: false, unmatched: true, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
+          ? { ok: false, unmatched: true, abortedDueToSubrequestBudget: hitSubreqLimit, ingestStatus: "failed", reviewReasonCode: "TMDB_NOT_FOUND", confidence: bestConfidence, rawInput: rawName, parsed, candidates }
           : null;
       }
 
@@ -1650,8 +1662,8 @@
       }
 
       // Kein leerer Film-Eintrag ohne gültige Videodatei in D1:
-      // Speichere `movies` in D1 erst dann, wenn tatsächlich eine gültige Videodatei gespeichert wurde (oder bereits existiert)!
-      if (savedMovieVideo || preExistingMovie) {
+      // Speichere `movies` in D1 erst dann, wenn tatsächlich eine gültige Videodatei gespeichert wurde (oder bereits existiert oder manuell bestätigt wurde)!
+      if (savedMovieVideo || preExistingMovie || options?.allowCreateWithoutVideoFile) {
         await saveMovieToD1(env, movieDetails);
       }
 
@@ -2398,6 +2410,8 @@
   }
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
+    const batchWallStartMs = Date.now();
+    const BATCH_WALL_CLOCK_LIMIT_MS = 8000;
     resetSubrequestBudget();
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
@@ -2420,21 +2434,33 @@
     const total = entriesList.length;
     const playlistMode = String(playlistContext?.playlistMode || "both");
     const shouldRegisterVipStream = playlistMode === "vip_stream" || playlistMode === "both";
+    const intraBatchResolvedMap = new Map();
+    const buildIntraBatchTitleKey = (rawObjOrStr) => {
+      if (!rawObjOrStr) return "";
+      const rawTitle = typeof rawObjOrStr === "string"
+        ? rawObjOrStr
+        : String(rawObjOrStr.cleanTitle || rawObjOrStr.series_title || rawObjOrStr.title || rawObjOrStr.filename || rawObjOrStr.file_name || "");
+      const stripped = rawTitle.replace(/\b(?:S\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Season\s*\d+|Folge\s*\d+|Episode\s*\d+)\b.*$/i, "").trim();
+      return normalizeTitleForConfidence(stripped || rawTitle);
+    };
 
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
-      // CLOUDFLARE 50-SUBREQUESTS-LIMIT SCHUTZSCHILD:
-      // Da jetzt jeder externe Fetch (inkl. Details & Fallbacks) exakt gezählt wird, stoppen wir kontrolliert bereits ab >= 26 externen Subrequests
-      // und liefern PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Limit erreicht wird!
-      if (!hasSubrequestBudget(26) && i > 0) {
+      // CLOUDFLARE 50-SUBREQUESTS-LIMIT & 8s-WALL-CLOCK-TIMEOUT SCHUTZSCHILD:
+      // Stoppt kontrolliert ab >= 26 Subrequests ODER >= 8000ms verstrichener Laufzeit
+      // und liefert PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Timeout erreicht wird!
+      const elapsedWallMs = Date.now() - batchWallStartMs;
+      if ((!hasSubrequestBudget(26) || elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && i > 0) {
         partialBatch = true;
         nextStartIndex = i;
-        pauseReason = "SUBREQUEST_LIMIT_GUARD";
+        pauseReason = elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
         const pausedEntry = entriesList[i];
         diagLogsToSave.push({
           msgId: pausedEntry?.msg_id || pausedEntry?.message_id || "",
           stage: "BATCH_GUARD",
           status: "SUBREQUEST_PAUSE",
-          reason: `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
+          reason: elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS
+            ? `Zeit-Guard nach ${elapsedWallMs}ms (>8000ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
+            : `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
           fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
           textPreview: String(pausedEntry?.raw_text || "").slice(0, 200),
           parsedTitle: pausedEntry?.cleanTitle || "",
@@ -2451,16 +2477,40 @@
       let abortedMidBatchDueToBudget = false;
       let abortBatchIndex = i;
 
-      // Sequenzielle Abarbeitung innerhalb des Mini-Batches:
-      // Dadurch befüllt der 1. Eintrag eines Titels (Film, Serie oder auch Nicht erkannt) sofort den RAM/D1-Titel-Cache,
-      // sodass alle weiteren Einträge gleichen Titels 0 externe API-Requests benötigen!
+      // Sequenzielle Abarbeitung innerhalb des Mini-Batches + Intra-Batch Serien-Vererbung:
+      // Sobald Folge 1 einer Serie (z.B. S01E01) im Batch aufgelöst wurde, erben alle nachfolgenden Folgen
+      // derselben Serie im selben Batch direkt deren tmdb_id (0 erneute Such-Aufrufe)!
       for (let bStep = 0; bStep < batch.length; bStep++) {
-        if (!hasSubrequestBudget(28) && (i + bStep) > 0) {
+        const stepElapsedWallMs = Date.now() - batchWallStartMs;
+        if ((!hasSubrequestBudget(28) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
         }
-        const entry = batch[bStep];
+        if (typeof subrequestBudgetExhausted !== "undefined") {
+          subrequestBudgetExhausted = false;
+        }
+        let entry = batch[bStep];
+        const entryNormKey = buildIntraBatchTitleKey(entry);
+        const isEntrySeriesHint = typeof entry === "object" && entry !== null && Boolean(
+          entry.isSeries || entry.typeCode === "s" || entry.type === "series" || entry.season || entry.episode ||
+          /\b(?:S\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(String(entry.filename || entry.file_name || entry.cleanTitle || ""))
+        );
+        if (typeof entry === "object" && entry !== null && !entry.tmdb_id && !entry.tmdbId && entryNormKey && entryNormKey !== "unbekannt") {
+          const inherited = intraBatchResolvedMap.get((isEntrySeriesHint ? "s::" : "m::") + entryNormKey)
+            || (isEntrySeriesHint ? intraBatchResolvedMap.get("any::" + entryNormKey) : null);
+          if (inherited && inherited.tmdbId) {
+            entry = {
+              ...entry,
+              tmdb_id: inherited.tmdbId,
+              typeCode: inherited.typeCode,
+              isSeries: inherited.typeCode === "s",
+              cleanTitle: inherited.cleanTitle || entry.cleanTitle,
+              external_poster_url: entry.external_poster_url || inherited.poster || ""
+            };
+            batch[bStep] = entry;
+          }
+        }
         const entryFileMeta = (typeof entry === "object" && entry?.telegram_file_id)
           ? { fileId: entry.telegram_file_id, fileUniqueId: entry.telegram_unique_id || null, fileSize: entry.file_size || null, mimeType: entry.mime_type || "video/mp4" }
           : null;
@@ -2486,12 +2536,35 @@
             error: String(itemErr?.message || itemErr || "Unbekannter Fehler")
           };
         }
-        // Falls das Element während der Auflösung ans Subrequest-Limit (>= 32) gestoßen ist und deshalb keinen Treffer fand (und nicht aus dem Negativ-Cache kam):
-        // NICHT als 0% CONFLICT_? fehlschlagen lassen, sondern diesen Index sauber für den nächsten Batch vormerken!
-        if ((!stepRes || stepRes.unmatched) && !stepRes?.fromNegativeCache && !hasSubrequestBudget(32) && (i + bStep) > 0) {
+        // Falls das Element während der Auflösung ans Subrequest-Limit gestoßen ist und deshalb keinen Treffer fand (und nicht aus dem Negativ-Cache kam):
+        // NICHT als TMDB_NOT_FOUND fehlschlagen lassen (Breaking Bad S01E01 Fix!), sondern diesen Index sauber für den nächsten Batch vormerken!
+        if (
+          (!stepRes || stepRes.unmatched) &&
+          !stepRes?.fromNegativeCache &&
+          (stepRes?.abortedDueToSubrequestBudget || (typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34)) &&
+          (i + bStep) > 0
+        ) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
+        }
+        // Intra-Batch Vererbungs-Cache aktualisieren, sobald ein Titel sicher (ab 80% ohne Konflikt) aufgelöst wurde:
+        if (stepRes && stepRes.ok && stepRes.tmdbId && !stepRes.contextError && Number(stepRes.confidence || 100) >= 80) {
+          const resolvedMeta = {
+            tmdbId: Number(stepRes.tmdbId),
+            typeCode: stepRes.typeCode === "s" ? "s" : "m",
+            cleanTitle: stepRes.cleanTitle || "",
+            poster: stepRes.poster || ""
+          };
+          if (entryNormKey && entryNormKey !== "unbekannt") {
+            intraBatchResolvedMap.set(resolvedMeta.typeCode + "::" + entryNormKey, resolvedMeta);
+            if (resolvedMeta.typeCode === "s") intraBatchResolvedMap.set("any::" + entryNormKey, resolvedMeta);
+          }
+          const resNormKey = buildIntraBatchTitleKey(stepRes.cleanTitle || "");
+          if (resNormKey && resNormKey !== "unbekannt") {
+            intraBatchResolvedMap.set(resolvedMeta.typeCode + "::" + resNormKey, resolvedMeta);
+            if (resolvedMeta.typeCode === "s") intraBatchResolvedMap.set("any::" + resNormKey, resolvedMeta);
+          }
         }
         batchResults.push(stepRes);
       }

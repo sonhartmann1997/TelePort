@@ -99,6 +99,7 @@
     const pending = activeD1WriteBuffer;
     activeD1WriteBuffer = null;
     if (!Array.isArray(pending) || pending.length === 0) return 0;
+    memoryFallback.delete("d1_series_gaps_cache");
     const rawDb = getRawD1Binding(env);
     if (!rawDb) return 0;
     let flushedCount = 0;
@@ -2020,6 +2021,7 @@
   async function saveEpisodeFileToD1(env, seriesId, seasonNumber, episodeNumber, fileInfo) {
     const rawFid = fileInfo?.fileId || fileInfo?.telegram_file_id;
     if (!seriesId || !rawFid) return false;
+    memoryFallback.delete("d1_series_gaps_cache");
     const sid = Number(seriesId);
     const sNum = Number(seasonNumber || 1);
     const eNum = Number(episodeNumber || 1);
@@ -2881,32 +2883,38 @@
     return { seasonCounts, episodeTitleMap };
   }
 
-  // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03; Priorität 2: Fehlende Folgen bis Staffelende)
+  // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03 sowie komplett fehlende Zwischen-Staffeln; Priorität 2: Fehlende Folgen bis Staffelende)
   async function computeSeriesGapsOverview(env, forceRefresh = false) {
     const cachedGaps = memoryFallback.get("d1_series_gaps_cache");
-    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 180000) {
+    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 60000) {
       return cachedGaps.data;
     }
     const db = await ensureD1Schema(env);
+    const rawDb = getRawD1Binding(env) || db;
     const seriesMap = new Map();
     const seasonMetaBySeries = new Map();
     const uploadedBySeriesSeason = new Map();
+    const allCheckedSeriesIds = new Set();
 
-    if (db) {
+    if (rawDb) {
       try {
         trackStat("d1Reads");
-        const [sRes, ssRes, efRes] = await db.batch([
-          db.prepare("SELECT tmdb_id, title, release_year, poster_path, number_of_seasons, number_of_episodes, details_json FROM series"),
-          db.prepare("SELECT series_id, season_number, episodes_json FROM series_seasons"),
-          db.prepare("SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags FROM episode_files")
+        if (typeof countD1Subrequest === "function") countD1Subrequest();
+        const [sRes, ssRes, seCountRes, efRes] = await rawDb.batch([
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, number_of_seasons, number_of_episodes, details_json FROM series"),
+          rawDb.prepare("SELECT series_id, season_number, episodes_json FROM series_seasons"),
+          rawDb.prepare("SELECT series_id, season_number, COUNT(*) AS ep_count, MAX(episode_number) AS max_ep FROM series_episodes GROUP BY series_id, season_number"),
+          rawDb.prepare("SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags FROM episode_files")
         ]);
         for (const r of (sRes?.results || [])) {
           if (!r || !r.tmdb_id) continue;
+          const sid = Number(r.tmdb_id);
+          allCheckedSeriesIds.add(sid);
           let details = null;
           try { details = r.details_json ? JSON.parse(r.details_json) : null; } catch (_) {}
-          seriesMap.set(Number(r.tmdb_id), {
-            tmdbId: Number(r.tmdb_id),
-            title: r.title || details?.title || `Serie #${r.tmdb_id}`,
+          seriesMap.set(sid, {
+            tmdbId: sid,
+            title: r.title || details?.title || `Serie #${sid}`,
             year: r.release_year || (details?.releaseDate ? String(details.releaseDate).split("-")[0] : "k.A."),
             poster: resolvePosterUrl(r.poster_path || details?.poster_path, "w185", details?.external_poster_url || ""),
             numberOfSeasons: Number(r.number_of_seasons || details?.numberOfSeasons || 1),
@@ -2917,6 +2925,7 @@
           const sid = Number(sr?.series_id || 0);
           const sNum = Number(sr?.season_number || 0);
           if (!sid || !sNum) continue;
+          allCheckedSeriesIds.add(sid);
           let epCount = 0;
           try {
             const parsed = JSON.parse(sr.episodes_json || "{}");
@@ -2926,11 +2935,22 @@
           if (!seasonMetaBySeries.has(sid)) seasonMetaBySeries.set(sid, new Map());
           if (epCount > 0) seasonMetaBySeries.get(sid).set(sNum, epCount);
         }
+        for (const secRow of (seCountRes?.results || [])) {
+          const sid = Number(secRow?.series_id || 0);
+          const sNum = Number(secRow?.season_number || 0);
+          const cnt = Math.max(Number(secRow?.ep_count || 0), Number(secRow?.max_ep || 0));
+          if (!sid || !sNum || cnt <= 0) continue;
+          allCheckedSeriesIds.add(sid);
+          if (!seasonMetaBySeries.has(sid)) seasonMetaBySeries.set(sid, new Map());
+          const prevCnt = seasonMetaBySeries.get(sid).get(sNum) || 0;
+          if (cnt > prevCnt) seasonMetaBySeries.get(sid).set(sNum, cnt);
+        }
         for (const ef of (efRes?.results || [])) {
           const sid = Number(ef?.series_id || 0);
           const sNum = Number(ef?.season_number || 1);
           const eNum = Number(ef?.episode_number || 0);
           if (!sid || !sNum || eNum <= 0) continue;
+          allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
           if (!uploadedBySeriesSeason.has(key)) uploadedBySeriesSeason.set(key, new Map());
           const epMap = uploadedBySeriesSeason.get(key);
@@ -2947,6 +2967,7 @@
     for (const [k, v] of memoryFallback.entries()) {
       if (k.startsWith("d1_series_") && !k.startsWith("d1_series_best_quality_") && v && typeof v === "object" && v.id) {
         const sid = Number(v.id);
+        allCheckedSeriesIds.add(sid);
         if (!seriesMap.has(sid)) {
           seriesMap.set(sid, {
             tmdbId: sid,
@@ -2962,6 +2983,7 @@
         const sid = Number(parts[0] || 0);
         const sNum = Number(parts[1] || 1);
         if (sid > 0 && sNum > 0) {
+          allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
           if (!uploadedBySeriesSeason.has(key)) uploadedBySeriesSeason.set(key, new Map());
           const epMap = uploadedBySeriesSeason.get(key);
@@ -2978,134 +3000,200 @@
       }
     }
 
-    const seriesGapsList = [];
-    let totalSeriesWithInternalGaps = 0;
-    let totalInternalMissingEpisodes = 0;
-    let totalTrailingMissingEpisodes = 0;
-
+    // Bestimme pro Serie die höchste hochgeladene Staffelnummer, um auch komplett fehlende Zwischen-Staffeln (z.B. S01 & S03 vorhanden, S02 fehlt komplett) zu prüfen!
+    const maxSeasonBySeries = new Map();
+    const seasonsToInspectBySeries = new Map();
     for (const [key, epMap] of uploadedBySeriesSeason.entries()) {
       if (!epMap || epMap.size === 0) continue;
       const [sidStr, sNumStr] = key.split("_");
       const sid = Number(sidStr);
       const sNum = Number(sNumStr);
+      if (!sid || !sNum) continue;
+      const curMax = maxSeasonBySeries.get(sid) || 0;
+      if (sNum > curMax) maxSeasonBySeries.set(sid, sNum);
+      if (!seasonsToInspectBySeries.has(sid)) seasonsToInspectBySeries.set(sid, new Set());
+      seasonsToInspectBySeries.get(sid).add(sNum);
+    }
+    for (const [sid, maxS] of maxSeasonBySeries.entries()) {
+      const sSet = seasonsToInspectBySeries.get(sid);
+      for (let s = 1; s <= maxS; s++) {
+        sSet.add(s);
+      }
+    }
+
+    const seriesGapsList = [];
+    let totalSeriesWithInternalGaps = 0;
+    let totalInternalMissingEpisodes = 0;
+    let totalTrailingMissingEpisodes = 0;
+    let totalPrereleaseOnlyEpisodes = 0;
+
+    for (const [sid, seasonSet] of seasonsToInspectBySeries.entries()) {
+      const maxUploadedSeason = maxSeasonBySeries.get(sid) || 1;
       const sMeta = seriesMap.get(sid) || {
         tmdbId: sid,
         title: memoryFallback.get(`title_cache_s_${sid}`) || `Serie #${sid}`,
         year: "k.A.",
         poster: "",
-        numberOfSeasons: sNum,
+        numberOfSeasons: maxUploadedSeason,
         detailsSeasons: []
       };
 
-      const presentEps = Array.from(epMap.keys()).sort((a, b) => a - b);
-      const maxUploadedEp = presentEps[presentEps.length - 1] || 0;
-      const prereleaseEps = Array.from(epMap.values()).filter(x => x.isPrerelease).map(x => x.episode);
+      const sortedSeasonNums = Array.from(seasonSet).sort((a, b) => a - b);
+      for (const sNum of sortedSeasonNums) {
+        const epMap = uploadedBySeriesSeason.get(`${sid}_${sNum}`) || new Map();
+        const presentEps = Array.from(epMap.keys()).sort((a, b) => a - b);
+        const maxUploadedEp = presentEps[presentEps.length - 1] || 0;
+        const prereleaseEps = Array.from(epMap.values()).filter(x => x.isPrerelease).map(x => x.episode);
 
-      let officialCount = seasonMetaBySeries.get(sid)?.get(sNum) || 0;
-      if (!officialCount && Array.isArray(sMeta.detailsSeasons)) {
-        const foundSeason = sMeta.detailsSeasons.find(s => Number(s?.season_number) === sNum);
-        if (foundSeason && Number(foundSeason.episode_count) > 0) {
-          officialCount = Number(foundSeason.episode_count);
+        let officialCount = seasonMetaBySeries.get(sid)?.get(sNum) || 0;
+        if (!officialCount && Array.isArray(sMeta.detailsSeasons)) {
+          const foundSeason = sMeta.detailsSeasons.find(s => Number(s?.season_number) === sNum);
+          if (foundSeason && Number(foundSeason.episode_count) > 0) {
+            officialCount = Number(foundSeason.episode_count);
+          }
         }
-      }
-      const effectiveTotalExpected = Math.max(officialCount || 0, maxUploadedEp);
 
-      // Priorität 1: Interne Lücken innerhalb der Staffel (1 .. maxUploadedEp, z.B. Folge 1+2 fehlt während Folge 3 vorhanden ist!)
-      const missingInternal = [];
-      for (let ep = 1; ep <= maxUploadedEp; ep++) {
-        if (!epMap.has(ep)) missingInternal.push(ep);
-      }
+        // Spezialfall: Komplett fehlende Zwischen-Staffel (z.B. Staffel 2 hat 0 Folgen, aber Staffel 3 hat Folgen!)
+        const isCompletelyMissingIntermediateSeason = presentEps.length === 0 && sNum < maxUploadedSeason;
+        const effectiveTotalExpected = isCompletelyMissingIntermediateSeason
+          ? Math.max(officialCount || 10, 1)
+          : Math.max(officialCount || 0, maxUploadedEp);
 
-      // Zusammenhängende Lücken-Blöcke (insb. Multi-Episode-Gaps wie "Episode 1 & 2 missing, 3 exists") berechnen
-      const internalGapRanges = [];
-      const gapHighlights = [];
-      let hasMultiEpisodeGap = false;
-      if (missingInternal.length > 0) {
-        let rangeStart = missingInternal[0];
-        let rangeEnd = missingInternal[0];
-        for (let idx = 1; idx <= missingInternal.length; idx++) {
-          const cur = missingInternal[idx];
-          if (cur === rangeEnd + 1) {
-            rangeEnd = cur;
-          } else {
-            const count = rangeEnd - rangeStart + 1;
-            const nextExisting = presentEps.find(p => p > rangeEnd) || (rangeEnd + 1);
-            const isMulti = count >= 2;
-            if (isMulti) hasMultiEpisodeGap = true;
-            const labelDe = count === 1
-              ? `Folge ${rangeStart} fehlt (Folge ${nextExisting} vorhanden)`
-              : count === 2
-                ? `Folge ${rangeStart} & ${rangeEnd} fehlen (Folge ${nextExisting} vorhanden)`
-                : `Folge ${rangeStart}–${rangeEnd} fehlen (${count} Folgen vor Folge ${nextExisting})`;
-            const labelEn = count === 1
-              ? `Episode ${rangeStart} missing, ${nextExisting} exists`
-              : count === 2
-                ? `Episode ${rangeStart} & ${rangeEnd} missing, ${nextExisting} exists`
-                : `Episodes ${rangeStart}–${rangeEnd} missing, ${nextExisting} exists`;
-            internalGapRanges.push({
-              startEpisode: rangeStart,
-              endEpisode: rangeEnd,
-              count,
-              nextExistingEpisode: nextExisting,
-              isMultiEpisodeGap: isMulti,
-              labelDe,
-              labelEn
-            });
-            gapHighlights.push(labelDe);
-            if (cur !== undefined) {
-              rangeStart = cur;
+        // Priorität 1: Interne Lücken innerhalb der Staffel (1 .. maxUploadedEp) ODER komplett fehlende Zwischen-Staffel!
+        const missingInternal = [];
+        if (isCompletelyMissingIntermediateSeason) {
+          for (let ep = 1; ep <= Math.min(effectiveTotalExpected, 100); ep++) {
+            missingInternal.push(ep);
+          }
+        } else {
+          for (let ep = 1; ep <= maxUploadedEp; ep++) {
+            if (!epMap.has(ep)) missingInternal.push(ep);
+          }
+        }
+
+        // Zusammenhängende Lücken-Blöcke (insb. Multi-Episode-Gaps wie "Episode 1 & 2 missing, 3 exists") berechnen
+        const internalGapRanges = [];
+        const gapHighlights = [];
+        let hasMultiEpisodeGap = false;
+        if (isCompletelyMissingIntermediateSeason) {
+          hasMultiEpisodeGap = true;
+          const labelDe = `Komplette Staffel ${sNum} fehlt (vor Staffel ${maxUploadedSeason})`;
+          const labelEn = `Entire Season ${sNum} missing (before Season ${maxUploadedSeason})`;
+          internalGapRanges.push({
+            startEpisode: 1,
+            endEpisode: effectiveTotalExpected,
+            count: effectiveTotalExpected,
+            nextExistingEpisode: 1,
+            isMultiEpisodeGap: true,
+            isMissingSeason: true,
+            labelDe,
+            labelEn
+          });
+          gapHighlights.push(labelDe);
+        } else if (missingInternal.length > 0) {
+          let rangeStart = missingInternal[0];
+          let rangeEnd = missingInternal[0];
+          for (let idx = 1; idx <= missingInternal.length; idx++) {
+            const cur = missingInternal[idx];
+            if (cur === rangeEnd + 1) {
               rangeEnd = cur;
+            } else {
+              const count = rangeEnd - rangeStart + 1;
+              const nextExisting = presentEps.find(p => p > rangeEnd) || (rangeEnd + 1);
+              const isMulti = count >= 2;
+              if (isMulti) hasMultiEpisodeGap = true;
+              const labelDe = count === 1
+                ? `Folge ${rangeStart} fehlt (Folge ${nextExisting} vorhanden)`
+                : count === 2
+                  ? `Folge ${rangeStart} & ${rangeEnd} fehlen (Folge ${nextExisting} vorhanden)`
+                  : `Folge ${rangeStart}–${rangeEnd} fehlen (${count} Folgen vor Folge ${nextExisting})`;
+              const labelEn = count === 1
+                ? `Episode ${rangeStart} missing, ${nextExisting} exists`
+                : count === 2
+                  ? `Episode ${rangeStart} & ${rangeEnd} missing, ${nextExisting} exists`
+                  : `Episodes ${rangeStart}–${rangeEnd} missing, ${nextExisting} exists`;
+              internalGapRanges.push({
+                startEpisode: rangeStart,
+                endEpisode: rangeEnd,
+                count,
+                nextExistingEpisode: nextExisting,
+                isMultiEpisodeGap: isMulti,
+                labelDe,
+                labelEn
+              });
+              gapHighlights.push(labelDe);
+              if (cur !== undefined) {
+                rangeStart = cur;
+                rangeEnd = cur;
+              }
             }
           }
         }
-      }
 
-      // Priorität 2: Fehlende Folgen am Staffelende (maxUploadedEp + 1 .. effectiveTotalExpected)
-      const missingTrailing = [];
-      if (effectiveTotalExpected > maxUploadedEp) {
-        for (let ep = maxUploadedEp + 1; ep <= Math.min(effectiveTotalExpected, 250); ep++) {
-          missingTrailing.push(ep);
+        // Priorität 2: Fehlende Folgen am Staffelende (maxUploadedEp + 1 .. effectiveTotalExpected)
+        const missingTrailing = [];
+        if (!isCompletelyMissingIntermediateSeason && effectiveTotalExpected > maxUploadedEp) {
+          for (let ep = maxUploadedEp + 1; ep <= Math.min(effectiveTotalExpected, 250); ep++) {
+            missingTrailing.push(ep);
+          }
         }
-      }
 
-      if (missingInternal.length === 0 && missingTrailing.length === 0 && prereleaseEps.length === 0) {
-        continue;
-      }
+        if (missingInternal.length === 0 && missingTrailing.length === 0 && prereleaseEps.length === 0) {
+          continue;
+        }
 
-      totalInternalMissingEpisodes += missingInternal.length;
-      totalTrailingMissingEpisodes += missingTrailing.length;
+        totalInternalMissingEpisodes += missingInternal.length;
+        totalTrailingMissingEpisodes += missingTrailing.length;
+        totalPrereleaseOnlyEpisodes += prereleaseEps.length;
 
-      let seriesObj = seriesGapsList.find(x => x.tmdbId === sid);
-      if (!seriesObj) {
-        seriesObj = {
-          tmdbId: sid,
-          title: sMeta.title,
-          year: sMeta.year,
-          poster: sMeta.poster,
-          hasInternalGaps: false,
-          hasMultiEpisodeGap: false,
-          internalMissingCount: 0,
-          trailingMissingCount: 0,
-          seasons: []
-        };
-        seriesGapsList.push(seriesObj);
+        let seriesObj = seriesGapsList.find(x => x.tmdbId === sid);
+        if (!seriesObj) {
+          seriesObj = {
+            tmdbId: sid,
+            seriesId: sid,
+            title: sMeta.title,
+            year: sMeta.year,
+            poster: sMeta.poster,
+            hasInternalGaps: false,
+            hasPriorityInternalGaps: false,
+            hasMultiEpisodeGap: false,
+            internalMissingCount: 0,
+            totalInternalMissing: 0,
+            trailingMissingCount: 0,
+            totalTrailingMissing: 0,
+            totalPrerelease: 0,
+            seasons: []
+          };
+          seriesGapsList.push(seriesObj);
+        }
+        if (missingInternal.length > 0) {
+          seriesObj.hasInternalGaps = true;
+          seriesObj.hasPriorityInternalGaps = true;
+        }
+        if (hasMultiEpisodeGap) seriesObj.hasMultiEpisodeGap = true;
+        seriesObj.internalMissingCount += missingInternal.length;
+        seriesObj.totalInternalMissing += missingInternal.length;
+        seriesObj.trailingMissingCount += missingTrailing.length;
+        seriesObj.totalTrailingMissing += missingTrailing.length;
+        seriesObj.totalPrerelease += prereleaseEps.length;
+        seriesObj.seasons.push({
+          seasonNumber: sNum,
+          presentEpisodes: presentEps,
+          uploadedEpisodes: presentEps,
+          uploadedCount: presentEps.length,
+          prereleaseEpisodes: prereleaseEps,
+          maxUploadedEp: isCompletelyMissingIntermediateSeason ? effectiveTotalExpected : maxUploadedEp,
+          expectedTotalEpisodes: effectiveTotalExpected,
+          missingInternal,
+          internalGaps: missingInternal,
+          missingTrailing,
+          trailingMissing: missingTrailing,
+          isCompletelyMissingSeason: isCompletelyMissingIntermediateSeason,
+          hasMultiEpisodeGap,
+          internalGapRanges,
+          gapHighlights
+        });
       }
-      if (missingInternal.length > 0) seriesObj.hasInternalGaps = true;
-      if (hasMultiEpisodeGap) seriesObj.hasMultiEpisodeGap = true;
-      seriesObj.internalMissingCount += missingInternal.length;
-      seriesObj.trailingMissingCount += missingTrailing.length;
-      seriesObj.seasons.push({
-        seasonNumber: sNum,
-        presentEpisodes: presentEps,
-        prereleaseEpisodes: prereleaseEps,
-        maxUploadedEp,
-        expectedTotalEpisodes: effectiveTotalExpected,
-        missingInternal,
-        missingTrailing,
-        hasMultiEpisodeGap,
-        internalGapRanges,
-        gapHighlights
-      });
     }
 
     let totalSeriesWithMultiEpisodeGaps = 0;
@@ -3115,7 +3203,7 @@
       if (s.hasMultiEpisodeGap) totalSeriesWithMultiEpisodeGaps++;
     }
 
-    // Sortiere Serien mit Multi-Episode-Gaps (z.B. E01+E02 fehlt vor E03) und internen Staffel-Lücken immer ganz nach oben!
+    // Sortiere Serien mit Multi-Episode-Gaps (z.B. E01+E02 fehlt vor E03 oder fehlende Zwischen-Staffel) und internen Staffel-Lücken immer ganz nach oben!
     seriesGapsList.sort((a, b) => {
       if (a.hasMultiEpisodeGap !== b.hasMultiEpisodeGap) return a.hasMultiEpisodeGap ? -1 : 1;
       if (a.hasInternalGaps !== b.hasInternalGaps) return a.hasInternalGaps ? -1 : 1;
@@ -3124,7 +3212,17 @@
       return String(a.title || "").localeCompare(String(b.title || ""), "de");
     });
 
+    const totalCheckedCount = Math.max(allCheckedSeriesIds.size, seasonsToInspectBySeries.size, seriesGapsList.length);
     const resultObj = {
+      // Felder für TMA Admin-Panel (08c-tma-netflix-frontend.js)
+      totalSeriesChecked: totalCheckedCount,
+      seriesWithGapsCount: seriesGapsList.length,
+      seriesWithInternalGapsCount: totalSeriesWithInternalGaps,
+      totalMissingInternal: totalInternalMissingEpisodes,
+      totalMissingTrailing: totalTrailingMissingEpisodes,
+      totalPrereleaseOnly: totalPrereleaseOnlyEpisodes,
+      items: seriesGapsList,
+      // Felder für SeriesHealth Studio-Modul & Abwärtskompatibilität
       totalSeriesWithGaps: seriesGapsList.length,
       totalSeriesWithInternalGaps,
       totalSeriesWithMultiEpisodeGaps,
@@ -3584,6 +3682,78 @@
     return filtered;
   }
 
+  // Vergibt für manuell ohne TMDb-ID bestätigte Filme & Serien eine garantiert kollisionsfreie synthetische ID im exklusiven 900.000.000-Bereich.
+  // Prüft vorab in D1 (movies UND series), ob die ID frei ist oder bereits exakt zu demselben Titel gehört, damit sich zwei unterschiedliche Titel NIEMALS überschreiben!
+  async function allocateCollisionFreeManualSyntheticId(env, typeCode = "m", title = "", year = "") {
+    const tc = typeCode === "s" ? "s" : "m";
+    const normT = normalizeCompareString(title || "unbekannt") || "unbekannt";
+    const cleanY = String(year || "").match(/\d{4}/)?.[0] || "";
+
+    // 1. Prüfe im lokalen D1-Katalog-RAM-Cache, ob dieser manuelle Titel bereits existiert (wichtig für Folge-Episoden derselben Serie!)
+    try {
+      const catMap = await ensureLocalD1CatalogTitleMapLoaded(env);
+      if (catMap instanceof Map) {
+        const hitExact = cleanY ? catMap.get(`${tc}_${normT}_${cleanY}`) : null;
+        const hitAny = catMap.get(`${tc}_${normT}_any`);
+        const existingHit = hitExact || hitAny;
+        if (existingHit && Number(existingHit.tmdbId) >= 900000000) {
+          return Number(existingHit.tmdbId);
+        }
+      }
+    } catch (e) {}
+
+    // 2. Deterministische Start-ID im getrennten 900M-Raum (Filme: 900.000.000..944.999.999, Serien: 945.000.000..989.999.999)
+    const baseOffset = tc === "s" ? 945000000 : 900000000;
+    let h = 2166136261;
+    const seedStr = `manual_${tc}_${normT}_${cleanY}`;
+    for (let i = 0; i < seedStr.length; i++) {
+      h ^= seedStr.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    const baseCandidateId = baseOffset + ((h >>> 0) % 44000000);
+
+    // 3. Aktive D1-Kollisionsprüfung über `movies` UND `series`
+    const db = await ensureD1Schema(env);
+    if (!db) return baseCandidateId;
+    try {
+      const rawDb = db._rawDb || db;
+      const upperCheckId = baseCandidateId + 25;
+      const [mRes, sRes] = await rawDb.batch([
+        rawDb.prepare("SELECT tmdb_id, title, release_year FROM movies WHERE tmdb_id >= ?1 AND tmdb_id <= ?2").bind(baseCandidateId, upperCheckId),
+        rawDb.prepare("SELECT tmdb_id, title, release_year FROM series WHERE tmdb_id >= ?1 AND tmdb_id <= ?2").bind(baseCandidateId, upperCheckId)
+      ]);
+      const occupiedMovies = new Map();
+      for (const r of (mRes?.results || [])) {
+        occupiedMovies.set(Number(r.tmdb_id), r);
+      }
+      const occupiedSeries = new Map();
+      for (const r of (sRes?.results || [])) {
+        occupiedSeries.set(Number(r.tmdb_id), r);
+      }
+
+      for (let offset = 0; offset <= 25; offset++) {
+        const candidateId = baseCandidateId + offset;
+        const mRow = occupiedMovies.get(candidateId);
+        const sRow = occupiedSeries.get(candidateId);
+        if (!mRow && !sRow) {
+          return candidateId;
+        }
+        // Falls derselbe Typ und derselbe normalisierte Titel bereits unter dieser ID gespeichert ist -> wiederverwenden!
+        if (tc === "m" && mRow && !sRow && normalizeCompareString(mRow.title) === normT) {
+          if (!cleanY || !mRow.release_year || String(mRow.release_year) === cleanY) {
+            return candidateId;
+          }
+        }
+        if (tc === "s" && sRow && !mRow && normalizeCompareString(sRow.title) === normT) {
+          if (!cleanY || !sRow.release_year || String(sRow.release_year) === cleanY) {
+            return candidateId;
+          }
+        }
+      }
+    } catch (e) {}
+    return baseCandidateId;
+  }
+
   async function getMovieFromD1(env, movieId) {
     if (!movieId) return null;
     const mid = Number(movieId);
@@ -3600,13 +3770,15 @@
         .bind(mid)
         .first();
       if (!row || !row.details_json) return null;
-      if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
+      // Externe & manuelle IDs (>= 8000000) niemals per TMDb-TTL verfallen lassen!
+      if (mid < 8000000 && (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS)) return null;
       const parsed = JSON.parse(row.details_json);
       if (parsed && parsed.title) {
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
         memoryFallback.set(`d1_catalog_movie_${mid}`, parsed);
+        memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
         trackStat("d1Hits");
         return parsed;
       }
@@ -3624,8 +3796,8 @@
       ? parseInt(String(movieObj.releaseDate).split("-")[0], 10) || null
       : null;
     registerLocalD1CatalogTitleInRam("m", mid, movieObj.title, releaseYearForIdx);
-    // Wenn derselbe Film in den letzten 10 Minuten bereits in D1 gespeichert wurde und sich das Poster nicht geändert hat, spare den redundanten D1-Write!
-    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevMovie && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
+    // Wenn derselbe Film in den letzten 30 Minuten bereits in D1 gespeichert wurde und sich Titel/Poster nicht geändert haben, spare den redundanten D1-Write!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 1800000 && prevMovie && prevMovie.title === movieObj.title && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
       return;
     }
     const db = await ensureD1Schema(env);
@@ -3689,13 +3861,15 @@
         .bind(sid)
         .first();
       if (!row || !row.details_json) return null;
-      if (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) return null;
+      // Externe & manuelle Serien-IDs (>= 8000000) niemals per TMDb-TTL verfallen lassen!
+      if (sid < 8000000 && (Date.now() - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS)) return null;
       const parsed = JSON.parse(row.details_json);
       if (parsed && parsed.title) {
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
         memoryFallback.set(`d1_catalog_series_${sid}`, parsed);
+        memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
         trackStat("d1Hits");
         return parsed;
       }
@@ -3748,9 +3922,9 @@
       ? parseInt(String(seriesObj.releaseDate).split("-")[0], 10) || null
       : null;
     registerLocalD1CatalogTitleInRam("s", sid, seriesObj.title, releaseYearForIdx);
-    // Wenn dieselbe Serie in den letzten 10 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E03)
-    // und sich weder Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
-    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 600000 && prevSeries && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
+    // Wenn dieselbe Serie in den letzten 30 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E24)
+    // und sich weder Titel, Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
+    if (prevSavedTs > 0 && (Date.now() - prevSavedTs) < 1800000 && prevSeries && prevSeries.title === seriesObj.title && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
       return;
     }
     const db = await ensureD1Schema(env);
@@ -3797,8 +3971,9 @@
           )
       ];
 
-      // Bestehende Karteileichen (episode_number > seasonEpisodeCount) gebündelt im selben db.batch bereinigen (1 Subrequest statt N!)
-      if (Array.isArray(seriesObj.seasons)) {
+      // Karteileichen-Bereinigung nur ausführen, wenn eine alternative Schnittfassung / Episode-Group aktiv ist (spart N D1-Statements bei Standard-Serien!)
+      const needsEpisodeGroupPrune = Boolean(FORCE_EPISODE_GROUP_SERIES.has(sid) || seriesObj.versionInfo?.isAlternativeOrder);
+      if (needsEpisodeGroupPrune && Array.isArray(seriesObj.seasons)) {
         for (const s of seriesObj.seasons) {
           const sNum = Number(s?.season_number || 0);
           const maxEp = Number(s?.episode_count || 0);
@@ -4332,7 +4507,27 @@
     const keys = buildTitleResolutionCacheKeys(rawSearchTitle, yr, tc);
     if (!keys) return null;
 
-    // 2. Prüfe RAM + D1 entity_cache auf bereits aufgelöste Titel (inkl. TMDb, alle 7 Fallback-APIs >= 8000000 UND Negativ-Cache für unauffindbare Titel!)
+    // 2. Prüfe zuerst den lokalen D1-Katalog (movies / series Tabellen) per In-Memory-Titel-Index (0 externe API-Requests bei bereits vorhandenen Filmen/Serien, überstimmt auch alte Negativ-Cache-Einträge!)
+    const catalogMap = await ensureLocalD1CatalogTitleMapLoaded(env);
+    if (catalogMap instanceof Map && catalogMap.size > 0) {
+      const catExact = yr ? catalogMap.get(`${tc}_${keys.normT}_${yr}`) : null;
+      const catAny = catalogMap.get(`${tc}_${keys.normT}_any`);
+      const catCandidate = catExact || catAny;
+      if (catCandidate && catCandidate.tmdbId) {
+        const yearAcceptable = !yr || !catCandidate.year || Math.abs(yr - Number(catCandidate.year)) <= 2 || tc === "s";
+        if (yearAcceptable) {
+          return {
+            matchedBy: "d1_catalog",
+            typeCode: catCandidate.typeCode || tc,
+            tmdbId: Number(catCandidate.tmdbId),
+            confidence: catExact ? 98 : 92,
+            source: "D1-Katalog"
+          };
+        }
+      }
+    }
+
+    // 3. Prüfe RAM + D1 entity_cache auf bereits aufgelöste Titel (inkl. TMDb, alle 7 Fallback-APIs >= 8000000 UND Negativ-Cache für unauffindbare Titel!)
     const ramHit =
       memoryFallback.get(keys.exactKey) ||
       (keys.legacySeriesKey ? memoryFallback.get(keys.legacySeriesKey) : null) ||
@@ -4387,26 +4582,6 @@
           details: d1Hit.details || null,
           candidates: d1Hit.candidates || []
         };
-      }
-    }
-
-    // 3. Prüfe den lokalen D1-Katalog (movies / series Tabellen) per In-Memory-Titel-Index (0 externe API-Requests bei bereits vorhandenen Filmen/Serien!)
-    const catalogMap = await ensureLocalD1CatalogTitleMapLoaded(env);
-    if (catalogMap instanceof Map && catalogMap.size > 0) {
-      const catExact = yr ? catalogMap.get(`${tc}_${keys.normT}_${yr}`) : null;
-      const catAny = catalogMap.get(`${tc}_${keys.normT}_any`);
-      const catCandidate = catExact || catAny;
-      if (catCandidate && catCandidate.tmdbId) {
-        const yearAcceptable = !yr || !catCandidate.year || Math.abs(yr - Number(catCandidate.year)) <= 2 || tc === "s";
-        if (yearAcceptable) {
-          return {
-            matchedBy: "d1_catalog",
-            typeCode: catCandidate.typeCode || tc,
-            tmdbId: Number(catCandidate.tmdbId),
-            confidence: catExact ? 98 : 92,
-            source: "D1-Katalog"
-          };
-        }
       }
     }
 

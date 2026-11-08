@@ -220,8 +220,97 @@ export default function App() {
           ? (payload.messages as Array<Record<string, any>>)
           : [];
 
+      // 1. Set-based deduplication of payload items BEFORE the D1-check
+      const seenBatchItemKeys = new Set<string>();
+      const deduplicatedEntries: Array<Record<string, any>> = [];
+      let deduplicatedItemsDropped = 0;
+
+      for (const item of rawEntries) {
+        if (!item || typeof item !== 'object') {
+          deduplicatedEntries.push(item);
+          continue;
+        }
+
+        const rawTitle = String(
+          item.cleanTitle ||
+            item.clean_title ||
+            item.series_title ||
+            item.title ||
+            item.name ||
+            item.filename ||
+            item.file_name ||
+            item.rawInput ||
+            item.caption ||
+            item.text ||
+            ''
+        ).trim();
+
+        const normalizedTitleKey = rawTitle
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+        const telegramIdKey = String(
+          item.file_unique_id ||
+            item.fileUniqueId ||
+            item.document?.file_unique_id ||
+            item.video?.file_unique_id ||
+            item.file_id ||
+            item.fileId ||
+            item.message_id ||
+            item.msg_id ||
+            item.msgId ||
+            item.id ||
+            ''
+        ).trim();
+
+        const seasonVal = item.season ?? item.season_number ?? '';
+        const episodeVal = item.episode ?? item.episode_number ?? '';
+        const seMatch = rawTitle.match(
+          /\b(?:S(\d{1,2})E(\d{1,3})|(\d{1,2})x(\d{1,3})|Staffel\s*(\d{1,2}).*?Folge\s*(\d{1,3}))\b/i
+        );
+        const seKey =
+          seasonVal !== '' || episodeVal !== ''
+            ? `s${seasonVal}e${episodeVal}`
+            : seMatch
+              ? `s${Number(seMatch[1] || seMatch[3] || seMatch[5] || 0)}e${Number(
+                  seMatch[2] || seMatch[4] || seMatch[6] || 0
+                )}`
+              : '';
+
+        const yearKey = String(item.year ?? item.release_year ?? '').trim();
+
+        // Build composite identity key: Telegram-ID + normalized title + S/E + year
+        if (telegramIdKey || normalizedTitleKey) {
+          const itemDedupKey = `${telegramIdKey}::${normalizedTitleKey}::${seKey}::${yearKey}`;
+          if (seenBatchItemKeys.has(itemDedupKey)) {
+            deduplicatedItemsDropped++;
+            continue;
+          }
+          seenBatchItemKeys.add(itemDedupKey);
+        }
+
+        deduplicatedEntries.push(item);
+      }
+
+      const D1_LATENCY_THRESHOLD_MS = 2000;
+      const D1_COOLDOWN_DURATION_MS = 5000;
+      let cooldownTriggered = false;
+      let totalCooldownMs = 0;
+
+      // 2. Set/Map-based deduplication of D1 database lookups across the batch + Phase A latency tracking
+      const tPreCheckStart = performance.now();
+      const seenD1QueryKeys = new Set<string>();
+      const batchD1LookupCache = new Map<
+        string,
+        ReturnType<typeof checkDatabaseForExistingTitle>
+      >();
       let d1PreMatchedCount = 0;
-      const preCheckedEntries = rawEntries.map((item) => {
+      let d1BatchCacheHits = 0;
+
+      const preCheckedEntries = deduplicatedEntries.map((item) => {
         if (!item || typeof item !== 'object') return item;
         if (item.tmdb_id || item.tmdbId) {
           d1PreMatchedCount++;
@@ -248,10 +337,31 @@ export default function App() {
           Boolean(item.season || item.episode || item.season_number || item.episode_number) ||
           /\b(S\d{1,2}E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(candidateTitle);
 
-        const d1Match = checkDatabaseForExistingTitle(candidateTitle, {
-          year: item.year || item.release_year || null,
-          isSeries: isSeriesHint ? true : undefined,
-        });
+        const itemYear = item.year || item.release_year || null;
+        const normalizedD1TitleKey = candidateTitle
+          .toLowerCase()
+          .replace(/\b(S\d{1,2}E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b.*$/i, '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+        const d1QueryKey = `${normalizedD1TitleKey || candidateTitle.toLowerCase()}::${
+          itemYear ?? ''
+        }::${isSeriesHint ? 's' : 'm'}`;
+
+        let d1Match: ReturnType<typeof checkDatabaseForExistingTitle>;
+        if (seenD1QueryKeys.has(d1QueryKey) && batchD1LookupCache.has(d1QueryKey)) {
+          d1Match = batchD1LookupCache.get(d1QueryKey)!;
+          d1BatchCacheHits++;
+        } else {
+          seenD1QueryKeys.add(d1QueryKey);
+          d1Match = checkDatabaseForExistingTitle(candidateTitle, {
+            year: itemYear,
+            isSeries: isSeriesHint ? true : undefined,
+          });
+          batchD1LookupCache.set(d1QueryKey, d1Match);
+        }
 
         if (d1Match.matched && d1Match.confidence >= 85 && d1Match.tmdbId) {
           d1PreMatchedCount++;
@@ -273,6 +383,29 @@ export default function App() {
         return item;
       });
 
+      const d1PreCheckLatencyMs = Math.round(performance.now() - tPreCheckStart);
+
+      // Auto-pause if local D1 pre-check latency exceeds 2 seconds (2000ms)
+      if (d1PreCheckLatencyMs > D1_LATENCY_THRESHOLD_MS) {
+        cooldownTriggered = true;
+        totalCooldownMs += D1_COOLDOWN_DURATION_MS;
+        const preCooldownLog: ConsoleLogEntry = {
+          id: `log_d1_cooldown_pre_${Date.now()}`,
+          level: 'warn',
+          args: [
+            `⏳ Auto-Pause (${D1_COOLDOWN_DURATION_MS / 1000}s Cooldown): D1-Vorab-Check-Latenz (${d1PreCheckLatencyMs}ms) > ${D1_LATENCY_THRESHOLD_MS}ms – Schutz vor HTTP 503 Gateway-Timeout aktiv`,
+          ],
+          time: new Date().toLocaleTimeString([], {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+        };
+        setLogs((prev) => [preCooldownLog, ...prev].slice(0, 50));
+        await new Promise((resolve) => setTimeout(resolve, D1_COOLDOWN_DURATION_MS));
+      }
+
       const enrichedPayload: Record<string, unknown> = {
         ...payload,
         ...(Array.isArray(payload.entries) ? { entries: preCheckedEntries } : {}),
@@ -280,6 +413,8 @@ export default function App() {
           ? { messages: preCheckedEntries }
           : {}),
         d1PreMatchedCount,
+        deduplicatedItemsDropped,
+        d1BatchCacheHits,
       };
 
       const importReq: WorkerRequestData = {
@@ -292,28 +427,13 @@ export default function App() {
         },
         body: JSON.stringify(enrichedPayload),
       };
+
+      // Phase B: Measure Worker D1 batch execution + catalog registration latency
+      const tWorkerD1Start = performance.now();
       const res = await executeWorkerSandbox(workerCode, importReq, envMap, kvNamespace);
-      const d1Log: ConsoleLogEntry[] =
-        d1PreMatchedCount > 0
-          ? [
-              {
-                id: `log_d1_pre_${Date.now()}`,
-                level: 'info',
-                args: [
-                  `⚡ D1-Vorab-Check (85%-Stop-Limit): ${d1PreMatchedCount}/${rawEntries.length} Titel lokal in D1 erkannt -> TMDb-ID vorab gesetzt (0 externe API-Calls)`,
-                ],
-                time: new Date().toLocaleTimeString([], {
-                  hour12: false,
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                }),
-              },
-            ]
-          : [];
-      setLogs((prev) => [...d1Log, ...res.logs, ...prev].slice(0, 50));
+      let parsedBody: Record<string, any> | null = null;
       try {
-        const parsedBody = JSON.parse(res.response.body);
+        parsedBody = JSON.parse(res.response.body);
         if (parsedBody && Array.isArray(parsedBody.batchItems)) {
           for (const bItem of parsedBody.batchItems) {
             if (bItem && bItem.tmdbId && bItem.cleanTitle) {
@@ -327,16 +447,83 @@ export default function App() {
             }
           }
         }
+      } catch {
+        parsedBody = null;
+      }
+
+      const workerD1LatencyMs = Math.round(performance.now() - tWorkerD1Start);
+      const d1LatencyMs = d1PreCheckLatencyMs + workerD1LatencyMs;
+
+      const d1Log: ConsoleLogEntry[] =
+        d1PreMatchedCount > 0 || deduplicatedItemsDropped > 0 || d1BatchCacheHits > 0
+          ? [
+              {
+                id: `log_d1_pre_${Date.now()}`,
+                level: 'info',
+                args: [
+                  `⚡ D1-Vorab-Check (85%-Stop-Limit): ${d1PreMatchedCount}/${preCheckedEntries.length} Titel lokal in D1 erkannt (${d1BatchCacheHits} Batch-Query-Cache-Hits, ${deduplicatedItemsDropped} Duplikat-Items vorab gefiltert, D1-Latenz: ${d1LatencyMs}ms) -> TMDb-ID vorab gesetzt (0 externe API-Calls)`,
+                ],
+                time: new Date().toLocaleTimeString([], {
+                  hour12: false,
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                }),
+              },
+            ]
+          : [];
+
+      // Auto-pause if Worker D1 batch latency or total D1 operation latency exceeds 2 seconds (2000ms)
+      if (
+        workerD1LatencyMs > D1_LATENCY_THRESHOLD_MS ||
+        (!cooldownTriggered && d1LatencyMs > D1_LATENCY_THRESHOLD_MS)
+      ) {
+        cooldownTriggered = true;
+        totalCooldownMs += D1_COOLDOWN_DURATION_MS;
+        const postCooldownLog: ConsoleLogEntry = {
+          id: `log_d1_cooldown_post_${Date.now()}`,
+          level: 'warn',
+          args: [
+            `⏳ Auto-Pause (${D1_COOLDOWN_DURATION_MS / 1000}s Cooldown): D1-Batch-Latenz (${d1LatencyMs}ms gesamt | Vorab: ${d1PreCheckLatencyMs}ms | Worker-D1: ${workerD1LatencyMs}ms) > ${D1_LATENCY_THRESHOLD_MS}ms – Schutz vor HTTP 503 Gateway-Timeout aktiv`,
+          ],
+          time: new Date().toLocaleTimeString([], {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+        };
+        setLogs((prev) => [postCooldownLog, ...d1Log, ...res.logs, ...prev].slice(0, 50));
+        await new Promise((resolve) => setTimeout(resolve, D1_COOLDOWN_DURATION_MS));
+      } else {
+        setLogs((prev) => [...d1Log, ...res.logs, ...prev].slice(0, 50));
+      }
+
+      if (parsedBody) {
         return {
           ...parsedBody,
           d1PreMatchedCount,
-        };
-      } catch {
-        return {
-          ok: res.response.status >= 200 && res.response.status < 300,
-          d1PreMatchedCount,
+          deduplicatedItemsDropped,
+          d1BatchCacheHits,
+          d1LatencyMs,
+          d1PreCheckLatencyMs,
+          workerD1LatencyMs,
+          cooldownTriggered,
+          cooldownMs: totalCooldownMs,
         };
       }
+
+      return {
+        ok: res.response.status >= 200 && res.response.status < 300,
+        d1PreMatchedCount,
+        deduplicatedItemsDropped,
+        d1BatchCacheHits,
+        d1LatencyMs,
+        d1PreCheckLatencyMs,
+        workerD1LatencyMs,
+        cooldownTriggered,
+        cooldownMs: totalCooldownMs,
+      };
     },
     [workerCode, requestData, envVars, kvNamespace]
   );

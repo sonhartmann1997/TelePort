@@ -1,102 +1,114 @@
-# Eliminierung von `HTTP 503` beim Massen-Import durch D1-Bulk-Bündelung (`db.batch`) & Browser-Titel-Cache
+# Kollisionsfreie ID-Architektur, Manuelle Titel-Bestätigung & D1/KV-Speicher-Optimierung
 
-Behebung des Cloudflare-Fehlers `⏳ Rate-Limit / Einzel-Isolierung bei #5469: API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP 503)` durch Zusammenfassung aller D1-Lese- und Schreiboperationen eines Import-Batches in gesammelte `db.batch()`-Transaktionen, lückenlose Zählung aller D1-/KV-/HTTP-Subrequests sowie einen persistenten Browser-Titel-Cache im Mini-App-Importer.
+Dieses Update beseitigt jegliche ID-Überlappungen zwischen TMDb, Zusatz-APIs und manuell angelegten Titeln, sorgt dafür, dass Serien wie Filme vorrangig ihre echte TMDb-ID erhalten, ermöglicht das manuelle Bestätigen unbekannter Filme/Serien ohne TMDb-ID über einen eigenen Dialog und reduziert unnötige D1- und KV-Schreibzugriffe drastisch.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Beide Optimierungsstrategien wurden durch deine Auswahl bestätigt und sind verbindlich eingeplant:
+> Alle Rückfragen aus Phase 1 wurden bestätigt und sind verbindlich in dieser Architektur verankert:
 
-- **Bestätigte Entscheidung 1 (D1-Bulk-Bündelung per `db.batch` + D1-Subrequest-Zählung)**: Da Cloudflare jede einzelne D1-Abfrage (`first`, `all`, `run`, `batch`) und jeden KV-Aufruf auf das harte 50-Subrequest-Limit pro Worker-Aufruf anrechnet, werden sämtliche D1-Vorab-Checks am Batch-Anfang in **1 einzigen `db.batch()`-Read** und sämtliche D1-Speicheroperationen am Batch-Ende in **1 einzigen `db.batch()`-Write** gebündelt. Zusätzlich zählt ein transparenter D1/KV-Tracker jede reale Datenbankabfrage im Subrequest-Budget mit.
-- **Bestätigte Entscheidung 2 (Browser-Titel-Cache im Mini-App-Importer)**: Der JSON-Importer der Mini-App merkt sich jeden einmal aufgelösten Serien- und Filmtitel im Browser-Speicher (`resolvedTitlesCache`) und übergibt bei allen nachfolgenden Episoden oder Qualitätsstufen desselben Titels direkt die fertige `tmdb_id` an den Worker (`0 Such-Requests`).
+- **Automatische TMDb-Brücke + getrennte Original-IDs für Zusatz-APIs**: Serien und Filme nutzen vorrangig ihre offizielle TMDb-ID (`1 .. 99.999.999`). Findet OMDb, TVMaze oder Wikidata eine externe ID (`imdb_id`, `thetvdb_id`, `wikidata_id`), wird zuerst über TMDb `/3/find/` geprüft, ob ein offizieller TMDb-Eintrag existiert. Nur wenn kein TMDb-Eintrag existiert, wird der Titel automatisch mit seiner nativen Zusatz-API-ID in einem strikt getrennten 100-Millionen-Block (ohne Modulo-Kürzung) gespeichert.
+- **Manueller Bestätigungs-Dialog für Titel ohne API-Treffer**: Filme und Serien, die weder auf TMDb noch in den Zusatz-APIs gefunden werden (oder manuell angelegt werden sollen), können direkt über einen Dialog mit **Titel, Erscheinungsjahr, Typ (Film/Serie inkl. Staffel/Episode) und optionalem Poster-Link** bestätigt werden. Sie erhalten eine kollisionsgeprüfte synthetische ID im exklusiven `900.000.000`-Bereich.
+- **D1- & KV-Limit-Schonung**: Unveränderte Serien-Metadaten werden beim Episoden-Import nicht mehr bei jeder Folge erneut in `series` und `series_seasons` geschrieben (spart >80 % D1-Writes bei Serien), und unnötige KV-Reads/Writes bei `bot_vip` sowie unveränderten Ordner-/Session-Ständen werden per Dirty-Signatur gestoppt.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **Ursache des `HTTP 503` bei `#5469`**: In Cloudflare Workers zählen nicht nur externe `fetch()`-Aufrufe, sondern auch jede einzelne D1-SQL-Abfrage und jeder KV-Zugriff als Subrequest (Limit: 50 pro Request). Bisher löste ein 10er-Batch rund 70 bis 90 einzelne D1-Abfragen aus (pro Eintrag 4 einzelne `SELECT`-Checks, 2–4 `entity_cache`-Writes sowie separate `SELECT`/`INSERT`-Aufrufe für `movie_files`, `episode_files`, `movies`, `series`, Playlists und Checkpoints). Sobald die Summe aus D1-Abfragen und API-Fetches 50 erreichte, brach Cloudflare den Worker hart mit `HTTP 503` ab.
-- **Lösung**:
-  1. **Vom Einzel-SQL zum Sammel-`db.batch`**: Reduktion der D1-Subrequests pro 10er-Batch von ~80 auf **2–4 gebündelte `db.batch`-Aufrufe**.
-  2. **Echtes Subrequest-Tracking (HTTP + D1 + KV)**: Der Subrequest-Zähler überwacht alle drei Subrequest-Quellen gemeinsam und teilt einen Batch rechtzeitig (`PARTIAL_BATCH`), bevor Cloudflare je an die 50er-Grenze stößt.
-  3. **Browser-Titel-Cache in der Mini-App**: Verhindert wiederholte Titelsuchen bereits auf Client-Seite über alle Chunks hinweg.
+- **Was das System leistet**:
+  1. **Überlappungsfreie ID-Räume ohne Modulo-Kollisionen**: Bisherige Modulo-Rechnungen (`% 290000` / `% 390000`) im engen `8.000.000`-Bereich führten dazu, dass sich Wikidata (`8.4M–8.69M`), Apple iTunes (`8.5M–8.9M`) und Wikipedia (`8.7M–8.99M`) gegenseitig überschreiben konnten. Durch disjunkte 100-Millionen-Bereiche pro Quelle bleibt jede externe ID 1:1 erhalten.
+  2. **Echte TMDb-IDs für Serien & Filme**: Bevor eine Serie auf eine TVMaze- oder OMDb-ID ausweicht, löst eine TMDb-Find-Bridge (`imdb_id` / `tvdb_id` -> TMDb TV ID) die echte TMDb-Serien-ID auf.
+  3. **Manuelle Bestätigung ohne TMDb-ID**: Unbekannte Eigenproduktionen, seltene Dokus oder regionale Titel können ohne TMDb-Zwang bestätigt werden; weitere Episoden derselben Serie erben automatisch dieselbe manuelle Serien-ID.
+  4. **Maximale D1- & KV-Effizienz**: Schreibzugriffe erfolgen nur noch bei echten Datenänderungen (Dirty-Hash-Guard).
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Key User Flows**:
-  1. **Vorab-Anreicherung im Browser vor jedem Batch**: Bevor der Mini-App-Importer die nächsten 10 Einträge an den Worker sendet, prüft er seinen lokalen `resolvedTitlesCache`. Ist eine Serie (z. B. Folge 1 aus einem früheren Batch) oder ein Film bereits bekannt, wird die `tmdb_id` direkt an den Eintrag geheftet.
-  2. **1-Subrequest D1-Bulk-Prefetch im Worker**: Der Worker lädt zu Beginn des Batches alle benötigten `movie_files`-, `episode_files`- und `entity_cache`-Einträge für alle 10 Elemente in **einem einzigen `db.batch()`-Aufruf** in den RAM.
-  3. **1-Subrequest D1-Bulk-Commit am Batch-Ende**: Während die 10 Einträge verarbeitet werden, sammelt eine D1-Write-Queue alle SQL-Statements (`movies`, `series`, `movie_files`, `episode_files`, `series_episodes`, `entity_cache`, `d1_playlist_items`, `import_diagnostic_logs`, `d1_import_checkpoints`) und schreibt sie am Ende gemeinsam in **einem einzigen `db.batch()`-Aufruf** in D1.
-  4. **Transparente Live-Anzeige**: Im Import-Log und Fortschrittsbalken sieht der Admin jederzeit die exakte Anzahl der genutzten Gesamt-Subrequests (inkl. D1) sowie die Anzahl der lokal aus dem Browser-/D1-Cache bedienten Titel.
-- **Visual Identity & Theme**:
-  - *Aesthetic Direction*: Dunkles Streaming- & Admin-Cockpit (`#101016` / `#090c14`) mit flüssigem Echtzeit-Fortschrittsbalken ohne Gateway-Aussetzer.
-  - *Color Palette & Mood*: Smaragdgrün (`#10b981`) für gebündelte D1-Commits und Cache-Treffer, Cyan (`#38bdf8`) für `PARTIAL_BATCH`-Fortsetzungen, Amber (`#f59e0b`) für manuelle Prüf-Kandidaten.
-  - *Typography & Hierarchy*: Tabellarische Zähler (`tabular-nums`) und Monospace-Metriken für Subrequest-Budget und Batch-Durchsatz.
+- **Manueller Bestätigungs-Dialog (ohne TMDb-ID)**:
+  - Im **Konflikt- & Review-Bereich** des Backup-Importers, im **Diagnose-Log** sowie in der **Film/Serien-CRUD-Verwaltung** erscheint neben der TMDb-Kandidaten-Suche der Button **✨ Ohne TMDb-ID manuell bestätigen**.
+  - Ein aufgeräumtes Modal im dunklen Streaming-Design (`#12121a`, klare Typografie, 0 überflüssige Badges) öffnet sich mit vorausgefüllten Werten aus dem Dateinamen:
+    - **Titel** (Textfeld, vorausgefüllt mit erkanntem `cleanTitle`)
+    - **Erscheinungsjahr** (z. B. `2024` oder leer für `k.A.`)
+    - **Medientyp-Umschalter** (`🎬 Film` / `📺 Serie` – bei Serie mit Feldern für **Staffel** und **Episode**)
+    - **Optionaler Poster-/Cover-Link** (`https://...`) und **Optionale Genres / Kurzinfo**
+  - Mit Klick auf **✅ Jetzt mit synthetischer ID speichern** wird der Eintrag sofort in D1 angelegt, aus der Konfliktliste als gelöst markiert und im Katalog sichtbar.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Entscheidung 1: Transparenter D1-Subrequest-Proxy + Write-Behind-Queue pro Batch**
-  - *Gewählter Ansatz*: Das D1-Binding wird mit einem leichtgewichtigen Proxy ummantelt, der jeden tatsächlichen `.first()`-, `.all()`-, `.run()`- und `.batch()`-Aufruf in `currentInvocationSubrequests` mitzählt. Gleichzeitig werden während eines Import-Batches alle Schreibbefehle in einer Batch-Transaktionsliste (`pendingD1BatchStatements`) gesammelt und am Ende in einem einzigen `db.batch()` ausgeführt.
-  - *Warum*: Ein `db.batch()` mit 40 SQL-Statements zählt bei Cloudflare als **nur 1 einziger Subrequest** statt 40. Damit sinkt die D1-Last pro Batch um über 90 %.
-- **Entscheidung 2: Client-seitiger `resolvedTitlesCache` im Mini-App-Importer**
-  - *Gewählter Ansatz*: Der Browser speichert für jeden erfolgreich verarbeiteten oder bereits als `TMDB_NOT_FOUND` eingestuften Titel den normalisierten Titel-Key im RAM und in `localStorage`. Kommen im weiteren Verlauf (z. B. bei `#5469`) weitere Folgen derselben Serie oder Duplikate vor, sendet der Browser `tmdb_id` bzw. das Negativ-Flag direkt mit.
-  - *Warum*: Spart sowohl im Browser als auch im Worker sämtliche Such-Kaskaden für bereits bekannte Titel über alle 180.000 Einträge hinweg.
+- **Entscheidung 1: Disjunkte 100-Millionen-ID-Blöcke statt Modulo-Kompression**
+  - *Gewählter Ansatz*:
+    - `1 .. 99.999.999`: **Offizielle TMDb-ID** (Filme & Serien in getrennten Tabellen `movies` und `series`)
+    - `100.000.000 .. 199.999.999`: **OMDb / IMDb** (`100_000_000 + numerische IMDb-ID`, z. B. `tt1234567` $\rightarrow$ `101234567`)
+    - `200.000.000 .. 299.999.999`: **TVMaze** (`200_000_000 + tvmazeId`)
+    - `300.000.000 .. 399.999.999`: **AniList** (`300_000_000 + anilistId`)
+    - `400.000.000 .. 499.999.999`: **MyAnimeList / Jikan** (`400_000_000 + malId`)
+    - `500.000.000 .. 599.999.999`: **Wikidata** (`500_000_000 + Q-Nummer`)
+    - `600.000.000 .. 699.999.999`: **MediaWiki / Wikipedia** (`600_000_000 + pageid`)
+    - `700.000.000 .. 899.999.999`: **Apple iTunes DE** (`700_000_000 + track/collectionId`)
+    - `900.000.000 .. 999.999.999`: **Manuell bestätigte Titel ohne TMDb-ID** (deterministischer Hash aus `typeCode + normalisierter Titel + Jahr` im `900M`-Raum + aktive D1-Kollisionsprüfung mit Linear-Probing, falls ein Hash jemals durch einen anderen Titel belegt sein sollte).
+  - *Warum*: Keine zwei APIs können jemals dieselbe ID erzeugen, und innerhalb einer API entfällt die Modulo-Kollision (`% 290000`). Bestehende Fallback-IDs (`>= 8.000.000`) bleiben voll abwärtskompatibel.
+
+- **Entscheidung 2: D1 Write-Deduplizierung bei Serien-Episoden & KV-Dirty-Guard**
+  - *Gewählter Ansatz*: Beim Import von 20 Folgen einer Serie wurde bisher 20-mal `saveSeriesToD1` (inkl. Schleife über alle Staffeln in `series_seasons`) ausgeführt. Ein In-Memory-Signatur-Check (`d1_series_sig_${id}`) überspringt redundante Schreibvorgänge auf `series` und `series_seasons`, solange sich die Serien-Stammdaten nicht geändert haben; es wird nur die neue Episode in `episode_files` geschrieben.
+  - *Warum*: Senkt die D1-Row-Writes beim Serien-Import um über 80 % und hält die Worker-Latenz dauerhaft niedrig.
 
 ---
 
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
-
-### Architecture & Batch Pipeline Diagram
+## 4. Technical Architecture & Data Strategy
 
 ```
-┌────────────────────────────────────────────────────────────────────────────────┐
-│                  Mini-App JSON-Importer (Browser-Client)                       │
-│                                                                                │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │ 1. Client-Side resolvedTitlesCache (RAM + localStorage)                  │  │
-│  │    • Prüft jeden Eintrag im 10er-Slice vor dem Senden                    │  │
-│  │    • Bekannter Titel (>= 85 %): Setzt tmdb_id, typeCode, Poster vorab    │  │
-│  │    • Bekannter Negativ-Titel: Markiert knownUnmatched = true (0 APIs)    │  │
-│  └────────────────────────────────────┬─────────────────────────────────────┘  │
-└───────────────────────────────────────┼────────────────────────────────────────┘
-                                        │ POST /api/tma/admin/import-batch
-                                        ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│                   Cloudflare Worker Import-Pipeline (Server)                   │
-│                                                                                │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │ 2. Bulk D1 Prefetch (1 einziger db.batch() = 1 Subrequest)               │  │
-│  │    • Lädt alle file_ids, entity_cache-Keys & vorhandene Serien/Filme     │  │
-│  │      für den gesamten Batch in einem einzigen D1-Roundtrip in den RAM    │  │
-│  └────────────────────────────────────┬─────────────────────────────────────┘  │
-│                                       ▼                                        │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │ 3. Sequenzielle Auflösung mit Unified Subrequest-Guard (HTTP + D1 + KV)  │  │
-│  │    • Jede echte HTTP-, D1- und KV-Operation erhöht subrequestCount       │  │
-│  │    • Alle D1-Writes (movies, series, episode_files, entity_cache)        │  │
-│  │      aktualisieren sofort den RAM und landen in pendingD1BatchStatements │  │
-│  │    • Ab 32 Gesamt-Subrequests: Sauberer Stopp -> PARTIAL_BATCH           │  │
-│  └────────────────────────────────────┬─────────────────────────────────────┘  │
-│                                       ▼                                        │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │ 4. Bulk D1 Flush am Batch-Ende (1 einziger db.batch() = 1 Subrequest)    │  │
-│  │    • Schreibt alle gesammelten Statements + Playlist-Items +             │  │
-│  │      Diagnose-Logs + Import-Checkpoint gemeinsam in 1 D1-Transaktion     │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                     Eingehende Datei / Manuelle Eingabe                    │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      │
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 1. TMDb-Suche & Externe-ID-Brücke (/3/find/{imdb_id | tvdb_id})            │
+│    • Liefert für Filme UND Serien vorrangig die echte TMDb-ID (1..99M)     │
+└──────────────────┬──────────────────────────────────────┬──────────────────┘
+                   │ Gefunden auf TMDb                    │ Nicht auf TMDb
+                   ▼                                      ▼
+┌─────────────────────────────────────┐ ┌────────────────────────────────────┐
+│ Echte TMDb-ID (1 .. 99.999.999)     │ │ 2. Zusatz-API-Kaskade              │
+│ • Filme -> Tabelle `movies`         │ │ • OMDb     : 100M + IMDb-Nummer    │
+│ • Serien -> Tabelle `series`        │ │ • TVMaze   : 200M + TVMaze-ID      │
+└──────────────────┬──────────────────┘ │ • AniList  : 300M + AniList-ID     │
+                   │                    │ • MAL/Jikan: 400M + MAL-ID         │
+                   │                    │ • Wikidata : 500M + Q-ID           │
+                   │                    │ • Wikipedia: 600M + Page-ID        │
+                   │                    │ • iTunes   : 700M + Collection-ID  │
+                   │                    └────────┬──────────────────┬────────┘
+                   │                             │ Treffer          │ Kein Treffer
+                   │                             │                  ▼
+                   │                             │ ┌─────────────────────────┐
+                   │                             │ │ 3. Manuelle Bestätigung │
+                   │                             │ │ • Dialog: Titel, Jahr,  │
+                   │                             │ │   Typ (m/s), Poster-URL │
+                   │                             │ │ • ID: 900M + Hash +     │
+                   │                             │ │   D1-Kollisionsprüfung  │
+                   │                             │ └────────┬────────────────┘
+                   ▼                             ▼          ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 4. D1 & KV Persistence Layer (Optimiert)                                   │
+│    • D1 Signature-Guard verhindert doppelte `series`/`movies`-Writes       │
+│    • `entity_cache` merkt sich auch manuelle 900M-Serien für Folge-Eps     │
+│    • KV Dirty-Check verhindert redundante `u_bundle` & `bot_vip` Writes    │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Model & State Mapping
-
-- **Unified Subrequest Counter (`currentInvocationSubrequests`)**:
-  - Zählt jeden `fetchWithTimeout`-Aufruf (+1), jeden echten D1-Roundtrip über den D1-Binding-Proxy (`.first()`, `.all()`, `.run()`, `.batch()` je +1) und jeden KV-Aufruf (`kvCachedGetRaw` bei Cache-Miss +1).
-  - `ensureD1Schema` wird pro Worker-Isolate nur 1x ausgeführt; zudem wird bei bereits initialisierten Tabellen der zweite `sqlite_master`-Roundtrip eingespart.
-- **Bulk D1 Prefetch (`prefetchBatchMediaFromD1`)**:
-  - Sammelt vor der Batch-Schleife alle `telegram_file_id`s und `title_res_*`-Cache-Keys der 10 Einträge und führt deren `SELECT`-Abfragen gebündelt in einem einzigen `db.batch()` aus, der direkt `memoryFallback` befüllt. Damit benötigt `findExistingMediaInD1BeforeExternalSearch` innerhalb der Schleife **0 zusätzliche D1-Subrequests**.
-- **Buffered D1 Batch Commit (`beginD1BatchBuffer` / `flushD1BatchBuffer`)**:
-  - Während `processEntriesBatchWithLimit` aktiv ist, reihen `saveMovieToD1`, `saveSeriesToD1`, `saveSeasonToD1`, `saveMovieFileToD1`, `saveEpisodeFileToD1`, `saveEntityToD1`, `saveSearchCacheToD1`, `saveImportDiagnosticLogsToD1`, `batchUpsertPlaylistItemsInD1` und `saveImportCheckpointToD1` ihre vorbereiteten SQL-Statements in den Batch-Buffer ein und führen am Ende von `/api/tma/admin/import-batch` (bzw. `/api/import-json`) einen einzigen gesammelten `db.batch()` aus.
-- **Client-Side Title Cache (`clientResolvedTitleCache` in der Mini-App)**:
-  - Speichert nach jedem Batch alle aufgelösten `batchItems` (sowie `TMDB_NOT_FOUND`-Titel derselben Import-Sitzung) unter ihrem normalisierten Titel+Jahr-Schlüssel, sodass nachfolgende Episoden oder Duplikate im Browser vorab mit `tmdb_id` versehen werden.
+### Interaktive Abläufe & State-Mapping
+1. **Automatische TMDb-Brücke für Serien (`fetchTvMazeSeriesFallback` / `fetchOmdbFallback`)**:
+   - Liefert TVMaze `show.externals.thetvdb` oder `show.externals.imdb` (bzw. OMDb `data.imdbID`), prüft `resolveExternalIdToTmdb(env, externalId, source, typeCode)` per `/3/find/`, ob TMDb die Serie unter einer offiziellen TMDb-ID führt, und gibt direkt die echten TMDb-Stammdaten zurück.
+2. **Kollisionsfreie synthetische ID-Vergabe (`allocateCollisionFreeManualSyntheticId`)**:
+   - Berechnet aus `normalizeCompareString(title) + "_" + year + "_" + typeCode` eine Start-ID im Bereich `900.000.000 .. 989.999.999`.
+   - Prüft in D1 (`movies` bzw. `series`), ob diese ID bereits existiert:
+     - Ist sie frei $\rightarrow$ sofort verwenden.
+     - Gehört sie bereits exakt zu demselben normalisierten Titel $\rightarrow$ wiederverwenden (damit z. B. Folge 2 bis 10 derselben manuellen Serie in derselben Serie landen).
+     - Gehört sie zu einem anderen Titel $\rightarrow$ inkrementiert (`candidateId + 1`), bis ein freier Slot gefunden ist.
+3. **Manueller Bestätigungs-Dialog im Admin-Panel**:
+   - Neuer Button `✨ Manuell ohne TMDb-ID` bei jedem Konflikt-/Unmatched-Eintrag sowie im CRUD-Tab.
+   - Öffnet das Modal `openManualNoTmdbConfirmModalClient(indexOrContext)` mit Eingabefeldern für Titel, Jahr, Typ (`Film`/`Serie`), Staffel/Episode (bei Serien) und Poster-URL.
+   - Sendet den Request an `/api/tma/admin/remap-import-item` mit `confirmManualWithoutTmdb: true` und aktualisiert die UI-Liste sowie den D1-Auflösungs-Cache sofort.

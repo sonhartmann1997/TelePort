@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementierungsplan zur Eliminierung von HTTP 503 beim Massen-Import durch D1-Bulk-Bündelung (1 db.batch für Reads & Writes), vollständiges Subrequest-Tracking (HTTP + D1 + KV) und persistenten Browser-Titel-Cache in der Mini-App.",
-  "updatedAt":  "2026-11-08T18:50:38.765871459Z",
+  "summary":  "Architekturplan für kollisionsfreie 100M-API-ID-Bereiche ohne Modulo-Kürzung, automatische TMDb-ID-Auflösung für Serien/Filme, manuellen Bestätigungs-Dialog für Titel ohne TMDb-ID (900M-Bereich mit D1-Kollisionsschutz) sowie D1- & KV-Speicher-Optimierung (Serien-Write-Deduplizierung & KV-Dirty-Checks).",
+  "updatedAt":  "2026-11-08T21:44:56.147467152Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -185,7 +185,7 @@
             const firstTextLine = contentLines[0] || "";
 
             const safeTextForYear = flatText.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
-            const yearInText = (" " + safeTextForYear + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![.\\d])(?:[)\\]\\s._\\-·‧]|$)/i)?.[1] || effectivePre.year || null;
+            const yearInText = (" " + safeTextForYear + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i)?.[1] || effectivePre.year || null;
             const seInFileRaw = normFileName ? normFileName.match(/\\bS(\\d{1,2})[\\s._-]*E(\\d{1,3})(?:[-–]E?(\\d{1,3}))?\\b/i) : null;
             const seInFile = seInFileRaw
               ? ("S" + String(parseInt(seInFileRaw[1], 10) || 1).padStart(2, "0") + "E" + String(parseInt(seInFileRaw[2], 10) || 1).padStart(2, "0"))
@@ -1066,7 +1066,10 @@
         } catch (e) {}
         saveBackupJobToIndexedDbClient(Boolean(forceServerSync));
         backupImportJob._cpSyncStep = Number(backupImportJob._cpSyncStep || 0) + 1;
-        const shouldSyncServer = Boolean(forceServerSync) || (backupImportJob._cpSyncStep % 5 === 0) || (cp.totalEntries > 0 && cp.cursor >= cp.totalEntries);
+        // Während der aktive Batch-Loop läuft, wird der Checkpoint bereits atomar in jedem /admin/import-batch Request in D1 gespeichert.
+        // Ein separater Server-POST erfolgt nur bei explizitem Pause-Klick (forceServerSync = true), außerhalb des Loops oder bei 100% Abschluss,
+        // damit niemals 2 parallele Worker-Requests kollidieren (Schutz vor HTTP 503).
+        const shouldSyncServer = Boolean(forceServerSync) || (!backupImportJob.running && (backupImportJob._cpSyncStep % 5 === 0)) || (cp.totalEntries > 0 && cp.cursor >= cp.totalEntries);
         if (shouldSyncServer) {
           apiFetchJson(API_BASE + "/admin/import-checkpoint", {
             method: "POST",
@@ -1802,15 +1805,357 @@
           await applyBackupCandidateRemap(itemId, it.tmdbId, it.typeCode || "m", { isConfirmAction: true });
           return;
         }
-        if (it.isUncertain && backupImportJob.uncertainCount > 0) {
-          backupImportJob.uncertainCount = Math.max(0, backupImportJob.uncertainCount - 1);
+        openManualNoTmdbConfirmForReviewItem(itemId);
+      }
+
+      let activeManualNoTmdbContext = null;
+
+      function closeManualNoTmdbConfirmModalClient() {
+        const el = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        if (el) el.style.display = "none";
+        activeManualNoTmdbContext = null;
+      }
+
+      function toggleManualNoTmdbSeriesFieldsClient() {
+        const typeSel = document.getElementById("manualNoTmdbTypeSel");
+        const seWrap = document.getElementById("manualNoTmdbSeriesRow");
+        if (seWrap && typeSel) {
+          seWrap.style.display = typeSel.value === "s" ? "grid" : "none";
         }
-        it.isUncertain = false;
-        it.status = "confirmed";
-        it.resolvedByAdmin = true;
-        it.expandedAfterResolve = false;
-        showHudToast("✅ Zuordnung bestätigt");
-        updateSingleReviewCardInDom(itemId);
+      }
+
+      function openManualNoTmdbConfirmModalClient(ctx) {
+        if (!ctx || typeof ctx !== "object") return;
+        activeManualNoTmdbContext = ctx;
+        let overlay = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        if (!overlay && document.body) {
+          overlay = document.createElement("div");
+          overlay.id = "manualNoTmdbConfirmModalOverlay";
+          overlay.style.cssText =
+            "position:fixed;inset:0;z-index:12000;background:rgba(5,6,12,0.84);backdrop-filter:blur(7px);" +
+            "display:flex;align-items:center;justify-content:center;padding:14px;";
+          document.body.appendChild(overlay);
+        }
+        if (!overlay) return;
+
+        const initType = ctx.typeCode === "s" ? "s" : "m";
+        const initTitle = String(ctx.title || "").trim();
+        const initYear = String(ctx.year && ctx.year !== "k.A." ? ctx.year : "").replace(/[^0-9]/g, "").slice(0, 4);
+        const initSeason = Math.max(1, parseInt(ctx.season, 10) || 1);
+        const initEpisode = Math.max(1, parseInt(ctx.episode, 10) || 1);
+        const initPoster = String(ctx.poster || "").trim();
+        const initGenres = String(ctx.genres || "Manuell bestätigt").trim();
+        const initOverview = String(ctx.overview || "").trim();
+        const sibCount = Number(ctx.siblingCount || 0);
+
+        overlay.style.display = "flex";
+        overlay.innerHTML =
+          '<div style="width:min(95vw,500px);background:#12131c;border:1px solid rgba(168,85,247,0.45);border-radius:14px;padding:16px;box-shadow:0 20px 50px rgba(0,0,0,0.85);color:#f8fafc;max-height:90vh;overflow-y:auto">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">' +
+              '<div>' +
+                '<div style="font-size:15px;font-weight:900;color:#fff">✨ Titel ohne TMDb-ID manuell bestätigen</div>' +
+                '<div style="font-size:11.5px;color:#cbd5e1;margin-top:2px">Erhält eine kollisionsfreie synthetische ID im exklusiven <b>900.000.000+</b> Bereich (überschreibt niemals TMDb- oder API-IDs).</div>' +
+              '</div>' +
+              '<button type="button" class="btn" style="padding:4px 9px;font-size:12px" onclick="closeManualNoTmdbConfirmModalClient()">✕</button>' +
+            '</div>' +
+            (ctx.rawFileName ? (
+              '<div style="background:#0b0c12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:11px;color:#94a3b8;word-break:break-all">' +
+                '📄 <b>Datei / Quelle:</b> <code style="color:#e2e8f0">' + esc(ctx.rawFileName) + '</code>' +
+              '</div>'
+            ) : '') +
+            '<div style="display:flex;flex-direction:column;gap:9px">' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#c084fc;margin-bottom:4px">🎬 Titel (Pflichtfeld)</label>' +
+                '<input id="manualNoTmdbTitleInp" value="' + esc(initTitle) + '" placeholder="z.B. Seltene Dokumentation / Eigenproduktion" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
+              '</div>' +
+              '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📂 Medientyp</label>' +
+                  '<select id="manualNoTmdbTypeSel" onchange="toggleManualNoTmdbSeriesFieldsClient()" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box">' +
+                    '<option value="m"' + (initType === 'm' ? ' selected' : '') + '>🎬 Film (900M–944M)</option>' +
+                    '<option value="s"' + (initType === 's' ? ' selected' : '') + '>📺 Serie (945M–989M)</option>' +
+                  '</select>' +
+                '</div>' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📅 Erscheinungsjahr (optional)</label>' +
+                  '<input id="manualNoTmdbYearInp" type="number" min="1900" max="2099" value="' + esc(initYear) + '" placeholder="z.B. 2024" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
+                '</div>' +
+              '</div>' +
+              '<div id="manualNoTmdbSeriesRow" style="display:' + (initType === 's' ? 'grid' : 'none') + ';grid-template-columns:1fr 1fr;gap:8px;background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.3);border-radius:8px;padding:8px">' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#e9d5ff;margin-bottom:3px">📺 Staffel (S)</label>' +
+                  '<input id="manualNoTmdbSeasonInp" type="number" min="1" max="99" value="' + initSeason + '" style="width:100%;padding:6px 8px;border-radius:6px;background:#12131c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+                '</div>' +
+                '<div>' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#e9d5ff;margin-bottom:3px">🎞️ Episode (E)</label>' +
+                  '<input id="manualNoTmdbEpInp" type="number" min="1" max="999" value="' + initEpisode + '" style="width:100%;padding:6px 8px;border-radius:6px;background:#12131c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+                '</div>' +
+                (sibCount >= 2 ? (
+                  '<label style="grid-column:1 / -1;display:flex;align-items:center;gap:6px;font-size:11.5px;color:#38bdf8;cursor:pointer;margin-top:2px">' +
+                    '<input id="manualNoTmdbApplySiblingsChk" type="checkbox" checked />' +
+                    '<span>⚡ Alle <b>' + sibCount + ' offenen Folgen</b> dieser Serie gleich mit derselben Serien-ID verknüpfen</span>' +
+                  '</label>'
+                ) : '') +
+              '</div>' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">🖼️ Optionaler Poster-Link (HTTPS Bild-URL)</label>' +
+                '<input id="manualNoTmdbPosterInp" value="' + esc(initPoster) + '" placeholder="https://... (leer lassen für Standard-Cover)" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+              '</div>' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">🏷️ Genres (optional)</label>' +
+                '<input id="manualNoTmdbGenresInp" value="' + esc(initGenres) + '" placeholder="z.B. Dokumentation, Konzert, Eigenproduktion" style="width:100%;padding:7px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+              '</div>' +
+              '<div>' +
+                '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📝 Kurzbeschreibung (optional)</label>' +
+                '<textarea id="manualNoTmdbOverviewInp" rows="2" placeholder="Optionale Beschreibung für die Detailansicht..." style="width:100%;padding:7px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box;resize:vertical">' + esc(initOverview) + '</textarea>' +
+              '</div>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">' +
+              '<button type="button" class="btn" onclick="closeManualNoTmdbConfirmModalClient()">Abbrechen</button>' +
+              '<button type="button" class="btn green" style="background:linear-gradient(90deg,#7c3aed,#059669);border-color:#a855f7;font-weight:800" onclick="submitManualNoTmdbConfirmModalClient()">✨ Ohne TMDb-ID speichern & zuweisen</button>' +
+            '</div>' +
+          '</div>';
+      }
+
+      function openManualNoTmdbConfirmForReviewItem(itemId) {
+        const it = (backupImportJob.reviewItems || []).find(x => String(x.id) === String(itemId));
+        if (!it) return;
+        syncReviewCardDomInputsToItemState(it);
+        const searchInp = document.getElementById("revSearchInp_" + itemId);
+        const seasonInp = document.getElementById("revSeasonInp_" + itemId);
+        const epInp = document.getElementById("revEpInp_" + itemId);
+        const rawFileName = it.rawFileName || it.rawEntry?.raw_file_name || it.rawEntry?.filename || it.rawInput || "";
+        const siblings = getMatchingOpenSeriesSiblingItems(it, null);
+        const guessType = (it.typeCode === "s" || it.season || it.episode || /S\\d{1,2}E\\d{1,3}|Staffel|Folge|Episode/i.test(rawFileName)) ? "s" : "m";
+        openManualNoTmdbConfirmModalClient({
+          mode: "review",
+          itemId: it.id,
+          title: (searchInp && searchInp.value.trim()) ? searchInp.value.trim() : (it.cleanTitle || it.rawInput || "Unbekannter Titel"),
+          year: it.year && it.year !== "k.A." ? it.year : "",
+          typeCode: guessType,
+          season: seasonInp ? seasonInp.value : (it.season || 1),
+          episode: epInp ? epInp.value : (it.episode || 1),
+          poster: it.poster || "",
+          rawFileName,
+          siblingCount: siblings.length
+        });
+      }
+
+      function openManualNoTmdbConfirmForDiagItem(diagIdx) {
+        loadClientDiagnosticLogsFromStorage();
+        const item = clientDiagnosticLogState.logs[diagIdx];
+        if (!item) return;
+        const typeSel = document.getElementById("diagFixType_" + diagIdx);
+        const sInp = document.getElementById("diagFixSeason_" + diagIdx);
+        const eInp = document.getElementById("diagFixEp_" + diagIdx);
+        openManualNoTmdbConfirmModalClient({
+          mode: "diag",
+          diagIdx,
+          title: item.parsedTitle || item.fileName || "Unbekannter Titel",
+          year: "",
+          typeCode: (typeSel ? typeSel.value : (item.detectedType === "series" || item.seasonNumber ? "s" : "m")),
+          season: sInp ? sInp.value : (item.seasonNumber || 1),
+          episode: eInp ? eInp.value : (item.episodeNumber || 1),
+          poster: "",
+          rawFileName: item.fileName || item.rawText || ""
+        });
+      }
+
+      function openManualNoTmdbConfirmForCrudClient() {
+        const typeCode = document.getElementById("crudTypeSel")?.value || "m";
+        const title = document.getElementById("crudTitleInp")?.value.trim() || "";
+        const year = document.getElementById("crudYearInp")?.value.trim() || "";
+        openManualNoTmdbConfirmModalClient({
+          mode: "crud",
+          title,
+          year,
+          typeCode,
+          season: 1,
+          episode: 1,
+          poster: ""
+        });
+      }
+
+      async function submitManualNoTmdbConfirmModalClient() {
+        const ctx = activeManualNoTmdbContext;
+        if (!ctx) return;
+        const title = String(document.getElementById("manualNoTmdbTitleInp")?.value || "").trim();
+        const typeCode = document.getElementById("manualNoTmdbTypeSel")?.value === "s" ? "s" : "m";
+        const year = String(document.getElementById("manualNoTmdbYearInp")?.value || "").trim();
+        const season = Math.max(1, parseInt(document.getElementById("manualNoTmdbSeasonInp")?.value, 10) || 1);
+        const episode = Math.max(1, parseInt(document.getElementById("manualNoTmdbEpInp")?.value, 10) || 1);
+        const poster = String(document.getElementById("manualNoTmdbPosterInp")?.value || "").trim();
+        const genres = String(document.getElementById("manualNoTmdbGenresInp")?.value || "Manuell bestätigt").trim();
+        const overview = String(document.getElementById("manualNoTmdbOverviewInp")?.value || "").trim();
+        const applySiblings = Boolean(document.getElementById("manualNoTmdbApplySiblingsChk")?.checked);
+
+        if (!title) {
+          showHudToast("⚠️ Bitte einen Titel für die manuelle Bestätigung eingeben.");
+          return;
+        }
+
+        const manualCustomMeta = {
+          title,
+          originalTitle: title,
+          year: year || "k.A.",
+          poster,
+          genres: genres || "Manuell bestätigt",
+          overview: overview || "Manuell ohne TMDb-ID bestätigter Titel.",
+          source: "Manuell bestätigt"
+        };
+
+        closeManualNoTmdbConfirmModalClient();
+
+        if (ctx.mode === "review" && ctx.itemId) {
+          const baseItem = (backupImportJob.reviewItems || []).find(x => String(x.id) === String(ctx.itemId));
+          if (!baseItem) return;
+          const sInp = document.getElementById("revSeasonInp_" + ctx.itemId);
+          const eInp = document.getElementById("revEpInp_" + ctx.itemId);
+          if (sInp) sInp.value = String(season);
+          if (eInp) eInp.value = String(episode);
+          baseItem.season = season;
+          baseItem.episode = episode;
+          baseItem.cleanTitle = title;
+          if (year) baseItem.year = year;
+
+          const siblings = (typeCode === "s" && applySiblings)
+            ? getMatchingOpenSeriesSiblingItems(baseItem, null)
+            : [baseItem];
+          const targetList = siblings.length > 0 ? siblings : [baseItem];
+
+          setBusyState(true, "✨ Vergib kollisionsfreie 900M-ID & speichere „" + title + "“ in D1...");
+          try {
+            let sharedAllocatedId = 0;
+            let okCount = 0;
+            for (const sib of targetList) {
+              const ok = await applyBackupCandidateRemap(sib.id, sharedAllocatedId, typeCode, {
+                isConfirmAction: true,
+                confirmManualWithoutTmdb: true,
+                manualCustomMeta,
+                candidateMeta: manualCustomMeta,
+                silentBusy: true
+              });
+              if (ok) {
+                okCount++;
+                if (!sharedAllocatedId && sib.tmdbId) {
+                  sharedAllocatedId = Number(sib.tmdbId);
+                }
+              }
+            }
+            clearClientMediaCaches();
+            showHudToast("✨ Manuell ohne TMDb-ID gespeichert: " + title + (sharedAllocatedId ? (" (#" + sharedAllocatedId + ")") : "") + (targetList.length > 1 ? (" [" + okCount + " Folgen]") : ""));
+          } finally {
+            setBusyState(false);
+          }
+          return;
+        }
+
+        if (ctx.mode === "diag" && ctx.diagIdx !== undefined) {
+          loadClientDiagnosticLogsFromStorage();
+          const item = clientDiagnosticLogState.logs[ctx.diagIdx];
+          if (!item) return;
+          setBusyState(true, "✨ Weise Diagnose-Eintrag kollisionsfreie 900M-ID zu...");
+          try {
+            const rawEntry = item.rawEntry && typeof item.rawEntry === "object"
+              ? { ...item.rawEntry }
+              : {
+                  filename: item.fileName,
+                  raw_file_name: item.fileName,
+                  raw_text: item.rawText,
+                  msg_id: item.msgId,
+                  message_id: item.msgId
+                };
+            if (typeCode === "s") {
+              rawEntry.season = season;
+              rawEntry.episode = episode;
+              rawEntry.isSeries = true;
+            }
+            const r = await apiFetchJson(API_BASE + "/admin/remap-import-item", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                newTmdbId: 0,
+                newTypeCode: typeCode,
+                confirmManualWithoutTmdb: true,
+                manualCustomMeta,
+                season: typeCode === "s" ? season : null,
+                episode: typeCode === "s" ? episode : null,
+                oldTmdbId: item.tmdbId || null,
+                oldTypeCode: item.detectedType === "series" ? "s" : "m",
+                targetChatId: backupImportJob.targetPlaylistChatId || chatId,
+                playlistFolderId: backupImportJob.playlistFolderId || null,
+                playlistMode: backupImportJob.playlistMode || "both",
+                rawEntry
+              })
+            });
+            if (r && r.ok && r.matchedItem) {
+              item.status = "OK";
+              item.tmdbId = r.matchedItem.tmdbId;
+              item.detectedType = typeCode === "s" ? "series" : "movie";
+              item.seasonNumber = typeCode === "s" ? season : null;
+              item.episodeNumber = typeCode === "s" ? episode : null;
+              item.reason = "Manuell ohne TMDb-ID bestätigt → " + r.matchedItem.cleanTitle + " (#" + r.matchedItem.tmdbId + ")";
+              saveClientDiagnosticLogsToStorage();
+              await apiFetchJson(API_BASE + "/admin/import-logs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "resolve",
+                  id: item.id,
+                  msgId: item.msgId,
+                  tmdbId: r.matchedItem.tmdbId,
+                  reason: item.reason
+                })
+              }).catch(() => {});
+              clearClientMediaCaches();
+              showHudToast("✨ Manuell ohne TMDb-ID verknüpft: " + r.matchedItem.cleanTitle + " (#" + r.matchedItem.tmdbId + ")");
+              refreshDiagnosticLogMountDom();
+            } else {
+              showHudToast("⚠️ " + (r?.error || "Manuelle Zuweisung fehlgeschlagen"));
+            }
+          } finally {
+            setBusyState(false);
+          }
+          return;
+        }
+
+        if (ctx.mode === "crud") {
+          const fileId = document.getElementById("crudFileIdInp")?.value.trim() || "";
+          const quality = document.getElementById("crudQualityInp")?.value.trim() || "1080p";
+          const fileSize = document.getElementById("crudFileSizeInp")?.value.trim() || "";
+          const tags = document.getElementById("crudTagsInp")?.value.trim() || "";
+          setBusyState(true, "✨ Lege manuellen Titel ohne TMDb-ID in D1 an...");
+          try {
+            const r = await apiFetchJson(API_BASE + "/admin/media", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "upsert",
+                confirmManualWithoutTmdb: true,
+                typeCode,
+                tmdbId: 0,
+                title,
+                year,
+                poster,
+                genres,
+                overview,
+                season,
+                episode,
+                fileId,
+                quality,
+                fileSize,
+                tags
+              })
+            });
+            clearClientMediaCaches();
+            if (!r || !r.ok) showHudToast("⚠️ " + (r?.error || "Fehler beim Anlegen"));
+            else showHudToast("✨ Manuell angelegt: " + title + " (#" + (r.item?.id || r.item?.tmdbId || "") + ")");
+            state.adminMediaType = typeCode;
+            await loadAdminPanelView();
+          } finally {
+            setBusyState(false);
+          }
+        }
       }
 
       function usePrevMessageForReviewSearch(itemId, queryText) {
@@ -1838,7 +2183,8 @@
 
       async function applyBackupCandidateRemap(itemId, newTmdbId, newTypeCode, options = null) {
         const it = (backupImportJob.reviewItems || []).find(x => String(x.id) === String(itemId));
-        if (!it || !newTmdbId) return false;
+        const isManualNoTmdb = Boolean(options?.confirmManualWithoutTmdb);
+        if (!it || (!newTmdbId && !isManualNoTmdb)) return false;
         syncReviewCardDomInputsToItemState(it);
 
         const cands = Array.isArray(it.candidates) ? it.candidates : [];
@@ -1869,11 +2215,11 @@
           vote_average: Number(matchedCand.voteAverage || 0),
           source: matchedCand.source || it.metadataSource || "Fallback"
         } : {
-          id: Number(newTmdbId),
+          id: Number(newTmdbId || 0),
           title: it.cleanTitle || "Unbekannt",
           year: it.year || "k.A.",
           poster: it.poster || "",
-          source: it.metadataSource || "Fallback"
+          source: isManualNoTmdb ? "Manuell bestätigt" : (it.metadataSource || "Fallback")
         });
 
         const activeChan = backupImportJob.verifiedChannelId || getSavedVerifiedChannelIdClient();
@@ -1890,8 +2236,10 @@
               oldTypeCode: it.typeCode || "m",
               oldSeason: it.season || null,
               oldEpisode: it.episode || null,
-              newTmdbId: Number(newTmdbId),
+              newTmdbId: Number(newTmdbId || 0),
               newTypeCode: newTypeCode === "s" ? "s" : "m",
+              confirmManualWithoutTmdb: isManualNoTmdb,
+              manualCustomMeta: options?.manualCustomMeta || null,
               sourceChannelId: activeChan || "",
               messageId: it.messageId || it.rawEntry?.message_id || it.rawEntry?.msg_id || null,
               candidateMeta,
@@ -2318,6 +2666,7 @@
               '<span style="font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;background:' + badgeBg + '">' + badgeLabel + '</span>' +
               (item.tmdbId && !isResolved ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="confirmBackupReviewItem(\\'' + esc(item.id) + '\\')">✓ Passt so</button>' : '') +
               (seriesSiblings.length >= 2 && batchTmdbId > 0 ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px;background:linear-gradient(90deg,#059669,#0284c7);border-color:#38bdf8" onclick="confirmAllSeriesEpisodesInReview(\\'' + esc(item.id) + '\\',' + batchTmdbId + ',\\'s\\')" title="Speichert alle ' + seriesSiblings.length + ' offenen Folgen dieser Serie jeweils mit ihrer eigenen Staffel/Folge (z.B. S01E09, S01E10, S01E12) in D1">⚡ Alle ' + seriesSiblings.length + ' Folgen bestätigen</button>' : '') +
+              '<button type="button" class="btn purple" style="padding:4px 9px;font-size:11px;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + esc(item.id) + '\\')" title="Titel existiert nicht auf TMDb? Hier manuell mit eigener kollisionsfreier 900M-ID bestätigen">✨ Ohne TMDb-ID bestätigen</button>' +
               (item.tmdbId ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'' + (item.typeCode || 'm') + '\\',' + Number(item.tmdbId) + ',false)">👁️ Vorschau</button>' : '') +
               (isResolved ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="collapseResolvedReviewCard(\\'' + esc(item.id) + '\\')">🔼 Einklappen</button>' : '') +
             '</div>' +
@@ -2395,6 +2744,7 @@
             '</div>' +
             '<input id="revSearchInp_' + esc(item.id) + '" value="' + esc(item.manualSearchQuery || item.cleanTitle || '') + '" placeholder="Manueller Titel oder TMDb-ID (z.B. 603)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchManualCandidatesForReviewItem(\\'' + esc(item.id) + '\\')}" style="flex:1;min-width:160px;padding:5px 9px;border-radius:6px;background:#16161e;color:#fff;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
             '<button type="button" class="btn" style="padding:5px 10px;font-size:11.5px" onclick="searchManualCandidatesForReviewItem(\\'' + esc(item.id) + '\\')">🔍 Alle 8 APIs durchsuchen</button>' +
+            '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + esc(item.id) + '\\')">✨ Ohne TMDb-ID zuweisen</button>' +
           '</div>' +
         '</div>';
       }
@@ -2696,6 +3046,8 @@
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="switchBackupSubTab(\\'review\\')">⚠️ Unsicher / Prüfen: <b style="color:#f59e0b">' + j.uncertainCount.toLocaleString('de-DE') + '</b></div>' +
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="setBackupReviewFilter(\\'failed\\');switchBackupSubTab(\\'review\\')">❌ Nicht erkannt: <b style="color:#f87171">' + j.failedCount.toLocaleString('de-DE') + '</b></div>' +
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="switchBackupSubTab(\\'diaglog\\')">🛠️ Diagnose-Log: <b style="color:#60a5fa">' + getDiagnosticLogTotalCountClient() + '</b></div>' +
+                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🧠 D1-Pre-Seed: <b style="color:#34d399">' + Number(j.d1PreSeedCount || 0).toLocaleString('de-DE') + ' Titel</b>' + (Number(j.browserCacheHitsCount || 0) > 0 ? (' <span style="color:#38bdf8;font-size:10.5px">(⚡ ' + Number(j.browserCacheHitsCount).toLocaleString('de-DE') + ' Hits)</span>') : '') + '</div>' +
+                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🎛️ Modus: <b style="color:' + (j.currentBatchModeColor || '#38bdf8') + '">' + esc(j.currentBatchModeLabel || '⚡ Standard (10/Batch)') + '</b></div>' +
                 '<div style="background:#1c1c22;padding:8px;border-radius:6px">⚡ Tempo: <b>' + speedPerSec + ' Titel/s</b>' + (j.running && etaSec > 0 ? ' (ETA ~' + etaStr + ')' : '') + '</div>' +
               '</div>' +
               (Array.isArray(j.livePosterFeed) && j.livePosterFeed.length > 0 ? (
@@ -3130,6 +3482,7 @@
                       '<input id="diagFixSeason_' + origIdx + '" type="number" value="' + esc(item.seasonNumber || 1) + '" placeholder="Staffel" style="width:68px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" title="Staffel" />' +
                       '<input id="diagFixEp_' + origIdx + '" type="number" value="' + esc(item.episodeNumber || 1) + '" placeholder="Folge" style="width:68px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" title="Folge" />' +
                       '<button type="button" class="btn green" style="padding:5px 9px;font-size:11px" onclick="quickAssignDiagLogEntryClient(' + origIdx + ')">💾 Jetzt verknüpfen</button>' +
+                      '<button type="button" class="btn purple" style="padding:5px 9px;font-size:11px;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForDiagItem(' + origIdx + ')">✨ Ohne TMDb-ID bestätigen</button>' +
                     '</div>'
                   ) : '') +
                 '</div>';
@@ -3233,6 +3586,43 @@
           .replace(/[^a-z0-9]+/g, "")
           .trim();
 
+        // D1-Katalog Pre-Seed: Einmalig beim Start alle bereits in D1 gespeicherten Filme & Serien in den Browser-Cache vorladen (0 Such-Calls ab Eintrag #1!)
+        if (!backupImportJob._d1CatalogPreSeeded) {
+          backupImportJob._d1CatalogPreSeeded = true;
+          backupImportJob.currentBatchModeLabel = "🧠 Lade D1-Pre-Seed...";
+          backupImportJob.currentBatchModeColor = "#38bdf8";
+          renderBackupImportBoxDom();
+          try {
+            const preRes = await apiFetchJson(API_BASE + "/admin/catalog-preseed", { method: "GET" });
+            if (preRes && preRes.ok && Array.isArray(preRes.items)) {
+              let preSeedAdded = 0;
+              for (const pItem of preRes.items) {
+                if (!pItem || !pItem.tmdbId || !pItem.title) continue;
+                const pNorm = normClientTitleKey(pItem.title);
+                if (!pNorm || pNorm === "unbekannt") continue;
+                const pType = pItem.typeCode === "s" ? "s" : "m";
+                const pYear = pItem.year ? String(pItem.year) : "any";
+                const cacheObj = {
+                  tmdbId: Number(pItem.tmdbId),
+                  typeCode: pType,
+                  cleanTitle: String(pItem.title),
+                  poster: pItem.poster || ""
+                };
+                backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
+                if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
+                  backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
+                }
+                preSeedAdded++;
+              }
+              backupImportJob.d1PreSeedCount = preSeedAdded;
+              if (preSeedAdded > 0) {
+                backupImportJob.recentLog.push("🧠 D1-Katalog Pre-Seed geladen: " + preSeedAdded.toLocaleString("de-DE") + " Filme & Serien vorab im Browser-Cache bereit (0 Such-Calls)!");
+              }
+            }
+          } catch (preErr) {}
+          renderBackupImportBoxDom();
+        }
+
         while (backupImportJob.running && !backupImportJob.paused && backupImportJob.cursor < backupImportJob.entries.length) {
           // Wenn der Admin gerade aktiv eine Übersicht lädt, kurz warten, damit es keinen HTTP 503 Konflikt gibt
           let waitGuard = 0;
@@ -3243,10 +3633,87 @@
           if (!backupImportJob.running || backupImportJob.paused) break;
 
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
-          const effectiveBatchSize = curRetryCount > 0 ? 1 : DEFAULT_BATCH_SIZE;
+          // Lookahead auf die nächsten 16 Einträge für adaptive Batch-Größe (🚀 Turbo bei bekannten D1-/Serien-Titeln, 🛡️ Gedrosselt nach Cooldown)
+          const lookaheadSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + 16);
+          let lookaheadCacheHits = 0;
+          for (const lkItem of lookaheadSlice) {
+            if (!lkItem || typeof lkItem !== "object") continue;
+            if (lkItem.tmdb_id || lkItem.tmdbId) {
+              lookaheadCacheHits++;
+              continue;
+            }
+            const lkKey = normClientTitleKey(lkItem.cleanTitle || lkItem.title || "");
+            if (!lkKey) continue;
+            const lkType = (lkItem.typeCode === "s" || lkItem.isSeries || lkItem.season || lkItem.episode) ? "s" : "m";
+            const lkYear = lkItem.year && lkItem.year !== "k.A." ? String(lkItem.year) : "any";
+            if (
+              backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_" + lkYear]?.tmdbId ||
+              backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_any"]?.tmdbId
+            ) {
+              lookaheadCacheHits++;
+            }
+          }
+
+          let effectiveBatchSize = DEFAULT_BATCH_SIZE;
+          if (curRetryCount > 0) {
+            effectiveBatchSize = 1;
+            backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
+            backupImportJob.currentBatchModeColor = "#fbbf24";
+          } else if (backupImportJob._lastBatchHadLatencyCooldown) {
+            effectiveBatchSize = 6;
+            backupImportJob._lastBatchHadLatencyCooldown = false;
+            backupImportJob.currentBatchModeLabel = "🛡️ Gedrosselt (6/Batch nach Pause)";
+            backupImportJob.currentBatchModeColor = "#f59e0b";
+          } else if (lookaheadCacheHits >= 8) {
+            effectiveBatchSize = 16;
+            backupImportJob.currentBatchModeLabel = "🚀 Turbo (16/Batch • Cache-Hits)";
+            backupImportJob.currentBatchModeColor = "#34d399";
+          } else {
+            effectiveBatchSize = DEFAULT_BATCH_SIZE;
+            backupImportJob.currentBatchModeLabel = "⚡ Standard (" + DEFAULT_BATCH_SIZE + "/Batch)";
+            backupImportJob.currentBatchModeColor = "#38bdf8";
+          }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
-          // Browser-Titel-Cache: Bereits im Lauf aufgelöste Serien/Filme direkt mit ihrer TMDb-ID annotieren (0 Such-Calls im Worker!)
-          const slice = rawSlice.map(entry => {
+
+          // 1. Set-basierte Deduplizierung identischer Payload-Einträge innerhalb des Batches VOR dem D1-/Worker-Check
+          const seenBatchItemKeys = new Set();
+          const dedupedRawSlice = [];
+          const dedupedOrigIndices = [];
+          let batchDedupDropped = 0;
+          for (let sIdx = 0; sIdx < rawSlice.length; sIdx++) {
+            const item = rawSlice[sIdx];
+            if (!item || typeof item !== "object") {
+              dedupedRawSlice.push(item);
+              dedupedOrigIndices.push(sIdx);
+              continue;
+            }
+            const rawTitle = String(item.cleanTitle || item.title || item.filename || item.file_name || item.raw_file_name || item.rawInput || "").trim();
+            const normTitle = normClientTitleKey(rawTitle);
+            const tgIdKey = String(item.telegram_unique_id || item.file_unique_id || item.telegram_file_id || item.file_id || item.msg_id || item.message_id || "").trim();
+            const seKey = (item.season || item.episode) ? ("s" + (item.season || 0) + "e" + (item.episode || 0)) : "";
+            const yKey = String(item.year || "").trim();
+            if (tgIdKey || normTitle) {
+              const compositeKey = tgIdKey + "::" + normTitle + "::" + seKey + "::" + yKey;
+              if (seenBatchItemKeys.has(compositeKey)) {
+                batchDedupDropped++;
+                continue;
+              }
+              seenBatchItemKeys.add(compositeKey);
+            }
+            dedupedRawSlice.push(item);
+            dedupedOrigIndices.push(sIdx);
+          }
+
+          if (dedupedRawSlice.length === 0) {
+            backupImportJob.cursor += rawSlice.length;
+            backupImportJob.duplicatesInDb += batchDedupDropped;
+            saveBackupCheckpointClient(false);
+            renderBackupImportBoxDom();
+            continue;
+          }
+
+          // 2. Browser-Titel-Cache: Bereits im Lauf oder per D1-Pre-Seed aufgelöste Serien/Filme direkt mit ihrer TMDb-ID annotieren (0 Such-Calls im Worker!)
+          const slice = dedupedRawSlice.map(entry => {
             if (!entry || typeof entry !== "object") return entry;
             if (entry.tmdb_id || entry.tmdbId || entry.knownUnmatched) return entry;
             const rawTitle = entry.cleanTitle || entry.title || "";
@@ -3262,6 +3729,7 @@
               return { ...entry, knownUnmatched: true };
             }
             if (cachedHit.tmdbId) {
+              backupImportJob.browserCacheHitsCount = Number(backupImportJob.browserCacheHitsCount || 0) + 1;
               return {
                 ...entry,
                 tmdb_id: cachedHit.tmdbId,
@@ -3274,8 +3742,10 @@
             return entry;
           });
           let hadRateWarning = false;
+          let batchLatencyMs = 0;
           try {
             const cpPayload = buildCurrentBackupCheckpointPayload();
+            const tBatchStartMs = Date.now();
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -3292,6 +3762,7 @@
                 checkpoint: cpPayload
               })
             });
+            batchLatencyMs = Date.now() - tBatchStartMs;
             if (r && r.ok) {
               delete backupImportJob.cursorRetries[backupImportJob.cursor];
               if (r.playlistFolder?.id) {
@@ -3299,20 +3770,25 @@
                 backupImportJob.customPlaylistName = r.playlistFolder.name;
               }
               const batchStartIdx = backupImportJob.cursor;
-              // 40-Subrequest-Guard: Wenn der Worker PARTIAL_BATCH meldet, rückt der Cursor exakt um nextStartIndex vor und macht nahtlos weiter!
-              const processedCount = (r.status === "PARTIAL_BATCH" && typeof r.nextStartIndex === "number" && r.nextStartIndex > 0)
+              // 40-Subrequest- & 8s-Zeit-Guard: Wenn der Worker PARTIAL_BATCH meldet, rückt der Cursor exakt zum nächsten unverarbeiteten Original-Index vor!
+              const processedSliceCount = (r.status === "PARTIAL_BATCH" && typeof r.nextStartIndex === "number" && r.nextStartIndex > 0)
                 ? r.nextStartIndex
                 : slice.length;
-              backupImportJob.cursor += processedCount;
+              const rawAdvanceCount = (r.status === "PARTIAL_BATCH" && processedSliceCount < dedupedOrigIndices.length)
+                ? dedupedOrigIndices[processedSliceCount]
+                : rawSlice.length;
+              const processedCount = processedSliceCount;
+              backupImportJob.cursor += rawAdvanceCount;
               backupImportJob.moviesSaved += Number(r.moviesAddedCount || 0);
               backupImportJob.seriesSaved += Number(r.seriesAddedCount || 0);
               backupImportJob.failedCount += Number(r.failedCount || 0);
-              backupImportJob.duplicatesInDb += Number(r.duplicatesCount || 0);
+              backupImportJob.duplicatesInDb += Number(r.duplicatesCount || 0) + batchDedupDropped;
               backupImportJob.mergedQualitiesInDb += Number(r.mergedQualitiesCount || 0);
               backupImportJob.uncertainCount += Number(r.uncertainCount || 0);
 
               if (Array.isArray(r.batchItems)) {
                 const batchDiagEntries = [];
+                const newlyResolvedSeriesMap = {};
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
                   const isFailedItem = bItem.status === "failed" || !bItem.tmdbId;
@@ -3335,17 +3811,21 @@
                       if (itemTypeCode === "s" || itemYearKey === "any") {
                         backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = cacheVal;
                       }
+                      newlyResolvedSeriesMap[itemTypeCode + "_" + normInKey] = cacheVal;
                     }
                     if (normResKey && normResKey !== "unbekannt") {
                       backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_" + itemYearKey] = cacheVal;
                       if (itemTypeCode === "s" || itemYearKey === "any") {
                         backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normResKey + "_any"] = cacheVal;
                       }
+                      newlyResolvedSeriesMap[itemTypeCode + "_" + normResKey] = cacheVal;
                     }
                   } else if (isFailedItem && bItem.reviewReasonCode === "TMDB_NOT_FOUND" && normInKey && normInKey !== "unbekannt") {
-                    backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = { knownUnmatched: true };
-                    if (itemTypeCode === "s" || itemYearKey === "any") {
-                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = { knownUnmatched: true };
+                    if (!backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"]?.tmdbId) {
+                      backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_" + itemYearKey] = { knownUnmatched: true };
+                      if (itemTypeCode === "s" || itemYearKey === "any") {
+                        backupImportJob.resolvedTitlesCache[itemTypeCode + "_" + normInKey + "_any"] = { knownUnmatched: true };
+                      }
                     }
                   }
                   const computedReason = bItem.errorReason || (isFailedItem
@@ -3398,27 +3878,113 @@
                   });
                 }
                 if (r.status === "PARTIAL_BATCH") {
+                  const isTimeGuard = r.pauseReason === "TIME_LIMIT_GUARD";
                   batchDiagEntries.push({
                     msgId: null,
-                    fileName: "Subrequest-Guard (Pause bei Index +" + processedCount + ")",
+                    fileName: (isTimeGuard ? "8s-Zeit-Guard" : "Subrequest-Guard") + " (Pause bei Index +" + processedCount + ")",
                     rawText: "",
                     status: "SUBREQUEST_PAUSE",
-                    reason: "40-Subrequest-Schutz erreicht (" + (r.subrequestCount || 40) + " Subrequests) – nahtlose Fortsetzung im nächsten Batch",
+                    reason: isTimeGuard
+                      ? "8s-Laufzeit-Schutz erreicht (" + batchLatencyMs + "ms) – nahtlose Fortsetzung im nächsten Batch"
+                      : "Subrequest-Schutz erreicht (" + (r.subrequestCount || 26) + " Subrequests) – nahtlose Fortsetzung im nächsten Batch",
                     detectedType: "system",
                     parsedTitle: "PARTIAL_BATCH"
                   });
-                  backupImportJob.recentLog.push("🛡️ 40-Subrequest-Guard aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
+                  backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "8s-Zeit-Guard" : "Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
                 }
                 appendClientDiagnosticLogs(batchDiagEntries, false);
                 if (backupImportJob.livePosterFeed.length > 16) {
                   backupImportJob.livePosterFeed = backupImportJob.livePosterFeed.slice(0, 16);
+                }
+
+                // AUTO-NACHHEILUNG (Breaking Bad S01E01 Fix):
+                // Falls eine frühere Episode derselben Serie im aktuellen Lauf wegen Subrequest-Cutoff oder temporärem Timeout
+                // als TMDB_NOT_FOUND liegen geblieben ist, verknüpfe sie jetzt sofort automatisch mit der erkannten TMDb-ID!
+                if (Object.keys(newlyResolvedSeriesMap).length > 0 && Array.isArray(backupImportJob.reviewItems)) {
+                  const orphansToHeal = [];
+                  for (let ri = 0; ri < backupImportJob.reviewItems.length; ri++) {
+                    const prevRev = backupImportJob.reviewItems[ri];
+                    if (!prevRev || prevRev.status !== "failed" || prevRev.tmdbId || prevRev._autoHealed) continue;
+                    const pType = (prevRev.typeCode === "s" || prevRev.season || prevRev.episode) ? "s" : "m";
+                    const pNorm = normClientTitleKey(prevRev.cleanTitle || prevRev.rawEntry?.cleanTitle || "");
+                    const matchedResolved = pNorm ? newlyResolvedSeriesMap[pType + "_" + pNorm] : null;
+                    if (matchedResolved && matchedResolved.tmdbId) {
+                      prevRev._autoHealed = true;
+                      orphansToHeal.push({ revItem: prevRev, resolved: matchedResolved });
+                    }
+                  }
+                  if (orphansToHeal.length > 0) {
+                    try {
+                      const healEntries = orphansToHeal.map(o => ({
+                        ...(typeof o.revItem.rawEntry === "object" && o.revItem.rawEntry ? o.revItem.rawEntry : { filename: o.revItem.rawInput }),
+                        tmdb_id: o.resolved.tmdbId,
+                        typeCode: o.resolved.typeCode,
+                        isSeries: o.resolved.typeCode === "s",
+                        cleanTitle: o.resolved.cleanTitle || o.revItem.cleanTitle,
+                        external_poster_url: o.resolved.poster || "",
+                        bypassNegativeTitleCache: true
+                      }));
+                      const healRes = await apiFetchJson(API_BASE + "/admin/import-batch", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          entries: healEntries,
+                          sourceChannelId: activeChan,
+                          playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
+                          playlistMode: backupImportJob.playlistMode || "both",
+                          playlistFolderId: backupImportJob.playlistFolderId || null,
+                          targetChatId: backupImportJob.targetPlaylistChatId || chatId,
+                          sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
+                          deferKvWrite: true
+                        })
+                      });
+                      if (healRes && healRes.ok && Array.isArray(healRes.batchItems)) {
+                        for (let hi = 0; hi < orphansToHeal.length; hi++) {
+                          const healedItem = healRes.batchItems[hi];
+                          const targetRev = orphansToHeal[hi].revItem;
+                          if (healedItem && healedItem.tmdbId) {
+                            targetRev.status = healedItem.ingestStatus || "added";
+                            targetRev.isUncertain = false;
+                            targetRev.contextError = false;
+                            targetRev.reviewReasonCode = null;
+                            targetRev.errorReason = null;
+                            targetRev.tmdbId = healedItem.tmdbId;
+                            targetRev.cleanTitle = healedItem.cleanTitle || targetRev.cleanTitle;
+                            targetRev.year = healedItem.year || targetRev.year;
+                            targetRev.poster = healedItem.poster || orphansToHeal[hi].resolved.poster || "";
+                            targetRev.reason = "🩹 Automatisch nachgeheilt → " + targetRev.cleanTitle + " (TMDb #" + healedItem.tmdbId + ")";
+                            backupImportJob.failedCount = Math.max(0, Number(backupImportJob.failedCount || 0) - 1);
+                            if (healedItem.typeCode === "s") backupImportJob.seriesSaved++;
+                            else backupImportJob.moviesSaved++;
+                            if (Array.isArray(backupImportJob.clientDiagLogs)) {
+                              for (const dLog of backupImportJob.clientDiagLogs) {
+                                if (dLog && dLog.status === "TMDB_NOT_FOUND" &&
+                                    ((targetRev.msgId && Number(dLog.msgId) === Number(targetRev.msgId)) ||
+                                     dLog.fileName === (targetRev.rawFileName || targetRev.rawInput))) {
+                                  dLog.status = "OK";
+                                  dLog.reviewReasonCode = null;
+                                  dLog.tmdbId = healedItem.tmdbId;
+                                  dLog.parsedTitle = targetRev.cleanTitle;
+                                  dLog.reason = targetRev.reason;
+                                }
+                              }
+                            }
+                            const seLabel = targetRev.season
+                              ? (" S" + String(targetRev.season).padStart(2, "0") + "E" + String(targetRev.episode || 1).padStart(2, "0"))
+                              : "";
+                            backupImportJob.recentLog.push("🩹 Auto-Nachheilung: " + targetRev.cleanTitle + seLabel + " nachträglich mit TMDb #" + healedItem.tmdbId + " verknüpft!");
+                          }
+                        }
+                      }
+                    } catch (healErr) {}
+                  }
                 }
               }
 
               if (Array.isArray(r.sampleTitles) && r.sampleTitles.length > 0) {
                 backupImportJob.recentLog.push("✅ Batch #" + Math.ceil(backupImportJob.cursor / DEFAULT_BATCH_SIZE) + " [" + (backupImportJob.customPlaylistName || "Playlist") + "]: " + r.sampleTitles.slice(0, 3).join(", "));
               }
-              saveBackupCheckpointClient();
+              saveBackupCheckpointClient(false);
             } else {
               hadRateWarning = true;
               const errMsg = String(r?.error || "Kurze Pause...");
@@ -3427,7 +3993,7 @@
               if (nextRetry >= 3) {
                 isolateFailedEntryAtCursor(errMsg);
               } else {
-                saveBackupCheckpointClient();
+                saveBackupCheckpointClient(false);
                 const waitMs = 1800 * nextRetry;
                 backupImportJob.recentLog.push("⏳ Einzel-Prüfung (" + nextRetry + "/2) bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
                 await new Promise(res => setTimeout(res, waitMs));
@@ -3441,14 +4007,24 @@
             if (nextRetry >= 3) {
               isolateFailedEntryAtCursor(errMsg);
             } else {
-              saveBackupCheckpointClient();
+              saveBackupCheckpointClient(false);
               const waitMs = 2200 * nextRetry;
               backupImportJob.recentLog.push("⏳ Rate-Limit / Einzel-Isolierung (" + nextRetry + "/2) bei #" + backupImportJob.cursor + ": " + errMsg);
               await new Promise(res => setTimeout(res, waitMs));
             }
           }
           renderBackupImportBoxDom();
-          await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
+          // Auto-Pause (5s Cooldown), sobald die D1-/Worker-Batch-Latenz 2 Sekunden (2000ms) überschreitet, um HTTP 503 Gateway-Timeouts proaktiv zu verhindern
+          if (batchLatencyMs > 2000 && backupImportJob.running && !backupImportJob.paused) {
+            backupImportJob._lastBatchHadLatencyCooldown = true;
+            backupImportJob.currentBatchModeLabel = "⏳ Auto-Pause (5s Cooldown)";
+            backupImportJob.currentBatchModeColor = "#fbbf24";
+            backupImportJob.recentLog.push("⏳ Auto-Pause (5s Cooldown): D1-/Worker-Batch-Latenz (" + batchLatencyMs + "ms > 2000ms) – Schutz vor HTTP 503 Gateway-Timeout aktiv");
+            renderBackupImportBoxDom();
+            await new Promise(res => setTimeout(res, 5000));
+          } else {
+            await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
+          }
         }
 
         backupImportJob.running = false;
@@ -3878,7 +4454,8 @@
               r = await apiFetchJson(
                 API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
                 "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
-                "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "")
+                "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "") +
+                (forceNetworkRefresh ? "&refresh=1" : "")
               );
               if (r && r.ok) {
                 window._lastAdminOverviewCache = r;
@@ -3911,7 +4488,16 @@
           const mediaList = r.media || [];
           const qStats = r.queueStats || { pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 };
           const adminPlaylists = r.playlists || [];
-          const seriesGaps = r.seriesGaps || { totalSeriesChecked: 0, seriesWithGapsCount: 0, seriesWithInternalGapsCount: 0, totalMissingInternal: 0, totalMissingTrailing: 0, totalPrereleaseOnly: 0, items: [] };
+          const rawSeriesGaps = r.seriesGaps || {};
+          const seriesGaps = {
+            totalSeriesChecked: Number(rawSeriesGaps.totalSeriesChecked ?? (Array.isArray(rawSeriesGaps.items || rawSeriesGaps.series) ? (rawSeriesGaps.items || rawSeriesGaps.series).length : 0)),
+            seriesWithGapsCount: Number(rawSeriesGaps.seriesWithGapsCount ?? rawSeriesGaps.totalSeriesWithGaps ?? 0),
+            seriesWithInternalGapsCount: Number(rawSeriesGaps.seriesWithInternalGapsCount ?? rawSeriesGaps.totalSeriesWithInternalGaps ?? 0),
+            totalMissingInternal: Number(rawSeriesGaps.totalMissingInternal ?? rawSeriesGaps.totalInternalMissingEpisodes ?? 0),
+            totalMissingTrailing: Number(rawSeriesGaps.totalMissingTrailing ?? rawSeriesGaps.totalTrailingMissingEpisodes ?? 0),
+            totalPrereleaseOnly: Number(rawSeriesGaps.totalPrereleaseOnly ?? rawSeriesGaps.totalPrereleaseEpisodes ?? 0),
+            items: Array.isArray(rawSeriesGaps.items) ? rawSeriesGaps.items : (Array.isArray(rawSeriesGaps.series) ? rawSeriesGaps.series : [])
+          };
           const allReports = Array.isArray(r.reports) ? r.reports : (window._adminReportsCache || []);
           window._adminReportsCache = allReports;
           if (!clientDiagnosticLogState.loadedFromD1Once && !backupImportJob.running) {
@@ -4187,23 +4773,29 @@
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                     '<button class="btn ' + ((state.adminGapFilter || 'all') === 'all' ? 'amber' : '') + '" onclick="state.adminGapFilter=\\'all\\';loadAdminPanelView()">📋 Alle Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
                     '<button class="btn ' + (state.adminGapFilter === 'internal' ? 'red' : '') + '" onclick="state.adminGapFilter=\\'internal\\';loadAdminPanelView()">🚨 Nur Lücken mitten in der Staffel (' + Number(seriesGaps.seriesWithInternalGapsCount || 0) + ')</button>' +
+                    '<button class="btn green" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView(true)" title="Ignoriert den Cache und scannt alle Serien, Staffeln und Episoden in D1 sofort neu">🔄 Jetzt Lücken neu scannen</button>' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:8px;margin-bottom:12px;font-size:12px">' +
-                  '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(239,68,68,0.4)">🚨 <b>Lücken mitten in Staffel (Prio 1):</b> <span style="color:#f87171;font-weight:900">' + Number(seriesGaps.totalMissingInternal || 0) + ' Folgen</span> in ' + Number(seriesGaps.seriesWithInternalGapsCount || 0) + ' Serien</div>' +
+                  '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(239,68,68,0.4)">🚨 <b>Lücken mitten in Staffel/Serie (Prio 1):</b> <span style="color:#f87171;font-weight:900">' + Number(seriesGaps.totalMissingInternal || 0) + ' Folgen</span> in ' + Number(seriesGaps.seriesWithInternalGapsCount || 0) + ' Serien</div>' +
                   '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(56,189,248,0.35)">⏳ <b>Fehlend am Staffelende (Prio 2):</b> <span style="color:#38bdf8;font-weight:900">' + Number(seriesGaps.totalMissingTrailing || 0) + ' Folgen</span></div>' +
                   '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(245,158,11,0.4)">⚠️ <b>Nur als Vorabversion/TS/MD:</b> <span style="color:#fbbf24;font-weight:900">' + Number(seriesGaps.totalPrereleaseOnly || 0) + ' Folgen</span></div>' +
                 '</div>' +
-                '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">💡 <b>Besonders wichtig (rot markiert):</b> Wenn z.B. <code>Folge 1 + 2</code> fehlen, während <code>Folge 3</code> bereits vorhanden ist, steht diese Serie ganz oben, damit du die Lücken sofort gezielt füllen kannst.</p>' +
+                '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">💡 <b>Besonders wichtig (rot markiert):</b> Wenn z.B. <code>Folge 1 + 2</code> fehlen, während <code>Folge 3</code> bereits vorhanden ist, oder eine komplette Zwischen-Staffel (z.B. <code>Staffel 2</code> vor <code>Staffel 3</code>) fehlt, steht diese Serie ganz oben.</p>' +
                 ((() => {
-                  const gapItems = (seriesGaps.items || []).filter(item => state.adminGapFilter === "internal" ? item.hasPriorityInternalGaps : true);
+                  const gapItems = (seriesGaps.items || []).filter(item => state.adminGapFilter === "internal" ? (item.hasPriorityInternalGaps ?? item.hasInternalGaps) : true);
                   if (gapItems.length === 0) {
                     return '<div style="padding:18px;text-align:center;color:#34d399;font-size:12.5px;background:#101016;border-radius:8px;border:1px solid rgba(16,185,129,0.35)">🎉 Perfekt! Keine fehlenden Serienfolgen in dieser Ansicht gefunden.</div>';
                   }
                   return '<div style="display:flex;flex-direction:column;gap:10px;max-height:620px;overflow-y:auto;padding-right:4px">' +
                     gapItems.map(sItem => {
+                      const seriesIdVal = Number(sItem.seriesId ?? sItem.tmdbId ?? 0);
+                      const hasPrioInt = Boolean(sItem.hasPriorityInternalGaps ?? sItem.hasInternalGaps);
+                      const totInt = Number(sItem.totalInternalMissing ?? sItem.internalMissingCount ?? 0);
+                      const totTrail = Number(sItem.totalTrailingMissing ?? sItem.trailingMissingCount ?? 0);
+                      const totPre = Number(sItem.totalPrerelease ?? sItem.prereleaseCount ?? 0);
                       const pImg = resolvePosterUrlClient(sItem.poster, "w185", "");
-                      return '<div style="background:#12121a;border:1px solid ' + (sItem.hasPriorityInternalGaps ? 'rgba(239,68,68,0.55)' : 'rgba(255,255,255,0.14)') + ';border-radius:10px;padding:11px;display:flex;flex-direction:column;gap:8px">' +
+                      return '<div style="background:#12121a;border:1px solid ' + (hasPrioInt ? 'rgba(239,68,68,0.55)' : 'rgba(255,255,255,0.14)') + ';border-radius:10px;padding:11px;display:flex;flex-direction:column;gap:8px">' +
                         '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
                           '<div style="display:flex;align-items:center;gap:10px;min-width:200px;flex:1">' +
                             (pImg
@@ -4211,39 +4803,48 @@
                               : '<div style="width:38px;height:56px;background:#1e293b;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">📺</div>') +
                             '<div>' +
                               '<div style="font-size:13.5px;font-weight:900;color:#fff;display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-                                esc(sItem.title) + ' <span style="color:#94a3b8;font-weight:600;font-size:12px">(' + esc(sItem.year || 'k.A.') + ' • TMDb #' + Number(sItem.seriesId) + ')</span>' +
-                                (sItem.hasPriorityInternalGaps ? '<span style="background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.5);padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800">🚨 LÜCKE MITTEN IN DER STAFFEL (' + Number(sItem.totalInternalMissing) + ' fehlt)</span>' : '') +
+                                esc(sItem.title) + ' <span style="color:#94a3b8;font-weight:600;font-size:12px">(' + esc(sItem.year || 'k.A.') + ' • TMDb #' + seriesIdVal + ')</span>' +
+                                (hasPrioInt ? '<span style="background:rgba(239,68,68,0.22);color:#fca5a5;border:1px solid rgba(239,68,68,0.5);padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:800">🚨 LÜCKE MITTEN IN DER STAFFEL/SERIE (' + totInt + ' fehlt)</span>' : '') +
                               '</div>' +
                               '<div style="font-size:11.5px;color:#cbd5e1;margin-top:3px">' +
-                                'Innerhalb der Staffel fehlend: <b style="color:#f87171">' + Number(sItem.totalInternalMissing || 0) + '</b> • Am Staffelende offen: <b style="color:#38bdf8">' + Number(sItem.totalTrailingMissing || 0) + '</b>' +
-                                (Number(sItem.totalPrerelease || 0) > 0 ? (' • Nur Vorabversion/TS/MD: <b style="color:#fbbf24">' + Number(sItem.totalPrerelease) + '</b>') : '') +
+                                'Innerhalb der Staffel/Serie fehlend: <b style="color:#f87171">' + totInt + '</b> • Am Staffelende offen: <b style="color:#38bdf8">' + totTrail + '</b>' +
+                                (totPre > 0 ? (' • Nur Vorabversion/TS/MD: <b style="color:#fbbf24">' + totPre + '</b>') : '') +
                               '</div>' +
                             '</div>' +
                           '</div>' +
-                          '<button class="btn blue" onclick="openDetails(\\'s\\',' + Number(sItem.seriesId) + ',false)">📺 Serie öffnen</button>' +
+                          '<button class="btn blue" onclick="openDetails(\\'s\\',' + seriesIdVal + ',false)">📺 Serie öffnen</button>' +
                         '</div>' +
                         '<div style="display:flex;flex-direction:column;gap:6px">' +
                           (sItem.seasons || []).map(sec => {
-                            const intCodes = (sec.internalGaps || []).map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
-                            const trailCodes = (sec.trailingMissing || []).map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
-                            const preCodes = (sec.prereleaseEpisodes || []).map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
-                            const upCodes = (sec.uploadedEpisodes || []).map(epN => 'E' + String(epN).padStart(2, '0'));
-                            return '<div style="background:#181824;border:1px solid rgba(255,255,255,0.09);border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+                            const intList = sec.internalGaps || sec.internalMissingEpisodes || [];
+                            const trailList = sec.trailingMissing || sec.trailingMissingEpisodes || [];
+                            const preList = sec.prereleaseEpisodes || [];
+                            const upList = sec.uploadedEpisodes || sec.presentEpisodes || [];
+                            const upCount = Number(sec.uploadedCount ?? sec.uploadedEpisodesCount ?? upList.length);
+                            const intCodes = intList.map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
+                            const trailCodes = trailList.map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
+                            const preCodes = preList.map(epN => 'S' + String(sec.seasonNumber).padStart(2, '0') + 'E' + String(epN).padStart(2, '0'));
+                            const upCodes = upList.map(epN => 'E' + String(epN).padStart(2, '0'));
+                            const isMissingWholeSeason = Boolean(sec.isCompletelyMissingSeason);
+                            return '<div style="background:#181824;border:1px solid ' + (isMissingWholeSeason ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.09)') + ';border-radius:8px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
                               '<div style="flex:1;min-width:210px;font-size:11.5px">' +
                                 '<div style="font-weight:800;color:#fff;margin-bottom:3px">' +
-                                  'Staffel ' + Number(sec.seasonNumber) + ' <span style="color:#34d399;font-weight:700">(' + Number(sec.uploadedCount) + ' / ' + Number(sec.expectedTotalEpisodes) + ' Folgen vorhanden: ' + esc(upCodes.slice(0, 12).join(', ')) + (upCodes.length > 12 ? '…' : '') + ')</span>' +
+                                  'Staffel ' + Number(sec.seasonNumber) +
+                                  (isMissingWholeSeason
+                                    ? ' <span style="color:#f87171;font-weight:800">(0 / ' + Number(sec.expectedTotalEpisodes) + ' Folgen vorhanden – komplette Zwischen-Staffel fehlt!)</span>'
+                                    : ' <span style="color:#34d399;font-weight:700">(' + upCount + ' / ' + Number(sec.expectedTotalEpisodes) + ' Folgen vorhanden: ' + esc(upCodes.slice(0, 12).join(', ')) + (upCodes.length > 12 ? '…' : '') + ')</span>') +
                                 '</div>' +
                                 (intCodes.length > 0 ? (
-                                  '<div style="color:#fca5a5;margin-top:2px">🚨 <b>Fehlt mitten in Staffel ' + Number(sec.seasonNumber) + ' (vor E' + String(sec.maxUploadedEp).padStart(2, '0') + '):</b> <code style="background:rgba(239,68,68,0.2);color:#fecaca;padding:1px 6px;border-radius:4px;font-weight:800">' + esc(intCodes.join(', ')) + '</code></div>'
+                                  '<div style="color:#fca5a5;margin-top:2px">🚨 <b>' + (isMissingWholeSeason ? ('Komplette Staffel ' + Number(sec.seasonNumber) + ' fehlt mitten in der Serie:') : ('Fehlt mitten in Staffel ' + Number(sec.seasonNumber) + ' (vor E' + String(sec.maxUploadedEp).padStart(2, '0') + '):')) + '</b> <code style="background:rgba(239,68,68,0.2);color:#fecaca;padding:1px 6px;border-radius:4px;font-weight:800">' + esc(intCodes.slice(0, 16).join(', ')) + (intCodes.length > 16 ? (' +' + (intCodes.length - 16) + ' weitere') : '') + '</code></div>'
                                 ) : '') +
                                 (trailCodes.length > 0 ? (
-                                  '<div style="color:#93c5fd;margin-top:2px">⏳ <b>Fehlt ab E' + String(sec.maxUploadedEp + 1).padStart(2, '0') + ' bis Staffelende:</b> <code style="background:rgba(56,189,248,0.14);color:#bae6fd;padding:1px 6px;border-radius:4px">' + esc(trailCodes.slice(0, 15).join(', ')) + (trailCodes.length > 15 ? (' +' + (trailCodes.length - 15) + ' weitere') : '') + '</code></div>'
+                                  '<div style="color:#93c5fd;margin-top:2px">⏳ <b>Fehlt ab E' + String(Number(sec.maxUploadedEp || 0) + 1).padStart(2, '0') + ' bis Staffelende:</b> <code style="background:rgba(56,189,248,0.14);color:#bae6fd;padding:1px 6px;border-radius:4px">' + esc(trailCodes.slice(0, 15).join(', ')) + (trailCodes.length > 15 ? (' +' + (trailCodes.length - 15) + ' weitere') : '') + '</code></div>'
                                 ) : '') +
                                 (preCodes.length > 0 ? (
                                   '<div style="color:#fde68a;margin-top:2px">⚠️ <b>Nur als Vorabversion / TS / MD vorhanden (wird bei gutem Upload automatisch ersetzt):</b> <code style="background:rgba(245,158,11,0.2);color:#fef08a;padding:1px 6px;border-radius:4px">' + esc(preCodes.join(', ')) + '</code></div>'
                                 ) : '') +
                               '</div>' +
-                              '<button class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'s\\',' + Number(sItem.seriesId) + ',false,\\'\\',\\'\\',' + Number(sec.seasonNumber) + ')">Staffel ' + Number(sec.seasonNumber) + ' öffnen</button>' +
+                              '<button class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'s\\',' + seriesIdVal + ',false,\\'\\',\\'\\',' + Number(sec.seasonNumber) + ')">Staffel ' + Number(sec.seasonNumber) + ' öffnen</button>' +
                             '</div>';
                           }).join("") +
                         '</div>' +
@@ -4324,6 +4925,7 @@
                 '</div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
                   '<button class="btn green" onclick="submitAdminMediaCrud()">💾 In D1 speichern / von TMDB synchronisieren</button>' +
+                  '<button class="btn purple" style="background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForCrudClient()">✨ Ohne TMDb-ID manuell anlegen</button>' +
                   '<button class="btn ' + (state.adminMediaType === 'm' ? 'active' : '') + '" onclick="state.adminMediaType=\\'m\\';loadAdminPanelView()">🎬 Filme in D1 zeigen</button>' +
                   '<button class="btn ' + (state.adminMediaType === 's' ? 'active' : '') + '" onclick="state.adminMediaType=\\'s\\';loadAdminPanelView()">📺 Serien in D1 zeigen</button>' +
                 '</div>' +

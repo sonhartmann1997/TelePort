@@ -1207,6 +1207,20 @@
       }
     }
 
+    // Für bot_vip niemals KV lesen – bot_vip lebt zu 100% in D1 (d1_playlist_folders / d1_playlist_items)
+    if (cleanId === "bot_vip") {
+      const botVipBundle = {
+        v: 2,
+        updatedAt: Date.now(),
+        savedList: [],
+        folders: [],
+        settings: { ...DEFAULT_USER_SETTINGS_TEMPLATE },
+        session: {}
+      };
+      syncUserBundleToMemoryMirrors(cleanId, botVipBundle);
+      return botVipBundle;
+    }
+
     try {
       const rawBundle = await kvCachedGetRaw(env, bundleKey, "MOVIE_SAVED");
       if (rawBundle) {
@@ -1226,40 +1240,44 @@
       }
     } catch (e) {}
 
-    // Automatische Lazy-Migration bestehender Legacy-KV-Keys (1-malig beim ersten Laden)
+    // Automatische Lazy-Migration bestehender Legacy-KV-Keys (nur 1-malig pro Chat-ID prüfen, spart 4 KV-Reads bei neuen Usern!)
     let migratedFromLegacy = false;
     let savedList = [];
     let folders = [];
     let settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE };
     let session = {};
+    const legacyCheckedKey = `u_legacy_checked_${cleanId}`;
 
-    try {
-      const [rawUser, rawFolders, rawSettings, rawSess] = await Promise.all([
-        kvCachedGetRaw(env, `user_${cleanId}`, "MOVIE_SAVED"),
-        kvCachedGetRaw(env, `folders_${cleanId}`, "MOVIE_SAVED"),
-        kvCachedGetRaw(env, `settings_${cleanId}`, "MOVIE_SAVED"),
-        kvCachedGetRaw(env, `sess_${cleanId}`, "MOVIE_SAVED")
-      ]);
-      if (rawUser) {
-        savedList = normalizeSavedItems(JSON.parse(rawUser));
-        migratedFromLegacy = true;
-      }
-      if (rawFolders) {
-        const pf = JSON.parse(rawFolders);
-        if (Array.isArray(pf)) folders = pf;
-        migratedFromLegacy = true;
-      }
-      if (rawSettings) {
-        const ps = JSON.parse(rawSettings);
-        if (ps && typeof ps === "object") settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...ps };
-        migratedFromLegacy = true;
-      }
-      if (rawSess) {
-        const pss = JSON.parse(rawSess);
-        if (pss && typeof pss === "object") session = pss;
-        migratedFromLegacy = true;
-      }
-    } catch (e) {}
+    if (!memoryFallback.has(legacyCheckedKey) && cleanId !== "guest") {
+      memoryFallback.set(legacyCheckedKey, true);
+      try {
+        const [rawUser, rawFolders, rawSettings, rawSess] = await Promise.all([
+          kvCachedGetRaw(env, `user_${cleanId}`, "MOVIE_SAVED"),
+          kvCachedGetRaw(env, `folders_${cleanId}`, "MOVIE_SAVED"),
+          kvCachedGetRaw(env, `settings_${cleanId}`, "MOVIE_SAVED"),
+          kvCachedGetRaw(env, `sess_${cleanId}`, "MOVIE_SAVED")
+        ]);
+        if (rawUser) {
+          savedList = normalizeSavedItems(JSON.parse(rawUser));
+          migratedFromLegacy = true;
+        }
+        if (rawFolders) {
+          const pf = JSON.parse(rawFolders);
+          if (Array.isArray(pf)) folders = pf;
+          migratedFromLegacy = true;
+        }
+        if (rawSettings) {
+          const ps = JSON.parse(rawSettings);
+          if (ps && typeof ps === "object") settings = { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...ps };
+          migratedFromLegacy = true;
+        }
+        if (rawSess) {
+          const pss = JSON.parse(rawSess);
+          if (pss && typeof pss === "object") session = pss;
+          migratedFromLegacy = true;
+        }
+      } catch (e) {}
+    }
 
     const bundle = {
       v: 2,
@@ -1387,7 +1405,12 @@
     syncUserBundleToMemoryMirrors(cleanId, bundle);
     for (const f of bundle.folders) {
       if (f && f.id && (f.isJsonPlaylist || f.type === "playlist" || cleanId === "bot_vip")) {
-        try { await upsertPlaylistFolderInD1(env, cleanId, f); } catch (e) {}
+        const fSigKey = `d1_folder_sig_${cleanId}_${f.id}`;
+        const nextFSig = JSON.stringify({ name: f.name, enabled: f.enabled !== false, playlistMode: f.playlistMode || "both", sourceLabel: f.sourceLabel || "" });
+        if (memoryFallback.get(fSigKey) !== nextFSig) {
+          memoryFallback.set(fSigKey, nextFSig);
+          try { await upsertPlaylistFolderInD1(env, cleanId, f); } catch (e) {}
+        }
       }
     }
     if (cleanId === "bot_vip" || options.skipKvWrite) {
@@ -2684,6 +2707,9 @@
   async function flushUserSession(env, chatId, options = {}) {
     if (!chatId) {
       await flushDirtyKvBatch(env, { force: Boolean(options?.force) });
+      return;
+    }
+    if (String(chatId) === "bot_vip") {
       return;
     }
     const bundle = await getUserBundle(env, chatId);

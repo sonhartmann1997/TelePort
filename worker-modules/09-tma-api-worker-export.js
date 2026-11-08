@@ -395,7 +395,17 @@
             getFolders(env, playlistChatId).catch(() => []),
             getSavedList(env, playlistChatId).catch(() => []),
             listMediaReportsFromD1(env, "all").catch(() => []),
-            computeSeriesGapsOverview(env).catch(() => ({ totalSeriesChecked: 0, incompleteSeriesCount: 0, totalMissingEpisodes: 0, seriesList: [] }))
+            computeSeriesGapsOverview(env, url.searchParams.get("refresh") === "1").catch(() => ({
+              totalSeriesChecked: 0,
+              seriesWithGapsCount: 0,
+              seriesWithInternalGapsCount: 0,
+              totalMissingInternal: 0,
+              totalMissingTrailing: 0,
+              totalPrereleaseOnly: 0,
+              items: [],
+              totalSeriesWithGaps: 0,
+              series: []
+            }))
           ]);
           const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || []);
           const playlists = (targetFolders || []).map(f => ({
@@ -426,7 +436,8 @@
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/series-gaps" && request.method === "GET") {
-          const seriesGaps = await computeSeriesGapsOverview(env);
+          const forceRefresh = url.searchParams.get("refresh") === "1";
+          const seriesGaps = await computeSeriesGapsOverview(env, forceRefresh);
           return new Response(JSON.stringify({ ok: true, seriesGaps }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/playlists" && request.method === "POST") {
@@ -503,6 +514,44 @@
             return new Response(JSON.stringify(res), { status: 200, headers: corsHeaders });
           }
           return new Response(JSON.stringify({ ok: false, error: "Unbekannte Playlist-Aktion." }), { status: 400, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/catalog-preseed" && (request.method === "GET" || request.method === "POST")) {
+          const items = [];
+          try {
+            await ensureD1Schema(env);
+            const rawDb = getRawD1Binding(env);
+            if (rawDb) {
+              trackStat("d1Reads");
+              if (typeof countD1Subrequest === "function") countD1Subrequest();
+              const [mRows, sRows] = await rawDb.batch([
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM movies"),
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series")
+              ]);
+              for (const r of (mRows?.results || [])) {
+                if (r?.tmdb_id && r?.title) {
+                  items.push({
+                    tmdbId: Number(r.tmdb_id),
+                    typeCode: "m",
+                    title: String(r.title),
+                    year: r.release_year ? String(r.release_year) : null,
+                    poster: r.poster_path || ""
+                  });
+                }
+              }
+              for (const r of (sRows?.results || [])) {
+                if (r?.tmdb_id && r?.title) {
+                  items.push({
+                    tmdbId: Number(r.tmdb_id),
+                    typeCode: "s",
+                    title: String(r.title),
+                    year: r.release_year ? String(r.release_year) : null,
+                    poster: r.poster_path || ""
+                  });
+                }
+              }
+            }
+          } catch (e) {}
+          return new Response(JSON.stringify({ ok: true, count: items.length, items }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
@@ -702,7 +751,7 @@
         }
         if (path === "/api/tma/admin/remap-import-item" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          const newTmdbId = Number(body.newTmdbId || 0);
+          let newTmdbId = Number(body.newTmdbId || 0);
           const newTypeCode = body.newTypeCode === "s" ? "s" : "m";
           const oldTmdbId = body.oldTmdbId ? Number(body.oldTmdbId) : null;
           const oldTypeCode = body.oldTypeCode === "s" ? "s" : "m";
@@ -712,9 +761,30 @@
             ? body.playlistMode
             : (targetChatId === "bot_vip" ? "vip_stream" : "both");
           const rawEntry = body.rawEntry && typeof body.rawEntry === "object" ? body.rawEntry : {};
+          const isManualWithoutTmdb = Boolean(body.confirmManualWithoutTmdb || (!newTmdbId && body.manualCustomMeta));
+          const manualCustomMeta = body.manualCustomMeta && typeof body.manualCustomMeta === "object" ? body.manualCustomMeta : null;
+
+          if (isManualWithoutTmdb && (!newTmdbId || newTmdbId < 900000000)) {
+            const manualTitle = String(
+              manualCustomMeta?.title ||
+              body.candidateMeta?.title ||
+              rawEntry.cleanTitle ||
+              rawEntry.title ||
+              rawEntry.filename ||
+              rawEntry.raw_file_name ||
+              "Unbekannter Titel"
+            ).trim();
+            const manualYear = String(
+              manualCustomMeta?.year ||
+              body.candidateMeta?.year ||
+              rawEntry.year ||
+              ""
+            ).trim();
+            newTmdbId = await allocateCollisionFreeManualSyntheticId(env, newTypeCode, manualTitle, manualYear);
+          }
 
           if (!newTmdbId) {
-            return new Response(JSON.stringify({ ok: false, error: "Ungültige Ziel-TMDb-ID." }), { status: 400, headers: corsHeaders });
+            return new Response(JSON.stringify({ ok: false, error: "Ungültige Ziel-ID (weder TMDb-ID noch manuelle Bestätigung)." }), { status: 400, headers: corsHeaders });
           }
 
           // 1. Falls zuvor ein falscher Treffer in der Playlist gespeichert wurde, diesen sauber aus der Ziel-Playlist entfernen
@@ -741,18 +811,41 @@
           const registerAsVipStream = playlistMode === "vip_stream" || playlistMode === "both";
           const manualSeason = body.season ? Math.max(1, parseInt(body.season, 10) || 1) : null;
           const manualEpisode = body.episode ? Math.max(1, parseInt(body.episode, 10) || 1) : null;
+          const effectiveCandidateMeta = isManualWithoutTmdb
+            ? {
+                id: newTmdbId,
+                title: String(manualCustomMeta?.title || body.candidateMeta?.title || rawEntry.cleanTitle || rawEntry.filename || "Unbekannter Titel").trim(),
+                originalTitle: String(manualCustomMeta?.originalTitle || manualCustomMeta?.title || "").trim(),
+                year: String(manualCustomMeta?.year || body.candidateMeta?.year || rawEntry.year || "k.A.").trim(),
+                poster: String(manualCustomMeta?.poster || body.candidateMeta?.poster || "").trim(),
+                genres: String(manualCustomMeta?.genres || body.candidateMeta?.genres || "Manuell bestätigt").trim(),
+                overview: String(manualCustomMeta?.overview || body.candidateMeta?.overview || "Manuell ohne TMDb-ID bestätigter Titel.").trim(),
+                vote_average: Number(manualCustomMeta?.vote_average || 0),
+                source: "Manuell bestätigt"
+              }
+            : (body.candidateMeta || null);
+
           const resolved = await resolveAndIngestMediaEntry(env, {
             ...rawEntry,
+            ...(effectiveCandidateMeta?.title ? { title: effectiveCandidateMeta.title, cleanTitle: effectiveCandidateMeta.title } : {}),
+            ...(effectiveCandidateMeta?.year && effectiveCandidateMeta.year !== "k.A." ? { year: effectiveCandidateMeta.year } : {}),
             tmdb_id: newTmdbId,
             typeCode: newTypeCode,
             type: newTypeCode === "s" ? "series" : "movie",
             isSeries: newTypeCode === "s",
             ...(newTypeCode === "s" && manualSeason ? { season: manualSeason, manualSeason } : {}),
             ...(newTypeCode === "s" && manualEpisode ? { episode: manualEpisode, manualEpisode } : {})
-          }, entryFileMeta, { registerAsVipStream, bypassNegativeTitleCache: true });
+          }, entryFileMeta, {
+            registerAsVipStream,
+            bypassNegativeTitleCache: true,
+            confirmManualWithoutTmdb: isManualWithoutTmdb,
+            allowCreateWithoutVideoFile: true,
+            candidateMeta: effectiveCandidateMeta,
+            sourceChannelId: body.sourceChannelId || ""
+          });
 
           if (!resolved || !resolved.ok) {
-            return new Response(JSON.stringify({ ok: false, error: "TMDb-Eintrag konnte nicht geladen werden." }), { status: 404, headers: corsHeaders });
+            return new Response(JSON.stringify({ ok: false, error: "Eintrag konnte nicht geladen oder gespeichert werden." }), { status: 404, headers: corsHeaders });
           }
 
           await invalidateOrUpdateTitleResolutionCacheInD1(
@@ -765,7 +858,7 @@
               typeCode: resolved.typeCode,
               title: resolved.cleanTitle,
               confidence: 100,
-              source: resolved.metadataSource || "Admin-Remap",
+              source: resolved.metadataSource || (isManualWithoutTmdb ? "Manuell bestätigt" : "Admin-Remap"),
               notFound: false
             }
           );
@@ -789,7 +882,7 @@
               part: resolved.part || null,
               season: resolved.season || null,
               episode: resolved.episode || null,
-              metadataSource: resolved.metadataSource || "TMDb",
+              metadataSource: resolved.metadataSource || (isManualWithoutTmdb ? "Manuell bestätigt" : "TMDb"),
               confidence: 100
             }
           }), { status: 200, headers: corsHeaders });
@@ -848,13 +941,17 @@
           if (body.action === "upsert") {
             let targetId = Number(body.tmdbId || 0);
             let details = null;
-            if (targetId) {
+            const confirmManual = Boolean(body.confirmManualWithoutTmdb);
+            if (!targetId && confirmManual && body.title) {
+              targetId = await allocateCollisionFreeManualSyntheticId(env, typeCode, String(body.title), body.year ? String(body.year) : "");
+            }
+            if (targetId && targetId < 8000000) {
               details = typeCode === "s" ? await fetchSeriesDetails(env, targetId) : await fetchMovieDetails(env, targetId);
               if (details) {
                 if (typeCode === "s") await saveSeriesToD1(env, details);
                 else await saveMovieToD1(env, details);
               }
-            } else if (body.title) {
+            } else if (!targetId && body.title && !confirmManual) {
               const ingested = await resolveAndIngestMediaEntry(env, {
                 title: String(body.title),
                 year: body.year ? String(body.year) : "",
@@ -867,27 +964,40 @@
               if (ingested?.ok) {
                 return new Response(JSON.stringify({ ok: true, item: ingested }), { status: 200, headers: corsHeaders });
               }
+              if (body.allowManualFallback !== false) {
+                targetId = await allocateCollisionFreeManualSyntheticId(env, typeCode, String(body.title), body.year ? String(body.year) : "");
+              }
             }
             if (!details && targetId && body.title) {
+              const cleanYear = body.year && /^\d{4}$/.test(String(body.year).trim()) ? String(body.year).trim() : "";
+              const customPoster = body.poster ? String(body.poster).trim() : null;
               details = {
                 id: targetId,
                 title: String(body.title).trim(),
-                releaseDate: body.year ? `${body.year}-01-01` : "Keine Angabe",
+                originalTitle: String(body.title).trim(),
+                releaseDate: cleanYear ? `${cleanYear}-01-01` : "Keine Angabe",
+                year: cleanYear || "k.A.",
                 fsk: "FSK Keine Angabe",
                 vote_average: 0,
                 runtime: "Keine Angabe",
                 country: "k.A.",
-                genres: "Keine Angabe",
+                genres: body.genres ? String(body.genres).trim() : "Manuell bestätigt",
                 directors: "Keine Angabe",
                 casts: "Keine Angabe",
-                overview: ""
+                overview: body.overview ? String(body.overview).trim() : "Manuell ohne TMDb-ID angelegter Titel.",
+                poster_path: null,
+                external_poster_url: customPoster,
+                metadataSource: "Manuell bestätigt",
+                ...(typeCode === "s" ? { totalSeasons: 1, totalEpisodes: 1, seasons: [{ season_number: 1, episode_count: 1 }] } : {})
               };
               if (typeCode === "s") await saveSeriesToD1(env, details);
               else await saveMovieToD1(env, details);
             }
             if (details && body.fileId) {
+              const sNum = Math.max(1, parseInt(body.season, 10) || 1);
+              const eNum = Math.max(1, parseInt(body.episode, 10) || 1);
               if (typeCode === "s") {
-                await saveEpisodeFileToD1(env, details.id, 1, 1, {
+                await saveEpisodeFileToD1(env, details.id, sNum, eNum, {
                   fileId: body.fileId,
                   quality: body.quality || "1080p",
                   fileSize: body.fileSize || null,

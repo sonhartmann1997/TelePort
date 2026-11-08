@@ -472,8 +472,10 @@
   }
 
   var currentInvocationSubrequests = 0;
+  var subrequestBudgetExhausted = false;
   function resetSubrequestBudget() {
     currentInvocationSubrequests = 0;
+    subrequestBudgetExhausted = false;
   }
   function hasSubrequestBudget(limit = 36) {
     return currentInvocationSubrequests < limit;
@@ -485,6 +487,7 @@
     if (memHit) return memHit;
 
     if (!hasSubrequestBudget(40)) {
+      subrequestBudgetExhausted = true;
       return null;
     }
 
@@ -504,14 +507,124 @@
     }
   }
 
-  function hashStringToPositiveInt(str, offsetBase = 8000000) {
+  function hashStringToPositiveInt(str, offsetBase = 900000000, moduloRange = 89999999) {
     let h = 2166136261;
     const s = String(str || "");
     for (let i = 0; i < s.length; i++) {
       h ^= s.charCodeAt(i);
       h = Math.imul(h, 16777619);
     }
-    return offsetBase + (Math.abs(h) % 290000);
+    const cleanMod = Math.max(1000000, Number(moduloRange) || 89999999);
+    return offsetBase + ((h >>> 0) % cleanMod);
+  }
+
+  // Löst externe IDs (IMDb tt..., TheTVDB, Wikidata Q...) direkt über TMDb /3/find/ in offizielle TMDb-IDs (1..99.999.999) auf,
+  // damit Serien und Filme wann immer möglich ihre echte TMDb-ID statt einer Fallback-ID erhalten!
+  async function resolveExternalIdToTmdb(env, externalId, externalSource = "imdb_id", preferredTypeCode = null) {
+    const extId = String(externalId || "").trim();
+    if (!extId || !env?.TMDB_BEARER_TOKEN) return null;
+    const findUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(extId)}?external_source=${encodeURIComponent(externalSource)}&language=de-DE`;
+    const findData = await cachedExternalFetchJson(findUrl, {
+      headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` }
+    }, 3500);
+    if (!findData || typeof findData !== "object") return null;
+
+    const trySeriesFirst = preferredTypeCode === "s";
+    const tvHit = Array.isArray(findData.tv_results) && findData.tv_results.length > 0 ? findData.tv_results[0] : null;
+    const movieHit = Array.isArray(findData.movie_results) && findData.movie_results.length > 0 ? findData.movie_results[0] : null;
+
+    if (trySeriesFirst && tvHit?.id) {
+      const det = await fetchSeriesDetails(env, Number(tvHit.id));
+      if (det && det.id) {
+        const yr = String(det.releaseDate || "").split("-")[0] || "k.A.";
+        return {
+          source: `TMDb (via ${externalSource})`,
+          id: Number(det.id),
+          tmdbId: Number(det.id),
+          typeCode: "s",
+          title: det.title,
+          originalTitle: det.title,
+          year: yr,
+          releaseDate: det.releaseDate || "Keine Angabe",
+          fsk: det.fsk || "FSK Keine Angabe",
+          statusText: det.statusText || "Unbekannt",
+          runtime: det.runtime || "Keine Angabe",
+          genres: det.genres || "Serie",
+          directors: det.directors || "Keine Angabe",
+          casts: det.casts || "Keine Angabe",
+          country: det.country || "k.A.",
+          overview: det.overview || "",
+          poster: det.poster_path ? `https://image.tmdb.org/t/p/w185${det.poster_path}` : (det.external_poster_url || ""),
+          external_poster_url: det.external_poster_url || "",
+          vote_average: det.vote_average || 0,
+          numberOfSeasons: det.numberOfSeasons || 1,
+          numberOfEpisodes: det.numberOfEpisodes || 0,
+          seasons: det.seasons || [],
+          confidence: 94
+        };
+      }
+    }
+
+    if (movieHit?.id && preferredTypeCode !== "s") {
+      const det = await fetchMovieDetails(env, Number(movieHit.id));
+      if (det && det.id) {
+        const yr = String(det.releaseDate || "").split("-")[0] || "k.A.";
+        return {
+          source: `TMDb (via ${externalSource})`,
+          id: Number(det.id),
+          tmdbId: Number(det.id),
+          typeCode: "m",
+          title: det.title,
+          originalTitle: det.title,
+          year: yr,
+          releaseDate: det.releaseDate || "Keine Angabe",
+          fsk: det.fsk || "FSK Keine Angabe",
+          runtime: det.runtime || "Keine Angabe",
+          genres: det.genres || "Film",
+          directors: det.directors || "Keine Angabe",
+          casts: det.casts || "Keine Angabe",
+          country: det.country || "k.A.",
+          overview: det.overview || "",
+          poster: det.poster_path ? `https://image.tmdb.org/t/p/w185${det.poster_path}` : (det.external_poster_url || ""),
+          external_poster_url: det.external_poster_url || "",
+          vote_average: det.vote_average || 0,
+          confidence: 94
+        };
+      }
+    }
+
+    if (!trySeriesFirst && tvHit?.id && !preferredTypeCode) {
+      const det = await fetchSeriesDetails(env, Number(tvHit.id));
+      if (det && det.id) {
+        const yr = String(det.releaseDate || "").split("-")[0] || "k.A.";
+        return {
+          source: `TMDb (via ${externalSource})`,
+          id: Number(det.id),
+          tmdbId: Number(det.id),
+          typeCode: "s",
+          title: det.title,
+          originalTitle: det.title,
+          year: yr,
+          releaseDate: det.releaseDate || "Keine Angabe",
+          fsk: det.fsk || "FSK Keine Angabe",
+          statusText: det.statusText || "Unbekannt",
+          runtime: det.runtime || "Keine Angabe",
+          genres: det.genres || "Serie",
+          directors: det.directors || "Keine Angabe",
+          casts: det.casts || "Keine Angabe",
+          country: det.country || "k.A.",
+          overview: det.overview || "",
+          poster: det.poster_path ? `https://image.tmdb.org/t/p/w185${det.poster_path}` : (det.external_poster_url || ""),
+          external_poster_url: det.external_poster_url || "",
+          vote_average: det.vote_average || 0,
+          numberOfSeasons: det.numberOfSeasons || 1,
+          numberOfEpisodes: det.numberOfEpisodes || 0,
+          seasons: det.seasons || [],
+          confidence: 92
+        };
+      }
+    }
+    return null;
   }
 
   const EPISODE_GROUP_TYPES = {
@@ -1263,24 +1376,36 @@
     }
     if (!data || data.Response === "False" || !data.Title) return null;
 
-    const syntheticId = data.imdbID
-      ? (8000000 + (parseInt(String(data.imdbID).replace(/\D/g, ""), 10) % 390000))
-      : hashStringToPositiveInt(`omdb_${data.Title}_${data.Year}`, 8000000);
+    const resolvedTc = data.Type === "series" ? "s" : typeCode;
+    // Zuerst versuchen, die gefundene IMDb-ID direkt in eine echte TMDb-ID (1..99.999.999) aufzulösen!
+    if (data.imdbID && env?.TMDB_BEARER_TOKEN) {
+      const tmdbBridged = await resolveExternalIdToTmdb(env, data.imdbID, "imdb_id", resolvedTc).catch(() => null);
+      if (tmdbBridged && tmdbBridged.id && tmdbBridged.id < 8000000) {
+        return tmdbBridged;
+      }
+    }
+
+    // Disjunkter 100M-Block für OMDb/IMDb (100.000.000 .. 199.999.999) OHNE Modulo-390k-Kürzung!
+    // IMDb-IDs sind global über Filme und Serien hinweg eindeutig (tt1234567 -> 101234567).
+    const rawImdbDigits = data.imdbID ? parseInt(String(data.imdbID).replace(/\D/g, ""), 10) : 0;
+    const omdbId = rawImdbDigits > 0
+      ? (100000000 + (rawImdbDigits % 99999999))
+      : hashStringToPositiveInt(`omdb_${resolvedTc}_${data.Title}_${data.Year}`, 190000000, 9999999);
     const parsedYear = String(data.Year || "").match(/\d{4}/)?.[0] || (year ? String(year) : "k.A.");
     const posterUrl = data.Poster && data.Poster !== "N/A" ? String(data.Poster) : "";
     const voteAvg = parseFloat(data.imdbRating) || 0;
 
     return {
       source: "OMDb",
-      id: syntheticId,
+      id: omdbId,
       imdbId: data.imdbID || null,
-      typeCode: data.Type === "series" ? "s" : typeCode,
+      typeCode: resolvedTc,
       title: String(data.Title).trim(),
       originalTitle: String(data.Title).trim(),
       year: parsedYear,
       releaseDate: parsedYear !== "k.A." ? `${parsedYear}-01-01` : "Keine Angabe",
       runtime: data.Runtime && data.Runtime !== "N/A" ? data.Runtime.replace("min", "Min.") : "Keine Angabe",
-      genres: data.Genre && data.Genre !== "N/A" ? data.Genre : (typeCode === "s" ? "Serie" : "Film"),
+      genres: data.Genre && data.Genre !== "N/A" ? data.Genre : (resolvedTc === "s" ? "Serie" : "Film"),
       directors: data.Director && data.Director !== "N/A" ? data.Director : "Keine Angabe",
       casts: data.Actors && data.Actors !== "N/A" ? data.Actors : "Keine Angabe",
       country: data.Country && data.Country !== "N/A" ? data.Country : "k.A.",
@@ -1410,6 +1535,16 @@
           }
         }
 
+        // Prüfe P345 (IMDb-ID in Wikidata) -> Brücke auf echte TMDb-ID!
+        const imdbClaim = claims.P345?.[0]?.mainsnak?.datavalue?.value;
+        if (imdbClaim && /^tt\d+$/i.test(String(imdbClaim).trim()) && env?.TMDB_BEARER_TOKEN) {
+          const isTvDescPrelim = /(?:serie|fernsehserie|miniserie|staffel|tv series|television series)/i.test(descDe);
+          const bridged = await resolveExternalIdToTmdb(env, String(imdbClaim).trim(), "imdb_id", isTvDescPrelim ? "s" : typeCode).catch(() => null);
+          if (bridged && bridged.id && bridged.id < 8000000) {
+            return bridged;
+          }
+        }
+
         // Falls keine TMDb-ID verknüpft ist, nur zulassen wenn P577 (Veröffentlichungsdatum), P57 (Regisseur), P136 (Genre) oder P345 (IMDb) existiert
         const hasMediaClaims = Boolean(claims.P577 || claims.P57 || claims.P136 || claims.P161 || claims.P345);
         if (!hasMediaClaims) continue;
@@ -1421,11 +1556,13 @@
           ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(String(commonsFile))}?width=400`
           : "";
         const isTvDesc = /(?:serie|fernsehserie|miniserie|staffel|tv series|television series)/i.test(descDe);
-        const syntheticId = 8400000 + (parseInt(String(entityId).replace(/\D/g, ""), 10) % 290000);
+        // Disjunkter 500M-Block für Wikidata (500.000.000 .. 599.999.999) OHNE Modulo-290k-Kürzung!
+        const qDigits = parseInt(String(entityId).replace(/\D/g, ""), 10) || hashStringToPositiveInt(labelDe, 0, 99999999);
+        const wikidataIdNum = 500000000 + (qDigits % 99999999);
 
         return {
           source: "Wikidata",
-          id: syntheticId,
+          id: wikidataIdNum,
           wikidataId: entityId,
           typeCode: isTvDesc ? "s" : typeCode,
           title: String(labelDe).trim(),
@@ -1493,12 +1630,17 @@
           .trim();
         const yrInExtract = extract.match(/\b(19[2-9]\d|20[0-3]\d)\b/)?.[1] || (year ? String(year) : "k.A.");
         const posterUrl = p.thumbnail?.source || p.original?.source || "";
-        const syntheticId = 8700000 + (Number(p.pageid || hashStringToPositiveInt(cleanedWikiTitle, 0)) % 290000);
+        // Disjunkter 600M-Block für Wikipedia DE (600M..649M) und EN (650M..699M) OHNE Modulo-290k-Kürzung!
+        const wikiBase = w.host.startsWith("de.") ? 600000000 : 650000000;
+        const pageIdNum = Number(p.pageid) > 0
+          ? (Number(p.pageid) % 49999999)
+          : hashStringToPositiveInt(cleanedWikiTitle, 0, 49999999);
+        const wikiId = wikiBase + pageIdNum;
         const isTv = /(?:fernsehserie|miniserie|staffel|episoden|television series|tv series)/i.test(`${p.title} ${extract}`);
 
         return {
           source: `MediaWiki (${w.host.split(".")[0].toUpperCase()})`,
-          id: syntheticId,
+          id: wikiId,
           pageId: p.pageid,
           typeCode: isTv ? "s" : typeCode,
           title: cleanedWikiTitle || cleanQ,
@@ -1547,10 +1689,13 @@
       const highResArt = item.artworkUrl100
         ? String(item.artworkUrl100).replace(/100x100bb/i, "600x900bb")
         : "";
-      const syntheticId = 8500000 + (Number(item.collectionId || item.trackId || 0) % 400000 || hashStringToPositiveInt(`itunes_${rawName}`, 400000));
+      // Disjunkter 700M..899M-Block für Apple iTunes DE (getrennt für Film 700M..799M und Serie 800M..899M)
+      const itunesBase = typeCode === "s" ? 800000000 : 700000000;
+      const rawItunesId = Number(item.collectionId || item.trackId || 0);
+      const itunesId = itunesBase + (rawItunesId > 0 ? (rawItunesId % 99999999) : hashStringToPositiveInt(`itunes_${typeCode}_${rawName}`, 0, 99999999));
       return {
         source: "Apple iTunes DE",
-        id: syntheticId,
+        id: itunesId,
         typeCode: typeCode === "s" ? "s" : "m",
         title: rawName,
         originalTitle: String(item.trackCensoredName || rawName),
@@ -1630,9 +1775,10 @@
           .trim();
         const bestTitle = String(m.title?.english || m.title?.romaji || matchedTitle).trim();
         const posterUrl = m.coverImage?.extraLarge || m.coverImage?.large || "";
+        // Disjunkter 300M-Block für AniList (300.000.000 .. 399.999.999) mit 1:1 nativer AniList-ID
         const resultObj = {
           source: "AniList Anime",
-          id: 9500000 + Number(m.id || hashStringToPositiveInt(bestTitle, 200000)),
+          id: 300000000 + (Number(m.id || hashStringToPositiveInt(bestTitle, 0, 99999999)) % 99999999),
           typeCode: resolvedTc,
           title: bestTitle,
           originalTitle: String(m.title?.romaji || m.title?.native || bestTitle),
@@ -1690,9 +1836,10 @@
       const relYear = String(item.year || (item.aired?.from ? String(item.aired.from).split("-")[0] : "") || year || "k.A.");
       const posterUrl = item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || "";
       const bestTitle = String(item.title_german || item.title_english || item.title || matched).trim();
+      // Disjunkter 400M-Block für MyAnimeList / Jikan (400.000.000 .. 499.999.999) mit 1:1 nativer MAL-ID
       return {
         source: "MyAnimeList (Jikan)",
-        id: 9700000 + Number(item.mal_id || hashStringToPositiveInt(bestTitle, 200000)),
+        id: 400000000 + (Number(item.mal_id || hashStringToPositiveInt(bestTitle, 0, 99999999)) % 99999999),
         typeCode: resolvedTc,
         title: bestTitle,
         originalTitle: String(item.title_japanese || item.title || bestTitle),
@@ -1717,29 +1864,40 @@
   }
 
   // Führt die erweiterte 8-Stufen Multi-API Fallback-Kaskade aus:
-  // 1. OMDb -> 2. Apple iTunes DE -> 3. TVMaze (Serien) -> 4. AniList Anime -> 5. Jikan/MAL Anime -> 6. Wikidata (inkl. TMDb-ID Bridge & Q5 Personensperre) -> 7. MediaWiki (Wikipedia DE/EN)
+  // 1. OMDb (inkl. TMDb-Bridge) -> 2. TVMaze (inkl. TMDb-Bridge) -> 3. Wikidata (inkl. TMDb-Bridge) -> 4. Apple iTunes DE -> 5. AniList Anime -> 6. Jikan/MAL Anime -> 7. MediaWiki (Wikipedia DE/EN)
   async function fetchMultiApiFallbackCascade(env, parsed, forceTypeCode = null) {
     const searchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
     if (!searchTitle && !parsed?.imdbId) return null;
     const tc = forceTypeCode || (parsed?.isSeries ? "s" : "m");
     const yr = parsed?.year || null;
 
-    // 1. OMDb API Fallback
+    // 1. OMDb API Fallback (löst bei vorhandener IMDb-ID automatisch zuerst auf die echte TMDb-ID auf!)
     const omdbHit = await fetchOmdbFallback(env, searchTitle, yr, tc, parsed?.imdbId || null).catch(() => null);
-    if (omdbHit) return omdbHit;
+    if (omdbHit && omdbHit.id < 8000000) return omdbHit;
 
-    // 2. Apple iTunes Search API DE (Deutsche Filme & Serien + High-Res Cover)
-    const itunesHit = await fetchItunesFallback(env, searchTitle, yr, tc).catch(() => null);
-    if (itunesHit) return itunesHit;
-
-    // 3. TVMaze API Fallback (speziell für Serien & Episodenlisten)
+    // 2. TVMaze API Fallback (speziell für Serien & Episodenlisten – löst über IMDb/TheTVDB zuerst auf echte TMDb-ID auf!)
+    let tvmazeFallbackObj = null;
     if (tc === "s" || !forceTypeCode) {
       const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
       if (maze && maze.tvmazeId) {
+        if (env?.TMDB_BEARER_TOKEN) {
+          if (maze.imdbId) {
+            const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
+            if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
+          }
+          if (maze.tvdbId) {
+            const bridgedTvdb = await resolveExternalIdToTmdb(env, maze.tvdbId, "tvdb_id", "s").catch(() => null);
+            if (bridgedTvdb && bridgedTvdb.id && bridgedTvdb.id < 8000000) return bridgedTvdb;
+          }
+        }
         const mazeYear = String(maze.releaseDate || "").split("-")[0] || (yr ? String(yr) : "k.A.");
-        return {
+        // Disjunkter 200M-Block für TVMaze (200.000.000 .. 299.999.999) mit 1:1 nativer TVMaze-ID
+        tvmazeFallbackObj = {
           source: "TVMaze",
-          id: Number(maze.tvmazeId) + 9000000,
+          id: 200000000 + (Number(maze.tvmazeId) % 99999999),
+          tvmazeId: Number(maze.tvmazeId),
+          imdbId: maze.imdbId || null,
+          tvdbId: maze.tvdbId || null,
           typeCode: "s",
           title: maze.title,
           originalTitle: maze.title,
@@ -1757,14 +1915,23 @@
           vote_average: maze.vote_average || 0,
           numberOfSeasons: maze.seasons?.length || 1,
           numberOfEpisodes: maze.episodes?.length || 0,
+          seasons: maze.seasons || [],
           confidence: 80
         };
       }
     }
 
-    // 4. Wikidata API Fallback (inkl. P4947/P4983 TMDb-ID Bridge & strikter Q5 Schauspieler-Sperre!)
+    // 3. Wikidata API Fallback (inkl. P4947/P4983/P345 TMDb-ID Bridge & strikter Q5 Schauspieler-Sperre!)
     const wikidataHit = await fetchWikidataFallback(env, searchTitle, yr, tc).catch(() => null);
     if (wikidataHit && wikidataHit.id < 8000000) return wikidataHit;
+
+    // Falls keine echte TMDb-ID über die Brücken gefunden wurde, liefere den besten Zusatz-API-Treffer mit disjunkter 100M-ID:
+    if (omdbHit) return omdbHit;
+    if (tvmazeFallbackObj) return tvmazeFallbackObj;
+
+    // 4. Apple iTunes Search API DE (Deutsche Filme & Serien + High-Res Cover)
+    const itunesHit = await fetchItunesFallback(env, searchTitle, yr, tc).catch(() => null);
+    if (itunesHit) return itunesHit;
 
     // 5. AniList GraphQL API (Anime Filme & Serien)
     const anilistHit = await fetchAniListFallback(env, searchTitle, yr, tc).catch(() => null);
@@ -1774,10 +1941,10 @@
     const jikanHit = await fetchJikanAnimeFallback(env, searchTitle, yr, tc).catch(() => null);
     if (jikanHit) return jikanHit;
 
-    // 7. Wikidata Fallback (falls synthetische ID >= 8000000)
+    // 7. Wikidata Fallback (500M-Block)
     if (wikidataHit) return wikidataHit;
 
-    // 8. MediaWiki (Wikipedia DE/EN) API Fallback
+    // 8. MediaWiki (Wikipedia DE/EN 600M/650M-Block) API Fallback
     const mediaWikiHit = await fetchMediaWikiFallback(env, searchTitle, yr, tc).catch(() => null);
     if (mediaWikiHit) return mediaWikiHit;
 
@@ -1812,6 +1979,10 @@
     }
 
     // 3. Bei Cache-Miss: TMDB API abfragen (Videos direkt in append_to_response gebündelt)
+    if (!hasSubrequestBudget(42)) {
+      subrequestBudgetExhausted = true;
+      return null;
+    }
     const urlDe = `https://api.themoviedb.org/3/movie/${movieId}?append_to_response=credits,release_dates,images,watch/providers,videos&include_image_language=de,en,null&include_video_language=de,en,null&language=de-DE`;
     try {
       const res = await fetchWithTimeout(urlDe, {
@@ -1965,6 +2136,8 @@
 
       const out = {
         tvmazeId: show.id,
+        imdbId: show.externals?.imdb ? String(show.externals.imdb).trim() : null,
+        tvdbId: show.externals?.thetvdb ? Number(show.externals.thetvdb) : null,
         title: show.name || cleanTitle,
         overview: summary,
         runtime,
@@ -2010,6 +2183,10 @@
     }
 
     // 3. Bei Cache-Miss: TMDB API abfragen (+ automatischer TVMaze API Fallback für fehlende Serieninfos)
+    if (!hasSubrequestBudget(42)) {
+      subrequestBudgetExhausted = true;
+      return null;
+    }
     const urlDe = `https://api.themoviedb.org/3/tv/${seriesId}?append_to_response=credits,content_ratings,images,watch/providers,videos&include_image_language=de,en,null&include_video_language=de,en,null&language=de-DE`;
     try {
       const res = await fetchWithTimeout(urlDe, {
