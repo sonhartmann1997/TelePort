@@ -2,6 +2,8 @@
 // Utility for fetching OMDb metadata and upgrading Amazon/IMDb posters to high resolution (_V1_SX1000.jpg).
 // Supports Admin toggle + API key persistence in localStorage and optional KV namespace sync.
 
+import { checkDatabaseForExistingTitle, SimulatedKVNamespace } from './workerSandbox';
+
 export interface OmdbConfig {
   enabled: boolean;
   apiKey: string;
@@ -261,22 +263,85 @@ export async function enrichBatchEntriesWithOmdbFallback(
   entries: any[],
   options?: {
     kvNamespace?: string;
+    kvInstance?: SimulatedKVNamespace;
     apiKey?: string;
     maxLookups?: number;
     onProgress?: (done: number, total: number) => void;
   }
-): Promise<{ entries: any[]; enrichedCount: number }> {
-  const cfg = loadOmdbConfig(options?.kvNamespace);
-  if (!cfg.enabled || !Array.isArray(entries) || entries.length === 0) {
-    return { entries, enrichedCount: 0 };
+): Promise<{ entries: any[]; enrichedCount: number; d1PreMatchedCount: number }> {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { entries: [], enrichedCount: 0, d1PreMatchedCount: 0 };
   }
 
+  const cfg = loadOmdbConfig(options?.kvNamespace);
   const maxLookups = options?.maxLookups ?? 30;
   let lookupsDone = 0;
   let enrichedCount = 0;
+  let d1PreMatchedCount = 0;
 
-  const candidates = entries.filter((entry) => {
+  const cloned = entries.map((e) => ({ ...e }));
+
+  // First pass: check D1 locally with 85% stop-limit before triggering any external OMDb API calls
+  for (let i = 0; i < cloned.length; i++) {
+    const item = cloned[i];
+    if (!item || typeof item !== 'object') continue;
+    if (item.tmdb_id || item.tmdbId) {
+      d1PreMatchedCount++;
+      continue;
+    }
+
+    const rawTitle =
+      item.clean_title ||
+      item.cleanTitle ||
+      item.series_title ||
+      item.title ||
+      item.name ||
+      item.filename ||
+      item.file_name ||
+      item.rawInput ||
+      '';
+    if (!rawTitle || rawTitle.length < 2) continue;
+
+    const isSeries =
+      item.media_type === 'tv' ||
+      item.type === 'series' ||
+      Boolean(item.season_number || item.episode_number || item.season || item.episode) ||
+      /\b(S\d{1,2}E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(rawTitle);
+
+    const d1Hit = checkDatabaseForExistingTitle(rawTitle, {
+      year: item.year || item.release_year || null,
+      isSeries: isSeries ? true : undefined,
+      kvNamespace: options?.kvInstance || null,
+      stopConfidenceThreshold: 85,
+    });
+
+    if (d1Hit.matched && d1Hit.confidence >= 85 && d1Hit.tmdbId) {
+      item.tmdb_id = d1Hit.tmdbId;
+      item.tmdbId = d1Hit.tmdbId;
+      item.typeCode = d1Hit.typeCode;
+      item.type = d1Hit.typeCode === 's' ? 'series' : 'movie';
+      item.isSeries = d1Hit.typeCode === 's';
+      item.cleanTitle = d1Hit.title;
+      if (!item.external_poster_url && d1Hit.posterUrl) {
+        item.external_poster_url = d1Hit.posterUrl;
+        item.posterUrl = d1Hit.posterUrl;
+      }
+      if (!item.overview && d1Hit.overview) {
+        item.overview = d1Hit.overview;
+      }
+      item.preResolvedFromD1 = true;
+      item.d1Confidence = d1Hit.confidence;
+      d1PreMatchedCount++;
+    }
+  }
+
+  if (!cfg.enabled) {
+    return { entries: cloned, enrichedCount: 0, d1PreMatchedCount };
+  }
+
+  const candidates = cloned.filter((entry) => {
     if (!entry || typeof entry !== 'object') return false;
+    if (entry.preResolvedFromD1 || entry.tmdb_id || entry.tmdbId) return false;
     const hasPoster = Boolean(
       entry.poster_path ||
         entry.external_poster_url ||
@@ -289,13 +354,13 @@ export async function enrichBatchEntriesWithOmdbFallback(
 
   const targetCount = Math.min(candidates.length, maxLookups);
   if (targetCount === 0) {
-    return { entries, enrichedCount: 0 };
+    return { entries: cloned, enrichedCount: 0, d1PreMatchedCount };
   }
 
-  const cloned = entries.map((e) => ({ ...e }));
   for (let i = 0; i < cloned.length; i++) {
     if (lookupsDone >= maxLookups) break;
     const item = cloned[i];
+    if (item.preResolvedFromD1 || item.tmdb_id || item.tmdbId) continue;
     const hasPoster = Boolean(
       item.poster_path ||
         item.external_poster_url ||
@@ -307,17 +372,20 @@ export async function enrichBatchEntriesWithOmdbFallback(
 
     const rawTitle =
       item.clean_title ||
+      item.cleanTitle ||
       item.series_title ||
       item.title ||
       item.name ||
+      item.filename ||
       item.file_name ||
+      item.rawInput ||
       '';
     if (!rawTitle || rawTitle.length < 2) continue;
 
     const isSeries =
       item.media_type === 'tv' ||
       item.type === 'series' ||
-      Boolean(item.season_number || item.episode_number) ||
+      Boolean(item.season_number || item.episode_number || item.season || item.episode) ||
       /\b(S\d{1,2}E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(rawTitle);
 
     lookupsDone++;
@@ -351,5 +419,5 @@ export async function enrichBatchEntriesWithOmdbFallback(
     }
   }
 
-  return { entries: cloned, enrichedCount };
+  return { entries: cloned, enrichedCount, d1PreMatchedCount };
 }

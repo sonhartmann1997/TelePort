@@ -379,14 +379,19 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
         };
       });
 
-      const { entries: batchEntries, enrichedCount: omdbEnrichedCount } =
-        await enrichBatchEntriesWithOmdbFallback(rawBatchEntries, {
-          apiKey: omdbConfig.apiKey,
-          maxLookups: 8,
-        });
+      const {
+        entries: batchEntries,
+        enrichedCount: omdbEnrichedCount,
+        d1PreMatchedCount: modalD1Hits,
+      } = await enrichBatchEntriesWithOmdbFallback(rawBatchEntries, {
+        apiKey: omdbConfig.apiKey,
+        kvInstance: kvNamespace,
+        maxLookups: 8,
+      });
 
+      let workerRes: any = null;
       if (onImportBatchToWorker) {
-        await onImportBatchToWorker({
+        workerRes = await onImportBatchToWorker({
           entries: batchEntries,
           playlistName,
           sourceChannelId: verifiedChannelId,
@@ -397,9 +402,15 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
         await new Promise((r) => setTimeout(r, 320));
       }
 
+      const effD1Hits = Math.max(
+        Number(modalD1Hits || 0),
+        Number(workerRes?.d1PreMatchedCount || 0)
+      );
+      const d1Note =
+        effD1Hits > 0 ? ` · ⚡ ${effD1Hits} D1-Treffer ≥85% (0 API-Calls)` : '';
       const omdbNote =
         omdbEnrichedCount > 0 ? ` · ${omdbEnrichedCount} High-Res OMDb Posters` : '';
-      const summary = `Imported ${chunk.entries.length} entries (${chunk.moviesCount} movies · ${chunk.seriesCount} series${omdbNote}) [Channel ${verifiedChannelId}] into D1`;
+      const summary = `Imported ${chunk.entries.length} entries (${chunk.moviesCount} movies · ${chunk.seriesCount} series${d1Note}${omdbNote}) [Channel ${verifiedChannelId}] into D1`;
 
       appendTelegramActivityLog(
         {

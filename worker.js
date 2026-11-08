@@ -44455,7 +44455,8 @@
           seriesAdded,
           failedItems,
           duplicatesCount,
-          mergedQualitiesCount
+          mergedQualitiesCount,
+          batchItems
         } = await processEntriesBatchWithLimit(
           env,
           slice,
@@ -44472,7 +44473,9 @@
           failedCount: failedItems.length,
           duplicatesCount: Number(duplicatesCount || 0),
           mergedQualitiesCount: Number(mergedQualitiesCount || 0),
+          d1PreMatchedCount: Number(body.d1PreMatchedCount || 0),
           sampleTitles: [...moviesAdded.slice(0, 3), ...seriesAdded.slice(0, 3)],
+          batchItems: Array.isArray(batchItems) ? batchItems : [],
           playlistFolder
         }), { status: 200, headers: corsHeaders });
       }

@@ -14,7 +14,12 @@ import {
   WorkerResponseData,
   WorkerTemplate,
 } from './types/worker';
-import { executeWorkerSandbox, SimulatedKVNamespace } from './utils/workerSandbox';
+import {
+  executeWorkerSandbox,
+  SimulatedKVNamespace,
+  checkDatabaseForExistingTitle as queryD1ForExistingTitle,
+  registerResolvedTitleInD1Catalog,
+} from './utils/workerSandbox';
 
 // Dynamic import() code-splitting for each Studio module
 const NetflixTmaSimulator = lazy(() =>
@@ -195,6 +200,88 @@ export default function App() {
       for (const v of envVars) {
         envMap[v.key] = v.value;
       }
+
+      // Local helper that verifies entry existence in D1 before triggering any external API calls, enforcing the 85% stop-limit
+      const checkDatabaseForExistingTitle = (
+        title: string,
+        meta?: { year?: number | string | null; isSeries?: boolean }
+      ) => {
+        return queryD1ForExistingTitle(title, {
+          year: meta?.year ?? null,
+          isSeries: meta?.isSeries,
+          kvNamespace,
+          stopConfidenceThreshold: 85,
+        });
+      };
+
+      const rawEntries = Array.isArray(payload.entries)
+        ? (payload.entries as Array<Record<string, any>>)
+        : Array.isArray(payload.messages)
+          ? (payload.messages as Array<Record<string, any>>)
+          : [];
+
+      let d1PreMatchedCount = 0;
+      const preCheckedEntries = rawEntries.map((item) => {
+        if (!item || typeof item !== 'object') return item;
+        if (item.tmdb_id || item.tmdbId) {
+          d1PreMatchedCount++;
+          return item;
+        }
+        const candidateTitle = String(
+          item.cleanTitle ||
+            item.clean_title ||
+            item.series_title ||
+            item.title ||
+            item.name ||
+            item.filename ||
+            item.file_name ||
+            item.rawInput ||
+            ''
+        ).trim();
+        if (!candidateTitle) return item;
+
+        const isSeriesHint =
+          item.isSeries === true ||
+          item.typeCode === 's' ||
+          item.type === 'series' ||
+          item.media_type === 'tv' ||
+          Boolean(item.season || item.episode || item.season_number || item.episode_number) ||
+          /\b(S\d{1,2}E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(candidateTitle);
+
+        const d1Match = checkDatabaseForExistingTitle(candidateTitle, {
+          year: item.year || item.release_year || null,
+          isSeries: isSeriesHint ? true : undefined,
+        });
+
+        if (d1Match.matched && d1Match.confidence >= 85 && d1Match.tmdbId) {
+          d1PreMatchedCount++;
+          return {
+            ...item,
+            tmdb_id: d1Match.tmdbId,
+            tmdbId: d1Match.tmdbId,
+            typeCode: d1Match.typeCode,
+            type: d1Match.typeCode === 's' ? 'series' : 'movie',
+            isSeries: d1Match.typeCode === 's',
+            cleanTitle: d1Match.title,
+            year: item.year || d1Match.year || undefined,
+            external_poster_url: item.external_poster_url || d1Match.posterUrl || undefined,
+            overview: item.overview || d1Match.overview || undefined,
+            preResolvedFromD1: true,
+            d1Confidence: d1Match.confidence,
+          };
+        }
+        return item;
+      });
+
+      const enrichedPayload: Record<string, unknown> = {
+        ...payload,
+        ...(Array.isArray(payload.entries) ? { entries: preCheckedEntries } : {}),
+        ...(Array.isArray(payload.messages) && !Array.isArray(payload.entries)
+          ? { messages: preCheckedEntries }
+          : {}),
+        d1PreMatchedCount,
+      };
+
       const importReq: WorkerRequestData = {
         ...requestData,
         method: 'POST',
@@ -203,14 +290,52 @@ export default function App() {
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(enrichedPayload),
       };
       const res = await executeWorkerSandbox(workerCode, importReq, envMap, kvNamespace);
-      setLogs((prev) => [...res.logs, ...prev].slice(0, 50));
+      const d1Log: ConsoleLogEntry[] =
+        d1PreMatchedCount > 0
+          ? [
+              {
+                id: `log_d1_pre_${Date.now()}`,
+                level: 'info',
+                args: [
+                  `⚡ D1-Vorab-Check (85%-Stop-Limit): ${d1PreMatchedCount}/${rawEntries.length} Titel lokal in D1 erkannt -> TMDb-ID vorab gesetzt (0 externe API-Calls)`,
+                ],
+                time: new Date().toLocaleTimeString([], {
+                  hour12: false,
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                }),
+              },
+            ]
+          : [];
+      setLogs((prev) => [...d1Log, ...res.logs, ...prev].slice(0, 50));
       try {
-        return JSON.parse(res.response.body);
+        const parsedBody = JSON.parse(res.response.body);
+        if (parsedBody && Array.isArray(parsedBody.batchItems)) {
+          for (const bItem of parsedBody.batchItems) {
+            if (bItem && bItem.tmdbId && bItem.cleanTitle) {
+              registerResolvedTitleInD1Catalog({
+                tmdbId: Number(bItem.tmdbId),
+                typeCode: bItem.typeCode === 's' ? 's' : 'm',
+                title: String(bItem.cleanTitle),
+                year: bItem.year && bItem.year !== 'k.A.' ? bItem.year : null,
+                posterUrl: bItem.poster || '',
+              });
+            }
+          }
+        }
+        return {
+          ...parsedBody,
+          d1PreMatchedCount,
+        };
       } catch {
-        return { ok: res.response.status >= 200 && res.response.status < 300 };
+        return {
+          ok: res.response.status >= 200 && res.response.status < 300,
+          d1PreMatchedCount,
+        };
       }
     },
     [workerCode, requestData, envVars, kvNamespace]

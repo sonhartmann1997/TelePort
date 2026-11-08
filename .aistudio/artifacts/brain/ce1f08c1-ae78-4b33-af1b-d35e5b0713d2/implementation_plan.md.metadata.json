@@ -1,6 +1,6 @@
 {
-  "summary":  "Architektur- und Umsetzungsplan zur drastischen Minimierung externer API-Zugriffe beim JSON-Import (D1-First Lookup, persistenter Positiv-/Negativ-Titel-Cache über alle 8 APIs für identische Titel, Sofort-Stopp ab 85% Trefferquote und präzises Cloudflare Subrequest-Accounting gegen HTTP 503).",
-  "updatedAt":  "2026-11-07T12:56:32.513934002Z",
+  "summary":  "Implementierungsplan für checkDatabaseForExistingTitle(title) in handleDispatchWorkerImportBatch und der Splitter-Modal-Pipeline mit 85%-Confidence-Sofort-Stopp und Vorab-TMDb-ID-Bindung.",
+  "updatedAt":  "2026-11-07T13:55:39.802494141Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

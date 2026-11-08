@@ -1357,3 +1357,408 @@ function getHttpStatusText(status: number): string {
   };
   return map[status] || 'Response';
 }
+
+export interface D1ExistingTitleMatch {
+  matched: boolean;
+  confidence: number;
+  tmdbId: number | null;
+  typeCode: 'm' | 's';
+  title: string;
+  year: number | null;
+  posterUrl: string;
+  overview?: string;
+  source: string;
+}
+
+interface D1CatalogRecord {
+  tmdbId: number;
+  typeCode: 'm' | 's';
+  title: string;
+  originalTitle?: string;
+  normTitle: string;
+  normOriginalTitle: string;
+  year: number | null;
+  posterUrl: string;
+  overview?: string;
+}
+
+const D1_TITLE_CATALOG_STORAGE_KEY = '__tma_d1_title_catalog_v1__';
+const runtimeD1TitleCatalog = new Map<string, D1CatalogRecord>();
+let d1TitleCatalogSeeded = false;
+
+export function normalizeMediaTitleForD1Lookup(rawInput: string): {
+  cleanTitle: string;
+  normTitle: string;
+  year: number | null;
+  isSeries: boolean;
+} {
+  const raw = String(rawInput || '').trim();
+  if (!raw) {
+    return { cleanTitle: '', normTitle: '', year: null, isSeries: false };
+  }
+
+  const isSeries =
+    /\b(S\d{1,2}\s*E\d{1,3}|S\d{1,2}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+|Episode\s*\d+|Season\s*\d+|Complete\s*Series)\b/i.test(
+      raw
+    );
+
+  // Strip file extension
+  let cleaned = raw.replace(/\.(mp4|mkv|avi|mov|m4v|webm|ts|flv|wmv)$/i, ' ');
+
+  // Extract 4-digit release year if present (prefer year before technical tags)
+  const yearMatch = cleaned.match(/(?:^|[\s([._-])((?:19|20)\d{2})(?=$|[\s)\]._,-])/);
+  const extractedYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+
+  // Truncate everything starting at episode marker or release/quality tag
+  cleaned = cleaned
+    .replace(
+      /\b(S\d{1,2}\s*E\d{1,3}|S\d{1,2}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+|Episode\s*\d+|Season\s*\d+)\b.*$/i,
+      ' '
+    )
+    .replace(
+      /\b(2160p|1080p|720p|480p|4K|UHD|HDR|HDR10|DV|GERMAN|DEUTSCH|DL|DUAL|ML|WEBRip|WEB-DL|WEBDL|BluRay|BDRip|BRRip|HDTV|DVDRip|x264|x265|h264|h265|HEVC|AVC|AAC|AC3|EAC3|DTS|TrueHD|Atmos|EXTENDED|UNCUT|REMASTERED|DIRECTORS\s*CUT|PROPER|REPACK)\b.*$/i,
+      ' '
+    );
+
+  // Remove year in parentheses or trailing year
+  if (extractedYear) {
+    cleaned = cleaned.replace(new RegExp(`\\(\\s*${extractedYear}\\s*\\)`, 'g'), ' ');
+    cleaned = cleaned.replace(new RegExp(`\\[\\s*${extractedYear}\\s*\\]`, 'g'), ' ');
+    cleaned = cleaned.replace(new RegExp(`\\b${extractedYear}\\b\\s*$`, 'g'), ' ');
+  }
+
+  cleaned = cleaned
+    .replace(/[._]+/g, ' ')
+    .replace(/\s*[-–—]\s*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const normTitle = cleaned
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .replace(/ō/g, 'o')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return {
+    cleanTitle: cleaned || raw,
+    normTitle,
+    year: extractedYear,
+    isSeries,
+  };
+}
+
+function normalizeExactString(val: string): string {
+  return String(val || '')
+    .toLowerCase()
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/ß/g, 'ss')
+    .replace(/ō/g, 'o')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function ensureD1TitleCatalogSeeded(kvNamespace?: SimulatedKVNamespace | null) {
+  if (!d1TitleCatalogSeeded) {
+    d1TitleCatalogSeeded = true;
+    for (const m of SIMULATED_TMDB_MOVIES) {
+      const year = m.release_date ? parseInt(String(m.release_date).slice(0, 4), 10) || null : null;
+      const posterUrl = m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : '';
+      const key = `m_${m.id}`;
+      runtimeD1TitleCatalog.set(key, {
+        tmdbId: Number(m.id),
+        typeCode: 'm',
+        title: m.title,
+        originalTitle: m.original_title || m.title,
+        normTitle: normalizeExactString(m.title),
+        normOriginalTitle: normalizeExactString(m.original_title || m.title),
+        year,
+        posterUrl,
+        overview: m.overview || '',
+      });
+    }
+    for (const s of SIMULATED_TMDB_SERIES) {
+      const year = s.first_air_date ? parseInt(String(s.first_air_date).slice(0, 4), 10) || null : null;
+      const posterUrl = s.poster_path ? `https://image.tmdb.org/t/p/w500${s.poster_path}` : '';
+      const key = `s_${s.id}`;
+      runtimeD1TitleCatalog.set(key, {
+        tmdbId: Number(s.id),
+        typeCode: 's',
+        title: s.name,
+        originalTitle: s.original_name || s.name,
+        normTitle: normalizeExactString(s.name),
+        normOriginalTitle: normalizeExactString(s.original_name || s.name),
+        year,
+        posterUrl,
+        overview: s.overview || '',
+      });
+    }
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(D1_TITLE_CATALOG_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            for (const rec of parsed) {
+              if (rec && rec.tmdbId && rec.title) {
+                const key = `${rec.typeCode === 's' ? 's' : 'm'}_${rec.tmdbId}`;
+                runtimeD1TitleCatalog.set(key, {
+                  tmdbId: Number(rec.tmdbId),
+                  typeCode: rec.typeCode === 's' ? 's' : 'm',
+                  title: String(rec.title),
+                  originalTitle: String(rec.originalTitle || rec.title),
+                  normTitle: normalizeExactString(rec.title),
+                  normOriginalTitle: normalizeExactString(rec.originalTitle || rec.title),
+                  year: rec.year ? Number(rec.year) : null,
+                  posterUrl: String(rec.posterUrl || ''),
+                  overview: String(rec.overview || ''),
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  // Also index any saved lists or D1 entities stored inside SimulatedKVNamespace
+  if (kvNamespace && typeof kvNamespace.getAllItems === 'function') {
+    for (const kvItem of kvNamespace.getAllItems()) {
+      if (!kvItem || !kvItem.key || !kvItem.value) continue;
+      if (
+        kvItem.key.startsWith('saved_list_') ||
+        kvItem.key.startsWith('d1_catalog_movie_') ||
+        kvItem.key.startsWith('d1_catalog_series_')
+      ) {
+        try {
+          const parsed = JSON.parse(kvItem.value);
+          const list = Array.isArray(parsed) ? parsed : [parsed];
+          for (const entry of list) {
+            const tmdbId = Number(entry?.tmdbId || entry?.id || 0);
+            const title = String(entry?.title || entry?.name || entry?.cleanTitle || '').trim();
+            if (!tmdbId || !title) continue;
+            const typeCode: 'm' | 's' =
+              entry?.contentType === 'series' ||
+              entry?.typeCode === 's' ||
+              kvItem.key.startsWith('d1_catalog_series_')
+                ? 's'
+                : 'm';
+            const rawYear = entry?.year || entry?.releaseDate || entry?.release_date || entry?.first_air_date;
+            const yearMatch = rawYear ? String(rawYear).match(/\b((?:19|20)\d{2})\b/) : null;
+            const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+            const posterUrl = String(
+              entry?.poster ||
+                entry?.external_poster_url ||
+                (entry?.poster_path ? `https://image.tmdb.org/t/p/w500${entry.poster_path}` : '')
+            );
+            const key = `${typeCode}_${tmdbId}`;
+            if (!runtimeD1TitleCatalog.has(key)) {
+              runtimeD1TitleCatalog.set(key, {
+                tmdbId,
+                typeCode,
+                title,
+                originalTitle: String(entry?.originalTitle || title),
+                normTitle: normalizeExactString(title),
+                normOriginalTitle: normalizeExactString(entry?.originalTitle || title),
+                year,
+                posterUrl,
+              });
+            }
+          }
+        } catch {
+          // ignore malformed KV json
+        }
+      }
+    }
+  }
+}
+
+export function registerResolvedTitleInD1Catalog(entry: {
+  tmdbId: number;
+  typeCode: 'm' | 's';
+  title: string;
+  originalTitle?: string;
+  year?: number | string | null;
+  posterUrl?: string;
+  overview?: string;
+}) {
+  const tmdbId = Number(entry?.tmdbId || 0);
+  const title = String(entry?.title || '').trim();
+  if (!tmdbId || !title) return;
+  const typeCode: 'm' | 's' = entry.typeCode === 's' ? 's' : 'm';
+  const yearMatch = entry.year ? String(entry.year).match(/\b((?:19|20)\d{2})\b/) : null;
+  const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+  const key = `${typeCode}_${tmdbId}`;
+  runtimeD1TitleCatalog.set(key, {
+    tmdbId,
+    typeCode,
+    title,
+    originalTitle: entry.originalTitle || title,
+    normTitle: normalizeExactString(title),
+    normOriginalTitle: normalizeExactString(entry.originalTitle || title),
+    year,
+    posterUrl: String(entry.posterUrl || ''),
+    overview: String(entry.overview || ''),
+  });
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const serialized = Array.from(runtimeD1TitleCatalog.values()).slice(-1500);
+      localStorage.setItem(D1_TITLE_CATALOG_STORAGE_KEY, JSON.stringify(serialized));
+    }
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function computeD1TitleMatchConfidence(
+  queryNorm: string,
+  queryYear: number | null,
+  queryIsSeries: boolean | undefined,
+  candidate: D1CatalogRecord
+): number {
+  if (!queryNorm || !candidate.normTitle) return 0;
+
+  const candNorm = candidate.normTitle;
+  const candOrigNorm = candidate.normOriginalTitle || candNorm;
+  const typeAligned =
+    queryIsSeries === undefined ||
+    (queryIsSeries && candidate.typeCode === 's') ||
+    (!queryIsSeries && candidate.typeCode === 'm');
+
+  // 1. Exact normalized match
+  if (queryNorm === candNorm || queryNorm === candOrigNorm) {
+    if (queryYear && candidate.year) {
+      const diff = Math.abs(queryYear - candidate.year);
+      if (diff === 0) return typeAligned ? 100 : 92;
+      if (diff === 1) return typeAligned ? 96 : 88;
+      return typeAligned ? 86 : 78;
+    }
+    return typeAligned ? 95 : 86;
+  }
+
+  // 2. Token similarity & prefix match
+  const qTokens = queryNorm.split(' ').filter(Boolean);
+  const cTokens = candNorm.split(' ').filter(Boolean);
+  if (qTokens.length === 0 || cTokens.length === 0) return 0;
+
+  const cSet = new Set(cTokens);
+  const oSet = new Set(candOrigNorm.split(' ').filter(Boolean));
+  let matchedInDe = 0;
+  let matchedInOrig = 0;
+  for (const t of qTokens) {
+    if (cSet.has(t)) matchedInDe++;
+    if (oSet.has(t)) matchedInOrig++;
+  }
+
+  const deRatio = matchedInDe / Math.max(qTokens.length, cTokens.length);
+  const origRatio = matchedInOrig / Math.max(qTokens.length, oSet.size || 1);
+  const bestRatio = Math.max(deRatio, origRatio);
+
+  if (bestRatio < 0.65) return 0;
+
+  let score = Math.round(bestRatio * 88);
+  if (queryYear && candidate.year) {
+    const diff = Math.abs(queryYear - candidate.year);
+    if (diff === 0) score += 10;
+    else if (diff === 1) score += 6;
+    else score -= 8;
+  }
+  if (!typeAligned) {
+    score -= 8;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+/**
+ * Verifies entry existence in the local D1 catalog before triggering any external API calls.
+ * Enforces an immediate 85% stop-limit: as soon as a D1 candidate reaches >= 85% match confidence,
+ * the search stops immediately and returns the matched D1 record.
+ */
+export function checkDatabaseForExistingTitle(
+  title: string,
+  options?: {
+    year?: number | string | null;
+    isSeries?: boolean;
+    kvNamespace?: SimulatedKVNamespace | null;
+    stopConfidenceThreshold?: number;
+  }
+): D1ExistingTitleMatch {
+  const stopLimit = options?.stopConfidenceThreshold ?? 85;
+  ensureD1TitleCatalogSeeded(options?.kvNamespace);
+
+  const parsed = normalizeMediaTitleForD1Lookup(title);
+  const explicitYear = options?.year
+    ? parseInt(String(options.year).slice(0, 4), 10) || null
+    : null;
+  const effectiveYear = explicitYear || parsed.year;
+  const effectiveIsSeries =
+    options?.isSeries !== undefined ? options.isSeries : parsed.isSeries ? true : undefined;
+
+  if (!parsed.normTitle || parsed.normTitle.length < 2) {
+    return {
+      matched: false,
+      confidence: 0,
+      tmdbId: null,
+      typeCode: effectiveIsSeries ? 's' : 'm',
+      title: parsed.cleanTitle || title,
+      year: effectiveYear,
+      posterUrl: '',
+      source: 'NONE',
+    };
+  }
+
+  let bestCandidate: D1CatalogRecord | null = null;
+  let bestConfidence = 0;
+
+  for (const candidate of runtimeD1TitleCatalog.values()) {
+    const conf = computeD1TitleMatchConfidence(
+      parsed.normTitle,
+      effectiveYear,
+      effectiveIsSeries,
+      candidate
+    );
+    if (conf > bestConfidence) {
+      bestConfidence = conf;
+      bestCandidate = candidate;
+    }
+    // Enforce the 85% stop-limit: stop searching immediately once >= 85% confidence is reached
+    if (bestConfidence >= stopLimit && bestCandidate) {
+      return {
+        matched: true,
+        confidence: bestConfidence,
+        tmdbId: bestCandidate.tmdbId,
+        typeCode: bestCandidate.typeCode,
+        title: bestCandidate.title,
+        year: bestCandidate.year,
+        posterUrl: bestCandidate.posterUrl,
+        overview: bestCandidate.overview,
+        source: 'D1',
+      };
+    }
+  }
+
+  return {
+    matched: false,
+    confidence: bestConfidence,
+    tmdbId: bestCandidate ? bestCandidate.tmdbId : null,
+    typeCode: bestCandidate ? bestCandidate.typeCode : effectiveIsSeries ? 's' : 'm',
+    title: bestCandidate ? bestCandidate.title : parsed.cleanTitle || title,
+    year: bestCandidate ? bestCandidate.year : effectiveYear,
+    posterUrl: bestCandidate ? bestCandidate.posterUrl : '',
+    overview: bestCandidate?.overview,
+    source: 'NONE',
+  };
+}
+
