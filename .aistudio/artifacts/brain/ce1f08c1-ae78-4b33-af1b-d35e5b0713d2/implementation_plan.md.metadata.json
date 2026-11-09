@@ -1,6 +1,6 @@
 {
-  "summary":  "Aktualisierter Implementierungsplan mit der exakten Ursache für nicht in D1 gespeicherte Filme/Serien + 6726ms Latenz (rawDb.batch Wrapper-Bug in ensureD1Schema verhinderte die ALTER TABLE Migration der neuen Spalten, wodurch flushD1BatchBuffer in den langsamen Einzel-Fallback lief) sowie garantierten D1-Commits und adaptivem Pacing.",
-  "updatedAt":  "2026-11-09T12:39:40.717041072Z",
+  "summary":  "Vollständige Fehleranalyse des Diagnose-Logs (8 konkrete Parsing- & Logging-Fehler mit msgId-Belegen) sowie der Architektur- und Reparaturplan für Server- und Client-Parser.",
+  "updatedAt":  "2026-11-09T14:04:55.114307482Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

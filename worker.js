@@ -1317,6 +1317,15 @@
       return true;
     }
 
+    // 5. Reine Chat-Kommentare / Lacher ohne Datei und ohne Foto-Poster (z.B. "Hahahahah Bruder") als Junk verwerfen
+    const isVideoOrDoc = Boolean(msg.video || msg.document || mediaType === "video_file" || fileName);
+    if (!isVideoOrDoc && !isPhotoHeader && rawCaptionPreview) {
+      const cleanPreview = rawCaptionPreview.trim();
+      if (cleanPreview.length <= 60 && /(?:^|\b)(?:hahaha+|hihi+|lol+|rofl|haha+\s+bruder|bruder\b|danke\s+dir|vielen\s+dank)(?:\b|$)/i.test(cleanPreview)) {
+        return true;
+      }
+    }
+
     return false;
   }
 
@@ -1366,8 +1375,8 @@
         if (/^❖\s*@/.test(l) || /^(?:➠|✔️|🔞|قیمت)/.test(l)) {
           return false;
         }
-        // 1b. Reine Metadaten-Zeilen ("Size: 295 MB", "Studio:", "Gener:", "+18", "Ab 16 Jahren") niemals als Filmtitel werten!
-        if (/^(?:size|größe|groesse|qualität|qualitaet|quality|format|dauer|laufzeit|runtime|länge|laenge|sprache|language|genre|gener|fsk|studio|director|regie|darsteller|actors|cast|released|release|imdb|rating|preis|free|uncensored)\s*[:=-]/i.test(l)) {
+        // 1b. Reine Metadaten-Zeilen ("Size: 295 MB", "Erstausstrahlung: April 2025", "Studio:", "Gener:", "+18", "Ab 16 Jahren") niemals als Filmtitel werten!
+        if (/^(?:size|größe|groesse|dateigröße|qualität|qualitaet|quality|format|codec|audio|dauer|laufzeit|runtime|länge|laenge|sprache|language|untertitel|subtitles|genre|gener|fsk|studio|director|regie|darsteller|actors|cast|released|release|erstausstrahlung|ausstrahlung|premiere|kinostart|tv-start|starttermin|start|erscheinungsjahr|produktionsjahr|produktionsland|handlungsjahr|imdb|tmdb|rating|bewertung|quelle|source|kanal|channel|preis|free|kostenlos|uncensored)\s*[:=-]/i.test(l)) {
           return false;
         }
         if (/^(?:\+?\s*1[268]\s*\+?|ab\s+\d{1,2}\s+jahren.*|fsk\s*\d{1,2}|\d+(?:[.,]\d+)?\s*(?:mb|gb|tb))\s*$/i.test(l)) {
@@ -1513,7 +1522,7 @@
   const EDITION_CUT_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\s._-]*duper[\s._-]*cut|extended[\s._-]*director'?s?[\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\s._-]*matte|international|rough|workprint)[\s._-]*(?:cut|edition|version|fassung|ed\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\s._-]*(?:fassung|version|edition|cut)|(?:4k[\s._-]*)?(?:digitally[\s._-]*)?(?:remastered|restored)|mastered[\s._-]*in[\s._-]*4k|open[\s._-]*matte)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Erweiterter Cleaner-Regex mit Umlaut-sicheren Wortgrenzen (schützt "Geisterjäger", "Jäger", "Bürger", "World Wide Web" & "Grundkurs Spanish"):
-  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\.?1|5\.1|7\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
+  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|264|265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\.?1|5\.1|7\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Volle Datumsangaben (DD.MM.YYYY wie 21.07.2012 oder 01.12.2018) erkennen & schützen (Regel 6 / Fall 17)
   const FULL_DATE_REGEX = /\b\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\b/g;
@@ -1617,6 +1626,9 @@
     for (let i = 0; i < 10; i++) {
       s = s.replace(PERSIAN_DIGITS[i], String(i)).replace(ARABIC_DIGITS[i], String(i));
     }
+
+    // Hochgestellte Qualitäts-Tags wie "ᴴᴰ" (\u1D34\u1D30) oder "⁴ᴷ" vor NFKD in " HD " / " 4K " umwandeln
+    s = s.replace(/\u1D34\u1D30/g, " HD ").replace(/\u2074\u1D37/g, " 4K ");
 
     s = Array.from(s).map(ch => {
       return (ch.charCodeAt(0) > 127 && !"äöüÄÖÜßéèêàáâóòôúùûíìîçñøåÆØÅ–—„“”’´‧·".includes(ch))
@@ -1730,8 +1742,8 @@
   function applyHardYearCutoff(rawString) {
     if (!rawString) return { titleBeforeYear: "", year: null, hadYearCutoff: false };
     const s = String(rawString).replace(FULL_DATE_REGEX, " ");
-    // Prüfe zuerst auf eingeklammerte Jahreszahl (schützt Filme wie "Wonder Woman 1984 (2020)" oder "Blade Runner 2049 (2017)")
-    const parenMatch = s.match(/^(.*?)\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]](.*)$/i);
+    // 1. Prüfe zuerst auf eingeklammerte Jahreszahl oder Jahres-Spanne wie "(2003 - 2006)" oder "(USA 2023) HD 264" (schützt auch "Wonder Woman 1984 (2020)")
+    const parenMatch = s.match(/^(.*?)\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)(?:\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)?)?\s*[\)\]](.*)$/i);
     if (parenMatch && parenMatch[1] && parenMatch[1].trim().length >= 2) {
       return {
         titleBeforeYear: parenMatch[1].trim(),
@@ -1774,13 +1786,15 @@
     // MODUL 2.1: Führende 01/02/03/04 direkt vor einer Jahresklammer (z.B. "The Postman 01 (1997)") vor dem Jahres-Cut-Off entfernen
     s = s.replace(/\b0[1-4](?=\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]])/gi, " ");
 
-    // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (schneidet auch Genres ohne Leerzeichen wie "2012SiFi" und Schauspieler/Größen rechts neben der Jahreszahl ab!)
+    // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (schneidet auch Genres ohne Leerzeichen wie "2012SiFi" und Tech-Reste wie "(USA 2023) HD 264" ab!)
     const yearCutoffRes = applyHardYearCutoff(s);
     if (yearCutoffRes.hadYearCutoff && yearCutoffRes.titleBeforeYear) {
       s = yearCutoffRes.titleBeforeYear;
     }
 
-    s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/gi, " ");
+    // Jahres-Spannen wie "(2003 - 2006)" oder "2003 - 2006" sowie einzelne Jahresklammern restlos entfernen (verhindert "( - )" bei Little Britain!)
+    s = s.replace(/[\(\[]?\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)\s*[\)\]]?/gi, " ");
+    s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—]?\s*[\)\]]/gi, " ");
 
     // Scene-Audio & Release-Group-Kombinationen (z. B. "AC3D.5.1", "BDRiP.XViD-HaN") vor dem Punkt-Splitter bereinigen
     s = s.replace(/\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\s._-]*(?:5\.1|7\.1|2\.0)\b/gi, " ");
@@ -1815,7 +1829,8 @@
     s = s.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|de|eng|en|jap|jpn)(?:[\s._-]+(?:ger|deu|de|eng|en|jap|jpn))?[\s._-]+(?:sub|subs|subbed|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
     s = s.replace(/AC3\.?CD0*[1-9]/gi, " "); // Spezialfix für "Klasse84AC3.CD01"
     s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|part|teil|pt|split)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
-    s = s.replace(/(?:[-_.]|\s)00[1-9]\b/gi, " ");
+    // Nur echte Split-Archiv-Endungen (.001 bis .004 am Ende) entfernen, NIEMALS "007" in "James Bond 007"!
+    s = s.replace(/(?:[-_.]|\s)00[1-4]\s*$/gi, " ");
 
     // Editionen (Extended Cut, Director's Cut, Collector's Edition, DC etc.) & Tech-Junk entfernen
     s = extractAndStripEditions(s).cleaned;
@@ -1825,13 +1840,15 @@
     s = s.replace(/[\(\[]\s*(?:the\s+)?(?:cut|dc|edition|version|fassung)\s*[\)\]]/gi, " ");
     s = s.replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|dc|edition|version|fassung|redux)\s*$/i, "$1");
     s = s.replace(/\s*[-–:]\s*(?:the|der|die|das)\s*$/i, "");
-    // Alleinstehende 2-Buchstaben-Sprachkürzel (auch "De" / "DE") am Ende oder in Klammern entfernen (z. B. "Es ist nur eine Phase, Hase (2021) DE #gutFilm.mp4")
-    s = s.replace(/(?:[\(\[_-]\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\s*[\)\]]?|\s+(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO)(?=\s*$))/g, " ");
+    // Alleinstehende 2-Buchstaben-Sprachkürzel (auch "De" / "DE") NUR in Klammern oder ganz am Ende entfernen (NIEMALS "- Der" in "Shrek - Der tollkühne Held" oder "James Bond 007 - Der Morgen Stirbt Nie" anschneiden!)
+    s = s.replace(/[\(\[]\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\s*[\)\]]/g, " ");
+    s = s.replace(/(?:[-_]\s*|\s+)(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\b(?=\s*$)/g, " ");
 
     // Nur echte Katalognummern mit Punkt ("3559. ", "01. ") oder Null-Präfix mit Bindestrich ("01 - ") am Anfang entfernen,
     // NIEMALS Serientitel wie "7 vs. Wild", "4400 - S2E01", "101 Dalmatiner" oder "6000 Euro"! (Fall 12, 13, 14, 18)
     s = s.replace(/^(?:\d{1,4}\.\s+|0\d\s*[-–]\s+)/, "").replace(/-\d{3}$/, "");
-    s = s.replace(/\(\s*\)|\[\s*\]/g, "");
+    // Leere oder nur aus Bindestrichen/Satzzeichen bestehende Klammern wie "( - )" restlos entfernen
+    s = s.replace(/[\(\[]\s*[-–—/:.,;]*\s*[\)\]]/g, " ");
     s = s.replace(/\s+/g, " ").replace(/^[\s\-–·‧:.,#"=|⎪&]+|[\s\-–·‧:.,#"=|⎪&]+$/g, "");
 
     // MODUL 2.5: Umlaut-Normalisierung ("schlaegt zurueck" -> "schlägt zurück")
@@ -2000,7 +2017,12 @@
       if (nextContext.isSeriesHeader || /\b(?:Staffel\s+\d+|Miniserie|\d+\/\d+\s*Folgen|\d+\s*Staffeln\s*\/\s*\d+\s*Folgen|\d+\s+Folgen\s+in\s+\d+\s+Staffel)/i.test(text)) {
         const ymHeader = (` ${text.slice(0, 120)} `).match(YEAR_REGEX);
         if (ymHeader && !nextContext.year) nextContext.year = parseInt(ymHeader[1], 10);
-        const headerClean = cleanMediaTitle(firstLine.replace(/Staffel\s*\d+.*/i, "").replace(/\bS\d{1,2}E\d{1,3}\b.*/i, "").replace(YEAR_REGEX, " "));
+        const firstWithoutRanges = firstLine
+          .replace(/[\(\[]?\s*(?:19[2-9]\d|20[0-2]\d)\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)\s*[\)\]]?/gi, " ")
+          .replace(/Staffel\s*\d+.*/i, "")
+          .replace(/\bS\d{1,2}E\d{1,3}\b.*/i, "")
+          .replace(YEAR_REGEX, " ");
+        const headerClean = cleanMediaTitle(firstWithoutRanges);
         const isGenericHeaderWord = /^(?:film|filme|serie|serien|video|deutsch|german|hd|fullhd|neu|new|kino|stream|action|horror|comedy|drama|thriller|scifi|fantasy|ab\s+\d+\s+jahren|\+?18\+?)$/i.test(headerClean);
         if (headerClean && !isGenericHeaderWord) {
           if (nextContext.seriesHeader && normalizeCompareString(nextContext.seriesHeader) !== normalizeCompareString(headerClean)) {
@@ -2013,15 +2035,39 @@
         }
       } else {
         // Auch bei längeren Einzeilern mit Handlungsbeschreibung (wie ID 108858 "My Big Fat Greek Wedding – Hochzeit auf Griechisch 2002 Mit dreißig Jahren...")
-        // innerhalb der ersten 90 Zeichen nach Titel + Jahreszahl suchen
+        // oder "(USA 2023) HD 264" nach Titel + Jahreszahl suchen, SOWIE jahreslose Poster-Header ("DRAGON 🐉 BALL DAIMA", "HIGH POTENTIAL", "The Wire", "Fargo", "Creed 3 Rockys Legacy", "„Cocaine Bear“") erkennen!
         // WICHTIG: Collection-Header ("König der Löwen teil 1 bis 3", "Trilogie", "Collection") niemals als Einzeltitel im PreContext speichern!
         const isCollectionHeaderLine = /(?:teil\s*\d+\s*(?:bis|-|–)\s*\d+|\b\d+\s*-\s*\d+\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
         if (!isCollectionHeaderLine) {
-          const headSlice = firstLine.slice(0, 90);
+          const headSlice = firstLine.slice(0, 110);
+          const cutoffCheck = applyHardYearCutoff(headSlice);
           const ym = (` ${headSlice} `).match(YEAR_REGEX);
-          if (ym && ym.index >= 2) {
+          if (cutoffCheck.hadYearCutoff && cutoffCheck.titleBeforeYear) {
+            nextContext.year = cutoffCheck.year;
+            nextContext.title = cleanMediaTitle(cutoffCheck.titleBeforeYear);
+          } else if (ym && ym.index >= 2) {
             nextContext.year = parseInt(ym[1], 10);
             nextContext.title = cleanMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
+          } else {
+            // Jahresloser Foto-/Text-Header:
+            // 1. Falls die erste Zeile ein langer Beschreibungssatz mit einem Titel in Anführungszeichen ist (z.B. „Cocaine Bear“ in msgId 3436):
+            const wordsInFirstLine = firstLine.trim().split(/\s+/).filter(Boolean);
+            const quotedTitleMatch = (firstLine.length > 65 || wordsInFirstLine.length > 8)
+              ? text.match(/[„"«»”"]([^„"«»”"\n]{2,55})[“"«»”"]/)
+              : null;
+            if (quotedTitleMatch && quotedTitleMatch[1]) {
+              const qClean = cleanMediaTitle(quotedTitleMatch[1]);
+              if (qClean && qClean.length >= 2 && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\+?18\+?)$/i.test(qClean)) {
+                nextContext.title = qClean;
+              }
+            } else if (firstLine.length >= 2 && firstLine.length <= 65 && wordsInFirstLine.length <= 8) {
+              // 2. Kurze, saubere Titelzeile ohne Jahreszahl (z.B. "DRAGON 🐉 BALL DAIMA", "𝗛𝗜𝗚𝗛 𝗣𝗢𝗧𝗘𝗡𝗧𝗜𝗔𝗟 ᴴᴰ", "The Wire", "Fargo", "Prison Break", "Creed 3 Rockys Legacy")
+              const noYearClean = cleanMediaTitle(firstLine);
+              const isGenericWord = /^(?:film|filme|serie|serien|video|deutsch|german|hd|fullhd|uhd|4k|neu|new|kino|stream|action|horror|comedy|drama|thriller|scifi|fantasy|ab\s+\d+\s+jahren|\+?18\+?)$/i.test(noYearClean);
+              if (noYearClean && noYearClean.length >= 2 && !isGenericWord) {
+                nextContext.title = noYearClean;
+              }
+            }
           }
         }
       }
@@ -7005,9 +7051,20 @@
         timestamp: Number(item.timestamp || now)
       };
     });
-    // MODUL 5.1: Fehler-Priorität im Log-Buffer!
-    // OK und SKIPPED_DUPLICATE dürfen echte Problem-Einträge (TMDB_NOT_FOUND, CONFLICT, SUBREQUEST_PAUSE, API_ERROR, SKIPPED_HEADER, SKIPPED_JUNK) NIEMALS verdrängen!
-    const allCombined = [...normalizedBatch, ...existingMem];
+    // MODUL 5.1: Fehler-Priorität im Log-Buffer + automatisches Ersetzen aufgelöster SUBREQUEST_PAUSE-Einträge!
+    const resolvedMsgIdsInBatch = new Set(
+      normalizedBatch
+        .filter(x => x && x.msgId && x.status !== "SUBREQUEST_PAUSE")
+        .map(x => String(x.msgId))
+    );
+    const cleanedExistingMem = existingMem.filter(x => {
+      if (!x) return false;
+      if (x.status === "SUBREQUEST_PAUSE" && x.msgId && resolvedMsgIdsInBatch.has(String(x.msgId))) {
+        return false;
+      }
+      return true;
+    });
+    const allCombined = [...normalizedBatch, ...cleanedExistingMem];
     const isPriorityLogStatus = (st) => st !== "OK" && st !== "SKIPPED_DUPLICATE";
     const priorityLogs = allCombined.filter(x => x && isPriorityLogStatus(String(x.status || "OK")));
     const routineLogs = allCombined.filter(x => x && !isPriorityLogStatus(String(x.status || "OK")));
@@ -7023,10 +7080,19 @@
     const d1ToPersist = options?.persistAll
       ? normalizedBatch
       : normalizedBatch.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE" && l.status !== "SKIPPED_HEADER" && l.status !== "SKIPPED_JUNK");
-    if (d1ToPersist.length === 0) return;
 
     const db = await ensureD1Schema(env);
     if (!db) return;
+    if (resolvedMsgIdsInBatch.size > 0) {
+      try {
+        const msgIdArr = Array.from(resolvedMsgIdsInBatch).slice(0, 40);
+        const delStmts = msgIdArr.map(mid =>
+          db.prepare("DELETE FROM import_diagnostic_logs WHERE msg_id = ?1 AND status = 'SUBREQUEST_PAUSE'").bind(String(mid))
+        );
+        if (delStmts.length > 0) await db.batch(delStmts);
+      } catch (e) {}
+    }
+    if (d1ToPersist.length === 0) return;
     try {
       const chunkSize = 40;
       for (let i = 0; i < d1ToPersist.length; i += chunkSize) {
@@ -7114,10 +7180,19 @@
     const memRows = Array.isArray(memoryFallback.get("d1_import_diagnostic_logs"))
       ? memoryFallback.get("d1_import_diagnostic_logs")
       : [];
+    const resolvedMsgIdsAll = new Set();
+    for (const r of [...memRows, ...d1Rows]) {
+      if (r && r.msgId && r.status && r.status !== "SUBREQUEST_PAUSE") {
+        resolvedMsgIdsAll.add(String(r.msgId));
+      }
+    }
     const mergedMap = new Map();
     for (const r of [...memRows, ...d1Rows]) {
       if (!r) continue;
       if (r.status === "CONFLICT_?") r.status = "CONFLICT";
+      if (r.status === "SUBREQUEST_PAUSE" && r.msgId && resolvedMsgIdsAll.has(String(r.msgId))) {
+        continue;
+      }
       if (!r.reviewReasonCode) {
         r.reviewReasonCode = inferReviewReasonCodeFromLogItem(r) || null;
       }
@@ -36738,7 +36813,7 @@
           .map(l => l.trim())
           .filter(l => {
             if (!l) return false;
-            if (/^(?:weitergeleitet|forwarded|kanal|channel|quelle|source|join|abonniert|size|größe|groesse|dateigröße|runtime|laufzeit|dauer|länge|laenge|erscheinungsjahr|produktionsland|genre|gener|studio|regie|director|darsteller|actors|cast|fsk|imdb|tmdb|rating|bewertung|audio|format|codec|sprache|language|untertitel|subtitles|released|preis|free|kostenlos)\\b/i.test(l)) return false;
+            if (/^(?:weitergeleitet|forwarded|kanal|channel|quelle|source|join|abonniert|size|größe|groesse|dateigröße|runtime|laufzeit|dauer|länge|laenge|erscheinungsjahr|produktionsjahr|produktionsland|handlungsjahr|erstausstrahlung|ausstrahlung|premiere|kinostart|tv-start|starttermin|start|genre|gener|studio|regie|director|darsteller|actors|cast|fsk|imdb|tmdb|rating|bewertung|audio|format|codec|qualität|qualitaet|quality|sprache|language|untertitel|subtitles|released|release|preis|free|kostenlos|uncensored)\\b/i.test(l)) return false;
             if (/^(?:[🔞➕+\\s]*(?:12|16|18)\\+?|ab\\s+\\d+\\s+jahren|fsk\\s*\\d+|\\d+(?:[.,]\\d+)?\\s*(?:mb|gb|tb|min|minuten))$/i.test(l)) return false;
             const stripped = l
               .replace(/https?:\\/\\/\\S+/gi, "")
@@ -36783,6 +36858,13 @@
         // Videos ohne "Trailer" im Namen sind ab 60 Sekunden erlaubt (rettet Star Wars: Die Mächte des Schicksals & One Piece Strohhut Theater!)
         if (isVid && dur > 0 && dur < 60) {
           return "🎭 Kurzclip (< 60s) übersprungen";
+        }
+        const isPhoto = Boolean(msg.photo || mType === "photo" || /^image\\//i.test(msg.mime_type || ""));
+        if (!isVid && !isPhoto && !fName && rawCap) {
+          const cleanCap = rawCap.trim();
+          if (cleanCap.length <= 60 && /(?:^|\\b)(?:hahaha+|hihi+|lol+|rofl|haha+\\s+bruder|bruder\\b|danke\\s+dir|vielen\\s+dank)(?:\\b|$)/i.test(cleanCap)) {
+            return "💬 Chat-Kommentar übersprungen";
+          }
         }
         return null;
       }
@@ -36829,7 +36911,9 @@
           .replace(/%26/gi, "&")
           .replace(/%20/g, " ")
           .replace(/[۰-۹]/g, d => "۰۱۲۳۴۵۶۷۸۹".indexOf(d))
-          .replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
+          .replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d))
+          .replace(/\\u1D34\\u1D30/g, " HD ")
+          .replace(/\\u2074\\u1D37/g, " 4K ");
         s = Array.from(s).map(ch => {
           return (ch.charCodeAt(0) > 127 && !"äöüÄÖÜßéèêàáâóòôúùûíìîçñøåÆØÅ–—„“”’´‧·".includes(ch))
             ? ch.normalize("NFKD")
@@ -36873,12 +36957,43 @@
         return s;
       }
 
+      function isLikelyClientPlotDescription(str) {
+        const s = String(str || "").trim();
+        if (!s) return false;
+        if (s.length > 120) return true;
+        const words = s.split(/\\s+/).filter(Boolean);
+        if (words.length > 15) return true;
+        if (/[.!?]\\s+[A-ZÄÖÜ]/.test(s) && words.length > 9) return true;
+        return false;
+      }
+
+      function applyClientHardYearCutoff(rawString) {
+        if (!rawString) return { titleBeforeYear: "", year: null, hadYearCutoff: false };
+        const s = String(rawString).replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
+        const parenMatch = s.match(/^(.*?)\\s*[\\(\\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)(?:\\s*[-–—/bis]+\\s*(?:19[2-9]\\d|20[0-2]\\d|heute|present)?)?\\s*[\\)\\]](.*)$/i);
+        if (parenMatch && parenMatch[1] && parenMatch[1].trim().length >= 2) {
+          return { titleBeforeYear: parenMatch[1].trim(), year: parseInt(parenMatch[2], 10), hadYearCutoff: true };
+        }
+        const yearCutMatch = s.match(/^(.*?)(?:[\\s._\\-(\\[\\]]+)(19[2-9]\\d|20[0-2]\\d)(?=[\\s._\\-)\\]]|(?:SiFi|SciFi|Sci-Fi|Action|Comedy|Komödie|Komoedie|Drama|Crime|Krimi|Thriller|Horror|Abenteuer|Adventure|Krieg|Geschichte|History|Fantasy|Animation|Familie|Romantik|Romance|Mystery|Western|Musik|Doku|Dokumentation|HD|FullHD|FHD|UHD|4K|1080p|720p|480p|German|Deutsch|DE|EN|AC3|DTS|x264|x265|264|265|XviD|DivX|mp4|mkv|avi|$))/i);
+        if (yearCutMatch && yearCutMatch[1] && yearCutMatch[1].trim().length >= 2) {
+          return { titleBeforeYear: yearCutMatch[1].trim(), year: parseInt(yearCutMatch[2], 10), hadYearCutoff: true };
+        }
+        return { titleBeforeYear: s, year: null, hadYearCutoff: false };
+      }
+
       function cleanClientMediaTitle(raw) {
         if (!raw) return "";
         let t = normalizeClientEpisodeText(raw)
           .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|json))+$/i, "");
         t = t.replace(/\\(\\s*\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\s*\\)/g, " ");
         t = t.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
+        t = t.replace(/\\b0[1-4](?=\\s*[\\(\\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[\\)\\]])/gi, " ");
+        const cutoffRes = applyClientHardYearCutoff(t);
+        if (cutoffRes.hadYearCutoff && cutoffRes.titleBeforeYear) {
+          t = cutoffRes.titleBeforeYear;
+        }
+        t = t.replace(/[\\(\\[]?\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[-–—/bis]+\\s*(?:19[2-9]\\d|20[0-2]\\d|heute|present)\\s*[\\)\\]]?/gi, " ");
+        t = t.replace(/[\\(\\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[-–—]?\\s*[\\)\\]]/gi, " ");
         t = t.replace(/\\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\\s._-]*(?:5\\.1|7\\.1|2\\.0)\\b/gi, " ");
         t = t.replace(/\\b(?:XViD|DivX|x264|x265|H\\.?264|H\\.?265|HEVC|BDRiP|BRRiP|DVDRiP|WEBRiP|WEB-DL)-[A-Za-z0-9]{2,12}\\b/gi, " ");
         if (((t.match(/\\./g) || []).length >= 2 || /[A-Za-zÄÖÜäöüß]{2,}\\.[A-Za-zÄÖÜäöüß0-9]{2,}/.test(t)) && !/^(?:e\\.t\\.?|a\\.d\\.?|o\\.c\\.?|l\\.a\\.?|k\\.o\\.?|s\\.h\\.i\\.e\\.l\\.d\\.?)$/i.test(t.trim())) {
@@ -36888,15 +37003,16 @@
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:ger|deu|eng|jap|jpn|fr|es|it|tr|ru)[\\s._-]+(?:sub|subs|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|japanisch|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:sub|subs|ut|untertitel|dub|dubbed|forced)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/(?:AC3|AAC|DTS|DD5\\.?1)?[\\s._-]*(?:CD|Disc|Disk|DVD|Split)[\\s._-]*0*[1-9]\\b/gi, " ");
-        t = t.replace(/(?:^|[\\s._\\-(])Part[\\s._-]*0*([1-9]\\d?)(?:$|[\\s._\\-)])/gi, " ");
-        t = t.replace(/(?:[-_.]|\\s)00[1-9]\\b/g, " ");
+        t = t.replace(/(?:^|[\\s._\\-(])(?:Part|Teil|Pt)[\\s._-]*0*([1-9]\\d?)(?:$|[\\s._\\-)])/gi, " ");
+        // Nur echte Split-Archiv-Endungen (.001 bis .004 am Ende) entfernen, NIEMALS "007" in "James Bond 007"!
+        t = t.replace(/(?:[-_.]|\\s)00[1-4]\\s*$/gi, " ");
         t = t.replace(/[\\u{1F1E6}-\\u{1F1FF}]{2}/gu, "");
         t = t.replace(/[《》«»⟨⟩]/g, " ");
         t = t.replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\\s]+/gu, "");
         t = t.replace(/[↩️🔠🔢⤴️⬅️➡️🎦]+.*$/gu, "");
         t = t.replace(/[\\p{Emoji_Presentation}\\p{Extended_Pictographic}🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎🩸❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️]/gu, " ");
         t = t.replace(/@[A-Za-z0-9_]+/g, "");
-        t = t.replace(/#(?:gutfilm|archemovie|filmwelt|weltderfilme|sauerkraut|hd|fullhd|fhd|uhd|4k|1080p|720p|480p|deutsch|german|kino|serie|serien|film|filme|neu|new|stream|download|vip|ov|omu|horror|action|comedy|thriller|drama|scifi|fantasy|anime)\\b/gi, " ");
+        t = t.replace(/#(?:gutfilm|archemovie|filmwelt|weltderfilme|sauerkraut|hd|fullhd|fhd|uhd|4k|1080p|720p|480p|deutsch|german|kino|serie|serien|film|filme|neu|new|stream|download|vip|ov|omu|horror|action|comedy|thriller|drama|scifi|sifi|fantasy|anime)\\b/gi, " ");
         t = t.replace(/#(?=[A-Za-zÄÖÜäöüß0-9])/g, " ");
         t = t.replace(/s[\\._]to\\s*-?\\s*Serien.*/i, "").replace(/Sto\\s*-\\s*Serien.*/i, "");
         t = t.replace(/serien[\\._](?:life|show).*/i, "").replace(/HD\\s*Filme\\s*Serien.*/i, "");
@@ -36906,14 +37022,16 @@
         t = t.replace(/\\bS\\d{1,2}\\s*E\\d{0,3}(?=[A-Za-z]|\\b)/gi, " ");
         t = t.replace(/\\b\\d{3,4}\\s*[x×]\\s*\\d{3,4}\\b/g, "");
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\\s._-]*duper[\\s._-]*cut|extended[\\s._-]*director'?s?[\\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\\s._-]*matte|international|rough|workprint)[\\s._-]*(?:cut|edition|version|fassung|ed\\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\\s._-]*(?:fassung|version|edition|cut)|(?:4k[\\s._-]*)?(?:digitally[\\s._-]*)?(?:remastered|restored)|mastered[\\s._-]*in[\\s._-]*4k|open[\\s._-]*matte|3d|hsbs|sbs|hou)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
-        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\\.?1|5\\.1|7\\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
+        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|264|265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\\.?1|5\\.1|7\\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/[\\(\\[]\\s*(?:the\\s+)?(?:cut|dc|edition|version|fassung)\\s*[\\)\\]]/gi, " ");
         t = t.replace(/[\\(\\[]\\s*(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s*[\\)\\]]/gi, " ");
-        t = t.replace(/^(.{2,}?)\\s+(?:[-–:]\\s*)?(?:the\\s+)?(?:cut|edition|version|fassung|redux)\\s*$/i, "$1");
+        t = t.replace(/^(.{2,}?)\\s+(?:[-–:]\\s*)?(?:the\\s+)?(?:cut|dc|edition|version|fassung|redux)\\s*$/i, "$1");
         t = t.replace(/\\s*[-–:]\\s*(?:the|der|die|das)\\s*$/i, "");
-        t = t.replace(/(?:[\\(\\[_-]\\s*(?:DE|EN|FR|ES|IT|TR|RU|JA|KO)\\s*[\\)\\]]?|\\s+(?:DE|EN|FR|ES|IT|TR|RU|JA|KO)(?=\\s*$))/g, " ");
+        // Alleinstehende 2-Buchstaben-Sprachkürzel NUR in Klammern oder ganz am Ende entfernen (NIEMALS "- Der" in "Shrek - Der tollkühne Held" oder "James Bond 007 - Der Morgen Stirbt Nie" anschneiden!)
+        t = t.replace(/[\\(\\[]\\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\\s*[\\)\\]]/g, " ");
+        t = t.replace(/(?:[-_]\\s*|\\s+)(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\\b(?=\\s*$)/g, " ");
         t = t.replace(/^(?:\\d{1,4}\\.\\s+|0\\d\\s*[-–]\\s+)/, "").replace(/-\\d{3}$/, "");
-        t = t.replace(/\\(\\s*\\)|\\[\\s*\\]/g, "");
+        t = t.replace(/[\\(\\[]\\s*[-–—/:.,;]*\\s*[\\)\\]]/g, " ");
         t = t.replace(/\\s+/g, " ").replace(/^[\\s\\-–·‧:.,#"=|⎪&]+|[\\s\\-–·‧:.,#"=|⎪&]+$/g, "");
         if (/^(?:[A-Za-zÄÖÜäöüß]\\s+){3,}[A-Za-zÄÖÜäöüß]$/.test(t)) {
           t = t.replace(/\\s+/g, "");
@@ -37098,8 +37216,8 @@
             .replace(new RegExp("\\\\b" + year + "\\\\b", "g"), " ");
         }
         let cleanTitle = cleanClientMediaTitle(titleCand) || "Unbekannt";
-        if (cleanTitle && cleanTitle.length > 50) {
-          cleanTitle = cleanTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+        if (cleanTitle && isLikelyClientPlotDescription(cleanTitle)) {
+          cleanTitle = cleanTitle.split(/[:\\n(]/)[0].trim();
         }
         const jacobMatch = cleanTitle.match(/^(Jacob\\s*2[\\s/_]*2)\\s+(und\\s+.+)$/i);
         if (jacobMatch) cleanTitle = "Jacob 2/2";
@@ -37495,10 +37613,15 @@
           if (/\\b\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel/i.test(firstLine) && ctx.seriesHeader) {
             return ctx;
           }
-          if (ctx.isSeriesHeader || /\\b(?:Staffel\\s+\\d+|Miniserie|\\d+\\/\\d+\\s*Folgen|\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel)/i.test(txt)) {
+          if (ctx.isSeriesHeader || /\\b(?:Staffel\\s+\\d+|Miniserie|\\d+\\/\\d+\\s*Folgen|\\d+\\s*Staffeln\\s*\\/\\s*\\d+\\s*Folgen|\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel)/i.test(txt)) {
             const ymHeader = (" " + txt.slice(0, 120) + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i);
             if (ymHeader && !ctx.year) ctx.year = parseInt(ymHeader[1], 10);
-            const hClean = cleanClientMediaTitle(firstLine.replace(/Staffel\\s*\\d+.*/i, "").replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
+            const firstWithoutRanges = firstLine
+              .replace(/[\\(\\[]?\\s*(?:19[2-9]\\d|20[0-2]\\d)\\s*[-–—/bis]+\\s*(?:19[2-9]\\d|20[0-2]\\d|heute|present)\\s*[\\)\\]]?/gi, " ")
+              .replace(/Staffel\\s*\\d+.*/i, "")
+              .replace(/\\bS\\d{1,2}E\\d{1,3}\\b.*/i, "")
+              .replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " ");
+            const hClean = cleanClientMediaTitle(firstWithoutRanges);
             if (hClean && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(hClean)) {
               ctx.seriesHeader = hClean;
               ctx.isSeriesHeader = true;
@@ -37508,17 +37631,46 @@
           } else if (!msg.file_name && msg.media_type !== "video_file") {
             const isCollectionHeaderLine = /(?:teil\\s*\\d+\\s*(?:bis|-|–)\\s*\\d+|\\b\\d+\\s*-\\s*\\d+\\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
             if (!isCollectionHeaderLine) {
-              const headSlice = txt.slice(0, 110);
+              const headSlice = firstLine.slice(0, 110);
+              const cutoffCheck = applyClientHardYearCutoff(headSlice);
               const ym = (" " + headSlice + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i);
-              if (ym && ym.index >= 2) {
+              if (cutoffCheck.hadYearCutoff && cutoffCheck.titleBeforeYear) {
+                ctx.year = cutoffCheck.year;
+                const tGuess = cleanClientMediaTitle(cutoffCheck.titleBeforeYear);
+                if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
+                  ctx.title = tGuess;
+                  if (ctx.isSeriesHeader) ctx.seriesHeader = tGuess;
+                  else delete ctx.seriesHeader;
+                }
+              } else if (ym && ym.index >= 2) {
                 ctx.year = parseInt(ym[1], 10);
-                const tGuess = cleanClientMediaTitle(firstLine.replace(/\\b(19[2-9]\\d|20[0-2]\\d)\\b/g, " "));
+                const tGuess = cleanClientMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
                 if (tGuess && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(tGuess)) {
                   ctx.title = tGuess;
                   if (ctx.isSeriesHeader) {
                     ctx.seriesHeader = tGuess;
                   } else {
                     delete ctx.seriesHeader;
+                  }
+                }
+              } else {
+                // Jahresloser Foto-/Text-Header:
+                // 1. Falls die erste Zeile ein langer Beschreibungssatz mit einem Titel in Anführungszeichen ist (z.B. „Cocaine Bear“ in msgId 3436):
+                const wordsInFirstLine = firstLine.trim().split(/\\s+/).filter(Boolean);
+                const quotedTitleMatch = (firstLine.length > 65 || wordsInFirstLine.length > 8)
+                  ? txt.match(/[„"«»”"]([^„"«»”"\\n]{2,55})[“"«»”"]/)
+                  : null;
+                if (quotedTitleMatch && quotedTitleMatch[1]) {
+                  const qClean = cleanClientMediaTitle(quotedTitleMatch[1]);
+                  if (qClean && qClean.length >= 2 && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\\+?18\\+?)$/i.test(qClean)) {
+                    ctx.title = qClean;
+                    delete ctx.seriesHeader;
+                  }
+                } else if (firstLine.length >= 2 && firstLine.length <= 65 && wordsInFirstLine.length <= 8) {
+                  // 2. Kurze, saubere Titelzeile ohne Jahreszahl (z.B. "DRAGON 🐉 BALL DAIMA", "𝗛𝗜𝗚𝗛 𝗣𝗢𝗧𝗘𝗡𝗧𝗜𝗔𝗟 ᴴᴰ", "The Wire", "Fargo", "Prison Break", "Creed 3 Rockys Legacy")
+                  const noYearClean = cleanClientMediaTitle(firstLine);
+                  if (noYearClean && noYearClean.length >= 2 && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|video|deutsch|german|hd|fullhd|uhd|4k|neu|new|kino|stream|action|horror|comedy|drama|thriller|scifi|fantasy|ab\\s+\\d+\\s+jahren|\\+?18\\+?)$/i.test(noYearClean)) {
+                    ctx.title = noYearClean;
                   }
                 }
               }
@@ -37583,9 +37735,9 @@
           const cleanedNeighborTitle = firstLine
             .replace(/\\s*[(\\[\\-–]*\\s*\\b(19[2-9]\\d|20[0-2]\\d)\\b\\s*[)\\]]*\\s*$/, "")
             .trim();
-          // "Cocaine Bear"- & "Ted Bundy"-Schutz (Max. Titellänge 60 Zeichen):
-          // Wenn die erste Zeile des Nachbar-Posts länger als 60 Zeichen ist, ist es eine Filmbeschreibung!
-          if (cleanedNeighborTitle.length > 60) {
+          // "Cocaine Bear"- & "Ted Bundy"-Schutz (MODUL 2.5):
+          // Nur echte Beschreibungssätze (> 120 Zeichen oder > 15 Wörter) als Beschreibung behandeln, niemals gültige Titel mitten im Wort abschneiden!
+          if (isLikelyClientPlotDescription(cleanedNeighborTitle)) {
             return {
               ...parsedVideo,
               year: parsedVideo.year || neighborYear,
@@ -37597,8 +37749,8 @@
             };
           }
           let finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
-          if (finalTitle && finalTitle.length > 50) {
-            finalTitle = finalTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+          if (finalTitle && isLikelyClientPlotDescription(finalTitle)) {
+            finalTitle = finalTitle.split(/[:\\n(]/)[0].trim();
           }
 
           return {
@@ -37644,7 +37796,7 @@
 
           const rawCandidates = [];
           const clientPreLogs = [];
-          const metaPrefixRegex = /^(?:Qualität|Quality|Genre|Gener|Studio|FSK|Jahr|Erscheinungsjahr|Produktionsland|Release|Released|Bewertung|Rating|IMDb|TMDB|Audio|Sprache|Language|Untertitel|Subtitles|Dauer|Laufzeit|Länge|Laenge|Runtime|Regie|Director|Darsteller|Actors|Cast|Handlung|Inhalt|Beschreibung|Plot|Info|Größe|Groesse|Dateigröße|Size|Format|Codec|Quelle|Source|Link|Download|Stream|Kanal|Channel|Preis|Free|Kostenlos)\\s*[:\\-]/i;
+          const metaPrefixRegex = /^(?:Qualität|Qualitaet|Quality|Genre|Gener|Studio|FSK|Jahr|Erscheinungsjahr|Produktionsjahr|Produktionsland|Handlungsjahr|Release|Released|Erstausstrahlung|Ausstrahlung|Premiere|Kinostart|TV-Start|Starttermin|Start|Bewertung|Rating|IMDb|TMDB|Audio|Sprache|Language|Untertitel|Subtitles|Dauer|Laufzeit|Länge|Laenge|Runtime|Regie|Director|Darsteller|Actors|Cast|Handlung|Inhalt|Beschreibung|Plot|Info|Größe|Groesse|Dateigröße|Size|Format|Codec|Quelle|Source|Link|Download|Stream|Kanal|Channel|Preis|Free|Kostenlos)\\s*[:=\\-]/i;
 
           let rollingPreContext = {};
           const totalMsgs = tgMessages.length;
@@ -37727,7 +37879,10 @@
                 rollingPreContext = extractClientPreContextFromMsg(msg, rollingPreContext);
               }
             } else if (!rawFileName && !validFilePath) {
-              rollingPreContext = extractClientPreContextFromMsg(msg, rollingPreContext);
+              const prevCtxBeforeMsg = { ...rollingPreContext };
+              const ownCtxOnly = extractClientPreContextFromMsg(msg, {});
+              const ownExtractedHeaderTitle = ownCtxOnly.seriesHeader || ownCtxOnly.title || "";
+              rollingPreContext = extractClientPreContextFromMsg(msg, prevCtxBeforeMsg);
               if (isPhotoMsg) {
                 if (clientPreLogs.length < 350) {
                   clientPreLogs.push({
@@ -37735,9 +37890,9 @@
                     fileName: "Foto/Poster-Header",
                     rawText: flatTextRaw.slice(0, 140),
                     status: "SKIPPED_HEADER",
-                    reason: "Serien-/Film-Poster als Vorab-Kontext gespeichert (" + (rollingPreContext.seriesHeader || rollingPreContext.title || "Reset") + ")",
+                    reason: "Serien-/Film-Poster als Vorab-Kontext gespeichert (" + (ownExtractedHeaderTitle || "Reset") + ")",
                     detectedType: "header",
-                    parsedTitle: rollingPreContext.seriesHeader || rollingPreContext.title || ""
+                    parsedTitle: ownExtractedHeaderTitle
                   });
                 }
                 continue;
@@ -37822,14 +37977,16 @@
 
             if (!isVideoMsg && !isRarMsg && !rawFileName && !validFilePath) {
               if (clientPreLogs.length < 350 && flatTextRaw.trim()) {
+                const ownTextCtxOnly = extractClientPreContextFromMsg(msg, {});
+                const ownTextHeaderTitle = ownTextCtxOnly.seriesHeader || ownTextCtxOnly.title || "";
                 clientPreLogs.push({
                   msgId: currentMsgId || null,
                   fileName: "Text-Header",
                   rawText: flatTextRaw.slice(0, 140),
                   status: "SKIPPED_HEADER",
-                  reason: "Text-/Serien-Header ohne Videodatei (" + (rollingPreContext.seriesHeader || rollingPreContext.title || "Info") + ")",
+                  reason: "Text-/Serien-Header ohne Videodatei (" + (ownTextHeaderTitle || "Info") + ")",
                   detectedType: "header",
-                  parsedTitle: rollingPreContext.seriesHeader || rollingPreContext.title || ""
+                  parsedTitle: ownTextHeaderTitle
                 });
               }
               continue;
@@ -37906,7 +38063,7 @@
             const fileCleanOwn = vonSeriesTitle
               ? vonSeriesTitle
               : (!isGenericFile && !isLeadingNumberEpisode ? cleanClientMediaTitle(( normFileName || "" ).replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "")) : "");
-            const textCleanOwn = (cleanFirstLine && firstTextLine.length <= 60 && !isLeadingNumberEpisode)
+            const textCleanOwn = (cleanFirstLine && !isLikelyClientPlotDescription(firstTextLine) && !isLeadingNumberEpisode)
               ? cleanClientMediaTitle(firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "").replace(/\\bStaffel\\s*\\d+.*/i, ""))
               : "";
             const ownExplicitSeriesTitle = vonSeriesTitle || ((textCleanOwn && textCleanOwn.length >= 2) ? textCleanOwn : ((fileCleanOwn && fileCleanOwn.length >= 2) ? fileCleanOwn : ""));
@@ -37941,8 +38098,8 @@
             const preTitleMatchesOwn = !ownBaseWord || ownBaseWord.length < 3 ||
               (effectivePre.title && String(effectivePre.title).toLowerCase().includes(ownBaseWord));
 
-            // Beschreibungs-Schutz ("Ted Bundy" / "Cocaine Bear"): Wenn firstTextLine > 60 Zeichen lang ist, ist es eine Beschreibung und kein Titel!
-            const firstLineIsDescription = firstTextLine.length > 60;
+            // Beschreibungs-Schutz ("Ted Bundy" / "Cocaine Bear" MODUL 2.5): Nur echte Beschreibungssätze (> 120 Zeichen oder > 15 Wörter) als Beschreibung werten!
+            const firstLineIsDescription = isLikelyClientPlotDescription(firstTextLine);
 
             if (vonSeriesTitle) {
               baseCandidate = vonSeriesTitle + " " + seInText;
@@ -37951,7 +38108,7 @@
               baseCandidate = (effectivePre.seriesHeader || effectivePre.title) + " " + seInText + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
               parsedFrom = "Serien-Header + Episodennummer";
             } else if (!ownExplicitSeriesTitle && effectivePre.title && ((isGenericFile && !cleanFirstLine) || preTitleMatchesOwn) && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
-              baseCandidate = effectivePre.title;
+              baseCandidate = effectivePre.title + (seInText ? (" " + seInText) : "");
               parsedFrom = "Vorab-Steckbrief (Nachricht darüber)";
             } else if (!ownExplicitSeriesTitle && effectivePre.seriesHeader && (isGenericFile || !cleanFirstLine)) {
               baseCandidate = effectivePre.seriesHeader + (seInText ? (" " + seInText) : "");
@@ -37973,7 +38130,7 @@
                 parsedFrom = isRarMsg ? "RAR-Archiv (Caption)" : "Caption Zeile 1";
               }
             } else {
-              baseCandidate = normFileName || (firstLineIsDescription ? firstTextLine.split(/[:\\n(]/)[0].trim().slice(0, 40) : firstTextLine);
+              baseCandidate = normFileName || (firstLineIsDescription ? firstTextLine.split(/[:\\n(]/)[0].trim() : firstTextLine);
               parsedFrom = isRarMsg ? "RAR-Archiv" : (rawFileName ? "Dateiname" : "Caption");
             }
 
@@ -40966,19 +41123,24 @@
         if (!Array.isArray(newEntries) || newEntries.length === 0) return;
         loadClientDiagnosticLogsFromStorage();
         const existingIndexByKey = new Map();
+        const existingPauseIndexByMsgId = new Map();
         (clientDiagnosticLogState.logs || []).forEach((l, idx) => {
           const k = String(l.msgId || "") + "|" + String(l.fileName || "");
           if (!existingIndexByKey.has(k)) existingIndexByKey.set(k, idx);
+          if (l.msgId && String(l.status || "").toUpperCase() === "SUBREQUEST_PAUSE" && !existingPauseIndexByMsgId.has(Number(l.msgId))) {
+            existingPauseIndexByMsgId.set(Number(l.msgId), idx);
+          }
         });
         const added = [];
         for (const raw of newEntries) {
           if (!raw) continue;
           const rawMsgVal = raw.msgId ?? raw.msg_id ?? null;
-          const normMsgId = (rawMsgVal !== null && rawMsgVal !== "" && Number.isFinite(Number(rawMsgVal)))
+          const normMsgId = (rawMsgVal !== null && rawMsgVal !== "" && Number.isFinite(Number(rawMsgVal)) && Number(rawMsgVal) > 0)
             ? Number(rawMsgVal)
             : null;
           const rawStatusUp = String(raw.status || "OK").toUpperCase();
           const normStatus = rawStatusUp === "CONFLICT_?" ? "CONFLICT" : rawStatusUp;
+          const isSystemPause = raw.detectedType === "system" || raw.parsedTitle === "PARTIAL_BATCH";
           const entry = {
             id: raw.id || ("diag_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)),
             msgId: normMsgId,
@@ -40989,26 +41151,49 @@
             reason: String(raw.reason || "").slice(0, 360),
             detectedType: String(raw.detectedType || raw.detected_type || "auto"),
             parsedTitle: String(raw.parsedTitle || raw.parsed_title || raw.cleanTitle || ""),
-            matchedTitle: String(raw.matchedTitle || raw.matched_title || raw.details?.matchedTitle || ""),
+            matchedTitle: isSystemPause ? "" : String(raw.matchedTitle || raw.matched_title || raw.details?.matchedTitle || ""),
             seasonNumber: raw.seasonNumber ?? raw.season_number ?? raw.season ?? null,
             episodeNumber: raw.episodeNumber ?? raw.episode_number ?? raw.episode ?? null,
-            tmdbId: raw.tmdbId ?? raw.tmdb_id ?? null,
+            tmdbId: isSystemPause ? null : (raw.tmdbId ?? raw.tmdb_id ?? null),
             details: raw.details && typeof raw.details === "object" ? raw.details : null,
             rawEntry: raw.rawEntry || raw.details?.rawEntry || (raw.raw_entry_json ? (() => { try { return JSON.parse(raw.raw_entry_json); } catch (_) { return null; } })() : null),
             createdAt: Number(raw.createdAt || raw.created_at || Date.now())
           };
           const dedupeKey = String(entry.msgId || "") + "|" + entry.fileName;
-          if (existingIndexByKey.has(dedupeKey)) {
+          // Wenn für dieselbe msgId bereits ein temporärer SUBREQUEST_PAUSE-Eintrag existiert und sie nun im Folge-Batch aufgelöst wurde:
+          // Überschreibe den SUBREQUEST_PAUSE-Eintrag direkt in-place statt einen zweiten Eintrag für dieselbe msgId anzulegen!
+          const pauseIdxForMsg = (normMsgId && normStatus !== "SUBREQUEST_PAUSE" && existingPauseIndexByMsgId.has(normMsgId))
+            ? existingPauseIndexByMsgId.get(normMsgId)
+            : undefined;
+          if (pauseIdxForMsg !== undefined) {
+            clientDiagnosticLogState.logs[pauseIdxForMsg] = {
+              ...clientDiagnosticLogState.logs[pauseIdxForMsg],
+              ...entry,
+              matchedTitle: entry.matchedTitle || clientDiagnosticLogState.logs[pauseIdxForMsg]?.matchedTitle || "",
+              tmdbId: entry.tmdbId ?? clientDiagnosticLogState.logs[pauseIdxForMsg]?.tmdbId ?? null
+            };
+            existingPauseIndexByMsgId.delete(normMsgId);
+            existingIndexByKey.set(dedupeKey, pauseIdxForMsg);
+            added.push(clientDiagnosticLogState.logs[pauseIdxForMsg]);
+          } else if (existingIndexByKey.has(dedupeKey)) {
             const existingIdx = existingIndexByKey.get(dedupeKey);
+            const prevStatus = String(clientDiagnosticLogState.logs[existingIdx]?.status || "").toUpperCase();
+            // Ein bereits erfolgreich aufgelöster Eintrag (OK/CONFLICT/SKIPPED_DUPLICATE) darf niemals nachträglich wieder durch SUBREQUEST_PAUSE überschrieben werden!
+            if (normStatus === "SUBREQUEST_PAUSE" && prevStatus && prevStatus !== "SUBREQUEST_PAUSE") {
+              continue;
+            }
             clientDiagnosticLogState.logs[existingIdx] = {
               ...clientDiagnosticLogState.logs[existingIdx],
               ...entry,
-              matchedTitle: entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || "",
-              tmdbId: entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null
+              matchedTitle: isSystemPause ? "" : (entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || ""),
+              tmdbId: isSystemPause ? null : (entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null)
             };
             added.push(clientDiagnosticLogState.logs[existingIdx]);
           } else {
             existingIndexByKey.set(dedupeKey, 0);
+            if (normMsgId && normStatus === "SUBREQUEST_PAUSE") {
+              existingPauseIndexByMsgId.set(normMsgId, 0);
+            }
             clientDiagnosticLogState.logs.unshift(entry);
             added.push(entry);
           }

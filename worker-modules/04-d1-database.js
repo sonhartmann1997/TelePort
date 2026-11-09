@@ -559,9 +559,20 @@
         timestamp: Number(item.timestamp || now)
       };
     });
-    // MODUL 5.1: Fehler-Priorität im Log-Buffer!
-    // OK und SKIPPED_DUPLICATE dürfen echte Problem-Einträge (TMDB_NOT_FOUND, CONFLICT, SUBREQUEST_PAUSE, API_ERROR, SKIPPED_HEADER, SKIPPED_JUNK) NIEMALS verdrängen!
-    const allCombined = [...normalizedBatch, ...existingMem];
+    // MODUL 5.1: Fehler-Priorität im Log-Buffer + automatisches Ersetzen aufgelöster SUBREQUEST_PAUSE-Einträge!
+    const resolvedMsgIdsInBatch = new Set(
+      normalizedBatch
+        .filter(x => x && x.msgId && x.status !== "SUBREQUEST_PAUSE")
+        .map(x => String(x.msgId))
+    );
+    const cleanedExistingMem = existingMem.filter(x => {
+      if (!x) return false;
+      if (x.status === "SUBREQUEST_PAUSE" && x.msgId && resolvedMsgIdsInBatch.has(String(x.msgId))) {
+        return false;
+      }
+      return true;
+    });
+    const allCombined = [...normalizedBatch, ...cleanedExistingMem];
     const isPriorityLogStatus = (st) => st !== "OK" && st !== "SKIPPED_DUPLICATE";
     const priorityLogs = allCombined.filter(x => x && isPriorityLogStatus(String(x.status || "OK")));
     const routineLogs = allCombined.filter(x => x && !isPriorityLogStatus(String(x.status || "OK")));
@@ -577,10 +588,19 @@
     const d1ToPersist = options?.persistAll
       ? normalizedBatch
       : normalizedBatch.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE" && l.status !== "SKIPPED_HEADER" && l.status !== "SKIPPED_JUNK");
-    if (d1ToPersist.length === 0) return;
 
     const db = await ensureD1Schema(env);
     if (!db) return;
+    if (resolvedMsgIdsInBatch.size > 0) {
+      try {
+        const msgIdArr = Array.from(resolvedMsgIdsInBatch).slice(0, 40);
+        const delStmts = msgIdArr.map(mid =>
+          db.prepare("DELETE FROM import_diagnostic_logs WHERE msg_id = ?1 AND status = 'SUBREQUEST_PAUSE'").bind(String(mid))
+        );
+        if (delStmts.length > 0) await db.batch(delStmts);
+      } catch (e) {}
+    }
+    if (d1ToPersist.length === 0) return;
     try {
       const chunkSize = 40;
       for (let i = 0; i < d1ToPersist.length; i += chunkSize) {
@@ -668,10 +688,19 @@
     const memRows = Array.isArray(memoryFallback.get("d1_import_diagnostic_logs"))
       ? memoryFallback.get("d1_import_diagnostic_logs")
       : [];
+    const resolvedMsgIdsAll = new Set();
+    for (const r of [...memRows, ...d1Rows]) {
+      if (r && r.msgId && r.status && r.status !== "SUBREQUEST_PAUSE") {
+        resolvedMsgIdsAll.add(String(r.msgId));
+      }
+    }
     const mergedMap = new Map();
     for (const r of [...memRows, ...d1Rows]) {
       if (!r) continue;
       if (r.status === "CONFLICT_?") r.status = "CONFLICT";
+      if (r.status === "SUBREQUEST_PAUSE" && r.msgId && resolvedMsgIdsAll.has(String(r.msgId))) {
+        continue;
+      }
       if (!r.reviewReasonCode) {
         r.reviewReasonCode = inferReviewReasonCodeFromLogItem(r) || null;
       }

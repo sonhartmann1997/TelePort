@@ -182,6 +182,15 @@
       return true;
     }
 
+    // 5. Reine Chat-Kommentare / Lacher ohne Datei und ohne Foto-Poster (z.B. "Hahahahah Bruder") als Junk verwerfen
+    const isVideoOrDoc = Boolean(msg.video || msg.document || mediaType === "video_file" || fileName);
+    if (!isVideoOrDoc && !isPhotoHeader && rawCaptionPreview) {
+      const cleanPreview = rawCaptionPreview.trim();
+      if (cleanPreview.length <= 60 && /(?:^|\b)(?:hahaha+|hihi+|lol+|rofl|haha+\s+bruder|bruder\b|danke\s+dir|vielen\s+dank)(?:\b|$)/i.test(cleanPreview)) {
+        return true;
+      }
+    }
+
     return false;
   }
 
@@ -231,8 +240,8 @@
         if (/^❖\s*@/.test(l) || /^(?:➠|✔️|🔞|قیمت)/.test(l)) {
           return false;
         }
-        // 1b. Reine Metadaten-Zeilen ("Size: 295 MB", "Studio:", "Gener:", "+18", "Ab 16 Jahren") niemals als Filmtitel werten!
-        if (/^(?:size|größe|groesse|qualität|qualitaet|quality|format|dauer|laufzeit|runtime|länge|laenge|sprache|language|genre|gener|fsk|studio|director|regie|darsteller|actors|cast|released|release|imdb|rating|preis|free|uncensored)\s*[:=-]/i.test(l)) {
+        // 1b. Reine Metadaten-Zeilen ("Size: 295 MB", "Erstausstrahlung: April 2025", "Studio:", "Gener:", "+18", "Ab 16 Jahren") niemals als Filmtitel werten!
+        if (/^(?:size|größe|groesse|dateigröße|qualität|qualitaet|quality|format|codec|audio|dauer|laufzeit|runtime|länge|laenge|sprache|language|untertitel|subtitles|genre|gener|fsk|studio|director|regie|darsteller|actors|cast|released|release|erstausstrahlung|ausstrahlung|premiere|kinostart|tv-start|starttermin|start|erscheinungsjahr|produktionsjahr|produktionsland|handlungsjahr|imdb|tmdb|rating|bewertung|quelle|source|kanal|channel|preis|free|kostenlos|uncensored)\s*[:=-]/i.test(l)) {
           return false;
         }
         if (/^(?:\+?\s*1[268]\s*\+?|ab\s+\d{1,2}\s+jahren.*|fsk\s*\d{1,2}|\d+(?:[.,]\d+)?\s*(?:mb|gb|tb))\s*$/i.test(l)) {
@@ -378,7 +387,7 @@
   const EDITION_CUT_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\s._-]*duper[\s._-]*cut|extended[\s._-]*director'?s?[\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\s._-]*matte|international|rough|workprint)[\s._-]*(?:cut|edition|version|fassung|ed\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\s._-]*(?:fassung|version|edition|cut)|(?:4k[\s._-]*)?(?:digitally[\s._-]*)?(?:remastered|restored)|mastered[\s._-]*in[\s._-]*4k|open[\s._-]*matte)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Erweiterter Cleaner-Regex mit Umlaut-sicheren Wortgrenzen (schützt "Geisterjäger", "Jäger", "Bürger", "World Wide Web" & "Grundkurs Spanish"):
-  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\.?1|5\.1|7\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
+  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|264|265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\.?1|5\.1|7\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Volle Datumsangaben (DD.MM.YYYY wie 21.07.2012 oder 01.12.2018) erkennen & schützen (Regel 6 / Fall 17)
   const FULL_DATE_REGEX = /\b\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\b/g;
@@ -482,6 +491,9 @@
     for (let i = 0; i < 10; i++) {
       s = s.replace(PERSIAN_DIGITS[i], String(i)).replace(ARABIC_DIGITS[i], String(i));
     }
+
+    // Hochgestellte Qualitäts-Tags wie "ᴴᴰ" (\u1D34\u1D30) oder "⁴ᴷ" vor NFKD in " HD " / " 4K " umwandeln
+    s = s.replace(/\u1D34\u1D30/g, " HD ").replace(/\u2074\u1D37/g, " 4K ");
 
     s = Array.from(s).map(ch => {
       return (ch.charCodeAt(0) > 127 && !"äöüÄÖÜßéèêàáâóòôúùûíìîçñøåÆØÅ–—„“”’´‧·".includes(ch))
@@ -595,8 +607,8 @@
   function applyHardYearCutoff(rawString) {
     if (!rawString) return { titleBeforeYear: "", year: null, hadYearCutoff: false };
     const s = String(rawString).replace(FULL_DATE_REGEX, " ");
-    // Prüfe zuerst auf eingeklammerte Jahreszahl (schützt Filme wie "Wonder Woman 1984 (2020)" oder "Blade Runner 2049 (2017)")
-    const parenMatch = s.match(/^(.*?)\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]](.*)$/i);
+    // 1. Prüfe zuerst auf eingeklammerte Jahreszahl oder Jahres-Spanne wie "(2003 - 2006)" oder "(USA 2023) HD 264" (schützt auch "Wonder Woman 1984 (2020)")
+    const parenMatch = s.match(/^(.*?)\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)(?:\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)?)?\s*[\)\]](.*)$/i);
     if (parenMatch && parenMatch[1] && parenMatch[1].trim().length >= 2) {
       return {
         titleBeforeYear: parenMatch[1].trim(),
@@ -639,13 +651,15 @@
     // MODUL 2.1: Führende 01/02/03/04 direkt vor einer Jahresklammer (z.B. "The Postman 01 (1997)") vor dem Jahres-Cut-Off entfernen
     s = s.replace(/\b0[1-4](?=\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]])/gi, " ");
 
-    // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (schneidet auch Genres ohne Leerzeichen wie "2012SiFi" und Schauspieler/Größen rechts neben der Jahreszahl ab!)
+    // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (schneidet auch Genres ohne Leerzeichen wie "2012SiFi" und Tech-Reste wie "(USA 2023) HD 264" ab!)
     const yearCutoffRes = applyHardYearCutoff(s);
     if (yearCutoffRes.hadYearCutoff && yearCutoffRes.titleBeforeYear) {
       s = yearCutoffRes.titleBeforeYear;
     }
 
-    s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/gi, " ");
+    // Jahres-Spannen wie "(2003 - 2006)" oder "2003 - 2006" sowie einzelne Jahresklammern restlos entfernen (verhindert "( - )" bei Little Britain!)
+    s = s.replace(/[\(\[]?\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)\s*[\)\]]?/gi, " ");
+    s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—]?\s*[\)\]]/gi, " ");
 
     // Scene-Audio & Release-Group-Kombinationen (z. B. "AC3D.5.1", "BDRiP.XViD-HaN") vor dem Punkt-Splitter bereinigen
     s = s.replace(/\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\s._-]*(?:5\.1|7\.1|2\.0)\b/gi, " ");
@@ -680,7 +694,8 @@
     s = s.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|de|eng|en|jap|jpn)(?:[\s._-]+(?:ger|deu|de|eng|en|jap|jpn))?[\s._-]+(?:sub|subs|subbed|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
     s = s.replace(/AC3\.?CD0*[1-9]/gi, " "); // Spezialfix für "Klasse84AC3.CD01"
     s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|part|teil|pt|split)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
-    s = s.replace(/(?:[-_.]|\s)00[1-9]\b/gi, " ");
+    // Nur echte Split-Archiv-Endungen (.001 bis .004 am Ende) entfernen, NIEMALS "007" in "James Bond 007"!
+    s = s.replace(/(?:[-_.]|\s)00[1-4]\s*$/gi, " ");
 
     // Editionen (Extended Cut, Director's Cut, Collector's Edition, DC etc.) & Tech-Junk entfernen
     s = extractAndStripEditions(s).cleaned;
@@ -690,13 +705,15 @@
     s = s.replace(/[\(\[]\s*(?:the\s+)?(?:cut|dc|edition|version|fassung)\s*[\)\]]/gi, " ");
     s = s.replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|dc|edition|version|fassung|redux)\s*$/i, "$1");
     s = s.replace(/\s*[-–:]\s*(?:the|der|die|das)\s*$/i, "");
-    // Alleinstehende 2-Buchstaben-Sprachkürzel (auch "De" / "DE") am Ende oder in Klammern entfernen (z. B. "Es ist nur eine Phase, Hase (2021) DE #gutFilm.mp4")
-    s = s.replace(/(?:[\(\[_-]\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\s*[\)\]]?|\s+(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO)(?=\s*$))/g, " ");
+    // Alleinstehende 2-Buchstaben-Sprachkürzel (auch "De" / "DE") NUR in Klammern oder ganz am Ende entfernen (NIEMALS "- Der" in "Shrek - Der tollkühne Held" oder "James Bond 007 - Der Morgen Stirbt Nie" anschneiden!)
+    s = s.replace(/[\(\[]\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\s*[\)\]]/g, " ");
+    s = s.replace(/(?:[-_]\s*|\s+)(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\b(?=\s*$)/g, " ");
 
     // Nur echte Katalognummern mit Punkt ("3559. ", "01. ") oder Null-Präfix mit Bindestrich ("01 - ") am Anfang entfernen,
     // NIEMALS Serientitel wie "7 vs. Wild", "4400 - S2E01", "101 Dalmatiner" oder "6000 Euro"! (Fall 12, 13, 14, 18)
     s = s.replace(/^(?:\d{1,4}\.\s+|0\d\s*[-–]\s+)/, "").replace(/-\d{3}$/, "");
-    s = s.replace(/\(\s*\)|\[\s*\]/g, "");
+    // Leere oder nur aus Bindestrichen/Satzzeichen bestehende Klammern wie "( - )" restlos entfernen
+    s = s.replace(/[\(\[]\s*[-–—/:.,;]*\s*[\)\]]/g, " ");
     s = s.replace(/\s+/g, " ").replace(/^[\s\-–·‧:.,#"=|⎪&]+|[\s\-–·‧:.,#"=|⎪&]+$/g, "");
 
     // MODUL 2.5: Umlaut-Normalisierung ("schlaegt zurueck" -> "schlägt zurück")
@@ -865,7 +882,12 @@
       if (nextContext.isSeriesHeader || /\b(?:Staffel\s+\d+|Miniserie|\d+\/\d+\s*Folgen|\d+\s*Staffeln\s*\/\s*\d+\s*Folgen|\d+\s+Folgen\s+in\s+\d+\s+Staffel)/i.test(text)) {
         const ymHeader = (` ${text.slice(0, 120)} `).match(YEAR_REGEX);
         if (ymHeader && !nextContext.year) nextContext.year = parseInt(ymHeader[1], 10);
-        const headerClean = cleanMediaTitle(firstLine.replace(/Staffel\s*\d+.*/i, "").replace(/\bS\d{1,2}E\d{1,3}\b.*/i, "").replace(YEAR_REGEX, " "));
+        const firstWithoutRanges = firstLine
+          .replace(/[\(\[]?\s*(?:19[2-9]\d|20[0-2]\d)\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)\s*[\)\]]?/gi, " ")
+          .replace(/Staffel\s*\d+.*/i, "")
+          .replace(/\bS\d{1,2}E\d{1,3}\b.*/i, "")
+          .replace(YEAR_REGEX, " ");
+        const headerClean = cleanMediaTitle(firstWithoutRanges);
         const isGenericHeaderWord = /^(?:film|filme|serie|serien|video|deutsch|german|hd|fullhd|neu|new|kino|stream|action|horror|comedy|drama|thriller|scifi|fantasy|ab\s+\d+\s+jahren|\+?18\+?)$/i.test(headerClean);
         if (headerClean && !isGenericHeaderWord) {
           if (nextContext.seriesHeader && normalizeCompareString(nextContext.seriesHeader) !== normalizeCompareString(headerClean)) {
@@ -878,15 +900,39 @@
         }
       } else {
         // Auch bei längeren Einzeilern mit Handlungsbeschreibung (wie ID 108858 "My Big Fat Greek Wedding – Hochzeit auf Griechisch 2002 Mit dreißig Jahren...")
-        // innerhalb der ersten 90 Zeichen nach Titel + Jahreszahl suchen
+        // oder "(USA 2023) HD 264" nach Titel + Jahreszahl suchen, SOWIE jahreslose Poster-Header ("DRAGON 🐉 BALL DAIMA", "HIGH POTENTIAL", "The Wire", "Fargo", "Creed 3 Rockys Legacy", "„Cocaine Bear“") erkennen!
         // WICHTIG: Collection-Header ("König der Löwen teil 1 bis 3", "Trilogie", "Collection") niemals als Einzeltitel im PreContext speichern!
         const isCollectionHeaderLine = /(?:teil\s*\d+\s*(?:bis|-|–)\s*\d+|\b\d+\s*-\s*\d+\b|collection|trilogie|trilogy|quadrilogie|box)/i.test(firstLine);
         if (!isCollectionHeaderLine) {
-          const headSlice = firstLine.slice(0, 90);
+          const headSlice = firstLine.slice(0, 110);
+          const cutoffCheck = applyHardYearCutoff(headSlice);
           const ym = (` ${headSlice} `).match(YEAR_REGEX);
-          if (ym && ym.index >= 2) {
+          if (cutoffCheck.hadYearCutoff && cutoffCheck.titleBeforeYear) {
+            nextContext.year = cutoffCheck.year;
+            nextContext.title = cleanMediaTitle(cutoffCheck.titleBeforeYear);
+          } else if (ym && ym.index >= 2) {
             nextContext.year = parseInt(ym[1], 10);
             nextContext.title = cleanMediaTitle(headSlice.slice(0, Math.max(0, ym.index - 1)));
+          } else {
+            // Jahresloser Foto-/Text-Header:
+            // 1. Falls die erste Zeile ein langer Beschreibungssatz mit einem Titel in Anführungszeichen ist (z.B. „Cocaine Bear“ in msgId 3436):
+            const wordsInFirstLine = firstLine.trim().split(/\s+/).filter(Boolean);
+            const quotedTitleMatch = (firstLine.length > 65 || wordsInFirstLine.length > 8)
+              ? text.match(/[„"«»”"]([^„"«»”"\n]{2,55})[“"«»”"]/)
+              : null;
+            if (quotedTitleMatch && quotedTitleMatch[1]) {
+              const qClean = cleanMediaTitle(quotedTitleMatch[1]);
+              if (qClean && qClean.length >= 2 && !/^(?:film|filme|serie|serien|kinofilm|spielfilm|deutsch|german|hd|uhd|4k|\+?18\+?)$/i.test(qClean)) {
+                nextContext.title = qClean;
+              }
+            } else if (firstLine.length >= 2 && firstLine.length <= 65 && wordsInFirstLine.length <= 8) {
+              // 2. Kurze, saubere Titelzeile ohne Jahreszahl (z.B. "DRAGON 🐉 BALL DAIMA", "𝗛𝗜𝗚𝗛 𝗣𝗢𝗧𝗘𝗡𝗧𝗜𝗔𝗟 ᴴᴰ", "The Wire", "Fargo", "Prison Break", "Creed 3 Rockys Legacy")
+              const noYearClean = cleanMediaTitle(firstLine);
+              const isGenericWord = /^(?:film|filme|serie|serien|video|deutsch|german|hd|fullhd|uhd|4k|neu|new|kino|stream|action|horror|comedy|drama|thriller|scifi|fantasy|ab\s+\d+\s+jahren|\+?18\+?)$/i.test(noYearClean);
+              if (noYearClean && noYearClean.length >= 2 && !isGenericWord) {
+                nextContext.title = noYearClean;
+              }
+            }
           }
         }
       }

@@ -1,8 +1,8 @@
             };
           }
           let finalTitle = cleanClientMediaTitle(cleanedNeighborTitle) || cleanedNeighborTitle;
-          if (finalTitle && finalTitle.length > 50) {
-            finalTitle = finalTitle.split(/[:\\n(]/)[0].trim().slice(0, 40);
+          if (finalTitle && isLikelyClientPlotDescription(finalTitle)) {
+            finalTitle = finalTitle.split(/[:\\n(]/)[0].trim();
           }
 
           return {
@@ -48,7 +48,7 @@
 
           const rawCandidates = [];
           const clientPreLogs = [];
-          const metaPrefixRegex = /^(?:Qualität|Quality|Genre|Gener|Studio|FSK|Jahr|Erscheinungsjahr|Produktionsland|Release|Released|Bewertung|Rating|IMDb|TMDB|Audio|Sprache|Language|Untertitel|Subtitles|Dauer|Laufzeit|Länge|Laenge|Runtime|Regie|Director|Darsteller|Actors|Cast|Handlung|Inhalt|Beschreibung|Plot|Info|Größe|Groesse|Dateigröße|Size|Format|Codec|Quelle|Source|Link|Download|Stream|Kanal|Channel|Preis|Free|Kostenlos)\\s*[:\\-]/i;
+          const metaPrefixRegex = /^(?:Qualität|Qualitaet|Quality|Genre|Gener|Studio|FSK|Jahr|Erscheinungsjahr|Produktionsjahr|Produktionsland|Handlungsjahr|Release|Released|Erstausstrahlung|Ausstrahlung|Premiere|Kinostart|TV-Start|Starttermin|Start|Bewertung|Rating|IMDb|TMDB|Audio|Sprache|Language|Untertitel|Subtitles|Dauer|Laufzeit|Länge|Laenge|Runtime|Regie|Director|Darsteller|Actors|Cast|Handlung|Inhalt|Beschreibung|Plot|Info|Größe|Groesse|Dateigröße|Size|Format|Codec|Quelle|Source|Link|Download|Stream|Kanal|Channel|Preis|Free|Kostenlos)\\s*[:=\\-]/i;
 
           let rollingPreContext = {};
           const totalMsgs = tgMessages.length;
@@ -131,7 +131,10 @@
                 rollingPreContext = extractClientPreContextFromMsg(msg, rollingPreContext);
               }
             } else if (!rawFileName && !validFilePath) {
-              rollingPreContext = extractClientPreContextFromMsg(msg, rollingPreContext);
+              const prevCtxBeforeMsg = { ...rollingPreContext };
+              const ownCtxOnly = extractClientPreContextFromMsg(msg, {});
+              const ownExtractedHeaderTitle = ownCtxOnly.seriesHeader || ownCtxOnly.title || "";
+              rollingPreContext = extractClientPreContextFromMsg(msg, prevCtxBeforeMsg);
               if (isPhotoMsg) {
                 if (clientPreLogs.length < 350) {
                   clientPreLogs.push({
@@ -139,9 +142,9 @@
                     fileName: "Foto/Poster-Header",
                     rawText: flatTextRaw.slice(0, 140),
                     status: "SKIPPED_HEADER",
-                    reason: "Serien-/Film-Poster als Vorab-Kontext gespeichert (" + (rollingPreContext.seriesHeader || rollingPreContext.title || "Reset") + ")",
+                    reason: "Serien-/Film-Poster als Vorab-Kontext gespeichert (" + (ownExtractedHeaderTitle || "Reset") + ")",
                     detectedType: "header",
-                    parsedTitle: rollingPreContext.seriesHeader || rollingPreContext.title || ""
+                    parsedTitle: ownExtractedHeaderTitle
                   });
                 }
                 continue;
@@ -226,14 +229,16 @@
 
             if (!isVideoMsg && !isRarMsg && !rawFileName && !validFilePath) {
               if (clientPreLogs.length < 350 && flatTextRaw.trim()) {
+                const ownTextCtxOnly = extractClientPreContextFromMsg(msg, {});
+                const ownTextHeaderTitle = ownTextCtxOnly.seriesHeader || ownTextCtxOnly.title || "";
                 clientPreLogs.push({
                   msgId: currentMsgId || null,
                   fileName: "Text-Header",
                   rawText: flatTextRaw.slice(0, 140),
                   status: "SKIPPED_HEADER",
-                  reason: "Text-/Serien-Header ohne Videodatei (" + (rollingPreContext.seriesHeader || rollingPreContext.title || "Info") + ")",
+                  reason: "Text-/Serien-Header ohne Videodatei (" + (ownTextHeaderTitle || "Info") + ")",
                   detectedType: "header",
-                  parsedTitle: rollingPreContext.seriesHeader || rollingPreContext.title || ""
+                  parsedTitle: ownTextHeaderTitle
                 });
               }
               continue;
@@ -310,7 +315,7 @@
             const fileCleanOwn = vonSeriesTitle
               ? vonSeriesTitle
               : (!isGenericFile && !isLeadingNumberEpisode ? cleanClientMediaTitle(( normFileName || "" ).replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "")) : "");
-            const textCleanOwn = (cleanFirstLine && firstTextLine.length <= 60 && !isLeadingNumberEpisode)
+            const textCleanOwn = (cleanFirstLine && !isLikelyClientPlotDescription(firstTextLine) && !isLeadingNumberEpisode)
               ? cleanClientMediaTitle(firstTextLine.replace(/\\bS\\d{1,2}[\\s._-]*E\\d{1,3}.*$/i, "").replace(/\\bStaffel\\s*\\d+.*/i, ""))
               : "";
             const ownExplicitSeriesTitle = vonSeriesTitle || ((textCleanOwn && textCleanOwn.length >= 2) ? textCleanOwn : ((fileCleanOwn && fileCleanOwn.length >= 2) ? fileCleanOwn : ""));
@@ -345,8 +350,8 @@
             const preTitleMatchesOwn = !ownBaseWord || ownBaseWord.length < 3 ||
               (effectivePre.title && String(effectivePre.title).toLowerCase().includes(ownBaseWord));
 
-            // Beschreibungs-Schutz ("Ted Bundy" / "Cocaine Bear"): Wenn firstTextLine > 60 Zeichen lang ist, ist es eine Beschreibung und kein Titel!
-            const firstLineIsDescription = firstTextLine.length > 60;
+            // Beschreibungs-Schutz ("Ted Bundy" / "Cocaine Bear" MODUL 2.5): Nur echte Beschreibungssätze (> 120 Zeichen oder > 15 Wörter) als Beschreibung werten!
+            const firstLineIsDescription = isLikelyClientPlotDescription(firstTextLine);
 
             if (vonSeriesTitle) {
               baseCandidate = vonSeriesTitle + " " + seInText;
@@ -355,7 +360,7 @@
               baseCandidate = (effectivePre.seriesHeader || effectivePre.title) + " " + seInText + (multiLineEpTitle ? (" - " + multiLineEpTitle) : "");
               parsedFrom = "Serien-Header + Episodennummer";
             } else if (!ownExplicitSeriesTitle && effectivePre.title && ((isGenericFile && !cleanFirstLine) || preTitleMatchesOwn) && (effectivePre.tmdbId || effectivePre.imdbId || isGenericFile || !cleanFirstLine)) {
-              baseCandidate = effectivePre.title;
+              baseCandidate = effectivePre.title + (seInText ? (" " + seInText) : "");
               parsedFrom = "Vorab-Steckbrief (Nachricht darüber)";
             } else if (!ownExplicitSeriesTitle && effectivePre.seriesHeader && (isGenericFile || !cleanFirstLine)) {
               baseCandidate = effectivePre.seriesHeader + (seInText ? (" " + seInText) : "");
@@ -377,7 +382,7 @@
                 parsedFrom = isRarMsg ? "RAR-Archiv (Caption)" : "Caption Zeile 1";
               }
             } else {
-              baseCandidate = normFileName || (firstLineIsDescription ? firstTextLine.split(/[:\\n(]/)[0].trim().slice(0, 40) : firstTextLine);
+              baseCandidate = normFileName || (firstLineIsDescription ? firstTextLine.split(/[:\\n(]/)[0].trim() : firstTextLine);
               parsedFrom = isRarMsg ? "RAR-Archiv" : (rawFileName ? "Dateiname" : "Caption");
             }
 
@@ -3370,19 +3375,24 @@
         if (!Array.isArray(newEntries) || newEntries.length === 0) return;
         loadClientDiagnosticLogsFromStorage();
         const existingIndexByKey = new Map();
+        const existingPauseIndexByMsgId = new Map();
         (clientDiagnosticLogState.logs || []).forEach((l, idx) => {
           const k = String(l.msgId || "") + "|" + String(l.fileName || "");
           if (!existingIndexByKey.has(k)) existingIndexByKey.set(k, idx);
+          if (l.msgId && String(l.status || "").toUpperCase() === "SUBREQUEST_PAUSE" && !existingPauseIndexByMsgId.has(Number(l.msgId))) {
+            existingPauseIndexByMsgId.set(Number(l.msgId), idx);
+          }
         });
         const added = [];
         for (const raw of newEntries) {
           if (!raw) continue;
           const rawMsgVal = raw.msgId ?? raw.msg_id ?? null;
-          const normMsgId = (rawMsgVal !== null && rawMsgVal !== "" && Number.isFinite(Number(rawMsgVal)))
+          const normMsgId = (rawMsgVal !== null && rawMsgVal !== "" && Number.isFinite(Number(rawMsgVal)) && Number(rawMsgVal) > 0)
             ? Number(rawMsgVal)
             : null;
           const rawStatusUp = String(raw.status || "OK").toUpperCase();
           const normStatus = rawStatusUp === "CONFLICT_?" ? "CONFLICT" : rawStatusUp;
+          const isSystemPause = raw.detectedType === "system" || raw.parsedTitle === "PARTIAL_BATCH";
           const entry = {
             id: raw.id || ("diag_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)),
             msgId: normMsgId,
@@ -3393,26 +3403,49 @@
             reason: String(raw.reason || "").slice(0, 360),
             detectedType: String(raw.detectedType || raw.detected_type || "auto"),
             parsedTitle: String(raw.parsedTitle || raw.parsed_title || raw.cleanTitle || ""),
-            matchedTitle: String(raw.matchedTitle || raw.matched_title || raw.details?.matchedTitle || ""),
+            matchedTitle: isSystemPause ? "" : String(raw.matchedTitle || raw.matched_title || raw.details?.matchedTitle || ""),
             seasonNumber: raw.seasonNumber ?? raw.season_number ?? raw.season ?? null,
             episodeNumber: raw.episodeNumber ?? raw.episode_number ?? raw.episode ?? null,
-            tmdbId: raw.tmdbId ?? raw.tmdb_id ?? null,
+            tmdbId: isSystemPause ? null : (raw.tmdbId ?? raw.tmdb_id ?? null),
             details: raw.details && typeof raw.details === "object" ? raw.details : null,
             rawEntry: raw.rawEntry || raw.details?.rawEntry || (raw.raw_entry_json ? (() => { try { return JSON.parse(raw.raw_entry_json); } catch (_) { return null; } })() : null),
             createdAt: Number(raw.createdAt || raw.created_at || Date.now())
           };
           const dedupeKey = String(entry.msgId || "") + "|" + entry.fileName;
-          if (existingIndexByKey.has(dedupeKey)) {
+          // Wenn für dieselbe msgId bereits ein temporärer SUBREQUEST_PAUSE-Eintrag existiert und sie nun im Folge-Batch aufgelöst wurde:
+          // Überschreibe den SUBREQUEST_PAUSE-Eintrag direkt in-place statt einen zweiten Eintrag für dieselbe msgId anzulegen!
+          const pauseIdxForMsg = (normMsgId && normStatus !== "SUBREQUEST_PAUSE" && existingPauseIndexByMsgId.has(normMsgId))
+            ? existingPauseIndexByMsgId.get(normMsgId)
+            : undefined;
+          if (pauseIdxForMsg !== undefined) {
+            clientDiagnosticLogState.logs[pauseIdxForMsg] = {
+              ...clientDiagnosticLogState.logs[pauseIdxForMsg],
+              ...entry,
+              matchedTitle: entry.matchedTitle || clientDiagnosticLogState.logs[pauseIdxForMsg]?.matchedTitle || "",
+              tmdbId: entry.tmdbId ?? clientDiagnosticLogState.logs[pauseIdxForMsg]?.tmdbId ?? null
+            };
+            existingPauseIndexByMsgId.delete(normMsgId);
+            existingIndexByKey.set(dedupeKey, pauseIdxForMsg);
+            added.push(clientDiagnosticLogState.logs[pauseIdxForMsg]);
+          } else if (existingIndexByKey.has(dedupeKey)) {
             const existingIdx = existingIndexByKey.get(dedupeKey);
+            const prevStatus = String(clientDiagnosticLogState.logs[existingIdx]?.status || "").toUpperCase();
+            // Ein bereits erfolgreich aufgelöster Eintrag (OK/CONFLICT/SKIPPED_DUPLICATE) darf niemals nachträglich wieder durch SUBREQUEST_PAUSE überschrieben werden!
+            if (normStatus === "SUBREQUEST_PAUSE" && prevStatus && prevStatus !== "SUBREQUEST_PAUSE") {
+              continue;
+            }
             clientDiagnosticLogState.logs[existingIdx] = {
               ...clientDiagnosticLogState.logs[existingIdx],
               ...entry,
-              matchedTitle: entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || "",
-              tmdbId: entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null
+              matchedTitle: isSystemPause ? "" : (entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || ""),
+              tmdbId: isSystemPause ? null : (entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null)
             };
             added.push(clientDiagnosticLogState.logs[existingIdx]);
           } else {
             existingIndexByKey.set(dedupeKey, 0);
+            if (normMsgId && normStatus === "SUBREQUEST_PAUSE") {
+              existingPauseIndexByMsgId.set(normMsgId, 0);
+            }
             clientDiagnosticLogState.logs.unshift(entry);
             added.push(entry);
           }

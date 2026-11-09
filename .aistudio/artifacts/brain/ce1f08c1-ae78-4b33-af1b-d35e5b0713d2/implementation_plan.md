@@ -1,96 +1,133 @@
-# D1-Persistenz-Garantie & Batch-Latenz-Optimierung
+# Fehleranalyse & Reparaturplan: Parsing-Logik & Diagnose-Logger
 
-Dieses Update behebt die gemeinsame Hauptursache dafür, warum Filme/Serien teilweise nur im RAM (`memoryFallback`) blieben **und** warum Batches `6.726 ms` benötigten, und optimiert gleichzeitig das D1-Batching sowie das Pacing im Frontend.
-
----
-
-## User Review & Critical Decisions
+Die Auswertung deines Diagnose-Logs (`1.200 Logs`, davon `785 OK`, `348 SKIPPED_HEADER`, `49 SUBREQUEST_PAUSE`, `2 TMDB_NOT_FOUND`, `1 CONFLICT`) zeigt, dass die Pipeline bereits sehr stabil läuft – die verbleibenden Fehlzuordnungen, verstümmelten Titel und leeren `(Reset)`-Header lassen sich auf **8 exakte Ursachen** in der Server- und Client-Parsing-Logik zurückführen.
 
 > [!IMPORTANT]
-> **Gefundene Hauptursache (Root Cause für RAM-only + 6.726 ms Latenz):**
-> 1. **Wrapper-Konflikt in `ensureD1Schema` blockierte die Spalten-Migration:**
->    In `ensureD1Schema` wurde `rawDb.batch([ db.prepare(...) ])` aufgerufen. Da `db.prepare(...)` unser Wrapper-Objekt (`{ _rawStmt, ... }`) zurückgibt, erwartet das native Cloudflare `rawDb.batch()` jedoch ungewrappte `rawDb.prepare(...)`-Statements. Dadurch brach `ensureD1Schema` vor dem `ALTER TABLE`-Block ab (`catch (e) { d1SchemaInitialized = true; }`).
-> 2. **Fehlende Spalten ließen D1-Inserts scheitern (Daten blieben nur im RAM):**
->    Weil die neuen Spalten (`manual_override`, `file_fingerprint`, `part_number`, `edition_label`, `is_bonus`, `matched_title`) durch den abgebrochenen Migrations-Block in bestehenden D1-Tabellen fehlten, wurden Filme und Serien zwar vorab in `memoryFallback` (RAM) eingetragen, aber das anschließende `INSERT INTO movies / series / movie_files` in `flushD1BatchBuffer` schlug mit einem SQLite-Spaltenfehler fehl.
-> 3. **6.726 ms Latenz durch den Fehler-Fallback in `flushD1BatchBuffer`:**
->    Wenn `rawDb.batch(chunk)` wegen einer fehlenden Spalte fehlschlug, sprang `flushD1BatchBuffer` in den `catch (batchErr)`-Block und versuchte, alle 30–60 Statements einzeln nacheinander per `await singleStmt.run()` auszuführen – was die Batch-Laufzeit auf **6.726 ms** hochtrieb und bei `hasSubrequestBudget(44)` restliche Schreibbefehle abbrach!
-
-- **Entscheidung 1 (Garantierte D1-Schema-Migration & Unwrapping):**
-  - `ensureD1Schema` nutzt durchgehend native `rawDb.prepare(...)`-Statements (und `wrapD1Stmt` / `flushD1BatchBuffer` entpacken `stmt._rawStmt || stmt` immer zuverlässig).
-  - Zusätzlich werden alle neuen Spalten sowohl direkt in `CREATE TABLE IF NOT EXISTS` als auch im `ALTER TABLE`-Migrationsblock angelegt. Falls `ALTER TABLE` noch nicht durchgelaufen ist, darf `d1SchemaInitialized` niemals vorzeitig auf `true` gesetzt werden.
-- **Entscheidung 2 (100 % D1-Schreibgarantie für Filme, Serien, Episoden & Dateien):**
-  - `flushD1BatchBuffer` verwirft im Fallback niemals Statements wegen `hasSubrequestBudget(44)`, sondern führt D1-Writes garantiert aus.
-  - `d1_movie_saved_ts_${mid}` und `d1_series_saved_ts_${sid}` werden erst gesetzt, wenn das SQL-Statement tatsächlich ohne Fehler an D1 übergeben wurde.
-- **Entscheidung 3 (Worker schonen ohne Datenverlust):**
-  - **Sammel-Prefetch (`prefetchBatchMediaFromD1`):** Lädt `movie_files` und `episode_files` für bekannte `tmdb_id`s im Batch in **1 einzigen `rawDb.batch()`-Read** vorab.
-  - **Zero-Write nur bei verifizierten D1-Duplikaten:** Ein `SKIPPED_DUPLICATE`-Short-Circuit greift nur dann, wenn die Datei bereits real aus D1 geladen wurde (`fromD1: true`). Neue Filme, Serien, Episoden und neue Qualitäten werden **immer** in D1 geschrieben.
-  - **`cleanupEmptySeriesInD1AndMemory` nur am Import-Ende:** Läuft nur noch beim letzten Batch (`isFinalBatch`), nicht nach jedem 10er-Zwischenbatch.
-  - **Adaptives Pacing statt starrer 5s-Pause:** Keine Zusatzpause bis `4.500 ms`; kurze `1.000 ms` Verschnaufpause bei `4.500–6.500 ms`; `2.000 ms` Cooldown erst ab `> 6.500 ms`.
+> **Synchronisierung von Server- & Client-Parser:**
+> Einige Bereinigungsregeln waren im Worker-Parser bereits aktualisiert, im vorgeschalteten Browser-JSON-Parser jedoch noch auf dem älteren Stand. Alle 8 Korrekturen werden nachfolgend **synchron in beiden Parser-Stufen** (Browser-Vorab-Parser & Cloudflare Worker-Ingester) verankert.
 
 ---
 
-## 1. Overview & Core Concept
+### 1. Gefundene Fehler im Diagnose-Log (Root-Cause-Analyse)
 
-- **Was wird sichergestellt:** Jeder erkannte oder manuell bestätigte Film, jede Serie, jede Episode und jeder Stream-Link wird garantiert und dauerhaft in den Cloudflare-D1-Tabellen (`movies`, `series`, `series_seasons`, `series_episodes`, `movie_files`, `episode_files`, `d1_playlist_items`) gespeichert – nach einem Browser-Reload oder Worker-Neustart ist 100 % des Katalogs in D1 vorhanden.
-- **Gleichzeitige Worker-Schonung:** Durch das funktionierende `rawDb.batch()` werden alle Schreibzugriffe eines Batches in **1 einzigen D1-Batch-Transaktion** (~50–120 ms statt 6.726 ms) ausgeführt.
-
----
-
-## 2. User Experience & Visual Design
-
-- **Verlässliche D1-Speicherung & schneller Import-Takt:**
-  - Im Backup-Importer laufen Batches ohne den bisherigen `batchErr`-Einzelfallback in unter **1–3 Sekunden** durch.
-  - Nach Abschluss (oder Pausieren) des Imports bleiben alle Filme, Serien und Episoden dauerhaft in D1 gespeichert und sind sofort auf allen Geräten abrufbar.
-
----
-
-## 3. Key Product Decisions & Trade-Offs
-
-- **Entscheidung 1: Sicheres Statement-Unwrapping in allen `rawDb.batch()`-Aufrufen**
-  - *Gewählter Ansatz:* Eine zentrale Hilfsfunktion `unwrapRawD1Statements(stmts)` stellt sicher, dass `rawDb.batch()` ausschließlich native D1-Statements erhält.
-  - *Warum:* Verhindert `D1_TYPE_ERROR` bei Schema-Initialisierung und Sammel-Batches.
-- **Entscheidung 2: Unterscheidung zwischen RAM-Vorschau und echtem D1-Bestand (`_persistedInD1`)**
-  - *Gewählter Ansatz:* Einträge im Memory-Cache erhalten das Flag `_persistedInD1: true` erst dann, wenn sie aus D1 gelesen oder erfolgreich per `flushD1BatchBuffer` in D1 geschrieben wurden.
-  - *Warum:* Dadurch wird kein Film und keine Serie jemals fälschlich beim D1-Schreiben übersprungen, nur weil die Metadaten kurz zuvor im RAM lagen.
+#### Fehler 1: `"- Der"` wird zu `" r"` verstümmelt (Ursache für beide `TMDB_NOT_FOUND` & den `CONFLICT`!)
+- **Belege im Log:**
+  - `msgId: 2895`: `Shrek - Der tollkühne Held (2001).m4v` ➔ `parsedTitle: "Shrek r tollkühne Held"` (`TMDB_NOT_FOUND`)
+  - `msgId: 2897`: `Shrek 2 - Der tollkühne Held kehrt zurück (2004).m4v` ➔ `parsedTitle: "Shrek 2 r tollkühne Held kehrt zurück"` (`TMDB_NOT_FOUND`)
+  - `msgId: 3011`: `James Bond 007 - Der Morgen Stirbt Nie (1997).m4v` ➔ `parsedTitle: "James Bond r Morgen Stirbt Nie"` (`CONFLICT`, landet bei `"List of films set in Berlin"`)
+- **Ursache:**
+  Die Regex zur Entfernung von Länder-/Sprachkürzeln `/(?:[\(\[_-]\s*(?:DE|De|de|EN|...)\s*[\)\]]?)/g` hatte eine optionale schließende Klammer `[\)\]]?` und **keine Wortgrenze (`\b`)**. Dadurch hat sie mitten im deutschen Artikel **`"- Der"`** die Zeichenkette **`"- De"`** als Sprachkürzel erkannt und gelöscht – übrig blieb **`" r"`**!
+- **Lösung:**
+  Sprachkürzel in Klammern (`(DE)`, `[DE]`) werden strikt von Bindestrich-Suffixen getrennt. Ein Bindestrich-Sprachkürzel (`- DE`, `_DE`) wird nur noch dann entfernt, wenn danach eine **Wortgrenze + Zeilenende** (`\b(?=\s*$)`) folgt. Deutsche Artikel (`Der`, `Die`, `Das`, `Den`, `Dem`, `Des`) nach einem Bindestrich bleiben zu 100 % geschützt.
 
 ---
 
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+#### Fehler 2: `"007"` wird aus `"James Bond 007"` gelöscht
+- **Beleg im Log:**
+  - `msgId: 3011`: `James Bond 007 - Der Morgen Stirbt Nie (1997).m4v` ➔ `"007"` fehlt komplett im `parsedTitle`.
+- **Ursache:**
+  Die Split-Archiv-Regex `replace(/(?:[-_.]|\s)00[1-9]\b/gi, " ")` sollte eigentlich Datei-Splits wie `.001` oder `-002` am Dateiende entfernen, löscht aber auch `" 007"` mitten im Titel.
+- **Lösung:**
+  Split-Endungen werden nur noch ganz am Ende des Dateinamens für die Ziffern `001` bis `004` (`(?:[-_.]|\s)00[1-4]\s*$/i`) entfernt. `"007"` bleibt immer erhalten.
+
+---
+
+#### Fehler 3: Foto-/Poster-Header ohne Jahreszahl werden als `(Reset)` verworfen
+- **Belege im Log:**
+  - `msgId: 3872`: `"DRAGON 🐉 BALL DAIMA"` ➔ `parsedTitle: ""`, `reason: "... (Reset)"`
+  - `msgId: 3571`: `"𝗛𝗜𝗚𝗛 𝗣𝗢𝗧𝗘𝗡𝗧𝗜𝗔𝗟 ᴴᴰ"` ➔ `parsedTitle: ""`, `reason: "... (Reset)"`
+  - `msgId: 2889` (`"The Wire"`), `msgId: 2754` (`"Jamai Raja"`), `msgId: 2712` (`"Fargo"`), `msgId: 2421` (`"Tote Mädchen lügen nicht"`), `msgId: 2389` (`"The Last Kingdom"`), `msgId: 2339` (`"Das Amt"`), `msgId: 2244` (`"Prison Break"`), `msgId: 3431` (`"Creed 3 Rockys Legacy"`), `msgId: 3430` (`"Begabt - Die Gleichung eines Lebens"`) ➔ alle mit `parsedTitle: ""` und `(Reset)`.
+  - `msgId: 3436`: `"Wild, witzig und wahnsinnig abgedreht: „Cocaine Bear“ erzählt..."` ➔ `parsedTitle: ""`, `(Reset)`.
+- **Ursache:**
+  1. In `extractPreContext` (Server & Client) wurde die erste Textzeile eines Foto-Posters (`firstLine`) **nur dann** als Titel/Serien-Header gespeichert, wenn entweder das Wort `"Staffel"` oder eine **4-stellige Jahreszahl** im Text vorkam. Reine Titel-Poster wie `"The Wire"`, `"Fargo"` oder `"Prison Break"` ohne Jahreszahl fielen durch das Raster und lösten fälschlicherweise einen `(Reset)` aus!
+  2. Bei `"𝗛𝗜𝗚𝗛 𝗣𝗢𝗧𝗘𝗡𝗧𝗜𝗔𝗟 ᴴᴰ"` (`msgId: 3571`) wurden die hochgestellten Unicode-Buchstaben `ᴴᴰ` (`\u1D34\u1D30`) zu `"HD"` normalisiert oder vor der NFKD-Normalisierung gefiltert, ohne dass ein Jahr vorhanden war.
+  3. Bei `"Wild, witzig und wahnsinnig abgedreht: „Cocaine Bear“ erzählt..."` (`msgId: 3436`) war Zeile 1 ein langer Beschreibungssatz, obwohl der Filmtitel eindeutig in deutschen Anführungszeichen `„Cocaine Bear“` steht.
+- **Lösung:**
+  - Hat ein Foto-/Text-Header in Zeile 1 einen sauberen Titel (2–65 Zeichen, max. 8 Wörter, kein Metadaten-Label), wird dieser **auch ohne Jahreszahl** als Vorab-Kontext (`title` bzw. `seriesHeader`) übernommen.
+  - Ist Zeile 1 ein langer Beschreibungssatz (> 65 Zeichen / > 10 Wörter), sucht ein Fallback nach einem Titel in Anführungszeichen (`„...“`, `"..."`, `«...»`) wie `„Cocaine Bear“`.
+  - Unicode-Superscript `ᴴᴰ` / `⁴ᴷ` wird vor der Bereinigung explizit in `HD` / `4K` umgewandelt und als Technik-Tag entfernt.
+
+---
+
+#### Fehler 4: Jahres-Spannen `(2003 - 2006)` hinterlassen Klammer-Reste `"Little Britain ( - )"`
+- **Belege im Log:**
+  - `msgId: 3481, 3474, 3467`: `"Little Britain (2003 - 2006) Staffel 2/3/4"` ➔ `parsedTitle: "Little Britain ( - )"`.
+- **Ursache:**
+  Die Jahres-Regex hat `2003` und `2006` einzeln gelöscht, wodurch der Bindestrich zwischen den Klammern `( - )` stehen blieb.
+- **Lösung:**
+  Jahres-Spannen `[\(\[]?\s*(19[2-9]\d|20[0-2]\d)\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)?\s*[\)\]]?` werden als kompletter Ausdruck erkannt (das Startjahr `2003` wird als `year` gespeichert) und mitsamt Klammern und Bindestrich restlos entfernt. Zusätzlich entfernt die Endbereinigung verwaiste Klammern mit Sonderzeichen (`[\(\[]\s*[-–—/:.,;]*\s*[\)\]]`).
+
+---
+
+#### Fehler 5: `"Killers of the Flower Moon (USA 2023) HD 264"` behält `"264"` im Titel
+- **Beleg im Log:**
+  - `msgId: 3553`: `rawText: "Killers of the Flower Moon (USA 2023) HD 264"` ➔ `parsedTitle: "Killers of the Flower Moon 264"`.
+- **Ursache:**
+  1. In `extractClientPreContextFromMsg` und `extractPreContext` wurde nur die Jahreszahl `2023` aus Zeile 1 gelöscht, statt den **harten Jahres-Cut-Off** (`applyHardYearCutoff`) anzuwenden, der alles rechts neben `(USA 2023)` (also auch `HD 264`) abschneidet.
+  2. Zudem fehlte `264` / `265` ohne führendes `x` oder `h.` in der Tech-Junk-Liste.
+- **Lösung:**
+  `applyHardYearCutoff` wird konsequent auch auf Header-Zeilen und im Client-Parser angewendet; zusätzlich wird `\b(?:x|h\.?)?26[45]\b` in den Tech-Junk-Filter aufgenommen.
+
+---
+
+#### Fehler 6: `"Erstausstrahlung: April 2025"` als Titel (`msgId: 3791`) & Chat-Text `"Hahahahah Bruder"` erbt Filmtitel (`msgId: 3447`)
+- **Belege im Log:**
+  - `msgId: 3791`: `"Erstausstrahlung: April 2025 👈 👈\n\nDer Kopfgeldjäger Hub Halloran..."` ➔ `parsedTitle: "Erstausstrahlung: April"`.
+  - `msgId: 3447`: `"Hahahahah Bruder"` ➔ `parsedTitle: "Arielle, die Meerjungfrau"` (aus vorheriger Nachricht geerbt).
+- **Ursache:**
+  - `Erstausstrahlung:`, `Ausstrahlung:`, `Premiere:`, `Kinostart:`, `Start:` fehlten in der Metadaten-Zeilenfilterung (`getCleanContentLines`).
+  - Reine Chat-/Kommentar-Nachrichten ohne Video behielten beim Aufruf von `extractClientPreContextFromMsg` den vorherigen `rollingPreContext.title` bei und schrieben ihn in das Header-Log.
+- **Lösung:**
+  - `Erstausstrahlung|Ausstrahlung|Premiere|Kinostart|TV-Start|Starttermin` werden als Metadaten-Präfixe ausgefiltert.
+  - Chat-Kommentare ohne Medienbezug (`"Hahahahah Bruder"`, `"Danke"`, `"Lol"`) werden als `SKIPPED_JUNK` übersprungen und erben niemals den `parsedTitle` des vorherigen Films.
+
+---
+
+#### Fehler 7: Alter 40-Zeichen-Abschneider im Browser-Vorab-Parser noch aktiv
+- **Ursache:**
+  Im Worker-Parser wurde das Limit bereits auf 120 Zeichen angehoben, aber im Client-Parser (`parseClientMediaPreview` und `enrichClientVideoFromNeighborPost`) stand noch `if (cleanTitle.length > 50) cleanTitle = cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 40);`.
+- **Lösung:**
+  Auch im Client-Parser wird der harte 40/50-Zeichen-Abschnitt entfernt und durch die 120-Zeichen-/15-Wörter-Regel ersetzt.
+
+---
+
+#### Fehler 8: `SUBREQUEST_PAUSE`-Duplikate & vererbte `tmdbId` bei `PARTIAL_BATCH`
+- **Belege im Log:**
+  - `msgId: 186`, `msgId: 99`, `msgId: 93` tauchen doppelt als `SUBREQUEST_PAUSE` auf – einmal beim Pausieren (`tmdbId: null`) und einmal nach erfolgreichem Import (`tmdbId: 1396, matchedTitle: "Breaking Bad"`), wobei der Status auf `SUBREQUEST_PAUSE` hängen blieb.
+  - `Subrequest-Guard (Pause bei Index +5)` (`parsedTitle: "PARTIAL_BATCH"`) trägt eine fremde `tmdbId` (`140607`, `180`, `991530`).
+- **Lösung:**
+  - Wird eine pausierte `msgId` im Folge-Batch mit finalem Status (`OK`, `CONFLICT`, `TMDB_NOT_FOUND`) verarbeitet, überschreibt das Log-Merge den alten `SUBREQUEST_PAUSE`-Status dieser `msgId` sauber mit `"OK"` (statt `SUBREQUEST_PAUSE` beizubehalten).
+  - System-Einträge (`PARTIAL_BATCH` / `Subrequest-Guard`) erhalten strikt `tmdbId: null, matchedTitle: null` und werden pro Batch-Pause eindeutig geschlüsselt.
+
+---
+
+### 2. Technische Architektur des Synchron-Fixes
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│            GARANTIERTE D1-PERSISTENZ & SCHNELLE BATCH-PIPELINE             │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 1. ensureD1Schema(env)                                                     │
-│    ├── Native rawDb.prepare() für CREATE TABLE + ALTER TABLE Migrationen   │
-│    └── Alle neuen Spalten (manual_override, file_fingerprint, part_number, │
-│        edition_label, is_bonus, matched_title) garantiert in D1 vorhanden  │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 2. prefetchBatchMediaFromD1(env, entriesList)                              │
-│    └── 1 rawDb.batch() Read lädt bestehende D1-Zeilen (inkl. _fromD1=true) │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 3. resolveAndIngestMediaEntry -> saveMovieToD1 / saveSeriesToD1            │
-│    ├── Pushes INSERT OR REPLACE für movies/series/episodes/files in Buffer │
-│    └── Überspringt D1-Write NUR, wenn Eintrag bereits mit _fromD1=true     │
-│        in D1 verifiziert ist                                               │
-├────────────────────────────────────────────────────────────────────────────┤
-│ 4. flushD1BatchBuffer(env) am Batch-Ende                                   │
-│    ├── Entpackt alle Statements sauber via unwrapRawD1Statements()         │
-│    ├── Committet alle Filme, Serien & Dateien in 1 atomaren rawDb.batch()  │
-│    └── Kein Verwerfen von Schreibbefehlen durch Subrequest-Limits          │
+│                   TELEGRAM JSON-EXPORT / KANAL-POSTS                       │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 1. Vorab-Normalisierung & Gatekeeper (Client & Worker)                     │
+│  • NFKD + Superscript-Normalisierung ("𝗛𝗜𝗚𝗛 𝗣𝗢𝗧𝗘𝗡𝗧𝗜𝗔𝗟 ᴴᴰ" -> "HIGH POTENTIAL")│
+│  • Chat-Chatter ("Hahahahah Bruder") -> SKIPPED_JUNK (kein Context-Bleed)  │
+│  • Metadaten-Filter inkl. "Erstausstrahlung:", "Kinostart:", "Premiere:"   │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 2. Harter Jahres- & Spannen-Cut-Off + Titel-Reinigung                      │
+│  • Jahres-Spannen "(2003 - 2006)" -> Startjahr 2003 + Klammern komplett weg│
+│  • Harter Cut-Off nach "(USA 2023)" -> "HD 264" fällt sofort weg           │
+│  • Sprach-Suffix "- DE" nur mit \b am Ende -> "- Der" bleibt 100% intakt!  │
+│  • Split-Suffix "-001..-004" nur am Ende -> "James Bond 007" bleibt intakt!│
+│  • Kein 40-Zeichen-Abschneider im Client- & Server-Parser (120 Zeichen)    │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│ 3. Vorab-Kontext (Poster-Header) & Diagnose-Log-Merger                     │
+│  • Poster ohne Jahr ("The Wire", "Fargo", "Prison Break") werden erkannt   │
+│  • Zitat-Fallback ("„Cocaine Bear“") bei langen Beschreibungs-Postern      │
+│  • SUBREQUEST_PAUSE wird bei Erfolg im nächsten Batch sauber zu "OK"       │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
-
-### Geplante Änderungen im Detail
-1. **Schema-Initialisierung & D1-Wrapper (`04-d1-database.js`):**
-   - `unwrapRawD1Statements(stmts)` einführen und in `ensureD1Schema`, `flushD1BatchBuffer` sowie `db.batch` verwenden.
-   - In `ensureD1Schema`: Alle neuen Spalten (`manual_override`, `file_fingerprint`, `part_number`, `edition_label`, `is_bonus`, `review_reason_code`, `matched_title`) direkt in die `CREATE TABLE IF NOT EXISTS`-Definitionen aufnehmen und den `ALTER TABLE`-Migrationsblock mit `rawDb.batch(unwrapRawD1Statements(alterStmts))` absichern.
-2. **Garantierte D1-Speicherung für Filme, Serien & Dateien (`04-d1-database.js`):**
-   - In `saveMovieToD1` und `saveSeriesToD1`: Die 30-Minuten-Wiederholsperre (`d1_movie_saved_ts_${mid}` / `d1_series_saved_ts_${sid}`) darf nur greifen, wenn der Film bzw. die Serie nachweislich bereits in D1 existiert, und die vorherige Einzel-`SELECT manual_override`-Abfrage wird durch das bereits vorgeladene `manual_override`-Feld bzw. ein `ON CONFLICT(tmdb_id) DO UPDATE ... WHERE COALESCE(movies.manual_override, 0) = 0 OR excluded.manual_override = 1` direkt im SQL-Statement ersetzt (spart 1 D1-Read pro Film/Serie UND garantiert den D1-Write!).
-   - In `saveEpisodeFileToD1`: Die neuen Spalten `file_fingerprint, part_number, edition_label, is_bonus` ebenfalls vollständig im `INSERT INTO episode_files` persistieren.
-   - In `saveMovieFileToD1` und `saveEpisodeFileToD1`: Nur dann den D1-Write als `isExactDuplicate` überspringen, wenn die identische Datei bereits in D1 (`_fromD1: true`) gespeichert ist.
-   - In `flushD1BatchBuffer`: Den `hasSubrequestBudget(44)`-Abbruch im Fehler-Fallback entfernen, damit niemals ein D1-Schreibbefehl stillschweigend verworfen wird.
-3. **Worker-Loop & Frontend-Pacing (`07-webhook-callbacks.js`, `09-tma-api-worker-export.js`, `08c-tma-netflix-frontend.js`):**
-   - `cleanupEmptySeriesInD1AndMemory` nur noch beim finalen Batch (`isFinalBatch`) ausführen.
-   - `BATCH_WALL_CLOCK_LIMIT_MS` auf `5200ms` setzen und `JSON_INGEST_DELAY_MS` bei reinen D1-/Cache-Treffern überspringen.
-   - Im Frontend die starre `2000ms -> 5s Pause` durch das adaptive Pacing (`<= 4500ms` 0s Zusatzpause, `4500–6500ms` 1s Kurzpausierung, `> 6500ms` 2s Cooldown) ersetzen.
