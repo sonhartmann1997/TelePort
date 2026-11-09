@@ -637,7 +637,8 @@
               folderId: playlistFolder.id,
               playlistName: playlistFolder.name,
               playlistMode: playlistFolder.playlistMode || playlistMode,
-              deferKvWrite: true
+              deferKvWrite: true,
+              isFinalBatch: body.isFinalBatch === undefined ? true : Boolean(body.isFinalBatch)
             }
           );
           const effectiveProcessedCount = Number(nextStartIndex ?? entries.length);

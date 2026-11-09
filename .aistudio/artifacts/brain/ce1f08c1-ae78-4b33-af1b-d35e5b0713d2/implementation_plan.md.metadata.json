@@ -1,6 +1,6 @@
 {
-  "summary":  "Vollständiger Implementierungsplan für die 5 Pipeline-Module, das 900M-ID Abgleich-Modal (Live-Vorschau, Queue-Modus, 1-Klick-TMDb-Migration) sowie die 3 Zusatz-Features: Selbstlernendes Alias-Gedächtnis in D1, Mehrteiler-Vollständigkeitsprüfung (CD1/CD2) und 1-Klick-Nachprüfung alter Konflikte.",
-  "updatedAt":  "2026-11-09T11:33:19.773902395Z",
+  "summary":  "Aktualisierter Implementierungsplan mit der exakten Ursache für nicht in D1 gespeicherte Filme/Serien + 6726ms Latenz (rawDb.batch Wrapper-Bug in ensureD1Schema verhinderte die ALTER TABLE Migration der neuen Spalten, wodurch flushD1BatchBuffer in den langsamen Einzel-Fallback lief) sowie garantierten D1-Commits und adaptivem Pacing.",
+  "updatedAt":  "2026-11-09T12:39:40.717041072Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -4077,6 +4077,7 @@
               body: JSON.stringify({
                 entries: slice,
                 batchStartCursor: backupImportJob.cursor,
+                isFinalBatch: (backupImportJob.cursor + rawSlice.length >= backupImportJob.entries.length),
                 sourceChannelId: activeChan,
                 playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
                 playlistMode: backupImportJob.playlistMode || "both",
@@ -4339,16 +4340,23 @@
             }
           }
           renderBackupImportBoxDom();
-          // Auto-Pause (5s Cooldown), sobald die D1-/Worker-Batch-Latenz 2 Sekunden (2000ms) überschreitet, um HTTP 503 Gateway-Timeouts proaktiv zu verhindern
-          if (batchLatencyMs > 2000 && backupImportJob.running && !backupImportJob.paused) {
+          // Adaptives Pacing statt starrer 5s-Pause bei >2000ms:
+          // Normale TMDb-Batches bis 4500ms laufen ohne Zusatzpause durch; 4500–6500ms erhalten 1s Verschnaufpause; erst ab >6500ms greift ein 2s Cooldown.
+          if (batchLatencyMs > 6500 && backupImportJob.running && !backupImportJob.paused) {
             backupImportJob._lastBatchHadLatencyCooldown = true;
-            backupImportJob.currentBatchModeLabel = "⏳ Auto-Pause (5s Cooldown)";
+            backupImportJob.currentBatchModeLabel = "⏳ Kurz-Pause (2s Cooldown)";
             backupImportJob.currentBatchModeColor = "#fbbf24";
-            backupImportJob.recentLog.push("⏳ Auto-Pause (5s Cooldown): D1-/Worker-Batch-Latenz (" + batchLatencyMs + "ms > 2000ms) – Schutz vor HTTP 503 Gateway-Timeout aktiv");
+            backupImportJob.recentLog.push("⏳ Kurz-Pause (2s Cooldown): Hohe Worker-Batch-Latenz (" + batchLatencyMs + "ms > 6500ms) – drossele Folge-Batch auf 6 Einträge");
             renderBackupImportBoxDom();
-            await new Promise(res => setTimeout(res, 5000));
+            await new Promise(res => setTimeout(res, 2000));
+          } else if (batchLatencyMs > 4500 && backupImportJob.running && !backupImportJob.paused) {
+            backupImportJob._lastBatchHadLatencyCooldown = true;
+            backupImportJob.currentBatchModeLabel = "🛡️ Adaptives Pacing (1s)";
+            backupImportJob.currentBatchModeColor = "#f59e0b";
+            renderBackupImportBoxDom();
+            await new Promise(res => setTimeout(res, 1000));
           } else {
-            await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
+            await new Promise(res => setTimeout(res, hadRateWarning ? 500 : 220));
           }
         }
 

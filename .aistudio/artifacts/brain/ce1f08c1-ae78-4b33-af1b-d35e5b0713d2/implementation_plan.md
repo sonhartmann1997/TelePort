@@ -1,128 +1,96 @@
-# 5-Modul Pipeline-Upgrade, 900M-ID Abgleich-Konsole & Smart-Heilung
+# D1-Persistenz-Garantie & Batch-Latenz-Optimierung
 
-Dieses Upgrade erweitert die Import-, Parser-, TMDb-Scoring-, D1-UPSERT- und Diagnose-Pipeline um 5 präzise abgestimmte Module, ergänzt das manuelle 900M-ID Abgleich-Modal um Live-Kollisionsprüfung, Queue-Abarbeitung und 1-Klick-Migration auf echte TMDb-IDs und fügt 3 intelligente Komfort-Werkzeuge hinzu (selbstlernendes Alias-Gedächtnis, Mehrteiler-Lückenprüfung für CD1/CD2 und 1-Klick-Nachprüfung alter Konflikte).
+Dieses Update behebt die gemeinsame Hauptursache dafür, warum Filme/Serien teilweise nur im RAM (`memoryFallback`) blieben **und** warum Batches `6.726 ms` benötigten, und optimiert gleichzeitig das D1-Batching sowie das Pacing im Frontend.
+
+---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Alle bestätigten Entscheidungen und deine 3 ausgewählten Zusatz-Ideen sind fest im Plan verankert (ohne AVI/DivX/Browser-Stream-Priorisierung in Modul 4):
+> **Gefundene Hauptursache (Root Cause für RAM-only + 6.726 ms Latenz):**
+> 1. **Wrapper-Konflikt in `ensureD1Schema` blockierte die Spalten-Migration:**
+>    In `ensureD1Schema` wurde `rawDb.batch([ db.prepare(...) ])` aufgerufen. Da `db.prepare(...)` unser Wrapper-Objekt (`{ _rawStmt, ... }`) zurückgibt, erwartet das native Cloudflare `rawDb.batch()` jedoch ungewrappte `rawDb.prepare(...)`-Statements. Dadurch brach `ensureD1Schema` vor dem `ALTER TABLE`-Block ab (`catch (e) { d1SchemaInitialized = true; }`).
+> 2. **Fehlende Spalten ließen D1-Inserts scheitern (Daten blieben nur im RAM):**
+>    Weil die neuen Spalten (`manual_override`, `file_fingerprint`, `part_number`, `edition_label`, `is_bonus`, `matched_title`) durch den abgebrochenen Migrations-Block in bestehenden D1-Tabellen fehlten, wurden Filme und Serien zwar vorab in `memoryFallback` (RAM) eingetragen, aber das anschließende `INSERT INTO movies / series / movie_files` in `flushD1BatchBuffer` schlug mit einem SQLite-Spaltenfehler fehl.
+> 3. **6.726 ms Latenz durch den Fehler-Fallback in `flushD1BatchBuffer`:**
+>    Wenn `rawDb.batch(chunk)` wegen einer fehlenden Spalte fehlschlug, sprang `flushD1BatchBuffer` in den `catch (batchErr)`-Block und versuchte, alle 30–60 Statements einzeln nacheinander per `await singleStmt.run()` auszuführen – was die Batch-Laufzeit auf **6.726 ms** hochtrieb und bei `hasSubrequestBudget(44)` restliche Schreibbefehle abbrach!
 
-- **Bestätigte Entscheidung 1 (900M-ID Abgleich-Modal & Komfort-Funktionen)**:
-  - **Live-Vorschau der 900M-ID & D1-Kollisionsstatus** (`900M–944M` Film, `945M–989M` Serie).
-  - **Automatische Erkennung vorhandener 900M-Serien** in D1, damit weitere Folgen derselben Serie sofort dieselbe ID erhalten.
-  - **Queue-Modus** zum flüssigen Abarbeiten aller offenen `TMDB_NOT_FOUND`-Einträge nacheinander.
-  - **1-Klick-Migration (`900M-ID → echte TMDb-ID`)** inklusive verlustfreiem Umzug aller Episoden, Dateien und Playlists.
-- **Bestätigte Entscheidung 2 (5-Modul Pipeline-Erweiterung – ohne AVI/Browser-Stream-Logik)**:
-  - **Modul 1 (Import-Loop & Variablen-Hygiene)**: Aufsteigende Sortierung nach `msg.id`, Session-Deduplizierung via `processedMsgIds`, lückenlose `rawText`-Extraktion in allen Pfaden, isolierter Variablen-Scope im Schleifenkörper und Gatekeeper-Filterung für Sprachlern-/Tutorial-Videos (`SKIPPED_JUNK`).
-  - **Modul 2 (Parser, CD1/CD2-Pairing, Bonus, Editionen & Jahres-Cut-Off)**: Erkennung von `CD1`/`CD2` und führenden `01`/`02` vor `(YYYY)` **vor** der Serien-Weiche inkl. Nachbar-Pairing (`i - 1` / `i + 1`), Bonus-/Special-Guard (`season = 0` / `isBonus = true`), Editions-Extraktion (`editionLabel`), harter Cut-Off rechts neben der Jahreszahl (auch ohne Leerzeichen wie `2012SiFi`) sowie Anhebung des Titel-Limits auf **120 Zeichen** (mit `> 15 Wörter` Beschreibungs-Schutz).
-  - **Modul 3 (TMDb Smart-Scoring & Fallbacks)**: Exakter Titel-Bonus (`+150 Punkte` bei ±1 Jahr) und Artikel-Schutz (`The`/`Der`/`Die`/`Das` erst im letzten Schritt entfernen), Römische-Zahlen-Retry bei Jahres-Konflikt (> 2 Jahre Abweichung), Dual-Source-Fallback (`titleFromText` ↔ `titleFromFileName`), Nachbar-Überlaufschutz bei eigenem Titel + Jahr sowie `/search/tv`-Miniserien-Fallback.
-  - **Modul 4 (D1 `fileFingerprint`, `part_number`, Jahres-Sperre & `manual_override`)**: Zweistufiger `fileFingerprint` (`file_unique_id || file_id || size_duration_WxH`), sauberes Versions-Badge (`[editionLabel, resolutionLabel, sizeLabel].filter(Boolean).join(" • ")`), eigenes `part_number`-Feld, Jahres-Sperre beim Film-UPSERT (> 1 Jahr Abweichung blockiert Zusammenführung) und unüberschreibbarer Admin-Schreibschutz (`manual_override = 1`).
-  - **Modul 5 (Diagnose-Logger)**: Fehler-Priorisierung im Export-Puffer (`OK`/`SKIPPED_DUPLICATE` verdrängen niemals echte Problemfälle), einheitlicher Status `"CONFLICT"` sowie strikte Trennung zwischen `parsedTitle` und `matchedTitle`.
-- **Bestätigte Entscheidung 3 (Ausgewählte Zusatz-Ideen)**:
-  1. **Selbstlernendes Alias-Gedächtnis bei manueller Korrektur**: Jede manuelle Admin-Zuweisung speichert das normalisierte Roh-Titel-/Dateinamen-Muster dauerhaft als gelernte Alias-Regel in D1 (`manual_override = 1`), sodass künftige Folgen oder Re-Uploads sofort ohne externe API-Abfrage aufgelöst werden.
-  2. **Mehrteiler-Prüfung für fehlende `CD1`- oder `CD2`-Teile**: Automatische Erkennung unvollständiger Mehrteiler-Filme (z. B. `part_number = 2` vorhanden, aber `part_number = 1` fehlt, oder `CD 1` ohne `CD 2`) mit eigener Übersicht im Lücken-Tab.
-  3. **1-Klick-Nachprüfung alter Konflikte mit neuer Pipeline**: Direkt-Button im Konflikt-/Diagnose-Tab, der bestehende `CONFLICT`- und `TMDB_NOT_FOUND`-Einträge aus früheren Durchläufen gesammelt durch die neue Modul-2/3-Pipeline (Jahres-Cut-Off, Roman-Retry, Dual-Source, Miniserien-Fallback) schickt und automatisch heilt.
+- **Entscheidung 1 (Garantierte D1-Schema-Migration & Unwrapping):**
+  - `ensureD1Schema` nutzt durchgehend native `rawDb.prepare(...)`-Statements (und `wrapD1Stmt` / `flushD1BatchBuffer` entpacken `stmt._rawStmt || stmt` immer zuverlässig).
+  - Zusätzlich werden alle neuen Spalten sowohl direkt in `CREATE TABLE IF NOT EXISTS` als auch im `ALTER TABLE`-Migrationsblock angelegt. Falls `ALTER TABLE` noch nicht durchgelaufen ist, darf `d1SchemaInitialized` niemals vorzeitig auf `true` gesetzt werden.
+- **Entscheidung 2 (100 % D1-Schreibgarantie für Filme, Serien, Episoden & Dateien):**
+  - `flushD1BatchBuffer` verwirft im Fallback niemals Statements wegen `hasSubrequestBudget(44)`, sondern führt D1-Writes garantiert aus.
+  - `d1_movie_saved_ts_${mid}` und `d1_series_saved_ts_${sid}` werden erst gesetzt, wenn das SQL-Statement tatsächlich ohne Fehler an D1 übergeben wurde.
+- **Entscheidung 3 (Worker schonen ohne Datenverlust):**
+  - **Sammel-Prefetch (`prefetchBatchMediaFromD1`):** Lädt `movie_files` und `episode_files` für bekannte `tmdb_id`s im Batch in **1 einzigen `rawDb.batch()`-Read** vorab.
+  - **Zero-Write nur bei verifizierten D1-Duplikaten:** Ein `SKIPPED_DUPLICATE`-Short-Circuit greift nur dann, wenn die Datei bereits real aus D1 geladen wurde (`fromD1: true`). Neue Filme, Serien, Episoden und neue Qualitäten werden **immer** in D1 geschrieben.
+  - **`cleanupEmptySeriesInD1AndMemory` nur am Import-Ende:** Läuft nur noch beim letzten Batch (`isFinalBatch`), nicht nach jedem 10er-Zwischenbatch.
+  - **Adaptives Pacing statt starrer 5s-Pause:** Keine Zusatzpause bis `4.500 ms`; kurze `1.000 ms` Verschnaufpause bei `4.500–6.500 ms`; `2.000 ms` Cooldown erst ab `> 6.500 ms`.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **Was das System leistet**: Große Telegram-Kanal-Exporte (`result.json`) werden streng chronologisch dedupliziert, Mehrteiler (`CD1`/`CD2`, `01 (1997)`), Sondereditionen (`Director's Cut`) und Bonus-Clips sauber getrennt, über mehrstufiges TMDb-Smart-Scoring aufgelöst und kollisionsfrei mit `fileFingerprint` in D1 gespeichert. Manuelle Korrekturen trainieren automatisch das D1-Alias-Gedächtnis, während unvollständige `CD1`/`CD2`-Mehrteiler und offene 900M-Titel übersichtlich verwaltet werden.
-- **Zielgruppe / Einsatzkontext**: Administratoren der Telegram Mini App & des Cloudflare Workers zur vollautomatischen und kuratierten Katalogpflege.
-- **Kernmehrwert**: Deutlich weniger Fehlzuordnungen bei Filmreihen und Zweiteilern, null falsche Duplikat-Verwerfungen bei JSON-Backups ohne `file_id`, dauerhaftes Lernen aus jeder Admin-Korrektur und schnelle Stapel-Heilung alter Konflikte.
+- **Was wird sichergestellt:** Jeder erkannte oder manuell bestätigte Film, jede Serie, jede Episode und jeder Stream-Link wird garantiert und dauerhaft in den Cloudflare-D1-Tabellen (`movies`, `series`, `series_seasons`, `series_episodes`, `movie_files`, `episode_files`, `d1_playlist_items`) gespeichert – nach einem Browser-Reload oder Worker-Neustart ist 100 % des Katalogs in D1 vorhanden.
+- **Gleichzeitige Worker-Schonung:** Durch das funktionierende `rawDb.batch()` werden alle Schreibzugriffe eines Batches in **1 einzigen D1-Batch-Transaktion** (~50–120 ms statt 6.726 ms) ausgeführt.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Zentrale User Flows**:
-  1. **900M-ID Abgleich-Modal mit Live-Vorschau, Serien-Erkennung & Queue-Modus**:
-     - Zeigt während der Eingabe live die deterministische 900M-ID (`900M–944M` Film, `945M–989M` Serie) und den D1-Kollisionsstatus.
-     - Erkennt automatisch bereits in D1 vorhandene 900M-Serien mit gleichem Titel und schlägt deren ID per 1-Klick vor.
-     - Im **Queue-Modus** werden alle offenen `TMDB_NOT_FOUND`-Einträge nacheinander im selben Dialog durchgeblättert (`Eintrag 1 von N`).
-  2. **1-Klick-Migration (`900M-ID → echte TMDb-ID`)**:
-     - Zieht alle Episoden, Videodateien und Playlist-Einträge einer synthetischen 900M-ID verlustfrei auf eine echte TMDb-ID um und setzt `manual_override = 1`.
-  3. **1-Klick „Alt-Konflikte mit neuer Pipeline heilen“**:
-     - Im Konflikt- und Diagnose-Tab prüft ein Button alle offenen `CONFLICT`- und `TMDB_NOT_FOUND`-Einträge mit der neuen Modul-2/3-Pipeline nach, aktualisiert geheilte Treffer direkt in D1 und zeigt eine Erfolgsbilanz (`X von Y Konflikten automatisch geheilt`).
-  4. **Mehrteiler-Lücken-Anzeige (`CD1` / `CD2` Vollständigkeit)**:
-     - Im Lücken-Finder werden neben fehlenden Serienfolgen auch unvollständige Mehrteiler-Filme (`CD 1 fehlt` oder `CD 2 fehlt`) hervorgehoben.
-- **Visual Identity & Theme**:
-  - *Aesthetic Direction*: Kontrastreiches Dark-Slate Admin- & Katalog-Interface (`#101016` / `#161622`) mit klarer typografischer Hierarchie und ruhigen, unverschnörkelten Text-Metadaten (`Director's Cut • 1080p • 1.8 GB`).
-  - *Color Palette & Semantik*: Smaragdgrün (`#10B981`) für verifizierte D1-Einträge und geheilte Konflikte, Amber (`#F59E0B`) für `"CONFLICT"`-Prüffälle und fehlende `CD1`/`CD2`-Teile, Violett/Blau (`#A855F7` / `#38BDF8`) für den 900M-Abgleich und Karmesinrot (`#EF4444`) für Fehler.
-  - *Typography & Tabular Numerals*: Alle IDs, Message-IDs und Zähler nutzen `font-variant-numeric: tabular-nums` bzw. Monospace-Schrift.
+- **Verlässliche D1-Speicherung & schneller Import-Takt:**
+  - Im Backup-Importer laufen Batches ohne den bisherigen `batchErr`-Einzelfallback in unter **1–3 Sekunden** durch.
+  - Nach Abschluss (oder Pausieren) des Imports bleiben alle Filme, Serien und Episoden dauerhaft in D1 gespeichert und sind sofort auf allen Geräten abrufbar.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Entscheidung 1: Zweistufiger `fileFingerprint` ohne Format-Diskriminierung**
-  - *Gewählter Ansatz*: `fileFingerprint = msg.file_unique_id || msg.file_id || "${msg.file_size || 0}_${msg.duration_seconds || 0}_${msg.width || 0}x${msg.height || 0}"`.
-  - *Warum*: Verhindert den `null === null`-Duplikat-Bug bei JSON-Backups zuverlässig, ohne `.avi`- oder `.mp4`-Dateien unterschiedlich zu werten.
-- **Entscheidung 2: Selbstlernendes Alias-Gedächtnis + `manual_override = 1`**
-  - *Gewählter Ansatz*: Jede manuelle Zuweisung speichert sowohl die bereinigte Titel-Variante als auch den rohen Dateinamen-Stamm (ohne `SxxExx`/`CDx`/Jahr) mit `manual_override = 1` in D1 `entity_cache` sowie auf dem Film-/Serien-Datensatz.
-  - *Warum*: Künftige Episoden derselben Serie oder erneute Backup-Läufe erkennen das gelernte Muster sofort in Stufe 0 (D1-First) und überschreiben niemals manuelle Admin-Entscheidungen.
-- **Entscheidung 3: Harter Jahres-Cut-Off + 120-Zeichen-Titellimit mit 15-Wörter-Schutz**
-  - *Gewählter Ansatz*: Alles rechts neben einer erkannten Jahreszahl `(1920..2029)` (inkl. `2012SiFi`) wird sofort abgeschnitten; einzeilige Titel dürfen bis zu 120 Zeichen lang sein, während Fließtext-Beschreibungen ab `> 15 Wörtern` erkannt werden.
-  - *Warum*: Schützt lange deutsche Filmtitel (*Star Wars: Episode V – Das Imperium schlägt zurück*) vor dem 40-Zeichen-Abschneider und entfernt gleichzeitig angeklebte Genre-/Cast-Ketten hinter dem Jahr.
+- **Entscheidung 1: Sicheres Statement-Unwrapping in allen `rawDb.batch()`-Aufrufen**
+  - *Gewählter Ansatz:* Eine zentrale Hilfsfunktion `unwrapRawD1Statements(stmts)` stellt sicher, dass `rawDb.batch()` ausschließlich native D1-Statements erhält.
+  - *Warum:* Verhindert `D1_TYPE_ERROR` bei Schema-Initialisierung und Sammel-Batches.
+- **Entscheidung 2: Unterscheidung zwischen RAM-Vorschau und echtem D1-Bestand (`_persistedInD1`)**
+  - *Gewählter Ansatz:* Einträge im Memory-Cache erhalten das Flag `_persistedInD1: true` erst dann, wenn sie aus D1 gelesen oder erfolgreich per `flushD1BatchBuffer` in D1 geschrieben wurden.
+  - *Warum:* Dadurch wird kein Film und keine Serie jemals fälschlich beim D1-Schreiben übersprungen, nur weil die Metadaten kurz zuvor im RAM lagen.
 
 ---
 
 ## 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
-### Architecture & Pipeline Diagram
-
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ MODUL 1: Chronologischer Import-Loop & Gatekeeper                            │
-│  • messages.sort((a,b) => Number(a.id) - Number(b.id))                       │
-│  • processedMsgIds = new Set() (keine Mehrfachverarbeitung bei Resume)       │
-│  • rawText-Extraktion (String & Array-Entities) + isolierter Loop-Scope      │
-│  • Gatekeeper: Sprachlern-/Tutorial-Videos -> status: "SKIPPED_JUNK"         │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ MODUL 2: Parser, CD1/CD2-Pairing, Bonus-Schutz, Editionen & Jahres-Cut-Off   │
-│  • Multi-Part vor Serien-Weiche: -CD1/-CD2 & "01 (1997)" -> movie + part     │
-│  • Nachbar-Pairing (i-1 / i+1): Übernimmt tmdbId für Part 2 bei gleichem Name│
-│  • Bonus/Special-Guard: season = 0 / isBonus = true (überschreibt nie S01E01)│
-│  • Edition-Extractor -> editionLabel | Harter Jahres-Cut-Off (inkl. 2012SiFi)│
-│  • Umlaut-Normalisierung + 120-Zeichen-Limit (Satz/Wort-Check > 15 Wörter)   │
-└──────────────────────────────────────┬───────────────────────────────────────┘
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ MODUL 3: Selbstlernender D1-Alias-Cache & TMDb Smart-Scoring                 │
-│  • Stufe 0: D1-Alias-Gedächtnis (gelernte Admin-Muster -> 0 API-Requests)    │
-│  • Exakter Titel + Jahr (±1) = +150 Punkte Bonus | Artikel erst zuletzt ab   │
-│  • Römische-Zahlen-Retry (I..XIII) bei Jahres-Abweichung > 2 Jahre           │
-│  • Dual-Source-Fallback: titleFromText <-> titleFromFileName                 │
-│  • Kein Nachbar-Überlauf bei eigenem Titel + Jahr | /search/tv Fallback      │
-└──────────────────┬───────────────────────────────────────┬───────────────────┘
-                   │ Treffer gefunden                      │ Kein API-Treffer
-                   ▼                                       ▼
-┌─────────────────────────────────────────┐ ┌──────────────────────────────────┐
-│ MODUL 4: D1 Smart-UPSERT & Mehrteiler   │ │ 900M-ID Abgleich-Modal & Heilung │
-│  • fileFingerprint (Size_Dur_WxH)       │ │  • Live-Vorschau 900M-ID & Status│
-│  • part_number + CD1/CD2-Lücken-Prüfung │ │  • Auto-Vorschlag 900M-Serien    │
-│  • Jahres-Sperre (>1J) & manual_override│ │  • Queue-Modus & 1-Klick-Upgrade │
-└──────────────────┬──────────────────────┘ │  • 1-Klick Konflikt-Auto-Heilung │
-                   │                        └──────────────┬───────────────────┘
-                   └───────────────────┬───────────────────┘
-                                       ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│ MODUL 5: Diagnose-Logger (ImportLogger)                                      │
-│  • Problem-Priorität im Puffer (OK/SKIPPED_DUPLICATE verdrängen nie Fehler)  │
-│  • Einheitlicher Status "CONFLICT" | parsedTitle vs. matchedTitle getrennt   │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│            GARANTIERTE D1-PERSISTENZ & SCHNELLE BATCH-PIPELINE             │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 1. ensureD1Schema(env)                                                     │
+│    ├── Native rawDb.prepare() für CREATE TABLE + ALTER TABLE Migrationen   │
+│    └── Alle neuen Spalten (manual_override, file_fingerprint, part_number, │
+│        edition_label, is_bonus, matched_title) garantiert in D1 vorhanden  │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 2. prefetchBatchMediaFromD1(env, entriesList)                              │
+│    └── 1 rawDb.batch() Read lädt bestehende D1-Zeilen (inkl. _fromD1=true) │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 3. resolveAndIngestMediaEntry -> saveMovieToD1 / saveSeriesToD1            │
+│    ├── Pushes INSERT OR REPLACE für movies/series/episodes/files in Buffer │
+│    └── Überspringt D1-Write NUR, wenn Eintrag bereits mit _fromD1=true     │
+│        in D1 verifiziert ist                                               │
+├────────────────────────────────────────────────────────────────────────────┤
+│ 4. flushD1BatchBuffer(env) am Batch-Ende                                   │
+│    ├── Entpackt alle Statements sauber via unwrapRawD1Statements()         │
+│    ├── Committet alle Filme, Serien & Dateien in 1 atomaren rawDb.batch()  │
+│    └── Kein Verwerfen von Schreibbefehlen durch Subrequest-Limits          │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Model & Endpoints
-
-- **D1-Tabellen (`movies`, `series`, `movie_files`, `episode_files`, `entity_cache`)**:
-  - `movies` & `series`: `manual_override INTEGER DEFAULT 0` schützt manuell zugewiesene Titel vor dem Überschreiben durch spätere automatische Läufe.
-  - `movie_files` & `episode_files`: `file_fingerprint TEXT`, `part_number INTEGER DEFAULT 1`, `edition_label TEXT` und `is_bonus INTEGER DEFAULT 0`.
-  - `entity_cache`: Speichert bei jeder manuellen Admin-Korrektur zusätzlich das normalisierte Dateinamen-Stammmuster (`alias_learned_<normStem>`) mit `manualOverride: true`.
-- **Neue & erweiterte Admin-Endpunkte**:
-  - `/api/tma/admin/preview-manual-id`: Berechnet live die kollisionsfreie 900M-ID und prüft, ob bereits eine gleichnamige 900M-Serie oder ein 900M-Film in D1 existiert.
-  - `/api/tma/admin/migrate-synthetic-id`: Migriert einen synthetischen 900M-Eintrag inkl. aller Episoden, Dateien und Playlists per 1-Klick auf eine echte TMDb-ID.
-  - `/api/tma/admin/reheal-conflicts`: Führt die 1-Klick-Nachprüfung offener `CONFLICT`- und `TMDB_NOT_FOUND`-Einträge mit der neuen Modul-2/3-Pipeline aus und speichert geheilte Treffer direkt in D1.
-  - Erweiterung von `computeSeriesGapsOverview`: Meldet neben fehlenden Serienfolgen/Staffeln auch `incompleteMultipartMovies` (Filme mit `CD 2` ohne `CD 1` oder `CD 1` mit Hinweis auf Mehrteiler ohne `CD 2`).
+### Geplante Änderungen im Detail
+1. **Schema-Initialisierung & D1-Wrapper (`04-d1-database.js`):**
+   - `unwrapRawD1Statements(stmts)` einführen und in `ensureD1Schema`, `flushD1BatchBuffer` sowie `db.batch` verwenden.
+   - In `ensureD1Schema`: Alle neuen Spalten (`manual_override`, `file_fingerprint`, `part_number`, `edition_label`, `is_bonus`, `review_reason_code`, `matched_title`) direkt in die `CREATE TABLE IF NOT EXISTS`-Definitionen aufnehmen und den `ALTER TABLE`-Migrationsblock mit `rawDb.batch(unwrapRawD1Statements(alterStmts))` absichern.
+2. **Garantierte D1-Speicherung für Filme, Serien & Dateien (`04-d1-database.js`):**
+   - In `saveMovieToD1` und `saveSeriesToD1`: Die 30-Minuten-Wiederholsperre (`d1_movie_saved_ts_${mid}` / `d1_series_saved_ts_${sid}`) darf nur greifen, wenn der Film bzw. die Serie nachweislich bereits in D1 existiert, und die vorherige Einzel-`SELECT manual_override`-Abfrage wird durch das bereits vorgeladene `manual_override`-Feld bzw. ein `ON CONFLICT(tmdb_id) DO UPDATE ... WHERE COALESCE(movies.manual_override, 0) = 0 OR excluded.manual_override = 1` direkt im SQL-Statement ersetzt (spart 1 D1-Read pro Film/Serie UND garantiert den D1-Write!).
+   - In `saveEpisodeFileToD1`: Die neuen Spalten `file_fingerprint, part_number, edition_label, is_bonus` ebenfalls vollständig im `INSERT INTO episode_files` persistieren.
+   - In `saveMovieFileToD1` und `saveEpisodeFileToD1`: Nur dann den D1-Write als `isExactDuplicate` überspringen, wenn die identische Datei bereits in D1 (`_fromD1: true`) gespeichert ist.
+   - In `flushD1BatchBuffer`: Den `hasSubrequestBudget(44)`-Abbruch im Fehler-Fallback entfernen, damit niemals ein D1-Schreibbefehl stillschweigend verworfen wird.
+3. **Worker-Loop & Frontend-Pacing (`07-webhook-callbacks.js`, `09-tma-api-worker-export.js`, `08c-tma-netflix-frontend.js`):**
+   - `cleanupEmptySeriesInD1AndMemory` nur noch beim finalen Batch (`isFinalBatch`) ausführen.
+   - `BATCH_WALL_CLOCK_LIMIT_MS` auf `5200ms` setzen und `JSON_INGEST_DELAY_MS` bei reinen D1-/Cache-Treffern überspringen.
+   - Im Frontend die starre `2000ms -> 5s Pause` durch das adaptive Pacing (`<= 4500ms` 0s Zusatzpause, `4500–6500ms` 1s Kurzpausierung, `> 6500ms` 2s Cooldown) ersetzen.

@@ -2541,7 +2541,7 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     const batchWallStartMs = Date.now();
-    const BATCH_WALL_CLOCK_LIMIT_MS = 8000;
+    const BATCH_WALL_CLOCK_LIMIT_MS = 5200;
     resetSubrequestBudget();
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
@@ -2936,7 +2936,7 @@
         } catch (e) {}
       }
 
-      if (i + JSON_INGEST_CONCURRENCY < total) {
+      if (i + JSON_INGEST_CONCURRENCY < total && currentInvocationSubrequests > 2) {
         await new Promise(r => setTimeout(r, JSON_INGEST_DELAY_MS));
       }
     }
@@ -2980,8 +2980,8 @@
       }
     }
 
-    // Automatische DB-Bereinigung am Ende jedes Imports: Entfernt alle Serien mit 0 gültigen Episoden-Videos
-    if (!partialBatch) {
+    // Automatische DB-Bereinigung nur am Ende des gesamten Imports (oder bei Einzel-Läufen): Entfernt Serien mit 0 gültigen Episoden-Videos
+    if (!partialBatch && (!playlistContext || playlistContext.isFinalBatch !== false)) {
       await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
     }
 

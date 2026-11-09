@@ -6468,6 +6468,11 @@
     return env.DB || env.MOVIE_DB || null;
   }
 
+  function unwrapRawD1Statements(stmts) {
+    if (!Array.isArray(stmts)) return [];
+    return stmts.map(s => (s && s._rawStmt) ? s._rawStmt : s).filter(Boolean);
+  }
+
   function wrapD1Stmt(rawStmt, sqlStr) {
     if (!rawStmt) return rawStmt;
     const isWriteStmt = /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(String(sqlStr || ""));
@@ -6514,7 +6519,7 @@
       async batch(stmts) {
         if (!Array.isArray(stmts) || stmts.length === 0) return [];
         const allWrites = stmts.every(s => Boolean(s && s._isWriteStmt));
-        const rawStmts = stmts.map(s => (s && s._rawStmt) ? s._rawStmt : s);
+        const rawStmts = unwrapRawD1Statements(stmts);
         if (Array.isArray(activeD1WriteBuffer) && allWrites) {
           for (const rs of rawStmts) {
             activeD1WriteBuffer.push(rs);
@@ -6549,22 +6554,21 @@
     const rawDb = getRawD1Binding(env);
     if (!rawDb) return 0;
     let flushedCount = 0;
+    const rawPending = unwrapRawD1Statements(pending);
     const CHUNK_SIZE = 80;
-    for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
-      const chunk = pending.slice(i, i + CHUNK_SIZE);
+    for (let i = 0; i < rawPending.length; i += CHUNK_SIZE) {
+      const chunk = rawPending.slice(i, i + CHUNK_SIZE);
       try {
         countD1Subrequest();
         await rawDb.batch(chunk);
         flushedCount += chunk.length;
       } catch (batchErr) {
-        // Fallback: falls ein einzelnes Statement im Sammel-Batch fehlschlägt, teile den Chunk auf
+        // Fallback: falls ein einzelnes Statement im Sammel-Batch fehlschlägt, führe alle übrigen Schreibbefehle garantiert einzeln aus (kein Verwerfen!)
         for (const singleStmt of chunk) {
           try {
-            if (!hasSubrequestBudget || hasSubrequestBudget(44)) {
-              countD1Subrequest();
-              await singleStmt.run();
-              flushedCount++;
-            }
+            countD1Subrequest();
+            await singleStmt.run();
+            flushedCount++;
           } catch (singleErr) {}
         }
       }
@@ -6583,7 +6587,7 @@
     d1SchemaInitPromise = (async () => {
       try {
         countD1Subrequest();
-        await rawDb.batch([
+        await rawDb.batch(unwrapRawD1Statements([
           db.prepare(`CREATE TABLE IF NOT EXISTS movies (
             tmdb_id INTEGER PRIMARY KEY,
             title TEXT NOT NULL,
@@ -6605,6 +6609,7 @@
             collection_id INTEGER,
             collection_name TEXT,
             telegraph_url TEXT,
+            manual_override INTEGER DEFAULT 0,
             details_json TEXT NOT NULL,
             updated_at INTEGER NOT NULL
           )`),
@@ -6630,6 +6635,7 @@
             number_of_seasons INTEGER DEFAULT 1,
             number_of_episodes INTEGER DEFAULT 0,
             telegraph_url TEXT,
+            manual_override INTEGER DEFAULT 0,
             details_json TEXT NOT NULL,
             updated_at INTEGER NOT NULL
           )`),
@@ -6674,9 +6680,13 @@
             movie_id INTEGER NOT NULL,
             telegram_file_id TEXT NOT NULL,
             telegram_unique_id TEXT,
+            file_fingerprint TEXT,
             quality TEXT DEFAULT '1080p',
             codec TEXT DEFAULT 'x264',
             part TEXT,
+            part_number INTEGER DEFAULT 1,
+            edition_label TEXT,
+            is_bonus INTEGER DEFAULT 0,
             tags TEXT,
             file_size INTEGER,
             mime_type TEXT,
@@ -6694,9 +6704,13 @@
             episode_number INTEGER NOT NULL,
             telegram_file_id TEXT NOT NULL,
             telegram_unique_id TEXT,
+            file_fingerprint TEXT,
             quality TEXT DEFAULT '1080p',
             codec TEXT DEFAULT 'x264',
             part TEXT,
+            part_number INTEGER DEFAULT 1,
+            edition_label TEXT,
+            is_bonus INTEGER DEFAULT 0,
             tags TEXT,
             version_label TEXT DEFAULT 'Originalfassung',
             file_size INTEGER,
@@ -6767,6 +6781,7 @@
             file_name TEXT,
             text_preview TEXT,
             parsed_title TEXT,
+            matched_title TEXT,
             season INTEGER,
             episode INTEGER,
             tmdb_query TEXT,
@@ -6842,54 +6857,66 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlists_chat ON d1_playlists(chat_id, created_at)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_folder ON d1_playlist_items(chat_id, folder_id, added_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_tmdb ON d1_playlist_items(tmdb_id, content_type)")
-        ]);
-        // Subrequest-sparende Auto-Migration: Prüfe in 1 einziger Abfrage sqlite_master und führe fehlende Spalten gebündelt per db.batch aus
-        try {
-          const schemaRes = await db.prepare("SELECT name, sql FROM sqlite_master WHERE type='table'").all();
-          const sqlByTable = new Map();
-          for (const row of (schemaRes?.results || [])) {
-            if (row?.name && row?.sql) sqlByTable.set(String(row.name), String(row.sql));
+        ]));
+      } catch (e) {}
+
+      // Subrequest-sparende Auto-Migration: Prüfe in 1 einziger Abfrage sqlite_master und führe fehlende Spalten gebündelt per rawDb.batch aus
+      try {
+        const schemaRes = await db.prepare("SELECT name, sql FROM sqlite_master WHERE type='table'").all();
+        const sqlByTable = new Map();
+        for (const row of (schemaRes?.results || [])) {
+          if (row?.name && row?.sql) sqlByTable.set(String(row.name), String(row.sql));
+        }
+        const requiredCols = [
+          ["movies", "telegraph_url", "ALTER TABLE movies ADD COLUMN telegraph_url TEXT"],
+          ["series", "telegraph_url", "ALTER TABLE series ADD COLUMN telegraph_url TEXT"],
+          ["series_seasons", "telegraph_url", "ALTER TABLE series_seasons ADD COLUMN telegraph_url TEXT"],
+          ["series_episodes", "versions_json", "ALTER TABLE series_episodes ADD COLUMN versions_json TEXT DEFAULT '[]'"],
+          ["movie_files", "tags", "ALTER TABLE movie_files ADD COLUMN tags TEXT"],
+          ["episode_files", "tags", "ALTER TABLE episode_files ADD COLUMN tags TEXT"],
+          ["episode_files", "version_label", "ALTER TABLE episode_files ADD COLUMN version_label TEXT DEFAULT 'Originalfassung'"],
+          ["movie_files", "raw_filename", "ALTER TABLE movie_files ADD COLUMN raw_filename TEXT"],
+          ["movie_files", "raw_caption", "ALTER TABLE movie_files ADD COLUMN raw_caption TEXT"],
+          ["movie_files", "message_link", "ALTER TABLE movie_files ADD COLUMN message_link TEXT"],
+          ["movie_files", "subtitles_json", "ALTER TABLE movie_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"],
+          ["episode_files", "raw_filename", "ALTER TABLE episode_files ADD COLUMN raw_filename TEXT"],
+          ["episode_files", "raw_caption", "ALTER TABLE episode_files ADD COLUMN raw_caption TEXT"],
+          ["episode_files", "message_link", "ALTER TABLE episode_files ADD COLUMN message_link TEXT"],
+          ["episode_files", "subtitles_json", "ALTER TABLE episode_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"],
+          ["movies", "manual_override", "ALTER TABLE movies ADD COLUMN manual_override INTEGER DEFAULT 0"],
+          ["series", "manual_override", "ALTER TABLE series ADD COLUMN manual_override INTEGER DEFAULT 0"],
+          ["movie_files", "file_fingerprint", "ALTER TABLE movie_files ADD COLUMN file_fingerprint TEXT"],
+          ["movie_files", "part_number", "ALTER TABLE movie_files ADD COLUMN part_number INTEGER DEFAULT 1"],
+          ["movie_files", "edition_label", "ALTER TABLE movie_files ADD COLUMN edition_label TEXT"],
+          ["movie_files", "is_bonus", "ALTER TABLE movie_files ADD COLUMN is_bonus INTEGER DEFAULT 0"],
+          ["episode_files", "file_fingerprint", "ALTER TABLE episode_files ADD COLUMN file_fingerprint TEXT"],
+          ["episode_files", "part_number", "ALTER TABLE episode_files ADD COLUMN part_number INTEGER DEFAULT 1"],
+          ["episode_files", "edition_label", "ALTER TABLE episode_files ADD COLUMN edition_label TEXT"],
+          ["episode_files", "is_bonus", "ALTER TABLE episode_files ADD COLUMN is_bonus INTEGER DEFAULT 0"],
+          ["import_diagnostic_logs", "review_reason_code", "ALTER TABLE import_diagnostic_logs ADD COLUMN review_reason_code TEXT"],
+          ["import_diagnostic_logs", "matched_title", "ALTER TABLE import_diagnostic_logs ADD COLUMN matched_title TEXT"]
+        ];
+        const alterStmts = [];
+        for (const [tbl, col, ddl] of requiredCols) {
+          const tblSql = sqlByTable.get(tbl) || "";
+          if (tblSql && !new RegExp(`\\b${col}\\b`, "i").test(tblSql)) {
+            alterStmts.push(db.prepare(ddl));
           }
-          const requiredCols = [
-            ["movies", "telegraph_url", "ALTER TABLE movies ADD COLUMN telegraph_url TEXT"],
-            ["series", "telegraph_url", "ALTER TABLE series ADD COLUMN telegraph_url TEXT"],
-            ["series_seasons", "telegraph_url", "ALTER TABLE series_seasons ADD COLUMN telegraph_url TEXT"],
-            ["series_episodes", "versions_json", "ALTER TABLE series_episodes ADD COLUMN versions_json TEXT DEFAULT '[]'"],
-            ["movie_files", "tags", "ALTER TABLE movie_files ADD COLUMN tags TEXT"],
-            ["episode_files", "tags", "ALTER TABLE episode_files ADD COLUMN tags TEXT"],
-            ["episode_files", "version_label", "ALTER TABLE episode_files ADD COLUMN version_label TEXT DEFAULT 'Originalfassung'"],
-            ["movie_files", "raw_filename", "ALTER TABLE movie_files ADD COLUMN raw_filename TEXT"],
-            ["movie_files", "raw_caption", "ALTER TABLE movie_files ADD COLUMN raw_caption TEXT"],
-            ["movie_files", "message_link", "ALTER TABLE movie_files ADD COLUMN message_link TEXT"],
-            ["movie_files", "subtitles_json", "ALTER TABLE movie_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"],
-            ["episode_files", "raw_filename", "ALTER TABLE episode_files ADD COLUMN raw_filename TEXT"],
-            ["episode_files", "raw_caption", "ALTER TABLE episode_files ADD COLUMN raw_caption TEXT"],
-            ["episode_files", "message_link", "ALTER TABLE episode_files ADD COLUMN message_link TEXT"],
-            ["episode_files", "subtitles_json", "ALTER TABLE episode_files ADD COLUMN subtitles_json TEXT DEFAULT '[]'"],
-            ["movies", "manual_override", "ALTER TABLE movies ADD COLUMN manual_override INTEGER DEFAULT 0"],
-            ["series", "manual_override", "ALTER TABLE series ADD COLUMN manual_override INTEGER DEFAULT 0"],
-            ["movie_files", "file_fingerprint", "ALTER TABLE movie_files ADD COLUMN file_fingerprint TEXT"],
-            ["movie_files", "part_number", "ALTER TABLE movie_files ADD COLUMN part_number INTEGER DEFAULT 1"],
-            ["movie_files", "edition_label", "ALTER TABLE movie_files ADD COLUMN edition_label TEXT"],
-            ["movie_files", "is_bonus", "ALTER TABLE movie_files ADD COLUMN is_bonus INTEGER DEFAULT 0"],
-            ["episode_files", "file_fingerprint", "ALTER TABLE episode_files ADD COLUMN file_fingerprint TEXT"],
-            ["episode_files", "part_number", "ALTER TABLE episode_files ADD COLUMN part_number INTEGER DEFAULT 1"],
-            ["episode_files", "edition_label", "ALTER TABLE episode_files ADD COLUMN edition_label TEXT"],
-            ["episode_files", "is_bonus", "ALTER TABLE episode_files ADD COLUMN is_bonus INTEGER DEFAULT 0"],
-            ["import_diagnostic_logs", "review_reason_code", "ALTER TABLE import_diagnostic_logs ADD COLUMN review_reason_code TEXT"],
-            ["import_diagnostic_logs", "matched_title", "ALTER TABLE import_diagnostic_logs ADD COLUMN matched_title TEXT"]
-          ];
-          const alterStmts = [];
-          for (const [tbl, col, ddl] of requiredCols) {
-            const tblSql = sqlByTable.get(tbl) || "";
-            if (tblSql && !new RegExp(`\\b${col}\\b`, "i").test(tblSql)) {
-              alterStmts.push(db.prepare(ddl));
+        }
+        if (alterStmts.length > 0) {
+          const rawAlterStmts = unwrapRawD1Statements(alterStmts);
+          try {
+            countD1Subrequest();
+            await rawDb.batch(rawAlterStmts);
+          } catch (alterBatchErr) {
+            for (const s of rawAlterStmts) {
+              try {
+                countD1Subrequest();
+                await s.run();
+              } catch (singleAlterErr) {}
             }
           }
-          if (alterStmts.length > 0) {
-            await db.batch(alterStmts);
-          }
-        } catch (e) {}
+        }
         d1SchemaInitialized = true;
       } catch (e) {
         d1SchemaInitialized = true;
@@ -8338,7 +8365,7 @@
           .prepare("SELECT id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id = ?1")
           .bind(mid)
           .all();
-        existingDbRows = Array.isArray(res?.results) ? res.results : [];
+        existingDbRows = Array.isArray(res?.results) ? res.results.map(r => ({ ...r, _fromD1: true })) : [];
         memoryFallback.set(memKey, existingDbRows);
         memoryFallback.set(memLoadedTsKey, Date.now());
       } catch (e) {}
@@ -8384,6 +8411,7 @@
     const msgId = Number(fileInfo.messageId || fileInfo.msgId || fileInfo.message_id || extractExportMessageIdFromFileId(normalizedFid) || 0) || null;
     const validExistingMovieRows = allExistingRows.filter(r => r && r.telegram_file_id && scoreTelegramFileIdValidity(r.telegram_file_id) > 0);
     // MODUL 4.1: Nur dann als SKIPPED_DUPLICATE werten, wenn (tmdb_id, part_number, fileFingerprint) bzw. identische msgId bereits in D1 existiert!
+    let matchedDuplicateRow = null;
     const isExactDuplicate = validExistingMovieRows.some(r => {
       const exFid = String(r.telegram_file_id || "").trim();
       const exMsgId = Number(extractExportMessageIdFromFileId(exFid) || 0) || null;
@@ -8391,11 +8419,16 @@
       if (exPartNum !== partNumber) return false;
       const exFp = String(r.file_fingerprint || "").trim();
       if (exFp && fileFingerprint && fileFingerprint !== "0_0_0x0" && exFp === fileFingerprint) {
+        matchedDuplicateRow = r;
         return true;
       }
       const fidMatch = exFid === normalizedFid;
       const msgMatch = (msgId && exMsgId) ? (msgId === exMsgId) : fidMatch;
-      return fidMatch && msgMatch;
+      if (fidMatch && msgMatch) {
+        matchedDuplicateRow = r;
+        return true;
+      }
+      return false;
     }) && incomingSubs.length === 0;
 
     const incomingQualNorm = String(fileInfo.quality || "1080p").toUpperCase();
@@ -8408,6 +8441,11 @@
     );
     const isUpdated = !isExactDuplicate && validExistingMovieRows.length > 0 && !hasDifferentQuality;
     const isMergedQuality = !isExactDuplicate && hasDifferentQuality;
+
+    // Wenn die identische Datei nachweislich bereits in D1 (_fromD1 === true) liegt und keine Untertitel/Vorabversionen hinzukamen, spare den redundanten D1-Write!
+    if (isExactDuplicate && matchedDuplicateRow && matchedDuplicateRow._fromD1 === true && replacedPrereleaseCount === 0) {
+      return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, skippedPrerelease: false, replacedPrereleaseCount: 0 };
+    }
 
     const entry = {
       movie_id: mid,
@@ -8428,7 +8466,8 @@
       message_link: messageLink,
       subtitles: mergedSubs,
       subtitles_json: JSON.stringify(mergedSubs),
-      updated_at: Date.now()
+      updated_at: Date.now(),
+      _fromD1: Boolean(db)
     };
     const nextMem = sortAndDedupeStreamFiles([
       entry,
@@ -8593,7 +8632,7 @@
           .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id = ?1 AND season_number = ?2")
           .bind(sid, sNum)
           .all();
-        const loadedSeasonRows = Array.isArray(res?.results) ? res.results : [];
+        const loadedSeasonRows = Array.isArray(res?.results) ? res.results.map(r => ({ ...r, _fromD1: true })) : [];
         const mergedById = new Map();
         for (const r of [...loadedSeasonRows, ...existingMem]) {
           if (r && r.telegram_file_id) {
@@ -8646,6 +8685,7 @@
     // MODUL 4.1: Smart-UPSERT mit zweistufigem fileFingerprint & part_number
     const msgId = Number(fileInfo.messageId || fileInfo.msgId || fileInfo.message_id || extractExportMessageIdFromFileId(normalizedFid) || 0) || null;
     const validExistingEpRows = allExistingEpRows.filter(r => r && r.telegram_file_id && scoreTelegramFileIdValidity(r.telegram_file_id) > 0);
+    let matchedDuplicateEpRow = null;
     const isExactDuplicate = validExistingEpRows.some(r => {
       const exFid = String(r.telegram_file_id || "").trim();
       const exMsgId = Number(r.message_id || extractExportMessageIdFromFileId(exFid) || 0) || null;
@@ -8653,11 +8693,16 @@
       if (exPartNum !== partNumber) return false;
       const exFp = String(r.file_fingerprint || "").trim();
       if (exFp && fileFingerprint && fileFingerprint !== "0_0_0x0" && exFp === fileFingerprint) {
+        matchedDuplicateEpRow = r;
         return true;
       }
       const fidMatch = exFid === normalizedFid;
       const msgMatch = (msgId && exMsgId) ? (msgId === exMsgId) : fidMatch;
-      return fidMatch && msgMatch;
+      if (fidMatch && msgMatch) {
+        matchedDuplicateEpRow = r;
+        return true;
+      }
+      return false;
     }) && incomingSubs.length === 0;
 
     const incomingQualNorm = String(fileInfo.quality || "1080p").toUpperCase();
@@ -8671,6 +8716,11 @@
     );
     const isUpdated = !isExactDuplicate && validExistingEpRows.length > 0 && !hasDifferentQualityOrVersion;
     const isMergedQuality = !isExactDuplicate && hasDifferentQualityOrVersion;
+
+    // Wenn die identische Episode nachweislich bereits in D1 (_fromD1 === true) liegt und keine Untertitel/Vorabversionen hinzukamen, spare den redundanten D1-Write!
+    if (isExactDuplicate && matchedDuplicateEpRow && matchedDuplicateEpRow._fromD1 === true && replacedPrereleaseCount === 0) {
+      return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, skippedPrerelease: false, replacedPrereleaseCount: 0 };
+    }
 
     const entry = {
       series_id: sid,
@@ -8696,7 +8746,8 @@
       message_link: messageLink,
       subtitles: mergedSubs,
       subtitles_json: JSON.stringify(mergedSubs),
-      updated_at: Date.now()
+      updated_at: Date.now(),
+      _fromD1: Boolean(db)
     };
     const sameEpDeduped = sortAndDedupeStreamFiles([
       entry,
@@ -8747,12 +8798,16 @@
       }
       stmts.push(
         db.prepare(`INSERT INTO episode_files (
-          series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+          series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
         ON CONFLICT(series_id, season_number, episode_number, telegram_file_id) DO UPDATE SET
+          file_fingerprint = COALESCE(excluded.file_fingerprint, episode_files.file_fingerprint),
           quality = excluded.quality,
           codec = excluded.codec,
           part = COALESCE(excluded.part, episode_files.part),
+          part_number = COALESCE(excluded.part_number, episode_files.part_number, 1),
+          edition_label = COALESCE(excluded.edition_label, episode_files.edition_label),
+          is_bonus = COALESCE(excluded.is_bonus, episode_files.is_bonus, 0),
           tags = CASE WHEN excluded.tags != '' THEN excluded.tags ELSE COALESCE(episode_files.tags, '') END,
           version_label = COALESCE(NULLIF(excluded.version_label, ''), episode_files.version_label, 'Originalfassung'),
           file_size = COALESCE(excluded.file_size, episode_files.file_size),
@@ -8767,9 +8822,13 @@
             entry.episode_number,
             entry.telegram_file_id,
             entry.telegram_unique_id,
+            entry.file_fingerprint,
             entry.quality,
             entry.codec,
             entry.part,
+            entry.part_number,
+            entry.edition_label,
+            entry.is_bonus,
             entry.tags,
             entry.version_label,
             entry.file_size,
@@ -10388,7 +10447,16 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        parsed._persistedInD1 = true;
         memoryFallback.set(`d1_catalog_movie_${mid}`, parsed);
+        memoryFallback.set(`d1_movie_in_db_${mid}`, {
+          manualOverride: Boolean(parsed.manualOverride || parsed.manual_override),
+          title: parsed.title,
+          poster_path: parsed.poster_path || null,
+          external_poster_url: parsed.external_poster_url || null,
+          telegraphUrl: parsed.telegraphUrl || null,
+          ts: Date.now()
+        });
         memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
         trackStat("d1Hits");
         return parsed;
@@ -10402,43 +10470,72 @@
     const mid = Number(movieObj.id);
     const prevSavedTs = Number(memoryFallback.get(`d1_movie_saved_ts_${mid}`) || 0);
     const prevMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
+    const knownInD1 = memoryFallback.get(`d1_movie_in_db_${mid}`);
     // MODUL 4.5: Schreibschutz für Admin-Entscheidungen (manual_override = 1)
-    if (prevMovie && prevMovie.manualOverride && !movieObj.manualOverride) {
+    if ((prevMovie?.manualOverride || knownInD1?.manualOverride) && !movieObj.manualOverride) {
       return;
     }
-    const isManualOverride = Boolean(movieObj.manualOverride || movieObj.manual_override || prevMovie?.manualOverride);
+    const isManualOverride = Boolean(movieObj.manualOverride || movieObj.manual_override || prevMovie?.manualOverride || knownInD1?.manualOverride);
     if (isManualOverride) movieObj.manualOverride = true;
     memoryFallback.set(`d1_catalog_movie_${mid}`, movieObj);
     const releaseYearForIdx = movieObj.releaseDate && movieObj.releaseDate !== "Keine Angabe"
       ? parseInt(String(movieObj.releaseDate).split("-")[0], 10) || null
       : null;
     registerLocalD1CatalogTitleInRam("m", mid, movieObj.title, releaseYearForIdx);
-    // Wenn derselbe Film in den letzten 30 Minuten bereits in D1 gespeichert wurde und sich Titel/Poster nicht geändert haben, spare den redundanten D1-Write!
-    if (!movieObj.manualOverride && prevSavedTs > 0 && (Date.now() - prevSavedTs) < 1800000 && prevMovie && prevMovie.title === movieObj.title && prevMovie.poster_path === movieObj.poster_path && prevMovie.external_poster_url === movieObj.external_poster_url && prevMovie.telegraphUrl === movieObj.telegraphUrl) {
+    // NUR dann den D1-Write überspringen, wenn der Film nachweislich bereits in D1 (_persistedInD1 / d1_movie_in_db_) liegt!
+    if (
+      !movieObj.manualOverride &&
+      knownInD1 &&
+      prevSavedTs > 0 &&
+      (Date.now() - prevSavedTs) < 1800000 &&
+      knownInD1.title === movieObj.title &&
+      (knownInD1.poster_path || null) === (movieObj.poster_path || null) &&
+      (knownInD1.external_poster_url || null) === (movieObj.external_poster_url || null) &&
+      (knownInD1.telegraphUrl || null) === (movieObj.telegraphUrl || null)
+    ) {
+      movieObj._persistedInD1 = true;
       return;
     }
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
-      if (!isManualOverride) {
-        const existingRow = await db.prepare("SELECT manual_override FROM movies WHERE tmdb_id = ?1").bind(mid).first().catch(() => null);
-        if (existingRow && Number(existingRow.manual_override) === 1) {
-          return;
-        }
-      }
       trackStat("d1Writes");
       const releaseYear = movieObj.releaseDate && movieObj.releaseDate !== "Keine Angabe"
         ? parseInt(String(movieObj.releaseDate).split("-")[0], 10) || null
         : null;
       await db
-        .prepare(`INSERT OR REPLACE INTO movies (
+        .prepare(`INSERT INTO movies (
           tmdb_id, title, release_date, release_year, fsk, vote_average, runtime,
           country, genres, directors, casts, overview, is_english_fallback,
           providers, poster_path, backdrop_path, trailer_key,
           collection_id, collection_name, telegraph_url, manual_override, details_json, updated_at
         ) VALUES (
           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
-        )`)
+        )
+        ON CONFLICT(tmdb_id) DO UPDATE SET
+          title = excluded.title,
+          release_date = excluded.release_date,
+          release_year = excluded.release_year,
+          fsk = excluded.fsk,
+          vote_average = excluded.vote_average,
+          runtime = excluded.runtime,
+          country = excluded.country,
+          genres = excluded.genres,
+          directors = excluded.directors,
+          casts = excluded.casts,
+          overview = excluded.overview,
+          is_english_fallback = excluded.is_english_fallback,
+          providers = excluded.providers,
+          poster_path = COALESCE(excluded.poster_path, movies.poster_path),
+          backdrop_path = COALESCE(excluded.backdrop_path, movies.backdrop_path),
+          trailer_key = COALESCE(excluded.trailer_key, movies.trailer_key),
+          collection_id = COALESCE(excluded.collection_id, movies.collection_id),
+          collection_name = COALESCE(excluded.collection_name, movies.collection_name),
+          telegraph_url = COALESCE(excluded.telegraph_url, movies.telegraph_url),
+          manual_override = CASE WHEN excluded.manual_override = 1 OR COALESCE(movies.manual_override, 0) = 1 THEN 1 ELSE 0 END,
+          details_json = excluded.details_json,
+          updated_at = excluded.updated_at
+        WHERE COALESCE(movies.manual_override, 0) = 0 OR excluded.manual_override = 1`)
         .bind(
           mid,
           String(movieObj.title || "Unbekannt"),
@@ -10465,6 +10562,15 @@
           Date.now()
         )
         .run();
+      movieObj._persistedInD1 = true;
+      memoryFallback.set(`d1_movie_in_db_${mid}`, {
+        manualOverride: isManualOverride,
+        title: movieObj.title,
+        poster_path: movieObj.poster_path || null,
+        external_poster_url: movieObj.external_poster_url || null,
+        telegraphUrl: movieObj.telegraphUrl || null,
+        ts: Date.now()
+      });
       memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
     } catch (e) {}
   }
@@ -10492,7 +10598,16 @@
         if (row.telegraph_url && !parsed.telegraphUrl) {
           parsed.telegraphUrl = row.telegraph_url;
         }
+        parsed._persistedInD1 = true;
         memoryFallback.set(`d1_catalog_series_${sid}`, parsed);
+        memoryFallback.set(`d1_series_in_db_${sid}`, {
+          manualOverride: Boolean(parsed.manualOverride || parsed.manual_override),
+          title: parsed.title,
+          poster_path: parsed.poster_path || null,
+          external_poster_url: parsed.external_poster_url || null,
+          telegraphUrl: parsed.telegraphUrl || null,
+          ts: Date.now()
+        });
         memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
         trackStat("d1Hits");
         return parsed;
@@ -10541,45 +10656,74 @@
     const sid = Number(seriesObj.id);
     const prevSavedTs = Number(memoryFallback.get(`d1_series_saved_ts_${sid}`) || 0);
     const prevSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
+    const knownInD1 = memoryFallback.get(`d1_series_in_db_${sid}`);
     // MODUL 4.5: Schreibschutz für Admin-Entscheidungen (manual_override = 1)
-    if (prevSeries && prevSeries.manualOverride && !seriesObj.manualOverride) {
+    if ((prevSeries?.manualOverride || knownInD1?.manualOverride) && !seriesObj.manualOverride) {
       return;
     }
-    const isManualOverride = Boolean(seriesObj.manualOverride || seriesObj.manual_override || prevSeries?.manualOverride);
+    const isManualOverride = Boolean(seriesObj.manualOverride || seriesObj.manual_override || prevSeries?.manualOverride || knownInD1?.manualOverride);
     if (isManualOverride) seriesObj.manualOverride = true;
     memoryFallback.set(`d1_catalog_series_${sid}`, seriesObj);
     const releaseYearForIdx = seriesObj.releaseDate && seriesObj.releaseDate !== "Keine Angabe"
       ? parseInt(String(seriesObj.releaseDate).split("-")[0], 10) || null
       : null;
     registerLocalD1CatalogTitleInRam("s", sid, seriesObj.title, releaseYearForIdx);
-    // Wenn dieselbe Serie in den letzten 30 Minuten bereits in D1 gespeichert wurde (z.B. bei S01E01 -> S01E02 -> S01E24)
-    // und sich weder Titel, Poster noch Telegraph-Link geändert haben, spare das erneute Schreiben & Staffel-Prunen komplett ein!
-    if (!seriesObj.manualOverride && prevSavedTs > 0 && (Date.now() - prevSavedTs) < 1800000 && prevSeries && prevSeries.title === seriesObj.title && prevSeries.poster_path === seriesObj.poster_path && prevSeries.external_poster_url === seriesObj.external_poster_url && prevSeries.telegraphUrl === seriesObj.telegraphUrl) {
+    // NUR dann den D1-Write überspringen, wenn die Serie nachweislich bereits in D1 (_persistedInD1 / d1_series_in_db_) liegt!
+    if (
+      !seriesObj.manualOverride &&
+      knownInD1 &&
+      prevSavedTs > 0 &&
+      (Date.now() - prevSavedTs) < 1800000 &&
+      knownInD1.title === seriesObj.title &&
+      (knownInD1.poster_path || null) === (seriesObj.poster_path || null) &&
+      (knownInD1.external_poster_url || null) === (seriesObj.external_poster_url || null) &&
+      (knownInD1.telegraphUrl || null) === (seriesObj.telegraphUrl || null)
+    ) {
+      seriesObj._persistedInD1 = true;
       return;
     }
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
-      if (!isManualOverride) {
-        const existingRow = await db.prepare("SELECT manual_override FROM series WHERE tmdb_id = ?1").bind(sid).first().catch(() => null);
-        if (existingRow && Number(existingRow.manual_override) === 1) {
-          return;
-        }
-      }
       trackStat("d1Writes");
       const releaseYear = seriesObj.releaseDate && seriesObj.releaseDate !== "Keine Angabe"
         ? parseInt(String(seriesObj.releaseDate).split("-")[0], 10) || null
         : null;
       const stmts = [
         db
-          .prepare(`INSERT OR REPLACE INTO series (
+          .prepare(`INSERT INTO series (
             tmdb_id, title, release_date, release_year, fsk, status_text, vote_average,
             runtime, country, genres, directors, casts, overview, is_english_fallback,
             providers, poster_path, backdrop_path, trailer_key,
             number_of_seasons, number_of_episodes, telegraph_url, manual_override, details_json, updated_at
           ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
-          )`)
+          )
+          ON CONFLICT(tmdb_id) DO UPDATE SET
+            title = excluded.title,
+            release_date = excluded.release_date,
+            release_year = excluded.release_year,
+            fsk = excluded.fsk,
+            status_text = excluded.status_text,
+            vote_average = excluded.vote_average,
+            runtime = excluded.runtime,
+            country = excluded.country,
+            genres = excluded.genres,
+            directors = excluded.directors,
+            casts = excluded.casts,
+            overview = excluded.overview,
+            is_english_fallback = excluded.is_english_fallback,
+            providers = excluded.providers,
+            poster_path = COALESCE(excluded.poster_path, series.poster_path),
+            backdrop_path = COALESCE(excluded.backdrop_path, series.backdrop_path),
+            trailer_key = COALESCE(excluded.trailer_key, series.trailer_key),
+            number_of_seasons = excluded.number_of_seasons,
+            number_of_episodes = excluded.number_of_episodes,
+            telegraph_url = COALESCE(excluded.telegraph_url, series.telegraph_url),
+            manual_override = CASE WHEN excluded.manual_override = 1 OR COALESCE(series.manual_override, 0) = 1 THEN 1 ELSE 0 END,
+            details_json = excluded.details_json,
+            updated_at = excluded.updated_at
+          WHERE COALESCE(series.manual_override, 0) = 0 OR excluded.manual_override = 1`)
           .bind(
             sid,
             String(seriesObj.title || "Unbekannt"),
@@ -10632,6 +10776,15 @@
         }
       }
       await db.batch(stmts);
+      seriesObj._persistedInD1 = true;
+      memoryFallback.set(`d1_series_in_db_${sid}`, {
+        manualOverride: isManualOverride,
+        title: seriesObj.title,
+        poster_path: seriesObj.poster_path || null,
+        external_poster_url: seriesObj.external_poster_url || null,
+        telegraphUrl: seriesObj.telegraphUrl || null,
+        ts: Date.now()
+      });
       memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
     } catch (e) {}
   }
@@ -10931,14 +11084,31 @@
         trackStat("d1Reads");
         countD1Subrequest();
         const [mRows, sRows] = await rawDb.batch([
-          rawDb.prepare("SELECT tmdb_id, title, release_year FROM movies"),
-          rawDb.prepare("SELECT tmdb_id, title, release_year FROM series")
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM movies"),
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM series")
         ]);
+        const nowLoadedTs = Date.now();
         for (const r of (mRows?.results || [])) {
           registerLocalD1CatalogTitleInRam("m", r.tmdb_id, r.title, r.release_year);
+          memoryFallback.set(`d1_movie_in_db_${r.tmdb_id}`, {
+            manualOverride: Number(r.manual_override || 0) === 1,
+            title: r.title,
+            poster_path: r.poster_path || null,
+            external_poster_url: null,
+            telegraphUrl: r.telegraph_url || null,
+            ts: nowLoadedTs
+          });
         }
         for (const r of (sRows?.results || [])) {
           registerLocalD1CatalogTitleInRam("s", r.tmdb_id, r.title, r.release_year);
+          memoryFallback.set(`d1_series_in_db_${r.tmdb_id}`, {
+            manualOverride: Number(r.manual_override || 0) === 1,
+            title: r.title,
+            poster_path: r.poster_path || null,
+            external_poster_url: null,
+            telegraphUrl: r.telegraph_url || null,
+            ts: nowLoadedTs
+          });
         }
       } catch (e) {}
     }
@@ -10958,16 +11128,18 @@
     return { normT, tc, yrKey, exactKey, anyYearKey, legacySeriesKey, legacySeriesAnyKey };
   }
 
-  // Bündelt alle D1-Lesezugriffe (file_ids + entity_cache Keys) eines Import-Batches in 1 einzigen db.batch()-Subrequest!
+  // Bündelt alle D1-Lesezugriffe (file_ids + entity_cache Keys + movie_files/episode_files bekannter IDs) eines Import-Batches in 1 einzigen db.batch()-Subrequest!
   async function prefetchBatchMediaFromD1(env, entriesList) {
     if (!Array.isArray(entriesList) || entriesList.length === 0) return;
     await ensureD1Schema(env);
-    await ensureLocalD1CatalogTitleMapLoaded(env);
+    const localMap = await ensureLocalD1CatalogTitleMapLoaded(env);
     const rawDb = getRawD1Binding(env);
     if (!rawDb) return;
 
     const fidsToCheck = new Set();
     const entityKeysToCheck = new Set();
+    const movieIdsToPrefetchFiles = new Set();
+    const seriesIdsToPrefetchFiles = new Set();
 
     for (const item of entriesList) {
       if (!item) continue;
@@ -10982,11 +11154,20 @@
         : String(item.cleanTitle || item.title || item.filename || item.file_name || item.rawInput || "").trim();
       const isSer = typeof item === "object" && Boolean(item.isSeries || item.type === "series" || item.typeCode === "s" || item.season || item.episode);
       const yr = typeof item === "object" && item.year ? Number(item.year) : null;
+      let knownTmdbId = typeof item === "object" ? Number(item.tmdb_id || item.tmdbId || 0) : 0;
+      let effTc = isSer ? "s" : "m";
       if (rawTitle) {
         const parsedGuess = parseMediaFilename(rawTitle, item?.raw_text || item?.rawText || "");
         const effTitle = (typeof item === "object" && item.cleanTitle && item.cleanTitle !== "Unbekannt") ? item.cleanTitle : parsedGuess.cleanTitle;
-        const effTc = (isSer || parsedGuess.isSeries) ? "s" : "m";
+        effTc = (isSer || parsedGuess.isSeries) ? "s" : "m";
         const effYr = yr || parsedGuess.year || null;
+        if (!knownTmdbId && localMap instanceof Map) {
+          const normT = normalizeCompareString(effTitle || "");
+          const localHit = (effYr ? localMap.get(`${effTc}_${normT}_${effYr}`) : null) || localMap.get(`${effTc}_${normT}_any`);
+          if (localHit && localHit.tmdbId) {
+            knownTmdbId = Number(localHit.tmdbId);
+          }
+        }
         const keys = buildTitleResolutionCacheKeys(effTitle, effYr, effTc);
         if (keys) {
           for (const k of [keys.exactKey, keys.anyYearKey, keys.legacySeriesKey, keys.legacySeriesAnyKey]) {
@@ -10996,16 +11177,32 @@
           }
         }
       }
+      if (knownTmdbId > 0) {
+        if (effTc === "s") {
+          const sNum = Number(item?.season ?? 1) || 1;
+          if (!memoryFallback.has(`d1_ep_files_season_ts_${knownTmdbId}_${sNum}`)) {
+            seriesIdsToPrefetchFiles.add(knownTmdbId);
+          }
+        } else {
+          if (!memoryFallback.has(`d1_movie_files_ts_${knownTmdbId}`)) {
+            movieIdsToPrefetchFiles.add(knownTmdbId);
+          }
+        }
+      }
     }
 
     const fidArr = Array.from(fidsToCheck).slice(0, 30);
     const entArr = Array.from(entityKeysToCheck).slice(0, 45);
-    if (fidArr.length === 0 && entArr.length === 0) return;
+    const movFileIdArr = Array.from(movieIdsToPrefetchFiles).slice(0, 25);
+    const serFileIdArr = Array.from(seriesIdsToPrefetchFiles).slice(0, 15);
+    if (fidArr.length === 0 && entArr.length === 0 && movFileIdArr.length === 0 && serFileIdArr.length === 0) return;
 
     const batchStmts = [];
     let movFidStmtIdx = -1;
     let epFidStmtIdx = -1;
     let entStmtIdx = -1;
+    let movFilesPreloadIdx = -1;
+    let serFilesPreloadIdx = -1;
 
     if (fidArr.length > 0) {
       const placeholders = fidArr.map((_, i) => `?${i + 1}`).join(",");
@@ -11019,6 +11216,18 @@
       const placeholders = entArr.map((_, i) => `?${i + 1}`).join(",");
       entStmtIdx = batchStmts.length;
       batchStmts.push(rawDb.prepare(`SELECT cache_key, data_json, updated_at FROM entity_cache WHERE cache_key IN (${placeholders})`).bind(...entArr));
+    }
+
+    if (movFileIdArr.length > 0) {
+      const placeholders = movFileIdArr.map((_, i) => `?${i + 1}`).join(",");
+      movFilesPreloadIdx = batchStmts.length;
+      batchStmts.push(rawDb.prepare(`SELECT id, movie_id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...movFileIdArr));
+    }
+
+    if (serFileIdArr.length > 0) {
+      const placeholders = serFileIdArr.map((_, i) => `?${i + 1}`).join(",");
+      serFilesPreloadIdx = batchStmts.length;
+      batchStmts.push(rawDb.prepare(`SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id IN (${placeholders})`).bind(...serFileIdArr));
     }
 
     if (batchStmts.length === 0) return;
@@ -11084,6 +11293,43 @@
       for (const k of entArr) {
         if (!foundEntKeys.has(k)) {
           memoryFallback.set(`d1_entity_${k}`, { notInD1: true, ts: nowTs });
+        }
+      }
+
+      if (movFilesPreloadIdx >= 0) {
+        const groupedMovieFiles = new Map();
+        for (const mid of movFileIdArr) groupedMovieFiles.set(mid, []);
+        for (const r of (batchRes[movFilesPreloadIdx]?.results || [])) {
+          const mid = Number(r?.movie_id || 0);
+          if (mid && groupedMovieFiles.has(mid)) {
+            groupedMovieFiles.get(mid).push({ ...r, _fromD1: true });
+          }
+        }
+        for (const [mid, rows] of groupedMovieFiles.entries()) {
+          memoryFallback.set(`d1_movie_files_${mid}`, rows);
+          memoryFallback.set(`d1_movie_files_ts_${mid}`, nowTs);
+        }
+      }
+
+      if (serFilesPreloadIdx >= 0) {
+        const groupedEpFiles = new Map();
+        for (const r of (batchRes[serFilesPreloadIdx]?.results || [])) {
+          const sid = Number(r?.series_id || 0);
+          const sNum = Number(r?.season_number ?? 1);
+          if (!sid) continue;
+          const k = `${sid}_${sNum}`;
+          if (!groupedEpFiles.has(k)) groupedEpFiles.set(k, []);
+          groupedEpFiles.get(k).push({ ...r, _fromD1: true });
+        }
+        for (const [k, rows] of groupedEpFiles.entries()) {
+          memoryFallback.set(`d1_ep_files_${k}`, rows);
+          memoryFallback.set(`d1_ep_files_season_ts_${k}`, nowTs);
+        }
+        for (const sid of serFileIdArr) {
+          if (!groupedEpFiles.has(`${sid}_1`) && !memoryFallback.has(`d1_ep_files_season_ts_${sid}_1`)) {
+            memoryFallback.set(`d1_ep_files_${sid}_1`, []);
+            memoryFallback.set(`d1_ep_files_season_ts_${sid}_1`, nowTs);
+          }
         }
       }
     } catch (e) {}
@@ -22900,7 +23146,7 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     const batchWallStartMs = Date.now();
-    const BATCH_WALL_CLOCK_LIMIT_MS = 8000;
+    const BATCH_WALL_CLOCK_LIMIT_MS = 5200;
     resetSubrequestBudget();
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
@@ -23295,7 +23541,7 @@
         } catch (e) {}
       }
 
-      if (i + JSON_INGEST_CONCURRENCY < total) {
+      if (i + JSON_INGEST_CONCURRENCY < total && currentInvocationSubrequests > 2) {
         await new Promise(r => setTimeout(r, JSON_INGEST_DELAY_MS));
       }
     }
@@ -23339,8 +23585,8 @@
       }
     }
 
-    // Automatische DB-Bereinigung am Ende jedes Imports: Entfernt alle Serien mit 0 gültigen Episoden-Videos
-    if (!partialBatch) {
+    // Automatische DB-Bereinigung nur am Ende des gesamten Imports (oder bei Einzel-Läufen): Entfernt Serien mit 0 gültigen Episoden-Videos
+    if (!partialBatch && (!playlistContext || playlistContext.isFinalBatch !== false)) {
       await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
     }
 
@@ -41427,6 +41673,7 @@
               body: JSON.stringify({
                 entries: slice,
                 batchStartCursor: backupImportJob.cursor,
+                isFinalBatch: (backupImportJob.cursor + rawSlice.length >= backupImportJob.entries.length),
                 sourceChannelId: activeChan,
                 playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
                 playlistMode: backupImportJob.playlistMode || "both",
@@ -41689,16 +41936,23 @@
             }
           }
           renderBackupImportBoxDom();
-          // Auto-Pause (5s Cooldown), sobald die D1-/Worker-Batch-Latenz 2 Sekunden (2000ms) überschreitet, um HTTP 503 Gateway-Timeouts proaktiv zu verhindern
-          if (batchLatencyMs > 2000 && backupImportJob.running && !backupImportJob.paused) {
+          // Adaptives Pacing statt starrer 5s-Pause bei >2000ms:
+          // Normale TMDb-Batches bis 4500ms laufen ohne Zusatzpause durch; 4500–6500ms erhalten 1s Verschnaufpause; erst ab >6500ms greift ein 2s Cooldown.
+          if (batchLatencyMs > 6500 && backupImportJob.running && !backupImportJob.paused) {
             backupImportJob._lastBatchHadLatencyCooldown = true;
-            backupImportJob.currentBatchModeLabel = "⏳ Auto-Pause (5s Cooldown)";
+            backupImportJob.currentBatchModeLabel = "⏳ Kurz-Pause (2s Cooldown)";
             backupImportJob.currentBatchModeColor = "#fbbf24";
-            backupImportJob.recentLog.push("⏳ Auto-Pause (5s Cooldown): D1-/Worker-Batch-Latenz (" + batchLatencyMs + "ms > 2000ms) – Schutz vor HTTP 503 Gateway-Timeout aktiv");
+            backupImportJob.recentLog.push("⏳ Kurz-Pause (2s Cooldown): Hohe Worker-Batch-Latenz (" + batchLatencyMs + "ms > 6500ms) – drossele Folge-Batch auf 6 Einträge");
             renderBackupImportBoxDom();
-            await new Promise(res => setTimeout(res, 5000));
+            await new Promise(res => setTimeout(res, 2000));
+          } else if (batchLatencyMs > 4500 && backupImportJob.running && !backupImportJob.paused) {
+            backupImportJob._lastBatchHadLatencyCooldown = true;
+            backupImportJob.currentBatchModeLabel = "🛡️ Adaptives Pacing (1s)";
+            backupImportJob.currentBatchModeColor = "#f59e0b";
+            renderBackupImportBoxDom();
+            await new Promise(res => setTimeout(res, 1000));
           } else {
-            await new Promise(res => setTimeout(res, hadRateWarning ? 650 : 340));
+            await new Promise(res => setTimeout(res, hadRateWarning ? 500 : 220));
           }
         }
 
@@ -44575,7 +44829,8 @@
               folderId: playlistFolder.id,
               playlistName: playlistFolder.name,
               playlistMode: playlistFolder.playlistMode || playlistMode,
-              deferKvWrite: true
+              deferKvWrite: true,
+              isFinalBatch: body.isFinalBatch === undefined ? true : Boolean(body.isFinalBatch)
             }
           );
           const effectiveProcessedCount = Number(nextStartIndex ?? entries.length);
