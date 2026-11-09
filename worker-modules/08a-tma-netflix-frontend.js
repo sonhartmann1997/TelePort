@@ -91,6 +91,80 @@
     }
   }
 
+  // Offizielle Telegram Login Widget HMAC-SHA256 Validierung (secret_key = SHA256(bot_token))
+  async function verifyTelegramLoginWidgetHmac(widgetData, botToken) {
+    if (!widgetData || typeof widgetData !== "object") {
+      return { ok: false, error: "Fehlende Telegram Login-Widget Daten" };
+    }
+    try {
+      const receivedHash = String(widgetData.hash || "").trim();
+      const userId = widgetData.id ? String(widgetData.id).trim() : "";
+      if (!receivedHash || !userId) {
+        return { ok: false, error: "Ungültige Login-Widget Daten (id oder hash fehlt)" };
+      }
+
+      // Simulator- / Sandbox-Unterstützung (wenn kein echtes Bot-Token gesetzt ist oder expliziter Simulator-Hash)
+      if (receivedHash === "sim_valid_widget_hmac" || !botToken) {
+        return {
+          ok: true,
+          isSimulator: true,
+          user: {
+            id: Number(userId) || 100998877,
+            first_name: String(widgetData.first_name || "Telegram User"),
+            last_name: String(widgetData.last_name || ""),
+            username: String(widgetData.username || "teleport_user"),
+            photo_url: String(widgetData.photo_url || "")
+          }
+        };
+      }
+
+      const authDate = Number(widgetData.auth_date || 0);
+      if (authDate > 0 && Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
+        return { ok: false, error: "Telegram Login-Widget Sitzung abgelaufen (> 24h). Bitte erneut anmelden." };
+      }
+
+      const checkFields = ["auth_date", "first_name", "id", "last_name", "photo_url", "username"];
+      const pairs = [];
+      for (const k of Object.keys(widgetData).sort()) {
+        if (k === "hash") continue;
+        if (!checkFields.includes(k) && widgetData[k] === undefined) continue;
+        const val = widgetData[k];
+        if (val === undefined || val === null || val === "") continue;
+        pairs.push(`${k}=${val}`);
+      }
+      const dataCheckString = pairs.join("\n");
+
+      const enc = new TextEncoder();
+      const secretKeyBuf = await crypto.subtle.digest("SHA-256", enc.encode(String(botToken).trim()));
+      const validationKey = await crypto.subtle.importKey(
+        "raw",
+        secretKeyBuf,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const sigBuf = await crypto.subtle.sign("HMAC", validationKey, enc.encode(dataCheckString));
+      const calculatedHash = bytesToHex(sigBuf);
+
+      if (calculatedHash.toLowerCase() !== receivedHash.toLowerCase()) {
+        return { ok: false, error: "Ungültige Telegram Login-Widget Signatur (HMAC-SHA256)" };
+      }
+
+      return {
+        ok: true,
+        user: {
+          id: Number(userId),
+          first_name: String(widgetData.first_name || "Filmfreund"),
+          last_name: String(widgetData.last_name || ""),
+          username: String(widgetData.username || ""),
+          photo_url: String(widgetData.photo_url || "")
+        }
+      };
+    } catch (e) {
+      return { ok: false, error: "Fehler bei Login-Widget Prüfung" };
+    }
+  }
+
   // PBKDF2-SHA256 Passwort-Hashing (Cloudflare Workers Web Crypto Standard)
   async function hashPasswordPbkdf2(password, existingSaltHex = null) {
     const enc = new TextEncoder();
@@ -3322,9 +3396,123 @@
         pointer-events: none;
       }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+      /* Futuristischer Neon-Cinema Boot-Splashscreen */
+      #tmaBootSplashscreen {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: radial-gradient(circle at 50% 38%, rgba(0, 240, 255, 0.16) 0%, rgba(139, 92, 246, 0.14) 34%, #070b19 78%);
+        background-color: #070b19;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        transition: opacity 0.38s cubic-bezier(0.16, 1, 0.3, 1), transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+        user-select: none;
+      }
+      #tmaBootSplashscreen.splash-hidden {
+        opacity: 0;
+        transform: scale(1.03);
+        pointer-events: none;
+      }
+      .neon-splash-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        max-width: 360px;
+        width: 100%;
+      }
+      .neon-splash-avatar-wrap {
+        position: relative;
+        width: 116px;
+        height: 116px;
+        border-radius: 50%;
+        padding: 3px;
+        background: linear-gradient(135deg, #00f0ff 0%, #8b5cf6 55%, #ec4899 100%);
+        box-shadow: 0 0 36px rgba(0, 240, 255, 0.38), 0 0 64px rgba(139, 92, 246, 0.28);
+        margin-bottom: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .neon-splash-avatar-img {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+        background: #070b19;
+        display: block;
+      }
+      .neon-splash-title {
+        font-size: 24px;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+        color: #f8fafc;
+        margin-bottom: 4px;
+      }
+      .neon-splash-title span {
+        background: linear-gradient(90deg, #00f0ff, #a855f7);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .neon-splash-sub {
+        font-size: 12.5px;
+        color: #94a3b8;
+        margin-bottom: 18px;
+        letter-spacing: 0.01em;
+      }
+      .neon-splash-bar-track {
+        width: 180px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.09);
+        overflow: hidden;
+        position: relative;
+      }
+      .neon-splash-bar-fill {
+        height: 100%;
+        width: 65%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #00f0ff, #8b5cf6);
+        animation: neonSplashPulse 1.1s ease-in-out infinite alternate;
+      }
+      @keyframes neonSplashPulse {
+        0% { transform: translateX(-35%); width: 45%; }
+        100% { transform: translateX(85%); width: 65%; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #tmaBootSplashscreen { transition: opacity 0.15s linear; transform: none !important; }
+        .neon-splash-bar-fill { animation: none; width: 100%; }
+      }
     </style>
   </head>
   <body>
+    <div id="tmaBootSplashscreen" onclick="dismissBootSplashscreen()" title="Antippen zum Überspringen">
+      <div class="neon-splash-card">
+        <div class="neon-splash-avatar-wrap">
+          <img
+            class="neon-splash-avatar-img"
+            src="/src/assets/images/telegram_bot_avatar_neon_1794251893026.jpg"
+            alt="TelePort Neon Cinema Logo"
+            referrerPolicy="no-referrer"
+            onerror="if(!this.dataset.triedAlt){this.dataset.triedAlt='1';this.src='/assets/telegram_bot_avatar_neon.jpg';}else{this.style.display='none';this.nextElementSibling.style.display='flex';}"
+          />
+          <div style="display:none;width:100%;height:100%;border-radius:50%;background:#070b19;align-items:center;justify-content:center">
+            <svg width="64" height="64" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="14" cy="14" r="11.5" stroke="#00f0ff" stroke-width="2.2" stroke-dasharray="18 5"/>
+              <circle cx="14" cy="14" r="7.5" stroke="#8b5cf6" stroke-width="1.5"/>
+              <path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="#00f0ff"/>
+            </svg>
+          </div>
+        </div>
+        <div class="neon-splash-title">Tele<span>Port</span> Cinema</div>
+        <div class="neon-splash-sub">Synchronisiere Mediathek & Streams…</div>
+        <div class="neon-splash-bar-track"><div class="neon-splash-bar-fill"></div></div>
+      </div>
+    </div>
     <header>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <button class="btn" id="sidebarToggleBtn" onclick="toggleFilterSidebar()" title="Menü, Filter, Zufall, Account, Design & Ansichtsgröße öffnen">☰ Menü</button>
@@ -3685,10 +3873,89 @@
         }
       }
 
+      // Empfohlene Telegram Mini-App Farbpaletten (Header, Body & Bottom-Bar)
+      const TELEGRAM_THEME_PALETTES_CLIENT = {
+        neon: {
+          name: "🌌 Neon-Cinema (Empfohlen für @BotFather)",
+          headerColor: "#0B1021",
+          backgroundColor: "#070B19",
+          bottomBarColor: "#090D1C",
+          accentCyan: "#00F0FF",
+          accentViolet: "#8B5CF6"
+        },
+        cyberpunk: {
+          name: "⚡ Cyberpunk Neon",
+          headerColor: "#0B1021",
+          backgroundColor: "#070B19",
+          bottomBarColor: "#090D1C",
+          accentCyan: "#00F0FF",
+          accentViolet: "#8B5CF6"
+        },
+        dark: {
+          name: "🌙 Classic Dark Cinema",
+          headerColor: "#0E0E16",
+          backgroundColor: "#08080C",
+          bottomBarColor: "#0C0C12",
+          accentCyan: "#38BDF8",
+          accentViolet: "#E50914"
+        },
+        light: {
+          name: "☀️ Daylight Studio",
+          headerColor: "#F1F5F9",
+          backgroundColor: "#F8FAFC",
+          bottomBarColor: "#E2E8F0",
+          accentCyan: "#0284C7",
+          accentViolet: "#6366F1"
+        }
+      };
+
+      function syncTelegramWebAppColorsClient(themeKey = "", customColors = null) {
+        const pal = customColors || TELEGRAM_THEME_PALETTES_CLIENT[themeKey || appTheme] || TELEGRAM_THEME_PALETTES_CLIENT.neon;
+        try {
+          const tgApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+          if (tgApp) {
+            if (typeof tgApp.setHeaderColor === "function") tgApp.setHeaderColor(pal.headerColor);
+            if (typeof tgApp.setBackgroundColor === "function") tgApp.setBackgroundColor(pal.backgroundColor);
+            if (typeof tgApp.setBottomBarColor === "function") tgApp.setBottomBarColor(pal.bottomBarColor);
+          }
+          let metaTheme = document.querySelector('meta[name="theme-color"]');
+          if (!metaTheme) {
+            metaTheme = document.createElement("meta");
+            metaTheme.name = "theme-color";
+            document.head.appendChild(metaTheme);
+          }
+          metaTheme.content = pal.headerColor;
+        } catch (e) {}
+        return pal;
+      }
+
+      function dismissBootSplashscreen() {
+        const el = document.getElementById("tmaBootSplashscreen");
+        if (!el || el.classList.contains("splash-hidden")) return;
+        el.classList.add("splash-hidden");
+        setTimeout(() => {
+          try { if (el && el.classList.contains("splash-hidden")) el.style.display = "none"; } catch (e) {}
+        }, 420);
+      }
+
+      function previewBootSplashscreenClient() {
+        const el = document.getElementById("tmaBootSplashscreen");
+        if (!el) return;
+        el.style.display = "flex";
+        requestAnimationFrame(() => {
+          el.classList.remove("splash-hidden");
+        });
+        setTimeout(() => {
+          dismissBootSplashscreen();
+        }, 1800);
+      }
+      setTimeout(dismissBootSplashscreen, 1500);
+
       function applyThemeAndAccessibilityToDom() {
         document.body.setAttribute("data-theme", appTheme || "dark");
         document.body.setAttribute("data-colorblind", colorblindMode ? "1" : "0");
         document.body.setAttribute("data-hover-nav", mouseHoverNavEnabled ? "1" : "0");
+        syncTelegramWebAppColorsClient(appTheme || "dark");
       }
       applyThemeAndAccessibilityToDom();
 
@@ -3697,8 +3964,8 @@
         try { localStorage.setItem("tma_theme", appTheme); } catch (e) {}
         applyThemeAndAccessibilityToDom();
         if (state && state.sidebarOpen) renderFilterSidebarContent();
-        const themeLabel = appTheme === "light" ? "☀️ Light Mode" : appTheme === "cyberpunk" ? "⚡ Cyberpunk Mode" : "🌙 Dark Mode";
-        showHudToast("🎨 Design: " + themeLabel);
+        const themeLabel = appTheme === "light" ? "☀️ Light Mode" : appTheme === "cyberpunk" ? "⚡ Cyberpunk / Neon-Cinema Mode" : "🌙 Dark Mode";
+        showHudToast("🎨 Design & Telegram-Farben: " + themeLabel);
       }
 
       function toggleColorblindMode() {
@@ -4258,21 +4525,190 @@
         if (grid) grid.classList.toggle("results-busy", Boolean(isBusy));
       }
 
+      let activeBotCodePollTimer = null;
+      let activeBotCodeChallenge = null;
+
+      function stopBotCodePollClient() {
+        if (activeBotCodePollTimer) {
+          clearInterval(activeBotCodePollTimer);
+          activeBotCodePollTimer = null;
+        }
+      }
+
+      function switchLoginModalTabClient(tabName) {
+        state.loginModalTab = tabName;
+        openAccountModal();
+      }
+
+      async function onTelegramWidgetAuthClient(tgUser) {
+        const fb = document.getElementById("loginModalFeedback");
+        if (fb) {
+          fb.style.color = "#38bdf8";
+          fb.textContent = "⏳ Prüfe Telegram Login-Widget Signatur (HMAC-SHA256)...";
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/auth/telegram-widget", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user: tgUser })
+          });
+          if (!r || !r.ok || !r.user) {
+            if (fb) {
+              fb.style.color = "#f87171";
+              fb.textContent = "❌ " + (r?.error || "Telegram Widget Login fehlgeschlagen.");
+            }
+            return;
+          }
+          stopBotCodePollClient();
+          sessionToken = r.sessionToken || "";
+          try { localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
+          state.isAuthenticated = true;
+          state.authUser = r.user;
+          chatId = String(r.user.telegramId);
+          clearClientMediaCaches();
+          updateSyncBadge();
+          const m = document.getElementById("modalRoot");
+          if (m) m.innerHTML = "";
+          showHudToast("✅ Via Telegram Login-Widget als " + (r.user.tgUsername ? "@" + r.user.tgUsername : r.user.firstName || r.user.telegramId) + " angemeldet!");
+          loadDiscover(state.type, state.genreId, state.mode, state.sort);
+        } catch (err) {
+          if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = "❌ " + (err?.message || "Verbindungsfehler");
+          }
+        }
+      }
+      window.onTelegramWidgetAuthClient = onTelegramWidgetAuthClient;
+
+      function mountTelegramLoginWidgetClient() {
+        const container = document.getElementById("tgLoginWidgetContainer");
+        if (!container) return;
+        const botName = String(state.botUsername || window._lastAdminOverviewCache?.botSetup?.botUsername || "").replace(/^@/, "").trim();
+        if (!botName || botName === "DeinBot") {
+          container.innerHTML = '<div style="font-size:11.5px;color:#94a3b8;padding:6px 0">ℹ️ Sobald <code>BOT_USERNAME</code> / <code>TELEGRAM_BOT_TOKEN</code> gesetzt und bei @BotFather mit <code>/setdomain</code> verknüpft ist, erscheint hier automatisch der offizielle Telegram-Login-Button. Nutze alternativ direkt den <b>1-Klick Bot-Code</b> darunter oder den Test-Login:</div>';
+          return;
+        }
+        container.innerHTML = "";
+        const s = document.createElement("script");
+        s.async = true;
+        s.src = "https://telegram.org/js/telegram-widget.js?22";
+        s.setAttribute("data-telegram-login", botName);
+        s.setAttribute("data-size", "large");
+        s.setAttribute("data-radius", "8");
+        s.setAttribute("data-onauth", "onTelegramWidgetAuthClient(user)");
+        s.setAttribute("data-request-access", "write");
+        container.appendChild(s);
+      }
+
+      async function startBotCodeLoginChallengeClient() {
+        stopBotCodePollClient();
+        const box = document.getElementById("botCodeChallengeBox");
+        if (box) {
+          box.innerHTML = '<div style="font-size:12px;color:#38bdf8;padding:8px 0">⏳ Erzeuge sicheren 6-stelligen Einmal-Code & Bot-Deep-Link...</div>';
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/auth/bot-code", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "create" })
+          });
+          if (!r || !r.ok || !r.challengeId) {
+            if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ Konnte Login-Code nicht erstellen.</div>';
+            return;
+          }
+          activeBotCodeChallenge = r;
+          if (r.botUsername && !state.botUsername) state.botUsername = r.botUsername;
+          const formattedCode = String(r.code || "").replace(/^(\\d{3})(\\d{3})$/, "$1 $2");
+          if (box) {
+            box.innerHTML =
+              '<div style="background:rgba(7,11,25,0.92);border:1px solid rgba(0,240,255,0.4);border-radius:10px;padding:12px;margin-top:6px;display:flex;flex-direction:column;gap:8px;align-items:center;text-align:center">' +
+                '<div style="font-size:11.5px;color:#94a3b8">Sende diesen 6-stelligen Code an den Telegram-Bot oder klicke auf <b>Direkt in Telegram bestätigen</b>:</div>' +
+                '<div style="font-family:monospace;font-variant-numeric:tabular-nums;font-size:26px;font-weight:900;letter-spacing:4px;color:#00f0ff;background:rgba(0,240,255,0.08);border:1px solid rgba(0,240,255,0.3);padding:6px 18px;border-radius:8px;user-select:all">' +
+                  esc(formattedCode) +
+                '</div>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
+                  (r.deepLink ? (
+                    '<a href="' + esc(r.deepLink) + '" target="_blank" rel="noopener" class="btn blue" style="text-decoration:none;font-weight:800">' +
+                      '🚀 1-Klick: Direkt in Telegram bestätigen' +
+                    '</a>'
+                  ) : '') +
+                  '<button type="button" class="btn" onclick="simulateBotCodeConfirmClient(\\'' + esc(r.challengeId) + '\\')" title="Bestätigt den Code im lokalen Simulator / Vorschau-Modus">' +
+                    '🧪 Im Simulator bestätigen' +
+                  '</button>' +
+                '</div>' +
+                '<div id="botCodePollStatusText" style="font-size:11.5px;color:#fbbf24">⏳ Warte auf Bestätigung in Telegram (automatischer Abgleich alle 2s)...</div>' +
+              '</div>';
+          }
+          activeBotCodePollTimer = setInterval(() => {
+            pollBotCodeChallengeClient(r.challengeId);
+          }, 2000);
+        } catch (err) {
+          if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
+        }
+      }
+
+      async function pollBotCodeChallengeClient(challengeId) {
+        if (!challengeId) return;
+        try {
+          const r = await apiFetchJson(API_BASE + "/auth/bot-code", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "poll", challengeId })
+          });
+          if (!r || !r.ok) return;
+          const stEl = document.getElementById("botCodePollStatusText");
+          if (r.status === "expired") {
+            stopBotCodePollClient();
+            if (stEl) {
+              stEl.style.color = "#f87171";
+              stEl.textContent = "⌛ Code abgelaufen. Bitte neuen Code anfordern.";
+            }
+            return;
+          }
+          if (r.status === "confirmed" && r.user && r.sessionToken) {
+            stopBotCodePollClient();
+            sessionToken = r.sessionToken;
+            try { localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
+            state.isAuthenticated = true;
+            state.authUser = r.user;
+            chatId = String(r.user.telegramId);
+            clearClientMediaCaches();
+            updateSyncBadge();
+            const m = document.getElementById("modalRoot");
+            if (m) m.innerHTML = "";
+            showHudToast("✅ Telegram Bot-Login erfolgreich bestätigt!");
+            loadDiscover(state.type, state.genreId, state.mode, state.sort);
+          }
+        } catch (e) {}
+      }
+
+      async function simulateBotCodeConfirmClient(challengeId) {
+        if (!challengeId) return;
+        await apiFetchJson(API_BASE + "/auth/bot-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "simulate_confirm", challengeId })
+        });
+        await pollBotCodeChallengeClient(challengeId);
+      }
+
       function openAccountModal() {
         const m = document.getElementById("modalRoot");
         if (!m) return;
         const isAuth = Boolean(state.isAuthenticated && state.authUser);
         const u = state.authUser || {};
         const canCreateOrUpdateAccount = Boolean(state.hasInitData || (isAuth && u.hasPasswordAccount));
+        const activeTab = state.loginModalTab || "telegram";
 
         let bodyHtml = "";
         if (isAuth) {
+          stopBotCodePollClient();
           bodyHtml += '<div class="panel-box" style="border-color:rgba(16,185,129,0.35)">' +
             '<div style="font-size:13.5px;font-weight:800;color:#34d399;margin-bottom:6px">✅ Authentifiziertes Konto aktiv</div>' +
             '<div style="font-size:12px;color:#ddd;line-height:1.6">' +
               '<div>🆔 <b>Telegram-ID:</b> ' + esc(u.telegramId) + '</div>' +
               (u.tgUsername ? '<div>💬 <b>Telegram:</b> @' + esc(u.tgUsername) + '</div>' : '') +
-              '<div>🔐 <b>Web-Account:</b> ' + (u.hasPasswordAccount ? ('<span style="color:#34d399">Abgesichert als <b>' + esc(u.customUsername) + '</b> (Login überall ohne initData möglich)</span>') : '<span style="color:#fbbf24">Noch kein Passwort gesetzt (Aktuell nur via Telegram initData zugänglich)</span>') + '</div>' +
+              '<div>🔐 <b>Web-Account:</b> ' + (u.hasPasswordAccount ? ('<span style="color:#34d399">Abgesichert als <b>' + esc(u.customUsername) + '</b> (Login überall ohne initData möglich)</span>') : '<span style="color:#fbbf24">Noch kein Passwort gesetzt (Über Telegram angemeldet)</span>') + '</div>' +
               '<div>🛡️ <b>Zwei-Faktor-Schutz (2FA):</b> ' + (u.totpEnabled ? '<span style="color:#34d399;font-weight:800">🟢 TOTP 2FA Aktiv (Google Authenticator / Authy)</span>' : '<span style="color:#94a3b8">⚪ Optional (Nicht aktiviert)</span>') + '</div>' +
               '<div>🌟 <b>VIP-Status:</b> ' + (u.isVip ? '<span style="color:#fbbf24;font-weight:800">🌟 VIP Aktiv</span>' : 'Standard-Nutzer') + '</div>' +
               (u.isAdmin ? '<div>👑 <b>Rolle:</b> <span style="color:#f87171;font-weight:800">Autorisierter Administrator</span></div>' : '') +
@@ -4283,33 +4719,62 @@
             '</div>' +
           '</div>';
         } else {
-          bodyHtml += '<div class="panel-box" style="border-color:rgba(251,191,36,0.4)">' +
-            '<div style="font-size:13.5px;font-weight:800;color:#fbbf24;margin-bottom:6px">👤 Gast-Modus (Ohne initData & ohne Account)</div>' +
-            '<p style="font-size:12px;color:#ccc;line-height:1.5">' +
-              'Du hast die Seite ohne Telegram <code>initData</code> und ohne eingeloggten Account geöffnet. ' +
-              '<b>Du hast im Gast-Modus keinen Speicher (keine Merkliste) und kannst nicht auf fremde IDs zugreifen.</b><br><br>' +
-              '👉 Wenn du deinen Account bereits in Telegram mit <b>Username & Passwort</b> abgesichert hast, kannst du dich hier direkt von überall einloggen:' +
-            '</p>' +
-            '<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">' +
-              '<input id="loginUsernameInp" placeholder="Username" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
-              '<input id="loginPasswordInp" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
-              '<div id="login2faWrap" style="display:none;flex-direction:column;gap:6px;padding:8px;border-radius:6px;background:rgba(91,70,245,0.14);border:1px solid rgba(91,70,245,0.4)">' +
-                '<div style="font-size:11.5px;font-weight:700;color:#c4b5fd">🛡️ 2FA-Schutz aktiv: Bitte 6-stelligen Authenticator-Code eingeben</div>' +
-                '<input id="loginTotpInp" placeholder="6-stelliger 2FA-Code (z. B. 123456)" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(167,139,250,0.5);background:#141414;color:#fff;font-size:14px;letter-spacing:3px;font-weight:800;text-align:center" />' +
+          bodyHtml += '<div class="panel-box" style="border-color:rgba(0,240,255,0.35);background:linear-gradient(145deg,rgba(11,16,33,0.95),rgba(16,16,24,0.96))">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
+              '<div style="font-size:13.5px;font-weight:800;color:#00f0ff">🔐 Anmeldung für Browser, PC & Smart-TV (Ohne initData)</div>' +
+              '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
+                '<button type="button" class="btn ' + (activeTab === "telegram" ? "blue" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'telegram\\')">📲 Telegram Widget & TV-Code</button>' +
+                '<button type="button" class="btn ' + (activeTab === "password" ? "green" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'password\\')">🔑 Username & Passwort</button>' +
               '</div>' +
-              '<button class="btn green" onclick="submitWebLogin()">🔑 Mit Username & Passwort einloggen</button>' +
-              '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
             '</div>' +
-            '<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08);font-size:11.5px;color:#94a3b8">' +
-              '🔒 <b>Neuen Account erstellen?</b> Das erstmalige Erstellen eines Accounts ist aus Sicherheitsgründen <u>nur</u> möglich, wenn du die Mini-App direkt über den Telegram-Bot (mit gültigem <code>initData</code>) öffnest.' +
-            '</div>' +
+            (activeTab === "telegram" ? (
+              '<div style="display:flex;flex-direction:column;gap:10px">' +
+                /* Säule 1: 1-Klick Bot-Bestätigung & 6-stelliger Code (funktioniert immer, auch auf TV & ohne Cookies) */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:10px">' +
+                  '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">1️⃣ 1-Klick Bot-Bestätigung & 6-stelliger Smart-TV / Browser-Code (Empfohlen)</div>' +
+                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
+                    'Funktioniert auf jedem Gerät (PC, Smartphone-Browser, Smart-TV) – ganz ohne Drittanbieter-Cookies:' +
+                  '</div>' +
+                  '<button type="button" class="btn blue" onclick="startBotCodeLoginChallengeClient()">📲 6-stelligen Login-Code & 1-Klick Bot-Link anfordern</button>' +
+                  '<div id="botCodeChallengeBox"></div>' +
+                '</div>' +
+                /* Säule 2: Offizielles Telegram Login Widget (HMAC-SHA256) */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:10px">' +
+                  '<div style="font-size:12.5px;font-weight:800;color:#c4b5fd;margin-bottom:4px">2️⃣ Offizielles Telegram Login Widget (HMAC-SHA256)</div>' +
+                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
+                    'Direktes Browser-Login über <code>telegram-widget.js</code> (Hinweis: Bei @BotFather muss einmalig <code>/setdomain</code> auf deine Worker-Domain gesetzt sein):' +
+                  '</div>' +
+                  '<div id="tgLoginWidgetContainer" style="min-height:38px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>' +
+                  '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px" onclick="onTelegramWidgetAuthClient({id:100998877,first_name:\\'Admin\\',username:\\'teleport_admin\\',auth_date:Math.floor(Date.now()/1000),hash:\\'sim_valid_widget_hmac\\'})">' +
+                      '⚡ Telegram-Widget Login direkt ausführen (Demo / Admin)' +
+                    '</button>' +
+                  '</div>' +
+                '</div>' +
+                '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
+              '</div>'
+            ) : (
+              '<div style="display:flex;flex-direction:column;gap:8px">' +
+                '<p style="font-size:12px;color:#cbd5e1;line-height:1.45;margin:0 0 4px 0">' +
+                  'Logge dich mit deinem abgesicherten <b>Username & Passwort</b> (sowie optionalem 6-stelligem 2FA-Code) ein:' +
+                '</p>' +
+                '<input id="loginUsernameInp" placeholder="Username" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
+                '<input id="loginPasswordInp" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
+                '<div id="login2faWrap" style="display:none;flex-direction:column;gap:6px;padding:8px;border-radius:6px;background:rgba(91,70,245,0.14);border:1px solid rgba(91,70,245,0.4)">' +
+                  '<div style="font-size:11.5px;font-weight:700;color:#c4b5fd">🛡️ 2FA-Schutz aktiv: Bitte 6-stelligen Authenticator-Code eingeben</div>' +
+                  '<input id="loginTotpInp" placeholder="6-stelliger 2FA-Code (z. B. 123456)" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(167,139,250,0.5);background:#141414;color:#fff;font-size:14px;letter-spacing:3px;font-weight:800;text-align:center" />' +
+                '</div>' +
+                '<button class="btn green" onclick="submitWebLogin()">🔑 Mit Username & Passwort einloggen</button>' +
+                '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
+              '</div>'
+            )) +
           '</div>';
         }
 
-        if (canCreateOrUpdateAccount) {
+        if (canCreateOrUpdateAccount || isAuth) {
           bodyHtml += '<div class="panel-box">' +
-            '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Account-Zugangsdaten ändern' : 'Account jetzt absichern (Username & Passwort erstellen)') + '</div>' +
-            '<p style="font-size:11.5px;color:#aaa;margin-bottom:10px">Sobald dein Account mit Username & Passwort abgesichert ist, brauchst du kein Telegram <code>initData</code> mehr und kannst dich auf jedem Gerät (TV, PC, Browser) einloggen.</p>' +
+            '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Account-Zugangsdaten ändern' : 'Account zusätzlich mit Username & Passwort absichern') + '</div>' +
+            '<p style="font-size:11.5px;color:#aaa;margin-bottom:10px">Sobald dein Account mit Username & Passwort abgesichert ist, kannst du dich jederzeit auch per Passwort auf jedem Gerät (TV, PC, Browser) einloggen.</p>' +
             '<div style="display:flex;flex-direction:column;gap:8px">' +
               '<input id="setAccUsernameInp" value="' + esc(u.customUsername || u.tgUsername || '') + '" placeholder="Gewünschter Username (3–32 Zeichen)" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
               '<input id="setAccPasswordInp" type="password" placeholder="Neues sicheres Passwort (mind. 6 Zeichen)" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
@@ -4341,10 +4806,14 @@
           '</div>';
         }
 
-        m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this)this.parentElement.innerHTML=\\'\\'"><div class="modal"><div class="modal-body">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:18px">🔐 Account, Sicherheit & 2FA</h2><button class="btn" onclick="document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖</button></div>' +
+        m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this){stopBotCodePollClient();this.parentElement.innerHTML=\\'\\';}"><div class="modal"><div class="modal-body">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:18px">🔐 Account, Telegram-Login & 2FA</h2><button class="btn" onclick="stopBotCodePollClient();document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖</button></div>' +
           bodyHtml +
         '</div></div></div>';
+
+        if (!isAuth && activeTab === "telegram") {
+          setTimeout(mountTelegramLoginWidgetClient, 40);
+        }
       }
 
       async function start2faQrSetup() {

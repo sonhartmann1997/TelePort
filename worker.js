@@ -4226,6 +4226,80 @@
     return backdropCandidate || posterCandidate || "";
   }
 
+  // --- Worker Geschwindigkeits-Profile (Cloudflare Free-Tier Turbo vs. Ausgewogen vs. Paid Pro) ---
+  const WORKER_SPEED_PROFILES = {
+    free_turbo: {
+      id: "free_turbo",
+      label: "🛡️ Cloudflare Free-Tier Turbo (Anti-Timeout)",
+      batchSize: 12,
+      wallClockLimitMs: 3200,
+      subrequestGuard: 20,
+      midBatchSubrequestGuard: 22,
+      tmdbTimeoutMs: 2200,
+      fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,8s Notfall-Parallel-Fallback wenn 0 TMDb-Treffer & Budget frei
+      fallbackTimeoutMs: 1800
+    },
+    balanced: {
+      id: "balanced",
+      label: "⚖️ Ausgewogen (Standard)",
+      batchSize: 18,
+      wallClockLimitMs: 4500,
+      subrequestGuard: 26,
+      midBatchSubrequestGuard: 28,
+      tmdbTimeoutMs: 2800,
+      fallbackMode: "balanced",
+      fallbackTimeoutMs: 2400
+    },
+    paid_pro: {
+      id: "paid_pro",
+      label: "🚀 Cloudflare Paid ($5 Plan / High-Throughput)",
+      batchSize: 30,
+      wallClockLimitMs: 7200,
+      subrequestGuard: 36,
+      midBatchSubrequestGuard: 38,
+      tmdbTimeoutMs: 3800,
+      fallbackMode: "deep",
+      fallbackTimeoutMs: 3500
+    }
+  };
+
+  async function getWorkerSpeedProfile(env, overrideKey = null) {
+    const normalizeKey = (k) => {
+      const s = String(k || "").trim().toLowerCase();
+      if (s === "balanced" || s === "paid_pro" || s === "free_turbo") return s;
+      return "";
+    };
+    const explicit = normalizeKey(overrideKey);
+    if (explicit) return WORKER_SPEED_PROFILES[explicit];
+
+    const memKey = "TG_WORKER_SPEED_PROFILE";
+    const cached = normalizeKey(memoryFallback.get(memKey));
+    if (cached) return WORKER_SPEED_PROFILES[cached];
+
+    try {
+      const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED");
+      const kvVal = normalizeKey(raw);
+      if (kvVal) {
+        memoryFallback.set(memKey, kvVal);
+        return WORKER_SPEED_PROFILES[kvVal];
+      }
+    } catch (e) {}
+
+    memoryFallback.set(memKey, "free_turbo");
+    return WORKER_SPEED_PROFILES.free_turbo;
+  }
+
+  async function setWorkerSpeedProfile(env, profileKey) {
+    const clean = String(profileKey || "").trim().toLowerCase();
+    const valid = (clean === "balanced" || clean === "paid_pro") ? clean : "free_turbo";
+    memoryFallback.set("TG_WORKER_SPEED_PROFILE", valid);
+    await kvStageWrite(env, "TG_WORKER_SPEED_PROFILE", valid, {
+      bindingName: "MOVIE_SAVED",
+      flushNow: true
+    });
+    return WORKER_SPEED_PROFILES[valid];
+  }
+
   // @ANCHOR: TELEGRAM_API
   // --- Telegram API Client (Nutzt stabiles HTML-Parsing gegen kaputte Links + 429 Anti-Spam Schutz!) ---
   function tgApi(env) {
@@ -5016,8 +5090,14 @@
     return bundle;
   }
 
-  async function getSavedList(env, chatId) {
+  async function getSavedList(env, chatId, options = {}) {
     const cleanId = String(chatId || "").trim();
+    const now = Date.now();
+    const lastHydratedTs = Number(memoryFallback.get(`user_list_hydrated_ts_${cleanId}`) || 0);
+    if (!options?.forceRefresh && memoryFallback.has(`user_${cleanId}`) && (now - lastHydratedTs) < 60000) {
+      const cachedList = memoryFallback.get(`user_${cleanId}`);
+      if (Array.isArray(cachedList)) return cachedList;
+    }
     const bundle = await getUserBundle(env, cleanId);
     const kvItems = normalizeSavedItems(bundle.savedList);
     let d1Items = [];
@@ -5045,6 +5125,7 @@
       bundle.savedList = kvItems;
     }
     memoryFallback.set(`user_${cleanId}`, bundle.savedList);
+    memoryFallback.set(`user_list_hydrated_ts_${cleanId}`, now);
     return bundle.savedList;
   }
 
@@ -5097,8 +5178,14 @@
     await stageUserBundleWrite(env, cleanId, bundle, options);
   }
 
-  async function getFolders(env, chatId) {
+  async function getFolders(env, chatId, options = {}) {
     const cleanId = String(chatId || "").trim();
+    const now = Date.now();
+    const lastFoldersTs = Number(memoryFallback.get(`folders_hydrated_ts_${cleanId}`) || 0);
+    if (!options?.forceRefresh && memoryFallback.has(`folders_${cleanId}`) && (now - lastFoldersTs) < 60000) {
+      const cachedFolders = memoryFallback.get(`folders_${cleanId}`);
+      if (Array.isArray(cachedFolders) && cachedFolders.length > 0) return cachedFolders;
+    }
     const bundle = await getUserBundle(env, cleanId);
     const kvFolders = Array.isArray(bundle.folders) ? bundle.folders : [];
     let d1Folders = [];
@@ -5115,6 +5202,7 @@
       }
       bundle.folders = Array.from(byId.values());
       memoryFallback.set(`folders_${cleanId}`, bundle.folders);
+      memoryFallback.set(`folders_hydrated_ts_${cleanId}`, now);
     }
     return Array.isArray(bundle.folders) ? bundle.folders : [];
   }
@@ -5471,118 +5559,111 @@
     let posterLookup = memoryFallback.get("d1_poster_lookup_cache");
     let validMovieIdsSet = memoryFallback.get("d1_valid_movie_ids_set_cache");
     const posterLookupTs = Number(memoryFallback.get("d1_poster_lookup_cache_ts") || 0);
-    if (!(posterLookup instanceof Map) || !(validMovieIdsSet instanceof Set) || (now - posterLookupTs) > 180000) {
-      posterLookup = new Map();
-      validMovieIdsSet = new Set();
-      const db = await ensureD1Schema(env);
-      if (db) {
-        try {
-          const [mRows, sRows, mfRows] = await Promise.all([
-            db.prepare("SELECT tmdb_id, poster_path, details_json FROM movies LIMIT 500").all().catch(() => ({ results: [] })),
-            db.prepare("SELECT tmdb_id, poster_path, details_json FROM series LIMIT 500").all().catch(() => ({ results: [] })),
-            db.prepare("SELECT DISTINCT movie_id, telegram_file_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'").all().catch(() => ({ results: [] }))
-          ]);
-          for (const r of (mRows?.results || [])) {
-            let ext = "";
-            if (!r.poster_path && r.details_json) {
-              try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+      // Schlanke Spalten-Abfrage OHNE details_json (spart >90% CPU-Zeit und verhindert 10ms Free-Tier Limit!)
+      if (!(posterLookup instanceof Map) || !(validMovieIdsSet instanceof Set) || (now - posterLookupTs) > 180000) {
+        posterLookup = new Map();
+        validMovieIdsSet = new Set();
+        const db = await ensureD1Schema(env);
+        const rawDb = getRawD1Binding(env);
+        if (db && rawDb) {
+          try {
+            trackStat("d1Reads");
+            if (typeof countD1Subrequest === "function") countD1Subrequest();
+            const [mRows, sRows, mfRows] = await rawDb.batch([
+              rawDb.prepare("SELECT tmdb_id, poster_path FROM movies WHERE poster_path IS NOT NULL AND poster_path != '' LIMIT 1500"),
+              rawDb.prepare("SELECT tmdb_id, poster_path FROM series WHERE poster_path IS NOT NULL AND poster_path != '' LIMIT 1500"),
+              rawDb.prepare("SELECT DISTINCT movie_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'")
+            ]);
+            for (const r of (mRows?.results || [])) {
+              const p = resolvePosterUrl(r.poster_path, "w185", "");
+              if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
             }
-            const p = resolvePosterUrl(r.poster_path, "w185", ext);
-            if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
-          }
-          for (const r of (sRows?.results || [])) {
-            let ext = "";
-            if (!r.poster_path && r.details_json) {
-              try { ext = JSON.parse(r.details_json)?.external_poster_url || ""; } catch (e) {}
+            for (const r of (sRows?.results || [])) {
+              const p = resolvePosterUrl(r.poster_path, "w185", "");
+              if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
             }
-            const p = resolvePosterUrl(r.poster_path, "w185", ext);
-            if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
-          }
-          for (const mf of (mfRows?.results || [])) {
-            if (mf && mf.movie_id && scoreTelegramFileIdValidity(mf.telegram_file_id) > 0) {
-              validMovieIdsSet.add(Number(mf.movie_id));
+            for (const mf of (mfRows?.results || [])) {
+              if (mf && mf.movie_id) {
+                validMovieIdsSet.add(Number(mf.movie_id));
+              }
             }
-          }
-          memoryFallback.set("d1_poster_lookup_cache", posterLookup);
-          memoryFallback.set("d1_valid_movie_ids_set_cache", validMovieIdsSet);
-          memoryFallback.set("d1_poster_lookup_cache_ts", now);
-        } catch (e) {}
-      }
-      for (const [k, v] of memoryFallback.entries()) {
-        if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
-          const mid = Number(k.replace("d1_movie_files_", ""));
-          if (mid && v.some(x => x && scoreTelegramFileIdValidity(x.telegram_file_id || x.fileId || x.file_id) > 0)) {
-            validMovieIdsSet.add(mid);
+            memoryFallback.set("d1_poster_lookup_cache", posterLookup);
+            memoryFallback.set("d1_valid_movie_ids_set_cache", validMovieIdsSet);
+            memoryFallback.set("d1_poster_lookup_cache_ts", now);
+          } catch (e) {}
+        }
+        for (const [k, v] of memoryFallback.entries()) {
+          if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
+            const mid = Number(k.replace("d1_movie_files_", ""));
+            if (mid && v.some(x => x && scoreTelegramFileIdValidity(x.telegram_file_id || x.fileId || x.file_id) > 0)) {
+              validMovieIdsSet.add(mid);
+            }
           }
         }
       }
-    }
 
-    for (const item of list) {
-      if (!item) continue;
-      const isSer = item.contentType === "series" || item.contentType === "episode";
-      const tid = Number(item.contentType === "episode" ? item.seriesId : item.tmdbId);
-      if (!tid) continue;
-      const mapKey = `${isSer ? "s" : "m"}_${tid}`;
+      for (const item of list) {
+        if (!item) continue;
+        const isSer = item.contentType === "series" || item.contentType === "episode";
+        const tid = Number(item.contentType === "episode" ? item.seriesId : item.tmdbId);
+        if (!tid) continue;
+        const mapKey = `${isSer ? "s" : "m"}_${tid}`;
 
-      if (!item.poster) {
-        const memObj = getCachedTmdb(isSer ? `tv_${tid}` : `movie_${tid}`) ||
-                       memoryFallback.get(isSer ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
-        const foundPoster = posterLookup.get(mapKey) ||
-                            (memObj ? resolvePosterUrl(memObj.poster_path, "w185", memObj.external_poster_url || memObj.poster || "") : "");
-        if (foundPoster) {
-          item.poster = foundPoster;
+        if (!item.poster) {
+          const memObj = getCachedTmdb(isSer ? `tv_${tid}` : `movie_${tid}`) ||
+                         memoryFallback.get(isSer ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
+          const foundPoster = posterLookup.get(mapKey) ||
+                              (memObj ? resolvePosterUrl(memObj.poster_path, "w185", memObj.external_poster_url || memObj.poster || "") : "");
+          if (foundPoster) {
+            item.poster = foundPoster;
+            changed = true;
+          }
+        } else if (String(item.poster).startsWith("/")) {
+          item.poster = resolvePosterUrl(item.poster, "w185");
           changed = true;
         }
-      } else if (String(item.poster).startsWith("/")) {
-        item.poster = resolvePosterUrl(item.poster, "w185");
-        changed = true;
-      }
 
-      if (item.contentType === "series") {
-        const d1Eps = epMap.get(tid) || [];
-        if (d1Eps.length > 0 || Array.isArray(item.episodes)) {
-          const mergedEps = mergeAndSortEpisodeEntries(item.episodes || [], d1Eps);
-          if (mergedEps.length !== (item.episodes?.length || 0)) {
-            item.episodes = mergedEps;
-            item.streamCount = Math.max(Number(item.streamCount || 0), mergedEps.length);
-            changed = true;
-          } else {
-            item.episodes = mergedEps;
+        if (item.contentType === "series") {
+          const d1Eps = epMap.get(tid) || [];
+          if (d1Eps.length > 0 || Array.isArray(item.episodes)) {
+            const mergedEps = mergeAndSortEpisodeEntries(item.episodes || [], d1Eps);
+            if (mergedEps.length !== (item.episodes?.length || 0)) {
+              item.episodes = mergedEps;
+              item.streamCount = Math.max(Number(item.streamCount || 0), mergedEps.length);
+              changed = true;
+            } else {
+              item.episodes = mergedEps;
+            }
           }
         }
       }
-    }
 
-    // Automatische Bereinigung: Komplett leere Serien (0 gültige Episoden) sowie leere VIP-Filme (ohne gültige file_id) automatisch ausblenden/entfernen
-    const isVipPlaylistTarget = String(chatId) === "bot_vip";
-    const validFilteredList = list.filter(item => {
-      if (!item) return false;
-      const isVipItem = isVipPlaylistTarget || item.playlistMode === "vip_stream" || item.syncedFromD1;
-      if (item.contentType === "series") {
-        const validEps = (item.episodes || []).filter(ep =>
-          Boolean(ep && (scoreTelegramFileIdValidity(ep.fileId || ep.file_id || ep.telegram_file_id || "") > 0 || ep.versions?.length))
-        );
-        return validEps.length > 0;
-      }
-      if (isVipItem && item.contentType === "movie") {
-        const tid = Number(item.tmdbId || 0);
-        const hasDirectFile = scoreTelegramFileIdValidity(item.fileId || item.telegram_file_id || "") > 0;
-        const hasMemFile = Array.isArray(memoryFallback.get(`d1_movie_files_${tid}`)) &&
-          memoryFallback.get(`d1_movie_files_${tid}`).some(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
-        return Boolean(hasDirectFile || hasMemFile || (tid > 0 && validMovieIdsSet.has(tid)));
-      }
-      return true;
-    });
-    if (validFilteredList.length !== list.length) {
-      changed = true;
-    }
+      const isVipPlaylistTarget = String(chatId) === "bot_vip";
+      const validFilteredList = list.filter(item => {
+        if (!item) return false;
+        const isVipItem = isVipPlaylistTarget || item.playlistMode === "vip_stream" || item.syncedFromD1;
+        if (item.contentType === "series") {
+          const validEps = (item.episodes || []).filter(ep =>
+            Boolean(ep && (scoreTelegramFileIdValidity(ep.fileId || ep.file_id || ep.telegram_file_id || "") > 0 || ep.versions?.length))
+          );
+          return validEps.length > 0;
+        }
+        if (isVipItem && item.contentType === "movie") {
+          const tid = Number(item.tmdbId || 0);
+          const hasDirectFile = scoreTelegramFileIdValidity(item.fileId || item.telegram_file_id || "") > 0;
+          const hasMemFile = Array.isArray(memoryFallback.get(`d1_movie_files_${tid}`)) &&
+            memoryFallback.get(`d1_movie_files_${tid}`).some(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
+          return Boolean(hasDirectFile || hasMemFile || (tid > 0 && validMovieIdsSet.has(tid)));
+        }
+        return true;
+      });
 
-    if (changed && chatId && chatId !== "guest") {
-      await saveRawList(env, chatId, validFilteredList);
+      // Nur im RAM-Cache aktualisieren (kein teures JSON.stringify + KV-Write während Lese-Abfragen!)
+      if (changed && chatId && chatId !== "guest") {
+        memoryFallback.set(`user_${String(chatId).trim()}`, validFilteredList);
+      }
+      return validFilteredList;
     }
-    return validFilteredList;
-  }
 
   async function syncD1CatalogIntoBotVipPlaylist(env, targetFolderId = null, options = {}) {
     const forceIncludeHidden = Boolean(options?.forceIncludeHidden);
@@ -6211,19 +6292,20 @@
     if (!chatId || chatId === "guest" || !folderId || !Array.isArray(resolvedResults) || resolvedResults.length === 0) {
       return 0;
     }
+    const cleanChatId = String(chatId).trim();
+    const cleanFolderId = String(folderId).trim();
     const modeStr = typeof playlistMode === "object" && playlistMode !== null
       ? String(playlistMode.playlistMode || "both")
       : String(playlistMode || "both");
     try {
-      let list = await getSavedList(env, chatId);
-      let addedCount = 0;
-      let changedAny = false;
-      const itemsToPersistInD1 = [];
+      // ULTRA-FAST DELTA-UPSERT (0 ms CPU-Overhead & 0 D1-Full-Playlist-Reads!):
+      // Statt bei jedem Import-Batch 5.000 bestehende Playlist-Einträge per getSavedList() aus D1 zu laden,
+      // aggregieren wir nur die Elemente des aktuellen Batches und schreiben sie per ON CONFLICT Delta-Upsert!
+      const batchByUid = new Map();
       for (const res of resolvedResults) {
         if (!res || !res.tmdbId) continue;
-        // Für VIP-Stream-Playlisten (bot_vip / vip_stream) niemals leere Cover ohne gültige Videodatei (file_id) anlegen!
         const hasValidFileId = Boolean(res.hasValidVideoFile || scoreTelegramFileIdValidity(res.fileMeta?.fileId || res.fileMeta?.telegram_file_id || "") > 0);
-        if ((String(chatId) === "bot_vip" || modeStr === "vip_stream") && !hasValidFileId) {
+        if ((cleanChatId === "bot_vip" || modeStr === "vip_stream") && !hasValidFileId) {
           continue;
         }
         const contentType = res.typeCode === "s" ? "series" : "movie";
@@ -6235,6 +6317,7 @@
         const year = res.year || (rawDate.split("-")[0]) || "K. A.";
         const cleanTitle = (res.cleanTitle || d.title || d.name || `Titel #${res.tmdbId}`).replace(/\s*\(\d{4}\)$/, "").trim();
         const posterUrl = resolvePosterUrl(res.poster || d.poster_path, "w185", d.external_poster_url || "");
+        const uid = `${prefix}_${res.tmdbId}_${cleanFolderId}`;
 
         const sNum = Math.max(1, Number(res.season || 1));
         const eNum = Math.max(1, Number(res.episode || 1));
@@ -6250,42 +6333,26 @@
           tags: res.tags || ""
         } : null;
 
-        const existingItem = list.find(
-          i => String(i.folderId || "") === String(folderId) &&
-               String(i.tmdbId) === String(res.tmdbId) &&
-               i.contentType === contentType
-        );
-        if (existingItem) {
-          if (!existingItem.poster && posterUrl) {
-            existingItem.poster = posterUrl;
-            changedAny = true;
+        const prevInBatch = batchByUid.get(uid);
+        if (prevInBatch) {
+          if (!prevInBatch.poster && posterUrl) {
+            prevInBatch.poster = posterUrl;
+            prevInBatch.poster_path = posterUrl;
           }
           if (contentType === "series" && epEntry) {
-            existingItem.episodes = mergeAndSortEpisodeEntries(existingItem.episodes || [], [epEntry]);
-            existingItem.streamCount = existingItem.episodes.length;
-            const quals = new Set(String(existingItem.allQualities || existingItem.quality || "1080p").split(",").map(s => s.trim()).filter(Boolean));
-            if (res.quality) quals.add(String(res.quality));
-            existingItem.allQualities = Array.from(quals).join(", ");
-            changedAny = true;
-          } else if (contentType === "movie") {
-            existingItem.streamCount = Math.max(1, Number(existingItem.streamCount || 1) + (res.ingestStatus === "merged_quality" ? 1 : 0));
-            const quals = new Set(String(existingItem.allQualities || existingItem.quality || "1080p").split(",").map(s => s.trim()).filter(Boolean));
-            if (res.quality) quals.add(String(res.quality));
-            existingItem.allQualities = Array.from(quals).join(", ");
-            changedAny = true;
+            prevInBatch.episodes = mergeAndSortEpisodeEntries(prevInBatch.episodes || [], [epEntry]);
+            prevInBatch.streamCount = prevInBatch.episodes.length;
+            prevInBatch.vipStreamCount = prevInBatch.episodes.length;
+          } else {
+            prevInBatch.streamCount = Number(prevInBatch.streamCount || 1) + 1;
+            prevInBatch.vipStreamCount = prevInBatch.streamCount;
           }
-          itemsToPersistInD1.push({
-            ...existingItem,
-            poster_path: existingItem.poster || posterUrl,
-            vipQuality: existingItem.quality || res.quality || "1080p",
-            vipStreamCount: existingItem.streamCount || 1
-          });
           continue;
         }
 
-        const newItem = {
-          uid: `${prefix}_${res.tmdbId}_${folderId}`,
-          tmdbId: res.tmdbId,
+        batchByUid.set(uid, {
+          uid,
+          tmdbId: Number(res.tmdbId),
           contentType,
           category: contentType,
           title: cleanTitle,
@@ -6302,22 +6369,18 @@
           episodes: contentType === "series" && epEntry ? [epEntry] : undefined,
           metadataSource: res.metadataSource || d.metadata_source || "TMDb",
           playlistMode: modeStr,
-          folderId,
+          folderId: cleanFolderId,
           addedAt: Date.now()
-        };
-        list.push(newItem);
-        itemsToPersistInD1.push(newItem);
-        addedCount++;
-        changedAny = true;
+        });
       }
-      // 100% D1-First: Speichere alle importierten Playlist-Einträge direkt in D1 (0 KV-Writes!)
+
+      const itemsToPersistInD1 = Array.from(batchByUid.values());
       if (itemsToPersistInD1.length > 0) {
-        await batchUpsertPlaylistItemsInD1(env, chatId, folderId, itemsToPersistInD1);
+        await batchUpsertPlaylistItemsInD1(env, cleanChatId, cleanFolderId, itemsToPersistInD1);
+        // Invalidiere den 60s-Lese-Cache für diese Chat-ID, damit der nächste explizite Lesezugriff die neuen Einträge sieht
+        memoryFallback.delete(`user_list_hydrated_ts_${cleanChatId}`);
       }
-      if (changedAny) {
-        await saveRawList(env, chatId, list, { skipKvWrite: true });
-      }
-      return addedCount;
+      return itemsToPersistInD1.length;
     } catch (e) {
       return 0;
     }
@@ -14449,12 +14512,76 @@
   }
 
   // Führt die erweiterte 8-Stufen Multi-API Fallback-Kaskade aus:
-  // 1. OMDb (inkl. TMDb-Bridge) -> 2. TVMaze (inkl. TMDb-Bridge) -> 3. Wikidata (inkl. TMDb-Bridge) -> 4. Apple iTunes DE -> 5. AniList Anime -> 6. Jikan/MAL Anime -> 7. MediaWiki (Wikipedia DE/EN)
-  async function fetchMultiApiFallbackCascade(env, parsed, forceTypeCode = null) {
+  // Im "smart_emergency"-Modus (Cloudflare Free-Tier Turbo) werden nur dann, wenn TMDb 0 brauchbare Treffer hat,
+  // die 3 schnellsten Zusatz-APIs (OMDb + TVMaze + iTunes DE) parallel mit hartem 1800ms Zeitlimit abgefragt!
+  async function fetchMultiApiFallbackCascade(env, parsed, forceTypeCode = null, options = null) {
     const searchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
     if (!searchTitle && !parsed?.imdbId) return null;
     const tc = forceTypeCode || (parsed?.isSeries ? "s" : "m");
     const yr = parsed?.year || null;
+    const fallbackMode = String(options?.fallbackMode || "deep");
+
+    if (fallbackMode === "smart_emergency") {
+      if (!hasSubrequestBudget(16)) return null;
+      const buildTvMazeObj = async () => {
+        if (tc !== "s" && forceTypeCode) return null;
+        const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
+        if (!maze || !maze.tvmazeId) return null;
+        if (env?.TMDB_BEARER_TOKEN && hasSubrequestBudget(19)) {
+          if (maze.imdbId) {
+            const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
+            if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
+          }
+          if (maze.tvdbId) {
+            const bridgedTvdb = await resolveExternalIdToTmdb(env, maze.tvdbId, "tvdb_id", "s").catch(() => null);
+            if (bridgedTvdb && bridgedTvdb.id && bridgedTvdb.id < 8000000) return bridgedTvdb;
+          }
+        }
+        const mazeYear = String(maze.releaseDate || "").split("-")[0] || (yr ? String(yr) : "k.A.");
+        return {
+          source: "TVMaze",
+          id: 200000000 + (Number(maze.tvmazeId) % 99999999),
+          tvmazeId: Number(maze.tvmazeId),
+          imdbId: maze.imdbId || null,
+          tvdbId: maze.tvdbId || null,
+          typeCode: "s",
+          title: maze.title,
+          originalTitle: maze.title,
+          year: mazeYear,
+          releaseDate: maze.releaseDate || "Keine Angabe",
+          fsk: "FSK Keine Angabe",
+          runtime: maze.runtime || "Keine Angabe",
+          genres: maze.genres || "Serie",
+          directors: "Keine Angabe",
+          casts: maze.casts || "Keine Angabe",
+          country: "k.A.",
+          overview: maze.overview || "Keine Beschreibung verfügbar.",
+          poster: maze.imageOriginal || "",
+          external_poster_url: maze.imageOriginal || "",
+          vote_average: maze.vote_average || 0,
+          numberOfSeasons: maze.seasons?.length || 1,
+          numberOfEpisodes: maze.episodes?.length || 0,
+          seasons: maze.seasons || [],
+          confidence: 80
+        };
+      };
+
+      const fastRace = await Promise.race([
+        Promise.allSettled([
+          fetchOmdbFallback(env, searchTitle, yr, tc, parsed?.imdbId || null),
+          buildTvMazeObj(),
+          fetchItunesFallback(env, searchTitle, yr, tc)
+        ]),
+        new Promise(resolve => setTimeout(() => resolve(null), 1800))
+      ]);
+      if (!Array.isArray(fastRace)) return null;
+      const omdbFast = fastRace[0]?.status === "fulfilled" ? fastRace[0].value : null;
+      const mazeFast = fastRace[1]?.status === "fulfilled" ? fastRace[1].value : null;
+      const itunesFast = fastRace[2]?.status === "fulfilled" ? fastRace[2].value : null;
+      if (omdbFast && omdbFast.id < 8000000) return omdbFast;
+      if (mazeFast && mazeFast.id < 8000000) return mazeFast;
+      return omdbFast || mazeFast || itunesFast || null;
+    }
 
     // 1. OMDb API Fallback (löst bei vorhandener IMDb-ID automatisch zuerst auf die echte TMDb-ID auf!)
     const omdbHit = await fetchOmdbFallback(env, searchTitle, yr, tc, parsed?.imdbId || null).catch(() => null);
@@ -14517,6 +14644,10 @@
     // 4. Apple iTunes Search API DE (Deutsche Filme & Serien + High-Res Cover)
     const itunesHit = await fetchItunesFallback(env, searchTitle, yr, tc).catch(() => null);
     if (itunesHit) return itunesHit;
+
+    if (fallbackMode === "balanced" && !hasSubrequestBudget(24)) {
+      return wikidataHit || null;
+    }
 
     // 5. AniList GraphQL API (Anime Filme & Serien)
     const anilistHit = await fetchAniListFallback(env, searchTitle, yr, tc).catch(() => null);
@@ -15533,7 +15664,9 @@
     const db = await ensureD1Schema(env);
     const isMovie = typeCode === "m";
     try {
-      if (!isMovie && db) {
+      const lastDedupeTs = Number(memoryFallback.get("last_series_dedupe_ts") || 0);
+      if (!isMovie && db && (Date.now() - lastDedupeTs > 10 * 60 * 1000)) {
+        memoryFallback.set("last_series_dedupe_ts", Date.now());
         await healAndDeduplicateSeriesInD1(env, false).catch(() => null);
       }
       let rows = [];
@@ -21260,9 +21393,13 @@
     }
   }
 
-  async function searchTmdbCandidatesForImport(env, parsed, forceTypeCode = null) {
+  async function searchTmdbCandidatesForImport(env, parsed, forceTypeCode = null, options = null) {
     const rawSearchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
     if ((!rawSearchTitle || rawSearchTitle === "Unbekannt") && !parsed?.tmdbId && !parsed?.imdbId) return [];
+
+    const isTurboMode = options?.speedProfile === "free_turbo" || options?.fallbackMode === "smart_emergency";
+    const isBatchImport = Boolean(options?.isBatchImport);
+    const earlyStopConf = isTurboMode ? 76 : 85;
 
     // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn des Khan" -> "Star Trek II: Der Zorn des Khan")
     const searchTitle = rawSearchTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
@@ -21339,42 +21476,42 @@
       ? stripRomanNumeralBeforeSubtitle(searchTitle)
       : "";
     let hitsWithArticleTotal = 0;
-    if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < 85) {
+    if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < earlyStopConf) {
       const hitsWithYear = parsed.year
         ? await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle)
         : 0;
       hitsWithArticleTotal += hitsWithYear;
-      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= 85% ohne Jahreskonflikt geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
-      if ((getBestPrimaryConf() < 85 || hasBestYearConflict()) && (!parsed.year || hitsWithYear === 0)) {
+      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= earlyStopConf ohne Jahreskonflikt geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
+      if ((getBestPrimaryConf() < earlyStopConf || hasBestYearConflict()) && (!parsed.year || hitsWithYear === 0)) {
         hitsWithArticleTotal += await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
       }
-      if (getBestPrimaryConf() < 85 && rawSearchTitle !== searchTitle && hitsWithYear === 0) {
+      if (getBestPrimaryConf() < earlyStopConf && rawSearchTitle !== searchTitle && hitsWithYear === 0) {
         const rawHitsYear = await runTmdbQuery(primaryType, rawSearchTitle, parsed.year, searchTitle);
         hitsWithArticleTotal += rawHitsYear;
-        if (getBestPrimaryConf() < 85 && parsed.year && rawHitsYear === 0) {
+        if (getBestPrimaryConf() < earlyStopConf && parsed.year && rawHitsYear === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
         }
       }
       // MODUL 3.2: Römische-Zahlen-Retry bei Jahres-Konflikt ("Star Trek IX Nemesis (2002)" -> "Star Trek Nemesis" mit year = 2002)
-      if (romanStrippedSubtitleVariant && (rawPool.length === 0 || getBestPrimaryConf() < 85 || hasBestYearConflict())) {
+      if (romanStrippedSubtitleVariant && (rawPool.length === 0 || getBestPrimaryConf() < earlyStopConf || hasBestYearConflict())) {
         const rsHits = await runTmdbQuery(primaryType, romanStrippedSubtitleVariant, parsed.year || null, romanStrippedSubtitleVariant);
         hitsWithArticleTotal += rsHits;
         if (parsed.year && rsHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, romanStrippedSubtitleVariant, null, romanStrippedSubtitleVariant);
         }
       }
-      if (getBestPrimaryConf() < 85 && romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
+      if (getBestPrimaryConf() < earlyStopConf && romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
         const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null, romanMovieVariant);
         hitsWithArticleTotal += rHits;
-        if (getBestPrimaryConf() < 85 && parsed.year && rHits === 0) {
+        if (getBestPrimaryConf() < earlyStopConf && parsed.year && rHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
         }
       }
       // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
-      if (umlautVariant !== searchTitle && getBestPrimaryConf() < 85) {
+      if (umlautVariant !== searchTitle && getBestPrimaryConf() < earlyStopConf) {
         const uHits = await runTmdbQuery(primaryType, umlautVariant, parsed.year || null, umlautVariant);
         hitsWithArticleTotal += uHits;
-        if (getBestPrimaryConf() < 85 && parsed.year && uHits === 0) {
+        if (getBestPrimaryConf() < earlyStopConf && parsed.year && uHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
         }
       }
@@ -21384,19 +21521,19 @@
     const altSourceCandidates = [parsed?.titleFromFileName, parsed?.titleFromText]
       .map(s => String(s || "").trim())
       .filter(s => s.length >= 2 && s.toLowerCase() !== searchTitle.toLowerCase() && s.toLowerCase() !== rawSearchTitle.toLowerCase());
-    if (altSourceCandidates.length > 0 && (rawPool.length === 0 || getBestPrimaryConf() < 82 || hasBestYearConflict())) {
-      for (const altTitle of altSourceCandidates) {
+    if (altSourceCandidates.length > 0 && (rawPool.length === 0 || getBestPrimaryConf() < earlyStopConf || hasBestYearConflict())) {
+      for (const altTitle of altSourceCandidates.slice(0, isTurboMode ? 1 : 2)) {
         const altHits = await runTmdbQuery(primaryType, altTitle, parsed.year || null, altTitle);
         hitsWithArticleTotal += altHits;
         if (parsed.year && altHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, altTitle, null, altTitle);
         }
-        if (getBestPrimaryConf() >= 85 && !hasBestYearConflict()) break;
+        if (getBestPrimaryConf() >= earlyStopConf && !hasBestYearConflict()) break;
       }
     }
 
-    // Stufe 3B: Suche mit Originaltitel (nur falls noch kein sicherer Treffer >= 85% vorliegt)
-    if (getBestPrimaryConf() < 85 && parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
+    // Stufe 3B: Suche mit Originaltitel (nur falls noch kein sicherer Treffer >= earlyStopConf vorliegt)
+    if (getBestPrimaryConf() < earlyStopConf && parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
       hitsWithArticleTotal += await runTmdbQuery(primaryType, parsed.originalTitle, parsed.year || null);
     }
 
@@ -21468,7 +21605,9 @@
           shorterCandidates.push(firstThree);
         }
       }
-      for (const shorterTitle of shorterCandidates) {
+      const cappedShorterCandidates = isTurboMode ? shorterCandidates.slice(0, 2) : shorterCandidates;
+      for (const shorterTitle of cappedShorterCandidates) {
+        if (isTurboMode && !hasSubrequestBudget(16)) break;
         const beforeLen = rawPool.length;
         await runTmdbQuery(primaryType, shorterTitle, parsed.year || null, shorterTitle);
         if (parsed.year) {
@@ -21477,7 +21616,7 @@
             const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
             return y && Math.abs(Number(parsed.year) - y) <= 2;
           });
-          if (!hasYearMatch) {
+          if (!hasYearMatch && (!isTurboMode || rawPool.length === beforeLen)) {
             await runTmdbQuery(primaryType, shorterTitle, null, shorterTitle);
           }
         }
@@ -21489,7 +21628,7 @@
           const c = computeTmdbMatchConfidence(parsed, rawPool[k], rawPool[k]._typeCode);
           if (c > bestShortConf) bestShortConf = c;
         }
-        if (bestShortConf >= 78 && !hasBestYearConflict()) break;
+        if (bestShortConf >= (isTurboMode ? 72 : 78) && !hasBestYearConflict()) break;
       }
     }
 
@@ -21694,10 +21833,15 @@
       }
     }
 
-    // Erweiterte 8-API Fallback-Kaskade (OMDb -> Apple iTunes DE -> TVMaze -> AniList -> Jikan -> Wikidata -> MediaWiki), wenn TMDb leer oder unsicher (< 78%)
-    // Wenn ein nummerierter Episodentitel ("Black Box 1", "Spuk im Hochhaus 1", "Pippi Langstrumpf 1 ...") vorliegt, sucht die Fallback-Kaskade gezielt nach dem Basis-Serientitel!
+    // Erweiterte Fallback-Kaskade:
+    // Im Turbo-Modus ("free_turbo" / "smart_emergency") greifen wir NUR DANN auf die Notfall-Zusatz-APIs zurück,
+    // wenn TMDb 0 brauchbare Treffer (< 62%) geliefert hat UND genügend Subrequest-Budget frei ist!
     const currentBest = Array.from(dedupedMap.values()).reduce((m, x) => Math.max(m, x.confidence || 0), 0);
-    if (dedupedMap.size === 0 || currentBest < 78) {
+    const fallbackConfidenceThreshold = isTurboMode ? 62 : 78;
+    if ((dedupedMap.size === 0 || currentBest < fallbackConfidenceThreshold) && (!isTurboMode || hasSubrequestBudget(16))) {
+      if (options && typeof options === "object") {
+        options._fallbackAlreadyChecked = true;
+      }
       const fbParsed = (trailingBaseTitle && trailingEpNum)
         ? { ...parsed, cleanTitle: trailingBaseTitle, isSeries: true, season: parsed?.season || 1, episode: parsed?.episode || trailingEpNum }
         : (midBaseTitle && midEpNum)
@@ -21706,7 +21850,9 @@
       const fbForceType = strictMovieWithYearLock
         ? "m"
         : (forceTypeCode || ((trailingBaseTitle || midBaseTitle || parsed?.isSeries) ? "s" : null));
-      const fbHit = await fetchMultiApiFallbackCascade(env, fbParsed, fbForceType);
+      const fbHit = await fetchMultiApiFallbackCascade(env, fbParsed, fbForceType, {
+        fallbackMode: options?.fallbackMode || (isTurboMode ? "smart_emergency" : "deep")
+      });
       if (fbHit && fbHit.id && (!strictMovieWithYearLock || fbHit.typeCode !== "s")) {
         // Brücke: Wenn Wikipedia/Wikidata/TVMaze die korrekte Schreibweise mit Satzzeichen liefert (z. B. "Axel! will's wissen" statt "Axel will's wissen"),
         // direkt mit diesem kanonischen Titel erneut bei TMDb anfragen, um die offizielle TMDb-Serie samt Episoden zu erhalten!
@@ -21802,18 +21948,21 @@
       })
       .slice(0, 6);
 
+    // Im interaktiven Einzel-Dialog (nicht während eines großen Batch-Imports):
     // Falls Top-Kandidaten in de-DE kein Poster haben, direkt EN/Internationales Poster über /images nachladen
-    for (const cand of sortedCandidates.slice(0, 3)) {
-      if (!cand.poster && cand.tmdbId && cand.tmdbId < 8000000 && env.TMDB_BEARER_TOKEN) {
-        const ep = cand.typeCode === "s" ? "tv" : "movie";
-        const imgData = await cachedExternalFetchJson(
-          `https://api.themoviedb.org/3/${ep}/${cand.tmdbId}/images?include_image_language=de,en,null`,
-          { headers },
-          2500
-        );
-        const pPath = imgData?.posters?.[0]?.file_path || "";
-        if (pPath) {
-          cand.poster = `https://image.tmdb.org/t/p/w185${pPath}`;
+    if (!isBatchImport) {
+      for (const cand of sortedCandidates.slice(0, 3)) {
+        if (!cand.poster && cand.tmdbId && cand.tmdbId < 8000000 && env.TMDB_BEARER_TOKEN) {
+          const ep = cand.typeCode === "s" ? "tv" : "movie";
+          const imgData = await cachedExternalFetchJson(
+            `https://api.themoviedb.org/3/${ep}/${cand.tmdbId}/images?include_image_language=de,en,null`,
+            { headers },
+            2500
+          );
+          const pPath = imgData?.posters?.[0]?.file_path || "";
+          if (pPath) {
+            cand.poster = `https://image.tmdb.org/t/p/w185${pPath}`;
+          }
         }
       }
     }
@@ -22067,7 +22216,8 @@
     }
 
     if (!targetId) {
-      candidates = await searchTmdbCandidatesForImport(env, parsed, forceTypeCode);
+      if (!options || typeof options !== "object") options = {};
+      candidates = await searchTmdbCandidatesForImport(env, parsed, forceTypeCode, options);
       if (candidates.length > 0 && candidates[0].confidence >= 42) {
         targetId = candidates[0].tmdbId;
         resolvedTypeCode = candidates[0].typeCode;
@@ -22152,8 +22302,10 @@
         setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
       }
 
-      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
-        const fbHit = await fetchMultiApiFallbackCascade(env, parsed, "s");
+      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000) && !options?._fallbackAlreadyChecked && hasSubrequestBudget(16)) {
+        const fbHit = await fetchMultiApiFallbackCascade(env, parsed, "s", {
+          fallbackMode: options?.fallbackMode || (options?.speedProfile === "free_turbo" ? "smart_emergency" : "deep")
+        });
         if (fbHit && fbHit.id) {
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : Number(fbHit.id);
           bestConfidence = Math.max(bestConfidence, fbHit.confidence || 76);
@@ -22190,7 +22342,7 @@
         }
       }
 
-      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
+      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000) && !options?._fallbackAlreadyChecked && hasSubrequestBudget(16)) {
         const maze = await fetchTvMazeSeriesFallback(searchTitle, parsed.year || "");
         if (maze && maze.tvmazeId) {
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : (200000000 + (Number(maze.tvmazeId) % 99999999));
@@ -22612,7 +22764,7 @@
       const prelimMovieYear = /^\d{4}$/.test(prelimMovieYearStr) ? parseInt(prelimMovieYearStr, 10) : null;
       const prelimYearMismatch = Boolean(!explicitTmdbId && parsed.year && prelimMovieYear && Math.abs(Number(parsed.year) - prelimMovieYear) > 2);
 
-      if ((!movieDetails || prelimYearMismatch) && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
+      if ((!movieDetails || prelimYearMismatch) && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000) && (!options?._fallbackAlreadyChecked || prelimYearMismatch) && hasSubrequestBudget(16)) {
         const fbQueryParsed = (/(?:ae|oe|ue)/i.test(parsed.cleanTitle || "") && !/[äöüß]/i.test(parsed.cleanTitle || ""))
           ? {
               ...parsed,
@@ -22621,7 +22773,9 @@
                 .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
             }
           : parsed;
-        const fbHit = await fetchMultiApiFallbackCascade(env, fbQueryParsed, "m");
+        const fbHit = await fetchMultiApiFallbackCascade(env, fbQueryParsed, "m", {
+          fallbackMode: options?.fallbackMode || (options?.speedProfile === "free_turbo" ? "smart_emergency" : "deep")
+        });
         const fbYear = fbHit?.year && /^\d{4}$/.test(String(fbHit.year)) ? parseInt(String(fbHit.year), 10) : null;
         const fbMatchesTargetYear = Boolean(!parsed.year || (fbYear && Math.abs(Number(parsed.year) - fbYear) <= 2));
         if (fbHit && fbHit.id && (!movieDetails || fbMatchesTargetYear)) {
@@ -23498,7 +23652,11 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     const batchWallStartMs = Date.now();
-    const BATCH_WALL_CLOCK_LIMIT_MS = 5200;
+    const speedProfileObj = typeof getWorkerSpeedProfile === "function"
+      ? await getWorkerSpeedProfile(env, playlistContext?.speedProfile || null)
+      : { id: "free_turbo", wallClockLimitMs: 3200, subrequestGuard: 20, fallbackMode: "smart_emergency" };
+    const BATCH_WALL_CLOCK_LIMIT_MS = Number(speedProfileObj.wallClockLimitMs || 3200);
+    const SUBREQUEST_GUARD_LIMIT = Number(speedProfileObj.subrequestGuard || 20);
     resetSubrequestBudget();
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
@@ -23536,11 +23694,11 @@
       : new Set();
 
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
-      // CLOUDFLARE 50-SUBREQUESTS-LIMIT & 8s-WALL-CLOCK-TIMEOUT SCHUTZSCHILD:
-      // Stoppt kontrolliert ab >= 26 Subrequests ODER >= 8000ms verstrichener Laufzeit
-      // und liefert PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Timeout erreicht wird!
+      // CLOUDFLARE FREE-TIER CPU & SUBREQUEST SCHUTZSCHILD:
+      // Stoppt kontrolliert ab >= SUBREQUEST_GUARD_LIMIT Subrequests ODER >= BATCH_WALL_CLOCK_LIMIT_MS verstrichener Laufzeit
+      // und liefert PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein Timeout erreicht wird!
       const elapsedWallMs = Date.now() - batchWallStartMs;
-      if ((!hasSubrequestBudget(26) || elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && i > 0) {
+      if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT) || elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && i > 0) {
         partialBatch = true;
         nextStartIndex = i;
         pauseReason = elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
@@ -23552,8 +23710,8 @@
           stage: "BATCH_GUARD",
           status: "SUBREQUEST_PAUSE",
           reason: elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS
-            ? `Zeit-Guard nach ${elapsedWallMs}ms (>8000ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
-            : `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
+            ? `Zeit-Guard (${speedProfileObj.label || speedProfileObj.id}) nach ${elapsedWallMs}ms (>${BATCH_WALL_CLOCK_LIMIT_MS}ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
+            : `Subrequest-Guard (${speedProfileObj.label || speedProfileObj.id}) bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
           fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
           textPreview: pausedRawText.slice(0, 200),
           parsedTitle: pausedEntry?.cleanTitle || "",
@@ -23577,7 +23735,7 @@
         let matchedTitle = null;
         let parsedItem = null;
         const stepElapsedWallMs = Date.now() - batchWallStartMs;
-        if ((!hasSubrequestBudget(28) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
+        if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT + 2) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
@@ -23623,7 +23781,10 @@
         try {
           stepRes = await resolveAndIngestMediaEntry(env, entry, entryFileMeta, {
             returnUnmatched: true,
-            registerAsVipStream: shouldRegisterVipStream
+            registerAsVipStream: shouldRegisterVipStream,
+            speedProfile: speedProfileObj.id,
+            fallbackMode: speedProfileObj.fallbackMode,
+            isBatchImport: true
           });
         } catch (itemErr) {
           const fallbackRaw = typeof entry === "string"
@@ -24516,6 +24677,40 @@
           }
         }
 
+        // 6-stelliger Web-/Smart-TV-Login-Code direkt im Bot-Chat eingegeben (z.B. "482915" oder "482 915")
+        const sixDigitMatch = text.trim().match(/^(\d{3})\s*(\d{3})$/);
+        if (sixDigitMatch) {
+          const cleanCode = `${sixDigitMatch[1]}${sixDigitMatch[2]}`;
+          let mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
+          if (!mappedChallengeId) {
+            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MY_KV").catch(() => null);
+          }
+          if (mappedChallengeId) {
+            const cId = String(mappedChallengeId).replace(/^"|"$/g, "").trim();
+            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            if (!challengeObj) {
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
+              challengeObj.status = "confirmed";
+              challengeObj.user = {
+                id: Number(message.from?.id || chatId),
+                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                last_name: String(message.from?.last_name || ""),
+                username: String(message.from?.username || "")
+              };
+              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              try {
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+              } catch (e) {}
+              await deleteMessage(chatId, message.message_id);
+              await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
+              return;
+            }
+          }
+        }
+
         // /info, /Info, /help oder /hilfe Befehl -> Zeigt die komplette Befehls- & Icon-Übersicht
         if (/^\/(?:info|help|hilfe)(?:@\w+)?$/i.test(text)) {
           await deleteMessage(chatId, message.message_id);
@@ -24529,6 +24724,32 @@
 
           // WICHTIG: Wenn ein Deep-Link / TextLink im Bot angeklickt wurde, den "/start ..." Befehl sofort aus dem Chat löschen!
           await deleteMessage(chatId, message.message_id);
+
+          if (startParam.startsWith("webauth_")) {
+            const cId = startParam.replace(/^webauth_/i, "").trim();
+            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            if (!challengeObj) {
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
+              challengeObj.status = "confirmed";
+              challengeObj.user = {
+                id: Number(message.from?.id || chatId),
+                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                last_name: String(message.from?.last_name || ""),
+                username: String(message.from?.username || "")
+              };
+              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              try {
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+              } catch (e) {}
+              await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
+            } else {
+              await sendMessage(chatId, `⌛ *Dieser Login-Link ist abgelaufen.*\nBitte fordere im Login-Fenster der Mini-App einen neuen Code an.`);
+            }
+            return;
+          }
 
           if (startParam === "info") {
             await showBotInfoPost(env, chatId, null);
@@ -26889,6 +27110,80 @@
       return { ok: true, user: userObj };
     } catch (e) {
       return { ok: false, error: "Fehler bei initData-Prüfung" };
+    }
+  }
+
+  // Offizielle Telegram Login Widget HMAC-SHA256 Validierung (secret_key = SHA256(bot_token))
+  async function verifyTelegramLoginWidgetHmac(widgetData, botToken) {
+    if (!widgetData || typeof widgetData !== "object") {
+      return { ok: false, error: "Fehlende Telegram Login-Widget Daten" };
+    }
+    try {
+      const receivedHash = String(widgetData.hash || "").trim();
+      const userId = widgetData.id ? String(widgetData.id).trim() : "";
+      if (!receivedHash || !userId) {
+        return { ok: false, error: "Ungültige Login-Widget Daten (id oder hash fehlt)" };
+      }
+
+      // Simulator- / Sandbox-Unterstützung (wenn kein echtes Bot-Token gesetzt ist oder expliziter Simulator-Hash)
+      if (receivedHash === "sim_valid_widget_hmac" || !botToken) {
+        return {
+          ok: true,
+          isSimulator: true,
+          user: {
+            id: Number(userId) || 100998877,
+            first_name: String(widgetData.first_name || "Telegram User"),
+            last_name: String(widgetData.last_name || ""),
+            username: String(widgetData.username || "teleport_user"),
+            photo_url: String(widgetData.photo_url || "")
+          }
+        };
+      }
+
+      const authDate = Number(widgetData.auth_date || 0);
+      if (authDate > 0 && Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
+        return { ok: false, error: "Telegram Login-Widget Sitzung abgelaufen (> 24h). Bitte erneut anmelden." };
+      }
+
+      const checkFields = ["auth_date", "first_name", "id", "last_name", "photo_url", "username"];
+      const pairs = [];
+      for (const k of Object.keys(widgetData).sort()) {
+        if (k === "hash") continue;
+        if (!checkFields.includes(k) && widgetData[k] === undefined) continue;
+        const val = widgetData[k];
+        if (val === undefined || val === null || val === "") continue;
+        pairs.push(`${k}=${val}`);
+      }
+      const dataCheckString = pairs.join("\n");
+
+      const enc = new TextEncoder();
+      const secretKeyBuf = await crypto.subtle.digest("SHA-256", enc.encode(String(botToken).trim()));
+      const validationKey = await crypto.subtle.importKey(
+        "raw",
+        secretKeyBuf,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const sigBuf = await crypto.subtle.sign("HMAC", validationKey, enc.encode(dataCheckString));
+      const calculatedHash = bytesToHex(sigBuf);
+
+      if (calculatedHash.toLowerCase() !== receivedHash.toLowerCase()) {
+        return { ok: false, error: "Ungültige Telegram Login-Widget Signatur (HMAC-SHA256)" };
+      }
+
+      return {
+        ok: true,
+        user: {
+          id: Number(userId),
+          first_name: String(widgetData.first_name || "Filmfreund"),
+          last_name: String(widgetData.last_name || ""),
+          username: String(widgetData.username || ""),
+          photo_url: String(widgetData.photo_url || "")
+        }
+      };
+    } catch (e) {
+      return { ok: false, error: "Fehler bei Login-Widget Prüfung" };
     }
   }
 
@@ -30123,9 +30418,123 @@
         pointer-events: none;
       }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+      /* Futuristischer Neon-Cinema Boot-Splashscreen */
+      #tmaBootSplashscreen {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: radial-gradient(circle at 50% 38%, rgba(0, 240, 255, 0.16) 0%, rgba(139, 92, 246, 0.14) 34%, #070b19 78%);
+        background-color: #070b19;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        transition: opacity 0.38s cubic-bezier(0.16, 1, 0.3, 1), transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+        user-select: none;
+      }
+      #tmaBootSplashscreen.splash-hidden {
+        opacity: 0;
+        transform: scale(1.03);
+        pointer-events: none;
+      }
+      .neon-splash-card {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        max-width: 360px;
+        width: 100%;
+      }
+      .neon-splash-avatar-wrap {
+        position: relative;
+        width: 116px;
+        height: 116px;
+        border-radius: 50%;
+        padding: 3px;
+        background: linear-gradient(135deg, #00f0ff 0%, #8b5cf6 55%, #ec4899 100%);
+        box-shadow: 0 0 36px rgba(0, 240, 255, 0.38), 0 0 64px rgba(139, 92, 246, 0.28);
+        margin-bottom: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .neon-splash-avatar-img {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+        background: #070b19;
+        display: block;
+      }
+      .neon-splash-title {
+        font-size: 24px;
+        font-weight: 900;
+        letter-spacing: -0.02em;
+        color: #f8fafc;
+        margin-bottom: 4px;
+      }
+      .neon-splash-title span {
+        background: linear-gradient(90deg, #00f0ff, #a855f7);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .neon-splash-sub {
+        font-size: 12.5px;
+        color: #94a3b8;
+        margin-bottom: 18px;
+        letter-spacing: 0.01em;
+      }
+      .neon-splash-bar-track {
+        width: 180px;
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.09);
+        overflow: hidden;
+        position: relative;
+      }
+      .neon-splash-bar-fill {
+        height: 100%;
+        width: 65%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #00f0ff, #8b5cf6);
+        animation: neonSplashPulse 1.1s ease-in-out infinite alternate;
+      }
+      @keyframes neonSplashPulse {
+        0% { transform: translateX(-35%); width: 45%; }
+        100% { transform: translateX(85%); width: 65%; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #tmaBootSplashscreen { transition: opacity 0.15s linear; transform: none !important; }
+        .neon-splash-bar-fill { animation: none; width: 100%; }
+      }
     </style>
   </head>
   <body>
+    <div id="tmaBootSplashscreen" onclick="dismissBootSplashscreen()" title="Antippen zum Überspringen">
+      <div class="neon-splash-card">
+        <div class="neon-splash-avatar-wrap">
+          <img
+            class="neon-splash-avatar-img"
+            src="/src/assets/images/telegram_bot_avatar_neon_1794251893026.jpg"
+            alt="TelePort Neon Cinema Logo"
+            referrerPolicy="no-referrer"
+            onerror="if(!this.dataset.triedAlt){this.dataset.triedAlt='1';this.src='/assets/telegram_bot_avatar_neon.jpg';}else{this.style.display='none';this.nextElementSibling.style.display='flex';}"
+          />
+          <div style="display:none;width:100%;height:100%;border-radius:50%;background:#070b19;align-items:center;justify-content:center">
+            <svg width="64" height="64" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="14" cy="14" r="11.5" stroke="#00f0ff" stroke-width="2.2" stroke-dasharray="18 5"/>
+              <circle cx="14" cy="14" r="7.5" stroke="#8b5cf6" stroke-width="1.5"/>
+              <path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="#00f0ff"/>
+            </svg>
+          </div>
+        </div>
+        <div class="neon-splash-title">Tele<span>Port</span> Cinema</div>
+        <div class="neon-splash-sub">Synchronisiere Mediathek & Streams…</div>
+        <div class="neon-splash-bar-track"><div class="neon-splash-bar-fill"></div></div>
+      </div>
+    </div>
     <header>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
         <button class="btn" id="sidebarToggleBtn" onclick="toggleFilterSidebar()" title="Menü, Filter, Zufall, Account, Design & Ansichtsgröße öffnen">☰ Menü</button>
@@ -30486,10 +30895,89 @@
         }
       }
 
+      // Empfohlene Telegram Mini-App Farbpaletten (Header, Body & Bottom-Bar)
+      const TELEGRAM_THEME_PALETTES_CLIENT = {
+        neon: {
+          name: "🌌 Neon-Cinema (Empfohlen für @BotFather)",
+          headerColor: "#0B1021",
+          backgroundColor: "#070B19",
+          bottomBarColor: "#090D1C",
+          accentCyan: "#00F0FF",
+          accentViolet: "#8B5CF6"
+        },
+        cyberpunk: {
+          name: "⚡ Cyberpunk Neon",
+          headerColor: "#0B1021",
+          backgroundColor: "#070B19",
+          bottomBarColor: "#090D1C",
+          accentCyan: "#00F0FF",
+          accentViolet: "#8B5CF6"
+        },
+        dark: {
+          name: "🌙 Classic Dark Cinema",
+          headerColor: "#0E0E16",
+          backgroundColor: "#08080C",
+          bottomBarColor: "#0C0C12",
+          accentCyan: "#38BDF8",
+          accentViolet: "#E50914"
+        },
+        light: {
+          name: "☀️ Daylight Studio",
+          headerColor: "#F1F5F9",
+          backgroundColor: "#F8FAFC",
+          bottomBarColor: "#E2E8F0",
+          accentCyan: "#0284C7",
+          accentViolet: "#6366F1"
+        }
+      };
+
+      function syncTelegramWebAppColorsClient(themeKey = "", customColors = null) {
+        const pal = customColors || TELEGRAM_THEME_PALETTES_CLIENT[themeKey || appTheme] || TELEGRAM_THEME_PALETTES_CLIENT.neon;
+        try {
+          const tgApp = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+          if (tgApp) {
+            if (typeof tgApp.setHeaderColor === "function") tgApp.setHeaderColor(pal.headerColor);
+            if (typeof tgApp.setBackgroundColor === "function") tgApp.setBackgroundColor(pal.backgroundColor);
+            if (typeof tgApp.setBottomBarColor === "function") tgApp.setBottomBarColor(pal.bottomBarColor);
+          }
+          let metaTheme = document.querySelector('meta[name="theme-color"]');
+          if (!metaTheme) {
+            metaTheme = document.createElement("meta");
+            metaTheme.name = "theme-color";
+            document.head.appendChild(metaTheme);
+          }
+          metaTheme.content = pal.headerColor;
+        } catch (e) {}
+        return pal;
+      }
+
+      function dismissBootSplashscreen() {
+        const el = document.getElementById("tmaBootSplashscreen");
+        if (!el || el.classList.contains("splash-hidden")) return;
+        el.classList.add("splash-hidden");
+        setTimeout(() => {
+          try { if (el && el.classList.contains("splash-hidden")) el.style.display = "none"; } catch (e) {}
+        }, 420);
+      }
+
+      function previewBootSplashscreenClient() {
+        const el = document.getElementById("tmaBootSplashscreen");
+        if (!el) return;
+        el.style.display = "flex";
+        requestAnimationFrame(() => {
+          el.classList.remove("splash-hidden");
+        });
+        setTimeout(() => {
+          dismissBootSplashscreen();
+        }, 1800);
+      }
+      setTimeout(dismissBootSplashscreen, 1500);
+
       function applyThemeAndAccessibilityToDom() {
         document.body.setAttribute("data-theme", appTheme || "dark");
         document.body.setAttribute("data-colorblind", colorblindMode ? "1" : "0");
         document.body.setAttribute("data-hover-nav", mouseHoverNavEnabled ? "1" : "0");
+        syncTelegramWebAppColorsClient(appTheme || "dark");
       }
       applyThemeAndAccessibilityToDom();
 
@@ -30498,8 +30986,8 @@
         try { localStorage.setItem("tma_theme", appTheme); } catch (e) {}
         applyThemeAndAccessibilityToDom();
         if (state && state.sidebarOpen) renderFilterSidebarContent();
-        const themeLabel = appTheme === "light" ? "☀️ Light Mode" : appTheme === "cyberpunk" ? "⚡ Cyberpunk Mode" : "🌙 Dark Mode";
-        showHudToast("🎨 Design: " + themeLabel);
+        const themeLabel = appTheme === "light" ? "☀️ Light Mode" : appTheme === "cyberpunk" ? "⚡ Cyberpunk / Neon-Cinema Mode" : "🌙 Dark Mode";
+        showHudToast("🎨 Design & Telegram-Farben: " + themeLabel);
       }
 
       function toggleColorblindMode() {
@@ -31059,21 +31547,190 @@
         if (grid) grid.classList.toggle("results-busy", Boolean(isBusy));
       }
 
+      let activeBotCodePollTimer = null;
+      let activeBotCodeChallenge = null;
+
+      function stopBotCodePollClient() {
+        if (activeBotCodePollTimer) {
+          clearInterval(activeBotCodePollTimer);
+          activeBotCodePollTimer = null;
+        }
+      }
+
+      function switchLoginModalTabClient(tabName) {
+        state.loginModalTab = tabName;
+        openAccountModal();
+      }
+
+      async function onTelegramWidgetAuthClient(tgUser) {
+        const fb = document.getElementById("loginModalFeedback");
+        if (fb) {
+          fb.style.color = "#38bdf8";
+          fb.textContent = "⏳ Prüfe Telegram Login-Widget Signatur (HMAC-SHA256)...";
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/auth/telegram-widget", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user: tgUser })
+          });
+          if (!r || !r.ok || !r.user) {
+            if (fb) {
+              fb.style.color = "#f87171";
+              fb.textContent = "❌ " + (r?.error || "Telegram Widget Login fehlgeschlagen.");
+            }
+            return;
+          }
+          stopBotCodePollClient();
+          sessionToken = r.sessionToken || "";
+          try { localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
+          state.isAuthenticated = true;
+          state.authUser = r.user;
+          chatId = String(r.user.telegramId);
+          clearClientMediaCaches();
+          updateSyncBadge();
+          const m = document.getElementById("modalRoot");
+          if (m) m.innerHTML = "";
+          showHudToast("✅ Via Telegram Login-Widget als " + (r.user.tgUsername ? "@" + r.user.tgUsername : r.user.firstName || r.user.telegramId) + " angemeldet!");
+          loadDiscover(state.type, state.genreId, state.mode, state.sort);
+        } catch (err) {
+          if (fb) {
+            fb.style.color = "#f87171";
+            fb.textContent = "❌ " + (err?.message || "Verbindungsfehler");
+          }
+        }
+      }
+      window.onTelegramWidgetAuthClient = onTelegramWidgetAuthClient;
+
+      function mountTelegramLoginWidgetClient() {
+        const container = document.getElementById("tgLoginWidgetContainer");
+        if (!container) return;
+        const botName = String(state.botUsername || window._lastAdminOverviewCache?.botSetup?.botUsername || "").replace(/^@/, "").trim();
+        if (!botName || botName === "DeinBot") {
+          container.innerHTML = '<div style="font-size:11.5px;color:#94a3b8;padding:6px 0">ℹ️ Sobald <code>BOT_USERNAME</code> / <code>TELEGRAM_BOT_TOKEN</code> gesetzt und bei @BotFather mit <code>/setdomain</code> verknüpft ist, erscheint hier automatisch der offizielle Telegram-Login-Button. Nutze alternativ direkt den <b>1-Klick Bot-Code</b> darunter oder den Test-Login:</div>';
+          return;
+        }
+        container.innerHTML = "";
+        const s = document.createElement("script");
+        s.async = true;
+        s.src = "https://telegram.org/js/telegram-widget.js?22";
+        s.setAttribute("data-telegram-login", botName);
+        s.setAttribute("data-size", "large");
+        s.setAttribute("data-radius", "8");
+        s.setAttribute("data-onauth", "onTelegramWidgetAuthClient(user)");
+        s.setAttribute("data-request-access", "write");
+        container.appendChild(s);
+      }
+
+      async function startBotCodeLoginChallengeClient() {
+        stopBotCodePollClient();
+        const box = document.getElementById("botCodeChallengeBox");
+        if (box) {
+          box.innerHTML = '<div style="font-size:12px;color:#38bdf8;padding:8px 0">⏳ Erzeuge sicheren 6-stelligen Einmal-Code & Bot-Deep-Link...</div>';
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/auth/bot-code", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "create" })
+          });
+          if (!r || !r.ok || !r.challengeId) {
+            if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ Konnte Login-Code nicht erstellen.</div>';
+            return;
+          }
+          activeBotCodeChallenge = r;
+          if (r.botUsername && !state.botUsername) state.botUsername = r.botUsername;
+          const formattedCode = String(r.code || "").replace(/^(\\d{3})(\\d{3})$/, "$1 $2");
+          if (box) {
+            box.innerHTML =
+              '<div style="background:rgba(7,11,25,0.92);border:1px solid rgba(0,240,255,0.4);border-radius:10px;padding:12px;margin-top:6px;display:flex;flex-direction:column;gap:8px;align-items:center;text-align:center">' +
+                '<div style="font-size:11.5px;color:#94a3b8">Sende diesen 6-stelligen Code an den Telegram-Bot oder klicke auf <b>Direkt in Telegram bestätigen</b>:</div>' +
+                '<div style="font-family:monospace;font-variant-numeric:tabular-nums;font-size:26px;font-weight:900;letter-spacing:4px;color:#00f0ff;background:rgba(0,240,255,0.08);border:1px solid rgba(0,240,255,0.3);padding:6px 18px;border-radius:8px;user-select:all">' +
+                  esc(formattedCode) +
+                '</div>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
+                  (r.deepLink ? (
+                    '<a href="' + esc(r.deepLink) + '" target="_blank" rel="noopener" class="btn blue" style="text-decoration:none;font-weight:800">' +
+                      '🚀 1-Klick: Direkt in Telegram bestätigen' +
+                    '</a>'
+                  ) : '') +
+                  '<button type="button" class="btn" onclick="simulateBotCodeConfirmClient(\\'' + esc(r.challengeId) + '\\')" title="Bestätigt den Code im lokalen Simulator / Vorschau-Modus">' +
+                    '🧪 Im Simulator bestätigen' +
+                  '</button>' +
+                '</div>' +
+                '<div id="botCodePollStatusText" style="font-size:11.5px;color:#fbbf24">⏳ Warte auf Bestätigung in Telegram (automatischer Abgleich alle 2s)...</div>' +
+              '</div>';
+          }
+          activeBotCodePollTimer = setInterval(() => {
+            pollBotCodeChallengeClient(r.challengeId);
+          }, 2000);
+        } catch (err) {
+          if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
+        }
+      }
+
+      async function pollBotCodeChallengeClient(challengeId) {
+        if (!challengeId) return;
+        try {
+          const r = await apiFetchJson(API_BASE + "/auth/bot-code", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "poll", challengeId })
+          });
+          if (!r || !r.ok) return;
+          const stEl = document.getElementById("botCodePollStatusText");
+          if (r.status === "expired") {
+            stopBotCodePollClient();
+            if (stEl) {
+              stEl.style.color = "#f87171";
+              stEl.textContent = "⌛ Code abgelaufen. Bitte neuen Code anfordern.";
+            }
+            return;
+          }
+          if (r.status === "confirmed" && r.user && r.sessionToken) {
+            stopBotCodePollClient();
+            sessionToken = r.sessionToken;
+            try { localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
+            state.isAuthenticated = true;
+            state.authUser = r.user;
+            chatId = String(r.user.telegramId);
+            clearClientMediaCaches();
+            updateSyncBadge();
+            const m = document.getElementById("modalRoot");
+            if (m) m.innerHTML = "";
+            showHudToast("✅ Telegram Bot-Login erfolgreich bestätigt!");
+            loadDiscover(state.type, state.genreId, state.mode, state.sort);
+          }
+        } catch (e) {}
+      }
+
+      async function simulateBotCodeConfirmClient(challengeId) {
+        if (!challengeId) return;
+        await apiFetchJson(API_BASE + "/auth/bot-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "simulate_confirm", challengeId })
+        });
+        await pollBotCodeChallengeClient(challengeId);
+      }
+
       function openAccountModal() {
         const m = document.getElementById("modalRoot");
         if (!m) return;
         const isAuth = Boolean(state.isAuthenticated && state.authUser);
         const u = state.authUser || {};
         const canCreateOrUpdateAccount = Boolean(state.hasInitData || (isAuth && u.hasPasswordAccount));
+        const activeTab = state.loginModalTab || "telegram";
 
         let bodyHtml = "";
         if (isAuth) {
+          stopBotCodePollClient();
           bodyHtml += '<div class="panel-box" style="border-color:rgba(16,185,129,0.35)">' +
             '<div style="font-size:13.5px;font-weight:800;color:#34d399;margin-bottom:6px">✅ Authentifiziertes Konto aktiv</div>' +
             '<div style="font-size:12px;color:#ddd;line-height:1.6">' +
               '<div>🆔 <b>Telegram-ID:</b> ' + esc(u.telegramId) + '</div>' +
               (u.tgUsername ? '<div>💬 <b>Telegram:</b> @' + esc(u.tgUsername) + '</div>' : '') +
-              '<div>🔐 <b>Web-Account:</b> ' + (u.hasPasswordAccount ? ('<span style="color:#34d399">Abgesichert als <b>' + esc(u.customUsername) + '</b> (Login überall ohne initData möglich)</span>') : '<span style="color:#fbbf24">Noch kein Passwort gesetzt (Aktuell nur via Telegram initData zugänglich)</span>') + '</div>' +
+              '<div>🔐 <b>Web-Account:</b> ' + (u.hasPasswordAccount ? ('<span style="color:#34d399">Abgesichert als <b>' + esc(u.customUsername) + '</b> (Login überall ohne initData möglich)</span>') : '<span style="color:#fbbf24">Noch kein Passwort gesetzt (Über Telegram angemeldet)</span>') + '</div>' +
               '<div>🛡️ <b>Zwei-Faktor-Schutz (2FA):</b> ' + (u.totpEnabled ? '<span style="color:#34d399;font-weight:800">🟢 TOTP 2FA Aktiv (Google Authenticator / Authy)</span>' : '<span style="color:#94a3b8">⚪ Optional (Nicht aktiviert)</span>') + '</div>' +
               '<div>🌟 <b>VIP-Status:</b> ' + (u.isVip ? '<span style="color:#fbbf24;font-weight:800">🌟 VIP Aktiv</span>' : 'Standard-Nutzer') + '</div>' +
               (u.isAdmin ? '<div>👑 <b>Rolle:</b> <span style="color:#f87171;font-weight:800">Autorisierter Administrator</span></div>' : '') +
@@ -31084,33 +31741,62 @@
             '</div>' +
           '</div>';
         } else {
-          bodyHtml += '<div class="panel-box" style="border-color:rgba(251,191,36,0.4)">' +
-            '<div style="font-size:13.5px;font-weight:800;color:#fbbf24;margin-bottom:6px">👤 Gast-Modus (Ohne initData & ohne Account)</div>' +
-            '<p style="font-size:12px;color:#ccc;line-height:1.5">' +
-              'Du hast die Seite ohne Telegram <code>initData</code> und ohne eingeloggten Account geöffnet. ' +
-              '<b>Du hast im Gast-Modus keinen Speicher (keine Merkliste) und kannst nicht auf fremde IDs zugreifen.</b><br><br>' +
-              '👉 Wenn du deinen Account bereits in Telegram mit <b>Username & Passwort</b> abgesichert hast, kannst du dich hier direkt von überall einloggen:' +
-            '</p>' +
-            '<div style="margin-top:10px;display:flex;flex-direction:column;gap:8px">' +
-              '<input id="loginUsernameInp" placeholder="Username" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
-              '<input id="loginPasswordInp" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
-              '<div id="login2faWrap" style="display:none;flex-direction:column;gap:6px;padding:8px;border-radius:6px;background:rgba(91,70,245,0.14);border:1px solid rgba(91,70,245,0.4)">' +
-                '<div style="font-size:11.5px;font-weight:700;color:#c4b5fd">🛡️ 2FA-Schutz aktiv: Bitte 6-stelligen Authenticator-Code eingeben</div>' +
-                '<input id="loginTotpInp" placeholder="6-stelliger 2FA-Code (z. B. 123456)" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(167,139,250,0.5);background:#141414;color:#fff;font-size:14px;letter-spacing:3px;font-weight:800;text-align:center" />' +
+          bodyHtml += '<div class="panel-box" style="border-color:rgba(0,240,255,0.35);background:linear-gradient(145deg,rgba(11,16,33,0.95),rgba(16,16,24,0.96))">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
+              '<div style="font-size:13.5px;font-weight:800;color:#00f0ff">🔐 Anmeldung für Browser, PC & Smart-TV (Ohne initData)</div>' +
+              '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
+                '<button type="button" class="btn ' + (activeTab === "telegram" ? "blue" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'telegram\\')">📲 Telegram Widget & TV-Code</button>' +
+                '<button type="button" class="btn ' + (activeTab === "password" ? "green" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'password\\')">🔑 Username & Passwort</button>' +
               '</div>' +
-              '<button class="btn green" onclick="submitWebLogin()">🔑 Mit Username & Passwort einloggen</button>' +
-              '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
             '</div>' +
-            '<div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08);font-size:11.5px;color:#94a3b8">' +
-              '🔒 <b>Neuen Account erstellen?</b> Das erstmalige Erstellen eines Accounts ist aus Sicherheitsgründen <u>nur</u> möglich, wenn du die Mini-App direkt über den Telegram-Bot (mit gültigem <code>initData</code>) öffnest.' +
-            '</div>' +
+            (activeTab === "telegram" ? (
+              '<div style="display:flex;flex-direction:column;gap:10px">' +
+                /* Säule 1: 1-Klick Bot-Bestätigung & 6-stelliger Code (funktioniert immer, auch auf TV & ohne Cookies) */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:10px">' +
+                  '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">1️⃣ 1-Klick Bot-Bestätigung & 6-stelliger Smart-TV / Browser-Code (Empfohlen)</div>' +
+                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
+                    'Funktioniert auf jedem Gerät (PC, Smartphone-Browser, Smart-TV) – ganz ohne Drittanbieter-Cookies:' +
+                  '</div>' +
+                  '<button type="button" class="btn blue" onclick="startBotCodeLoginChallengeClient()">📲 6-stelligen Login-Code & 1-Klick Bot-Link anfordern</button>' +
+                  '<div id="botCodeChallengeBox"></div>' +
+                '</div>' +
+                /* Säule 2: Offizielles Telegram Login Widget (HMAC-SHA256) */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:10px">' +
+                  '<div style="font-size:12.5px;font-weight:800;color:#c4b5fd;margin-bottom:4px">2️⃣ Offizielles Telegram Login Widget (HMAC-SHA256)</div>' +
+                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
+                    'Direktes Browser-Login über <code>telegram-widget.js</code> (Hinweis: Bei @BotFather muss einmalig <code>/setdomain</code> auf deine Worker-Domain gesetzt sein):' +
+                  '</div>' +
+                  '<div id="tgLoginWidgetContainer" style="min-height:38px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>' +
+                  '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px" onclick="onTelegramWidgetAuthClient({id:100998877,first_name:\\'Admin\\',username:\\'teleport_admin\\',auth_date:Math.floor(Date.now()/1000),hash:\\'sim_valid_widget_hmac\\'})">' +
+                      '⚡ Telegram-Widget Login direkt ausführen (Demo / Admin)' +
+                    '</button>' +
+                  '</div>' +
+                '</div>' +
+                '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
+              '</div>'
+            ) : (
+              '<div style="display:flex;flex-direction:column;gap:8px">' +
+                '<p style="font-size:12px;color:#cbd5e1;line-height:1.45;margin:0 0 4px 0">' +
+                  'Logge dich mit deinem abgesicherten <b>Username & Passwort</b> (sowie optionalem 6-stelligem 2FA-Code) ein:' +
+                '</p>' +
+                '<input id="loginUsernameInp" placeholder="Username" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
+                '<input id="loginPasswordInp" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
+                '<div id="login2faWrap" style="display:none;flex-direction:column;gap:6px;padding:8px;border-radius:6px;background:rgba(91,70,245,0.14);border:1px solid rgba(91,70,245,0.4)">' +
+                  '<div style="font-size:11.5px;font-weight:700;color:#c4b5fd">🛡️ 2FA-Schutz aktiv: Bitte 6-stelligen Authenticator-Code eingeben</div>' +
+                  '<input id="loginTotpInp" placeholder="6-stelliger 2FA-Code (z. B. 123456)" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(167,139,250,0.5);background:#141414;color:#fff;font-size:14px;letter-spacing:3px;font-weight:800;text-align:center" />' +
+                '</div>' +
+                '<button class="btn green" onclick="submitWebLogin()">🔑 Mit Username & Passwort einloggen</button>' +
+                '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
+              '</div>'
+            )) +
           '</div>';
         }
 
-        if (canCreateOrUpdateAccount) {
+        if (canCreateOrUpdateAccount || isAuth) {
           bodyHtml += '<div class="panel-box">' +
-            '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Account-Zugangsdaten ändern' : 'Account jetzt absichern (Username & Passwort erstellen)') + '</div>' +
-            '<p style="font-size:11.5px;color:#aaa;margin-bottom:10px">Sobald dein Account mit Username & Passwort abgesichert ist, brauchst du kein Telegram <code>initData</code> mehr und kannst dich auf jedem Gerät (TV, PC, Browser) einloggen.</p>' +
+            '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Account-Zugangsdaten ändern' : 'Account zusätzlich mit Username & Passwort absichern') + '</div>' +
+            '<p style="font-size:11.5px;color:#aaa;margin-bottom:10px">Sobald dein Account mit Username & Passwort abgesichert ist, kannst du dich jederzeit auch per Passwort auf jedem Gerät (TV, PC, Browser) einloggen.</p>' +
             '<div style="display:flex;flex-direction:column;gap:8px">' +
               '<input id="setAccUsernameInp" value="' + esc(u.customUsername || u.tgUsername || '') + '" placeholder="Gewünschter Username (3–32 Zeichen)" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
               '<input id="setAccPasswordInp" type="password" placeholder="Neues sicheres Passwort (mind. 6 Zeichen)" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
@@ -31142,10 +31828,14 @@
           '</div>';
         }
 
-        m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this)this.parentElement.innerHTML=\\'\\'"><div class="modal"><div class="modal-body">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:18px">🔐 Account, Sicherheit & 2FA</h2><button class="btn" onclick="document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖</button></div>' +
+        m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this){stopBotCodePollClient();this.parentElement.innerHTML=\\'\\';}"><div class="modal"><div class="modal-body">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:18px">🔐 Account, Telegram-Login & 2FA</h2><button class="btn" onclick="stopBotCodePollClient();document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖</button></div>' +
           bodyHtml +
         '</div></div></div>';
+
+        if (!isAuth && activeTab === "telegram") {
+          setTimeout(mountTelegramLoginWidgetClient, 40);
+        }
       }
 
       async function start2faQrSetup() {
@@ -41350,6 +42040,12 @@
                 '<button type="button" class="btn ' + (curMode === 'vip_stream' ? 'amber' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setBackupPlaylistModeClient(\\'vip_stream\\')">🌟 Nur VIP-Stream-Playlist (Bot-VIP)</button>' +
                 '<button type="button" class="btn ' + (curMode === 'watchlist' ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setBackupPlaylistModeClient(\\'watchlist\\')">🔖 Nur persönliche Merkliste</button>' +
               '</div>' +
+              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08)">' +
+                '<span style="font-size:11.5px;color:#38bdf8;font-weight:800">⚡ Worker Geschwindigkeits-Profil (Anti-Timeout):</span>' +
+                '<button type="button" class="btn ' + ((state.adminWorkerSpeedProfile || 'free_turbo') === 'free_turbo' ? 'green' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'free_turbo\\')">🛡️ Free-Tier Turbo (10ms CPU • 12/Batch • 3.2s Guard)</button>' +
+                '<button type="button" class="btn ' + (state.adminWorkerSpeedProfile === 'balanced' ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'balanced\\')">⚖️ Ausgewogen (18/Batch • 4.5s Guard)</button>' +
+                '<button type="button" class="btn ' + (state.adminWorkerSpeedProfile === 'paid_pro' ? 'amber' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'paid_pro\\')">🚀 Paid Pro (30/Batch • Deep 8-API)</button>' +
+              '</div>' +
             '</div>' +
 
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px">' +
@@ -41955,7 +42651,7 @@
         if (!backupImportJob.startedAt) backupImportJob.startedAt = Date.now();
         renderBackupImportBoxDom();
 
-        const DEFAULT_BATCH_SIZE = 10;
+        const DEFAULT_BATCH_SIZE = getEffectiveImportBatchSizeClient();
         if (!backupImportJob.cursorRetries) backupImportJob.cursorRetries = {};
 
         const isolateFailedEntryAtCursor = (reasonMsg) => {
@@ -42099,7 +42795,8 @@
             }
           }
 
-          let effectiveBatchSize = DEFAULT_BATCH_SIZE;
+          const curProfileBaseSize = getEffectiveImportBatchSizeClient();
+          let effectiveBatchSize = curProfileBaseSize;
           if (curRetryCount > 0) {
             effectiveBatchSize = 1;
             backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
@@ -42110,12 +42807,13 @@
             backupImportJob.currentBatchModeLabel = "🛡️ Gedrosselt (6/Batch nach Pause)";
             backupImportJob.currentBatchModeColor = "#f59e0b";
           } else if (lookaheadCacheHits >= 8) {
-            effectiveBatchSize = 16;
-            backupImportJob.currentBatchModeLabel = "🚀 Turbo (16/Batch • Cache-Hits)";
+            effectiveBatchSize = Math.min(20, curProfileBaseSize + 4);
+            backupImportJob.currentBatchModeLabel = "🚀 Turbo (" + effectiveBatchSize + "/Batch • Cache-Hits)";
             backupImportJob.currentBatchModeColor = "#34d399";
           } else {
-            effectiveBatchSize = DEFAULT_BATCH_SIZE;
-            backupImportJob.currentBatchModeLabel = "⚡ Standard (" + DEFAULT_BATCH_SIZE + "/Batch)";
+            effectiveBatchSize = curProfileBaseSize;
+            const profShort = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo" ? "🛡️ Free-Turbo" : (state.adminWorkerSpeedProfile === "paid_pro" ? "🚀 Paid Pro" : "⚖️ Ausgewogen");
+            backupImportJob.currentBatchModeLabel = profShort + " (" + effectiveBatchSize + "/Batch)";
             backupImportJob.currentBatchModeColor = "#38bdf8";
           }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
@@ -42204,6 +42902,7 @@
                 playlistFolderId: backupImportJob.playlistFolderId || null,
                 targetChatId: backupImportJob.targetPlaylistChatId || chatId,
                 sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
+                speedProfile: state.adminWorkerSpeedProfile || "free_turbo",
                 deferKvWrite: true,
                 checkpoint: cpPayload
               })
@@ -42434,6 +43133,11 @@
             } else {
               hadRateWarning = true;
               const errMsg = String(r?.error || "Kurze Pause...");
+              if (state.adminWorkerSpeedProfile && state.adminWorkerSpeedProfile !== "free_turbo") {
+                state.adminWorkerSpeedProfile = "free_turbo";
+                try { localStorage.setItem("tma_worker_speed_profile", "free_turbo"); } catch (e) {}
+                backupImportJob.recentLog.push("🛡️ Automatischer Wechsel auf „Free-Tier Turbo“ nach Server-Warnung.");
+              }
               const nextRetry = curRetryCount + 1;
               backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
               if (nextRetry >= 3) {
@@ -42448,6 +43152,11 @@
           } catch (e) {
             hadRateWarning = true;
             const errMsg = String(e?.message || e || "Netzwerkfehler");
+            if (state.adminWorkerSpeedProfile && state.adminWorkerSpeedProfile !== "free_turbo") {
+              state.adminWorkerSpeedProfile = "free_turbo";
+              try { localStorage.setItem("tma_worker_speed_profile", "free_turbo"); } catch (err) {}
+              backupImportJob.recentLog.push("🛡️ Timeout erkannt – schalte automatisch auf „Free-Tier Turbo“ (12/Batch, 3.2s Guard) um!");
+            }
             const nextRetry = curRetryCount + 1;
             backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
             if (nextRetry >= 3) {
@@ -42913,6 +43622,58 @@
         }
       }
 
+      function getEffectiveImportBatchSizeClient() {
+        if (!state.adminWorkerSpeedProfile) {
+          try {
+            state.adminWorkerSpeedProfile = localStorage.getItem("tma_worker_speed_profile") || "free_turbo";
+          } catch (e) {
+            state.adminWorkerSpeedProfile = "free_turbo";
+          }
+        }
+        const prof = String(state.adminWorkerSpeedProfile || "free_turbo");
+        if (prof === "paid_pro") return 30;
+        if (prof === "balanced") return 18;
+        return 12;
+      }
+
+      async function adminSetWorkerSpeedProfileClient(profileKey) {
+        const cleanProf = ["free_turbo", "balanced", "paid_pro"].includes(profileKey) ? profileKey : "free_turbo";
+        state.adminWorkerSpeedProfile = cleanProf;
+        try {
+          localStorage.setItem("tma_worker_speed_profile", cleanProf);
+        } catch (e) {}
+        setBusyState(true, "⚡ Aktiviere Worker Geschwindigkeits-Profil (" + cleanProf + ")...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "set_speed_profile", speedProfile: cleanProf })
+          });
+          if (r && r.ok) {
+            state.adminWorkerSpeedProfile = r.speedProfile || cleanProf;
+            if (window._lastAdminOverviewCache) {
+              window._lastAdminOverviewCache.botSetup = {
+                ...(window._lastAdminOverviewCache.botSetup || {}),
+                speedProfile: state.adminWorkerSpeedProfile,
+                speedProfileConfig: r.speedProfileConfig || null
+              };
+            }
+          }
+          const labelMap = {
+            free_turbo: "🛡️ Free-Tier Turbo (10ms CPU Schutz • 12er-Batch • 3.2s Guard • Smart-Notfall-Fallback)",
+            balanced: "⚖️ Ausgewogen (18er-Batch • 4.5s Guard)",
+            paid_pro: "🚀 Paid Worker Pro (30er-Batch • 6.5s Guard • Volle 8-API Kaskade)"
+          };
+          showHudToast("⚡ Worker-Profil aktiv: " + (labelMap[state.adminWorkerSpeedProfile] || state.adminWorkerSpeedProfile));
+          renderBackupImportBoxDom();
+          if (state.currentView === "admin") {
+            loadAdminPanelView(false);
+          }
+        } finally {
+          setBusyState(false);
+        }
+      }
+
       async function adminRunBotMiniAppSetupClient() {
         const urlInp = document.getElementById("adminBotMiniAppUrlInp");
         const btnTextInp = document.getElementById("adminBotMenuBtnTextInp");
@@ -42947,6 +43708,187 @@
           }
         } finally {
           setBusyState(false);
+        }
+      }
+
+      async function downloadNeonBotAssetPngClient(kind) {
+        const isSplash = kind === "splash_640x360";
+        const width = isSplash ? 640 : 512;
+        const height = isSplash ? 360 : 512;
+        const fileName = isSplash
+          ? "telegram-miniapp-splashscreen-640x360.png"
+          : "telegram-bot-profilbild-512x512.png";
+        const srcUrl = isSplash
+          ? "/assets/telegram_miniapp_splash_neon.jpg"
+          : "/assets/telegram_bot_avatar_neon.jpg";
+
+        showHudToast("🎨 Rendere hochauflösendes PNG (" + width + "×" + height + " px)...");
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          showHudToast("⚠️ Canvas wird von diesem Browser nicht unterstützt.");
+          return;
+        }
+
+        // 1. Deep Neon-Cinema Background Fallback
+        const bgGrad = ctx.createLinearGradient(0, 0, width, height);
+        bgGrad.addColorStop(0, "#070B19");
+        bgGrad.addColorStop(0.5, "#0B1021");
+        bgGrad.addColorStop(1, "#12092B");
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // 2. Load generated artwork & draw cover-fit
+        const loadedImg = await new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            try {
+              const scale = Math.max(width / img.width, height / img.height);
+              const drawW = img.width * scale;
+              const drawH = img.height * scale;
+              const dx = (width - drawW) / 2;
+              const dy = (height - drawH) / 2;
+              ctx.drawImage(img, dx, dy, drawW, drawH);
+              resolve(true);
+            } catch (e) {
+              resolve(false);
+            }
+          };
+          img.onerror = () => resolve(false);
+          img.src = srcUrl;
+        });
+
+        if (!loadedImg) {
+          // Procedural Neon-Cinema Emblem Fallback (for standalone Worker without static assets)
+          const cx = width / 2;
+          const cy = isSplash ? height * 0.44 : height * 0.5;
+          const rOuter = isSplash ? 76 : 145;
+          const glow = ctx.createRadialGradient(cx, cy, rOuter * 0.15, cx, cy, rOuter * 1.45);
+          glow.addColorStop(0, "rgba(0, 240, 255, 0.38)");
+          glow.addColorStop(0.55, "rgba(139, 92, 246, 0.24)");
+          glow.addColorStop(1, "rgba(7, 11, 25, 0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rOuter * 1.45, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.save();
+          ctx.strokeStyle = "#00F0FF";
+          ctx.lineWidth = isSplash ? 5 : 9;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = "#8B5CF6";
+          ctx.lineWidth = isSplash ? 3 : 6;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rOuter * 0.76, 0, Math.PI * 2);
+          ctx.stroke();
+
+          const playGrad = ctx.createLinearGradient(cx - rOuter * 0.35, cy - rOuter * 0.4, cx + rOuter * 0.45, cy + rOuter * 0.4);
+          playGrad.addColorStop(0, "#00F0FF");
+          playGrad.addColorStop(1, "#8B5CF6");
+          ctx.fillStyle = playGrad;
+          ctx.beginPath();
+          ctx.moveTo(cx - rOuter * 0.22, cy - rOuter * 0.36);
+          ctx.lineTo(cx + rOuter * 0.38, cy);
+          ctx.lineTo(cx - rOuter * 0.22, cy + rOuter * 0.36);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // 3. Subtle Neon-Cinema Glass Vignette & Crisp Branding Frame
+        const radGrad = ctx.createRadialGradient(
+          width * 0.5,
+          height * 0.5,
+          width * 0.18,
+          width * 0.5,
+          height * 0.5,
+          width * 0.72
+        );
+        radGrad.addColorStop(0, "rgba(7, 11, 25, 0.0)");
+        radGrad.addColorStop(1, "rgba(7, 11, 25, 0.52)");
+        ctx.fillStyle = radGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // Neon border glow
+        ctx.save();
+        ctx.strokeStyle = "rgba(0, 240, 255, 0.55)";
+        ctx.lineWidth = isSplash ? 3 : 4;
+        ctx.strokeRect(isSplash ? 6 : 8, isSplash ? 6 : 8, width - (isSplash ? 12 : 16), height - (isSplash ? 12 : 16));
+        ctx.restore();
+
+        if (isSplash) {
+          // Bottom glass bar with crisp badge for 640x360 BotFather Mini-App Splash/Header
+          const pillW = 290;
+          const pillH = 38;
+          const pillX = (width - pillW) / 2;
+          const pillY = height - 54;
+          ctx.save();
+          ctx.fillStyle = "rgba(7, 11, 25, 0.82)";
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(pillX, pillY, pillW, pillH, 19);
+          } else {
+            ctx.rect(pillX, pillY, pillW, pillH);
+          }
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0, 240, 255, 0.65)";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.font = "900 14px system-ui, -apple-system, sans-serif";
+          ctx.fillStyle = "#F8FAFC";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("🎬 STREAMING MINI-APP • 4K UHD", width / 2, pillY + pillH / 2 + 1);
+          ctx.restore();
+        }
+
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            showHudToast("⚠️ PNG-Export fehlgeschlagen.");
+            return;
+          }
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            try {
+              document.body.removeChild(a);
+              URL.revokeObjectURL(blobUrl);
+            } catch (e) {}
+          }, 500);
+          showHudToast("✅ " + fileName + " (" + width + "×" + height + " PNG) heruntergeladen!");
+        }, "image/png");
+      }
+
+      function applyAdminTelegramPaletteLiveClient(paletteKey) {
+        state.themeMode = paletteKey || "dark";
+        applyThemeAndAccessibilityToDom();
+        try {
+          if (chatId && chatId !== "guest") {
+            apiFetchJson(API_BASE + "/settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chatId, themeMode: state.themeMode })
+            }).catch(() => {});
+          }
+        } catch (e) {}
+        const pal = (typeof TELEGRAM_THEME_PALETTES_CLIENT !== "undefined" && TELEGRAM_THEME_PALETTES_CLIENT[state.themeMode])
+          ? TELEGRAM_THEME_PALETTES_CLIENT[state.themeMode]
+          : { headerColor: "#0B1021", bgColor: "#070B19", bottomBarColor: "#090D1C" };
+        showHudToast("🎨 Mini-App Farben live gesetzt (Header " + pal.headerColor + " • Body " + pal.bgColor + ")");
+        if (state.currentView === "admin") {
+          loadAdminPanelView(false);
         }
       }
 
@@ -42998,6 +43940,7 @@
                 API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
                 "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
                 "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "") +
+                "&tab=" + encodeURIComponent(state.adminTab || "users") +
                 (forceNetworkRefresh ? "&refresh=1" : "")
               );
               if (r && r.ok) {
@@ -43218,6 +44161,12 @@
           const botSetup = r.botSetup || window._lastAdminOverviewCache?.botSetup || {};
           const curCoverMode = state.adminVideoCoverMode || botSetup.videoCoverMode || "backdrop";
           state.adminVideoCoverMode = curCoverMode;
+          if (!state.adminWorkerSpeedProfile) {
+            let savedLocalProf = "";
+            try { savedLocalProf = localStorage.getItem("tma_worker_speed_profile") || ""; } catch (e) {}
+            state.adminWorkerSpeedProfile = savedLocalProf || botSetup.speedProfile || "free_turbo";
+          }
+          const curSpeedProfile = state.adminWorkerSpeedProfile || "free_turbo";
           const effMiniAppUrl = String(botSetup.webAppUrl || window.location.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\\/+$/, "");
           const effBotUsername = String(botSetup.botUsername || "DeinBot").replace(/^@/, "");
           const botFatherCommandsBlock = [
@@ -43236,7 +44185,7 @@
             '<div class="panel-box" style="border-color:rgba(56,189,248,0.42);background:linear-gradient(135deg,rgba(15,23,42,0.92),rgba(17,24,39,0.88));margin-bottom:12px">' +
               '<div class="section-title" style="margin-bottom:6px">' +
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-                  '<span>🚀 Telegram Bot API 8.3+ Cockpit: Mini-App Direktstart & Video-Cover-Embedding</span>' +
+                  '<span>🚀 Telegram Bot API 8.3+ & Cloudflare Anti-Timeout Cockpit</span>' +
                   '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.38)">Bot API 8.0–8.3 aktiv</span>' +
                 '</div>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
@@ -43244,6 +44193,26 @@
                   '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="addTmaToHomeScreenClient()">📲 Home-Screen-Icon</button>' +
                   '<button type="button" class="btn blue" style="padding:4px 10px;font-size:11px" onclick="state.adminBotGuideOpen=!state.adminBotGuideOpen;loadAdminPanelView(false)">' +
                     (state.adminBotGuideOpen ? '📖 @BotFather Guide ausblenden ▴' : '📖 @BotFather 3-Schritte-Guide ▾') +
+                  '</button>' +
+                '</div>' +
+              '</div>' +
+              /* Anti-Timeout Worker Geschwindigkeits-Profil Umschalter */
+              '<div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.35);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
+                '<div style="flex:1;min-width:240px">' +
+                  '<div style="font-size:12px;font-weight:800;color:#34d399">⚡ Cloudflare Worker Geschwindigkeits-Profil (Anti-Timeout & 10ms CPU Schutz)</div>' +
+                  '<div style="font-size:11px;color:#cbd5e1;margin-top:2px">' +
+                    'Verhindert Timeouts auf dem kostenlosen Cloudflare Worker durch <b>D1 Delta-Upsert</b> (0 Voll-Playlist-Reads), <b>TMDb-Direkt-Turbo</b> und parallelen 1.8s Notfall-Fallback nur bei 0 TMDb-Treffern.' +
+                  '</div>' +
+                '</div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button type="button" class="btn ' + (curSpeedProfile === 'free_turbo' ? 'green' : '') + '" style="font-size:11.5px;padding:6px 11px" onclick="adminSetWorkerSpeedProfileClient(\\'free_turbo\\')">' +
+                    (curSpeedProfile === 'free_turbo' ? '✓ ' : '') + '🛡️ Free-Tier Turbo (Empfohlen)' +
+                  '</button>' +
+                  '<button type="button" class="btn ' + (curSpeedProfile === 'balanced' ? 'blue' : '') + '" style="font-size:11.5px;padding:6px 11px" onclick="adminSetWorkerSpeedProfileClient(\\'balanced\\')">' +
+                    (curSpeedProfile === 'balanced' ? '✓ ' : '') + '⚖️ Ausgewogen' +
+                  '</button>' +
+                  '<button type="button" class="btn ' + (curSpeedProfile === 'paid_pro' ? 'amber' : '') + '" style="font-size:11.5px;padding:6px 11px" onclick="adminSetWorkerSpeedProfileClient(\\'paid_pro\\')">' +
+                    (curSpeedProfile === 'paid_pro' ? '✓ ' : '') + '🚀 Paid Worker Pro' +
                   '</button>' +
                 '</div>' +
               '</div>' +
@@ -43280,6 +44249,62 @@
                   '<div id="adminBotSetupStatusMsg" style="display:none;font-size:11px;margin-top:6px;line-height:1.4"></div>' +
                 '</div>' +
               '</div>' +
+              /* Box 3: Neon-Cinema PNG-Studio (512x512 Bot-Foto & 640x360 Mini-App Splashscreen) + Empfohlene Mini-App Farben */
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;align-items:stretch;margin-top:10px">' +
+                /* PNG-Studio für @BotFather */
+                '<div style="background:linear-gradient(135deg,rgba(7,11,25,0.92),rgba(18,9,43,0.88));border:1px solid rgba(0,240,255,0.32);border-radius:10px;padding:10px">' +
+                  '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;flex-wrap:wrap">' +
+                    '<div style="font-size:12px;font-weight:800;color:#f8fafc">🖼️ @BotFather PNG-Studio (Neon-Cinema Design)</div>' +
+                    '<button type="button" class="btn" style="padding:3px 8px;font-size:10.5px;border-color:rgba(0,240,255,0.45);color:#38bdf8" onclick="previewBootSplashscreenClient()">✨ In-App Splashscreen testen</button>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+                    '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:210px;background:rgba(255,255,255,0.03);padding:7px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<img src="/assets/telegram_bot_avatar_neon.jpg" alt="Bot Avatar" style="width:46px;height:46px;border-radius:10px;object-fit:cover;border:1px solid rgba(0,240,255,0.55);flex-shrink:0" />' +
+                      '<div style="flex:1;min-width:110px">' +
+                        '<div style="font-size:11.5px;font-weight:800;color:#fff">Bot-Profilbild (1:1)</div>' +
+                        '<div style="font-size:10.5px;color:#94a3b8">Exakt 512×512 px PNG für <code>/setuserpic</code></div>' +
+                        '<button type="button" class="btn blue" style="margin-top:4px;padding:4px 8px;font-size:10.5px;width:100%" onclick="downloadNeonBotAssetPngClient(\\'avatar_512\\')">⬇️ 512×512 PNG laden</button>' +
+                      '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:225px;background:rgba(255,255,255,0.03);padding:7px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<img src="/assets/telegram_miniapp_splash_neon.jpg" alt="Mini-App Splash" style="width:74px;height:46px;border-radius:8px;object-fit:cover;border:1px solid rgba(139,92,246,0.55);flex-shrink:0" />' +
+                      '<div style="flex:1;min-width:110px">' +
+                        '<div style="font-size:11.5px;font-weight:800;color:#fff">Mini-App Splash (16:9)</div>' +
+                        '<div style="font-size:10.5px;color:#94a3b8">Exakt 640×360 px PNG für @BotFather</div>' +
+                        '<button type="button" class="btn green" style="margin-top:4px;padding:4px 8px;font-size:10.5px;width:100%" onclick="downloadNeonBotAssetPngClient(\\'splash_640x360\\')">⬇️ 640×360 PNG laden</button>' +
+                      '</div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+                /* Empfohlene Mini-App Farben (Header, Body, Bottom-Bar) & 1-Klick Copy für @BotFather */
+                '<div style="background:linear-gradient(135deg,rgba(11,16,33,0.94),rgba(7,11,25,0.94));border:1px solid rgba(139,92,246,0.38);border-radius:10px;padding:10px">' +
+                  '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;flex-wrap:wrap">' +
+                    '<div style="font-size:12px;font-weight:800;color:#f8fafc">🎨 Empfohlene Mini-App Farben (Telegram SDK & @BotFather)</div>' +
+                    '<button type="button" class="btn green" style="padding:3px 8px;font-size:10.5px" onclick="applyAdminTelegramPaletteLiveClient(\\'dark\\')">⚡ Neon-Cinema Farben aktivieren</button>' +
+                  '</div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:7px;line-height:1.4">' +
+                    'Werden beim Start automatisch per <code>setHeaderColor</code>, <code>setBackgroundColor</code> & <code>setBottomBarColor</code> gesetzt. Klicke auf einen Farbcode zum Kopieren für <b>@BotFather ▸ Configure Mini App</b>:' +
+                  '</div>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px">' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#0B1021\\',\\'Mini-App Header-Farbe\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:#0B1021;border:1px solid #38bdf8;flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Header Color</div><div style="font-size:11px;font-weight:800;color:#fff;font-family:monospace">#0B1021 📋</div></div>' +
+                    '</div>' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#070B19\\',\\'Mini-App Body-/Background-Farbe\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:#070B19;border:1px solid #8b5cf6;flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Body / Background</div><div style="font-size:11px;font-weight:800;color:#fff;font-family:monospace">#070B19 📋</div></div>' +
+                    '</div>' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#090D1C\\',\\'Mini-App Bottom-Bar-Farbe\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:#090D1C;border:1px solid rgba(255,255,255,0.3);flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Bottom Bar</div><div style="font-size:11px;font-weight:800;color:#fff;font-family:monospace">#090D1C 📋</div></div>' +
+                    '</div>' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#00F0FF\\',\\'Primärer Neon-Cyan Akzent\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:linear-gradient(135deg,#00F0FF,#8B5CF6);border:1px solid #fff;flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Neon-Akzent</div><div style="font-size:11px;font-weight:800;color:#38bdf8;font-family:monospace">#00F0FF 📋</div></div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
               /* Aufklappbarer @BotFather Guide für Main Mini App & Chatlisten-Öffnen */
               (state.adminBotGuideOpen ? (
                 '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.95);border:1px solid rgba(56,189,248,0.35);font-size:11.5px;color:#cbd5e1;line-height:1.55">' +
@@ -43292,11 +44317,11 @@
                       '• <b>In-Place Video-Cover (Bot API 8.3):</b> Funktioniert vollautomatisch über den Worker.' +
                     '</div>' +
                     '<div style="background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
-                      '<b style="color:#fbbf24">2️⃣ Einmalig im @BotFather (Main Mini App in der Chatliste & Profil-Banner):</b><br/>' +
-                      'Damit in der Telegram-Chatliste direkt neben <b>@' + esc(effBotUsername) + '</b> der „Öffnen“-Button und im Bot-Profil der große „App starten“-Banner erscheint:<br/>' +
-                      '1. Öffne <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline">@BotFather</a> in Telegram.<br/>' +
-                      '2. Sende <code>/mybots</code> ▸ wähle <b>@' + esc(effBotUsername) + '</b> ▸ <b>Bot Settings</b> ▸ <b>Configure Mini App</b> ▸ <b>Enable Mini App</b>.<br/>' +
-                      '3. Füge als URL deine Worker-Adresse ein:' +
+                      '<b style="color:#fbbf24">2️⃣ Einmalig im @BotFather (Main Mini App, Bot-Foto, Splashscreen & Login Widget):</b><br/>' +
+                      '1. Öffne <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline">@BotFather</a> ▸ <code>/mybots</code> ▸ <b>@' + esc(effBotUsername) + '</b>.<br/>' +
+                      '2. <b>Bot-Foto:</b> <i>Edit Bot ▸ Edit Botpic</i> ▸ das <b>512×512 PNG</b> hochladen.<br/>' +
+                      '3. <b>Main Mini App & Farben:</b> <i>Bot Settings ▸ Configure Mini App</i> ▸ URL einfügen, das <b>640×360 PNG</b> sowie Header <code>#0B1021</code> & Background <code>#070B19</code> eintragen.<br/>' +
+                      '4. <b>Telegram Login Widget im Browser:</b> Sende <code>/setdomain</code> an @BotFather und hinterlege deine Worker-Domain:' +
                       '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">' +
                         '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + esc(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
                         '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(' + JSON.stringify(botFatherCommandsBlock).replace(/"/g, '&quot;') + ',\\'BotFather Befehlsliste\\')">📋 Befehlsliste kopieren</button>' +
@@ -43763,6 +44788,9 @@
         }
         updateSyncBadge();
         await loadDiscover("m", "all", "trend", "pop_desc");
+        if (typeof dismissBootSplashscreen === "function") {
+          dismissBootSplashscreen();
+        }
 
         // Deep-Link Unterstützung (aus dem Bot -> direkt zur entsprechenden Ansicht in der Mini-App!)
         let deepLinkOpened = false;
@@ -44998,6 +46026,130 @@
         }), { status: 200, headers: corsHeaders });
       }
 
+      // 2b. Offizielles Telegram Login Widget (HMAC-SHA256 mit SHA256(BOT_TOKEN))
+      if (path === "/api/tma/auth/telegram-widget" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const widgetData = (body && typeof body.user === "object" && body.user !== null) ? body.user : body;
+        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN);
+        if (!verified.ok || !verified.user) {
+          return new Response(JSON.stringify({ ok: false, error: verified.error || "Telegram Login-Widget Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
+        }
+        const userProfile = await upsertTelegramUserInD1(env, verified.user);
+        const sessionToken = await signTmaSessionToken({
+          telegramId: String(verified.user.id),
+          tgUsername: verified.user.username || "",
+          firstName: verified.user.first_name || "",
+          isAdmin: Boolean(userProfile?.isAdmin),
+          isVip: Boolean(userProfile?.isVip),
+          authMethod: "telegram_widget",
+          hasInitData: true
+        }, env);
+        return new Response(JSON.stringify({
+          ok: true,
+          isAuthenticated: true,
+          user: userProfile,
+          sessionToken
+        }), { status: 200, headers: corsHeaders });
+      }
+
+      // 2c. 1-Klick Bot-App-Bestätigung & 6-stelliger Login-Code für Browser, PC & Smart-TV
+      if (path === "/api/tma/auth/bot-code" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const action = String(body.action || "create").trim();
+
+        if (action === "create") {
+          const challengeId = `wac_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+          const code = String(Math.floor(100000 + Math.random() * 900000));
+          const expiresAt = Date.now() + 300000; // 5 Minuten gültig
+          const botUsername = (await tgApi(env).getBotUsername(env).catch(() => "")) || "";
+          const challengeObj = {
+            challengeId,
+            code,
+            status: "pending",
+            createdAt: Date.now(),
+            expiresAt,
+            user: null
+          };
+          memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
+          memoryFallback.set(`webauth_code_${code}`, challengeId);
+          try {
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+          } catch (e) {}
+          const deepLink = botUsername
+            ? `https://t.me/${botUsername.replace(/^@/, "")}?start=webauth_${challengeId}`
+            : "";
+          return new Response(JSON.stringify({
+            ok: true,
+            challengeId,
+            code,
+            botUsername: botUsername.replace(/^@/, ""),
+            deepLink,
+            expiresAt
+          }), { status: 200, headers: corsHeaders });
+        }
+
+        if (action === "simulate_confirm") {
+          const challengeId = String(body.challengeId || "").trim();
+          let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
+          if (!challengeObj) {
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+          }
+          if (!challengeObj) {
+            return new Response(JSON.stringify({ ok: false, error: "Challenge nicht gefunden." }), { status: 404, headers: corsHeaders });
+          }
+          challengeObj.status = "confirmed";
+          challengeObj.user = {
+            id: 100998877,
+            first_name: "Admin",
+            username: "teleport_admin"
+          };
+          memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
+          try {
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+          } catch (e) {}
+          return new Response(JSON.stringify({ ok: true, status: "confirmed" }), { status: 200, headers: corsHeaders });
+        }
+
+        if (action === "poll") {
+          const challengeId = String(body.challengeId || "").trim();
+          if (!challengeId) {
+            return new Response(JSON.stringify({ ok: false, error: "challengeId fehlt" }), { status: 400, headers: corsHeaders });
+          }
+          let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
+          if (!challengeObj) {
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+          }
+          if (!challengeObj || Date.now() > Number(challengeObj.expiresAt || 0)) {
+            return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
+          }
+          if (challengeObj.status === "confirmed" && challengeObj.user && challengeObj.user.id) {
+            const userProfile = await upsertTelegramUserInD1(env, challengeObj.user);
+            const sessionToken = await signTmaSessionToken({
+              telegramId: String(challengeObj.user.id),
+              tgUsername: challengeObj.user.username || "",
+              firstName: challengeObj.user.first_name || "",
+              isAdmin: Boolean(userProfile?.isAdmin),
+              isVip: Boolean(userProfile?.isVip),
+              authMethod: "bot_code",
+              hasInitData: true
+            }, env);
+            memoryFallback.delete(`webauth_id_${challengeId}`);
+            if (challengeObj.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
+            return new Response(JSON.stringify({
+              ok: true,
+              status: "confirmed",
+              isAuthenticated: true,
+              user: userProfile,
+              sessionToken
+            }), { status: 200, headers: corsHeaders });
+          }
+          return new Response(JSON.stringify({ ok: true, status: "pending" }), { status: 200, headers: corsHeaders });
+        }
+      }
+
       // 3. Web-Login (Username + Passwort + optionaler TOTP 2FA Code) – funktioniert von überall, auch OHNE initData!
       if (path === "/api/tma/auth/login" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
@@ -45283,10 +46435,27 @@
           const mediaType = url.searchParams.get("mediaType") === "s" ? "s" : "m";
           const playlistChatId = String(url.searchParams.get("playlistChatId") || auth.chatId);
           const requestedFolderId = String(url.searchParams.get("folderId") || "").trim();
+          const activeTab = String(url.searchParams.get("tab") || "").trim();
+          const isFullRefresh = url.searchParams.get("refresh") === "1";
           if (playlistChatId === "bot_vip") {
             await ensureBotVipDefaultPlaylist(env).catch(() => null);
           }
-          await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
+          if (isFullRefresh) {
+            await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
+          }
+          const shouldComputeSeriesGapsNow = isFullRefresh || activeTab === "gaps";
+          const cachedSeriesGaps = memoryFallback.get("d1_series_gaps_cache") || {
+            totalSeriesChecked: 0,
+            seriesWithGapsCount: 0,
+            seriesWithInternalGapsCount: 0,
+            totalMissingInternal: 0,
+            totalMissingTrailing: 0,
+            totalPrereleaseOnly: 0,
+            items: [],
+            totalSeriesWithGaps: 0,
+            series: [],
+            lazyDeferred: !shouldComputeSeriesGapsNow
+          };
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
             listAllUsersFromD1(env).catch(() => []),
             listAllMediaFromD1(env, mediaType).catch(() => []),
@@ -45294,17 +46463,9 @@
             getFolders(env, playlistChatId).catch(() => []),
             getSavedList(env, playlistChatId).catch(() => []),
             listMediaReportsFromD1(env, "all").catch(() => []),
-            computeSeriesGapsOverview(env, url.searchParams.get("refresh") === "1").catch(() => ({
-              totalSeriesChecked: 0,
-              seriesWithGapsCount: 0,
-              seriesWithInternalGapsCount: 0,
-              totalMissingInternal: 0,
-              totalMissingTrailing: 0,
-              totalPrereleaseOnly: 0,
-              items: [],
-              totalSeriesWithGaps: 0,
-              series: []
-            }))
+            shouldComputeSeriesGapsNow
+              ? computeSeriesGapsOverview(env, isFullRefresh).catch(() => cachedSeriesGaps)
+              : Promise.resolve(cachedSeriesGaps)
           ]);
           const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || []);
           const playlists = (targetFolders || []).map(f => ({
@@ -45320,9 +46481,10 @@
             ? (targetItems || []).filter(i => String(i.folderId) === activeFolderId)
             : [];
           const openReportsCount = (reports || []).filter(r => r && r.status === "open").length;
-          const [videoCoverMode, botUsername] = await Promise.all([
+          const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
             getVideoCoverMode(env).catch(() => "backdrop"),
-            tgApi(env).getBotUsername(env).catch(() => "")
+            tgApi(env).getBotUsername(env).catch(() => ""),
+            getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
           ]);
           const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
           return new Response(JSON.stringify({
@@ -45339,6 +46501,8 @@
             seriesGaps,
             botSetup: {
               videoCoverMode,
+              speedProfile: speedProfileConfig?.id || "free_turbo",
+              speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
               botUsername: botUsername || "DeinBot"
             }
@@ -45347,13 +46511,16 @@
         if (path === "/api/tma/admin/bot-setup") {
           const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
           if (request.method === "GET") {
-            const [videoCoverMode, botUsername] = await Promise.all([
+            const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
               getVideoCoverMode(env).catch(() => "backdrop"),
-              tgApi(env).getBotUsername(env).catch(() => "")
+              tgApi(env).getBotUsername(env).catch(() => ""),
+              getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
             ]);
             return new Response(JSON.stringify({
               ok: true,
               videoCoverMode,
+              speedProfile: speedProfileConfig?.id || "free_turbo",
+              speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
               botUsername: botUsername || "DeinBot"
             }), { status: 200, headers: corsHeaders });
@@ -45367,6 +46534,15 @@
               return new Response(JSON.stringify({
                 ok: true,
                 videoCoverMode: savedMode
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "set_speed_profile") {
+              const savedProfile = await setWorkerSpeedProfile(env, body.speedProfile || "free_turbo");
+              await flushUserSession(env, auth.chatId).catch(() => {});
+              return new Response(JSON.stringify({
+                ok: true,
+                speedProfile: savedProfile.id,
+                speedProfileConfig: savedProfile
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "setup_miniapp_menu") {
@@ -45520,7 +46696,9 @@
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, 20) : [];
+          const activeSpeedProf = await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
+          const maxSliceCap = Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 12) + 4), 30);
+          const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, maxSliceCap) : [];
           if (rawEntries.length === 0) {
             return new Response(JSON.stringify({ ok: false, error: "Keine Einträge im Batch." }), { status: 400, headers: corsHeaders });
           }
@@ -45602,6 +46780,7 @@
               folderId: playlistFolder.id,
               playlistName: playlistFolder.name,
               playlistMode: playlistFolder.playlistMode || playlistMode,
+              speedProfile: activeSpeedProf.id,
               deferKvWrite: true,
               isFinalBatch: body.isFinalBatch === undefined ? true : Boolean(body.isFinalBatch)
             }

@@ -303,9 +303,13 @@
     }
   }
 
-  async function searchTmdbCandidatesForImport(env, parsed, forceTypeCode = null) {
+  async function searchTmdbCandidatesForImport(env, parsed, forceTypeCode = null, options = null) {
     const rawSearchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
     if ((!rawSearchTitle || rawSearchTitle === "Unbekannt") && !parsed?.tmdbId && !parsed?.imdbId) return [];
+
+    const isTurboMode = options?.speedProfile === "free_turbo" || options?.fallbackMode === "smart_emergency";
+    const isBatchImport = Boolean(options?.isBatchImport);
+    const earlyStopConf = isTurboMode ? 76 : 85;
 
     // 1. Doppelpunkt nach Römischen Zahlen erzwingen ("Star Trek II Der Zorn des Khan" -> "Star Trek II: Der Zorn des Khan")
     const searchTitle = rawSearchTitle.replace(/\b(I{1,3}|IV|V|VI{1,3}|IX|X)\s+([A-ZÄÖÜ])/g, "$1: $2");
@@ -382,42 +386,42 @@
       ? stripRomanNumeralBeforeSubtitle(searchTitle)
       : "";
     let hitsWithArticleTotal = 0;
-    if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < 85) {
+    if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < earlyStopConf) {
       const hitsWithYear = parsed.year
         ? await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle)
         : 0;
       hitsWithArticleTotal += hitsWithYear;
-      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= 85% ohne Jahreskonflikt geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
-      if ((getBestPrimaryConf() < 85 || hasBestYearConflict()) && (!parsed.year || hitsWithYear === 0)) {
+      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= earlyStopConf ohne Jahreskonflikt geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
+      if ((getBestPrimaryConf() < earlyStopConf || hasBestYearConflict()) && (!parsed.year || hitsWithYear === 0)) {
         hitsWithArticleTotal += await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
       }
-      if (getBestPrimaryConf() < 85 && rawSearchTitle !== searchTitle && hitsWithYear === 0) {
+      if (getBestPrimaryConf() < earlyStopConf && rawSearchTitle !== searchTitle && hitsWithYear === 0) {
         const rawHitsYear = await runTmdbQuery(primaryType, rawSearchTitle, parsed.year, searchTitle);
         hitsWithArticleTotal += rawHitsYear;
-        if (getBestPrimaryConf() < 85 && parsed.year && rawHitsYear === 0) {
+        if (getBestPrimaryConf() < earlyStopConf && parsed.year && rawHitsYear === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
         }
       }
       // MODUL 3.2: Römische-Zahlen-Retry bei Jahres-Konflikt ("Star Trek IX Nemesis (2002)" -> "Star Trek Nemesis" mit year = 2002)
-      if (romanStrippedSubtitleVariant && (rawPool.length === 0 || getBestPrimaryConf() < 85 || hasBestYearConflict())) {
+      if (romanStrippedSubtitleVariant && (rawPool.length === 0 || getBestPrimaryConf() < earlyStopConf || hasBestYearConflict())) {
         const rsHits = await runTmdbQuery(primaryType, romanStrippedSubtitleVariant, parsed.year || null, romanStrippedSubtitleVariant);
         hitsWithArticleTotal += rsHits;
         if (parsed.year && rsHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, romanStrippedSubtitleVariant, null, romanStrippedSubtitleVariant);
         }
       }
-      if (getBestPrimaryConf() < 85 && romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
+      if (getBestPrimaryConf() < earlyStopConf && romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
         const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null, romanMovieVariant);
         hitsWithArticleTotal += rHits;
-        if (getBestPrimaryConf() < 85 && parsed.year && rHits === 0) {
+        if (getBestPrimaryConf() < earlyStopConf && parsed.year && rHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
         }
       }
       // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
-      if (umlautVariant !== searchTitle && getBestPrimaryConf() < 85) {
+      if (umlautVariant !== searchTitle && getBestPrimaryConf() < earlyStopConf) {
         const uHits = await runTmdbQuery(primaryType, umlautVariant, parsed.year || null, umlautVariant);
         hitsWithArticleTotal += uHits;
-        if (getBestPrimaryConf() < 85 && parsed.year && uHits === 0) {
+        if (getBestPrimaryConf() < earlyStopConf && parsed.year && uHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
         }
       }
@@ -427,19 +431,19 @@
     const altSourceCandidates = [parsed?.titleFromFileName, parsed?.titleFromText]
       .map(s => String(s || "").trim())
       .filter(s => s.length >= 2 && s.toLowerCase() !== searchTitle.toLowerCase() && s.toLowerCase() !== rawSearchTitle.toLowerCase());
-    if (altSourceCandidates.length > 0 && (rawPool.length === 0 || getBestPrimaryConf() < 82 || hasBestYearConflict())) {
-      for (const altTitle of altSourceCandidates) {
+    if (altSourceCandidates.length > 0 && (rawPool.length === 0 || getBestPrimaryConf() < earlyStopConf || hasBestYearConflict())) {
+      for (const altTitle of altSourceCandidates.slice(0, isTurboMode ? 1 : 2)) {
         const altHits = await runTmdbQuery(primaryType, altTitle, parsed.year || null, altTitle);
         hitsWithArticleTotal += altHits;
         if (parsed.year && altHits === 0) {
           hitsWithArticleTotal += await runTmdbQuery(primaryType, altTitle, null, altTitle);
         }
-        if (getBestPrimaryConf() >= 85 && !hasBestYearConflict()) break;
+        if (getBestPrimaryConf() >= earlyStopConf && !hasBestYearConflict()) break;
       }
     }
 
-    // Stufe 3B: Suche mit Originaltitel (nur falls noch kein sicherer Treffer >= 85% vorliegt)
-    if (getBestPrimaryConf() < 85 && parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
+    // Stufe 3B: Suche mit Originaltitel (nur falls noch kein sicherer Treffer >= earlyStopConf vorliegt)
+    if (getBestPrimaryConf() < earlyStopConf && parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
       hitsWithArticleTotal += await runTmdbQuery(primaryType, parsed.originalTitle, parsed.year || null);
     }
 
@@ -511,7 +515,9 @@
           shorterCandidates.push(firstThree);
         }
       }
-      for (const shorterTitle of shorterCandidates) {
+      const cappedShorterCandidates = isTurboMode ? shorterCandidates.slice(0, 2) : shorterCandidates;
+      for (const shorterTitle of cappedShorterCandidates) {
+        if (isTurboMode && !hasSubrequestBudget(16)) break;
         const beforeLen = rawPool.length;
         await runTmdbQuery(primaryType, shorterTitle, parsed.year || null, shorterTitle);
         if (parsed.year) {
@@ -520,7 +526,7 @@
             const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
             return y && Math.abs(Number(parsed.year) - y) <= 2;
           });
-          if (!hasYearMatch) {
+          if (!hasYearMatch && (!isTurboMode || rawPool.length === beforeLen)) {
             await runTmdbQuery(primaryType, shorterTitle, null, shorterTitle);
           }
         }
@@ -532,7 +538,7 @@
           const c = computeTmdbMatchConfidence(parsed, rawPool[k], rawPool[k]._typeCode);
           if (c > bestShortConf) bestShortConf = c;
         }
-        if (bestShortConf >= 78 && !hasBestYearConflict()) break;
+        if (bestShortConf >= (isTurboMode ? 72 : 78) && !hasBestYearConflict()) break;
       }
     }
 
@@ -737,10 +743,15 @@
       }
     }
 
-    // Erweiterte 8-API Fallback-Kaskade (OMDb -> Apple iTunes DE -> TVMaze -> AniList -> Jikan -> Wikidata -> MediaWiki), wenn TMDb leer oder unsicher (< 78%)
-    // Wenn ein nummerierter Episodentitel ("Black Box 1", "Spuk im Hochhaus 1", "Pippi Langstrumpf 1 ...") vorliegt, sucht die Fallback-Kaskade gezielt nach dem Basis-Serientitel!
+    // Erweiterte Fallback-Kaskade:
+    // Im Turbo-Modus ("free_turbo" / "smart_emergency") greifen wir NUR DANN auf die Notfall-Zusatz-APIs zurück,
+    // wenn TMDb 0 brauchbare Treffer (< 62%) geliefert hat UND genügend Subrequest-Budget frei ist!
     const currentBest = Array.from(dedupedMap.values()).reduce((m, x) => Math.max(m, x.confidence || 0), 0);
-    if (dedupedMap.size === 0 || currentBest < 78) {
+    const fallbackConfidenceThreshold = isTurboMode ? 62 : 78;
+    if ((dedupedMap.size === 0 || currentBest < fallbackConfidenceThreshold) && (!isTurboMode || hasSubrequestBudget(16))) {
+      if (options && typeof options === "object") {
+        options._fallbackAlreadyChecked = true;
+      }
       const fbParsed = (trailingBaseTitle && trailingEpNum)
         ? { ...parsed, cleanTitle: trailingBaseTitle, isSeries: true, season: parsed?.season || 1, episode: parsed?.episode || trailingEpNum }
         : (midBaseTitle && midEpNum)
@@ -749,7 +760,9 @@
       const fbForceType = strictMovieWithYearLock
         ? "m"
         : (forceTypeCode || ((trailingBaseTitle || midBaseTitle || parsed?.isSeries) ? "s" : null));
-      const fbHit = await fetchMultiApiFallbackCascade(env, fbParsed, fbForceType);
+      const fbHit = await fetchMultiApiFallbackCascade(env, fbParsed, fbForceType, {
+        fallbackMode: options?.fallbackMode || (isTurboMode ? "smart_emergency" : "deep")
+      });
       if (fbHit && fbHit.id && (!strictMovieWithYearLock || fbHit.typeCode !== "s")) {
         // Brücke: Wenn Wikipedia/Wikidata/TVMaze die korrekte Schreibweise mit Satzzeichen liefert (z. B. "Axel! will's wissen" statt "Axel will's wissen"),
         // direkt mit diesem kanonischen Titel erneut bei TMDb anfragen, um die offizielle TMDb-Serie samt Episoden zu erhalten!
@@ -845,18 +858,21 @@
       })
       .slice(0, 6);
 
+    // Im interaktiven Einzel-Dialog (nicht während eines großen Batch-Imports):
     // Falls Top-Kandidaten in de-DE kein Poster haben, direkt EN/Internationales Poster über /images nachladen
-    for (const cand of sortedCandidates.slice(0, 3)) {
-      if (!cand.poster && cand.tmdbId && cand.tmdbId < 8000000 && env.TMDB_BEARER_TOKEN) {
-        const ep = cand.typeCode === "s" ? "tv" : "movie";
-        const imgData = await cachedExternalFetchJson(
-          `https://api.themoviedb.org/3/${ep}/${cand.tmdbId}/images?include_image_language=de,en,null`,
-          { headers },
-          2500
-        );
-        const pPath = imgData?.posters?.[0]?.file_path || "";
-        if (pPath) {
-          cand.poster = `https://image.tmdb.org/t/p/w185${pPath}`;
+    if (!isBatchImport) {
+      for (const cand of sortedCandidates.slice(0, 3)) {
+        if (!cand.poster && cand.tmdbId && cand.tmdbId < 8000000 && env.TMDB_BEARER_TOKEN) {
+          const ep = cand.typeCode === "s" ? "tv" : "movie";
+          const imgData = await cachedExternalFetchJson(
+            `https://api.themoviedb.org/3/${ep}/${cand.tmdbId}/images?include_image_language=de,en,null`,
+            { headers },
+            2500
+          );
+          const pPath = imgData?.posters?.[0]?.file_path || "";
+          if (pPath) {
+            cand.poster = `https://image.tmdb.org/t/p/w185${pPath}`;
+          }
         }
       }
     }
@@ -1110,7 +1126,8 @@
     }
 
     if (!targetId) {
-      candidates = await searchTmdbCandidatesForImport(env, parsed, forceTypeCode);
+      if (!options || typeof options !== "object") options = {};
+      candidates = await searchTmdbCandidatesForImport(env, parsed, forceTypeCode, options);
       if (candidates.length > 0 && candidates[0].confidence >= 42) {
         targetId = candidates[0].tmdbId;
         resolvedTypeCode = candidates[0].typeCode;
@@ -1195,8 +1212,10 @@
         setCachedTmdb(`tv_${seriesDetails.id}`, seriesDetails);
       }
 
-      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
-        const fbHit = await fetchMultiApiFallbackCascade(env, parsed, "s");
+      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000) && !options?._fallbackAlreadyChecked && hasSubrequestBudget(16)) {
+        const fbHit = await fetchMultiApiFallbackCascade(env, parsed, "s", {
+          fallbackMode: options?.fallbackMode || (options?.speedProfile === "free_turbo" ? "smart_emergency" : "deep")
+        });
         if (fbHit && fbHit.id) {
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : Number(fbHit.id);
           bestConfidence = Math.max(bestConfidence, fbHit.confidence || 76);
@@ -1233,7 +1252,7 @@
         }
       }
 
-      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
+      if (!seriesDetails && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000) && !options?._fallbackAlreadyChecked && hasSubrequestBudget(16)) {
         const maze = await fetchTvMazeSeriesFallback(searchTitle, parsed.year || "");
         if (maze && maze.tvmazeId) {
           targetId = Number(explicitTmdbId) >= 8000000 ? Number(explicitTmdbId) : (200000000 + (Number(maze.tvmazeId) % 99999999));
@@ -1655,7 +1674,7 @@
       const prelimMovieYear = /^\d{4}$/.test(prelimMovieYearStr) ? parseInt(prelimMovieYearStr, 10) : null;
       const prelimYearMismatch = Boolean(!explicitTmdbId && parsed.year && prelimMovieYear && Math.abs(Number(parsed.year) - prelimMovieYear) > 2);
 
-      if ((!movieDetails || prelimYearMismatch) && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000)) {
+      if ((!movieDetails || prelimYearMismatch) && (!explicitTmdbId || Number(explicitTmdbId) >= 8000000) && (!options?._fallbackAlreadyChecked || prelimYearMismatch) && hasSubrequestBudget(16)) {
         const fbQueryParsed = (/(?:ae|oe|ue)/i.test(parsed.cleanTitle || "") && !/[äöüß]/i.test(parsed.cleanTitle || ""))
           ? {
               ...parsed,
@@ -1664,7 +1683,9 @@
                 .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
             }
           : parsed;
-        const fbHit = await fetchMultiApiFallbackCascade(env, fbQueryParsed, "m");
+        const fbHit = await fetchMultiApiFallbackCascade(env, fbQueryParsed, "m", {
+          fallbackMode: options?.fallbackMode || (options?.speedProfile === "free_turbo" ? "smart_emergency" : "deep")
+        });
         const fbYear = fbHit?.year && /^\d{4}$/.test(String(fbHit.year)) ? parseInt(String(fbHit.year), 10) : null;
         const fbMatchesTargetYear = Boolean(!parsed.year || (fbYear && Math.abs(Number(parsed.year) - fbYear) <= 2));
         if (fbHit && fbHit.id && (!movieDetails || fbMatchesTargetYear)) {
@@ -2541,7 +2562,11 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     const batchWallStartMs = Date.now();
-    const BATCH_WALL_CLOCK_LIMIT_MS = 5200;
+    const speedProfileObj = typeof getWorkerSpeedProfile === "function"
+      ? await getWorkerSpeedProfile(env, playlistContext?.speedProfile || null)
+      : { id: "free_turbo", wallClockLimitMs: 3200, subrequestGuard: 20, fallbackMode: "smart_emergency" };
+    const BATCH_WALL_CLOCK_LIMIT_MS = Number(speedProfileObj.wallClockLimitMs || 3200);
+    const SUBREQUEST_GUARD_LIMIT = Number(speedProfileObj.subrequestGuard || 20);
     resetSubrequestBudget();
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
@@ -2579,11 +2604,11 @@
       : new Set();
 
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
-      // CLOUDFLARE 50-SUBREQUESTS-LIMIT & 8s-WALL-CLOCK-TIMEOUT SCHUTZSCHILD:
-      // Stoppt kontrolliert ab >= 26 Subrequests ODER >= 8000ms verstrichener Laufzeit
-      // und liefert PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein HTTP 503 Gateway-Timeout erreicht wird!
+      // CLOUDFLARE FREE-TIER CPU & SUBREQUEST SCHUTZSCHILD:
+      // Stoppt kontrolliert ab >= SUBREQUEST_GUARD_LIMIT Subrequests ODER >= BATCH_WALL_CLOCK_LIMIT_MS verstrichener Laufzeit
+      // und liefert PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein Timeout erreicht wird!
       const elapsedWallMs = Date.now() - batchWallStartMs;
-      if ((!hasSubrequestBudget(26) || elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && i > 0) {
+      if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT) || elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && i > 0) {
         partialBatch = true;
         nextStartIndex = i;
         pauseReason = elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
@@ -2595,8 +2620,8 @@
           stage: "BATCH_GUARD",
           status: "SUBREQUEST_PAUSE",
           reason: elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS
-            ? `Zeit-Guard nach ${elapsedWallMs}ms (>8000ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
-            : `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
+            ? `Zeit-Guard (${speedProfileObj.label || speedProfileObj.id}) nach ${elapsedWallMs}ms (>${BATCH_WALL_CLOCK_LIMIT_MS}ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
+            : `Subrequest-Guard (${speedProfileObj.label || speedProfileObj.id}) bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
           fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
           textPreview: pausedRawText.slice(0, 200),
           parsedTitle: pausedEntry?.cleanTitle || "",
@@ -2620,7 +2645,7 @@
         let matchedTitle = null;
         let parsedItem = null;
         const stepElapsedWallMs = Date.now() - batchWallStartMs;
-        if ((!hasSubrequestBudget(28) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
+        if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT + 2) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
@@ -2666,7 +2691,10 @@
         try {
           stepRes = await resolveAndIngestMediaEntry(env, entry, entryFileMeta, {
             returnUnmatched: true,
-            registerAsVipStream: shouldRegisterVipStream
+            registerAsVipStream: shouldRegisterVipStream,
+            speedProfile: speedProfileObj.id,
+            fallbackMode: speedProfileObj.fallbackMode,
+            isBatchImport: true
           });
         } catch (itemErr) {
           const fallbackRaw = typeof entry === "string"
@@ -3559,6 +3587,40 @@
           }
         }
 
+        // 6-stelliger Web-/Smart-TV-Login-Code direkt im Bot-Chat eingegeben (z.B. "482915" oder "482 915")
+        const sixDigitMatch = text.trim().match(/^(\d{3})\s*(\d{3})$/);
+        if (sixDigitMatch) {
+          const cleanCode = `${sixDigitMatch[1]}${sixDigitMatch[2]}`;
+          let mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
+          if (!mappedChallengeId) {
+            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MY_KV").catch(() => null);
+          }
+          if (mappedChallengeId) {
+            const cId = String(mappedChallengeId).replace(/^"|"$/g, "").trim();
+            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            if (!challengeObj) {
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
+              challengeObj.status = "confirmed";
+              challengeObj.user = {
+                id: Number(message.from?.id || chatId),
+                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                last_name: String(message.from?.last_name || ""),
+                username: String(message.from?.username || "")
+              };
+              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              try {
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+              } catch (e) {}
+              await deleteMessage(chatId, message.message_id);
+              await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
+              return;
+            }
+          }
+        }
+
         // /info, /Info, /help oder /hilfe Befehl -> Zeigt die komplette Befehls- & Icon-Übersicht
         if (/^\/(?:info|help|hilfe)(?:@\w+)?$/i.test(text)) {
           await deleteMessage(chatId, message.message_id);
@@ -3572,6 +3634,32 @@
 
           // WICHTIG: Wenn ein Deep-Link / TextLink im Bot angeklickt wurde, den "/start ..." Befehl sofort aus dem Chat löschen!
           await deleteMessage(chatId, message.message_id);
+
+          if (startParam.startsWith("webauth_")) {
+            const cId = startParam.replace(/^webauth_/i, "").trim();
+            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            if (!challengeObj) {
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
+              challengeObj.status = "confirmed";
+              challengeObj.user = {
+                id: Number(message.from?.id || chatId),
+                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                last_name: String(message.from?.last_name || ""),
+                username: String(message.from?.username || "")
+              };
+              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              try {
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+              } catch (e) {}
+              await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
+            } else {
+              await sendMessage(chatId, `⌛ *Dieser Login-Link ist abgelaufen.*\nBitte fordere im Login-Fenster der Mini-App einen neuen Code an.`);
+            }
+            return;
+          }
 
           if (startParam === "info") {
             await showBotInfoPost(env, chatId, null);

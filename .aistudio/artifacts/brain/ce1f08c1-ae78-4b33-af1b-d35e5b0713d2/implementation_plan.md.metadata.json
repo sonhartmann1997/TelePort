@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementierungsplan für das Telegram Bot API 8.0–8.3+ & Mini-App Upgrade: Permanenter Menü-Button (setChatMenuButton), Inline-Query Mini-App Start-Button, Bot API 8.0 Vollbild-Modus & Home-Screen-Shortcut, 1-Klick Setup & BotFather-Guide im Admin-Cockpit, umschaltbares Video-Cover-Embedding ohne Neu-Upload (cover in sendVideo & editMessageMedia inkl. Auto-Harvesting) sowie native copy_text-Buttons.",
-  "updatedAt":  "2026-11-09T16:35:38.550016285Z",
+  "summary":  "Implementierungsplan zur Beseitigung von Timeouts und Ladeverzögerungen auf dem kostenlosen Cloudflare Worker (10ms CPU-Limit & 50-Subrequests-Limit) beim JSON-Import sowie beim Öffnen des Admin-Dashboards und der Playlisten, inklusive umschaltbarem Geschwindigkeits-Profil im Admin-Cockpit.",
+  "updatedAt":  "2026-11-09T19:44:06.596848463Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

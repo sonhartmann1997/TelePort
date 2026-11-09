@@ -1947,12 +1947,76 @@
   }
 
   // Führt die erweiterte 8-Stufen Multi-API Fallback-Kaskade aus:
-  // 1. OMDb (inkl. TMDb-Bridge) -> 2. TVMaze (inkl. TMDb-Bridge) -> 3. Wikidata (inkl. TMDb-Bridge) -> 4. Apple iTunes DE -> 5. AniList Anime -> 6. Jikan/MAL Anime -> 7. MediaWiki (Wikipedia DE/EN)
-  async function fetchMultiApiFallbackCascade(env, parsed, forceTypeCode = null) {
+  // Im "smart_emergency"-Modus (Cloudflare Free-Tier Turbo) werden nur dann, wenn TMDb 0 brauchbare Treffer hat,
+  // die 3 schnellsten Zusatz-APIs (OMDb + TVMaze + iTunes DE) parallel mit hartem 1800ms Zeitlimit abgefragt!
+  async function fetchMultiApiFallbackCascade(env, parsed, forceTypeCode = null, options = null) {
     const searchTitle = String(parsed?.cleanTitle || parsed?.title || "").trim();
     if (!searchTitle && !parsed?.imdbId) return null;
     const tc = forceTypeCode || (parsed?.isSeries ? "s" : "m");
     const yr = parsed?.year || null;
+    const fallbackMode = String(options?.fallbackMode || "deep");
+
+    if (fallbackMode === "smart_emergency") {
+      if (!hasSubrequestBudget(16)) return null;
+      const buildTvMazeObj = async () => {
+        if (tc !== "s" && forceTypeCode) return null;
+        const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
+        if (!maze || !maze.tvmazeId) return null;
+        if (env?.TMDB_BEARER_TOKEN && hasSubrequestBudget(19)) {
+          if (maze.imdbId) {
+            const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
+            if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
+          }
+          if (maze.tvdbId) {
+            const bridgedTvdb = await resolveExternalIdToTmdb(env, maze.tvdbId, "tvdb_id", "s").catch(() => null);
+            if (bridgedTvdb && bridgedTvdb.id && bridgedTvdb.id < 8000000) return bridgedTvdb;
+          }
+        }
+        const mazeYear = String(maze.releaseDate || "").split("-")[0] || (yr ? String(yr) : "k.A.");
+        return {
+          source: "TVMaze",
+          id: 200000000 + (Number(maze.tvmazeId) % 99999999),
+          tvmazeId: Number(maze.tvmazeId),
+          imdbId: maze.imdbId || null,
+          tvdbId: maze.tvdbId || null,
+          typeCode: "s",
+          title: maze.title,
+          originalTitle: maze.title,
+          year: mazeYear,
+          releaseDate: maze.releaseDate || "Keine Angabe",
+          fsk: "FSK Keine Angabe",
+          runtime: maze.runtime || "Keine Angabe",
+          genres: maze.genres || "Serie",
+          directors: "Keine Angabe",
+          casts: maze.casts || "Keine Angabe",
+          country: "k.A.",
+          overview: maze.overview || "Keine Beschreibung verfügbar.",
+          poster: maze.imageOriginal || "",
+          external_poster_url: maze.imageOriginal || "",
+          vote_average: maze.vote_average || 0,
+          numberOfSeasons: maze.seasons?.length || 1,
+          numberOfEpisodes: maze.episodes?.length || 0,
+          seasons: maze.seasons || [],
+          confidence: 80
+        };
+      };
+
+      const fastRace = await Promise.race([
+        Promise.allSettled([
+          fetchOmdbFallback(env, searchTitle, yr, tc, parsed?.imdbId || null),
+          buildTvMazeObj(),
+          fetchItunesFallback(env, searchTitle, yr, tc)
+        ]),
+        new Promise(resolve => setTimeout(() => resolve(null), 1800))
+      ]);
+      if (!Array.isArray(fastRace)) return null;
+      const omdbFast = fastRace[0]?.status === "fulfilled" ? fastRace[0].value : null;
+      const mazeFast = fastRace[1]?.status === "fulfilled" ? fastRace[1].value : null;
+      const itunesFast = fastRace[2]?.status === "fulfilled" ? fastRace[2].value : null;
+      if (omdbFast && omdbFast.id < 8000000) return omdbFast;
+      if (mazeFast && mazeFast.id < 8000000) return mazeFast;
+      return omdbFast || mazeFast || itunesFast || null;
+    }
 
     // 1. OMDb API Fallback (löst bei vorhandener IMDb-ID automatisch zuerst auf die echte TMDb-ID auf!)
     const omdbHit = await fetchOmdbFallback(env, searchTitle, yr, tc, parsed?.imdbId || null).catch(() => null);
@@ -2015,6 +2079,10 @@
     // 4. Apple iTunes Search API DE (Deutsche Filme & Serien + High-Res Cover)
     const itunesHit = await fetchItunesFallback(env, searchTitle, yr, tc).catch(() => null);
     if (itunesHit) return itunesHit;
+
+    if (fallbackMode === "balanced" && !hasSubrequestBudget(24)) {
+      return wikidataHit || null;
+    }
 
     // 5. AniList GraphQL API (Anime Filme & Serien)
     const anilistHit = await fetchAniListFallback(env, searchTitle, yr, tc).catch(() => null);
@@ -3031,7 +3099,9 @@
     const db = await ensureD1Schema(env);
     const isMovie = typeCode === "m";
     try {
-      if (!isMovie && db) {
+      const lastDedupeTs = Number(memoryFallback.get("last_series_dedupe_ts") || 0);
+      if (!isMovie && db && (Date.now() - lastDedupeTs > 10 * 60 * 1000)) {
+        memoryFallback.set("last_series_dedupe_ts", Date.now());
         await healAndDeduplicateSeriesInD1(env, false).catch(() => null);
       }
       let rows = [];

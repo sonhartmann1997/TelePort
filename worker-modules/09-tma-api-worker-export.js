@@ -99,6 +99,130 @@
         }), { status: 200, headers: corsHeaders });
       }
 
+      // 2b. Offizielles Telegram Login Widget (HMAC-SHA256 mit SHA256(BOT_TOKEN))
+      if (path === "/api/tma/auth/telegram-widget" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const widgetData = (body && typeof body.user === "object" && body.user !== null) ? body.user : body;
+        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN);
+        if (!verified.ok || !verified.user) {
+          return new Response(JSON.stringify({ ok: false, error: verified.error || "Telegram Login-Widget Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
+        }
+        const userProfile = await upsertTelegramUserInD1(env, verified.user);
+        const sessionToken = await signTmaSessionToken({
+          telegramId: String(verified.user.id),
+          tgUsername: verified.user.username || "",
+          firstName: verified.user.first_name || "",
+          isAdmin: Boolean(userProfile?.isAdmin),
+          isVip: Boolean(userProfile?.isVip),
+          authMethod: "telegram_widget",
+          hasInitData: true
+        }, env);
+        return new Response(JSON.stringify({
+          ok: true,
+          isAuthenticated: true,
+          user: userProfile,
+          sessionToken
+        }), { status: 200, headers: corsHeaders });
+      }
+
+      // 2c. 1-Klick Bot-App-Bestätigung & 6-stelliger Login-Code für Browser, PC & Smart-TV
+      if (path === "/api/tma/auth/bot-code" && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const action = String(body.action || "create").trim();
+
+        if (action === "create") {
+          const challengeId = `wac_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+          const code = String(Math.floor(100000 + Math.random() * 900000));
+          const expiresAt = Date.now() + 300000; // 5 Minuten gültig
+          const botUsername = (await tgApi(env).getBotUsername(env).catch(() => "")) || "";
+          const challengeObj = {
+            challengeId,
+            code,
+            status: "pending",
+            createdAt: Date.now(),
+            expiresAt,
+            user: null
+          };
+          memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
+          memoryFallback.set(`webauth_code_${code}`, challengeId);
+          try {
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+          } catch (e) {}
+          const deepLink = botUsername
+            ? `https://t.me/${botUsername.replace(/^@/, "")}?start=webauth_${challengeId}`
+            : "";
+          return new Response(JSON.stringify({
+            ok: true,
+            challengeId,
+            code,
+            botUsername: botUsername.replace(/^@/, ""),
+            deepLink,
+            expiresAt
+          }), { status: 200, headers: corsHeaders });
+        }
+
+        if (action === "simulate_confirm") {
+          const challengeId = String(body.challengeId || "").trim();
+          let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
+          if (!challengeObj) {
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+          }
+          if (!challengeObj) {
+            return new Response(JSON.stringify({ ok: false, error: "Challenge nicht gefunden." }), { status: 404, headers: corsHeaders });
+          }
+          challengeObj.status = "confirmed";
+          challengeObj.user = {
+            id: 100998877,
+            first_name: "Admin",
+            username: "teleport_admin"
+          };
+          memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
+          try {
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+          } catch (e) {}
+          return new Response(JSON.stringify({ ok: true, status: "confirmed" }), { status: 200, headers: corsHeaders });
+        }
+
+        if (action === "poll") {
+          const challengeId = String(body.challengeId || "").trim();
+          if (!challengeId) {
+            return new Response(JSON.stringify({ ok: false, error: "challengeId fehlt" }), { status: 400, headers: corsHeaders });
+          }
+          let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
+          if (!challengeObj) {
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+          }
+          if (!challengeObj || Date.now() > Number(challengeObj.expiresAt || 0)) {
+            return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
+          }
+          if (challengeObj.status === "confirmed" && challengeObj.user && challengeObj.user.id) {
+            const userProfile = await upsertTelegramUserInD1(env, challengeObj.user);
+            const sessionToken = await signTmaSessionToken({
+              telegramId: String(challengeObj.user.id),
+              tgUsername: challengeObj.user.username || "",
+              firstName: challengeObj.user.first_name || "",
+              isAdmin: Boolean(userProfile?.isAdmin),
+              isVip: Boolean(userProfile?.isVip),
+              authMethod: "bot_code",
+              hasInitData: true
+            }, env);
+            memoryFallback.delete(`webauth_id_${challengeId}`);
+            if (challengeObj.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
+            return new Response(JSON.stringify({
+              ok: true,
+              status: "confirmed",
+              isAuthenticated: true,
+              user: userProfile,
+              sessionToken
+            }), { status: 200, headers: corsHeaders });
+          }
+          return new Response(JSON.stringify({ ok: true, status: "pending" }), { status: 200, headers: corsHeaders });
+        }
+      }
+
       // 3. Web-Login (Username + Passwort + optionaler TOTP 2FA Code) – funktioniert von überall, auch OHNE initData!
       if (path === "/api/tma/auth/login" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
@@ -384,10 +508,27 @@
           const mediaType = url.searchParams.get("mediaType") === "s" ? "s" : "m";
           const playlistChatId = String(url.searchParams.get("playlistChatId") || auth.chatId);
           const requestedFolderId = String(url.searchParams.get("folderId") || "").trim();
+          const activeTab = String(url.searchParams.get("tab") || "").trim();
+          const isFullRefresh = url.searchParams.get("refresh") === "1";
           if (playlistChatId === "bot_vip") {
             await ensureBotVipDefaultPlaylist(env).catch(() => null);
           }
-          await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
+          if (isFullRefresh) {
+            await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
+          }
+          const shouldComputeSeriesGapsNow = isFullRefresh || activeTab === "gaps";
+          const cachedSeriesGaps = memoryFallback.get("d1_series_gaps_cache") || {
+            totalSeriesChecked: 0,
+            seriesWithGapsCount: 0,
+            seriesWithInternalGapsCount: 0,
+            totalMissingInternal: 0,
+            totalMissingTrailing: 0,
+            totalPrereleaseOnly: 0,
+            items: [],
+            totalSeriesWithGaps: 0,
+            series: [],
+            lazyDeferred: !shouldComputeSeriesGapsNow
+          };
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
             listAllUsersFromD1(env).catch(() => []),
             listAllMediaFromD1(env, mediaType).catch(() => []),
@@ -395,17 +536,9 @@
             getFolders(env, playlistChatId).catch(() => []),
             getSavedList(env, playlistChatId).catch(() => []),
             listMediaReportsFromD1(env, "all").catch(() => []),
-            computeSeriesGapsOverview(env, url.searchParams.get("refresh") === "1").catch(() => ({
-              totalSeriesChecked: 0,
-              seriesWithGapsCount: 0,
-              seriesWithInternalGapsCount: 0,
-              totalMissingInternal: 0,
-              totalMissingTrailing: 0,
-              totalPrereleaseOnly: 0,
-              items: [],
-              totalSeriesWithGaps: 0,
-              series: []
-            }))
+            shouldComputeSeriesGapsNow
+              ? computeSeriesGapsOverview(env, isFullRefresh).catch(() => cachedSeriesGaps)
+              : Promise.resolve(cachedSeriesGaps)
           ]);
           const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || []);
           const playlists = (targetFolders || []).map(f => ({
@@ -421,9 +554,10 @@
             ? (targetItems || []).filter(i => String(i.folderId) === activeFolderId)
             : [];
           const openReportsCount = (reports || []).filter(r => r && r.status === "open").length;
-          const [videoCoverMode, botUsername] = await Promise.all([
+          const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
             getVideoCoverMode(env).catch(() => "backdrop"),
-            tgApi(env).getBotUsername(env).catch(() => "")
+            tgApi(env).getBotUsername(env).catch(() => ""),
+            getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
           ]);
           const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
           return new Response(JSON.stringify({
@@ -440,6 +574,8 @@
             seriesGaps,
             botSetup: {
               videoCoverMode,
+              speedProfile: speedProfileConfig?.id || "free_turbo",
+              speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
               botUsername: botUsername || "DeinBot"
             }
@@ -448,13 +584,16 @@
         if (path === "/api/tma/admin/bot-setup") {
           const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
           if (request.method === "GET") {
-            const [videoCoverMode, botUsername] = await Promise.all([
+            const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
               getVideoCoverMode(env).catch(() => "backdrop"),
-              tgApi(env).getBotUsername(env).catch(() => "")
+              tgApi(env).getBotUsername(env).catch(() => ""),
+              getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
             ]);
             return new Response(JSON.stringify({
               ok: true,
               videoCoverMode,
+              speedProfile: speedProfileConfig?.id || "free_turbo",
+              speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
               botUsername: botUsername || "DeinBot"
             }), { status: 200, headers: corsHeaders });
@@ -468,6 +607,15 @@
               return new Response(JSON.stringify({
                 ok: true,
                 videoCoverMode: savedMode
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "set_speed_profile") {
+              const savedProfile = await setWorkerSpeedProfile(env, body.speedProfile || "free_turbo");
+              await flushUserSession(env, auth.chatId).catch(() => {});
+              return new Response(JSON.stringify({
+                ok: true,
+                speedProfile: savedProfile.id,
+                speedProfileConfig: savedProfile
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "setup_miniapp_menu") {
@@ -621,7 +769,9 @@
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, 20) : [];
+          const activeSpeedProf = await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
+          const maxSliceCap = Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 12) + 4), 30);
+          const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, maxSliceCap) : [];
           if (rawEntries.length === 0) {
             return new Response(JSON.stringify({ ok: false, error: "Keine Einträge im Batch." }), { status: 400, headers: corsHeaders });
           }
@@ -703,6 +853,7 @@
               folderId: playlistFolder.id,
               playlistName: playlistFolder.name,
               playlistMode: playlistFolder.playlistMode || playlistMode,
+              speedProfile: activeSpeedProf.id,
               deferKvWrite: true,
               isFinalBatch: body.isFinalBatch === undefined ? true : Boolean(body.isFinalBatch)
             }

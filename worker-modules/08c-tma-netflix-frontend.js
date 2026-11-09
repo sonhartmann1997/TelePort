@@ -3263,6 +3263,12 @@
                 '<button type="button" class="btn ' + (curMode === 'vip_stream' ? 'amber' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setBackupPlaylistModeClient(\\'vip_stream\\')">🌟 Nur VIP-Stream-Playlist (Bot-VIP)</button>' +
                 '<button type="button" class="btn ' + (curMode === 'watchlist' ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setBackupPlaylistModeClient(\\'watchlist\\')">🔖 Nur persönliche Merkliste</button>' +
               '</div>' +
+              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08)">' +
+                '<span style="font-size:11.5px;color:#38bdf8;font-weight:800">⚡ Worker Geschwindigkeits-Profil (Anti-Timeout):</span>' +
+                '<button type="button" class="btn ' + ((state.adminWorkerSpeedProfile || 'free_turbo') === 'free_turbo' ? 'green' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'free_turbo\\')">🛡️ Free-Tier Turbo (10ms CPU • 12/Batch • 3.2s Guard)</button>' +
+                '<button type="button" class="btn ' + (state.adminWorkerSpeedProfile === 'balanced' ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'balanced\\')">⚖️ Ausgewogen (18/Batch • 4.5s Guard)</button>' +
+                '<button type="button" class="btn ' + (state.adminWorkerSpeedProfile === 'paid_pro' ? 'amber' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'paid_pro\\')">🚀 Paid Pro (30/Batch • Deep 8-API)</button>' +
+              '</div>' +
             '</div>' +
 
             '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px">' +
@@ -3868,7 +3874,7 @@
         if (!backupImportJob.startedAt) backupImportJob.startedAt = Date.now();
         renderBackupImportBoxDom();
 
-        const DEFAULT_BATCH_SIZE = 10;
+        const DEFAULT_BATCH_SIZE = getEffectiveImportBatchSizeClient();
         if (!backupImportJob.cursorRetries) backupImportJob.cursorRetries = {};
 
         const isolateFailedEntryAtCursor = (reasonMsg) => {
@@ -4012,7 +4018,8 @@
             }
           }
 
-          let effectiveBatchSize = DEFAULT_BATCH_SIZE;
+          const curProfileBaseSize = getEffectiveImportBatchSizeClient();
+          let effectiveBatchSize = curProfileBaseSize;
           if (curRetryCount > 0) {
             effectiveBatchSize = 1;
             backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
@@ -4023,12 +4030,13 @@
             backupImportJob.currentBatchModeLabel = "🛡️ Gedrosselt (6/Batch nach Pause)";
             backupImportJob.currentBatchModeColor = "#f59e0b";
           } else if (lookaheadCacheHits >= 8) {
-            effectiveBatchSize = 16;
-            backupImportJob.currentBatchModeLabel = "🚀 Turbo (16/Batch • Cache-Hits)";
+            effectiveBatchSize = Math.min(20, curProfileBaseSize + 4);
+            backupImportJob.currentBatchModeLabel = "🚀 Turbo (" + effectiveBatchSize + "/Batch • Cache-Hits)";
             backupImportJob.currentBatchModeColor = "#34d399";
           } else {
-            effectiveBatchSize = DEFAULT_BATCH_SIZE;
-            backupImportJob.currentBatchModeLabel = "⚡ Standard (" + DEFAULT_BATCH_SIZE + "/Batch)";
+            effectiveBatchSize = curProfileBaseSize;
+            const profShort = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo" ? "🛡️ Free-Turbo" : (state.adminWorkerSpeedProfile === "paid_pro" ? "🚀 Paid Pro" : "⚖️ Ausgewogen");
+            backupImportJob.currentBatchModeLabel = profShort + " (" + effectiveBatchSize + "/Batch)";
             backupImportJob.currentBatchModeColor = "#38bdf8";
           }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
@@ -4117,6 +4125,7 @@
                 playlistFolderId: backupImportJob.playlistFolderId || null,
                 targetChatId: backupImportJob.targetPlaylistChatId || chatId,
                 sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
+                speedProfile: state.adminWorkerSpeedProfile || "free_turbo",
                 deferKvWrite: true,
                 checkpoint: cpPayload
               })
@@ -4347,6 +4356,11 @@
             } else {
               hadRateWarning = true;
               const errMsg = String(r?.error || "Kurze Pause...");
+              if (state.adminWorkerSpeedProfile && state.adminWorkerSpeedProfile !== "free_turbo") {
+                state.adminWorkerSpeedProfile = "free_turbo";
+                try { localStorage.setItem("tma_worker_speed_profile", "free_turbo"); } catch (e) {}
+                backupImportJob.recentLog.push("🛡️ Automatischer Wechsel auf „Free-Tier Turbo“ nach Server-Warnung.");
+              }
               const nextRetry = curRetryCount + 1;
               backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
               if (nextRetry >= 3) {
@@ -4361,6 +4375,11 @@
           } catch (e) {
             hadRateWarning = true;
             const errMsg = String(e?.message || e || "Netzwerkfehler");
+            if (state.adminWorkerSpeedProfile && state.adminWorkerSpeedProfile !== "free_turbo") {
+              state.adminWorkerSpeedProfile = "free_turbo";
+              try { localStorage.setItem("tma_worker_speed_profile", "free_turbo"); } catch (err) {}
+              backupImportJob.recentLog.push("🛡️ Timeout erkannt – schalte automatisch auf „Free-Tier Turbo“ (12/Batch, 3.2s Guard) um!");
+            }
             const nextRetry = curRetryCount + 1;
             backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
             if (nextRetry >= 3) {
@@ -4826,6 +4845,58 @@
         }
       }
 
+      function getEffectiveImportBatchSizeClient() {
+        if (!state.adminWorkerSpeedProfile) {
+          try {
+            state.adminWorkerSpeedProfile = localStorage.getItem("tma_worker_speed_profile") || "free_turbo";
+          } catch (e) {
+            state.adminWorkerSpeedProfile = "free_turbo";
+          }
+        }
+        const prof = String(state.adminWorkerSpeedProfile || "free_turbo");
+        if (prof === "paid_pro") return 30;
+        if (prof === "balanced") return 18;
+        return 12;
+      }
+
+      async function adminSetWorkerSpeedProfileClient(profileKey) {
+        const cleanProf = ["free_turbo", "balanced", "paid_pro"].includes(profileKey) ? profileKey : "free_turbo";
+        state.adminWorkerSpeedProfile = cleanProf;
+        try {
+          localStorage.setItem("tma_worker_speed_profile", cleanProf);
+        } catch (e) {}
+        setBusyState(true, "⚡ Aktiviere Worker Geschwindigkeits-Profil (" + cleanProf + ")...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "set_speed_profile", speedProfile: cleanProf })
+          });
+          if (r && r.ok) {
+            state.adminWorkerSpeedProfile = r.speedProfile || cleanProf;
+            if (window._lastAdminOverviewCache) {
+              window._lastAdminOverviewCache.botSetup = {
+                ...(window._lastAdminOverviewCache.botSetup || {}),
+                speedProfile: state.adminWorkerSpeedProfile,
+                speedProfileConfig: r.speedProfileConfig || null
+              };
+            }
+          }
+          const labelMap = {
+            free_turbo: "🛡️ Free-Tier Turbo (10ms CPU Schutz • 12er-Batch • 3.2s Guard • Smart-Notfall-Fallback)",
+            balanced: "⚖️ Ausgewogen (18er-Batch • 4.5s Guard)",
+            paid_pro: "🚀 Paid Worker Pro (30er-Batch • 6.5s Guard • Volle 8-API Kaskade)"
+          };
+          showHudToast("⚡ Worker-Profil aktiv: " + (labelMap[state.adminWorkerSpeedProfile] || state.adminWorkerSpeedProfile));
+          renderBackupImportBoxDom();
+          if (state.currentView === "admin") {
+            loadAdminPanelView(false);
+          }
+        } finally {
+          setBusyState(false);
+        }
+      }
+
       async function adminRunBotMiniAppSetupClient() {
         const urlInp = document.getElementById("adminBotMiniAppUrlInp");
         const btnTextInp = document.getElementById("adminBotMenuBtnTextInp");
@@ -4860,6 +4931,187 @@
           }
         } finally {
           setBusyState(false);
+        }
+      }
+
+      async function downloadNeonBotAssetPngClient(kind) {
+        const isSplash = kind === "splash_640x360";
+        const width = isSplash ? 640 : 512;
+        const height = isSplash ? 360 : 512;
+        const fileName = isSplash
+          ? "telegram-miniapp-splashscreen-640x360.png"
+          : "telegram-bot-profilbild-512x512.png";
+        const srcUrl = isSplash
+          ? "/assets/telegram_miniapp_splash_neon.jpg"
+          : "/assets/telegram_bot_avatar_neon.jpg";
+
+        showHudToast("🎨 Rendere hochauflösendes PNG (" + width + "×" + height + " px)...");
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          showHudToast("⚠️ Canvas wird von diesem Browser nicht unterstützt.");
+          return;
+        }
+
+        // 1. Deep Neon-Cinema Background Fallback
+        const bgGrad = ctx.createLinearGradient(0, 0, width, height);
+        bgGrad.addColorStop(0, "#070B19");
+        bgGrad.addColorStop(0.5, "#0B1021");
+        bgGrad.addColorStop(1, "#12092B");
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // 2. Load generated artwork & draw cover-fit
+        const loadedImg = await new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            try {
+              const scale = Math.max(width / img.width, height / img.height);
+              const drawW = img.width * scale;
+              const drawH = img.height * scale;
+              const dx = (width - drawW) / 2;
+              const dy = (height - drawH) / 2;
+              ctx.drawImage(img, dx, dy, drawW, drawH);
+              resolve(true);
+            } catch (e) {
+              resolve(false);
+            }
+          };
+          img.onerror = () => resolve(false);
+          img.src = srcUrl;
+        });
+
+        if (!loadedImg) {
+          // Procedural Neon-Cinema Emblem Fallback (for standalone Worker without static assets)
+          const cx = width / 2;
+          const cy = isSplash ? height * 0.44 : height * 0.5;
+          const rOuter = isSplash ? 76 : 145;
+          const glow = ctx.createRadialGradient(cx, cy, rOuter * 0.15, cx, cy, rOuter * 1.45);
+          glow.addColorStop(0, "rgba(0, 240, 255, 0.38)");
+          glow.addColorStop(0.55, "rgba(139, 92, 246, 0.24)");
+          glow.addColorStop(1, "rgba(7, 11, 25, 0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rOuter * 1.45, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.save();
+          ctx.strokeStyle = "#00F0FF";
+          ctx.lineWidth = isSplash ? 5 : 9;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.strokeStyle = "#8B5CF6";
+          ctx.lineWidth = isSplash ? 3 : 6;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rOuter * 0.76, 0, Math.PI * 2);
+          ctx.stroke();
+
+          const playGrad = ctx.createLinearGradient(cx - rOuter * 0.35, cy - rOuter * 0.4, cx + rOuter * 0.45, cy + rOuter * 0.4);
+          playGrad.addColorStop(0, "#00F0FF");
+          playGrad.addColorStop(1, "#8B5CF6");
+          ctx.fillStyle = playGrad;
+          ctx.beginPath();
+          ctx.moveTo(cx - rOuter * 0.22, cy - rOuter * 0.36);
+          ctx.lineTo(cx + rOuter * 0.38, cy);
+          ctx.lineTo(cx - rOuter * 0.22, cy + rOuter * 0.36);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // 3. Subtle Neon-Cinema Glass Vignette & Crisp Branding Frame
+        const radGrad = ctx.createRadialGradient(
+          width * 0.5,
+          height * 0.5,
+          width * 0.18,
+          width * 0.5,
+          height * 0.5,
+          width * 0.72
+        );
+        radGrad.addColorStop(0, "rgba(7, 11, 25, 0.0)");
+        radGrad.addColorStop(1, "rgba(7, 11, 25, 0.52)");
+        ctx.fillStyle = radGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        // Neon border glow
+        ctx.save();
+        ctx.strokeStyle = "rgba(0, 240, 255, 0.55)";
+        ctx.lineWidth = isSplash ? 3 : 4;
+        ctx.strokeRect(isSplash ? 6 : 8, isSplash ? 6 : 8, width - (isSplash ? 12 : 16), height - (isSplash ? 12 : 16));
+        ctx.restore();
+
+        if (isSplash) {
+          // Bottom glass bar with crisp badge for 640x360 BotFather Mini-App Splash/Header
+          const pillW = 290;
+          const pillH = 38;
+          const pillX = (width - pillW) / 2;
+          const pillY = height - 54;
+          ctx.save();
+          ctx.fillStyle = "rgba(7, 11, 25, 0.82)";
+          ctx.beginPath();
+          if (typeof ctx.roundRect === "function") {
+            ctx.roundRect(pillX, pillY, pillW, pillH, 19);
+          } else {
+            ctx.rect(pillX, pillY, pillW, pillH);
+          }
+          ctx.fill();
+          ctx.strokeStyle = "rgba(0, 240, 255, 0.65)";
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          ctx.font = "900 14px system-ui, -apple-system, sans-serif";
+          ctx.fillStyle = "#F8FAFC";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("🎬 STREAMING MINI-APP • 4K UHD", width / 2, pillY + pillH / 2 + 1);
+          ctx.restore();
+        }
+
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            showHudToast("⚠️ PNG-Export fehlgeschlagen.");
+            return;
+          }
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            try {
+              document.body.removeChild(a);
+              URL.revokeObjectURL(blobUrl);
+            } catch (e) {}
+          }, 500);
+          showHudToast("✅ " + fileName + " (" + width + "×" + height + " PNG) heruntergeladen!");
+        }, "image/png");
+      }
+
+      function applyAdminTelegramPaletteLiveClient(paletteKey) {
+        state.themeMode = paletteKey || "dark";
+        applyThemeAndAccessibilityToDom();
+        try {
+          if (chatId && chatId !== "guest") {
+            apiFetchJson(API_BASE + "/settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chatId, themeMode: state.themeMode })
+            }).catch(() => {});
+          }
+        } catch (e) {}
+        const pal = (typeof TELEGRAM_THEME_PALETTES_CLIENT !== "undefined" && TELEGRAM_THEME_PALETTES_CLIENT[state.themeMode])
+          ? TELEGRAM_THEME_PALETTES_CLIENT[state.themeMode]
+          : { headerColor: "#0B1021", bgColor: "#070B19", bottomBarColor: "#090D1C" };
+        showHudToast("🎨 Mini-App Farben live gesetzt (Header " + pal.headerColor + " • Body " + pal.bgColor + ")");
+        if (state.currentView === "admin") {
+          loadAdminPanelView(false);
         }
       }
 
@@ -4911,6 +5163,7 @@
                 API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
                 "&playlistChatId=" + encodeURIComponent(state.adminPlaylistTargetChatId || chatId) +
                 "&folderId=" + encodeURIComponent(state.adminEditingFolderId || "") +
+                "&tab=" + encodeURIComponent(state.adminTab || "users") +
                 (forceNetworkRefresh ? "&refresh=1" : "")
               );
               if (r && r.ok) {
@@ -5131,6 +5384,12 @@
           const botSetup = r.botSetup || window._lastAdminOverviewCache?.botSetup || {};
           const curCoverMode = state.adminVideoCoverMode || botSetup.videoCoverMode || "backdrop";
           state.adminVideoCoverMode = curCoverMode;
+          if (!state.adminWorkerSpeedProfile) {
+            let savedLocalProf = "";
+            try { savedLocalProf = localStorage.getItem("tma_worker_speed_profile") || ""; } catch (e) {}
+            state.adminWorkerSpeedProfile = savedLocalProf || botSetup.speedProfile || "free_turbo";
+          }
+          const curSpeedProfile = state.adminWorkerSpeedProfile || "free_turbo";
           const effMiniAppUrl = String(botSetup.webAppUrl || window.location.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\\/+$/, "");
           const effBotUsername = String(botSetup.botUsername || "DeinBot").replace(/^@/, "");
           const botFatherCommandsBlock = [
@@ -5149,7 +5408,7 @@
             '<div class="panel-box" style="border-color:rgba(56,189,248,0.42);background:linear-gradient(135deg,rgba(15,23,42,0.92),rgba(17,24,39,0.88));margin-bottom:12px">' +
               '<div class="section-title" style="margin-bottom:6px">' +
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-                  '<span>🚀 Telegram Bot API 8.3+ Cockpit: Mini-App Direktstart & Video-Cover-Embedding</span>' +
+                  '<span>🚀 Telegram Bot API 8.3+ & Cloudflare Anti-Timeout Cockpit</span>' +
                   '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.38)">Bot API 8.0–8.3 aktiv</span>' +
                 '</div>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
@@ -5157,6 +5416,26 @@
                   '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="addTmaToHomeScreenClient()">📲 Home-Screen-Icon</button>' +
                   '<button type="button" class="btn blue" style="padding:4px 10px;font-size:11px" onclick="state.adminBotGuideOpen=!state.adminBotGuideOpen;loadAdminPanelView(false)">' +
                     (state.adminBotGuideOpen ? '📖 @BotFather Guide ausblenden ▴' : '📖 @BotFather 3-Schritte-Guide ▾') +
+                  '</button>' +
+                '</div>' +
+              '</div>' +
+              /* Anti-Timeout Worker Geschwindigkeits-Profil Umschalter */
+              '<div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.35);border-radius:10px;padding:10px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
+                '<div style="flex:1;min-width:240px">' +
+                  '<div style="font-size:12px;font-weight:800;color:#34d399">⚡ Cloudflare Worker Geschwindigkeits-Profil (Anti-Timeout & 10ms CPU Schutz)</div>' +
+                  '<div style="font-size:11px;color:#cbd5e1;margin-top:2px">' +
+                    'Verhindert Timeouts auf dem kostenlosen Cloudflare Worker durch <b>D1 Delta-Upsert</b> (0 Voll-Playlist-Reads), <b>TMDb-Direkt-Turbo</b> und parallelen 1.8s Notfall-Fallback nur bei 0 TMDb-Treffern.' +
+                  '</div>' +
+                '</div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button type="button" class="btn ' + (curSpeedProfile === 'free_turbo' ? 'green' : '') + '" style="font-size:11.5px;padding:6px 11px" onclick="adminSetWorkerSpeedProfileClient(\\'free_turbo\\')">' +
+                    (curSpeedProfile === 'free_turbo' ? '✓ ' : '') + '🛡️ Free-Tier Turbo (Empfohlen)' +
+                  '</button>' +
+                  '<button type="button" class="btn ' + (curSpeedProfile === 'balanced' ? 'blue' : '') + '" style="font-size:11.5px;padding:6px 11px" onclick="adminSetWorkerSpeedProfileClient(\\'balanced\\')">' +
+                    (curSpeedProfile === 'balanced' ? '✓ ' : '') + '⚖️ Ausgewogen' +
+                  '</button>' +
+                  '<button type="button" class="btn ' + (curSpeedProfile === 'paid_pro' ? 'amber' : '') + '" style="font-size:11.5px;padding:6px 11px" onclick="adminSetWorkerSpeedProfileClient(\\'paid_pro\\')">' +
+                    (curSpeedProfile === 'paid_pro' ? '✓ ' : '') + '🚀 Paid Worker Pro' +
                   '</button>' +
                 '</div>' +
               '</div>' +
@@ -5193,6 +5472,62 @@
                   '<div id="adminBotSetupStatusMsg" style="display:none;font-size:11px;margin-top:6px;line-height:1.4"></div>' +
                 '</div>' +
               '</div>' +
+              /* Box 3: Neon-Cinema PNG-Studio (512x512 Bot-Foto & 640x360 Mini-App Splashscreen) + Empfohlene Mini-App Farben */
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;align-items:stretch;margin-top:10px">' +
+                /* PNG-Studio für @BotFather */
+                '<div style="background:linear-gradient(135deg,rgba(7,11,25,0.92),rgba(18,9,43,0.88));border:1px solid rgba(0,240,255,0.32);border-radius:10px;padding:10px">' +
+                  '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;flex-wrap:wrap">' +
+                    '<div style="font-size:12px;font-weight:800;color:#f8fafc">🖼️ @BotFather PNG-Studio (Neon-Cinema Design)</div>' +
+                    '<button type="button" class="btn" style="padding:3px 8px;font-size:10.5px;border-color:rgba(0,240,255,0.45);color:#38bdf8" onclick="previewBootSplashscreenClient()">✨ In-App Splashscreen testen</button>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+                    '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:210px;background:rgba(255,255,255,0.03);padding:7px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<img src="/assets/telegram_bot_avatar_neon.jpg" alt="Bot Avatar" style="width:46px;height:46px;border-radius:10px;object-fit:cover;border:1px solid rgba(0,240,255,0.55);flex-shrink:0" />' +
+                      '<div style="flex:1;min-width:110px">' +
+                        '<div style="font-size:11.5px;font-weight:800;color:#fff">Bot-Profilbild (1:1)</div>' +
+                        '<div style="font-size:10.5px;color:#94a3b8">Exakt 512×512 px PNG für <code>/setuserpic</code></div>' +
+                        '<button type="button" class="btn blue" style="margin-top:4px;padding:4px 8px;font-size:10.5px;width:100%" onclick="downloadNeonBotAssetPngClient(\\'avatar_512\\')">⬇️ 512×512 PNG laden</button>' +
+                      '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:225px;background:rgba(255,255,255,0.03);padding:7px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<img src="/assets/telegram_miniapp_splash_neon.jpg" alt="Mini-App Splash" style="width:74px;height:46px;border-radius:8px;object-fit:cover;border:1px solid rgba(139,92,246,0.55);flex-shrink:0" />' +
+                      '<div style="flex:1;min-width:110px">' +
+                        '<div style="font-size:11.5px;font-weight:800;color:#fff">Mini-App Splash (16:9)</div>' +
+                        '<div style="font-size:10.5px;color:#94a3b8">Exakt 640×360 px PNG für @BotFather</div>' +
+                        '<button type="button" class="btn green" style="margin-top:4px;padding:4px 8px;font-size:10.5px;width:100%" onclick="downloadNeonBotAssetPngClient(\\'splash_640x360\\')">⬇️ 640×360 PNG laden</button>' +
+                      '</div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+                /* Empfohlene Mini-App Farben (Header, Body, Bottom-Bar) & 1-Klick Copy für @BotFather */
+                '<div style="background:linear-gradient(135deg,rgba(11,16,33,0.94),rgba(7,11,25,0.94));border:1px solid rgba(139,92,246,0.38);border-radius:10px;padding:10px">' +
+                  '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;flex-wrap:wrap">' +
+                    '<div style="font-size:12px;font-weight:800;color:#f8fafc">🎨 Empfohlene Mini-App Farben (Telegram SDK & @BotFather)</div>' +
+                    '<button type="button" class="btn green" style="padding:3px 8px;font-size:10.5px" onclick="applyAdminTelegramPaletteLiveClient(\\'dark\\')">⚡ Neon-Cinema Farben aktivieren</button>' +
+                  '</div>' +
+                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:7px;line-height:1.4">' +
+                    'Werden beim Start automatisch per <code>setHeaderColor</code>, <code>setBackgroundColor</code> & <code>setBottomBarColor</code> gesetzt. Klicke auf einen Farbcode zum Kopieren für <b>@BotFather ▸ Configure Mini App</b>:' +
+                  '</div>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px">' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#0B1021\\',\\'Mini-App Header-Farbe\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:#0B1021;border:1px solid #38bdf8;flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Header Color</div><div style="font-size:11px;font-weight:800;color:#fff;font-family:monospace">#0B1021 📋</div></div>' +
+                    '</div>' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#070B19\\',\\'Mini-App Body-/Background-Farbe\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:#070B19;border:1px solid #8b5cf6;flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Body / Background</div><div style="font-size:11px;font-weight:800;color:#fff;font-family:monospace">#070B19 📋</div></div>' +
+                    '</div>' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#090D1C\\',\\'Mini-App Bottom-Bar-Farbe\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:#090D1C;border:1px solid rgba(255,255,255,0.3);flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Bottom Bar</div><div style="font-size:11px;font-weight:800;color:#fff;font-family:monospace">#090D1C 📋</div></div>' +
+                    '</div>' +
+                    '<div onclick="copyAdminTextToClipboardClient(\\'#00F0FF\\',\\'Primärer Neon-Cyan Akzent\\')" style="cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)" title="Klicken zum Kopieren">' +
+                      '<span style="width:20px;height:20px;border-radius:5px;background:linear-gradient(135deg,#00F0FF,#8B5CF6);border:1px solid #fff;flex-shrink:0"></span>' +
+                      '<div style="line-height:1.2"><div style="font-size:10px;color:#94a3b8">Neon-Akzent</div><div style="font-size:11px;font-weight:800;color:#38bdf8;font-family:monospace">#00F0FF 📋</div></div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
               /* Aufklappbarer @BotFather Guide für Main Mini App & Chatlisten-Öffnen */
               (state.adminBotGuideOpen ? (
                 '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.95);border:1px solid rgba(56,189,248,0.35);font-size:11.5px;color:#cbd5e1;line-height:1.55">' +
@@ -5205,11 +5540,11 @@
                       '• <b>In-Place Video-Cover (Bot API 8.3):</b> Funktioniert vollautomatisch über den Worker.' +
                     '</div>' +
                     '<div style="background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
-                      '<b style="color:#fbbf24">2️⃣ Einmalig im @BotFather (Main Mini App in der Chatliste & Profil-Banner):</b><br/>' +
-                      'Damit in der Telegram-Chatliste direkt neben <b>@' + esc(effBotUsername) + '</b> der „Öffnen“-Button und im Bot-Profil der große „App starten“-Banner erscheint:<br/>' +
-                      '1. Öffne <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline">@BotFather</a> in Telegram.<br/>' +
-                      '2. Sende <code>/mybots</code> ▸ wähle <b>@' + esc(effBotUsername) + '</b> ▸ <b>Bot Settings</b> ▸ <b>Configure Mini App</b> ▸ <b>Enable Mini App</b>.<br/>' +
-                      '3. Füge als URL deine Worker-Adresse ein:' +
+                      '<b style="color:#fbbf24">2️⃣ Einmalig im @BotFather (Main Mini App, Bot-Foto, Splashscreen & Login Widget):</b><br/>' +
+                      '1. Öffne <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline">@BotFather</a> ▸ <code>/mybots</code> ▸ <b>@' + esc(effBotUsername) + '</b>.<br/>' +
+                      '2. <b>Bot-Foto:</b> <i>Edit Bot ▸ Edit Botpic</i> ▸ das <b>512×512 PNG</b> hochladen.<br/>' +
+                      '3. <b>Main Mini App & Farben:</b> <i>Bot Settings ▸ Configure Mini App</i> ▸ URL einfügen, das <b>640×360 PNG</b> sowie Header <code>#0B1021</code> & Background <code>#070B19</code> eintragen.<br/>' +
+                      '4. <b>Telegram Login Widget im Browser:</b> Sende <code>/setdomain</code> an @BotFather und hinterlege deine Worker-Domain:' +
                       '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">' +
                         '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + esc(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
                         '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(' + JSON.stringify(botFatherCommandsBlock).replace(/"/g, '&quot;') + ',\\'BotFather Befehlsliste\\')">📋 Befehlsliste kopieren</button>' +
@@ -5676,6 +6011,9 @@
         }
         updateSyncBadge();
         await loadDiscover("m", "all", "trend", "pop_desc");
+        if (typeof dismissBootSplashscreen === "function") {
+          dismissBootSplashscreen();
+        }
 
         // Deep-Link Unterstützung (aus dem Bot -> direkt zur entsprechenden Ansicht in der Mini-App!)
         let deepLinkOpened = false;
