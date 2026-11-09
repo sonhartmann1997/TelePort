@@ -2310,13 +2310,22 @@
     }
   }
 
-  // Entfernt inkompatible copy_text Buttons (verhindert Abstürze in Clients wie Arel Gram!)
+  // Normalisiert Reply-Markup inkl. nativer Telegram Bot API 8.0+ copy_text Buttons (CopyTextButton)
   function sanitizeReplyMarkup(replyMarkup) {
     if (!replyMarkup || !Array.isArray(replyMarkup.inline_keyboard)) return replyMarkup;
     return {
       inline_keyboard: replyMarkup.inline_keyboard.map(row =>
         row.map(btn => {
-          if (btn.copy_text) {
+          if (btn && btn.copy_text) {
+            const rawCopyText = typeof btn.copy_text === "object" && btn.copy_text !== null
+              ? String(btn.copy_text.text || "").trim()
+              : String(btn.copy_text || "").trim();
+            if (rawCopyText) {
+              return {
+                text: String(btn.text || "📋 Kopieren"),
+                copy_text: { text: rawCopyText.slice(0, 256) }
+              };
+            }
             return { text: btn.text, callback_data: "info_copy_fallback" };
           }
           return btn;
@@ -2324,3 +2333,4 @@
       )
     };
   }
+

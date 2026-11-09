@@ -4773,6 +4773,96 @@
         loadAdminPanelView();
       }
 
+      async function copyAdminTextToClipboardClient(text, label = "Text") {
+        const val = String(text || "").trim();
+        if (!val) return;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(val);
+            showHudToast("📋 " + label + " in die Zwischenablage kopiert!");
+            return;
+          }
+        } catch (e) {}
+        const ta = document.createElement("textarea");
+        ta.value = val;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        showHudToast("📋 " + label + " kopiert!");
+      }
+
+      async function adminSetVideoCoverModeClient(mode) {
+        const cleanMode = ["backdrop", "poster", "off"].includes(mode) ? mode : "backdrop";
+        setBusyState(true, "🖼️ Speichere Bot API 8.3 Video-Cover-Modus (" + cleanMode + ")...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "set_cover_mode", videoCoverMode: cleanMode })
+          });
+          if (r && r.ok) {
+            state.adminVideoCoverMode = r.videoCoverMode || cleanMode;
+            if (window._lastAdminOverviewCache) {
+              window._lastAdminOverviewCache.botSetup = {
+                ...(window._lastAdminOverviewCache.botSetup || {}),
+                videoCoverMode: state.adminVideoCoverMode
+              };
+            }
+            const labelMap = {
+              backdrop: "🖼️ 16:9 Szenenbild (TMDb Backdrop mit Poster-Fallback)",
+              poster: "🎬 2:3 Filmplakat (TMDb Poster)",
+              off: "⚪ Deaktiviert (Kein Cover-Embedding)"
+            };
+            showHudToast("✅ Bot API 8.3 Video-Cover: " + (labelMap[state.adminVideoCoverMode] || state.adminVideoCoverMode));
+            loadAdminPanelView(false);
+          } else {
+            showHudToast("⚠️ Konnte Cover-Modus nicht speichern.");
+          }
+        } finally {
+          setBusyState(false);
+        }
+      }
+
+      async function adminRunBotMiniAppSetupClient() {
+        const urlInp = document.getElementById("adminBotMiniAppUrlInp");
+        const btnTextInp = document.getElementById("adminBotMenuBtnTextInp");
+        const webAppUrl = (urlInp && urlInp.value ? urlInp.value.trim() : window.location.origin).replace(/\\/+$/, "");
+        const buttonText = (btnTextInp && btnTextInp.value ? btnTextInp.value.trim() : "🍿 Mediathek") || "🍿 Mediathek";
+        setBusyState(true, "🚀 Aktiviere Telegram Chat-Menü-Button (setChatMenuButton) & Bot-Befehle (setMyCommands)...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "setup_miniapp_menu",
+              webAppUrl,
+              buttonText
+            })
+          });
+          const statusEl = document.getElementById("adminBotSetupStatusMsg");
+          if (r && r.ok) {
+            if (statusEl) {
+              statusEl.style.display = "block";
+              statusEl.style.color = "#34d399";
+              statusEl.innerHTML = "✅ <b>Erfolgreich aktiviert!</b> Der permanente Button <b>„" + esc(r.buttonText || buttonText) + "“</b> unten links im Telegram-Chat (<code>setChatMenuButton</code>) sowie alle Schnellbefehle (<code>setMyCommands</code>) und der Inline-Suche-Button sind jetzt live geschaltet.";
+            }
+            showHudToast("🚀 Mini-App Menü-Button („" + (r.buttonText || buttonText) + "“) & Befehle live aktiviert!");
+          } else {
+            if (statusEl) {
+              statusEl.style.display = "block";
+              statusEl.style.color = "#f87171";
+              statusEl.textContent = "⚠️ Fehler bei der Telegram-Aktivierung. Prüfe, ob TELEGRAM_BOT_TOKEN in Cloudflare gesetzt ist.";
+            }
+            showHudToast("⚠️ Telegram API Rückmeldung prüfen.");
+          }
+        } finally {
+          setBusyState(false);
+        }
+      }
+
       async function loadAdminPanelView(forceNetworkRefresh = false) {
         if (!state.isAuthenticated || !state.authUser?.isAdmin) {
           showHudToast("⛔ Zugriff verweigert: Nur für autorisierte Administratoren.");
@@ -5038,6 +5128,98 @@
           const savedChanVal = backupImportJob.verifiedChannelId || getSavedVerifiedChannelIdClient();
           const isChanReady = Boolean(savedChanVal && (savedChanVal.startsWith("-100") || savedChanVal.startsWith("@")));
 
+          const botSetup = r.botSetup || window._lastAdminOverviewCache?.botSetup || {};
+          const curCoverMode = state.adminVideoCoverMode || botSetup.videoCoverMode || "backdrop";
+          state.adminVideoCoverMode = curCoverMode;
+          const effMiniAppUrl = String(botSetup.webAppUrl || window.location.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\\/+$/, "");
+          const effBotUsername = String(botSetup.botUsername || "DeinBot").replace(/^@/, "");
+          const botFatherCommandsBlock = [
+            "start - 🍿 Hauptmenü & Netflix Mini-App öffnen",
+            "search - 🔍 Film oder Serie direkt suchen",
+            "filter - 🎛️ Katalog-Filter & Streaming-Dienste",
+            "t - 🔥 Aktuelle Trends (z.B. /t f oder /t s)",
+            "p - 🌟 Populäre Hits (z.B. /p f oder /p s)",
+            "sc - 💎 Geheimtipps (z.B. /sc f oder /sc s)",
+            "r - 🎲 Zufalls-Tipp (z.B. /r f oder /r s)",
+            "info - ℹ️ Hilfe, Befehle & Mini-App Guide",
+            "id - 🆔 Eigene Chat- / Gruppen-ID anzeigen"
+          ].join("\\n");
+
+          const botApi83CockpitHtml =
+            '<div class="panel-box" style="border-color:rgba(56,189,248,0.42);background:linear-gradient(135deg,rgba(15,23,42,0.92),rgba(17,24,39,0.88));margin-bottom:12px">' +
+              '<div class="section-title" style="margin-bottom:6px">' +
+                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                  '<span>🚀 Telegram Bot API 8.3+ Cockpit: Mini-App Direktstart & Video-Cover-Embedding</span>' +
+                  '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.38)">Bot API 8.0–8.3 aktiv</span>' +
+                '</div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="toggleTmaFullscreenClient()">⛶ Vollbild testen</button>' +
+                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="addTmaToHomeScreenClient()">📲 Home-Screen-Icon</button>' +
+                  '<button type="button" class="btn blue" style="padding:4px 10px;font-size:11px" onclick="state.adminBotGuideOpen=!state.adminBotGuideOpen;loadAdminPanelView(false)">' +
+                    (state.adminBotGuideOpen ? '📖 @BotFather Guide ausblenden ▴' : '📖 @BotFather 3-Schritte-Guide ▾') +
+                  '</button>' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;align-items:stretch">' +
+                /* Box 1: Bot API 8.3 Video Cover Embedding ohne Re-Upload */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px">' +
+                  '<div style="font-size:12px;font-weight:800;color:#f8fafc;margin-bottom:4px">🖼️ Bot API 8.3 Video-Cover direkt in Dateien einbetten (0 Bytes Re-Upload)</div>' +
+                  '<div style="font-size:11px;color:#94a3b8;line-height:1.45;margin-bottom:8px">' +
+                    'Bettet das hochauflösende TMDb-Cover via <code>cover</code>-Parameter direkt in den Telegram-Videoplayer ein – bei <code>sendVideo</code> sofort und bei <code>copyMessage</code> automatisch über <b>File-ID-Harvesting + In-Place <code>editMessageMedia</code></b>!' +
+                  '</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn ' + (curCoverMode === 'backdrop' ? 'green' : '') + '" style="flex:1;min-width:130px;justify-content:center;font-size:11.5px" onclick="adminSetVideoCoverModeClient(\\'backdrop\\')">' +
+                      (curCoverMode === 'backdrop' ? '✓ ' : '') + '🖼️ 16:9 Szenenbild (Backdrop)' +
+                    '</button>' +
+                    '<button type="button" class="btn ' + (curCoverMode === 'poster' ? 'amber' : '') + '" style="flex:1;min-width:120px;justify-content:center;font-size:11.5px" onclick="adminSetVideoCoverModeClient(\\'poster\\')">' +
+                      (curCoverMode === 'poster' ? '✓ ' : '') + '🎬 2:3 Filmplakat (Poster)' +
+                    '</button>' +
+                    '<button type="button" class="btn ' + (curCoverMode === 'off' ? 'red' : '') + '" style="padding:6px 10px;font-size:11.5px" onclick="adminSetVideoCoverModeClient(\\'off\\')">' +
+                      (curCoverMode === 'off' ? '✓ ' : '') + '⚪ Aus' +
+                    '</button>' +
+                  '</div>' +
+                '</div>' +
+                /* Box 2: 1-Klick Mini-App Menü-Button Unten Links (setChatMenuButton) */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px">' +
+                  '<div style="font-size:12px;font-weight:800;color:#f8fafc;margin-bottom:4px">🍿 Mini-App Direktstart-Button im Bot aktivieren (setChatMenuButton)</div>' +
+                  '<div style="font-size:11px;color:#94a3b8;line-height:1.45;margin-bottom:8px">' +
+                    'Setzt den permanenten <b>„🍿 Mediathek“</b>-Button unten links neben dem Texteingabefeld im Bot-Chat für alle Nutzer sowie den Start-Button über jeder Inline-Suche.' +
+                  '</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    '<input id="adminBotMiniAppUrlInp" value="' + esc(effMiniAppUrl) + '" placeholder="https://dein-worker.workers.dev" style="flex:1;min-width:160px;padding:6px 9px;border-radius:6px;background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
+                    '<input id="adminBotMenuBtnTextInp" value="🍿 Mediathek" placeholder="Button-Text" style="width:115px;padding:6px 8px;border-radius:6px;background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
+                    '<button type="button" class="btn green" style="font-size:11.5px" onclick="adminRunBotMiniAppSetupClient()">🚀 Jetzt 1-Klick aktivieren</button>' +
+                  '</div>' +
+                  '<div id="adminBotSetupStatusMsg" style="display:none;font-size:11px;margin-top:6px;line-height:1.4"></div>' +
+                '</div>' +
+              '</div>' +
+              /* Aufklappbarer @BotFather Guide für Main Mini App & Chatlisten-Öffnen */
+              (state.adminBotGuideOpen ? (
+                '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.95);border:1px solid rgba(56,189,248,0.35);font-size:11.5px;color:#cbd5e1;line-height:1.55">' +
+                  '<div style="font-weight:800;color:#38bdf8;margin-bottom:6px">📖 Was du direkt hier per 1-Klick erledigst vs. was einmalig im @BotFather eingestellt wird:</div>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">' +
+                    '<div style="background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<b style="color:#34d399">1️⃣ Automatisch per Bot-API (Kein BotFather nötig):</b><br/>' +
+                      '• <b>Menü-Button unten links im Chat:</b> Wird beim Klick auf <i>„🚀 Jetzt 1-Klick aktivieren“</i> (und automatisch bei <code>/start</code>) via <code>setChatMenuButton</code> gesetzt.<br/>' +
+                      '• <b>Inline-Suche Start-Button:</b> Erscheint automatisch ganz oben über den Inline-Suchergebnissen.<br/>' +
+                      '• <b>In-Place Video-Cover (Bot API 8.3):</b> Funktioniert vollautomatisch über den Worker.' +
+                    '</div>' +
+                    '<div style="background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<b style="color:#fbbf24">2️⃣ Einmalig im @BotFather (Main Mini App in der Chatliste & Profil-Banner):</b><br/>' +
+                      'Damit in der Telegram-Chatliste direkt neben <b>@' + esc(effBotUsername) + '</b> der „Öffnen“-Button und im Bot-Profil der große „App starten“-Banner erscheint:<br/>' +
+                      '1. Öffne <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline">@BotFather</a> in Telegram.<br/>' +
+                      '2. Sende <code>/mybots</code> ▸ wähle <b>@' + esc(effBotUsername) + '</b> ▸ <b>Bot Settings</b> ▸ <b>Configure Mini App</b> ▸ <b>Enable Mini App</b>.<br/>' +
+                      '3. Füge als URL deine Worker-Adresse ein:' +
+                      '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">' +
+                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + esc(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
+                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(' + JSON.stringify(botFatherCommandsBlock).replace(/"/g, '&quot;') + ',\\'BotFather Befehlsliste\\')">📋 Befehlsliste kopieren</button>' +
+                      '</div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>'
+              ) : '') +
+            '</div>';
+
           root.innerHTML = '<div class="section">' +
             '<div class="section-title">' +
               '<span>👑 Admin-Dashboard & VIP- / Playlisten- / Backup-Verwaltung</span>' +
@@ -5056,6 +5238,7 @@
               '</div>' +
             '</div>' +
             buildAntiSpamCockpitBoxHtmlClient() +
+            botApi83CockpitHtml +
             (state.adminTab === "users" ? (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>👥 Registrierte Telegram- & Web-Nutzer (' + users.length + ')</span></div>' +

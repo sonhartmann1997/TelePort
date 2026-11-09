@@ -3445,13 +3445,22 @@
     }
   }
 
-  // Entfernt inkompatible copy_text Buttons (verhindert Abstürze in Clients wie Arel Gram!)
+  // Normalisiert Reply-Markup inkl. nativer Telegram Bot API 8.0+ copy_text Buttons (CopyTextButton)
   function sanitizeReplyMarkup(replyMarkup) {
     if (!replyMarkup || !Array.isArray(replyMarkup.inline_keyboard)) return replyMarkup;
     return {
       inline_keyboard: replyMarkup.inline_keyboard.map(row =>
         row.map(btn => {
-          if (btn.copy_text) {
+          if (btn && btn.copy_text) {
+            const rawCopyText = typeof btn.copy_text === "object" && btn.copy_text !== null
+              ? String(btn.copy_text.text || "").trim()
+              : String(btn.copy_text || "").trim();
+            if (rawCopyText) {
+              return {
+                text: String(btn.text || "📋 Kopieren"),
+                copy_text: { text: rawCopyText.slice(0, 256) }
+              };
+            }
             return { text: btn.text, callback_data: "info_copy_fallback" };
           }
           return btn;
@@ -3856,6 +3865,11 @@
       targetTopicId: String(jobInput.targetTopicId || "").trim(),
       sourceBridgeChatId: String(jobInput.sourceBridgeChatId || "").trim(),
       customBotToken: String(jobInput.customBotToken || "").trim(),
+      posterUrl: String(jobInput.posterUrl || "").trim(),
+      backdropUrl: String(jobInput.backdropUrl || "").trim(),
+      coverUrl: String(jobInput.coverUrl || "").trim(),
+      tmdbId: jobInput.tmdbId ? Number(jobInput.tmdbId) : null,
+      typeCode: String(jobInput.typeCode || "").trim(),
       method: String(jobInput.method || "sendVideo").trim(),
       status: "queued",
       reason: String(jobInput.reason || "Telegram Anti-Spam Pacing"),
@@ -4032,6 +4046,11 @@
               customBotToken: job.customBotToken,
               messageThreadId: job.targetTopicId,
               sourceBridgeChatId: job.sourceBridgeChatId,
+              posterUrl: job.posterUrl || "",
+              backdropUrl: job.backdropUrl || "",
+              coverUrl: job.coverUrl || "",
+              tmdbId: job.tmdbId || null,
+              typeCode: job.typeCode || "",
               _fromAntiSpamQueue: true
             });
             deliveredOk = Boolean(sent && sent.ok);
@@ -4121,6 +4140,92 @@
     };
   }
 
+  // --- Bot API 8.3 Video-Cover-Embedding Modus ("backdrop" | "poster" | "off") ---
+  function normalizeVideoCoverMode(val) {
+    const v = String(val || "").trim().toLowerCase();
+    if (v === "poster" || v === "off" || v === "backdrop") return v;
+    return "backdrop";
+  }
+
+  async function getVideoCoverMode(env) {
+    if (memoryFallback.has("TG_VIDEO_COVER_MODE")) {
+      return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
+    }
+    try {
+      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MY_KV");
+      if (raw) {
+        const mode = normalizeVideoCoverMode(raw);
+        memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+        return mode;
+      }
+    } catch (e) {}
+    memoryFallback.set("TG_VIDEO_COVER_MODE", "backdrop");
+    return "backdrop";
+  }
+
+  async function setVideoCoverMode(env, modeInput) {
+    const mode = normalizeVideoCoverMode(modeInput);
+    memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+    try {
+      await kvStageWrite(env, "TG_VIDEO_COVER_MODE", mode, {
+        bindingName: "MY_KV",
+        periodicOnly: false
+      });
+    } catch (e) {}
+    return mode;
+  }
+
+  function toHighResTmdbImageUrl(rawUrlOrPath, size = "w1280") {
+    const raw = String(rawUrlOrPath || "").trim();
+    if (!raw || raw.includes("placehold.co")) return "";
+    if (raw.startsWith("https://image.tmdb.org/t/p/")) {
+      return raw.replace(/\/t\/p\/(?:w\d+|original)\//, `/t/p/${size}/`);
+    }
+    if (raw.startsWith("https://") || raw.startsWith("http://")) {
+      return raw;
+    }
+    if (raw.startsWith("/")) {
+      return `https://image.tmdb.org/t/p/${size}${raw}`;
+    }
+    return "";
+  }
+
+  async function resolveVideoCoverUrlForDelivery(env, extraOpts = {}) {
+    if (!extraOpts || extraOpts.disableCover === true) return "";
+    const mode = extraOpts.coverModeOverride
+      ? normalizeVideoCoverMode(extraOpts.coverModeOverride)
+      : await getVideoCoverMode(env);
+    if (mode === "off") return "";
+
+    const explicitCover = toHighResTmdbImageUrl(extraOpts.coverUrl, mode === "poster" ? "w780" : "w1280");
+    if (explicitCover) return explicitCover;
+
+    let backdropCandidate = toHighResTmdbImageUrl(extraOpts.backdropUrl, "w1280");
+    let posterCandidate = toHighResTmdbImageUrl(extraOpts.posterUrl, "w780");
+
+    // Falls weder Backdrop noch Poster übergeben wurden, versuche anhand von tmdbId aus D1 aufzulösen
+    const tmdbId = Number(extraOpts.tmdbId || 0);
+    if (!backdropCandidate && !posterCandidate && tmdbId > 0) {
+      const typeCode = String(extraOpts.typeCode || "m").toLowerCase().startsWith("s") ? "s" : "m";
+      try {
+        const db = await ensureD1Schema(env);
+        if (db) {
+          const table = typeCode === "s" ? "series" : "movies";
+          const row = await db.prepare(`SELECT poster_path, backdrop_path, external_poster_url FROM ${table} WHERE tmdb_id = ?1 LIMIT 1`).bind(tmdbId).first().catch(() => null);
+          if (row) {
+            backdropCandidate = toHighResTmdbImageUrl(row.backdrop_path, "w1280");
+            posterCandidate = toHighResTmdbImageUrl(row.poster_path || row.external_poster_url, "w780");
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (mode === "poster") {
+      return posterCandidate || backdropCandidate || "";
+    }
+    return backdropCandidate || posterCandidate || "";
+  }
+
   // @ANCHOR: TELEGRAM_API
   // --- Telegram API Client (Nutzt stabiles HTML-Parsing gegen kaputte Links + 429 Anti-Spam Schutz!) ---
   function tgApi(env) {
@@ -4145,7 +4250,28 @@
               reply_markup: r.reply_markup ? sanitizeReplyMarkup(r.reply_markup) : undefined
             };
           });
-          const body = { inline_query_id: inlineQueryId, results: safeResults, cache_time: 15, ...options };
+          const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const cleanInlineOpts = { ...options };
+          const switchPmText = cleanInlineOpts.switch_pm_text;
+          const switchPmParam = cleanInlineOpts.switch_pm_parameter;
+          delete cleanInlineOpts.switch_pm_text;
+          delete cleanInlineOpts.switch_pm_parameter;
+
+          if (!cleanInlineOpts.button) {
+            if (effectiveWebAppBase && /^https:\/\//i.test(effectiveWebAppBase)) {
+              cleanInlineOpts.button = {
+                text: switchPmText ? `🍿 ${String(switchPmText).replace(/^[🍿🎬🔎⚙️\s]+/, "").slice(0, 30)}` : "🍿 Mediathek Mini-App öffnen",
+                web_app: { url: effectiveWebAppBase }
+              };
+            } else if (switchPmText) {
+              cleanInlineOpts.button = {
+                text: String(switchPmText).slice(0, 64),
+                start_parameter: String(switchPmParam || "inline_start").slice(0, 64)
+              };
+            }
+          }
+
+          const body = { inline_query_id: inlineQueryId, results: safeResults, cache_time: 15, ...cleanInlineOpts };
           const res = await fetchWithTimeout(`${TELEGRAM_API}/answerInlineQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -4154,6 +4280,61 @@
           return res.ok ? await res.json() : null;
         } catch (e) {
           return null;
+        }
+      },
+
+      async setChatMenuButton(chatId = null, webAppUrl = "", buttonText = "🍿 Mediathek") {
+        try {
+          trackStat("telegramCalls");
+          const base = String(webAppUrl || env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const finalUrl = chatId && !String(base).includes("chatId=")
+            ? `${base}?chatId=${encodeURIComponent(String(chatId))}`
+            : base;
+          const payload = {
+            menu_button: {
+              type: "web_app",
+              text: String(buttonText || "🍿 Mediathek").slice(0, 64),
+              web_app: { url: finalUrl }
+            }
+          };
+          if (chatId && /^\d+$/.test(String(chatId))) {
+            payload.chat_id = Number(chatId);
+          }
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/setChatMenuButton`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }, 4500);
+          return res.ok ? await res.json() : { ok: false, status: res.status };
+        } catch (e) {
+          return { ok: false, error: e?.message || "setChatMenuButton failed" };
+        }
+      },
+
+      async setMyCommands(customCommands = null) {
+        try {
+          trackStat("telegramCalls");
+          const commands = Array.isArray(customCommands) && customCommands.length > 0
+            ? customCommands
+            : [
+                { command: "start", description: "🍿 Hauptmenü & Netflix Mini-App öffnen" },
+                { command: "search", description: "🔍 Film oder Serie direkt suchen" },
+                { command: "filter", description: "🎛️ Katalog-Filter & Streaming-Dienste" },
+                { command: "t", description: "🔥 Aktuelle Trends (z.B. /t f oder /t s)" },
+                { command: "p", description: "🌟 Populäre Hits (z.B. /p f oder /p s)" },
+                { command: "sc", description: "💎 Geheimtipps (z.B. /sc f oder /sc s)" },
+                { command: "r", description: "🎲 Zufalls-Tipp (z.B. /r f oder /r s)" },
+                { command: "info", description: "ℹ️ Hilfe, Befehle & Mini-App Guide" },
+                { command: "id", description: "🆔 Eigene Chat- / Gruppen-ID anzeigen" }
+              ];
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/setMyCommands`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ commands })
+          }, 4500);
+          return res.ok ? await res.json() : { ok: false, status: res.status };
+        } catch (e) {
+          return { ok: false, error: e?.message || "setMyCommands failed" };
         }
       },
 
@@ -4439,6 +4620,8 @@
           const threadId = extraOpts.messageThreadId && /^\d+$/.test(String(extraOpts.messageThreadId).trim())
             ? parseInt(String(extraOpts.messageThreadId).trim(), 10)
             : undefined;
+          const resolvedCoverUrl = await resolveVideoCoverUrlForDelivery(env, extraOpts);
+          const startTimestamp = Number(extraOpts.startTimestamp) > 0 ? Math.floor(Number(extraOpts.startTimestamp)) : undefined;
 
           // 1. Prüfe auf Quellgruppen-Referenz aus Telegram Desktop Chat-Backup (tg_export_<channelId>_<msgId>)
           const exportMatch = String(fileIdOrExportRef).trim().match(/^tg_export_(-?\d+)_(\d+)$/i);
@@ -4448,7 +4631,7 @@
             const overrideBridge = String(extraOpts.sourceBridgeChatId || env.SOURCE_GROUP_CHAT_ID || "").trim();
             const fromChatId = overrideBridge || (rawChannelId.startsWith("-100") || rawChannelId.startsWith("-") ? rawChannelId : `-100${rawChannelId}`);
 
-            // Versuch A: Falls File-ID Harvesting gewünscht und Bot im Zielchat senden darf, kopiere Nachricht sauber per copyMessage
+            // Versuch A: Kopiere Nachricht sauber per copyMessage
             const copyPayload = {
               chat_id: targetChatId,
               from_chat_id: fromChatId,
@@ -4457,6 +4640,7 @@
               parse_mode: "HTML"
             };
             if (threadId) copyPayload.message_thread_id = threadId;
+            if (resolvedCoverUrl) copyPayload.cover = resolvedCoverUrl;
 
             let copyRes = await fetch(`${apiBase}/copyMessage`, {
               method: "POST",
@@ -4483,32 +4667,78 @@
 
             if (copyRes.ok) {
               const copyData = await copyRes.json().catch(() => ({ ok: true }));
+              const copiedMessageId = copyData?.result?.message_id || null;
               let harvestedFileId = null;
+              let harvestedIsVideo = false;
+              let coverEmbedded = false;
 
-              // Optionales File-ID Harvesting: Wenn der Bot die Nachricht kurz über forwardMessage (oder falls copyData ein Video-Objekt enthält) inspizieren kann
+              // Automatisches File-ID Harvesting für dauerhaftes Bot API 8.3 Cover-Embedding ohne Re-Upload
               const videoInRes = copyData?.result?.video || copyData?.result?.document;
               if (videoInRes && videoInRes.file_id) {
                 harvestedFileId = videoInRes.file_id;
+                harvestedIsVideo = Boolean(copyData?.result?.video);
                 await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, videoInRes.file_unique_id || null);
-              } else if (extraOpts.harvestViaForward && env.HARVEST_CACHE_CHAT_ID) {
-                try {
-                  const fwdRes = await fetch(`${apiBase}/forwardMessage`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      chat_id: env.HARVEST_CACHE_CHAT_ID,
+              } else if (extraOpts.autoHarvestFileId !== false) {
+                const harvestTargetChat = env.HARVEST_CACHE_CHAT_ID || (resolvedCoverUrl ? targetChatId : "");
+                const shouldDeleteTempForward = !env.HARVEST_CACHE_CHAT_ID && String(harvestTargetChat) === String(targetChatId);
+                if (harvestTargetChat) {
+                  try {
+                    const fwdPayload = {
+                      chat_id: harvestTargetChat,
                       from_chat_id: fromChatId,
                       message_id: sourceMsgId,
                       disable_notification: true
-                    })
-                  });
-                  if (fwdRes.ok) {
-                    const fwdJson = await fwdRes.json();
-                    const mediaObj = fwdJson?.result?.video || fwdJson?.result?.document;
-                    if (mediaObj?.file_id) {
-                      harvestedFileId = mediaObj.file_id;
-                      await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, mediaObj.file_unique_id || null);
+                    };
+                    if (shouldDeleteTempForward && threadId) fwdPayload.message_thread_id = threadId;
+                    const fwdRes = await fetch(`${apiBase}/forwardMessage`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(fwdPayload)
+                    });
+                    if (fwdRes.ok) {
+                      const fwdJson = await fwdRes.json().catch(() => null);
+                      const fwdMsgId = fwdJson?.result?.message_id;
+                      const mediaObj = fwdJson?.result?.video || fwdJson?.result?.document;
+                      if (mediaObj?.file_id) {
+                        harvestedFileId = mediaObj.file_id;
+                        harvestedIsVideo = Boolean(fwdJson?.result?.video);
+                        await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, mediaObj.file_unique_id || null);
+                      }
+                      if (shouldDeleteTempForward && fwdMsgId) {
+                        fetch(`${apiBase}/deleteMessage`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ chat_id: harvestTargetChat, message_id: fwdMsgId })
+                        }).catch(() => {});
+                      }
                     }
+                  } catch (e) {}
+                }
+              }
+
+              // Wenn wir eine Video-File-ID geerntet haben und ein TMDb-Cover aktiv ist:
+              // Direkt die kopierte Nachricht in-place per editMessageMedia + InputMediaVideo (Bot API 8.3 cover) veredeln!
+              if (harvestedFileId && harvestedIsVideo && resolvedCoverUrl && copiedMessageId) {
+                try {
+                  const editMediaPayload = {
+                    chat_id: targetChatId,
+                    message_id: copiedMessageId,
+                    media: {
+                      type: "video",
+                      media: harvestedFileId,
+                      cover: resolvedCoverUrl,
+                      caption: htmlCaption,
+                      parse_mode: "HTML",
+                      supports_streaming: true
+                    }
+                  };
+                  const editRes = await fetch(`${apiBase}/editMessageMedia`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(editMediaPayload)
+                  });
+                  if (editRes.ok) {
+                    coverEmbedded = true;
                   }
                 } catch (e) {}
               }
@@ -4519,13 +4749,15 @@
                 fromChatId,
                 sourceMessageId: sourceMsgId,
                 harvestedFileId,
+                coverEmbedded,
+                coverUrl: coverEmbedded ? resolvedCoverUrl : null,
                 result: copyData?.result || { message_id: Date.now() }
               };
             }
             return null;
           }
 
-          // 2. Regulärer Versand per echter telegram_file_id (sendVideo mit Fallback auf sendDocument)
+          // 2. Regulärer Versand per echter telegram_file_id (sendVideo inkl. Bot API 8.3 cover Parameter + Fallback)
           recordActualTelegramSendSlot(targetChatId);
           const videoBody = {
             chat_id: targetChatId,
@@ -4535,7 +4767,10 @@
             supports_streaming: true
           };
           if (threadId) videoBody.message_thread_id = threadId;
+          if (resolvedCoverUrl) videoBody.cover = resolvedCoverUrl;
+          if (startTimestamp !== undefined) videoBody.start_timestamp = startTimestamp;
 
+          let usedCover = Boolean(resolvedCoverUrl);
           let res = await fetch(`${apiBase}/sendVideo`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -4547,7 +4782,24 @@
             registerAntiSpam429FloodWait(retrySec, targetChatId);
             return null;
           }
+          // Falls Telegram das Cover-Bild ablehnt (z. B. temporärer Fetch-Fehler bei Bild-URL), versuche sendVideo ohne cover
+          if (!res.ok && usedCover) {
+            usedCover = false;
+            const fallbackVideoBody = { ...videoBody };
+            delete fallbackVideoBody.cover;
+            res = await fetch(`${apiBase}/sendVideo`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(fallbackVideoBody)
+            });
+            if (res.status === 429) {
+              const err429Retry = await res.json().catch(() => ({}));
+              registerAntiSpam429FloodWait(Number(err429Retry?.parameters?.retry_after) || 5, targetChatId);
+              return null;
+            }
+          }
           if (!res.ok) {
+            usedCover = false;
             const docBody = {
               chat_id: targetChatId,
               document: fileIdOrExportRef,
@@ -4566,7 +4818,14 @@
               return null;
             }
           }
-          return res.ok ? await res.json() : null;
+          if (!res.ok) return null;
+          const jsonRes = await res.json().catch(() => ({ ok: true }));
+          return {
+            ...jsonRes,
+            ok: true,
+            coverEmbedded: usedCover,
+            coverUrl: usedCover ? resolvedCoverUrl : null
+          };
         } catch (e) {
           return null;
         }
@@ -16218,6 +16477,9 @@
       inline_keyboard.unshift([
         { text: "🍿 Netflix Mini-App öffnen", web_app: { url: `${effectiveWebAppBase}?chatId=${chatId}` } }
       ]);
+      if (!isGroupOrChannelChat(chatId)) {
+        tgApi(env).setChatMenuButton(chatId, effectiveWebAppBase, "🍿 Mediathek").catch(() => {});
+      }
     }
 
     if (isGroupOrChannelChat(chatId)) {
@@ -19254,7 +19516,18 @@
       `▸ 🌐 [Auf TMDB öffnen](${tmdbUrl})\n` +
       `▸ 📤 [Titel als Post teilen](${shareDeepLink})`;
 
-    const inline_keyboard = [];
+    const inline_keyboard = [
+      [
+        { text: "📋 Titel + Jahr kopieren", copy_text: { text: titleWithYear } },
+        { text: "📋 Nur Titel kopieren", copy_text: { text: cleanTitle } }
+      ]
+    ];
+    const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    if (effectiveWebAppBase && !isGroupOrChannelChat(chatId)) {
+      inline_keyboard.push([
+        { text: "🍿 Direkt in Mini-App öffnen", web_app: { url: `${effectiveWebAppBase}?chatId=${chatId}&openType=${typeCode}&openId=${itemId}` } }
+      ]);
+    }
     for (let i = 0; i < providerButtons.length; i += 2) {
       inline_keyboard.push(
         providerButtons.slice(i, i + 2).map(pb => ({ text: pb.buttonText, url: pb.url }))
@@ -19318,10 +19591,14 @@
 
     const directShareUrl = `https://t.me/share/url?url=${encodeURIComponent(unified.targetTitleUrl)}&text=${encodeURIComponent(unified.plainShareText)}`;
 
+    const titleWithYear = releaseYear ? `${cleanTitle} (${releaseYear})` : cleanTitle;
     const inline_keyboard = [
       [
         { text: "📤 Inline an Chat senden", switch_inline_query: `share_${typeCode}_${itemId}` },
         { text: "📲 Über Telegram teilen", url: directShareUrl }
+      ],
+      [
+        { text: "📋 Titel kopieren", copy_text: { text: titleWithYear } }
       ],
       [
         { text: "🔙 Zurück zur Detailansicht", callback_data: `back_overlay_${typeCode}_${itemId}` },
@@ -30508,6 +30785,51 @@
         }
       }
 
+      function toggleTmaFullscreenClient() {
+        try {
+          const tgWebApp = window.Telegram && window.Telegram.WebApp;
+          if (tgWebApp && typeof tgWebApp.requestFullscreen === "function") {
+            if (tgWebApp.isFullscreen && typeof tgWebApp.exitFullscreen === "function") {
+              tgWebApp.exitFullscreen();
+              showHudToast("🗗 Telegram Vollbild-Modus beendet.");
+            } else {
+              tgWebApp.requestFullscreen();
+              showHudToast("⛶ Telegram Bot API 8.0 Vollbild-Modus aktiviert!");
+            }
+            return;
+          }
+          if (tgWebApp && typeof tgWebApp.expand === "function") {
+            tgWebApp.expand();
+          }
+          if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().then(() => {
+              showHudToast("⛶ Vollbild-Modus aktiviert!");
+            }).catch(() => {
+              showHudToast("⛶ Mini-App auf maximale Höhe erweitert!");
+            });
+          } else if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+            showHudToast("🗗 Vollbild-Modus beendet.");
+          } else {
+            showHudToast("⛶ Mini-App auf maximale Höhe erweitert!");
+          }
+        } catch (e) {
+          showHudToast("⛶ Vollbild-Umschaltung ausgeführt.");
+        }
+      }
+
+      function addTmaToHomeScreenClient() {
+        try {
+          const tgWebApp = window.Telegram && window.Telegram.WebApp;
+          if (tgWebApp && typeof tgWebApp.addToHomeScreen === "function") {
+            tgWebApp.addToHomeScreen();
+            showHudToast("📲 Telegram Home-Screen-Verknüpfung angefragt!");
+            return;
+          }
+        } catch (e) {}
+        showHudToast("📲 Tipp: Öffne die Mini-App in Telegram (ab v11.4 / Bot API 8.0) oder nutze im Browser „Zum Startbildschirm hinzufügen“.");
+      }
+
       function renderFilterSidebarContent(jumpToOptions = false) {
         const body = document.getElementById("sidebarDrawerBody");
         if (!body) return;
@@ -30624,6 +30946,12 @@
               '</button>' +
               '<button class="btn" onclick="closeFilterSidebar();restartApp()" title="Alle aktiven Filter zurücksetzen & neu starten">' +
                 '🔄 Neu starten' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
+                '⛶ Vollbild' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
+                '📲 Home-Icon' +
               '</button>' +
               (u.isAdmin ? (
                 '<button id="adminHeaderBtn" class="btn amber" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'
@@ -34937,6 +35265,8 @@
               customBotToken: prefs.customBotToken || "",
               typeCode: state.activeDetails?.typeCode || (metaObj.seriesId ? "s" : "m"),
               tmdbId: metaObj.seriesId || state.activeDetails?.id || null,
+              posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
+              backdropUrl: state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
               season: metaObj.season || null,
               episode: metaObj.episode || null
             })
@@ -34955,8 +35285,9 @@
               showHudToast("💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet!");
             } else {
               const copyNote = r.copiedFromSourceGroup ? " (per Auto-Copy aus Quellgruppe)" : "";
+              const coverNote = r.coverEmbedded ? " + 🖼️ Cover eingebettet" : "";
               const subNote = Number(r.subtitlesSentCount || 0) > 0 ? (" + 💬 " + r.subtitlesSentCount + " Untertitel mitgesendet") : "";
-              showHudToast("✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + subNote + "!");
+              showHudToast("✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!");
             }
             if (!isSubtitleOnly && metaObj.seriesId && metaObj.season) {
               loadSeason(metaObj.seriesId, metaObj.season, false, false);
@@ -35181,7 +35512,11 @@
                 targetGroupChatId: prefs.targetGroupChatId || "",
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
-                customBotToken: prefs.customBotToken || ""
+                customBotToken: prefs.customBotToken || "",
+                typeCode: "m",
+                tmdbId: d.id || null,
+                posterUrl: d.poster || d.poster_path || "",
+                backdropUrl: d.backdrop || d.backdrop_path || ""
               })
             });
             if (r && r.antiSpam) {
@@ -35253,7 +35588,11 @@
                 targetGroupChatId: prefs.targetGroupChatId || "",
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
-                customBotToken: prefs.customBotToken || ""
+                customBotToken: prefs.customBotToken || "",
+                typeCode: "s",
+                tmdbId: seriesId || state.activeDetails?.id || null,
+                posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
+                backdropUrl: ep.still || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || ""
               })
             });
             if (r && r.antiSpam) {
@@ -42521,6 +42860,96 @@
         loadAdminPanelView();
       }
 
+      async function copyAdminTextToClipboardClient(text, label = "Text") {
+        const val = String(text || "").trim();
+        if (!val) return;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(val);
+            showHudToast("📋 " + label + " in die Zwischenablage kopiert!");
+            return;
+          }
+        } catch (e) {}
+        const ta = document.createElement("textarea");
+        ta.value = val;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } catch (e) {}
+        document.body.removeChild(ta);
+        showHudToast("📋 " + label + " kopiert!");
+      }
+
+      async function adminSetVideoCoverModeClient(mode) {
+        const cleanMode = ["backdrop", "poster", "off"].includes(mode) ? mode : "backdrop";
+        setBusyState(true, "🖼️ Speichere Bot API 8.3 Video-Cover-Modus (" + cleanMode + ")...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "set_cover_mode", videoCoverMode: cleanMode })
+          });
+          if (r && r.ok) {
+            state.adminVideoCoverMode = r.videoCoverMode || cleanMode;
+            if (window._lastAdminOverviewCache) {
+              window._lastAdminOverviewCache.botSetup = {
+                ...(window._lastAdminOverviewCache.botSetup || {}),
+                videoCoverMode: state.adminVideoCoverMode
+              };
+            }
+            const labelMap = {
+              backdrop: "🖼️ 16:9 Szenenbild (TMDb Backdrop mit Poster-Fallback)",
+              poster: "🎬 2:3 Filmplakat (TMDb Poster)",
+              off: "⚪ Deaktiviert (Kein Cover-Embedding)"
+            };
+            showHudToast("✅ Bot API 8.3 Video-Cover: " + (labelMap[state.adminVideoCoverMode] || state.adminVideoCoverMode));
+            loadAdminPanelView(false);
+          } else {
+            showHudToast("⚠️ Konnte Cover-Modus nicht speichern.");
+          }
+        } finally {
+          setBusyState(false);
+        }
+      }
+
+      async function adminRunBotMiniAppSetupClient() {
+        const urlInp = document.getElementById("adminBotMiniAppUrlInp");
+        const btnTextInp = document.getElementById("adminBotMenuBtnTextInp");
+        const webAppUrl = (urlInp && urlInp.value ? urlInp.value.trim() : window.location.origin).replace(/\\/+$/, "");
+        const buttonText = (btnTextInp && btnTextInp.value ? btnTextInp.value.trim() : "🍿 Mediathek") || "🍿 Mediathek";
+        setBusyState(true, "🚀 Aktiviere Telegram Chat-Menü-Button (setChatMenuButton) & Bot-Befehle (setMyCommands)...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "setup_miniapp_menu",
+              webAppUrl,
+              buttonText
+            })
+          });
+          const statusEl = document.getElementById("adminBotSetupStatusMsg");
+          if (r && r.ok) {
+            if (statusEl) {
+              statusEl.style.display = "block";
+              statusEl.style.color = "#34d399";
+              statusEl.innerHTML = "✅ <b>Erfolgreich aktiviert!</b> Der permanente Button <b>„" + esc(r.buttonText || buttonText) + "“</b> unten links im Telegram-Chat (<code>setChatMenuButton</code>) sowie alle Schnellbefehle (<code>setMyCommands</code>) und der Inline-Suche-Button sind jetzt live geschaltet.";
+            }
+            showHudToast("🚀 Mini-App Menü-Button („" + (r.buttonText || buttonText) + "“) & Befehle live aktiviert!");
+          } else {
+            if (statusEl) {
+              statusEl.style.display = "block";
+              statusEl.style.color = "#f87171";
+              statusEl.textContent = "⚠️ Fehler bei der Telegram-Aktivierung. Prüfe, ob TELEGRAM_BOT_TOKEN in Cloudflare gesetzt ist.";
+            }
+            showHudToast("⚠️ Telegram API Rückmeldung prüfen.");
+          }
+        } finally {
+          setBusyState(false);
+        }
+      }
+
       async function loadAdminPanelView(forceNetworkRefresh = false) {
         if (!state.isAuthenticated || !state.authUser?.isAdmin) {
           showHudToast("⛔ Zugriff verweigert: Nur für autorisierte Administratoren.");
@@ -42786,6 +43215,98 @@
           const savedChanVal = backupImportJob.verifiedChannelId || getSavedVerifiedChannelIdClient();
           const isChanReady = Boolean(savedChanVal && (savedChanVal.startsWith("-100") || savedChanVal.startsWith("@")));
 
+          const botSetup = r.botSetup || window._lastAdminOverviewCache?.botSetup || {};
+          const curCoverMode = state.adminVideoCoverMode || botSetup.videoCoverMode || "backdrop";
+          state.adminVideoCoverMode = curCoverMode;
+          const effMiniAppUrl = String(botSetup.webAppUrl || window.location.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\\/+$/, "");
+          const effBotUsername = String(botSetup.botUsername || "DeinBot").replace(/^@/, "");
+          const botFatherCommandsBlock = [
+            "start - 🍿 Hauptmenü & Netflix Mini-App öffnen",
+            "search - 🔍 Film oder Serie direkt suchen",
+            "filter - 🎛️ Katalog-Filter & Streaming-Dienste",
+            "t - 🔥 Aktuelle Trends (z.B. /t f oder /t s)",
+            "p - 🌟 Populäre Hits (z.B. /p f oder /p s)",
+            "sc - 💎 Geheimtipps (z.B. /sc f oder /sc s)",
+            "r - 🎲 Zufalls-Tipp (z.B. /r f oder /r s)",
+            "info - ℹ️ Hilfe, Befehle & Mini-App Guide",
+            "id - 🆔 Eigene Chat- / Gruppen-ID anzeigen"
+          ].join("\\n");
+
+          const botApi83CockpitHtml =
+            '<div class="panel-box" style="border-color:rgba(56,189,248,0.42);background:linear-gradient(135deg,rgba(15,23,42,0.92),rgba(17,24,39,0.88));margin-bottom:12px">' +
+              '<div class="section-title" style="margin-bottom:6px">' +
+                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                  '<span>🚀 Telegram Bot API 8.3+ Cockpit: Mini-App Direktstart & Video-Cover-Embedding</span>' +
+                  '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.38)">Bot API 8.0–8.3 aktiv</span>' +
+                '</div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="toggleTmaFullscreenClient()">⛶ Vollbild testen</button>' +
+                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="addTmaToHomeScreenClient()">📲 Home-Screen-Icon</button>' +
+                  '<button type="button" class="btn blue" style="padding:4px 10px;font-size:11px" onclick="state.adminBotGuideOpen=!state.adminBotGuideOpen;loadAdminPanelView(false)">' +
+                    (state.adminBotGuideOpen ? '📖 @BotFather Guide ausblenden ▴' : '📖 @BotFather 3-Schritte-Guide ▾') +
+                  '</button>' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;align-items:stretch">' +
+                /* Box 1: Bot API 8.3 Video Cover Embedding ohne Re-Upload */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px">' +
+                  '<div style="font-size:12px;font-weight:800;color:#f8fafc;margin-bottom:4px">🖼️ Bot API 8.3 Video-Cover direkt in Dateien einbetten (0 Bytes Re-Upload)</div>' +
+                  '<div style="font-size:11px;color:#94a3b8;line-height:1.45;margin-bottom:8px">' +
+                    'Bettet das hochauflösende TMDb-Cover via <code>cover</code>-Parameter direkt in den Telegram-Videoplayer ein – bei <code>sendVideo</code> sofort und bei <code>copyMessage</code> automatisch über <b>File-ID-Harvesting + In-Place <code>editMessageMedia</code></b>!' +
+                  '</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn ' + (curCoverMode === 'backdrop' ? 'green' : '') + '" style="flex:1;min-width:130px;justify-content:center;font-size:11.5px" onclick="adminSetVideoCoverModeClient(\\'backdrop\\')">' +
+                      (curCoverMode === 'backdrop' ? '✓ ' : '') + '🖼️ 16:9 Szenenbild (Backdrop)' +
+                    '</button>' +
+                    '<button type="button" class="btn ' + (curCoverMode === 'poster' ? 'amber' : '') + '" style="flex:1;min-width:120px;justify-content:center;font-size:11.5px" onclick="adminSetVideoCoverModeClient(\\'poster\\')">' +
+                      (curCoverMode === 'poster' ? '✓ ' : '') + '🎬 2:3 Filmplakat (Poster)' +
+                    '</button>' +
+                    '<button type="button" class="btn ' + (curCoverMode === 'off' ? 'red' : '') + '" style="padding:6px 10px;font-size:11.5px" onclick="adminSetVideoCoverModeClient(\\'off\\')">' +
+                      (curCoverMode === 'off' ? '✓ ' : '') + '⚪ Aus' +
+                    '</button>' +
+                  '</div>' +
+                '</div>' +
+                /* Box 2: 1-Klick Mini-App Menü-Button Unten Links (setChatMenuButton) */
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:10px">' +
+                  '<div style="font-size:12px;font-weight:800;color:#f8fafc;margin-bottom:4px">🍿 Mini-App Direktstart-Button im Bot aktivieren (setChatMenuButton)</div>' +
+                  '<div style="font-size:11px;color:#94a3b8;line-height:1.45;margin-bottom:8px">' +
+                    'Setzt den permanenten <b>„🍿 Mediathek“</b>-Button unten links neben dem Texteingabefeld im Bot-Chat für alle Nutzer sowie den Start-Button über jeder Inline-Suche.' +
+                  '</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    '<input id="adminBotMiniAppUrlInp" value="' + esc(effMiniAppUrl) + '" placeholder="https://dein-worker.workers.dev" style="flex:1;min-width:160px;padding:6px 9px;border-radius:6px;background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
+                    '<input id="adminBotMenuBtnTextInp" value="🍿 Mediathek" placeholder="Button-Text" style="width:115px;padding:6px 8px;border-radius:6px;background:#0f172a;color:#f8fafc;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
+                    '<button type="button" class="btn green" style="font-size:11.5px" onclick="adminRunBotMiniAppSetupClient()">🚀 Jetzt 1-Klick aktivieren</button>' +
+                  '</div>' +
+                  '<div id="adminBotSetupStatusMsg" style="display:none;font-size:11px;margin-top:6px;line-height:1.4"></div>' +
+                '</div>' +
+              '</div>' +
+              /* Aufklappbarer @BotFather Guide für Main Mini App & Chatlisten-Öffnen */
+              (state.adminBotGuideOpen ? (
+                '<div style="margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.95);border:1px solid rgba(56,189,248,0.35);font-size:11.5px;color:#cbd5e1;line-height:1.55">' +
+                  '<div style="font-weight:800;color:#38bdf8;margin-bottom:6px">📖 Was du direkt hier per 1-Klick erledigst vs. was einmalig im @BotFather eingestellt wird:</div>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">' +
+                    '<div style="background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<b style="color:#34d399">1️⃣ Automatisch per Bot-API (Kein BotFather nötig):</b><br/>' +
+                      '• <b>Menü-Button unten links im Chat:</b> Wird beim Klick auf <i>„🚀 Jetzt 1-Klick aktivieren“</i> (und automatisch bei <code>/start</code>) via <code>setChatMenuButton</code> gesetzt.<br/>' +
+                      '• <b>Inline-Suche Start-Button:</b> Erscheint automatisch ganz oben über den Inline-Suchergebnissen.<br/>' +
+                      '• <b>In-Place Video-Cover (Bot API 8.3):</b> Funktioniert vollautomatisch über den Worker.' +
+                    '</div>' +
+                    '<div style="background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08)">' +
+                      '<b style="color:#fbbf24">2️⃣ Einmalig im @BotFather (Main Mini App in der Chatliste & Profil-Banner):</b><br/>' +
+                      'Damit in der Telegram-Chatliste direkt neben <b>@' + esc(effBotUsername) + '</b> der „Öffnen“-Button und im Bot-Profil der große „App starten“-Banner erscheint:<br/>' +
+                      '1. Öffne <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:#38bdf8;text-decoration:underline">@BotFather</a> in Telegram.<br/>' +
+                      '2. Sende <code>/mybots</code> ▸ wähle <b>@' + esc(effBotUsername) + '</b> ▸ <b>Bot Settings</b> ▸ <b>Configure Mini App</b> ▸ <b>Enable Mini App</b>.<br/>' +
+                      '3. Füge als URL deine Worker-Adresse ein:' +
+                      '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">' +
+                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + esc(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
+                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(' + JSON.stringify(botFatherCommandsBlock).replace(/"/g, '&quot;') + ',\\'BotFather Befehlsliste\\')">📋 Befehlsliste kopieren</button>' +
+                      '</div>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>'
+              ) : '') +
+            '</div>';
+
           root.innerHTML = '<div class="section">' +
             '<div class="section-title">' +
               '<span>👑 Admin-Dashboard & VIP- / Playlisten- / Backup-Verwaltung</span>' +
@@ -42804,6 +43325,7 @@
               '</div>' +
             '</div>' +
             buildAntiSpamCockpitBoxHtmlClient() +
+            botApi83CockpitHtml +
             (state.adminTab === "users" ? (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>👥 Registrierte Telegram- & Web-Nutzer (' + users.length + ')</span></div>' +
@@ -44798,6 +45320,11 @@
             ? (targetItems || []).filter(i => String(i.folderId) === activeFolderId)
             : [];
           const openReportsCount = (reports || []).filter(r => r && r.status === "open").length;
+          const [videoCoverMode, botUsername] = await Promise.all([
+            getVideoCoverMode(env).catch(() => "backdrop"),
+            tgApi(env).getBotUsername(env).catch(() => "")
+          ]);
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
           return new Response(JSON.stringify({
             ok: true,
             users,
@@ -44809,8 +45336,69 @@
             activePlaylistItems,
             reports: reports || [],
             openReportsCount,
-            seriesGaps
+            seriesGaps,
+            botSetup: {
+              videoCoverMode,
+              webAppUrl: effectiveWebAppUrl,
+              botUsername: botUsername || "DeinBot"
+            }
           }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/bot-setup") {
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          if (request.method === "GET") {
+            const [videoCoverMode, botUsername] = await Promise.all([
+              getVideoCoverMode(env).catch(() => "backdrop"),
+              tgApi(env).getBotUsername(env).catch(() => "")
+            ]);
+            return new Response(JSON.stringify({
+              ok: true,
+              videoCoverMode,
+              webAppUrl: effectiveWebAppUrl,
+              botUsername: botUsername || "DeinBot"
+            }), { status: 200, headers: corsHeaders });
+          }
+          if (request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const action = String(body.action || "set_cover_mode");
+            if (action === "set_cover_mode") {
+              const savedMode = await setVideoCoverMode(env, body.videoCoverMode || "backdrop");
+              await flushUserSession(env, auth.chatId).catch(() => {});
+              return new Response(JSON.stringify({
+                ok: true,
+                videoCoverMode: savedMode
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "setup_miniapp_menu") {
+              const customUrl = String(body.webAppUrl || effectiveWebAppUrl).trim().replace(/\/$/, "");
+              const buttonText = String(body.buttonText || "🍿 Mediathek").trim().slice(0, 32) || "🍿 Mediathek";
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  webAppUrl: customUrl,
+                  buttonText,
+                  message: "Menü-Button & Bot-Befehle im Simulator konfiguriert (setChatMenuButton + setMyCommands)."
+                }), { status: 200, headers: corsHeaders });
+              }
+              const [globalMenuRes, adminMenuRes, commandsRes] = await Promise.all([
+                tgApi(env).setChatMenuButton(null, customUrl, buttonText),
+                auth.chatId && /^\d+$/.test(String(auth.chatId))
+                  ? tgApi(env).setChatMenuButton(auth.chatId, customUrl, buttonText)
+                  : Promise.resolve({ ok: true }),
+                tgApi(env).setMyCommands()
+              ]);
+              return new Response(JSON.stringify({
+                ok: Boolean((globalMenuRes && globalMenuRes.ok) || (adminMenuRes && adminMenuRes.ok)),
+                webAppUrl: customUrl,
+                buttonText,
+                globalMenuRes,
+                adminMenuRes,
+                commandsRes
+              }), { status: 200, headers: corsHeaders });
+            }
+            return new Response(JSON.stringify({ ok: false, error: "Unbekannte Bot-Setup Aktion." }), { status: 400, headers: corsHeaders });
+          }
         }
         if (path === "/api/tma/admin/series-gaps" && request.method === "GET") {
           const forceRefresh = url.searchParams.get("refresh") === "1";
@@ -46912,6 +47500,10 @@
         const quality = String(body.quality || "1080p").trim();
         const fileSizeStr = formatFileSizeBytes(body.fileSize);
         const tagsStr = String(body.tags || "").trim();
+        const posterUrl = String(body.posterUrl || "").trim();
+        const backdropUrl = String(body.backdropUrl || "").trim();
+        const tmdbId = body.tmdbId ? Number(body.tmdbId) : null;
+        const typeCode = String(body.typeCode || "").trim();
         if (!fileId || !targetChat || targetChat === "guest") {
           return new Response(JSON.stringify({ ok: false, error: "Bitte gültige Datei-Referenz und Ziel-Chat-ID (bzw. Gruppen-ID) angeben." }), { status: 400, headers: corsHeaders });
         }
@@ -46942,6 +47534,10 @@
             targetTopicId,
             sourceBridgeChatId,
             customBotToken: effectiveCustomToken,
+            posterUrl,
+            backdropUrl,
+            tmdbId,
+            typeCode,
             method: methodLabel,
             reason: slotCheck.reason,
             reasonCode: slotCheck.reasonCode,
@@ -47048,6 +47644,9 @@
 
         // Wenn in der lokalen Sandbox weder TELEGRAM_BOT_TOKEN noch customBotToken gesetzt ist, liefere saubere Simulations-Bestätigung
         if (!env.TELEGRAM_BOT_TOKEN && !effectiveCustomToken) {
+          const simCoverUrl = isSubtitleOnlyRequest
+            ? ""
+            : await resolveVideoCoverUrlForDelivery(env, { posterUrl, backdropUrl, tmdbId, typeCode }).catch(() => "");
           await recordAndPruneWorkerActivityLog(env, {
             eventType: "delivery",
             status: "success",
@@ -47056,7 +47655,7 @@
             title: `${cleanTitle} (${quality})`,
             targetChatId: targetChat,
             durationMs: Date.now() - reqStartMs,
-            summary: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox)`
+            summary: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox${simCoverUrl ? " + 🖼️ Cover" : ""})`
           });
           return new Response(JSON.stringify({
             ok: true,
@@ -47064,6 +47663,8 @@
             targetChat,
             subtitlesSentCount: boundSubtitles.length,
             copiedFromSourceGroup: fileId.startsWith("tg_export_"),
+            coverEmbedded: Boolean(simCoverUrl),
+            coverUrl: simCoverUrl || null,
             antiSpam: getAntiSpamSnapshot(env, targetChat),
             message: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox-Modus).`
           }), { status: 200, headers: corsHeaders });
@@ -47082,7 +47683,8 @@
             const sRes = await tgApi(env).deliverMediaOrCopyFromSource(targetChat, subFid, subCap, {
               customBotToken: effectiveCustomToken,
               messageThreadId: targetTopicId,
-              sourceBridgeChatId
+              sourceBridgeChatId,
+              disableCover: true
             }).catch(() => null);
             if (sRes) subtitlesSentCount++;
           }
@@ -47097,7 +47699,11 @@
         const sent = await tgApi(env).deliverMediaOrCopyFromSource(targetChat, fileId, caption, {
           customBotToken: effectiveCustomToken,
           messageThreadId: targetTopicId,
-          sourceBridgeChatId
+          sourceBridgeChatId,
+          posterUrl,
+          backdropUrl,
+          tmdbId,
+          typeCode
         });
 
         if (!sent) {
@@ -47113,6 +47719,10 @@
               targetTopicId,
               sourceBridgeChatId,
               customBotToken: effectiveCustomToken,
+              posterUrl,
+              backdropUrl,
+              tmdbId,
+              typeCode,
               method: methodLabel,
               reason: `Telegram 429 retry_after (${antiSpamState.lastRetryAfterSec || 5}s)`,
               reasonCode: "flood_429",
@@ -47159,7 +47769,8 @@
             const sRes = await tgApi(env).deliverMediaOrCopyFromSource(targetChat, subFid, subCap, {
               customBotToken: effectiveCustomToken,
               messageThreadId: targetTopicId,
-              sourceBridgeChatId
+              sourceBridgeChatId,
+              disableCover: true
             }).catch(() => null);
             if (sRes) subtitlesSentCount++;
           }
@@ -47169,12 +47780,12 @@
           eventType: "delivery",
           status: "success",
           deliveryMode: targetMode,
-          method: sent.copiedFromSourceGroup ? "copyMessage" : "sendVideo",
+          method: sent.copiedFromSourceGroup ? (sent.coverEmbedded ? "copyMessage + editMediaCover" : "copyMessage") : (sent.coverEmbedded ? "sendVideo (cover)" : "sendVideo"),
           title: `${cleanTitle} (${quality})`,
           targetChatId: targetChat,
           harvestedFileId: sent.harvestedFileId || null,
           durationMs: Date.now() - reqStartMs,
-          summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat} gesendet${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
+          summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat} gesendet${sent.coverEmbedded ? " (+ 🖼️ Cover)" : ""}${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
         });
         return new Response(JSON.stringify({
           ok: true,
@@ -47182,6 +47793,8 @@
           subtitlesSentCount,
           copiedFromSourceGroup: Boolean(sent.copiedFromSourceGroup),
           harvestedFileId: sent.harvestedFileId || null,
+          coverEmbedded: Boolean(sent.coverEmbedded),
+          coverUrl: sent.coverUrl || null,
           antiSpam: getAntiSpamSnapshot(env, targetChat)
         }), { status: 200, headers: corsHeaders });
       }

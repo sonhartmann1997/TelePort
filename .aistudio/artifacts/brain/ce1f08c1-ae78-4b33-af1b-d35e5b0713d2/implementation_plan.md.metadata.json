@@ -1,6 +1,6 @@
 {
-  "summary":  "Vollständige Fehleranalyse des Diagnose-Logs (8 konkrete Parsing- & Logging-Fehler mit msgId-Belegen) sowie der Architektur- und Reparaturplan für Server- und Client-Parser.",
-  "updatedAt":  "2026-11-09T14:04:55.114307482Z",
+  "summary":  "Implementierungsplan für das Telegram Bot API 8.0–8.3+ & Mini-App Upgrade: Permanenter Menü-Button (setChatMenuButton), Inline-Query Mini-App Start-Button, Bot API 8.0 Vollbild-Modus & Home-Screen-Shortcut, 1-Klick Setup & BotFather-Guide im Admin-Cockpit, umschaltbares Video-Cover-Embedding ohne Neu-Upload (cover in sendVideo & editMessageMedia inkl. Auto-Harvesting) sowie native copy_text-Buttons.",
+  "updatedAt":  "2026-11-09T16:35:38.550016285Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -394,6 +394,11 @@
       targetTopicId: String(jobInput.targetTopicId || "").trim(),
       sourceBridgeChatId: String(jobInput.sourceBridgeChatId || "").trim(),
       customBotToken: String(jobInput.customBotToken || "").trim(),
+      posterUrl: String(jobInput.posterUrl || "").trim(),
+      backdropUrl: String(jobInput.backdropUrl || "").trim(),
+      coverUrl: String(jobInput.coverUrl || "").trim(),
+      tmdbId: jobInput.tmdbId ? Number(jobInput.tmdbId) : null,
+      typeCode: String(jobInput.typeCode || "").trim(),
       method: String(jobInput.method || "sendVideo").trim(),
       status: "queued",
       reason: String(jobInput.reason || "Telegram Anti-Spam Pacing"),
@@ -570,6 +575,11 @@
               customBotToken: job.customBotToken,
               messageThreadId: job.targetTopicId,
               sourceBridgeChatId: job.sourceBridgeChatId,
+              posterUrl: job.posterUrl || "",
+              backdropUrl: job.backdropUrl || "",
+              coverUrl: job.coverUrl || "",
+              tmdbId: job.tmdbId || null,
+              typeCode: job.typeCode || "",
               _fromAntiSpamQueue: true
             });
             deliveredOk = Boolean(sent && sent.ok);
@@ -659,6 +669,92 @@
     };
   }
 
+  // --- Bot API 8.3 Video-Cover-Embedding Modus ("backdrop" | "poster" | "off") ---
+  function normalizeVideoCoverMode(val) {
+    const v = String(val || "").trim().toLowerCase();
+    if (v === "poster" || v === "off" || v === "backdrop") return v;
+    return "backdrop";
+  }
+
+  async function getVideoCoverMode(env) {
+    if (memoryFallback.has("TG_VIDEO_COVER_MODE")) {
+      return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
+    }
+    try {
+      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MY_KV");
+      if (raw) {
+        const mode = normalizeVideoCoverMode(raw);
+        memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+        return mode;
+      }
+    } catch (e) {}
+    memoryFallback.set("TG_VIDEO_COVER_MODE", "backdrop");
+    return "backdrop";
+  }
+
+  async function setVideoCoverMode(env, modeInput) {
+    const mode = normalizeVideoCoverMode(modeInput);
+    memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+    try {
+      await kvStageWrite(env, "TG_VIDEO_COVER_MODE", mode, {
+        bindingName: "MY_KV",
+        periodicOnly: false
+      });
+    } catch (e) {}
+    return mode;
+  }
+
+  function toHighResTmdbImageUrl(rawUrlOrPath, size = "w1280") {
+    const raw = String(rawUrlOrPath || "").trim();
+    if (!raw || raw.includes("placehold.co")) return "";
+    if (raw.startsWith("https://image.tmdb.org/t/p/")) {
+      return raw.replace(/\/t\/p\/(?:w\d+|original)\//, `/t/p/${size}/`);
+    }
+    if (raw.startsWith("https://") || raw.startsWith("http://")) {
+      return raw;
+    }
+    if (raw.startsWith("/")) {
+      return `https://image.tmdb.org/t/p/${size}${raw}`;
+    }
+    return "";
+  }
+
+  async function resolveVideoCoverUrlForDelivery(env, extraOpts = {}) {
+    if (!extraOpts || extraOpts.disableCover === true) return "";
+    const mode = extraOpts.coverModeOverride
+      ? normalizeVideoCoverMode(extraOpts.coverModeOverride)
+      : await getVideoCoverMode(env);
+    if (mode === "off") return "";
+
+    const explicitCover = toHighResTmdbImageUrl(extraOpts.coverUrl, mode === "poster" ? "w780" : "w1280");
+    if (explicitCover) return explicitCover;
+
+    let backdropCandidate = toHighResTmdbImageUrl(extraOpts.backdropUrl, "w1280");
+    let posterCandidate = toHighResTmdbImageUrl(extraOpts.posterUrl, "w780");
+
+    // Falls weder Backdrop noch Poster übergeben wurden, versuche anhand von tmdbId aus D1 aufzulösen
+    const tmdbId = Number(extraOpts.tmdbId || 0);
+    if (!backdropCandidate && !posterCandidate && tmdbId > 0) {
+      const typeCode = String(extraOpts.typeCode || "m").toLowerCase().startsWith("s") ? "s" : "m";
+      try {
+        const db = await ensureD1Schema(env);
+        if (db) {
+          const table = typeCode === "s" ? "series" : "movies";
+          const row = await db.prepare(`SELECT poster_path, backdrop_path, external_poster_url FROM ${table} WHERE tmdb_id = ?1 LIMIT 1`).bind(tmdbId).first().catch(() => null);
+          if (row) {
+            backdropCandidate = toHighResTmdbImageUrl(row.backdrop_path, "w1280");
+            posterCandidate = toHighResTmdbImageUrl(row.poster_path || row.external_poster_url, "w780");
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (mode === "poster") {
+      return posterCandidate || backdropCandidate || "";
+    }
+    return backdropCandidate || posterCandidate || "";
+  }
+
   // @ANCHOR: TELEGRAM_API
   // --- Telegram API Client (Nutzt stabiles HTML-Parsing gegen kaputte Links + 429 Anti-Spam Schutz!) ---
   function tgApi(env) {
@@ -683,7 +779,28 @@
               reply_markup: r.reply_markup ? sanitizeReplyMarkup(r.reply_markup) : undefined
             };
           });
-          const body = { inline_query_id: inlineQueryId, results: safeResults, cache_time: 15, ...options };
+          const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const cleanInlineOpts = { ...options };
+          const switchPmText = cleanInlineOpts.switch_pm_text;
+          const switchPmParam = cleanInlineOpts.switch_pm_parameter;
+          delete cleanInlineOpts.switch_pm_text;
+          delete cleanInlineOpts.switch_pm_parameter;
+
+          if (!cleanInlineOpts.button) {
+            if (effectiveWebAppBase && /^https:\/\//i.test(effectiveWebAppBase)) {
+              cleanInlineOpts.button = {
+                text: switchPmText ? `🍿 ${String(switchPmText).replace(/^[🍿🎬🔎⚙️\s]+/, "").slice(0, 30)}` : "🍿 Mediathek Mini-App öffnen",
+                web_app: { url: effectiveWebAppBase }
+              };
+            } else if (switchPmText) {
+              cleanInlineOpts.button = {
+                text: String(switchPmText).slice(0, 64),
+                start_parameter: String(switchPmParam || "inline_start").slice(0, 64)
+              };
+            }
+          }
+
+          const body = { inline_query_id: inlineQueryId, results: safeResults, cache_time: 15, ...cleanInlineOpts };
           const res = await fetchWithTimeout(`${TELEGRAM_API}/answerInlineQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -692,6 +809,61 @@
           return res.ok ? await res.json() : null;
         } catch (e) {
           return null;
+        }
+      },
+
+      async setChatMenuButton(chatId = null, webAppUrl = "", buttonText = "🍿 Mediathek") {
+        try {
+          trackStat("telegramCalls");
+          const base = String(webAppUrl || env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const finalUrl = chatId && !String(base).includes("chatId=")
+            ? `${base}?chatId=${encodeURIComponent(String(chatId))}`
+            : base;
+          const payload = {
+            menu_button: {
+              type: "web_app",
+              text: String(buttonText || "🍿 Mediathek").slice(0, 64),
+              web_app: { url: finalUrl }
+            }
+          };
+          if (chatId && /^\d+$/.test(String(chatId))) {
+            payload.chat_id = Number(chatId);
+          }
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/setChatMenuButton`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }, 4500);
+          return res.ok ? await res.json() : { ok: false, status: res.status };
+        } catch (e) {
+          return { ok: false, error: e?.message || "setChatMenuButton failed" };
+        }
+      },
+
+      async setMyCommands(customCommands = null) {
+        try {
+          trackStat("telegramCalls");
+          const commands = Array.isArray(customCommands) && customCommands.length > 0
+            ? customCommands
+            : [
+                { command: "start", description: "🍿 Hauptmenü & Netflix Mini-App öffnen" },
+                { command: "search", description: "🔍 Film oder Serie direkt suchen" },
+                { command: "filter", description: "🎛️ Katalog-Filter & Streaming-Dienste" },
+                { command: "t", description: "🔥 Aktuelle Trends (z.B. /t f oder /t s)" },
+                { command: "p", description: "🌟 Populäre Hits (z.B. /p f oder /p s)" },
+                { command: "sc", description: "💎 Geheimtipps (z.B. /sc f oder /sc s)" },
+                { command: "r", description: "🎲 Zufalls-Tipp (z.B. /r f oder /r s)" },
+                { command: "info", description: "ℹ️ Hilfe, Befehle & Mini-App Guide" },
+                { command: "id", description: "🆔 Eigene Chat- / Gruppen-ID anzeigen" }
+              ];
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/setMyCommands`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ commands })
+          }, 4500);
+          return res.ok ? await res.json() : { ok: false, status: res.status };
+        } catch (e) {
+          return { ok: false, error: e?.message || "setMyCommands failed" };
         }
       },
 
@@ -977,6 +1149,8 @@
           const threadId = extraOpts.messageThreadId && /^\d+$/.test(String(extraOpts.messageThreadId).trim())
             ? parseInt(String(extraOpts.messageThreadId).trim(), 10)
             : undefined;
+          const resolvedCoverUrl = await resolveVideoCoverUrlForDelivery(env, extraOpts);
+          const startTimestamp = Number(extraOpts.startTimestamp) > 0 ? Math.floor(Number(extraOpts.startTimestamp)) : undefined;
 
           // 1. Prüfe auf Quellgruppen-Referenz aus Telegram Desktop Chat-Backup (tg_export_<channelId>_<msgId>)
           const exportMatch = String(fileIdOrExportRef).trim().match(/^tg_export_(-?\d+)_(\d+)$/i);
@@ -986,7 +1160,7 @@
             const overrideBridge = String(extraOpts.sourceBridgeChatId || env.SOURCE_GROUP_CHAT_ID || "").trim();
             const fromChatId = overrideBridge || (rawChannelId.startsWith("-100") || rawChannelId.startsWith("-") ? rawChannelId : `-100${rawChannelId}`);
 
-            // Versuch A: Falls File-ID Harvesting gewünscht und Bot im Zielchat senden darf, kopiere Nachricht sauber per copyMessage
+            // Versuch A: Kopiere Nachricht sauber per copyMessage
             const copyPayload = {
               chat_id: targetChatId,
               from_chat_id: fromChatId,
@@ -995,6 +1169,7 @@
               parse_mode: "HTML"
             };
             if (threadId) copyPayload.message_thread_id = threadId;
+            if (resolvedCoverUrl) copyPayload.cover = resolvedCoverUrl;
 
             let copyRes = await fetch(`${apiBase}/copyMessage`, {
               method: "POST",
@@ -1021,32 +1196,78 @@
 
             if (copyRes.ok) {
               const copyData = await copyRes.json().catch(() => ({ ok: true }));
+              const copiedMessageId = copyData?.result?.message_id || null;
               let harvestedFileId = null;
+              let harvestedIsVideo = false;
+              let coverEmbedded = false;
 
-              // Optionales File-ID Harvesting: Wenn der Bot die Nachricht kurz über forwardMessage (oder falls copyData ein Video-Objekt enthält) inspizieren kann
+              // Automatisches File-ID Harvesting für dauerhaftes Bot API 8.3 Cover-Embedding ohne Re-Upload
               const videoInRes = copyData?.result?.video || copyData?.result?.document;
               if (videoInRes && videoInRes.file_id) {
                 harvestedFileId = videoInRes.file_id;
+                harvestedIsVideo = Boolean(copyData?.result?.video);
                 await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, videoInRes.file_unique_id || null);
-              } else if (extraOpts.harvestViaForward && env.HARVEST_CACHE_CHAT_ID) {
-                try {
-                  const fwdRes = await fetch(`${apiBase}/forwardMessage`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      chat_id: env.HARVEST_CACHE_CHAT_ID,
+              } else if (extraOpts.autoHarvestFileId !== false) {
+                const harvestTargetChat = env.HARVEST_CACHE_CHAT_ID || (resolvedCoverUrl ? targetChatId : "");
+                const shouldDeleteTempForward = !env.HARVEST_CACHE_CHAT_ID && String(harvestTargetChat) === String(targetChatId);
+                if (harvestTargetChat) {
+                  try {
+                    const fwdPayload = {
+                      chat_id: harvestTargetChat,
                       from_chat_id: fromChatId,
                       message_id: sourceMsgId,
                       disable_notification: true
-                    })
-                  });
-                  if (fwdRes.ok) {
-                    const fwdJson = await fwdRes.json();
-                    const mediaObj = fwdJson?.result?.video || fwdJson?.result?.document;
-                    if (mediaObj?.file_id) {
-                      harvestedFileId = mediaObj.file_id;
-                      await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, mediaObj.file_unique_id || null);
+                    };
+                    if (shouldDeleteTempForward && threadId) fwdPayload.message_thread_id = threadId;
+                    const fwdRes = await fetch(`${apiBase}/forwardMessage`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(fwdPayload)
+                    });
+                    if (fwdRes.ok) {
+                      const fwdJson = await fwdRes.json().catch(() => null);
+                      const fwdMsgId = fwdJson?.result?.message_id;
+                      const mediaObj = fwdJson?.result?.video || fwdJson?.result?.document;
+                      if (mediaObj?.file_id) {
+                        harvestedFileId = mediaObj.file_id;
+                        harvestedIsVideo = Boolean(fwdJson?.result?.video);
+                        await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, mediaObj.file_unique_id || null);
+                      }
+                      if (shouldDeleteTempForward && fwdMsgId) {
+                        fetch(`${apiBase}/deleteMessage`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ chat_id: harvestTargetChat, message_id: fwdMsgId })
+                        }).catch(() => {});
+                      }
                     }
+                  } catch (e) {}
+                }
+              }
+
+              // Wenn wir eine Video-File-ID geerntet haben und ein TMDb-Cover aktiv ist:
+              // Direkt die kopierte Nachricht in-place per editMessageMedia + InputMediaVideo (Bot API 8.3 cover) veredeln!
+              if (harvestedFileId && harvestedIsVideo && resolvedCoverUrl && copiedMessageId) {
+                try {
+                  const editMediaPayload = {
+                    chat_id: targetChatId,
+                    message_id: copiedMessageId,
+                    media: {
+                      type: "video",
+                      media: harvestedFileId,
+                      cover: resolvedCoverUrl,
+                      caption: htmlCaption,
+                      parse_mode: "HTML",
+                      supports_streaming: true
+                    }
+                  };
+                  const editRes = await fetch(`${apiBase}/editMessageMedia`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(editMediaPayload)
+                  });
+                  if (editRes.ok) {
+                    coverEmbedded = true;
                   }
                 } catch (e) {}
               }
@@ -1057,13 +1278,15 @@
                 fromChatId,
                 sourceMessageId: sourceMsgId,
                 harvestedFileId,
+                coverEmbedded,
+                coverUrl: coverEmbedded ? resolvedCoverUrl : null,
                 result: copyData?.result || { message_id: Date.now() }
               };
             }
             return null;
           }
 
-          // 2. Regulärer Versand per echter telegram_file_id (sendVideo mit Fallback auf sendDocument)
+          // 2. Regulärer Versand per echter telegram_file_id (sendVideo inkl. Bot API 8.3 cover Parameter + Fallback)
           recordActualTelegramSendSlot(targetChatId);
           const videoBody = {
             chat_id: targetChatId,
@@ -1073,7 +1296,10 @@
             supports_streaming: true
           };
           if (threadId) videoBody.message_thread_id = threadId;
+          if (resolvedCoverUrl) videoBody.cover = resolvedCoverUrl;
+          if (startTimestamp !== undefined) videoBody.start_timestamp = startTimestamp;
 
+          let usedCover = Boolean(resolvedCoverUrl);
           let res = await fetch(`${apiBase}/sendVideo`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1085,7 +1311,24 @@
             registerAntiSpam429FloodWait(retrySec, targetChatId);
             return null;
           }
+          // Falls Telegram das Cover-Bild ablehnt (z. B. temporärer Fetch-Fehler bei Bild-URL), versuche sendVideo ohne cover
+          if (!res.ok && usedCover) {
+            usedCover = false;
+            const fallbackVideoBody = { ...videoBody };
+            delete fallbackVideoBody.cover;
+            res = await fetch(`${apiBase}/sendVideo`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(fallbackVideoBody)
+            });
+            if (res.status === 429) {
+              const err429Retry = await res.json().catch(() => ({}));
+              registerAntiSpam429FloodWait(Number(err429Retry?.parameters?.retry_after) || 5, targetChatId);
+              return null;
+            }
+          }
           if (!res.ok) {
+            usedCover = false;
             const docBody = {
               chat_id: targetChatId,
               document: fileIdOrExportRef,
@@ -1104,7 +1347,14 @@
               return null;
             }
           }
-          return res.ok ? await res.json() : null;
+          if (!res.ok) return null;
+          const jsonRes = await res.json().catch(() => ({ ok: true }));
+          return {
+            ...jsonRes,
+            ok: true,
+            coverEmbedded: usedCover,
+            coverUrl: usedCover ? resolvedCoverUrl : null
+          };
         } catch (e) {
           return null;
         }

@@ -421,6 +421,11 @@
             ? (targetItems || []).filter(i => String(i.folderId) === activeFolderId)
             : [];
           const openReportsCount = (reports || []).filter(r => r && r.status === "open").length;
+          const [videoCoverMode, botUsername] = await Promise.all([
+            getVideoCoverMode(env).catch(() => "backdrop"),
+            tgApi(env).getBotUsername(env).catch(() => "")
+          ]);
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
           return new Response(JSON.stringify({
             ok: true,
             users,
@@ -432,8 +437,69 @@
             activePlaylistItems,
             reports: reports || [],
             openReportsCount,
-            seriesGaps
+            seriesGaps,
+            botSetup: {
+              videoCoverMode,
+              webAppUrl: effectiveWebAppUrl,
+              botUsername: botUsername || "DeinBot"
+            }
           }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/bot-setup") {
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          if (request.method === "GET") {
+            const [videoCoverMode, botUsername] = await Promise.all([
+              getVideoCoverMode(env).catch(() => "backdrop"),
+              tgApi(env).getBotUsername(env).catch(() => "")
+            ]);
+            return new Response(JSON.stringify({
+              ok: true,
+              videoCoverMode,
+              webAppUrl: effectiveWebAppUrl,
+              botUsername: botUsername || "DeinBot"
+            }), { status: 200, headers: corsHeaders });
+          }
+          if (request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const action = String(body.action || "set_cover_mode");
+            if (action === "set_cover_mode") {
+              const savedMode = await setVideoCoverMode(env, body.videoCoverMode || "backdrop");
+              await flushUserSession(env, auth.chatId).catch(() => {});
+              return new Response(JSON.stringify({
+                ok: true,
+                videoCoverMode: savedMode
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "setup_miniapp_menu") {
+              const customUrl = String(body.webAppUrl || effectiveWebAppUrl).trim().replace(/\/$/, "");
+              const buttonText = String(body.buttonText || "🍿 Mediathek").trim().slice(0, 32) || "🍿 Mediathek";
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  webAppUrl: customUrl,
+                  buttonText,
+                  message: "Menü-Button & Bot-Befehle im Simulator konfiguriert (setChatMenuButton + setMyCommands)."
+                }), { status: 200, headers: corsHeaders });
+              }
+              const [globalMenuRes, adminMenuRes, commandsRes] = await Promise.all([
+                tgApi(env).setChatMenuButton(null, customUrl, buttonText),
+                auth.chatId && /^\d+$/.test(String(auth.chatId))
+                  ? tgApi(env).setChatMenuButton(auth.chatId, customUrl, buttonText)
+                  : Promise.resolve({ ok: true }),
+                tgApi(env).setMyCommands()
+              ]);
+              return new Response(JSON.stringify({
+                ok: Boolean((globalMenuRes && globalMenuRes.ok) || (adminMenuRes && adminMenuRes.ok)),
+                webAppUrl: customUrl,
+                buttonText,
+                globalMenuRes,
+                adminMenuRes,
+                commandsRes
+              }), { status: 200, headers: corsHeaders });
+            }
+            return new Response(JSON.stringify({ ok: false, error: "Unbekannte Bot-Setup Aktion." }), { status: 400, headers: corsHeaders });
+          }
         }
         if (path === "/api/tma/admin/series-gaps" && request.method === "GET") {
           const forceRefresh = url.searchParams.get("refresh") === "1";
@@ -2535,6 +2601,10 @@
         const quality = String(body.quality || "1080p").trim();
         const fileSizeStr = formatFileSizeBytes(body.fileSize);
         const tagsStr = String(body.tags || "").trim();
+        const posterUrl = String(body.posterUrl || "").trim();
+        const backdropUrl = String(body.backdropUrl || "").trim();
+        const tmdbId = body.tmdbId ? Number(body.tmdbId) : null;
+        const typeCode = String(body.typeCode || "").trim();
         if (!fileId || !targetChat || targetChat === "guest") {
           return new Response(JSON.stringify({ ok: false, error: "Bitte gültige Datei-Referenz und Ziel-Chat-ID (bzw. Gruppen-ID) angeben." }), { status: 400, headers: corsHeaders });
         }
@@ -2565,6 +2635,10 @@
             targetTopicId,
             sourceBridgeChatId,
             customBotToken: effectiveCustomToken,
+            posterUrl,
+            backdropUrl,
+            tmdbId,
+            typeCode,
             method: methodLabel,
             reason: slotCheck.reason,
             reasonCode: slotCheck.reasonCode,
@@ -2671,6 +2745,9 @@
 
         // Wenn in der lokalen Sandbox weder TELEGRAM_BOT_TOKEN noch customBotToken gesetzt ist, liefere saubere Simulations-Bestätigung
         if (!env.TELEGRAM_BOT_TOKEN && !effectiveCustomToken) {
+          const simCoverUrl = isSubtitleOnlyRequest
+            ? ""
+            : await resolveVideoCoverUrlForDelivery(env, { posterUrl, backdropUrl, tmdbId, typeCode }).catch(() => "");
           await recordAndPruneWorkerActivityLog(env, {
             eventType: "delivery",
             status: "success",
@@ -2679,7 +2756,7 @@
             title: `${cleanTitle} (${quality})`,
             targetChatId: targetChat,
             durationMs: Date.now() - reqStartMs,
-            summary: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox)`
+            summary: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox${simCoverUrl ? " + 🖼️ Cover" : ""})`
           });
           return new Response(JSON.stringify({
             ok: true,
@@ -2687,6 +2764,8 @@
             targetChat,
             subtitlesSentCount: boundSubtitles.length,
             copiedFromSourceGroup: fileId.startsWith("tg_export_"),
+            coverEmbedded: Boolean(simCoverUrl),
+            coverUrl: simCoverUrl || null,
             antiSpam: getAntiSpamSnapshot(env, targetChat),
             message: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox-Modus).`
           }), { status: 200, headers: corsHeaders });
@@ -2705,7 +2784,8 @@
             const sRes = await tgApi(env).deliverMediaOrCopyFromSource(targetChat, subFid, subCap, {
               customBotToken: effectiveCustomToken,
               messageThreadId: targetTopicId,
-              sourceBridgeChatId
+              sourceBridgeChatId,
+              disableCover: true
             }).catch(() => null);
             if (sRes) subtitlesSentCount++;
           }
@@ -2720,7 +2800,11 @@
         const sent = await tgApi(env).deliverMediaOrCopyFromSource(targetChat, fileId, caption, {
           customBotToken: effectiveCustomToken,
           messageThreadId: targetTopicId,
-          sourceBridgeChatId
+          sourceBridgeChatId,
+          posterUrl,
+          backdropUrl,
+          tmdbId,
+          typeCode
         });
 
         if (!sent) {
@@ -2736,6 +2820,10 @@
               targetTopicId,
               sourceBridgeChatId,
               customBotToken: effectiveCustomToken,
+              posterUrl,
+              backdropUrl,
+              tmdbId,
+              typeCode,
               method: methodLabel,
               reason: `Telegram 429 retry_after (${antiSpamState.lastRetryAfterSec || 5}s)`,
               reasonCode: "flood_429",
@@ -2782,7 +2870,8 @@
             const sRes = await tgApi(env).deliverMediaOrCopyFromSource(targetChat, subFid, subCap, {
               customBotToken: effectiveCustomToken,
               messageThreadId: targetTopicId,
-              sourceBridgeChatId
+              sourceBridgeChatId,
+              disableCover: true
             }).catch(() => null);
             if (sRes) subtitlesSentCount++;
           }
@@ -2792,12 +2881,12 @@
           eventType: "delivery",
           status: "success",
           deliveryMode: targetMode,
-          method: sent.copiedFromSourceGroup ? "copyMessage" : "sendVideo",
+          method: sent.copiedFromSourceGroup ? (sent.coverEmbedded ? "copyMessage + editMediaCover" : "copyMessage") : (sent.coverEmbedded ? "sendVideo (cover)" : "sendVideo"),
           title: `${cleanTitle} (${quality})`,
           targetChatId: targetChat,
           harvestedFileId: sent.harvestedFileId || null,
           durationMs: Date.now() - reqStartMs,
-          summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat} gesendet${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
+          summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat} gesendet${sent.coverEmbedded ? " (+ 🖼️ Cover)" : ""}${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
         });
         return new Response(JSON.stringify({
           ok: true,
@@ -2805,6 +2894,8 @@
           subtitlesSentCount,
           copiedFromSourceGroup: Boolean(sent.copiedFromSourceGroup),
           harvestedFileId: sent.harvestedFileId || null,
+          coverEmbedded: Boolean(sent.coverEmbedded),
+          coverUrl: sent.coverUrl || null,
           antiSpam: getAntiSpamSnapshot(env, targetChat)
         }), { status: 200, headers: corsHeaders });
       }

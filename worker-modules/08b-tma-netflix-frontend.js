@@ -2841,6 +2841,8 @@
               customBotToken: prefs.customBotToken || "",
               typeCode: state.activeDetails?.typeCode || (metaObj.seriesId ? "s" : "m"),
               tmdbId: metaObj.seriesId || state.activeDetails?.id || null,
+              posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
+              backdropUrl: state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
               season: metaObj.season || null,
               episode: metaObj.episode || null
             })
@@ -2859,8 +2861,9 @@
               showHudToast("💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet!");
             } else {
               const copyNote = r.copiedFromSourceGroup ? " (per Auto-Copy aus Quellgruppe)" : "";
+              const coverNote = r.coverEmbedded ? " + 🖼️ Cover eingebettet" : "";
               const subNote = Number(r.subtitlesSentCount || 0) > 0 ? (" + 💬 " + r.subtitlesSentCount + " Untertitel mitgesendet") : "";
-              showHudToast("✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + subNote + "!");
+              showHudToast("✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!");
             }
             if (!isSubtitleOnly && metaObj.seriesId && metaObj.season) {
               loadSeason(metaObj.seriesId, metaObj.season, false, false);
@@ -3085,7 +3088,11 @@
                 targetGroupChatId: prefs.targetGroupChatId || "",
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
-                customBotToken: prefs.customBotToken || ""
+                customBotToken: prefs.customBotToken || "",
+                typeCode: "m",
+                tmdbId: d.id || null,
+                posterUrl: d.poster || d.poster_path || "",
+                backdropUrl: d.backdrop || d.backdrop_path || ""
               })
             });
             if (r && r.antiSpam) {
@@ -3157,7 +3164,11 @@
                 targetGroupChatId: prefs.targetGroupChatId || "",
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
-                customBotToken: prefs.customBotToken || ""
+                customBotToken: prefs.customBotToken || "",
+                typeCode: "s",
+                tmdbId: seriesId || state.activeDetails?.id || null,
+                posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
+                backdropUrl: ep.still || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || ""
               })
             });
             if (r && r.antiSpam) {

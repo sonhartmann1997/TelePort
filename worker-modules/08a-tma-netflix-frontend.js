@@ -3984,6 +3984,51 @@
         }
       }
 
+      function toggleTmaFullscreenClient() {
+        try {
+          const tgWebApp = window.Telegram && window.Telegram.WebApp;
+          if (tgWebApp && typeof tgWebApp.requestFullscreen === "function") {
+            if (tgWebApp.isFullscreen && typeof tgWebApp.exitFullscreen === "function") {
+              tgWebApp.exitFullscreen();
+              showHudToast("🗗 Telegram Vollbild-Modus beendet.");
+            } else {
+              tgWebApp.requestFullscreen();
+              showHudToast("⛶ Telegram Bot API 8.0 Vollbild-Modus aktiviert!");
+            }
+            return;
+          }
+          if (tgWebApp && typeof tgWebApp.expand === "function") {
+            tgWebApp.expand();
+          }
+          if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().then(() => {
+              showHudToast("⛶ Vollbild-Modus aktiviert!");
+            }).catch(() => {
+              showHudToast("⛶ Mini-App auf maximale Höhe erweitert!");
+            });
+          } else if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+            showHudToast("🗗 Vollbild-Modus beendet.");
+          } else {
+            showHudToast("⛶ Mini-App auf maximale Höhe erweitert!");
+          }
+        } catch (e) {
+          showHudToast("⛶ Vollbild-Umschaltung ausgeführt.");
+        }
+      }
+
+      function addTmaToHomeScreenClient() {
+        try {
+          const tgWebApp = window.Telegram && window.Telegram.WebApp;
+          if (tgWebApp && typeof tgWebApp.addToHomeScreen === "function") {
+            tgWebApp.addToHomeScreen();
+            showHudToast("📲 Telegram Home-Screen-Verknüpfung angefragt!");
+            return;
+          }
+        } catch (e) {}
+        showHudToast("📲 Tipp: Öffne die Mini-App in Telegram (ab v11.4 / Bot API 8.0) oder nutze im Browser „Zum Startbildschirm hinzufügen“.");
+      }
+
       function renderFilterSidebarContent(jumpToOptions = false) {
         const body = document.getElementById("sidebarDrawerBody");
         if (!body) return;
@@ -4100,6 +4145,12 @@
               '</button>' +
               '<button class="btn" onclick="closeFilterSidebar();restartApp()" title="Alle aktiven Filter zurücksetzen & neu starten">' +
                 '🔄 Neu starten' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
+                '⛶ Vollbild' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
+                '📲 Home-Icon' +
               '</button>' +
               (u.isAdmin ? (
                 '<button id="adminHeaderBtn" class="btn amber" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'

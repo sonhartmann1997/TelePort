@@ -137,6 +137,9 @@
       inline_keyboard.unshift([
         { text: "🍿 Netflix Mini-App öffnen", web_app: { url: `${effectiveWebAppBase}?chatId=${chatId}` } }
       ]);
+      if (!isGroupOrChannelChat(chatId)) {
+        tgApi(env).setChatMenuButton(chatId, effectiveWebAppBase, "🍿 Mediathek").catch(() => {});
+      }
     }
 
     if (isGroupOrChannelChat(chatId)) {
@@ -3173,7 +3176,18 @@
       `▸ 🌐 [Auf TMDB öffnen](${tmdbUrl})\n` +
       `▸ 📤 [Titel als Post teilen](${shareDeepLink})`;
 
-    const inline_keyboard = [];
+    const inline_keyboard = [
+      [
+        { text: "📋 Titel + Jahr kopieren", copy_text: { text: titleWithYear } },
+        { text: "📋 Nur Titel kopieren", copy_text: { text: cleanTitle } }
+      ]
+    ];
+    const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    if (effectiveWebAppBase && !isGroupOrChannelChat(chatId)) {
+      inline_keyboard.push([
+        { text: "🍿 Direkt in Mini-App öffnen", web_app: { url: `${effectiveWebAppBase}?chatId=${chatId}&openType=${typeCode}&openId=${itemId}` } }
+      ]);
+    }
     for (let i = 0; i < providerButtons.length; i += 2) {
       inline_keyboard.push(
         providerButtons.slice(i, i + 2).map(pb => ({ text: pb.buttonText, url: pb.url }))
@@ -3237,10 +3251,14 @@
 
     const directShareUrl = `https://t.me/share/url?url=${encodeURIComponent(unified.targetTitleUrl)}&text=${encodeURIComponent(unified.plainShareText)}`;
 
+    const titleWithYear = releaseYear ? `${cleanTitle} (${releaseYear})` : cleanTitle;
     const inline_keyboard = [
       [
         { text: "📤 Inline an Chat senden", switch_inline_query: `share_${typeCode}_${itemId}` },
         { text: "📲 Über Telegram teilen", url: directShareUrl }
+      ],
+      [
+        { text: "📋 Titel kopieren", copy_text: { text: titleWithYear } }
       ],
       [
         { text: "🔙 Zurück zur Detailansicht", callback_data: `back_overlay_${typeCode}_${itemId}` },
