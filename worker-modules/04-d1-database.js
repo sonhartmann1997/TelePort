@@ -1705,12 +1705,19 @@
       });
     }
 
-    // Sobald mindestens eine gültige Datei (_validity >= 1) vorhanden ist, alle defekten Platzhalter (_validity === 0) ausfiltern!
-    // Synthetische vip_playlist_ Platzhalter werden immer verworfen, da sie nicht über Telegram gesendet werden können.
-    const hasValid = prepared.some(x => x._validity >= 1);
-    const pool = hasValid
-      ? prepared.filter(x => x._validity >= 1)
-      : prepared.filter(x => !String(x.telegram_file_id).startsWith("vip_playlist_"));
+    // Alle defekten Platzhalter (vip_playlist_, tg_export_0_, tg_export__ oder _validity === 0 bei gültigen Alternativen) konsequent ausfiltern,
+    // damit niemals defekte oder doppelte Stream-Buttons im UI gerendert werden!
+    const validCandidates = prepared.filter(x => {
+      const fidStr = String(x.telegram_file_id || "").trim();
+      if (!fidStr || fidStr.startsWith("vip_playlist_") || fidStr.startsWith("tg_export_0_") || fidStr === "tg_export__") return false;
+      return x._validity >= 1;
+    });
+    const pool = validCandidates.length > 0
+      ? validCandidates
+      : prepared.filter(x => {
+          const fidStr = String(x.telegram_file_id || "").trim();
+          return Boolean(fidStr && !fidStr.startsWith("vip_playlist_") && !fidStr.startsWith("tg_export_0_") && fidStr !== "tg_export__");
+        });
 
     // Höchste Gültigkeit zuerst (echte file_id > tg_export_-100... > Rest), danach neuestes updated_at
     pool.sort((a, b) => {
@@ -4653,7 +4660,7 @@
   async function ensureLocalD1CatalogTitleMapLoaded(env) {
     const lastLoadedTs = Number(memoryFallback.get("d1_local_catalog_title_map_ts") || 0);
     let map = memoryFallback.get("d1_local_catalog_title_map");
-    if (map instanceof Map && (Date.now() - lastLoadedTs) < 300000) {
+    if (map instanceof Map && map.size > 0 && (Date.now() - lastLoadedTs) < 1800000) {
       return map;
     }
     if (!(map instanceof Map)) {
@@ -4667,9 +4674,10 @@
         trackStat("d1Reads");
         countD1Subrequest();
         const [mRows, sRows] = await rawDb.batch([
-          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM movies"),
-          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM series")
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM movies ORDER BY updated_at DESC LIMIT 600"),
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM series ORDER BY updated_at DESC LIMIT 600")
         ]);
+        const cpuStart = Date.now();
         const nowLoadedTs = Date.now();
         for (const r of (mRows?.results || [])) {
           registerLocalD1CatalogTitleInRam("m", r.tmdb_id, r.title, r.release_year);
@@ -4692,6 +4700,9 @@
             telegraphUrl: r.telegraph_url || null,
             ts: nowLoadedTs
           });
+        }
+        if (typeof recordWorkerSyncCpuSpan === "function") {
+          recordWorkerSyncCpuSpan(Date.now() - cpuStart);
         }
       } catch (e) {}
     }
@@ -4774,10 +4785,10 @@
       }
     }
 
-    const fidArr = Array.from(fidsToCheck).slice(0, 30);
-    const entArr = Array.from(entityKeysToCheck).slice(0, 45);
-    const movFileIdArr = Array.from(movieIdsToPrefetchFiles).slice(0, 25);
-    const serFileIdArr = Array.from(seriesIdsToPrefetchFiles).slice(0, 15);
+    const fidArr = Array.from(fidsToCheck).slice(0, 18);
+    const entArr = Array.from(entityKeysToCheck).slice(0, 24);
+    const movFileIdArr = Array.from(movieIdsToPrefetchFiles).slice(0, 12);
+    const serFileIdArr = Array.from(seriesIdsToPrefetchFiles).slice(0, 8);
     if (fidArr.length === 0 && entArr.length === 0 && movFileIdArr.length === 0 && serFileIdArr.length === 0) return;
 
     const batchStmts = [];
@@ -4804,13 +4815,13 @@
     if (movFileIdArr.length > 0) {
       const placeholders = movFileIdArr.map((_, i) => `?${i + 1}`).join(",");
       movFilesPreloadIdx = batchStmts.length;
-      batchStmts.push(rawDb.prepare(`SELECT id, movie_id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...movFileIdArr));
+      batchStmts.push(rawDb.prepare(`SELECT id, movie_id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...movFileIdArr));
     }
 
     if (serFileIdArr.length > 0) {
       const placeholders = serFileIdArr.map((_, i) => `?${i + 1}`).join(",");
       serFilesPreloadIdx = batchStmts.length;
-      batchStmts.push(rawDb.prepare(`SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id IN (${placeholders})`).bind(...serFileIdArr));
+      batchStmts.push(rawDb.prepare(`SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename FROM episode_files WHERE series_id IN (${placeholders})`).bind(...serFileIdArr));
     }
 
     if (batchStmts.length === 0) return;

@@ -547,32 +547,44 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
       :root {
-        --bg: #0b0d13;
-        --surface: #12151e;
-        --card: #181c28;
-        --bg-elevated: #181c28;
-        --red: #e50914;
-        --accent-primary: #e50914;
-        --blue: #0ea5e9;
+        --bg: #060a14;
+        --surface: #0b1222;
+        --card: #101a30;
+        --bg-elevated: #13203b;
+        --red: #00e5ff;
+        --accent-primary: #00e5ff;
+        --blue: #38bdf8;
         --purple: #6366f1;
         --text: #f8fafc;
         --text-main: #f8fafc;
         --muted: #94a3b8;
         --text-muted: #94a3b8;
-        --inc-bg: rgba(16, 185, 129, 0.16);
-        --inc-border: rgba(16, 185, 129, 0.55);
+        --inc-bg: rgba(16, 185, 129, 0.18);
+        --inc-border: rgba(16, 185, 129, 0.62);
         --inc-text: #6ee7b7;
-        --inc-solid: #059669;
-        --exc-bg: rgba(239, 68, 68, 0.16);
-        --exc-border: rgba(239, 68, 68, 0.55);
-        --exc-text: #fca5a5;
-        --exc-solid: #dc2626;
+        --inc-solid: #10b981;
+        --exc-bg: rgba(244, 63, 94, 0.16);
+        --exc-border: rgba(244, 63, 94, 0.55);
+        --exc-text: #fda4af;
+        --exc-solid: #e11d48;
         --scale-all: 1;
         --scale-text: 1;
         --scale-cover: 1;
         --scale-menu: 1;
         --sticky-header-height: calc(54px * var(--scale-menu));
         --sticky-header-offset: calc(var(--sticky-header-height) + 20px);
+      }
+      /* Goldener Schnitt (1 : 1.618 -> 61.8% : 38.2%) Grid-Architektur */
+      .golden-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.618fr) minmax(270px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+      @media (max-width: 860px) {
+        .golden-grid {
+          grid-template-columns: 1fr;
+        }
       }
       /* Design-Themen: Light Mode & Cyberpunk Neon */
       body[data-theme="light"] {
@@ -2282,22 +2294,30 @@
         opacity: 1;
         pointer-events: auto;
       }
+      .card.card-saved {
+        border-color: rgba(16, 185, 129, 0.65) !important;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 14px rgba(0, 229, 255, 0.12);
+      }
       .card-quick-save:hover,
       .card-quick-save.spatial-focus {
         opacity: 1;
         pointer-events: auto;
         transform: scale(1.12);
-        background: var(--red);
+        background: #0ea5e9;
+        color: #04101d;
         border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.55), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.55), 0 4px 12px rgba(0,0,0,0.85);
       }
       .card-quick-save.saved {
-        background: var(--inc-solid);
-        border-color: var(--inc-border);
+        background: linear-gradient(135deg, #10b981, #059669);
+        border-color: #6ee7b7;
+        color: #ffffff;
+        font-weight: 900;
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.55), 0 2px 8px rgba(0, 0, 0, 0.65);
       }
       .card-quick-save.saved.spatial-focus {
         border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.65), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.75), 0 4px 12px rgba(0,0,0,0.85);
       }
       @keyframes quickSavePop {
         0% { transform: scale(0.8); }
@@ -5281,16 +5301,21 @@
         const key = (typeCode === "s" ? "s" : "m") + "_" + id;
         if (isSaved) savedKeysSet.add(key);
         else savedKeysSet.delete(key);
-        document.querySelectorAll('.card[data-card-key="' + key + '"] .card-quick-save').forEach(btn => {
-          btn.classList.toggle("saved", Boolean(isSaved));
-          btn.textContent = isSaved ? "✓" : "🔖";
-          if (triggerPop) {
-            btn.classList.remove("quick-save-pop");
-            void btn.offsetWidth; // Reflow erzwingen für erneute CSS-Keyframe-Animation
-            btn.classList.add("quick-save-pop");
-            setTimeout(() => {
+        document.querySelectorAll('.card[data-card-key="' + key + '"]').forEach(cardEl => {
+          cardEl.classList.toggle("card-saved", Boolean(isSaved));
+          const btn = cardEl.querySelector(".card-quick-save");
+          if (btn) {
+            btn.classList.toggle("saved", Boolean(isSaved));
+            btn.textContent = isSaved ? "✓" : "🔖";
+            btn.setAttribute("title", isSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)");
+            if (triggerPop) {
               btn.classList.remove("quick-save-pop");
-            }, 360);
+              void btn.offsetWidth; // Reflow erzwingen für erneute CSS-Keyframe-Animation
+              btn.classList.add("quick-save-pop");
+              setTimeout(() => {
+                btn.classList.remove("quick-save-pop");
+              }, 360);
+            }
           }
         });
         // Detail-Modal Button mitsynchronisieren, falls Modal für diesen Titel aktuell geöffnet ist
@@ -5441,6 +5466,58 @@
         cardLongPressTriggered = false;
         clearCardLongPressTimer();
       }, { passive: true });
+
+      // Desktop Mouse Long-Press (~420ms) auf Katalog-Karten zum direkten Speichern/Entfernen in der Merkliste
+      document.addEventListener("mousedown", function(ev) {
+        if (ev.button !== 0) return;
+        if (ev.target && ev.target.closest && ev.target.closest("button, a, select, input")) return;
+        const card = ev.target && ev.target.closest ? ev.target.closest(".card[data-card-key]") : null;
+        if (!card) return;
+        const rawKey = card.getAttribute("data-card-key") || "";
+        const parts = rawKey.split("_");
+        if (parts.length < 2) return;
+        const tc = parts[0] === "s" ? "s" : "m";
+        const idNum = Number(parts[1]);
+        if (!idNum) return;
+        const titleEl = card.querySelector(".card-title");
+        const titleTxt = card.getAttribute("data-card-title") || (titleEl ? titleEl.textContent : "") || "Titel";
+
+        clearCardLongPressTimer();
+        cardLongPressTriggered = false;
+        cardLongPressStartX = ev.clientX;
+        cardLongPressStartY = ev.clientY;
+        cardLongPressTarget = card;
+
+        cardLongPressTimer = setTimeout(function() {
+          cardLongPressTimer = null;
+          cardLongPressTriggered = true;
+          lastCardLongPressAt = Date.now();
+          if (cardLongPressTarget) {
+            cardLongPressTarget.classList.add("long-press-active");
+            setTimeout(() => {
+              if (card) card.classList.remove("long-press-active");
+            }, 240);
+          }
+          quickToggleCardWishlist(null, tc, idNum, titleTxt);
+        }, 420);
+      });
+
+      document.addEventListener("mousemove", function(ev) {
+        if (!cardLongPressTimer) return;
+        const dx = ev.clientX - cardLongPressStartX;
+        const dy = ev.clientY - cardLongPressStartY;
+        if ((dx * dx + dy * dy) > 256) {
+          clearCardLongPressTimer();
+        }
+      });
+
+      document.addEventListener("mouseup", function() {
+        if (cardLongPressTriggered) {
+          lastCardLongPressAt = Date.now();
+          cardLongPressTriggered = false;
+        }
+        clearCardLongPressTimer();
+      });
 
       let state = {
         type: "m",

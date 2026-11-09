@@ -6,14 +6,32 @@
     resetSubrequestBudget();
     const url = new URL(request.url);
     const path = url.pathname;
+    if (typeof beginWorkerRequestTelemetry === "function") {
+      beginWorkerRequestTelemetry(path);
+    }
     const corsHeaders = buildTmaCorsHeaders();
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
+    if (path === "/botfather-splash.svg" || path === "/api/tma/botfather-splash.svg") {
+      const svgContent = typeof BOTFATHER_SINGLE_PATH_SVG_512 === "string"
+        ? BOTFATHER_SINGLE_PATH_SVG_512
+        : `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="#00E5FF" fill-rule="evenodd" d="M210 184 L334 256 L210 328 Z"/></svg>`;
+      return new Response(svgContent, {
+        status: 200,
+        headers: {
+          "Content-Type": "image/svg+xml; charset=utf-8",
+          "Content-Disposition": "attachment; filename=\"bot-splashscreen-512x512.svg\"",
+          "Cache-Control": "public, max-age=86400",
+          ...corsHeaders
+        }
+      });
+    }
+
     if (path === "/favicon.ico" || path === "/favicon.svg") {
-      const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" fill="none"><defs><linearGradient id="g" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#a855f7"/><stop offset="100%" stop-color="#e50914"/></linearGradient></defs><circle cx="14" cy="14" r="11.5" stroke="url(#g)" stroke-width="2.6" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#g)"/></svg>`;
+      const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" fill="none"><defs><linearGradient id="g" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#00e5ff"/><stop offset="50%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="14" cy="14" r="11.5" stroke="url(#g)" stroke-width="2.6" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#00e5ff" stroke-width="1.5" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#g)"/></svg>`;
       return new Response(faviconSvg, {
         status: 200,
         headers: {
@@ -554,12 +572,15 @@
             ? (targetItems || []).filter(i => String(i.folderId) === activeFolderId)
             : [];
           const openReportsCount = (reports || []).filter(r => r && r.status === "open").length;
-          const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
+          const [videoCoverMode, botUsername, speedProfileConfig, webhookSecurity] = await Promise.all([
             getVideoCoverMode(env).catch(() => "backdrop"),
             tgApi(env).getBotUsername(env).catch(() => ""),
-            getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
+            getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo),
+            typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
           ]);
-          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\/$/, "");
+          const officialWebhookUrl = `${effectiveWebAppUrl}/webhook`;
+          const activeSecret = String(webhookSecurity?.secretToken || "");
           return new Response(JSON.stringify({
             ok: true,
             users,
@@ -572,30 +593,45 @@
             reports: reports || [],
             openReportsCount,
             seriesGaps,
+            _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null,
             botSetup: {
               videoCoverMode,
               speedProfile: speedProfileConfig?.id || "free_turbo",
               speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
+              webhookUrl: officialWebhookUrl,
+              hasWebhookPassword: Boolean(activeSecret),
+              webhookPasswordLength: activeSecret.length,
+              webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
+              webhookMaxConnections: Number(webhookSecurity?.maxConnections || 8),
               botUsername: botUsername || "DeinBot"
             }
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/bot-setup") {
-          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\/$/, "");
+          const officialWebhookUrl = `${effectiveWebAppUrl}/webhook`;
           if (request.method === "GET") {
-            const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
+            const [videoCoverMode, botUsername, speedProfileConfig, webhookSecurity] = await Promise.all([
               getVideoCoverMode(env).catch(() => "backdrop"),
               tgApi(env).getBotUsername(env).catch(() => ""),
-              getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
+              getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo),
+              typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
             ]);
+            const activeSecret = String(webhookSecurity?.secretToken || "");
             return new Response(JSON.stringify({
               ok: true,
               videoCoverMode,
               speedProfile: speedProfileConfig?.id || "free_turbo",
               speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
-              botUsername: botUsername || "DeinBot"
+              webhookUrl: officialWebhookUrl,
+              hasWebhookPassword: Boolean(activeSecret),
+              webhookPasswordLength: activeSecret.length,
+              webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
+              webhookMaxConnections: Number(webhookSecurity?.maxConnections || 8),
+              botUsername: botUsername || "DeinBot",
+              _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
             }), { status: 200, headers: corsHeaders });
           }
           if (request.method === "POST") {
@@ -606,7 +642,8 @@
               await flushUserSession(env, auth.chatId).catch(() => {});
               return new Response(JSON.stringify({
                 ok: true,
-                videoCoverMode: savedMode
+                videoCoverMode: savedMode,
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "set_speed_profile") {
@@ -615,7 +652,143 @@
               return new Response(JSON.stringify({
                 ok: true,
                 speedProfile: savedProfile.id,
-                speedProfileConfig: savedProfile
+                speedProfileConfig: savedProfile,
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "save_webhook_and_register") {
+              const rawPassword = String(body.webhookPassword ?? "").trim();
+              const sanitizedSecret = typeof sanitizeWebhookSecretToken === "function"
+                ? sanitizeWebhookSecretToken(rawPassword)
+                : rawPassword.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128);
+              const maxConnections = Math.min(40, Math.max(1, Number(body.maxConnections) || 8));
+              const dropPending = Boolean(body.dropPendingUpdates);
+              const customWebhookUrl = String(body.webhookUrl || officialWebhookUrl).trim() || officialWebhookUrl;
+              const savedCfg = typeof saveWebhookSecurityConfig === "function"
+                ? await saveWebhookSecurityConfig(env, {
+                    secretToken: sanitizedSecret,
+                    maxConnections,
+                    dropPendingDefault: dropPending
+                  })
+                : { secretToken: sanitizedSecret, maxConnections };
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  webhookUrl: customWebhookUrl,
+                  hasWebhookPassword: Boolean(savedCfg.secretToken),
+                  webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
+                  maxConnections: savedCfg.maxConnections,
+                  message: "Webhook-Passwort (secret_token) gespeichert & im Simulator registriert.",
+                  _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+                }), { status: 200, headers: corsHeaders });
+              }
+              const whPayload = {
+                url: customWebhookUrl,
+                max_connections: savedCfg.maxConnections,
+                drop_pending_updates: dropPending,
+                allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+              };
+              if (savedCfg.secretToken) {
+                whPayload.secret_token = savedCfg.secretToken;
+              }
+              const whRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(whPayload)
+              });
+              const whJson = await whRes.json().catch(() => ({}));
+              return new Response(JSON.stringify({
+                ok: Boolean(whJson?.ok),
+                webhookUrl: customWebhookUrl,
+                hasWebhookPassword: Boolean(savedCfg.secretToken),
+                webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
+                maxConnections: savedCfg.maxConnections,
+                telegramResponse: whJson,
+                message: whJson?.ok
+                  ? `Webhook inkl. Passwort-Schutz (${savedCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${savedCfg.maxConnections}) erfolgreich bei Telegram registriert!`
+                  : (whJson?.description || "Telegram setWebhook fehlgeschlagen."),
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "get_webhook_info") {
+              const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+                ? await getWebhookSecurityConfig(env)
+                : { secretToken: "", maxConnections: 8 };
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  webhookInfo: {
+                    url: officialWebhookUrl,
+                    has_custom_certificate: false,
+                    pending_update_count: 0,
+                    max_connections: webhookSecurity.maxConnections || 8,
+                    ip_address: "104.21.48.1 (Cloudflare Edge Simulator)",
+                    allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
+                  },
+                  hasWebhookPassword: Boolean(webhookSecurity.secretToken),
+                  _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+                }), { status: 200, headers: corsHeaders });
+              }
+              const infoRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`);
+              const infoJson = await infoRes.json().catch(() => ({}));
+              return new Response(JSON.stringify({
+                ok: Boolean(infoJson?.ok),
+                webhookInfo: infoJson?.result || null,
+                telegramResponse: infoJson,
+                hasWebhookPassword: Boolean(webhookSecurity.secretToken),
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "drop_pending_updates") {
+              const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+                ? await getWebhookSecurityConfig(env)
+                : { secretToken: "", maxConnections: 8 };
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  message: "Hängende Updates im Simulator geleert (drop_pending_updates = true)."
+                }), { status: 200, headers: corsHeaders });
+              }
+              const whPayload = {
+                url: officialWebhookUrl,
+                max_connections: webhookSecurity.maxConnections || 8,
+                drop_pending_updates: true,
+                allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+              };
+              if (webhookSecurity.secretToken) {
+                whPayload.secret_token = webhookSecurity.secretToken;
+              }
+              const dropRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(whPayload)
+              });
+              const dropJson = await dropRes.json().catch(() => ({}));
+              return new Response(JSON.stringify({
+                ok: Boolean(dropJson?.ok),
+                telegramResponse: dropJson,
+                message: dropJson?.ok
+                  ? "Alle angestauten Telegram-Updates (Retry-Stau) wurden erfolgreich verworfen!"
+                  : (dropJson?.description || "Konnte hängende Updates nicht verwerfen."),
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "test_webhook_auth") {
+              const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+                ? await getWebhookSecurityConfig(env)
+                : { secretToken: "", maxConnections: 8 };
+              const activeSecret = String(webhookSecurity?.secretToken || "");
+              return new Response(JSON.stringify({
+                ok: true,
+                webhookUrl: officialWebhookUrl,
+                hasWebhookPassword: Boolean(activeSecret),
+                gatekeeperStatus: activeSecret
+                  ? "🔒 AKTIV — Unbefugte POST-Requests ohne X-Telegram-Bot-Api-Secret-Token werden in <0.1ms (0 D1-Reads) mit HTTP 401 abgewiesen."
+                  : "⚠️ OFFEN — Noch kein Webhook-Passwort gesetzt. Bitte Passwort eintragen oder generieren.",
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "setup_miniapp_menu") {
@@ -770,7 +943,10 @@
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
           const activeSpeedProf = await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
-          const maxSliceCap = Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 12) + 4), 30);
+          const isPaidProf = activeSpeedProf?.id === "paid_highspeed";
+          const maxSliceCap = isPaidProf
+            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24) + 4), 28)
+            : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 5) + 1), 6);
           const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, maxSliceCap) : [];
           if (rawEntries.length === 0) {
             return new Response(JSON.stringify({ ok: false, error: "Keine Einträge im Batch." }), { status: 400, headers: corsHeaders });
@@ -882,6 +1058,9 @@
           if (typeof flushD1BatchBuffer === "function") {
             await flushD1BatchBuffer(env);
           }
+          const workerHealth = typeof buildWorkerHealthSnapshot === "function"
+            ? buildWorkerHealthSnapshot({ route: path, batchProcessedCount: effectiveProcessedCount })
+            : null;
           return new Response(JSON.stringify({
             ok: true,
             status: status || "COMPLETED_BATCH",
@@ -898,7 +1077,8 @@
             playlistSavedCount,
             playlistFolder,
             sampleTitles: [...moviesAdded.slice(0, 3), ...seriesAdded.slice(0, 3)],
-            batchItems: batchItems || []
+            batchItems: batchItems || [],
+            _workerHealth: workerHealth
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-logs") {
@@ -3150,22 +3330,26 @@
       }
 
       if (path === "/api/tma/anti-spam-queue") {
-        await hydrateAntiSpamStateFromStorage(env);
+        if (!antiSpamState.hydratedFromStorage) {
+          await hydrateAntiSpamStateFromStorage(env);
+        }
         const focusChat = String(url.searchParams.get("chatId") || auth.chatId || "").trim();
         if (request.method === "GET") {
-          const shouldDrain = url.searchParams.get("drain") !== "0";
+          const shouldDrain = url.searchParams.get("drain") !== "0" && antiSpamState.queue.length > 0;
           if (shouldDrain) {
             const drained = await drainAntiSpamQueue(env, 4, false);
             return new Response(JSON.stringify({
               ok: true,
               drainedCount: drained.drainedCount,
-              snapshot: getAntiSpamSnapshot(env, focusChat)
+              snapshot: getAntiSpamSnapshot(env, focusChat),
+              _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
             }), { status: 200, headers: corsHeaders });
           }
           return new Response(JSON.stringify({
             ok: true,
             drainedCount: 0,
-            snapshot: getAntiSpamSnapshot(env, focusChat)
+            snapshot: getAntiSpamSnapshot(env, focusChat),
+            _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
           }), { status: 200, headers: corsHeaders });
         }
         if (request.method === "POST") {
@@ -3740,6 +3924,7 @@
         if (
           url.pathname === "/app" ||
           url.pathname === "/miniapp" ||
+          url.pathname === "/botfather-splash.svg" ||
           url.pathname === "/api/import-json" ||
           url.pathname.startsWith("/api/tma/") ||
           (request.method === "GET" && url.pathname === "/" && url.searchParams.get("status") !== "1")
@@ -3749,14 +3934,18 @@
 
         if (request.method === "GET") {
           const configuredWebhookBase = String(env.WEBHOOK_URL || url.origin).replace(/\/$/, "");
+          const officialWebhookEndpoint = `${configuredWebhookBase}/webhook`;
           if ((url.pathname === "/setwebhook" || url.searchParams.get("setwebhook") === "1") && env.TELEGRAM_BOT_TOKEN) {
-            const targetWebhookUrl = `${configuredWebhookBase}/`;
+            const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+              ? await getWebhookSecurityConfig(env)
+              : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || ""), maxConnections: 8 };
             const whPayload = {
-              url: targetWebhookUrl,
+              url: officialWebhookEndpoint,
+              max_connections: webhookSecurity.maxConnections || 8,
               allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
             };
-            if (env.TELEGRAM_WEBHOOK_SECRET) {
-              whPayload.secret_token = String(env.TELEGRAM_WEBHOOK_SECRET);
+            if (webhookSecurity.secretToken) {
+              whPayload.secret_token = String(webhookSecurity.secretToken);
             }
             const whRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
               method: "POST",
@@ -3766,7 +3955,8 @@
             const whJson = await whRes.json().catch(() => ({}));
             return new Response(JSON.stringify({
               ok: Boolean(whJson?.ok),
-              webhookUrl: targetWebhookUrl,
+              webhookUrl: officialWebhookEndpoint,
+              hasWebhookPassword: Boolean(webhookSecurity.secretToken),
               telegramResponse: whJson
             }, null, 2), {
               status: 200,
@@ -3776,36 +3966,51 @@
 
           return new Response(JSON.stringify({
             status: "online",
-            service: "Telegram Movie & Series Bot + Netflix Mini-App (Cloudflare Worker v3.6.0)",
-            webhookUrl: `${configuredWebhookBase}/`,
+            service: "Telegram Movie & Series Bot + Netflix Mini-App (Cloudflare Worker v3.7.0)",
+            webhookUrl: officialWebhookEndpoint,
             miniAppUrl: `${configuredWebhookBase}/app`,
             studioUrl: `${configuredWebhookBase}/studio`,
+            botFatherSplashSvgUrl: `${configuredWebhookBase}/botfather-splash.svg`,
             customBotWebhookEndpoint: `${configuredWebhookBase}/api/telegram/custom-webhook`,
             timestamp: new Date().toISOString(),
             configuredSecrets: {
               TELEGRAM_BOT_TOKEN: !!env.TELEGRAM_BOT_TOKEN,
               TMDB_BEARER_TOKEN: !!env.TMDB_BEARER_TOKEN,
-              WEBHOOK_URL: env.WEBHOOK_URL || `${configuredWebhookBase}/`,
+              WEBHOOK_URL: officialWebhookEndpoint,
               MOVIE_SAVED: !!env.MOVIE_SAVED,
               D1_DB: !!(env.DB || env.MOVIE_DB),
             },
-            help: "Sende Telegram Webhook Updates per POST an diese URL, rufe ?setwebhook=1 auf oder öffne / bzw. /app für die Netflix Mini-App."
+            help: "Sende Telegram Webhook Updates per POST an /webhook (oder /), konfiguriere das Webhook-Passwort im Admin-Tab 'Bot & Einstellungen' oder öffne /app für die Mini-App."
           }, null, 2), {
             status: 200,
             headers: { "Content-Type": "application/json; charset=utf-8" },
           });
         }
 
-        if (request.method === "POST") {
-          // Telegram-Sicherheit: Validiere X-Telegram-Bot-Api-Secret-Token (sofern TELEGRAM_WEBHOOK_SECRET gesetzt)
-          if (env.TELEGRAM_WEBHOOK_SECRET) {
-            const incomingSecret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-            if (incomingSecret !== env.TELEGRAM_WEBHOOK_SECRET) {
-              return new Response("Forbidden: Invalid Secret Token", { status: 403 });
+        if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/webhook")) {
+          // 0ms Edge-Gatekeeper: Validiere Webhook-Passwort (X-Telegram-Bot-Api-Secret-Token oder ?secret=...)
+          const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+            ? await getWebhookSecurityConfig(env)
+            : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || "") };
+          const activeSecret = String(webhookSecurity?.secretToken || "").trim();
+          if (activeSecret) {
+            const incomingHeaderSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+            const incomingQuerySecret = String(url.searchParams.get("secret") || "").trim();
+            if (incomingHeaderSecret !== activeSecret && incomingQuerySecret !== activeSecret) {
+              return new Response("Unauthorized: Invalid Telegram Webhook Secret Password", { status: 401 });
             }
           }
 
-          const update = await request.json();
+          const update = await request.json().catch(() => null);
+          if (!update || typeof update !== "object") {
+            return new Response("OK", { status: 200 });
+          }
+
+          // Anti-Retry-Storm: Doppelte update_id aus Telegram-Retries in <0.1ms im RAM abfangen
+          if (typeof isDuplicateTelegramUpdateId === "function" && isDuplicateTelegramUpdateId(update.update_id)) {
+            return new Response("OK", { status: 200 });
+          }
+
           const runAll = async () => {
             await handleUpdate(env, update);
             await flushDirtyKvBatch(env);

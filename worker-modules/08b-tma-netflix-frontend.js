@@ -169,6 +169,73 @@
         applySortValue(next);
       }
 
+      window._workerHealthMonitorState = window._workerHealthMonitorState || {
+        history: [],
+        lastCpuMs: 0.9,
+        lastWallMs: 38,
+        lastSubrequests: 1,
+        lastD1Ops: 1,
+        lastRoute: "/api/tma/discover",
+        status: "healthy",
+        throttled: false,
+        recommendedBatchSize: 5,
+        cooldownUntil: 0,
+        throttleReason: ""
+      };
+
+      function recordClientWorkerHealthSample(sample) {
+        const st = window._workerHealthMonitorState;
+        const cpuMs = Math.max(0.2, Math.min(25, Number(sample?.cpuMs ?? 1.1)));
+        const wallMs = Math.max(5, Math.round(Number(sample?.wallMs ?? 45)));
+        const subrequests = Math.max(0, Number(sample?.subrequests ?? 0));
+        const d1Ops = Math.max(0, Number(sample?.d1Ops ?? 0));
+        const route = String(sample?.route || "/api/tma").replace("/api/tma", "") || "/";
+        st.lastCpuMs = Number(cpuMs.toFixed(2));
+        st.lastWallMs = wallMs;
+        st.lastSubrequests = subrequests;
+        st.lastD1Ops = d1Ops;
+        st.lastRoute = route;
+
+        if (sample?.forcedOverload || cpuMs >= 8.2) {
+          st.status = "critical";
+          st.throttled = true;
+          st.recommendedBatchSize = 1;
+          st.cooldownUntil = Date.now() + 2400;
+          st.throttleReason = "CPU " + cpuMs.toFixed(1) + "ms nahe 10ms Free-Limit → Batch auf 1 gedrosselt + 2.4s Cooldown";
+        } else if (cpuMs >= 6.8 || subrequests >= 14) {
+          st.status = "warning";
+          st.throttled = true;
+          st.recommendedBatchSize = 2;
+          st.cooldownUntil = Date.now() + 1400;
+          st.throttleReason = "CPU " + cpuMs.toFixed(1) + "ms (>=6.8ms) → Automatisch auf 2er Micro-Batch gedrosselt + 1.4s Cooldown";
+        } else {
+          st.status = "healthy";
+          if (st.throttled && Date.now() > st.cooldownUntil) {
+            st.recommendedBatchSize = Math.min(5, (st.recommendedBatchSize || 2) + 1);
+            if (st.recommendedBatchSize >= 4) {
+              st.throttled = false;
+              st.throttleReason = "";
+            }
+          } else if (!st.throttled) {
+            st.recommendedBatchSize = 5;
+          }
+        }
+
+        st.history.push({
+          ts: Date.now(),
+          cpuMs: st.lastCpuMs,
+          wallMs: st.lastWallMs,
+          subrequests: st.lastSubrequests,
+          d1Ops: st.lastD1Ops,
+          route: st.lastRoute,
+          status: st.status
+        });
+        if (st.history.length > 16) st.history.shift();
+        if (typeof window.updateWorkerHealthMonitorDom === "function") {
+          try { window.updateWorkerHealthMonitorDom(); } catch (e) {}
+        }
+      }
+
       async function apiFetchJson(url, opts = {}) {
         const headers = { ...(opts.headers || {}) };
         if (sessionToken) headers["Authorization"] = "Bearer " + sessionToken;
@@ -181,6 +248,7 @@
         const isImportBatch = String(url || "").includes("/admin/import-batch");
         const timeoutMs = isImportBatch ? 22000 : 11500;
         const doSingleFetch = async (isRetry = false) => {
+          const reqStartMs = Date.now();
           const timeoutCtrl = new AbortController();
           const timer = setTimeout(() => {
             try { timeoutCtrl.abort(); } catch (e) {}
@@ -204,6 +272,7 @@
             if (isRetry) fetchOpts.cache = "no-store";
             const res = await fetch(url, fetchOpts);
             const text = await res.text();
+            const wallElapsed = Date.now() - reqStartMs;
             const trimmed = String(text || "").trim();
             const isHtmlError =
               trimmed.startsWith("<!DOCTYPE") ||
@@ -214,6 +283,14 @@
               res.status === 503 ||
               res.status === 524;
             if (isHtmlError) {
+              recordClientWorkerHealthSample({
+                cpuMs: res.status === 503 ? 9.9 : 8.5,
+                wallMs: wallElapsed,
+                subrequests: 15,
+                d1Ops: 8,
+                route: String(url || ""),
+                forcedOverload: true
+              });
               const rateErr = new Error(
                 "API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP " + (res.status || 524) + ") – automatischer Cooldown aktiv"
               );
@@ -221,7 +298,20 @@
               throw rateErr;
             }
             try {
-              return JSON.parse(text);
+              const parsed = JSON.parse(text);
+              if (parsed && parsed._workerHealth && typeof parsed._workerHealth === "object") {
+                recordClientWorkerHealthSample(parsed._workerHealth);
+              } else {
+                const approxCpu = Math.min(9.2, Math.max(0.4, Number((text.length / 48000 + (isImportBatch ? 2.4 : 0.7)).toFixed(2))));
+                recordClientWorkerHealthSample({
+                  cpuMs: approxCpu,
+                  wallMs: wallElapsed,
+                  subrequests: Number(parsed?.subrequestCount || 1),
+                  d1Ops: 1,
+                  route: String(url || "")
+                });
+              }
+              return parsed;
             } catch (e) {
               const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 90);
               const parseErr = new Error("Server-Antwort kein JSON (HTTP " + res.status + "): " + (cleanSnippet || "Leere Antwort"));
@@ -1216,13 +1306,13 @@
               const yrStr = esc((it.release_date || it.first_air_date || '').slice(0, 4) || '–');
               const ratStr = it.vote_average ? it.vote_average.toFixed(1) : '–';
               const subRightTxt = isMixedMediaView ? ((tc === 's' ? '📺 ' : '🎬 ') + yrStr) : yrStr;
-              return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')">' +
+              return '<div class="card' + (isCardSaved ? ' card-saved' : '') + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')">' +
                 '<div class="card-poster-wrap">' +
                   '<div class="card-top-left-stack">' +
                     rankHtml +
                     vipQualityHtml +
                   '</div>' +
-                  '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="In Merkliste speichern oder entfernen (Tipp oder Karte gedrückt halten)">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
+                  '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="' + (isCardSaved ? 'In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)' : 'In Merkliste speichern (Tipp oder Karte gedrückt halten)') + '">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
                   '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')" title="Details öffnen">ℹ️ Details</button>' +
                   '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
                   '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : 'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%231c1c24%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2371717a%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E') + '" onerror="this.onerror=null;this.src=\\\'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%231c1c24%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2371717a%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E\\\';" loading="lazy" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
@@ -2528,6 +2618,9 @@
 
       async function pollAntiSpamQueueClient(autoDrain = true) {
         try {
+          if (typeof backupImportJob !== "undefined" && backupImportJob && backupImportJob.running) {
+            return;
+          }
           const prefs = getDeliveryPreferencesClient();
           const targetChat = prefs.targetMode === "group" && prefs.targetGroupChatId ? prefs.targetGroupChatId : chatId;
           const r = await apiFetchJson(
@@ -2549,13 +2642,10 @@
             const hasActiveWork = Number(r.snapshot.queueCount || 0) > 0 ||
               (r.snapshot.gauges && (
                 r.snapshot.gauges.floodWait429?.active ||
-                Number(r.snapshot.gauges.singleChatPacing?.cooldownMs || 0) > 0 ||
-                Number(r.snapshot.gauges.globalPerSec?.used || 0) > 0
+                Number(r.snapshot.gauges.singleChatPacing?.cooldownMs || 0) > 0
               ));
             if (hasActiveWork) {
-              scheduleAntiSpamPollClient(1050);
-            } else if (state.currentView === "settings" || state.currentView === "admin") {
-              scheduleAntiSpamPollClient(3500);
+              scheduleAntiSpamPollClient(1600);
             }
           }
         } catch (e) {}

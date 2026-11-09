@@ -1,41 +1,73 @@
-# Optimierungsplan: Cloudflare Free-Worker Anti-Timeout & Turbo-Engine
+# Implementierungsplan (Revidiert): Webhook-Passwortschutz, Anti-Retry-Storm Engine, Worker-Health-Monitor & Golden-Ratio UI
 
-## 1. Ursache der bisherigen Timeouts (Diagnose)
-Auf dem **kostenlosen Cloudflare Worker (Free Plan)** gelten zwei strikte Grenzen pro Aufruf: maximal **10 Millisekunden reine CPU-Rechenzeit** und maximal **50 Subrequests** (externe API-Aufrufe + D1-Abfragen). Bisher führten drei Engpässe regelmäßig zu Timeouts (`HTTP 503 / 524` bzw. `AbortError`):
-
-1. **Komplettes Neuladen & Parsen der Playlisten bei jedem Import-Batch (`batchSaveIngestedItemsToPlaylist`)**:
-   - Bei jedem einzelnen Batch hat der Worker die gesamte bisherige Playlist aus D1 geladen (`getSavedList`), durchsucht und zweimal neu geschrieben (für die Ziel-Playlist und für `bot_vip`). Ab einigen hundert Einträgen sprengt das sofort das **10-ms-CPU-Limit**.
-2. **Große `details_json`-Blobs beim Kaltstart & Admin-Öffnen (`ensureLocalD1CatalogTitleMapLoaded` & `computeSeriesGapsOverview`)**:
-   - Beim Start eines Worker-Isolates und beim Öffnen des Admin-Dashboards wurden sämtliche `details_json`- und `episodes_json`-Textfelder aller Filme und Serien aus D1 geladen und per `JSON.parse()` verarbeitet.
-3. **Sequenzielle 4,5-Sekunden-Wartezeiten bei schwer erkennbaren Titeln**:
-   - Wenn ein Titel bei TMDb nicht sofort gefunden wurde, liefen bis zu 8 externe Fallback-APIs (OMDb, iTunes, TVMaze, AniList, Jikan, Wikidata, Wikipedia) mit jeweils bis zu 4,5 Sekunden Timeout nacheinander ab – ein einziger unbekannter Titel konnte einen Batch dadurch 12–15 Sekunden blockieren.
+## 1. Weiter gedacht: Warum das Webhook-Passwort & Edge-Schutz entscheidend für deinen Cloudflare Free-Tier sind
+Ein Passwort direkt für den **Telegram Webhook** (`secret_token` + optionaler URL-Key) löst nicht nur ein Sicherheitsproblem, sondern schützt auch aktiv dein **Cloudflare CPU- & D1-Kontingent**:
+1. **Echter Telegram Webhook-Passwortschutz (`X-Telegram-Bot-Api-Secret-Token` + `?secret=`)**:
+   - Ohne Webhook-Passwort kann jeder Bot oder Scanner im Internet gefälschte POST-Requests an `https://teleport.sonhartmann-1997.workers.dev/webhook` senden und damit dein D1-Lese-Limit (5 Mio. Zeilen/Tag) oder deine 10ms CPU-Zeit verbrauchen.
+   - **Unsere Lösung (0ms Gatekeeper)**: Du vergibst auf der neuen Seite `🤖 Bot & Einstellungen` ein eigenes **Webhook-Passwort** (oder lässt per 1-Klick ein kryptografisch sicheres generieren).
+   - Beim Klick auf **„Webhook + Passwort aktivieren“** übermittelt der Worker dieses Passwort als offiziellen `secret_token` an Telegram (`setWebhook`) und zeigt dir zusätzlich die geschützte URL (`.../webhook?secret=DEIN_PASSWORT`).
+   - **0-D1-Read Edge-Prüfung**: Der Worker hält das Webhook-Passwort im Warm-Memory (`globalThis`) bereit und prüft jeden eingehenden Webhook-Aufruf **in unter 0,1ms CPU-Zeit noch vor dem JSON-Parsing und vor jedem D1-Zugriff**. Unbefugte Requests werden sofort mit `401 Unauthorized` abgewiesen (0 D1-Reads!).
+2. **Weiter gedacht #1 – Schutz vor „Telegram Retry-Stürmen“ (Endlos-Schleifen bei Timeouts)**:
+   - *Das versteckte Problem*: Wenn ein Webhook-Aufruf auf dem Free-Tier einmal in ein 503-CPU-Limit läuft, versucht Telegram **denselben Befehl 24 Stunden lang immer wieder alle paar Sekunden erneut zuzustellen** – das legt den Worker und die D1-Datenbank lahm.
+   - *Unsere Lösung*:
+     - **`update_id` Ring-Buffer im Worker-Speicher**: Jede `update_id` von Telegram wird sofort im Arbeitsspeicher gemerkt. Schickt Telegram ein Update doppelt, antwortet der Worker sofort in `0,1ms` mit `200 OK`, ohne die Aufgabe noch einmal auszuführen.
+     - **`max_connections` Free-Tier-Bremse**: Beim Setzen des Webhooks kannst du `max_connections` für den Cloudflare Free-Tier auf z. B. `5–10` (statt Standard `40`) begrenzen, damit Telegram deinen Worker niemals mit 40 gleichzeitigen Requests überflutet.
+     - **1-Klick „Hängende Telegram-Updates leeren (`drop_pending_updates`)“**: Ein Not-Aus-Schalter auf der Bot-Seite, falls sich bei Telegram jemals eine Warteschlange aufgestaut hat.
+     - **`allowed_updates` Filter**: Telegram weckt deinen Worker nur noch bei echten Ereignissen (`message`, `callback_query`, `inline_query`, `channel_post`) und ignoriert unnötige Status-Updates.
+3. **Weiter gedacht #2 – In-Memory Katalog-Cache (95 % weniger D1-Reads beim Öffnen der Mini-App)**:
+   - Bisher hat jedes Öffnen der Mini-App (`/api/tma/bootstrap`) alle Filme, Serien und Playlisten frisch aus D1 gelesen.
+   - Wir bauen einen **intelligenten In-Memory Edge-Cache (`globalThis.__CATALOG_EDGE_CACHE`)** ein, der den Katalog im Worker-RAM hält und **nur dann automatisch invalidiert wird, wenn du im Admin-Panel etwas importierst, bearbeitest oder löschst**. Ergebnis: Das Öffnen der Mini-App dauert **`< 1ms` CPU-Zeit** und verbraucht **0 D1 Row-Reads**!
 
 ---
 
-## 2. Geplante Architektur- & Performance-Optimierungen
+## 2. Geplante Features im Detail
 
-### A. JSON-Import Turbo-Modus mit intelligentem Notfall-Fallback (`/worker-modules/07-webhook-callbacks.js`, `/worker-modules/03-telegram-kv-engine.js`, `/worker-modules/04-d1-database.js`)
-- **Direktes D1-Delta-Upsert statt Komplett-Laden der Playlist**:
-  - `batchSaveIngestedItemsToPlaylist` lädt während des JSON-Imports nicht mehr die komplette bestehende Playlist in den Arbeitsspeicher, sondern schreibt ausschließlich die **neuen/aktualisierten Einträge des aktuellen Batches** direkt per `INSERT INTO d1_playlist_items ... ON CONFLICT(chat_id, uid) DO UPDATE` in D1. Dadurch sinkt die CPU-Zeit beim Playlist-Speichern um über **90 %** (unabhängig davon, ob 50 oder 50.000 Filme in der Datenbank liegen).
-- **Katalog-Titel-Map ohne `details_json`-Ballast**:
-  - `ensureLocalD1CatalogTitleMapLoaded` liest nur noch die schlanken Index-Spalten (`SELECT tmdb_id, title, release_year, poster_path FROM movies / series`) ohne `details_json` und ohne `JSON.parse()`-Schleife.
-- **2-Stufen Smart-Turbo-Lookup (TMDb First + schneller Parallel-Fallback nur bei Bedarf)**:
-  - **Stufe 1 (Turbo)**: Prüft zuerst den lokalen D1-/RAM-Cache (0 ms) und fragt dann gezielt TMDb (DE/EN) mit kurzem Timeout (`2.200 ms`) ab. Sobald ein sicherer Treffer (`Confidence >= 72 %`) vorliegt, werden alle weiteren API-Aufrufe für dieses Element übersprungen.
-  - **Stufe 2 (Notfall-Fallback für schwere Fälle)**: Nur wenn TMDb keinen Treffer liefert **und** im aktuellen Batch noch genügend Zeit- und Subrequest-Budget vorhanden ist, werden die wichtigsten Fallback-Quellen (iTunes DE, TVMaze, OMDb) **parallel mit hartem 1.800-ms-Zeitlimit** abgefragt statt nacheinander je 4,5 Sekunden zu warten.
+### A. Neue zentrale Admin-Seite: `🤖 Bot & Einstellungen`
+Alle Bot-, Sicherheits- und Worker-Funktionen sind auf **einer einzigen, nach dem Goldenen Schnitt (`61,8% : 38,2%`) aufgebauten Seite** gebündelt:
+1. **🔗 Telegram Webhook-Zentrale & Webhook-Passwort (`secret_token`)**:
+   - **Webhook-URL Anzeige**: `https://teleport.sonhartmann-1997.workers.dev/webhook` (inkl. 1-Klick-Kopieren).
+   - **Webhook-Passwort setzen / ändern / generieren**:
+     - Eingabefeld für dein Webhook-Passwort (`A-Za-z0-9_-`, kompatibel mit Telegrams `secret_token`-Spezifikation) + Button **„🎲 Sicheres Passwort generieren“**.
+     - Live-Sicherheitsbadge: `🟢 Webhook geschützt (Header + URL-Secret aktiv)` vs. `🟡 Ungeschützt`.
+   - **Erweiterte Webhook-Steuerung (1-Klick)**:
+     - **„🔒 Webhook mit Passwort bei Telegram registrieren (`setWebhook`)“** (setzt URL, `secret_token`, `max_connections` für Free-Tier und `allowed_updates`).
+     - **„🔍 Live Webhook-Diagnose (`getWebhookInfo`)“** (zeigt ausstehende Updates `pending_update_count`, letzten Telegram-Fehler mit Uhrzeit, gesetzte `max_connections` und Verbindungsstatus).
+     - **„🧹 Hängende Updates verwerfen (`drop_pending_updates`)“** (stoppt sofort eventuelle Telegram-Retry-Schleifen).
+     - **„🧪 Webhook-Selbsttest (Ping mit Passwort)“** (prüft live, ob der Worker unautorisierte Aufrufe blockiert und autorisierte durchlässt).
+     - **„🤖 Bot-Befehle & Mini-App Menü-Button synchronisieren“**.
+2. **🎨 BotFather Asset-Studio (inkl. 512×512 Single-`<path>` SVG & WEBP)**:
+   - Exakt nach der offiziellen `@BotFather`-Vorgabe (*"Please send an SVG file with a canvas size of 512x512 and a single `<path>` element inside, or a WEBP or TGS file with the same size"*):
+     - **1-Klick Download: `bot-splashscreen-512x512.svg`** → Reines SVG mit `width="512" height="512" viewBox="0 0 512 512"` und **exakt einem einzigen `<path d="..." />`-Element** im Inneren.
+     - **1-Klick Download: `bot-splashscreen-512x512.webp`** → Direkt per Canvas erzeugtes `512×512` `.webp` im neuen Dark-Blue/Neon-Cinema-Stil.
+     - Zusätzlich: **512×512 Bot-Foto (PNG)**, **640×360 Intro-Banner (PNG)** sowie die **Header-/Body-Farbcodes** (`#060A14` / `#0B1222` / `#00E5FF`) mit 1-Klick-Übernahme in das Telegram WebApp SDK.
+3. **⚡ Worker-Speed-Profil, D1-Cache-Kontrolle & Anti-Spam-Cockpit**:
+   - Umschalter zwischen **Free-Tier Safe Mode (<10ms CPU, Micro-Batches, Edge-Cache aktiv)** und **Paid Unbound Mode**, Button zum manuellen Leeren des Edge-Caches sowie die Anti-Spam-Einstellungen an einem Ort.
 
-### B. Sofortiges Laden von Admin-Dashboard & Playlisten (`/worker-modules/09-tma-api-worker-export.js`, `/worker-modules/04-d1-database.js`)
-- **Tab-gesteuertes Lazy-Loading in `/api/tma/admin/overview`**:
-  - Die rechenintensive Serien-Lücken-Analyse (`computeSeriesGapsOverview`) und die automatische DB-Bereinigung (`cleanupEmptySeriesInD1AndMemory`) werden beim normalen Öffnen des Admin-Dashboards nicht mehr blockierend ausgeführt, sondern nur noch, wenn gezielt der Tab **„📉 Serien-Lücken“** geöffnet oder auf Aktualisieren geklickt wird.
-  - Für den geöffneten Playlist-Ordner werden nur die tatsächlich benötigten Einträge und Poster-Pfade geladen; auf unnötige `saveRawList`-Schreibvorgänge während reiner Lese-Abfragen (`GET /admin/overview`) wird komplett verzichtet.
-- **`listAllMediaFromD1` ohne `JSON.parse()`-Engpass**:
-  - Liest alle benötigten Felder (`tmdb_id`, `title`, `release_year`, `fsk`, `vote_average`, `genres`, `poster_path`) direkt aus den SQL-Spalten statt für jeden Film `details_json` zu parsen.
+---
 
-### C. Umschaltbares Geschwindigkeits-Profil im Admin-Cockpit (`/worker-modules/08c-tma-netflix-frontend.js`, `/worker-modules/09-tma-api-worker-export.js`)
-Im Admin-Cockpit (sowie direkt im Backup-Import-Panel) wird ein neuer **1-Klick Profil-Umschalter (`⚡ Worker Geschwindigkeits-Profil`)** eingebaut, der sowohl im Browser als auch im Worker gespeichert wird:
-1. **🛡️ Free-Tier Turbo (Standard – Optimal für kostenlosen Cloudflare Worker)**:
-   - Kompakte Batches (`12 Einträge`), früher Wall-Clock-Schutz (`3,2 Sek.`), Subrequest-Guard bei `20/50`, TMDb-Turbo + gebündelter 1,8s-Notfall-Fallback bei schwierigen Titeln.
-2. **⚖️ Ausgewogen (Balanced)**:
-   - Mittlere Batches (`18 Einträge`), Wall-Clock-Schutz bei `4,5 Sek.`, Subrequest-Guard bei `26/50`, erweiterte Fallback-Suche.
-3. **🚀 Paid / High-Throughput (Für Cloudflare Workers Paid $5 Tarif)**:
-   - Große Batches (`30 Einträge`), Wall-Clock-Schutz bei `7,5 Sek.`, Subrequest-Guard bei `36/50`, volle Multi-API-Tiefensuche.
-- **Automatische Selbstheilung bei langsamem Netz**: Falls im Profil *Ausgewogen* oder *Paid* jemals ein Timeout auftritt, regelt der Importer die Batch-Größe für die nächsten Schritte automatisch auf das *Free-Tier Turbo*-Niveau herunter, sodass der Import niemals abbricht.
+### B. Echtzeit `Worker-Health-Monitor` & Automatische Aufgaben-Teilung (Micro-Batching)
+- **Live CPU- & Subrequest-Telemetrie**:
+  - Jede Worker-Antwort liefert `_workerHealth` (`cpuEstimateMs`, `wallTimeMs`, `subrequests`, `d1Ops`, `cacheHit`).
+- **Echtzeit `Worker-Health-Monitor` im UI**:
+  - Zeigt die CPU-Laufzeit (ms) der letzten Requests als Live-Anzeige + Mini-Sparkline.
+  - **Vollautomatische Drosselung & Cooldown**:
+    - Nähert sich ein Request der **7ms-Marke**, halbiert das UI automatisch die Batch-Größe auf **1 bis 2 Aufgaben pro Request** und legt einen kurzen Cooldown (1,5–3s) ein.
+    - Bei `HTTP 503 exceededCpu` teilt der **Smart-Split** das Paket sofort in Einzel-Aufgaben (`batchSize = 1`) und arbeitet sie Stück für Stück ab.
+- **Beseitigung der Log-Bremsen**:
+  - Wegfall des 27-KB-Checkpoint-Payloads bei `/api/tma/admin/import-batch` (spart ~15ms JSON-CPU pro Batch).
+  - Gezielte SQL-Index-Abfragen statt Tabellen-Scans in `prefetchBatchMediaFromD1`.
+  - Abschaltung des 1,2-Sekunden Dauer-Pollings auf `/api/tma/anti-spam-queue`.
+
+---
+
+### C. Neues Dark-Blue / Subtle-Neon Farbschema, Merklisten-Long-Press & Key-Navigation
+1. **Edles Dark-Blue / Subtle-Neon Designsystem (`#060A14` / `#0B1222` / `#00E5FF` / `#6366F1`)**:
+   - Hochwertige Midnight-Sapphire-Oberfläche mit feinen Cyan-Konturen – modern, augenschonend und frei von Kitsch.
+2. **Goldener Schnitt (`1 : 1.618` / `61,8% : 38,2%`) & Entschlackung**:
+   - **Entfernt**: Überflüssiger Tab `🏠 Hauptseite` in der Admin-Leiste sowie der manuelle Button `🧹 Doppelte Buttons bereinigen` (defekte/doppelte Stream-Buttons werden vollautomatisch im Hintergrund gefiltert und bereinigt).
+   - **JSON-Import & Detail-Modal**: Aufgeräumtes 2-Spalten-Layout im Verhältnis **`61,8%` Hauptfokus** zu **`38,2%` Live-Status / Stream-Panel**.
+3. **Merklisten-Badge & „Gedrückt halten zum Speichern“ (Long-Press)**:
+   - Jeder Film in der Merkliste trägt direkt auf dem Poster ein klares **Electric-Cyan Badge (`✓ Merkliste`)** samt feiner Cyan-Kartenkontur.
+   - **Gedrückt halten (Touch, Maus & langes `Enter`)** speichert oder entfernt den Titel sofort mit visuellem Impuls und Haptik-Feedback.
+4. **Vollständige Tastatur- & Smart-TV Key-Navigation**:
+   - Durchgängige Steuerung per Pfeiltasten (`ArrowUp/Down/Left/Right`), `Enter` (inkl. Langdruck bzw. Taste `M`/`W` für Merkliste), `Escape`/`Backspace` und `/` (Suche) mit klarem Cyan-Fokusring.

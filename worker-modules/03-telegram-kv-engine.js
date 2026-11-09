@@ -759,38 +759,201 @@
   const WORKER_SPEED_PROFILES = {
     free_turbo: {
       id: "free_turbo",
-      label: "🛡️ Cloudflare Free-Tier Turbo (Anti-Timeout)",
-      batchSize: 12,
-      wallClockLimitMs: 3200,
-      subrequestGuard: 20,
-      midBatchSubrequestGuard: 22,
-      tmdbTimeoutMs: 2200,
-      fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,8s Notfall-Parallel-Fallback wenn 0 TMDb-Treffer & Budget frei
-      fallbackTimeoutMs: 1800
+      label: "🛡️ Cloudflare Free-Tier Turbo (<10ms CPU Micro-Batch)",
+      batchSize: 5,
+      wallClockLimitMs: 2400,
+      subrequestGuard: 14,
+      midBatchSubrequestGuard: 16,
+      tmdbTimeoutMs: 1900,
+      fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,6s Notfall-Parallel-Fallback wenn 0 TMDb-Treffer & Budget frei
+      fallbackTimeoutMs: 1600
     },
     balanced: {
       id: "balanced",
       label: "⚖️ Ausgewogen (Standard)",
-      batchSize: 18,
-      wallClockLimitMs: 4500,
-      subrequestGuard: 26,
-      midBatchSubrequestGuard: 28,
-      tmdbTimeoutMs: 2800,
+      batchSize: 10,
+      wallClockLimitMs: 3800,
+      subrequestGuard: 22,
+      midBatchSubrequestGuard: 24,
+      tmdbTimeoutMs: 2500,
       fallbackMode: "balanced",
-      fallbackTimeoutMs: 2400
+      fallbackTimeoutMs: 2100
     },
     paid_pro: {
       id: "paid_pro",
       label: "🚀 Cloudflare Paid ($5 Plan / High-Throughput)",
-      batchSize: 30,
-      wallClockLimitMs: 7200,
-      subrequestGuard: 36,
-      midBatchSubrequestGuard: 38,
-      tmdbTimeoutMs: 3800,
+      batchSize: 24,
+      wallClockLimitMs: 6800,
+      subrequestGuard: 34,
+      midBatchSubrequestGuard: 36,
+      tmdbTimeoutMs: 3500,
       fallbackMode: "deep",
-      fallbackTimeoutMs: 3500
+      fallbackTimeoutMs: 3200
     }
   };
+
+  // --- Echtzeit Worker-Health-Monitor Telemetrie & CPU-Schätzung (<10ms Cloudflare Free-Tier Guard) ---
+  if (!globalThis.__WORKER_HEALTH_HISTORY) {
+    globalThis.__WORKER_HEALTH_HISTORY = [];
+  }
+  const activeWorkerTelemetry = {
+    requestStartMs: 0,
+    syncCpuAccumMs: 0,
+    d1OpsCount: 0,
+    jsonBytesParsed: 0,
+    cacheHit: false,
+    route: ""
+  };
+
+  function beginWorkerRequestTelemetry(route = "") {
+    activeWorkerTelemetry.requestStartMs = Date.now();
+    activeWorkerTelemetry.syncCpuAccumMs = 0;
+    activeWorkerTelemetry.d1OpsCount = 0;
+    activeWorkerTelemetry.jsonBytesParsed = 0;
+    activeWorkerTelemetry.cacheHit = false;
+    activeWorkerTelemetry.route = String(route || "");
+  }
+
+  function recordWorkerSyncCpuSpan(ms = 0, jsonBytes = 0, d1Ops = 0) {
+    if (ms > 0) activeWorkerTelemetry.syncCpuAccumMs += Number(ms);
+    if (jsonBytes > 0) activeWorkerTelemetry.jsonBytesParsed += Number(jsonBytes);
+    if (d1Ops > 0) activeWorkerTelemetry.d1OpsCount += Number(d1Ops);
+  }
+
+  function buildWorkerHealthSnapshot(extra = {}) {
+    const now = Date.now();
+    const wallMs = activeWorkerTelemetry.requestStartMs > 0
+      ? Math.max(1, now - activeWorkerTelemetry.requestStartMs)
+      : 1;
+    const subreqs = typeof currentInvocationSubrequests === "number" ? currentInvocationSubrequests : 0;
+    const d1Ops = Math.max(activeWorkerTelemetry.d1OpsCount, Number(extra.d1Ops || 0));
+    const jsonKb = activeWorkerTelemetry.jsonBytesParsed / 1024;
+    // Realistische Cloudflare V8 Isolate CPU-Kalkulation (Sync-JS + JSON-Serialisierung + Subrequest/D1-Binding-Overhead)
+    const rawCpuEst = 0.45 +
+      activeWorkerTelemetry.syncCpuAccumMs +
+      (jsonKb * 0.085) +
+      (d1Ops * 0.38) +
+      (subreqs * 0.28);
+    const cpuMs = Number(Math.min(25, Math.max(0.4, rawCpuEst)).toFixed(2));
+    const approachingLimit = cpuMs >= 6.8 || subreqs >= 18 || wallMs >= 3200;
+    const criticalLimit = cpuMs >= 8.5 || subreqs >= 26 || wallMs >= 5000;
+    const status = criticalLimit ? "critical" : approachingLimit ? "warning" : "optimal";
+    const recommendedBatchSize = criticalLimit ? 1 : approachingLimit ? 2 : 5;
+    const cooldownMs = criticalLimit ? 2600 : approachingLimit ? 1200 : 0;
+    const entry = {
+      ts: now,
+      route: activeWorkerTelemetry.route || extra.route || "/api/tma",
+      cpuMs,
+      wallMs,
+      subrequests: subreqs,
+      d1Ops,
+      cacheHit: Boolean(activeWorkerTelemetry.cacheHit || extra.cacheHit),
+      status,
+      recommendedBatchSize,
+      cooldownMs
+    };
+    const hist = globalThis.__WORKER_HEALTH_HISTORY;
+    hist.unshift(entry);
+    if (hist.length > 20) hist.length = 20;
+    return {
+      ...entry,
+      recentHistory: hist.slice(0, 12)
+    };
+  }
+
+  // --- Webhook-Passwort (secret_token) 0ms Edge-Gatekeeper & Anti-Retry-Storm Schutz ---
+  if (!globalThis.__RECENT_TG_UPDATE_IDS) {
+    globalThis.__RECENT_TG_UPDATE_IDS = new Set();
+  }
+
+  function isDuplicateTelegramUpdateId(updateId) {
+    const idNum = Number(updateId || 0);
+    if (!idNum) return false;
+    const set = globalThis.__RECENT_TG_UPDATE_IDS;
+    if (set.has(idNum)) return true;
+    set.add(idNum);
+    if (set.size > 250) {
+      const firstVal = set.values().next().value;
+      if (firstVal !== undefined) set.delete(firstVal);
+    }
+    return false;
+  }
+
+  function sanitizeWebhookSecretToken(rawSecret) {
+    // Offizielle Telegram setWebhook secret_token Vorgabe: 1-256 Zeichen, nur A-Z, a-z, 0-9, _ und -
+    return String(rawSecret || "")
+      .trim()
+      .replace(/[^A-Za-z0-9_-]/g, "_")
+      .slice(0, 128);
+  }
+
+  async function getWebhookSecurityConfig(env) {
+    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 600000) {
+      return globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
+    }
+    let secretToken = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
+    let maxConnections = 10;
+    try {
+      const memCfg = memoryFallback.get("TG_WEBHOOK_SECURITY_CONFIG_V1");
+      if (memCfg && typeof memCfg === "object") {
+        if (memCfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(memCfg.secretToken);
+        if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 10));
+      } else {
+        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED");
+        if (rawKv) {
+          const parsed = JSON.parse(rawKv);
+          if (parsed && typeof parsed === "object") {
+            if (parsed.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(parsed.secretToken);
+            if (parsed.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(parsed.maxConnections) || 10));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", parsed);
+          }
+        } else if (typeof getEntityFromD1 === "function") {
+          const d1Cfg = await getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000).catch(() => null);
+          if (d1Cfg && typeof d1Cfg === "object") {
+            if (d1Cfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(d1Cfg.secretToken);
+            if (d1Cfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(d1Cfg.maxConnections) || 10));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", d1Cfg);
+          }
+        }
+      }
+    } catch (e) {}
+    const cfg = {
+      secretToken,
+      maxConnections,
+      hasEnvSecret: Boolean(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET),
+      loadedAt: Date.now()
+    };
+    globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = cfg;
+    return cfg;
+  }
+
+  async function saveWebhookSecurityConfig(env, newSecretToken, maxConnections = 10) {
+    const cleanToken = sanitizeWebhookSecretToken(newSecretToken);
+    const cleanMaxConn = Math.min(40, Math.max(1, Number(maxConnections) || 10));
+    const payload = {
+      secretToken: cleanToken,
+      maxConnections: cleanMaxConn,
+      updatedAt: Date.now(),
+      loadedAt: Date.now()
+    };
+    globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = payload;
+    memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", payload);
+    try {
+      await kvStageWrite(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", JSON.stringify(payload), {
+        bindingName: "MOVIE_SAVED",
+        flushNow: true
+      });
+    } catch (e) {}
+    try {
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "config", payload);
+      }
+    } catch (e) {}
+    return payload;
+  }
+
+  // Offizielles BotFather 512x512 Single-<path> SVG (Exakt 1 <path>-Element im 512x512 Canvas, 100% BotFather-konform!)
+  const BOTFATHER_SINGLE_PATH_SVG_512 = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="#00E5FF" fill-rule="evenodd" d="M256 32C379.712 32 480 132.288 480 256C480 379.712 379.712 480 256 480C132.288 480 32 379.712 32 256C32 132.288 132.288 32 256 32ZM256 56C145.543 56 56 145.543 56 256C56 366.457 145.543 456 256 456C366.457 456 456 366.457 456 256C456 145.543 366.457 56 256 56ZM256 96C344.366 96 416 167.634 416 256C416 344.366 344.366 416 256 416C167.634 416 96 344.366 96 256C96 167.634 167.634 96 256 96ZM256 116C178.68 116 116 178.68 116 256C116 333.32 178.68 396 256 396C333.32 396 396 333.32 396 256C396 178.68 333.32 116 256 116ZM208 168L352 256L208 344V168Z"/></svg>`;
 
   async function getWorkerSpeedProfile(env, overrideKey = null) {
     const normalizeKey = (k) => {

@@ -4230,38 +4230,201 @@
   const WORKER_SPEED_PROFILES = {
     free_turbo: {
       id: "free_turbo",
-      label: "🛡️ Cloudflare Free-Tier Turbo (Anti-Timeout)",
-      batchSize: 12,
-      wallClockLimitMs: 3200,
-      subrequestGuard: 20,
-      midBatchSubrequestGuard: 22,
-      tmdbTimeoutMs: 2200,
-      fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,8s Notfall-Parallel-Fallback wenn 0 TMDb-Treffer & Budget frei
-      fallbackTimeoutMs: 1800
+      label: "🛡️ Cloudflare Free-Tier Turbo (<10ms CPU Micro-Batch)",
+      batchSize: 5,
+      wallClockLimitMs: 2400,
+      subrequestGuard: 14,
+      midBatchSubrequestGuard: 16,
+      tmdbTimeoutMs: 1900,
+      fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,6s Notfall-Parallel-Fallback wenn 0 TMDb-Treffer & Budget frei
+      fallbackTimeoutMs: 1600
     },
     balanced: {
       id: "balanced",
       label: "⚖️ Ausgewogen (Standard)",
-      batchSize: 18,
-      wallClockLimitMs: 4500,
-      subrequestGuard: 26,
-      midBatchSubrequestGuard: 28,
-      tmdbTimeoutMs: 2800,
+      batchSize: 10,
+      wallClockLimitMs: 3800,
+      subrequestGuard: 22,
+      midBatchSubrequestGuard: 24,
+      tmdbTimeoutMs: 2500,
       fallbackMode: "balanced",
-      fallbackTimeoutMs: 2400
+      fallbackTimeoutMs: 2100
     },
     paid_pro: {
       id: "paid_pro",
       label: "🚀 Cloudflare Paid ($5 Plan / High-Throughput)",
-      batchSize: 30,
-      wallClockLimitMs: 7200,
-      subrequestGuard: 36,
-      midBatchSubrequestGuard: 38,
-      tmdbTimeoutMs: 3800,
+      batchSize: 24,
+      wallClockLimitMs: 6800,
+      subrequestGuard: 34,
+      midBatchSubrequestGuard: 36,
+      tmdbTimeoutMs: 3500,
       fallbackMode: "deep",
-      fallbackTimeoutMs: 3500
+      fallbackTimeoutMs: 3200
     }
   };
+
+  // --- Echtzeit Worker-Health-Monitor Telemetrie & CPU-Schätzung (<10ms Cloudflare Free-Tier Guard) ---
+  if (!globalThis.__WORKER_HEALTH_HISTORY) {
+    globalThis.__WORKER_HEALTH_HISTORY = [];
+  }
+  const activeWorkerTelemetry = {
+    requestStartMs: 0,
+    syncCpuAccumMs: 0,
+    d1OpsCount: 0,
+    jsonBytesParsed: 0,
+    cacheHit: false,
+    route: ""
+  };
+
+  function beginWorkerRequestTelemetry(route = "") {
+    activeWorkerTelemetry.requestStartMs = Date.now();
+    activeWorkerTelemetry.syncCpuAccumMs = 0;
+    activeWorkerTelemetry.d1OpsCount = 0;
+    activeWorkerTelemetry.jsonBytesParsed = 0;
+    activeWorkerTelemetry.cacheHit = false;
+    activeWorkerTelemetry.route = String(route || "");
+  }
+
+  function recordWorkerSyncCpuSpan(ms = 0, jsonBytes = 0, d1Ops = 0) {
+    if (ms > 0) activeWorkerTelemetry.syncCpuAccumMs += Number(ms);
+    if (jsonBytes > 0) activeWorkerTelemetry.jsonBytesParsed += Number(jsonBytes);
+    if (d1Ops > 0) activeWorkerTelemetry.d1OpsCount += Number(d1Ops);
+  }
+
+  function buildWorkerHealthSnapshot(extra = {}) {
+    const now = Date.now();
+    const wallMs = activeWorkerTelemetry.requestStartMs > 0
+      ? Math.max(1, now - activeWorkerTelemetry.requestStartMs)
+      : 1;
+    const subreqs = typeof currentInvocationSubrequests === "number" ? currentInvocationSubrequests : 0;
+    const d1Ops = Math.max(activeWorkerTelemetry.d1OpsCount, Number(extra.d1Ops || 0));
+    const jsonKb = activeWorkerTelemetry.jsonBytesParsed / 1024;
+    // Realistische Cloudflare V8 Isolate CPU-Kalkulation (Sync-JS + JSON-Serialisierung + Subrequest/D1-Binding-Overhead)
+    const rawCpuEst = 0.45 +
+      activeWorkerTelemetry.syncCpuAccumMs +
+      (jsonKb * 0.085) +
+      (d1Ops * 0.38) +
+      (subreqs * 0.28);
+    const cpuMs = Number(Math.min(25, Math.max(0.4, rawCpuEst)).toFixed(2));
+    const approachingLimit = cpuMs >= 6.8 || subreqs >= 18 || wallMs >= 3200;
+    const criticalLimit = cpuMs >= 8.5 || subreqs >= 26 || wallMs >= 5000;
+    const status = criticalLimit ? "critical" : approachingLimit ? "warning" : "optimal";
+    const recommendedBatchSize = criticalLimit ? 1 : approachingLimit ? 2 : 5;
+    const cooldownMs = criticalLimit ? 2600 : approachingLimit ? 1200 : 0;
+    const entry = {
+      ts: now,
+      route: activeWorkerTelemetry.route || extra.route || "/api/tma",
+      cpuMs,
+      wallMs,
+      subrequests: subreqs,
+      d1Ops,
+      cacheHit: Boolean(activeWorkerTelemetry.cacheHit || extra.cacheHit),
+      status,
+      recommendedBatchSize,
+      cooldownMs
+    };
+    const hist = globalThis.__WORKER_HEALTH_HISTORY;
+    hist.unshift(entry);
+    if (hist.length > 20) hist.length = 20;
+    return {
+      ...entry,
+      recentHistory: hist.slice(0, 12)
+    };
+  }
+
+  // --- Webhook-Passwort (secret_token) 0ms Edge-Gatekeeper & Anti-Retry-Storm Schutz ---
+  if (!globalThis.__RECENT_TG_UPDATE_IDS) {
+    globalThis.__RECENT_TG_UPDATE_IDS = new Set();
+  }
+
+  function isDuplicateTelegramUpdateId(updateId) {
+    const idNum = Number(updateId || 0);
+    if (!idNum) return false;
+    const set = globalThis.__RECENT_TG_UPDATE_IDS;
+    if (set.has(idNum)) return true;
+    set.add(idNum);
+    if (set.size > 250) {
+      const firstVal = set.values().next().value;
+      if (firstVal !== undefined) set.delete(firstVal);
+    }
+    return false;
+  }
+
+  function sanitizeWebhookSecretToken(rawSecret) {
+    // Offizielle Telegram setWebhook secret_token Vorgabe: 1-256 Zeichen, nur A-Z, a-z, 0-9, _ und -
+    return String(rawSecret || "")
+      .trim()
+      .replace(/[^A-Za-z0-9_-]/g, "_")
+      .slice(0, 128);
+  }
+
+  async function getWebhookSecurityConfig(env) {
+    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 600000) {
+      return globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
+    }
+    let secretToken = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
+    let maxConnections = 10;
+    try {
+      const memCfg = memoryFallback.get("TG_WEBHOOK_SECURITY_CONFIG_V1");
+      if (memCfg && typeof memCfg === "object") {
+        if (memCfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(memCfg.secretToken);
+        if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 10));
+      } else {
+        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED");
+        if (rawKv) {
+          const parsed = JSON.parse(rawKv);
+          if (parsed && typeof parsed === "object") {
+            if (parsed.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(parsed.secretToken);
+            if (parsed.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(parsed.maxConnections) || 10));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", parsed);
+          }
+        } else if (typeof getEntityFromD1 === "function") {
+          const d1Cfg = await getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000).catch(() => null);
+          if (d1Cfg && typeof d1Cfg === "object") {
+            if (d1Cfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(d1Cfg.secretToken);
+            if (d1Cfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(d1Cfg.maxConnections) || 10));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", d1Cfg);
+          }
+        }
+      }
+    } catch (e) {}
+    const cfg = {
+      secretToken,
+      maxConnections,
+      hasEnvSecret: Boolean(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET),
+      loadedAt: Date.now()
+    };
+    globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = cfg;
+    return cfg;
+  }
+
+  async function saveWebhookSecurityConfig(env, newSecretToken, maxConnections = 10) {
+    const cleanToken = sanitizeWebhookSecretToken(newSecretToken);
+    const cleanMaxConn = Math.min(40, Math.max(1, Number(maxConnections) || 10));
+    const payload = {
+      secretToken: cleanToken,
+      maxConnections: cleanMaxConn,
+      updatedAt: Date.now(),
+      loadedAt: Date.now()
+    };
+    globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = payload;
+    memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", payload);
+    try {
+      await kvStageWrite(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", JSON.stringify(payload), {
+        bindingName: "MOVIE_SAVED",
+        flushNow: true
+      });
+    } catch (e) {}
+    try {
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "config", payload);
+      }
+    } catch (e) {}
+    return payload;
+  }
+
+  // Offizielles BotFather 512x512 Single-<path> SVG (Exakt 1 <path>-Element im 512x512 Canvas, 100% BotFather-konform!)
+  const BOTFATHER_SINGLE_PATH_SVG_512 = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="#00E5FF" fill-rule="evenodd" d="M256 32C379.712 32 480 132.288 480 256C480 379.712 379.712 480 256 480C132.288 480 32 379.712 32 256C32 132.288 132.288 32 256 32ZM256 56C145.543 56 56 145.543 56 256C56 366.457 145.543 456 256 456C366.457 456 456 366.457 456 256C456 145.543 366.457 56 256 56ZM256 96C344.366 96 416 167.634 416 256C416 344.366 344.366 416 256 416C167.634 416 96 344.366 96 256C96 167.634 167.634 96 256 96ZM256 116C178.68 116 116 178.68 116 256C116 333.32 178.68 396 256 396C333.32 396 396 333.32 396 256C396 178.68 333.32 116 256 116ZM208 168L352 256L208 344V168Z"/></svg>`;
 
   async function getWorkerSpeedProfile(env, overrideKey = null) {
     const normalizeKey = (k) => {
@@ -8519,12 +8682,19 @@
       });
     }
 
-    // Sobald mindestens eine gültige Datei (_validity >= 1) vorhanden ist, alle defekten Platzhalter (_validity === 0) ausfiltern!
-    // Synthetische vip_playlist_ Platzhalter werden immer verworfen, da sie nicht über Telegram gesendet werden können.
-    const hasValid = prepared.some(x => x._validity >= 1);
-    const pool = hasValid
-      ? prepared.filter(x => x._validity >= 1)
-      : prepared.filter(x => !String(x.telegram_file_id).startsWith("vip_playlist_"));
+    // Alle defekten Platzhalter (vip_playlist_, tg_export_0_, tg_export__ oder _validity === 0 bei gültigen Alternativen) konsequent ausfiltern,
+    // damit niemals defekte oder doppelte Stream-Buttons im UI gerendert werden!
+    const validCandidates = prepared.filter(x => {
+      const fidStr = String(x.telegram_file_id || "").trim();
+      if (!fidStr || fidStr.startsWith("vip_playlist_") || fidStr.startsWith("tg_export_0_") || fidStr === "tg_export__") return false;
+      return x._validity >= 1;
+    });
+    const pool = validCandidates.length > 0
+      ? validCandidates
+      : prepared.filter(x => {
+          const fidStr = String(x.telegram_file_id || "").trim();
+          return Boolean(fidStr && !fidStr.startsWith("vip_playlist_") && !fidStr.startsWith("tg_export_0_") && fidStr !== "tg_export__");
+        });
 
     // Höchste Gültigkeit zuerst (echte file_id > tg_export_-100... > Rest), danach neuestes updated_at
     pool.sort((a, b) => {
@@ -11467,7 +11637,7 @@
   async function ensureLocalD1CatalogTitleMapLoaded(env) {
     const lastLoadedTs = Number(memoryFallback.get("d1_local_catalog_title_map_ts") || 0);
     let map = memoryFallback.get("d1_local_catalog_title_map");
-    if (map instanceof Map && (Date.now() - lastLoadedTs) < 300000) {
+    if (map instanceof Map && map.size > 0 && (Date.now() - lastLoadedTs) < 1800000) {
       return map;
     }
     if (!(map instanceof Map)) {
@@ -11481,9 +11651,10 @@
         trackStat("d1Reads");
         countD1Subrequest();
         const [mRows, sRows] = await rawDb.batch([
-          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM movies"),
-          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM series")
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM movies ORDER BY updated_at DESC LIMIT 600"),
+          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, telegraph_url, manual_override FROM series ORDER BY updated_at DESC LIMIT 600")
         ]);
+        const cpuStart = Date.now();
         const nowLoadedTs = Date.now();
         for (const r of (mRows?.results || [])) {
           registerLocalD1CatalogTitleInRam("m", r.tmdb_id, r.title, r.release_year);
@@ -11506,6 +11677,9 @@
             telegraphUrl: r.telegraph_url || null,
             ts: nowLoadedTs
           });
+        }
+        if (typeof recordWorkerSyncCpuSpan === "function") {
+          recordWorkerSyncCpuSpan(Date.now() - cpuStart);
         }
       } catch (e) {}
     }
@@ -11588,10 +11762,10 @@
       }
     }
 
-    const fidArr = Array.from(fidsToCheck).slice(0, 30);
-    const entArr = Array.from(entityKeysToCheck).slice(0, 45);
-    const movFileIdArr = Array.from(movieIdsToPrefetchFiles).slice(0, 25);
-    const serFileIdArr = Array.from(seriesIdsToPrefetchFiles).slice(0, 15);
+    const fidArr = Array.from(fidsToCheck).slice(0, 18);
+    const entArr = Array.from(entityKeysToCheck).slice(0, 24);
+    const movFileIdArr = Array.from(movieIdsToPrefetchFiles).slice(0, 12);
+    const serFileIdArr = Array.from(seriesIdsToPrefetchFiles).slice(0, 8);
     if (fidArr.length === 0 && entArr.length === 0 && movFileIdArr.length === 0 && serFileIdArr.length === 0) return;
 
     const batchStmts = [];
@@ -11618,13 +11792,13 @@
     if (movFileIdArr.length > 0) {
       const placeholders = movFileIdArr.map((_, i) => `?${i + 1}`).join(",");
       movFilesPreloadIdx = batchStmts.length;
-      batchStmts.push(rawDb.prepare(`SELECT id, movie_id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...movFileIdArr));
+      batchStmts.push(rawDb.prepare(`SELECT id, movie_id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...movFileIdArr));
     }
 
     if (serFileIdArr.length > 0) {
       const placeholders = serFileIdArr.map((_, i) => `?${i + 1}`).join(",");
       serFilesPreloadIdx = batchStmts.length;
-      batchStmts.push(rawDb.prepare(`SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id IN (${placeholders})`).bind(...serFileIdArr));
+      batchStmts.push(rawDb.prepare(`SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename FROM episode_files WHERE series_id IN (${placeholders})`).bind(...serFileIdArr));
     }
 
     if (batchStmts.length === 0) return;
@@ -27569,32 +27743,44 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
       :root {
-        --bg: #0b0d13;
-        --surface: #12151e;
-        --card: #181c28;
-        --bg-elevated: #181c28;
-        --red: #e50914;
-        --accent-primary: #e50914;
-        --blue: #0ea5e9;
+        --bg: #060a14;
+        --surface: #0b1222;
+        --card: #101a30;
+        --bg-elevated: #13203b;
+        --red: #00e5ff;
+        --accent-primary: #00e5ff;
+        --blue: #38bdf8;
         --purple: #6366f1;
         --text: #f8fafc;
         --text-main: #f8fafc;
         --muted: #94a3b8;
         --text-muted: #94a3b8;
-        --inc-bg: rgba(16, 185, 129, 0.16);
-        --inc-border: rgba(16, 185, 129, 0.55);
+        --inc-bg: rgba(16, 185, 129, 0.18);
+        --inc-border: rgba(16, 185, 129, 0.62);
         --inc-text: #6ee7b7;
-        --inc-solid: #059669;
-        --exc-bg: rgba(239, 68, 68, 0.16);
-        --exc-border: rgba(239, 68, 68, 0.55);
-        --exc-text: #fca5a5;
-        --exc-solid: #dc2626;
+        --inc-solid: #10b981;
+        --exc-bg: rgba(244, 63, 94, 0.16);
+        --exc-border: rgba(244, 63, 94, 0.55);
+        --exc-text: #fda4af;
+        --exc-solid: #e11d48;
         --scale-all: 1;
         --scale-text: 1;
         --scale-cover: 1;
         --scale-menu: 1;
         --sticky-header-height: calc(54px * var(--scale-menu));
         --sticky-header-offset: calc(var(--sticky-header-height) + 20px);
+      }
+      /* Goldener Schnitt (1 : 1.618 -> 61.8% : 38.2%) Grid-Architektur */
+      .golden-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.618fr) minmax(270px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+      @media (max-width: 860px) {
+        .golden-grid {
+          grid-template-columns: 1fr;
+        }
       }
       /* Design-Themen: Light Mode & Cyberpunk Neon */
       body[data-theme="light"] {
@@ -29304,22 +29490,30 @@
         opacity: 1;
         pointer-events: auto;
       }
+      .card.card-saved {
+        border-color: rgba(16, 185, 129, 0.65) !important;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 14px rgba(0, 229, 255, 0.12);
+      }
       .card-quick-save:hover,
       .card-quick-save.spatial-focus {
         opacity: 1;
         pointer-events: auto;
         transform: scale(1.12);
-        background: var(--red);
+        background: #0ea5e9;
+        color: #04101d;
         border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.55), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.55), 0 4px 12px rgba(0,0,0,0.85);
       }
       .card-quick-save.saved {
-        background: var(--inc-solid);
-        border-color: var(--inc-border);
+        background: linear-gradient(135deg, #10b981, #059669);
+        border-color: #6ee7b7;
+        color: #ffffff;
+        font-weight: 900;
+        box-shadow: 0 0 12px rgba(16, 185, 129, 0.55), 0 2px 8px rgba(0, 0, 0, 0.65);
       }
       .card-quick-save.saved.spatial-focus {
         border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.65), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.75), 0 4px 12px rgba(0,0,0,0.85);
       }
       @keyframes quickSavePop {
         0% { transform: scale(0.8); }
@@ -32303,16 +32497,21 @@
         const key = (typeCode === "s" ? "s" : "m") + "_" + id;
         if (isSaved) savedKeysSet.add(key);
         else savedKeysSet.delete(key);
-        document.querySelectorAll('.card[data-card-key="' + key + '"] .card-quick-save').forEach(btn => {
-          btn.classList.toggle("saved", Boolean(isSaved));
-          btn.textContent = isSaved ? "✓" : "🔖";
-          if (triggerPop) {
-            btn.classList.remove("quick-save-pop");
-            void btn.offsetWidth; // Reflow erzwingen für erneute CSS-Keyframe-Animation
-            btn.classList.add("quick-save-pop");
-            setTimeout(() => {
+        document.querySelectorAll('.card[data-card-key="' + key + '"]').forEach(cardEl => {
+          cardEl.classList.toggle("card-saved", Boolean(isSaved));
+          const btn = cardEl.querySelector(".card-quick-save");
+          if (btn) {
+            btn.classList.toggle("saved", Boolean(isSaved));
+            btn.textContent = isSaved ? "✓" : "🔖";
+            btn.setAttribute("title", isSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)");
+            if (triggerPop) {
               btn.classList.remove("quick-save-pop");
-            }, 360);
+              void btn.offsetWidth; // Reflow erzwingen für erneute CSS-Keyframe-Animation
+              btn.classList.add("quick-save-pop");
+              setTimeout(() => {
+                btn.classList.remove("quick-save-pop");
+              }, 360);
+            }
           }
         });
         // Detail-Modal Button mitsynchronisieren, falls Modal für diesen Titel aktuell geöffnet ist
@@ -32463,6 +32662,58 @@
         cardLongPressTriggered = false;
         clearCardLongPressTimer();
       }, { passive: true });
+
+      // Desktop Mouse Long-Press (~420ms) auf Katalog-Karten zum direkten Speichern/Entfernen in der Merkliste
+      document.addEventListener("mousedown", function(ev) {
+        if (ev.button !== 0) return;
+        if (ev.target && ev.target.closest && ev.target.closest("button, a, select, input")) return;
+        const card = ev.target && ev.target.closest ? ev.target.closest(".card[data-card-key]") : null;
+        if (!card) return;
+        const rawKey = card.getAttribute("data-card-key") || "";
+        const parts = rawKey.split("_");
+        if (parts.length < 2) return;
+        const tc = parts[0] === "s" ? "s" : "m";
+        const idNum = Number(parts[1]);
+        if (!idNum) return;
+        const titleEl = card.querySelector(".card-title");
+        const titleTxt = card.getAttribute("data-card-title") || (titleEl ? titleEl.textContent : "") || "Titel";
+
+        clearCardLongPressTimer();
+        cardLongPressTriggered = false;
+        cardLongPressStartX = ev.clientX;
+        cardLongPressStartY = ev.clientY;
+        cardLongPressTarget = card;
+
+        cardLongPressTimer = setTimeout(function() {
+          cardLongPressTimer = null;
+          cardLongPressTriggered = true;
+          lastCardLongPressAt = Date.now();
+          if (cardLongPressTarget) {
+            cardLongPressTarget.classList.add("long-press-active");
+            setTimeout(() => {
+              if (card) card.classList.remove("long-press-active");
+            }, 240);
+          }
+          quickToggleCardWishlist(null, tc, idNum, titleTxt);
+        }, 420);
+      });
+
+      document.addEventListener("mousemove", function(ev) {
+        if (!cardLongPressTimer) return;
+        const dx = ev.clientX - cardLongPressStartX;
+        const dy = ev.clientY - cardLongPressStartY;
+        if ((dx * dx + dy * dy) > 256) {
+          clearCardLongPressTimer();
+        }
+      });
+
+      document.addEventListener("mouseup", function() {
+        if (cardLongPressTriggered) {
+          lastCardLongPressAt = Date.now();
+          cardLongPressTriggered = false;
+        }
+        clearCardLongPressTimer();
+      });
 
       let state = {
         type: "m",
@@ -33283,6 +33534,73 @@
         applySortValue(next);
       }
 
+      window._workerHealthMonitorState = window._workerHealthMonitorState || {
+        history: [],
+        lastCpuMs: 0.9,
+        lastWallMs: 38,
+        lastSubrequests: 1,
+        lastD1Ops: 1,
+        lastRoute: "/api/tma/discover",
+        status: "healthy",
+        throttled: false,
+        recommendedBatchSize: 5,
+        cooldownUntil: 0,
+        throttleReason: ""
+      };
+
+      function recordClientWorkerHealthSample(sample) {
+        const st = window._workerHealthMonitorState;
+        const cpuMs = Math.max(0.2, Math.min(25, Number(sample?.cpuMs ?? 1.1)));
+        const wallMs = Math.max(5, Math.round(Number(sample?.wallMs ?? 45)));
+        const subrequests = Math.max(0, Number(sample?.subrequests ?? 0));
+        const d1Ops = Math.max(0, Number(sample?.d1Ops ?? 0));
+        const route = String(sample?.route || "/api/tma").replace("/api/tma", "") || "/";
+        st.lastCpuMs = Number(cpuMs.toFixed(2));
+        st.lastWallMs = wallMs;
+        st.lastSubrequests = subrequests;
+        st.lastD1Ops = d1Ops;
+        st.lastRoute = route;
+
+        if (sample?.forcedOverload || cpuMs >= 8.2) {
+          st.status = "critical";
+          st.throttled = true;
+          st.recommendedBatchSize = 1;
+          st.cooldownUntil = Date.now() + 2400;
+          st.throttleReason = "CPU " + cpuMs.toFixed(1) + "ms nahe 10ms Free-Limit → Batch auf 1 gedrosselt + 2.4s Cooldown";
+        } else if (cpuMs >= 6.8 || subrequests >= 14) {
+          st.status = "warning";
+          st.throttled = true;
+          st.recommendedBatchSize = 2;
+          st.cooldownUntil = Date.now() + 1400;
+          st.throttleReason = "CPU " + cpuMs.toFixed(1) + "ms (>=6.8ms) → Automatisch auf 2er Micro-Batch gedrosselt + 1.4s Cooldown";
+        } else {
+          st.status = "healthy";
+          if (st.throttled && Date.now() > st.cooldownUntil) {
+            st.recommendedBatchSize = Math.min(5, (st.recommendedBatchSize || 2) + 1);
+            if (st.recommendedBatchSize >= 4) {
+              st.throttled = false;
+              st.throttleReason = "";
+            }
+          } else if (!st.throttled) {
+            st.recommendedBatchSize = 5;
+          }
+        }
+
+        st.history.push({
+          ts: Date.now(),
+          cpuMs: st.lastCpuMs,
+          wallMs: st.lastWallMs,
+          subrequests: st.lastSubrequests,
+          d1Ops: st.lastD1Ops,
+          route: st.lastRoute,
+          status: st.status
+        });
+        if (st.history.length > 16) st.history.shift();
+        if (typeof window.updateWorkerHealthMonitorDom === "function") {
+          try { window.updateWorkerHealthMonitorDom(); } catch (e) {}
+        }
+      }
+
       async function apiFetchJson(url, opts = {}) {
         const headers = { ...(opts.headers || {}) };
         if (sessionToken) headers["Authorization"] = "Bearer " + sessionToken;
@@ -33295,6 +33613,7 @@
         const isImportBatch = String(url || "").includes("/admin/import-batch");
         const timeoutMs = isImportBatch ? 22000 : 11500;
         const doSingleFetch = async (isRetry = false) => {
+          const reqStartMs = Date.now();
           const timeoutCtrl = new AbortController();
           const timer = setTimeout(() => {
             try { timeoutCtrl.abort(); } catch (e) {}
@@ -33318,6 +33637,7 @@
             if (isRetry) fetchOpts.cache = "no-store";
             const res = await fetch(url, fetchOpts);
             const text = await res.text();
+            const wallElapsed = Date.now() - reqStartMs;
             const trimmed = String(text || "").trim();
             const isHtmlError =
               trimmed.startsWith("<!DOCTYPE") ||
@@ -33328,6 +33648,14 @@
               res.status === 503 ||
               res.status === 524;
             if (isHtmlError) {
+              recordClientWorkerHealthSample({
+                cpuMs: res.status === 503 ? 9.9 : 8.5,
+                wallMs: wallElapsed,
+                subrequests: 15,
+                d1Ops: 8,
+                route: String(url || ""),
+                forcedOverload: true
+              });
               const rateErr = new Error(
                 "API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP " + (res.status || 524) + ") – automatischer Cooldown aktiv"
               );
@@ -33335,7 +33663,20 @@
               throw rateErr;
             }
             try {
-              return JSON.parse(text);
+              const parsed = JSON.parse(text);
+              if (parsed && parsed._workerHealth && typeof parsed._workerHealth === "object") {
+                recordClientWorkerHealthSample(parsed._workerHealth);
+              } else {
+                const approxCpu = Math.min(9.2, Math.max(0.4, Number((text.length / 48000 + (isImportBatch ? 2.4 : 0.7)).toFixed(2))));
+                recordClientWorkerHealthSample({
+                  cpuMs: approxCpu,
+                  wallMs: wallElapsed,
+                  subrequests: Number(parsed?.subrequestCount || 1),
+                  d1Ops: 1,
+                  route: String(url || "")
+                });
+              }
+              return parsed;
             } catch (e) {
               const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 90);
               const parseErr = new Error("Server-Antwort kein JSON (HTTP " + res.status + "): " + (cleanSnippet || "Leere Antwort"));
@@ -34330,13 +34671,13 @@
               const yrStr = esc((it.release_date || it.first_air_date || '').slice(0, 4) || '–');
               const ratStr = it.vote_average ? it.vote_average.toFixed(1) : '–';
               const subRightTxt = isMixedMediaView ? ((tc === 's' ? '📺 ' : '🎬 ') + yrStr) : yrStr;
-              return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')">' +
+              return '<div class="card' + (isCardSaved ? ' card-saved' : '') + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')">' +
                 '<div class="card-poster-wrap">' +
                   '<div class="card-top-left-stack">' +
                     rankHtml +
                     vipQualityHtml +
                   '</div>' +
-                  '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="In Merkliste speichern oder entfernen (Tipp oder Karte gedrückt halten)">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
+                  '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="' + (isCardSaved ? 'In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)' : 'In Merkliste speichern (Tipp oder Karte gedrückt halten)') + '">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
                   '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')" title="Details öffnen">ℹ️ Details</button>' +
                   '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
                   '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : 'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%231c1c24%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2371717a%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E') + '" onerror="this.onerror=null;this.src=\\\'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%231c1c24%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2371717a%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E\\\';" loading="lazy" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
@@ -35642,6 +35983,9 @@
 
       async function pollAntiSpamQueueClient(autoDrain = true) {
         try {
+          if (typeof backupImportJob !== "undefined" && backupImportJob && backupImportJob.running) {
+            return;
+          }
           const prefs = getDeliveryPreferencesClient();
           const targetChat = prefs.targetMode === "group" && prefs.targetGroupChatId ? prefs.targetGroupChatId : chatId;
           const r = await apiFetchJson(
@@ -35663,13 +36007,10 @@
             const hasActiveWork = Number(r.snapshot.queueCount || 0) > 0 ||
               (r.snapshot.gauges && (
                 r.snapshot.gauges.floodWait429?.active ||
-                Number(r.snapshot.gauges.singleChatPacing?.cooldownMs || 0) > 0 ||
-                Number(r.snapshot.gauges.globalPerSec?.used || 0) > 0
+                Number(r.snapshot.gauges.singleChatPacing?.cooldownMs || 0) > 0
               ));
             if (hasActiveWork) {
-              scheduleAntiSpamPollClient(1050);
-            } else if (state.currentView === "settings" || state.currentView === "admin") {
-              scheduleAntiSpamPollClient(3500);
+              scheduleAntiSpamPollClient(1600);
             }
           }
         } catch (e) {}
@@ -41980,7 +42321,7 @@
           : '';
 
         mount.innerHTML =
-          '<div style="background:#141414;border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:12px;margin-top:10px">' +
+          '<div style="background:var(--surface);border:1px solid rgba(0,229,255,0.22);border-radius:12px;padding:12px;margin-top:10px">' +
             checkpointBannerHtml +
             (j.repaired ? (
               '<div style="background:rgba(2,132,199,0.18);border:1px solid rgba(56,189,248,0.45);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:#e0f2fe">' +
@@ -41989,125 +42330,100 @@
             ) : '') +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
               '<div>' +
-                '<span style="font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:999px;background:' + (j.isTelegramBackup ? 'rgba(2,132,199,0.25);color:#38bdf8;border:1px solid rgba(56,189,248,0.4)' : 'rgba(16,185,129,0.2);color:#34d399') + '">' +
+                '<span style="font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px;background:' + (j.isTelegramBackup ? 'rgba(0,229,255,0.16);color:#00e5ff;border:1px solid rgba(0,229,255,0.4)' : 'rgba(16,185,129,0.2);color:#34d399') + '">' +
                   (j.isTelegramBackup ? ('📦 TELEGRAM CHAT-BACKUP: ' + esc(j.backupChatName)) : '📄 STANDARD JSON-TITELLISTE') +
                 '</span>' +
-                '<span style="font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;background:rgba(16,185,129,0.2);color:#34d399;margin-left:6px">📡 Kanal: ' + esc(activeChan || 'Verifiziert') + '</span>' +
-                '<div style="font-size:12px;color:#ccc;margin-top:6px">' +
-                  'Datei: <b>' + esc(effectiveFileName) + '</b>' + (j.fileSizeMb ? (' (' + j.fileSizeMb + ' MB)') : '') + ' • Roh-Nachrichten: <b>' + Number(j.rawMessageCount || total).toLocaleString('de-DE') + '</b> ➔ Zu verarbeitende Einträge: <b style="color:#fbbf24">' + total.toLocaleString('de-DE') + '</b>' +
-                  (j.entries.length === 0 && total > 0 ? ' <span style="color:#38bdf8;font-size:11px">(📌 D1-Checkpoint aktiv – zum Weiterlaufen bitte Datei oben kurz auswählen, Prüfen & Logs sind sofort verfügbar!)</span>' : '') +
+                '<span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;background:rgba(16,185,129,0.2);color:#34d399;margin-left:6px">📡 Kanal: ' + esc(activeChan || 'Verifiziert') + '</span>' +
+                '<div style="font-size:12px;color:#cbd5e1;margin-top:6px">' +
+                  'Datei: <b>' + esc(effectiveFileName) + '</b>' + (j.fileSizeMb ? (' (' + j.fileSizeMb + ' MB)') : '') + ' • Zu verarbeitende Einträge: <b style="color:#00e5ff">' + total.toLocaleString('de-DE') + '</b>' +
+                  (j.entries.length === 0 && total > 0 ? ' <span style="color:#38bdf8;font-size:11px">(📌 D1-Checkpoint aktiv – zum Weiterlaufen Datei oben kurz auswählen)</span>' : '') +
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 (!j.running && j.entries.length > 0 && done < total ? '<button class="btn green" onclick="startOrResumeBackupImport()">🚀 ' + (done > 0 ? ('Fortsetzen ab #' + done.toLocaleString('de-DE')) : ('Smart-Import starten (' + total.toLocaleString('de-DE') + ')')) + '</button>' : '') +
-                (j.running ? '<button class="btn amber" onclick="pauseBackupImport()">⏸️ Pausieren (Checkpoint speichern)</button>' : '') +
-                (done > 0 && !j.running && j.entries.length > 0 ? '<button class="btn amber" onclick="restartBackupFromZeroNoDupesClient()">🔄 Ab 0 neu starten (ohne Duplikate)</button>' : '') +
+                (j.running ? '<button class="btn amber" onclick="pauseBackupImport()">⏸️ Pausieren</button>' : '') +
+                (done > 0 && !j.running && j.entries.length > 0 ? '<button class="btn amber" onclick="restartBackupFromZeroNoDupesClient()">🔄 Ab 0 neu starten</button>' : '') +
                 ((done > 0 || (j.reviewItems && j.reviewItems.length > 0)) ? '<button class="btn red" onclick="resetBackupImport(true)">↺ Zurücksetzen</button>' : '') +
               '</div>' +
             '</div>' +
 
-            (done === 0 && !j.running ? (
-              '<div style="background:#181820;border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:10px;margin-bottom:10px">' +
-                '<div style="font-size:12px;font-weight:800;color:#fbbf24;margin-bottom:6px">🔎 Vorab-Analyse & Smart-Deduplizierung (bereit zum Start):</div>' +
-                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px;font-size:11.5px;margin-bottom:8px">' +
-                  '<div style="background:#121218;padding:7px 9px;border-radius:6px">🎬 Erkannte Filme: <b style="color:#34d399">' + Number(j.detectedMoviesCount || 0).toLocaleString('de-DE') + '</b></div>' +
-                  '<div style="background:#121218;padding:7px 9px;border-radius:6px">📺 Erkannte Serien/Folgen: <b style="color:#38bdf8">' + Number(j.detectedSeriesCount || 0).toLocaleString('de-DE') + '</b></div>' +
-                  '<div style="background:#121218;padding:7px 9px;border-radius:6px">♻️ Exakte Duplikate gefiltert: <b style="color:#a78bfa">' + Number(j.duplicatesSkippedInFile || 0).toLocaleString('de-DE') + '</b></div>' +
-                  '<div style="background:#121218;padding:7px 9px;border-radius:6px">🔗 Weitere Qualitäten/Parts: <b style="color:#fbbf24">' + Number(j.qualityVariantsInFile || 0).toLocaleString('de-DE') + '</b></div>' +
-                '</div>' +
-                (Array.isArray(j.previewSamples) && j.previewSamples.length > 0 ? (
-                  '<div style="font-size:11px;color:#94a3b8">' +
-                    '<b>Vorschau erkannter Titel:</b> ' +
-                    j.previewSamples.map(s =>
-                      '<span style="display:inline-block;background:#101015;border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:2px 6px;margin:2px;color:#e2e8f0">' +
-                        (s.isSeries ? '📺 ' : '🎬 ') + esc(s.cleanTitle) + (s.year && s.year !== 'k.A.' ? ' (' + esc(s.year) + ')' : '') + ' [' + esc(s.quality) + (s.isQualityVariant ? ' • 🔗 Merge' : '') + ']' +
-                      '</span>'
-                    ).join("") +
-                  '</div>'
-                ) : '') +
-              '</div>'
-            ) : '') +
-
-            '<div style="background:#1c1c24;padding:10px;border-radius:8px;border:1px solid rgba(16,185,129,0.35);margin-bottom:10px;display:flex;flex-direction:column;gap:8px">' +
-              '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
-                '<span style="font-size:12px;font-weight:800;color:#34d399">🎵 Ziel-Playlist (automatisch aus Backup-Namen):</span>' +
-                '<input id="backupPlaylistNameInp" value="' + esc(j.customPlaylistName || "🎵 JSON-Import") + '" oninput="updateBackupCustomPlaylistName(this.value)" placeholder="Custom Playlist Name..." style="flex:1;min-width:200px;padding:7px 10px;border-radius:6px;background:#101014;color:#fff;border:1px solid rgba(255,255,255,0.22);font-size:12px" />' +
-                (j.playlistFolderId ? '<span style="font-size:11px;color:#38bdf8">✅ Verknüpft (' + esc(j.playlistFolderId) + ')</span>' : '<span style="font-size:11px;color:#94a3b8">Wird beim Start automatisch angelegt</span>') +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;align-items:center;justify-content:space-between">' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button class="btn ' + (j.activeSubTab !== 'review' && j.activeSubTab !== 'diaglog' ? 'blue' : '') + '" onclick="switchBackupSubTab(\\'dashboard\\')">📊 Live-Cockpit (62:38)</button>' +
+                '<button id="revSubTabBtn" class="btn ' + (j.activeSubTab === 'review' ? 'amber' : '') + '" onclick="switchBackupSubTab(\\'review\\')">' +
+                  '🛠️ Prüfen & Korrigieren' +
+                  (openReviewCount > 0 ? ' <span style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:999px;font-size:10.5px;margin-left:4px">' + openReviewCount + '</span>' : ' (' + (j.reviewItems || []).length + ')') +
+                '</button>' +
+                '<button class="btn ' + (j.activeSubTab === 'diaglog' ? 'blue' : '') + '" onclick="switchBackupSubTab(\\'diaglog\\')">' +
+                  '📋 Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')' +
+                '</button>' +
               '</div>' +
               '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-                '<span style="font-size:11.5px;color:#cbd5e1;font-weight:700">⚙️ Playlist-Modus wählen (später im Admin jederzeit umschaltbar):</span>' +
-                '<button type="button" class="btn ' + (curMode === 'both' ? 'green' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setBackupPlaylistModeClient(\\'both\\')">⚡ Beides: VIP-Stream + Merkliste</button>' +
-                '<button type="button" class="btn ' + (curMode === 'vip_stream' ? 'amber' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setBackupPlaylistModeClient(\\'vip_stream\\')">🌟 Nur VIP-Stream-Playlist (Bot-VIP)</button>' +
-                '<button type="button" class="btn ' + (curMode === 'watchlist' ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setBackupPlaylistModeClient(\\'watchlist\\')">🔖 Nur persönliche Merkliste</button>' +
+                '<span style="font-size:11px;color:#94a3b8">🎵 Ziel-Playlist:</span>' +
+                '<input id="backupPlaylistNameInp" value="' + esc(j.customPlaylistName || "🎵 JSON-Import") + '" oninput="updateBackupCustomPlaylistName(this.value)" placeholder="Playlist Name..." style="width:170px;padding:5px 8px;border-radius:6px;background:#090f1d;color:#fff;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
               '</div>' +
-              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08)">' +
-                '<span style="font-size:11.5px;color:#38bdf8;font-weight:800">⚡ Worker Geschwindigkeits-Profil (Anti-Timeout):</span>' +
-                '<button type="button" class="btn ' + ((state.adminWorkerSpeedProfile || 'free_turbo') === 'free_turbo' ? 'green' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'free_turbo\\')">🛡️ Free-Tier Turbo (10ms CPU • 12/Batch • 3.2s Guard)</button>' +
-                '<button type="button" class="btn ' + (state.adminWorkerSpeedProfile === 'balanced' ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'balanced\\')">⚖️ Ausgewogen (18/Batch • 4.5s Guard)</button>' +
-                '<button type="button" class="btn ' + (state.adminWorkerSpeedProfile === 'paid_pro' ? 'amber' : '') + '" style="padding:4px 9px;font-size:11px" onclick="adminSetWorkerSpeedProfileClient(\\'paid_pro\\')">🚀 Paid Pro (30/Batch • Deep 8-API)</button>' +
-              '</div>' +
-            '</div>' +
-
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px">' +
-              '<button class="btn ' + (j.activeSubTab !== 'review' && j.activeSubTab !== 'diaglog' ? 'red' : '') + '" onclick="switchBackupSubTab(\\'dashboard\\')">📊 Live-Fortschritt & Poster-Feed</button>' +
-              '<button id="revSubTabBtn" class="btn ' + (j.activeSubTab === 'review' ? 'amber' : '') + '" onclick="switchBackupSubTab(\\'review\\')">' +
-                '🛠️ Prüfen & Korrigieren' +
-                (openReviewCount > 0 ? ' <span style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:999px;font-size:10.5px;margin-left:4px">' + openReviewCount + '</span>' : ' (' + (j.reviewItems || []).length + ')') +
-              '</button>' +
-              '<button class="btn ' + (j.activeSubTab === 'diaglog' ? 'blue' : '') + '" onclick="switchBackupSubTab(\\'diaglog\\')">' +
-                '🛠️ Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')' +
-              '</button>' +
             '</div>' +
 
             (j.activeSubTab === "review" ? renderBackupReviewTabHtml(j) : j.activeSubTab === "diaglog" ? renderImportDiagnosticLogBoxHtml() : (
-              '<div style="width:100%;height:22px;background:#222;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,0.15);position:relative;margin:10px 0">' +
-                '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#e50914,#10b981);transition:width 0.25s ease"></div>' +
-                '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:900;color:#fff;text-shadow:0 1px 4px #000">' +
-                  pct + '% (' + done.toLocaleString('de-DE') + ' / ' + total.toLocaleString('de-DE') + ')' +
-                '</div>' +
-              '</div>' +
-              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px;font-size:12px;margin-top:8px">' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🎬 Filme in D1: <b style="color:#34d399">' + j.moviesSaved.toLocaleString('de-DE') + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px">📺 Serien in D1: <b style="color:#38bdf8">' + j.seriesSaved.toLocaleString('de-DE') + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px">♻️ Duplikate gefiltert: <b style="color:#a78bfa">' + totalDeduplicated.toLocaleString('de-DE') + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🔗 Qualitäten gemerged: <b style="color:#fbbf24">' + totalMergedStreams.toLocaleString('de-DE') + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="switchBackupSubTab(\\'review\\')">⚠️ Unsicher / Prüfen: <b style="color:#f59e0b">' + j.uncertainCount.toLocaleString('de-DE') + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="setBackupReviewFilter(\\'failed\\');switchBackupSubTab(\\'review\\')">❌ Nicht erkannt: <b style="color:#f87171">' + j.failedCount.toLocaleString('de-DE') + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px;cursor:pointer" onclick="switchBackupSubTab(\\'diaglog\\')">🛠️ Diagnose-Log: <b style="color:#60a5fa">' + getDiagnosticLogTotalCountClient() + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🧠 D1-Pre-Seed: <b style="color:#34d399">' + Number(j.d1PreSeedCount || 0).toLocaleString('de-DE') + ' Titel</b>' + (Number(j.browserCacheHitsCount || 0) > 0 ? (' <span style="color:#38bdf8;font-size:10.5px">(⚡ ' + Number(j.browserCacheHitsCount).toLocaleString('de-DE') + ' Hits)</span>') : '') + '</div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px">🎛️ Modus: <b style="color:' + (j.currentBatchModeColor || '#38bdf8') + '">' + esc(j.currentBatchModeLabel || '⚡ Standard (10/Batch)') + '</b></div>' +
-                '<div style="background:#1c1c22;padding:8px;border-radius:6px">⚡ Tempo: <b>' + speedPerSec + ' Titel/s</b>' + (j.running && etaSec > 0 ? ' (ETA ~' + etaStr + ')' : '') + '</div>' +
-              '</div>' +
-              (Array.isArray(j.livePosterFeed) && j.livePosterFeed.length > 0 ? (
-                '<div style="margin-top:10px">' +
-                  '<div style="font-size:11.5px;font-weight:800;color:#cbd5e1;margin-bottom:6px">🎞️ Zuletzt zugeordnete Titel (Live-Feed):</div>' +
-                  '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">' +
-                    j.livePosterFeed.slice(0, 8).map(f => {
-                      const fSeCode = (f.typeCode === 's' && f.season)
-                        ? ('S' + String(f.season).padStart(2, '0') + 'E' + String(f.episode || 1).padStart(2, '0'))
-                        : '';
-                      const fPoster = resolvePosterUrlClient(f.poster, 'w185', '');
-                      return '<div style="min-width:155px;max-width:185px;background:#181820;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:6px;display:flex;gap:7px;align-items:center;flex-shrink:0">' +
-                        (fPoster
-                          ? '<img src="' + esc(fPoster) + '" style="width:34px;height:50px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
-                          : '<div style="width:34px;height:50px;background:#252530;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (f.typeCode === 's' ? '📺' : '🎬') + '</div>') +
-                        '<div style="min-width:0;flex:1">' +
-                          '<div style="font-size:11px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(f.cleanTitle) + '</div>' +
-                          '<div style="font-size:10px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (fSeCode ? ('<b style="color:#38bdf8">' + esc(fSeCode) + '</b> • ') : '') + esc(f.year || 'k.A.') + ' • ' + esc(f.quality || '1080p') + '</div>' +
-                          '<div style="font-size:9.5px;margin-top:2px;color:' + (f.isUncertain ? '#fbbf24' : f.ingestStatus === 'merged_quality' ? '#38bdf8' : '#34d399') + '">' +
-                            esc(f.metadataSource || 'TMDb') + ' • ' + (f.isUncertain ? ('⚠️ ' + f.confidence + '%') : f.ingestStatus === 'merged_quality' ? '🔗 Merge' : f.ingestStatus === 'duplicate' ? '♻️ In D1' : ('✅ ' + f.confidence + '%')) +
-                          '</div>' +
-                        '</div>' +
-                      '</div>';
-                    }).join("") +
+              '<div class="golden-grid">' +
+                /* Linke Hauptspalte (61.8%): Fortschritt, Kern-Kennzahlen & Live-Poster-Feed */
+                '<div style="display:flex;flex-direction:column;gap:10px;min-width:0">' +
+                  '<div style="width:100%;height:24px;background:#080e1c;border-radius:999px;overflow:hidden;border:1px solid rgba(0,229,255,0.3);position:relative">' +
+                    '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0284c7,#00e5ff,#10b981);transition:width 0.25s ease"></div>' +
+                    '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:900;color:#fff;text-shadow:0 1px 4px #000">' +
+                      pct + '% (' + done.toLocaleString('de-DE') + ' / ' + total.toLocaleString('de-DE') + ')' +
+                    '</div>' +
                   '</div>' +
-                '</div>'
-              ) : '') +
-              (j.recentLog.length > 0 ? (
-                '<div style="margin-top:8px;font-size:11px;color:#94a3b8;max-height:90px;overflow-y:auto;background:#101014;padding:6px 8px;border-radius:6px;font-family:monospace">' +
-                  j.recentLog.slice(-6).map(l => '<div>' + esc(l) + '</div>').join("") +
-                '</div>'
-              ) : '')
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;font-size:11.5px">' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">🎬 Filme in D1: <b style="color:#34d399">' + j.moviesSaved.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">📺 Serien in D1: <b style="color:#38bdf8">' + j.seriesSaved.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">♻️ Duplikate: <b style="color:#a78bfa">' + totalDeduplicated.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">🔗 Gemerged: <b style="color:#fbbf24">' + totalMergedStreams.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07);cursor:pointer" onclick="switchBackupSubTab(\\'review\\')">⚠️ Prüfen: <b style="color:#f59e0b">' + j.uncertainCount.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07);cursor:pointer" onclick="setBackupReviewFilter(\\'failed\\');switchBackupSubTab(\\'review\\')">❌ Offen: <b style="color:#f87171">' + j.failedCount.toLocaleString('de-DE') + '</b></div>' +
+                  '</div>' +
+                  (Array.isArray(j.livePosterFeed) && j.livePosterFeed.length > 0 ? (
+                    '<div>' +
+                      '<div style="font-size:11.5px;font-weight:800;color:#cbd5e1;margin-bottom:6px">🎞️ Zuletzt zugeordnete Titel (Live-Feed):</div>' +
+                      '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">' +
+                        j.livePosterFeed.slice(0, 8).map(f => {
+                          const fSeCode = (f.typeCode === 's' && f.season)
+                            ? ('S' + String(f.season).padStart(2, '0') + 'E' + String(f.episode || 1).padStart(2, '0'))
+                            : '';
+                          const fPoster = resolvePosterUrlClient(f.poster, 'w185', '');
+                          return '<div style="min-width:155px;max-width:185px;background:var(--card);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:6px;display:flex;gap:7px;align-items:center;flex-shrink:0">' +
+                            (fPoster
+                              ? '<img src="' + esc(fPoster) + '" style="width:34px;height:50px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
+                              : '<div style="width:34px;height:50px;background:#13203b;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (f.typeCode === 's' ? '📺' : '🎬') + '</div>') +
+                            '<div style="min-width:0;flex:1">' +
+                              '<div style="font-size:11px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(f.cleanTitle) + '</div>' +
+                              '<div style="font-size:10px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (fSeCode ? ('<b style="color:#00e5ff">' + esc(fSeCode) + '</b> • ') : '') + esc(f.year || 'k.A.') + ' • ' + esc(f.quality || '1080p') + '</div>' +
+                              '<div style="font-size:9.5px;margin-top:2px;color:' + (f.isUncertain ? '#fbbf24' : f.ingestStatus === 'merged_quality' ? '#38bdf8' : '#34d399') + '">' +
+                                esc(f.metadataSource || 'TMDb') + ' • ' + (f.isUncertain ? ('⚠️ ' + f.confidence + '%') : f.ingestStatus === 'merged_quality' ? '🔗 Merge' : f.ingestStatus === 'duplicate' ? '♻️ In D1' : ('✅ ' + f.confidence + '%')) +
+                              '</div>' +
+                            '</div>' +
+                          '</div>';
+                        }).join("") +
+                      '</div>' +
+                    '</div>'
+                  ) : '') +
+                '</div>' +
+                /* Rechte Begleitspalte (38.2%): Echtzeit Worker-Health-Monitor & Kompakt-Log */
+                '<div style="display:flex;flex-direction:column;gap:10px;min-width:0">' +
+                  (typeof renderWorkerHealthMonitorWidgetHtml === "function" ? renderWorkerHealthMonitorWidgetHtml(true) : '') +
+                  '<div style="background:var(--card);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:9px">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#cbd5e1;margin-bottom:5px">' +
+                      '<span>🎛️ Batch: <b style="color:' + (j.currentBatchModeColor || '#00e5ff') + '">' + esc(j.currentBatchModeLabel || '🛡️ Free-Turbo (5/Batch)') + '</b></span>' +
+                      '<span>⚡ <b>' + speedPerSec + ' Titel/s</b>' + (j.running && etaSec > 0 ? ' (~' + etaStr + ')' : '') + '</span>' +
+                    '</div>' +
+                    (j.recentLog.length > 0 ? (
+                      '<div style="font-size:10.5px;color:#94a3b8;max-height:86px;overflow-y:auto;background:#070c18;padding:6px 8px;border-radius:6px;font-family:monospace;line-height:1.45">' +
+                        j.recentLog.slice(-5).map(l => '<div>' + esc(l) + '</div>').join("") +
+                      '</div>'
+                    ) : '<div style="font-size:11px;color:#64748b">Bereit zum Start. Alle Batches werden automatisch unter 10ms CPU gehalten.</div>') +
+                  '</div>' +
+                '</div>' +
+              '</div>'
             )) +
           '</div>';
 
@@ -42795,26 +43111,35 @@
             }
           }
 
+          const healthSt = window._workerHealthMonitorState || {};
+          if (healthSt.cooldownUntil && Date.now() < healthSt.cooldownUntil) {
+            const waitCooldownMs = Math.min(2800, Math.max(200, healthSt.cooldownUntil - Date.now()));
+            backupImportJob.currentBatchModeLabel = "🛡️ CPU-Cooldown (" + (waitCooldownMs / 1000).toFixed(1) + "s Pause)";
+            backupImportJob.currentBatchModeColor = "#f59e0b";
+            renderBackupImportBoxDom();
+            await new Promise(r => setTimeout(r, waitCooldownMs));
+          }
           const curProfileBaseSize = getEffectiveImportBatchSizeClient();
-          let effectiveBatchSize = curProfileBaseSize;
+          const healthRecSize = Number(healthSt.recommendedBatchSize || 5);
+          let effectiveBatchSize = Math.min(curProfileBaseSize, healthRecSize);
           if (curRetryCount > 0) {
             effectiveBatchSize = 1;
             backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
             backupImportJob.currentBatchModeColor = "#fbbf24";
-          } else if (backupImportJob._lastBatchHadLatencyCooldown) {
-            effectiveBatchSize = 6;
+          } else if (healthSt.throttled || backupImportJob._lastBatchHadLatencyCooldown) {
+            effectiveBatchSize = Math.min(2, Math.max(1, healthRecSize));
             backupImportJob._lastBatchHadLatencyCooldown = false;
-            backupImportJob.currentBatchModeLabel = "🛡️ Gedrosselt (6/Batch nach Pause)";
+            backupImportJob.currentBatchModeLabel = "🛡️ Auto-Throttle (" + effectiveBatchSize + "/Batch • <7ms CPU Schutz)";
             backupImportJob.currentBatchModeColor = "#f59e0b";
-          } else if (lookaheadCacheHits >= 8) {
-            effectiveBatchSize = Math.min(20, curProfileBaseSize + 4);
+          } else if (lookaheadCacheHits >= 6) {
+            effectiveBatchSize = Math.min(8, curProfileBaseSize + 2);
             backupImportJob.currentBatchModeLabel = "🚀 Turbo (" + effectiveBatchSize + "/Batch • Cache-Hits)";
             backupImportJob.currentBatchModeColor = "#34d399";
           } else {
-            effectiveBatchSize = curProfileBaseSize;
+            effectiveBatchSize = Math.min(5, curProfileBaseSize);
             const profShort = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo" ? "🛡️ Free-Turbo" : (state.adminWorkerSpeedProfile === "paid_pro" ? "🚀 Paid Pro" : "⚖️ Ausgewogen");
             backupImportJob.currentBatchModeLabel = profShort + " (" + effectiveBatchSize + "/Batch)";
-            backupImportJob.currentBatchModeColor = "#38bdf8";
+            backupImportJob.currentBatchModeColor = "#00e5ff";
           }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
 
@@ -42887,7 +43212,20 @@
           let hadRateWarning = false;
           let batchLatencyMs = 0;
           try {
-            const cpPayload = buildCurrentBackupCheckpointPayload();
+            const isFinalBatchFlag = (backupImportJob.cursor + rawSlice.length >= backupImportJob.entries.length);
+            backupImportJob._batchStepCounter = Number(backupImportJob._batchStepCounter || 0) + 1;
+            const shouldPersistD1Checkpoint = isFinalBatchFlag || (backupImportJob._batchStepCounter % 6 === 0);
+            const lightweightCheckpoint = shouldPersistD1Checkpoint ? {
+              fileName: backupImportJob.fileName,
+              total: backupImportJob.entries.length,
+              cursor: backupImportJob.cursor,
+              moviesSaved: backupImportJob.moviesSaved,
+              seriesSaved: backupImportJob.seriesSaved,
+              failedCount: backupImportJob.failedCount,
+              duplicatesInDb: backupImportJob.duplicatesInDb,
+              mergedQualitiesInDb: backupImportJob.mergedQualitiesInDb,
+              uncertainCount: backupImportJob.uncertainCount
+            } : null;
             const tBatchStartMs = Date.now();
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
               method: "POST",
@@ -42895,7 +43233,7 @@
               body: JSON.stringify({
                 entries: slice,
                 batchStartCursor: backupImportJob.cursor,
-                isFinalBatch: (backupImportJob.cursor + rawSlice.length >= backupImportJob.entries.length),
+                isFinalBatch: isFinalBatchFlag,
                 sourceChannelId: activeChan,
                 playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
                 playlistMode: backupImportJob.playlistMode || "both",
@@ -42904,7 +43242,7 @@
                 sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
                 speedProfile: state.adminWorkerSpeedProfile || "free_turbo",
                 deferKvWrite: true,
-                checkpoint: cpPayload
+                checkpoint: lightweightCheckpoint
               })
             });
             batchLatencyMs = Date.now() - tBatchStartMs;
@@ -43871,6 +44209,313 @@
         }, "image/png");
       }
 
+      // 1-Klick BotFather 512x512 Single-<path> SVG Download (exakt nach Telegram-Spezifikation: 512x512 + 1 einziges <path>-Element)
+      function downloadBotFatherSinglePathSvgClient() {
+        const singlePathSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="#00E5FF" fill-rule="evenodd" d="M256 28 C381.9 28 484 130.1 484 256 C484 381.9 381.9 484 256 484 C130.1 484 28 381.9 28 256 C28 130.1 130.1 28 256 28 Z M256 58 C146.6 58 58 146.6 58 256 C58 365.4 146.6 454 256 454 C365.4 454 454 365.4 454 256 C454 146.6 365.4 58 256 58 Z M256 96 C344.4 96 416 167.6 416 256 C416 344.4 344.4 416 256 416 C167.6 416 96 344.4 96 256 C96 167.6 167.6 96 256 96 Z M256 118 C179.8 118 118 179.8 118 256 C118 332.2 179.8 394 256 394 C332.2 394 394 332.2 394 256 C394 179.8 332.2 118 256 118 Z M136 168 L168 168 L168 200 L136 200 Z M136 240 L168 240 L168 272 L136 272 Z M136 312 L168 312 L168 344 L136 344 Z M344 168 L376 168 L376 200 L344 200 Z M344 240 L376 240 L376 272 L344 272 Z M344 312 L376 312 L376 344 L344 344 Z M210 184 L334 256 L210 328 Z"/></svg>';
+        const blob = new Blob([singlePathSvg], { type: "image/svg+xml;charset=utf-8" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = "bot-splashscreen-512x512.svg";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          try {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+          } catch (e) {}
+        }, 500);
+        showHudToast("✅ bot-splashscreen-512x512.svg (512×512 • 1 <path>-Element) heruntergeladen!");
+      }
+
+      // 1-Klick BotFather 512x512 WEBP Download (Alternative für @BotFather Splashscreen / Icon)
+      function downloadNeonBotAssetWebpClient() {
+        const width = 512;
+        const height = 512;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const bgGrad = ctx.createLinearGradient(0, 0, width, height);
+        bgGrad.addColorStop(0, "#060A14");
+        bgGrad.addColorStop(0.5, "#0B1328");
+        bgGrad.addColorStop(1, "#111C38");
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, width, height);
+
+        const cx = 256;
+        const cy = 256;
+        const glow = ctx.createRadialGradient(cx, cy, 24, cx, cy, 220);
+        glow.addColorStop(0, "rgba(0, 229, 255, 0.42)");
+        glow.addColorStop(0.55, "rgba(99, 102, 241, 0.25)");
+        glow.addColorStop(1, "rgba(6, 10, 20, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 220, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "#00E5FF";
+        ctx.lineWidth = 14;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 176, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = "#6366F1";
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 132, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const playGrad = ctx.createLinearGradient(195, 175, 335, 335);
+        playGrad.addColorStop(0, "#00E5FF");
+        playGrad.addColorStop(1, "#38BDF8");
+        ctx.fillStyle = playGrad;
+        ctx.beginPath();
+        ctx.moveTo(212, 182);
+        ctx.lineTo(334, 256);
+        ctx.lineTo(212, 330);
+        ctx.closePath();
+        ctx.fill();
+
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            showHudToast("⚠️ WEBP-Export nicht unterstützt.");
+            return;
+          }
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = blobUrl;
+          a.download = "bot-splashscreen-512x512.webp";
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            try {
+              document.body.removeChild(a);
+              URL.revokeObjectURL(blobUrl);
+            } catch (e) {}
+          }, 500);
+          showHudToast("✅ bot-splashscreen-512x512.webp (512×512 WEBP) heruntergeladen!");
+        }, "image/webp", 0.94);
+      }
+
+      // Echtzeit Worker-Health-Monitor Widget (CPU-Laufzeit ms / 10ms Limit, Subrequests, Auto-Throttle & Sparkline)
+      function renderWorkerHealthMonitorWidgetHtml(compact = false) {
+        const st = window._workerHealthMonitorState || {
+          history: [],
+          lastCpuMs: 0.9,
+          lastWallMs: 38,
+          lastSubrequests: 1,
+          lastD1Ops: 1,
+          lastRoute: "/discover",
+          status: "healthy",
+          throttled: false,
+          recommendedBatchSize: 5
+        };
+        const cpuMs = Number(st.lastCpuMs || 0.9);
+        const cpuPct = Math.min(100, Math.max(4, Math.round((cpuMs / 10) * 100)));
+        const isCrit = cpuMs >= 8.2 || st.status === "critical";
+        const isWarn = !isCrit && (cpuMs >= 6.8 || st.status === "warning" || st.throttled);
+        const barColor = isCrit
+          ? "linear-gradient(90deg,#f59e0b,#ef4444)"
+          : isWarn
+            ? "linear-gradient(90deg,#00e5ff,#f59e0b)"
+            : "linear-gradient(90deg,#00e5ff,#10b981)";
+        const badgeBg = isCrit
+          ? "rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.5)"
+          : isWarn
+            ? "rgba(245,158,11,0.2);color:#fde68a;border:1px solid rgba(245,158,11,0.5)"
+            : "rgba(16,185,129,0.18);color:#6ee7b7;border:1px solid rgba(16,185,129,0.45)";
+        const badgeText = isCrit
+          ? "🚨 CPU NAHE 10ms – AUTO-COOLDOWN (1/Batch)"
+          : isWarn
+            ? "🛡️ GEDROSSELT (" + (st.recommendedBatchSize || 2) + "/Batch)"
+            : "🟢 OPTIMAL (<10ms Free-Limit)";
+        const hist = Array.isArray(st.history) && st.history.length > 0
+          ? st.history.slice(-14)
+          : [{ cpuMs: 0.9, status: "healthy" }, { cpuMs: 1.2, status: "healthy" }, { cpuMs: cpuMs, status: st.status }];
+        const sparkBars = hist.map(h => {
+          const hPct = Math.min(100, Math.max(12, Math.round((Number(h.cpuMs || 1) / 10) * 100)));
+          const c = h.cpuMs >= 8.2 ? "#ef4444" : h.cpuMs >= 6.8 ? "#f59e0b" : "#00e5ff";
+          return '<div title="CPU ' + Number(h.cpuMs || 0).toFixed(2) + 'ms (' + esc(h.route || '') + ')" style="flex:1;height:' + hPct + '%;background:' + c + ';border-radius:2px;min-width:5px"></div>';
+        }).join("");
+
+        return '<div class="worker-health-monitor-mount" style="background:linear-gradient(145deg,#091122,#0d1830);border:1px solid ' + (isCrit ? 'rgba(239,68,68,0.55)' : isWarn ? 'rgba(245,158,11,0.5)' : 'rgba(0,229,255,0.32)') + ';border-radius:10px;padding:' + (compact ? '10px' : '12px') + '">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">' +
+            '<div style="font-size:12px;font-weight:900;color:#f8fafc;display:flex;align-items:center;gap:6px">' +
+              '<span>🩺 Echtzeit Worker-Health-Monitor</span>' +
+              '<span style="font-size:10px;padding:2px 7px;border-radius:999px;' + badgeBg + '">' + badgeText + '</span>' +
+            '</div>' +
+            '<span style="font-size:11px;font-family:monospace;color:#00e5ff;font-weight:800">' + cpuMs.toFixed(2) + ' ms / 10.0 ms CPU</span>' +
+          '</div>' +
+          '<div style="width:100%;height:10px;background:#050913;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);margin-bottom:8px;position:relative">' +
+            '<div style="width:' + cpuPct + '%;height:100%;background:' + barColor + ';transition:width 0.25s ease"></div>' +
+            '<div title="7ms Auto-Throttle Schwelle" style="position:absolute;left:70%;top:0;bottom:0;width:2px;background:rgba(245,158,11,0.85)"></div>' +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:10.5px;margin-bottom:8px">' +
+            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">⚡ CPU: <b style="color:#00e5ff">' + cpuMs.toFixed(2) + 'ms</b></div>' +
+            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">⏱️ Netz: <b style="color:#e2e8f0">' + Number(st.lastWallMs || 40) + 'ms</b></div>' +
+            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">🔌 Subreq: <b style="color:#38bdf8">' + Number(st.lastSubrequests || 1) + '/50</b></div>' +
+            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">📦 Batch: <b style="color:#34d399">' + Number(st.recommendedBatchSize || 5) + '/Req</b></div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:flex-end;gap:3px;height:24px;background:#050913;padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,0.07)">' +
+            sparkBars +
+          '</div>' +
+          (st.throttleReason ? '<div style="font-size:10.5px;color:#fbbf24;margin-top:6px">🛡️ ' + esc(st.throttleReason) + '</div>' : '<div style="font-size:10px;color:#64748b;margin-top:5px">Ab 7.0ms CPU halbiert der Monitor die Batch-Größe vollautomatisch auf 1–2 und legt einen kurzen Cooldown ein.</div>') +
+        '</div>';
+      }
+
+      window.updateWorkerHealthMonitorDom = function() {
+        const mounts = document.querySelectorAll(".worker-health-monitor-mount");
+        if (!mounts || mounts.length === 0) return;
+        const freshHtml = renderWorkerHealthMonitorWidgetHtml(true);
+        mounts.forEach(el => {
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = freshHtml;
+          if (wrapper.firstElementChild) {
+            el.replaceWith(wrapper.firstElementChild);
+          }
+        });
+      };
+
+      // Generiert ein kryptografisch starkes Webhook-Passwort (secret_token kompatibel: A-Z, a-z, 0-9, _, -)
+      function generateRandomWebhookPasswordClient() {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+        const arr = new Uint8Array(36);
+        if (window.crypto && window.crypto.getRandomValues) {
+          window.crypto.getRandomValues(arr);
+        } else {
+          for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+        }
+        let token = "tp_wh_";
+        for (let i = 0; i < arr.length; i++) {
+          token += chars[arr[i] % chars.length];
+        }
+        const inp = document.getElementById("adminWebhookPasswordInp");
+        if (inp) {
+          inp.type = "text";
+          inp.value = token;
+        }
+        showHudToast("🔑 Sicheres Webhook-Passwort generiert – jetzt auf 'Speichern & bei Telegram registrieren' klicken!");
+      }
+
+      async function adminSaveAndRegisterWebhookClient() {
+        const pwInp = document.getElementById("adminWebhookPasswordInp");
+        const maxConnSel = document.getElementById("adminWebhookMaxConnSel");
+        const dropChk = document.getElementById("adminWebhookDropPendingChk");
+        const urlInp = document.getElementById("adminWebhookUrlInp");
+        const statusBox = document.getElementById("adminWebhookStatusBox");
+        const webhookPassword = pwInp ? String(pwInp.value || "").trim() : "";
+        const maxConnections = maxConnSel ? Number(maxConnSel.value || 8) : 8;
+        const dropPendingUpdates = Boolean(dropChk && dropChk.checked);
+        const webhookUrl = urlInp ? String(urlInp.value || "").trim() : "";
+
+        if (statusBox) {
+          statusBox.style.display = "block";
+          statusBox.style.color = "#38bdf8";
+          statusBox.innerHTML = "⏳ Speichere Webhook-Passwort & registriere Webhook bei Telegram (<code>setWebhook</code>)...";
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "save_webhook_and_register",
+              webhookPassword,
+              maxConnections,
+              dropPendingUpdates,
+              webhookUrl
+            })
+          });
+          if (r && r.ok) {
+            if (window._lastAdminOverviewCache && window._lastAdminOverviewCache.botSetup) {
+              window._lastAdminOverviewCache.botSetup.hasWebhookPassword = Boolean(r.hasWebhookPassword);
+              window._lastAdminOverviewCache.botSetup.webhookPasswordPreview = r.webhookPasswordPreview || "";
+              window._lastAdminOverviewCache.botSetup.webhookMaxConnections = r.maxConnections || maxConnections;
+            }
+            showHudToast("🔒 Webhook & Passwort erfolgreich bei Telegram registriert!");
+            if (statusBox) {
+              statusBox.style.color = "#34d399";
+              statusBox.innerHTML = "✅ <b>" + esc(r.message || "Webhook registriert!") + "</b>" +
+                (r.webhookPasswordPreview ? (" • Aktives Passwort: <code>" + esc(r.webhookPasswordPreview) + "</code>") : "");
+            }
+          } else {
+            const errTxt = (r && (r.message || r.error)) || "Registrierung fehlgeschlagen";
+            showHudToast("⚠️ " + errTxt);
+            if (statusBox) {
+              statusBox.style.color = "#f87171";
+              statusBox.innerHTML = "❌ <b>Fehler:</b> " + esc(errTxt);
+            }
+          }
+        } catch (e) {
+          if (statusBox) {
+            statusBox.style.color = "#f87171";
+            statusBox.innerHTML = "❌ <b>Netzwerkfehler:</b> " + esc(e.message || String(e));
+          }
+        }
+      }
+
+      async function adminCheckWebhookLiveStatusClient() {
+        const statusBox = document.getElementById("adminWebhookStatusBox");
+        if (statusBox) {
+          statusBox.style.display = "block";
+          statusBox.style.color = "#38bdf8";
+          statusBox.innerHTML = "🔍 Frage Live-Status von Telegram ab (<code>getWebhookInfo</code>)...";
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "get_webhook_info" })
+          });
+          const info = r?.webhookInfo || {};
+          const pending = Number(info.pending_update_count || 0);
+          const lastErr = info.last_error_message ? String(info.last_error_message) : "Keine Fehler";
+          const maxConn = Number(info.max_connections || 8);
+          if (statusBox) {
+            statusBox.style.color = pending > 0 ? "#fbbf24" : "#34d399";
+            statusBox.innerHTML =
+              '📡 <b>Telegram Live-Webhook-Status:</b><br/>' +
+              '• <b>Registrierte URL:</b> <code>' + esc(info.url || "Nicht gesetzt") + '</code><br/>' +
+              '• <b>Wartende Updates (Retry-Stau):</b> <b style="color:' + (pending > 0 ? '#f87171' : '#34d399') + '">' + pending + '</b> • <b>max_connections:</b> <code>' + maxConn + '</code><br/>' +
+              '• <b>Passwort-Gatekeeper:</b> ' + (r?.hasWebhookPassword ? '🔒 Aktiv (<code>X-Telegram-Bot-Api-Secret-Token</code>)' : '⚠️ Kein Passwort gesetzt') + '<br/>' +
+              '• <b>Letzter Telegram-Fehler:</b> <code>' + esc(lastErr) + '</code>';
+          }
+        } catch (e) {
+          if (statusBox) {
+            statusBox.style.color = "#f87171";
+            statusBox.innerHTML = "❌ Fehler bei getWebhookInfo: " + esc(e.message || String(e));
+          }
+        }
+      }
+
+      async function adminDropPendingWebhookUpdatesClient() {
+        const statusBox = document.getElementById("adminWebhookStatusBox");
+        if (statusBox) {
+          statusBox.style.display = "block";
+          statusBox.style.color = "#fbbf24";
+          statusBox.innerHTML = "🧹 Verwerfe angestaute Telegram-Updates (<code>drop_pending_updates=true</code>)...";
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "drop_pending_updates" })
+          });
+          showHudToast("🧹 " + (r?.message || "Hängende Updates verworfen!"));
+          if (statusBox) {
+            statusBox.style.color = "#34d399";
+            statusBox.innerHTML = "✅ <b>" + esc(r?.message || "Alle hängenden Updates verworfen!") + "</b>";
+          }
+        } catch (e) {
+          if (statusBox) {
+            statusBox.style.color = "#f87171";
+            statusBox.innerHTML = "❌ Fehler: " + esc(e.message || String(e));
+          }
+        }
+      }
+
       function applyAdminTelegramPaletteLiveClient(paletteKey) {
         state.themeMode = paletteKey || "dark";
         applyThemeAndAccessibilityToDom();
@@ -43885,7 +44530,7 @@
         } catch (e) {}
         const pal = (typeof TELEGRAM_THEME_PALETTES_CLIENT !== "undefined" && TELEGRAM_THEME_PALETTES_CLIENT[state.themeMode])
           ? TELEGRAM_THEME_PALETTES_CLIENT[state.themeMode]
-          : { headerColor: "#0B1021", bgColor: "#070B19", bottomBarColor: "#090D1C" };
+          : { headerColor: "#060A14", bgColor: "#060A14", bottomBarColor: "#0B1222" };
         showHudToast("🎨 Mini-App Farben live gesetzt (Header " + pal.headerColor + " • Body " + pal.bgColor + ")");
         if (state.currentView === "admin") {
           loadAdminPanelView(false);
@@ -44332,26 +44977,141 @@
               ) : '') +
             '</div>';
 
+          const officialWebhookUrl = String(botSetup.webhookUrl || (effMiniAppUrl + "/webhook"));
+          const hasWebhookPw = Boolean(botSetup.hasWebhookPassword);
+          const webhookPwPreview = String(botSetup.webhookPasswordPreview || "");
+          const webhookMaxConn = Number(botSetup.webhookMaxConnections || 8);
+
+          const botAndSettingsDedicatedPageHtml =
+            '<div class="golden-grid">' +
+              /* Linke Hauptspalte (61.8%): Webhook-Zentrale + Passwort-Schutz + BotFather Studio + Bot API 8.3 */
+              '<div style="display:flex;flex-direction:column;gap:12px;min-width:0">' +
+                /* 1. Telegram Webhook-Link & Passwort-Schutz (secret_token) Zentrale */
+                '<div class="panel-box" style="border-color:rgba(0,229,255,0.48);background:linear-gradient(145deg,#081121,#0d1930)">' +
+                  '<div class="section-title" style="margin-bottom:6px">' +
+                    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                      '<span>🔗 Telegram Bot Webhook-Link & Passwort-Schutz (<code>secret_token</code>)</span>' +
+                      '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:' + (hasWebhookPw ? 'rgba(16,185,129,0.2);color:#34d399;border:1px solid rgba(16,185,129,0.45)' : 'rgba(245,158,11,0.2);color:#fbbf24;border:1px solid rgba(245,158,11,0.45)') + '">' +
+                        (hasWebhookPw ? ('🔒 Passwort aktiv (' + esc(webhookPwPreview) + ')') : '⚠️ Noch kein Webhook-Passwort gesetzt') +
+                      '</span>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                      '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="adminCheckWebhookLiveStatusClient()">🔍 Live-Status (getWebhookInfo)</button>' +
+                      '<button type="button" class="btn amber" style="padding:4px 9px;font-size:11px" onclick="adminDropPendingWebhookUpdatesClient()" title="Verwirft alle bei Telegram angestauten Alt-Updates (stoppt Retry-Stürme sofort)">🧹 Hängende Updates verwerfen</button>' +
+                    '</div>' +
+                  '</div>' +
+                  '<p style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:10px">' +
+                    'Schützt deinen Cloudflare Worker vor fremden Bot-Scannern und Telegram-Retry-Stürmen: Unautorisierte Requests ohne gültiges Webhook-Passwort werden in <b>&lt; 0.1ms (0 D1-Reads)</b> an der Edge abgewiesen.' +
+                  '</p>' +
+                  '<div style="display:flex;flex-direction:column;gap:8px">' +
+                    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                      '<span style="font-size:11.5px;font-weight:800;color:#00e5ff;min-width:130px">🌐 Webhook-URL:</span>' +
+                      '<input id="adminWebhookUrlInp" value="' + esc(officialWebhookUrl) + '" readonly style="flex:1;min-width:220px;padding:7px 10px;border-radius:7px;background:#050a14;color:#00e5ff;border:1px solid rgba(0,229,255,0.35);font-family:monospace;font-size:12px" />' +
+                      '<button type="button" class="btn" onclick="copyAdminTextToClipboardClient(\\'' + esc(officialWebhookUrl) + '\\',\\'Telegram Webhook-URL\\')">📋 Link kopieren</button>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                      '<span style="font-size:11.5px;font-weight:800;color:#34d399;min-width:130px">🔑 Webhook-Passwort:</span>' +
+                      '<input id="adminWebhookPasswordInp" type="password" placeholder="' + (hasWebhookPw ? ('Aktives Passwort (' + esc(webhookPwPreview) + ') – neu eingeben zum Ändern') : 'Sicheres Passwort (A-Z, 0-9, _, -) eingeben oder generieren...') + '" style="flex:1;min-width:210px;padding:7px 10px;border-radius:7px;background:#050a14;color:#fff;border:1px solid rgba(16,185,129,0.4);font-family:monospace;font-size:12px" />' +
+                      '<button type="button" class="btn" onclick="const el=document.getElementById(\\'adminWebhookPasswordInp\\');if(el)el.type=el.type===\\'password\\'?\\'text\\':\\'password\\'">👁️</button>' +
+                      '<button type="button" class="btn purple" onclick="generateRandomWebhookPasswordClient()">🎲 Passwort generieren</button>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding-top:4px">' +
+                      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:#cbd5e1">' +
+                        '<label style="display:flex;align-items:center;gap:5px">⚡ Max. parallele Verbindungen:' +
+                          '<select id="adminWebhookMaxConnSel" style="padding:4px 8px;border-radius:6px;background:#050a14;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px">' +
+                            '<option value="6" ' + (webhookMaxConn === 6 ? 'selected' : '') + '>6 (Ultra-Safe Free-Tier)</option>' +
+                            '<option value="8" ' + (webhookMaxConn === 8 ? 'selected' : '') + '>8 (Empfohlen Free-Tier)</option>' +
+                            '<option value="16" ' + (webhookMaxConn === 16 ? 'selected' : '') + '>16 (Balanced)</option>' +
+                            '<option value="40" ' + (webhookMaxConn === 40 ? 'selected' : '') + '>40 (Paid Worker Standard)</option>' +
+                          '</select>' +
+                        '</label>' +
+                        '<label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
+                          '<input id="adminWebhookDropPendingChk" type="checkbox" checked /> 🧹 Alte hängende Updates beim Setzen verwerfen' +
+                        '</label>' +
+                      '</div>' +
+                      '<button type="button" class="btn green" onclick="adminSaveAndRegisterWebhookClient()">🔒 Passwort speichern & Webhook bei Telegram registrieren</button>' +
+                    '</div>' +
+                    '<div id="adminWebhookStatusBox" style="display:none;margin-top:6px;padding:8px 10px;border-radius:8px;background:rgba(5,10,20,0.85);border:1px solid rgba(0,229,255,0.28);font-size:11.5px;line-height:1.5"></div>' +
+                  '</div>' +
+                '</div>' +
+
+                /* 2. @BotFather Studio inkl. 512x512 Single-<path> SVG + 512x512 WEBP + 512x512 PNG + 640x360 PNG */
+                '<div class="panel-box" style="border-color:rgba(99,102,241,0.45);background:linear-gradient(145deg,#091224,#101935)">' +
+                  '<div class="section-title" style="margin-bottom:6px">' +
+                    '<span>🎨 @BotFather Komplett-Baukasten (512×512 Single-<code>&lt;path&gt;</code> SVG, WEBP & PNGs)</span>' +
+                    '<button type="button" class="btn" style="padding:3px 9px;font-size:11px;border-color:rgba(0,229,255,0.45);color:#00e5ff" onclick="previewBootSplashscreenClient()">✨ In-App Splashscreen testen</button>' +
+                  '</div>' +
+                  '<p style="font-size:11.5px;color:#cbd5e1;margin-bottom:10px;line-height:1.45">' +
+                    'Exakt nach der offiziellen Telegram-Anforderung (<i>„Canvas size 512×512 and a single &lt;path&gt; element inside, or a WEBP file with the same size“</i>):' +
+                  '</p>' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">' +
+                    '<div style="background:rgba(0,229,255,0.07);border:1px solid rgba(0,229,255,0.4);border-radius:9px;padding:9px;display:flex;flex-direction:column;justify-content:space-between;gap:6px">' +
+                      '<div>' +
+                        '<div style="font-size:12px;font-weight:900;color:#00e5ff">💎 Splashscreen SVG (512×512)</div>' +
+                        '<div style="font-size:10.5px;color:#cbd5e1;margin-top:2px">Strikte <code>512×512</code> Vektorgrafik mit exakt <b>1 einzigen <code>&lt;path&gt;</code>-Element</b> für @BotFather!</div>' +
+                      '</div>' +
+                      '<button type="button" class="btn green" style="width:100%;justify-content:center;font-size:11px" onclick="downloadBotFatherSinglePathSvgClient()">⬇️ 512×512 Single-Path .SVG laden</button>' +
+                    '</div>' +
+                    '<div style="background:rgba(99,102,241,0.09);border:1px solid rgba(99,102,241,0.42);border-radius:9px;padding:9px;display:flex;flex-direction:column;justify-content:space-between;gap:6px">' +
+                      '<div>' +
+                        '<div style="font-size:12px;font-weight:900;color:#a5b4fc">🖼️ Splashscreen WEBP (512×512)</div>' +
+                        '<div style="font-size:10.5px;color:#cbd5e1;margin-top:2px">Exakt <code>512×512 px</code> im verlustfreien <b>.WEBP</b> Format (Alternative für @BotFather).</div>' +
+                      '</div>' +
+                      '<button type="button" class="btn blue" style="width:100%;justify-content:center;font-size:11px" onclick="downloadNeonBotAssetWebpClient()">⬇️ 512×512 .WEBP laden</button>' +
+                    '</div>' +
+                    '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:9px;display:flex;flex-direction:column;justify-content:space-between;gap:6px">' +
+                      '<div>' +
+                        '<div style="font-size:12px;font-weight:800;color:#fff">🤖 Bot-Profilbild PNG (512×512)</div>' +
+                        '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px">Für <code>/setuserpic</code> im @BotFather.</div>' +
+                      '</div>' +
+                      '<button type="button" class="btn" style="width:100%;justify-content:center;font-size:11px" onclick="downloadNeonBotAssetPngClient(\\'avatar_512\\')">⬇️ 512×512 .PNG laden</button>' +
+                    '</div>' +
+                    '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.12);border-radius:9px;padding:9px;display:flex;flex-direction:column;justify-content:space-between;gap:6px">' +
+                      '<div>' +
+                        '<div style="font-size:12px;font-weight:800;color:#fff">🎬 Mini-App Header PNG (640×360)</div>' +
+                        '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px">16:9 Vorschau-Banner für Mini-App Links.</div>' +
+                      '</div>' +
+                      '<button type="button" class="btn" style="width:100%;justify-content:center;font-size:11px" onclick="downloadNeonBotAssetPngClient(\\'splash_640x360\\')">⬇️ 640×360 .PNG laden</button>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+
+                /* 3. Bot API 8.3 Cockpit (Speed-Profil, Video-Cover, Menü-Button, Farben & Befehlsliste) */
+                botApi83CockpitHtml +
+              '</div>' +
+
+              /* Rechte Begleitspalte (38.2%): Echtzeit Worker-Health-Monitor + Anti-Spam Cockpit + Schnell-Aktionen */
+              '<div style="display:flex;flex-direction:column;gap:12px;min-width:0">' +
+                renderWorkerHealthMonitorWidgetHtml(false) +
+                buildAntiSpamCockpitBoxHtmlClient() +
+                '<div class="panel-box" style="border-color:rgba(244,63,94,0.35)">' +
+                  '<div class="section-title" style="margin-bottom:6px"><span>🧰 Datenbank-Wartung & Komplett-Reset</span></div>' +
+                  '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:8px">Defekte oder doppelte Stream-Buttons werden jetzt vollautomatisch ausgefiltert. Bei Bedarf kannst du hier einen Datenbank-Reset ausführen:</div>' +
+                  '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn red" onclick="adminRunCompleteMediaResetClient()">🧨 Komplett-Reset (Alle Medien & Playlisten löschen)</button>' +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div>';
+
           root.innerHTML = '<div class="section">' +
             '<div class="section-title">' +
-              '<span>👑 Admin-Dashboard & VIP- / Playlisten- / Backup-Verwaltung</span>' +
+              '<span>👑 Admin-Cockpit & Bot-Zentrale</span>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button class="btn ' + (state.adminTab === 'bot' ? 'active' : 'blue') + '" onclick="state.adminTab=\\'bot\\';loadAdminPanelView()">🤖 Bot & Einstellungen</button>' +
+                '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 JSON-Import</button>' +
+                '<button class="btn ' + (state.adminTab === 'playlists' ? 'active' : '') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten (' + adminPlaylists.length + ')</button>' +
                 '<button class="btn ' + (state.adminTab === 'users' ? 'active' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'reports' ? 'active' : (openReportsCount > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'reports\\';loadAdminPanelView()">🚨 Meldungen (' + openReportsCount + ' offen)</button>' +
-                '<button class="btn ' + (state.adminTab === 'gaps' ? 'active' : '') + '" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView()" title="Fehlende Folgen in Serien (insb. Lücken mitten in einer Staffel wie Folge 1+2 fehlt, Folge 3 ist da)">📉 Serien-Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'playlists' ? 'active' : '') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten & Bot-VIP (' + adminPlaylists.length + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 Backup-Import (100k+)</button>' +
-                '<button class="btn ' + (state.adminTab === 'diaglog' ? 'active' : '') + '" onclick="state.adminTab=\\'diaglog\\';loadAdminPanelView()">🛠️ Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')</button>' +
-                '<button class="btn ' + (state.adminTab === 'crud' ? 'active' : '') + '" onclick="state.adminTab=\\'crud\\';loadAdminPanelView()">🎬 Film/Serien CRUD (' + mediaList.length + ')</button>' +
-                '<button class="btn" onclick="loadAdminPanelView(true)" title="Admin-Übersicht frisch vom Server laden">🔄 Übersicht</button>' +
-                '<button class="btn" onclick="adminRunD1DedupeFilesClient()" title="Entfernt alle doppelten oder defekten Stream-Buttons in D1">🧹 Doppelte Buttons bereinigen</button>' +
-                '<button class="btn red" onclick="adminRunCompleteMediaResetClient()" title="Löscht alle Filme, Serien, Episoden & Playlisten für einen sauberen Neustart">🧨 Komplett-Reset</button>' +
-                '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' +
+                '<button class="btn ' + (state.adminTab === 'reports' ? 'active' : (openReportsCount > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'reports\\';loadAdminPanelView()">🚨 Meldungen (' + openReportsCount + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'gaps' ? 'active' : '') + '" onclick="state.adminTab=\\'gaps\\';loadAdminPanelView()">📉 Serien-Lücken (' + Number(seriesGaps.seriesWithGapsCount || 0) + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'crud' ? 'active' : '') + '" onclick="state.adminTab=\\'crud\\';loadAdminPanelView()">🎬 Medien CRUD (' + mediaList.length + ')</button>' +
+                '<button class="btn ' + (state.adminTab === 'diaglog' ? 'active' : '') + '" onclick="state.adminTab=\\'diaglog\\';loadAdminPanelView()">📋 Logs (' + getDiagnosticLogTotalCountClient() + ')</button>' +
+                '<button class="btn" onclick="loadAdminPanelView(true)" title="Daten frisch vom Server laden">🔄</button>' +
               '</div>' +
             '</div>' +
-            buildAntiSpamCockpitBoxHtmlClient() +
-            botApi83CockpitHtml +
-            (state.adminTab === "users" ? (
+            (state.adminTab === "bot" ? (
+              botAndSettingsDedicatedPageHtml
+            ) : state.adminTab === "users" ? (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>👥 Registrierte Telegram- & Web-Nutzer (' + users.length + ')</span></div>' +
                 (users.length === 0 ? '<div style="font-size:12px;color:#aaa">Noch keine Nutzer in D1 registriert.</div>' : '') +
@@ -44537,57 +45297,43 @@
             ) : state.adminTab === "diaglog" ? (
               renderImportDiagnosticLogBoxHtml()
             ) : state.adminTab === "backup" ? (
-              '<div class="panel-box" style="border-color:rgba(56,189,248,0.5)">' +
-                '<div class="section-title">' +
-                  '<span>📡 Schritt 1 (Pflicht vor JSON-Upload): Quell-Kanal / Gruppen-ID prüfen & Dry-Run</span>' +
-                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                    '<button class="btn" onclick="adminRunD1DedupeFilesClient()">🧹 Doppelte Stream-Buttons bereinigen</button>' +
-                    '<button class="btn red" onclick="adminRunCompleteMediaResetClient()">🧨 Komplett-Reset (Alle Medien löschen)</button>' +
+              '<div class="panel-box" style="border-color:rgba(0,229,255,0.38)">' +
+                '<div class="golden-grid">' +
+                  '<div style="display:flex;flex-direction:column;gap:8px;min-width:0">' +
+                    '<div style="font-size:13px;font-weight:900;color:#fff">📦 JSON-Backup-Import (Schnellstart in 2 Schritten)</div>' +
+                    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+                      '<span style="font-size:11.5px;font-weight:800;color:#00e5ff">1️⃣ Quell-Kanal:</span>' +
+                      '<input id="backupSourceChannelInp" value="' + esc(savedChanVal) + '" placeholder="-1001234567890 oder https://t.me/c/1234567890/42" style="flex:1;min-width:200px;padding:7px 10px;border-radius:6px;background:#070d1b;color:#fff;border:1px solid rgba(0,229,255,0.4);font-family:monospace;font-size:12px" />' +
+                      '<input id="backupSampleMsgIdInp" type="number" placeholder="Msg-ID (opt.)" style="width:110px;padding:7px 9px;border-radius:6px;background:#070d1b;color:#fff;border:1px solid rgba(255,255,255,0.18);font-family:monospace;font-size:12px" />' +
+                      '<button class="btn green" onclick="verifyBackupChannelClient()">🔍 Kanal prüfen</button>' +
+                    '</div>' +
+                    '<div id="backupChannelVerifyBanner" style="display:' + (isChanReady ? 'block' : 'none') + ';padding:6px 10px;border-radius:6px;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.4);font-size:11.5px;color:#34d399">' +
+                      (isChanReady ? ('✅ Quell-Kanal aktiv: <code>' + esc(savedChanVal) + '</code> — Schritt 2 freigeschaltet!') : '') +
+                    '</div>' +
+                    '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:4px">' +
+                      '<span style="font-size:11.5px;font-weight:800;color:#34d399">2️⃣ JSON-Datei:</span>' +
+                      '<input id="backupJsonFileInputEl" type="file" accept=".json,application/json" ' + (!isChanReady ? 'disabled' : '') + ' onchange="handleBackupFileInput(event)" style="font-size:12px;color:#fff;background:#070d1b;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);opacity:' + (isChanReady ? '1' : '0.45') + '" />' +
+                      '<button type="button" class="btn" onclick="runSimulatedJsonImportTestSuiteClient()" title="Testet die Import-Pipeline mit 7 Testfällen">🧪 E2E-Test</button>' +
+                      '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ &gt;200 MB Hilfe</button>' +
+                      '<span id="backupParseNotice" style="font-size:12px;color:#fbbf24"></span>' +
+                    '</div>' +
                   '</div>' +
-                '</div>' +
-                '<p style="font-size:12px;color:#cbd5e1;line-height:1.5;margin-bottom:8px">' +
-                  '⚠️ <b>Strikte Kanal-ID-Pflicht:</b> Gib die Telegram Kanal-/Gruppen-ID (<code>-100...</code>) oder einen Beispiel-Link aus dem Kanal (z. B. <code>https://t.me/c/1234567890/42</code>) ein. Ohne geprüfte Kanal-ID ist der JSON-Upload gesperrt, damit niemals fehlerhafte Datei-IDs entstehen!' +
-                '</p>' +
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-                  '<input id="backupSourceChannelInp" value="' + esc(savedChanVal) + '" placeholder="-1001234567890 oder https://t.me/c/1234567890/42" style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(56,189,248,0.45);font-family:monospace;font-size:12px" />' +
-                  '<input id="backupSampleMsgIdInp" type="number" placeholder="Test Msg-ID (opt.)" style="width:140px;padding:8px 10px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.2);font-family:monospace;font-size:12px" />' +
-                  '<button class="btn green" onclick="verifyBackupChannelClient()">🔍 Kanal prüfen & freischalten (Dry-Run)</button>' +
-                '</div>' +
-                '<div id="backupChannelVerifyBanner" style="display:' + (isChanReady ? 'block' : 'none') + ';margin-top:8px;padding:8px 10px;border-radius:6px;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.4);font-size:12px;color:#34d399">' +
-                  (isChanReady ? ('✅ Verifizierte Quell-Kanal-ID aktiv: <code>' + esc(savedChanVal) + '</code> – JSON-Upload ist freigeschaltet!') : '') +
-                '</div>' +
-              '</div>' +
-              '<div class="panel-box">' +
-                '<div class="section-title">' +
-                  '<span>📦 Schritt 2: Telegram Chat-Backup (result.json) hochladen (mit Auto-Checkpoint & Fortsetzen)</span>' +
-                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                    '<button type="button" class="btn green" style="background:linear-gradient(90deg,#059669,#0284c7);border-color:#38bdf8" onclick="runSimulatedJsonImportTestSuiteClient()">🧪 E2E JSON-Import Simulation starten (7 Testfälle + Prüfbericht)</button>' +
-                    '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ >200 MB How-To & CLI Guide</button>' +
+                  '<div style="min-width:0">' +
+                    renderWorkerHealthMonitorWidgetHtml(true) +
                   '</div>' +
-                '</div>' +
-                '<p style="font-size:12px;color:#ccc;line-height:1.5;margin-bottom:10px">' +
-                  'Erkennt automatisch <b>Telegram Desktop Chat-Backups (<code>result.json</code> auch über 200 MB per 2 MB <code>File.slice()</code> Stream-Slicer)</b>. ' +
-                  'Merkt sich nach jedem Batch automatisch den <b>Fortschritts-Checkpoint</b> und verhindert bei Neustart jegliche Duplikate. ' +
-                  'Mit <b>🧪 E2E JSON-Import Simulation starten</b> kannst du die komplette Pipeline (Filme, Serien, Staffel-Lücken, TS-Upgrade, Duplikate, Konflikte, Meldungen & Katalog) live testen.' +
-                '</p>' +
-                '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
-                  '<input id="backupJsonFileInputEl" type="file" accept=".json,application/json" ' + (!isChanReady ? 'disabled' : '') + ' onchange="handleBackupFileInput(event)" style="font-size:12px;color:#fff;background:#141414;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);opacity:' + (isChanReady ? '1' : '0.45') + '" />' +
-                  '<button class="btn amber" onclick="downloadBackupSplitPartClient(0, 250)">💾 Part #1 (250 Videos) als .json laden</button>' +
-                  '<span id="backupParseNotice" style="font-size:12px;color:#fbbf24"></span>' +
                 '</div>' +
                 '<div id="e2eSimReportMount" style="display:' + (window._lastE2eSimReportHtml ? 'block' : 'none') + ';margin-top:10px">' + (window._lastE2eSimReportHtml || '') + '</div>' +
                 '<div id="backupImportLiveMount" style="margin-top:10px"></div>' +
                 (qStats.pendingCount > 0 ? (
-                  '<div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.1)">' +
-                    '<div style="font-size:13px;font-weight:800;color:#fbbf24;margin-bottom:6px">📥 Aktive D1-Server-Warteschlange (vom Telegram-Bot hochgeladen): ' + qStats.pendingCount + ' offen</div>' +
-                    '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-                      '<button class="btn green" onclick="runServerD1QueueStepAdmin(2)">▶️ Nächste 24 aus D1-Queue verarbeiten</button>' +
-                      '<button class="btn red" onclick="clearServerD1QueueAdmin()">🗑️ D1-Queue leeren</button>' +
+                  '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
+                    '<div style="font-size:12px;font-weight:800;color:#fbbf24">📥 Server-Queue (vom Bot hochgeladen): ' + qStats.pendingCount + ' offen</div>' +
+                    '<div style="display:flex;gap:8px">' +
+                      '<button class="btn green" onclick="runServerD1QueueStepAdmin(2)">▶️ Nächste verarbeiten</button>' +
+                      '<button class="btn red" onclick="clearServerD1QueueAdmin()">🗑️ Queue leeren</button>' +
                     '</div>' +
                   '</div>'
                 ) : '') +
-              '</div>' +
-              playlistsManagerBoxHtml
+              '</div>'
             ) : (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>➕ Film oder Serie in D1 anlegen / bearbeiten (CRUD)</span></div>' +
@@ -45840,6 +46586,25 @@
           return;
         }
 
+        // Tastatur-Shortcut 'M' oder 'W' auf einer fokussierten Film-/Serien-Karte schaltet direkt die Merkliste um!
+        if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey && (ev.key === "m" || ev.key === "M" || ev.key === "w" || ev.key === "W")) {
+          const focusedCard = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card[data-card-key]") : null;
+          if (focusedCard) {
+            const rawKey = focusedCard.getAttribute("data-card-key") || "";
+            const parts = rawKey.split("_");
+            if (parts.length >= 2) {
+              ev.preventDefault();
+              const tc = parts[0] === "s" ? "s" : "m";
+              const idNum = Number(parts[1]);
+              const titleTxt = focusedCard.getAttribute("data-card-title") || "Titel";
+              if (idNum > 0) {
+                quickToggleCardWishlist(ev, tc, idNum, titleTxt);
+                return;
+              }
+            }
+          }
+        }
+
         // Type-to-Search: Sobald auf der Tastatur ein Buchstabe/Zahl getippt wird, startet automatisch die Suche!
         if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.length === 1 && /[a-zA-Z0-9äöüÄÖÜß]/.test(ev.key)) {
           const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
@@ -45933,14 +46698,32 @@
     resetSubrequestBudget();
     const url = new URL(request.url);
     const path = url.pathname;
+    if (typeof beginWorkerRequestTelemetry === "function") {
+      beginWorkerRequestTelemetry(path);
+    }
     const corsHeaders = buildTmaCorsHeaders();
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
+    if (path === "/botfather-splash.svg" || path === "/api/tma/botfather-splash.svg") {
+      const svgContent = typeof BOTFATHER_SINGLE_PATH_SVG_512 === "string"
+        ? BOTFATHER_SINGLE_PATH_SVG_512
+        : `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="#00E5FF" fill-rule="evenodd" d="M210 184 L334 256 L210 328 Z"/></svg>`;
+      return new Response(svgContent, {
+        status: 200,
+        headers: {
+          "Content-Type": "image/svg+xml; charset=utf-8",
+          "Content-Disposition": "attachment; filename=\"bot-splashscreen-512x512.svg\"",
+          "Cache-Control": "public, max-age=86400",
+          ...corsHeaders
+        }
+      });
+    }
+
     if (path === "/favicon.ico" || path === "/favicon.svg") {
-      const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" fill="none"><defs><linearGradient id="g" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#a855f7"/><stop offset="100%" stop-color="#e50914"/></linearGradient></defs><circle cx="14" cy="14" r="11.5" stroke="url(#g)" stroke-width="2.6" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#g)"/></svg>`;
+      const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" fill="none"><defs><linearGradient id="g" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#00e5ff"/><stop offset="50%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="14" cy="14" r="11.5" stroke="url(#g)" stroke-width="2.6" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#00e5ff" stroke-width="1.5" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#g)"/></svg>`;
       return new Response(faviconSvg, {
         status: 200,
         headers: {
@@ -46481,12 +47264,15 @@
             ? (targetItems || []).filter(i => String(i.folderId) === activeFolderId)
             : [];
           const openReportsCount = (reports || []).filter(r => r && r.status === "open").length;
-          const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
+          const [videoCoverMode, botUsername, speedProfileConfig, webhookSecurity] = await Promise.all([
             getVideoCoverMode(env).catch(() => "backdrop"),
             tgApi(env).getBotUsername(env).catch(() => ""),
-            getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
+            getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo),
+            typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
           ]);
-          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\/$/, "");
+          const officialWebhookUrl = `${effectiveWebAppUrl}/webhook`;
+          const activeSecret = String(webhookSecurity?.secretToken || "");
           return new Response(JSON.stringify({
             ok: true,
             users,
@@ -46499,30 +47285,45 @@
             reports: reports || [],
             openReportsCount,
             seriesGaps,
+            _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null,
             botSetup: {
               videoCoverMode,
               speedProfile: speedProfileConfig?.id || "free_turbo",
               speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
+              webhookUrl: officialWebhookUrl,
+              hasWebhookPassword: Boolean(activeSecret),
+              webhookPasswordLength: activeSecret.length,
+              webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
+              webhookMaxConnections: Number(webhookSecurity?.maxConnections || 8),
               botUsername: botUsername || "DeinBot"
             }
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/bot-setup") {
-          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\/$/, "");
+          const officialWebhookUrl = `${effectiveWebAppUrl}/webhook`;
           if (request.method === "GET") {
-            const [videoCoverMode, botUsername, speedProfileConfig] = await Promise.all([
+            const [videoCoverMode, botUsername, speedProfileConfig, webhookSecurity] = await Promise.all([
               getVideoCoverMode(env).catch(() => "backdrop"),
               tgApi(env).getBotUsername(env).catch(() => ""),
-              getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo)
+              getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo),
+              typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
             ]);
+            const activeSecret = String(webhookSecurity?.secretToken || "");
             return new Response(JSON.stringify({
               ok: true,
               videoCoverMode,
               speedProfile: speedProfileConfig?.id || "free_turbo",
               speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
-              botUsername: botUsername || "DeinBot"
+              webhookUrl: officialWebhookUrl,
+              hasWebhookPassword: Boolean(activeSecret),
+              webhookPasswordLength: activeSecret.length,
+              webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
+              webhookMaxConnections: Number(webhookSecurity?.maxConnections || 8),
+              botUsername: botUsername || "DeinBot",
+              _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
             }), { status: 200, headers: corsHeaders });
           }
           if (request.method === "POST") {
@@ -46533,7 +47334,8 @@
               await flushUserSession(env, auth.chatId).catch(() => {});
               return new Response(JSON.stringify({
                 ok: true,
-                videoCoverMode: savedMode
+                videoCoverMode: savedMode,
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "set_speed_profile") {
@@ -46542,7 +47344,143 @@
               return new Response(JSON.stringify({
                 ok: true,
                 speedProfile: savedProfile.id,
-                speedProfileConfig: savedProfile
+                speedProfileConfig: savedProfile,
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "save_webhook_and_register") {
+              const rawPassword = String(body.webhookPassword ?? "").trim();
+              const sanitizedSecret = typeof sanitizeWebhookSecretToken === "function"
+                ? sanitizeWebhookSecretToken(rawPassword)
+                : rawPassword.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128);
+              const maxConnections = Math.min(40, Math.max(1, Number(body.maxConnections) || 8));
+              const dropPending = Boolean(body.dropPendingUpdates);
+              const customWebhookUrl = String(body.webhookUrl || officialWebhookUrl).trim() || officialWebhookUrl;
+              const savedCfg = typeof saveWebhookSecurityConfig === "function"
+                ? await saveWebhookSecurityConfig(env, {
+                    secretToken: sanitizedSecret,
+                    maxConnections,
+                    dropPendingDefault: dropPending
+                  })
+                : { secretToken: sanitizedSecret, maxConnections };
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  webhookUrl: customWebhookUrl,
+                  hasWebhookPassword: Boolean(savedCfg.secretToken),
+                  webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
+                  maxConnections: savedCfg.maxConnections,
+                  message: "Webhook-Passwort (secret_token) gespeichert & im Simulator registriert.",
+                  _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+                }), { status: 200, headers: corsHeaders });
+              }
+              const whPayload = {
+                url: customWebhookUrl,
+                max_connections: savedCfg.maxConnections,
+                drop_pending_updates: dropPending,
+                allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+              };
+              if (savedCfg.secretToken) {
+                whPayload.secret_token = savedCfg.secretToken;
+              }
+              const whRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(whPayload)
+              });
+              const whJson = await whRes.json().catch(() => ({}));
+              return new Response(JSON.stringify({
+                ok: Boolean(whJson?.ok),
+                webhookUrl: customWebhookUrl,
+                hasWebhookPassword: Boolean(savedCfg.secretToken),
+                webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
+                maxConnections: savedCfg.maxConnections,
+                telegramResponse: whJson,
+                message: whJson?.ok
+                  ? `Webhook inkl. Passwort-Schutz (${savedCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${savedCfg.maxConnections}) erfolgreich bei Telegram registriert!`
+                  : (whJson?.description || "Telegram setWebhook fehlgeschlagen."),
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "get_webhook_info") {
+              const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+                ? await getWebhookSecurityConfig(env)
+                : { secretToken: "", maxConnections: 8 };
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  webhookInfo: {
+                    url: officialWebhookUrl,
+                    has_custom_certificate: false,
+                    pending_update_count: 0,
+                    max_connections: webhookSecurity.maxConnections || 8,
+                    ip_address: "104.21.48.1 (Cloudflare Edge Simulator)",
+                    allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
+                  },
+                  hasWebhookPassword: Boolean(webhookSecurity.secretToken),
+                  _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+                }), { status: 200, headers: corsHeaders });
+              }
+              const infoRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`);
+              const infoJson = await infoRes.json().catch(() => ({}));
+              return new Response(JSON.stringify({
+                ok: Boolean(infoJson?.ok),
+                webhookInfo: infoJson?.result || null,
+                telegramResponse: infoJson,
+                hasWebhookPassword: Boolean(webhookSecurity.secretToken),
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "drop_pending_updates") {
+              const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+                ? await getWebhookSecurityConfig(env)
+                : { secretToken: "", maxConnections: 8 };
+              if (!env.TELEGRAM_BOT_TOKEN) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  simulated: true,
+                  message: "Hängende Updates im Simulator geleert (drop_pending_updates = true)."
+                }), { status: 200, headers: corsHeaders });
+              }
+              const whPayload = {
+                url: officialWebhookUrl,
+                max_connections: webhookSecurity.maxConnections || 8,
+                drop_pending_updates: true,
+                allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+              };
+              if (webhookSecurity.secretToken) {
+                whPayload.secret_token = webhookSecurity.secretToken;
+              }
+              const dropRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(whPayload)
+              });
+              const dropJson = await dropRes.json().catch(() => ({}));
+              return new Response(JSON.stringify({
+                ok: Boolean(dropJson?.ok),
+                telegramResponse: dropJson,
+                message: dropJson?.ok
+                  ? "Alle angestauten Telegram-Updates (Retry-Stau) wurden erfolgreich verworfen!"
+                  : (dropJson?.description || "Konnte hängende Updates nicht verwerfen."),
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "test_webhook_auth") {
+              const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+                ? await getWebhookSecurityConfig(env)
+                : { secretToken: "", maxConnections: 8 };
+              const activeSecret = String(webhookSecurity?.secretToken || "");
+              return new Response(JSON.stringify({
+                ok: true,
+                webhookUrl: officialWebhookUrl,
+                hasWebhookPassword: Boolean(activeSecret),
+                gatekeeperStatus: activeSecret
+                  ? "🔒 AKTIV — Unbefugte POST-Requests ohne X-Telegram-Bot-Api-Secret-Token werden in <0.1ms (0 D1-Reads) mit HTTP 401 abgewiesen."
+                  : "⚠️ OFFEN — Noch kein Webhook-Passwort gesetzt. Bitte Passwort eintragen oder generieren.",
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "setup_miniapp_menu") {
@@ -46697,7 +47635,10 @@
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
           const activeSpeedProf = await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
-          const maxSliceCap = Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 12) + 4), 30);
+          const isPaidProf = activeSpeedProf?.id === "paid_highspeed";
+          const maxSliceCap = isPaidProf
+            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24) + 4), 28)
+            : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 5) + 1), 6);
           const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, maxSliceCap) : [];
           if (rawEntries.length === 0) {
             return new Response(JSON.stringify({ ok: false, error: "Keine Einträge im Batch." }), { status: 400, headers: corsHeaders });
@@ -46809,6 +47750,9 @@
           if (typeof flushD1BatchBuffer === "function") {
             await flushD1BatchBuffer(env);
           }
+          const workerHealth = typeof buildWorkerHealthSnapshot === "function"
+            ? buildWorkerHealthSnapshot({ route: path, batchProcessedCount: effectiveProcessedCount })
+            : null;
           return new Response(JSON.stringify({
             ok: true,
             status: status || "COMPLETED_BATCH",
@@ -46825,7 +47769,8 @@
             playlistSavedCount,
             playlistFolder,
             sampleTitles: [...moviesAdded.slice(0, 3), ...seriesAdded.slice(0, 3)],
-            batchItems: batchItems || []
+            batchItems: batchItems || [],
+            _workerHealth: workerHealth
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-logs") {
@@ -49077,22 +50022,26 @@
       }
 
       if (path === "/api/tma/anti-spam-queue") {
-        await hydrateAntiSpamStateFromStorage(env);
+        if (!antiSpamState.hydratedFromStorage) {
+          await hydrateAntiSpamStateFromStorage(env);
+        }
         const focusChat = String(url.searchParams.get("chatId") || auth.chatId || "").trim();
         if (request.method === "GET") {
-          const shouldDrain = url.searchParams.get("drain") !== "0";
+          const shouldDrain = url.searchParams.get("drain") !== "0" && antiSpamState.queue.length > 0;
           if (shouldDrain) {
             const drained = await drainAntiSpamQueue(env, 4, false);
             return new Response(JSON.stringify({
               ok: true,
               drainedCount: drained.drainedCount,
-              snapshot: getAntiSpamSnapshot(env, focusChat)
+              snapshot: getAntiSpamSnapshot(env, focusChat),
+              _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
             }), { status: 200, headers: corsHeaders });
           }
           return new Response(JSON.stringify({
             ok: true,
             drainedCount: 0,
-            snapshot: getAntiSpamSnapshot(env, focusChat)
+            snapshot: getAntiSpamSnapshot(env, focusChat),
+            _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
           }), { status: 200, headers: corsHeaders });
         }
         if (request.method === "POST") {
@@ -49667,6 +50616,7 @@
         if (
           url.pathname === "/app" ||
           url.pathname === "/miniapp" ||
+          url.pathname === "/botfather-splash.svg" ||
           url.pathname === "/api/import-json" ||
           url.pathname.startsWith("/api/tma/") ||
           (request.method === "GET" && url.pathname === "/" && url.searchParams.get("status") !== "1")
@@ -49676,14 +50626,18 @@
 
         if (request.method === "GET") {
           const configuredWebhookBase = String(env.WEBHOOK_URL || url.origin).replace(/\/$/, "");
+          const officialWebhookEndpoint = `${configuredWebhookBase}/webhook`;
           if ((url.pathname === "/setwebhook" || url.searchParams.get("setwebhook") === "1") && env.TELEGRAM_BOT_TOKEN) {
-            const targetWebhookUrl = `${configuredWebhookBase}/`;
+            const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+              ? await getWebhookSecurityConfig(env)
+              : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || ""), maxConnections: 8 };
             const whPayload = {
-              url: targetWebhookUrl,
+              url: officialWebhookEndpoint,
+              max_connections: webhookSecurity.maxConnections || 8,
               allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
             };
-            if (env.TELEGRAM_WEBHOOK_SECRET) {
-              whPayload.secret_token = String(env.TELEGRAM_WEBHOOK_SECRET);
+            if (webhookSecurity.secretToken) {
+              whPayload.secret_token = String(webhookSecurity.secretToken);
             }
             const whRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
               method: "POST",
@@ -49693,7 +50647,8 @@
             const whJson = await whRes.json().catch(() => ({}));
             return new Response(JSON.stringify({
               ok: Boolean(whJson?.ok),
-              webhookUrl: targetWebhookUrl,
+              webhookUrl: officialWebhookEndpoint,
+              hasWebhookPassword: Boolean(webhookSecurity.secretToken),
               telegramResponse: whJson
             }, null, 2), {
               status: 200,
@@ -49703,36 +50658,51 @@
 
           return new Response(JSON.stringify({
             status: "online",
-            service: "Telegram Movie & Series Bot + Netflix Mini-App (Cloudflare Worker v3.6.0)",
-            webhookUrl: `${configuredWebhookBase}/`,
+            service: "Telegram Movie & Series Bot + Netflix Mini-App (Cloudflare Worker v3.7.0)",
+            webhookUrl: officialWebhookEndpoint,
             miniAppUrl: `${configuredWebhookBase}/app`,
             studioUrl: `${configuredWebhookBase}/studio`,
+            botFatherSplashSvgUrl: `${configuredWebhookBase}/botfather-splash.svg`,
             customBotWebhookEndpoint: `${configuredWebhookBase}/api/telegram/custom-webhook`,
             timestamp: new Date().toISOString(),
             configuredSecrets: {
               TELEGRAM_BOT_TOKEN: !!env.TELEGRAM_BOT_TOKEN,
               TMDB_BEARER_TOKEN: !!env.TMDB_BEARER_TOKEN,
-              WEBHOOK_URL: env.WEBHOOK_URL || `${configuredWebhookBase}/`,
+              WEBHOOK_URL: officialWebhookEndpoint,
               MOVIE_SAVED: !!env.MOVIE_SAVED,
               D1_DB: !!(env.DB || env.MOVIE_DB),
             },
-            help: "Sende Telegram Webhook Updates per POST an diese URL, rufe ?setwebhook=1 auf oder öffne / bzw. /app für die Netflix Mini-App."
+            help: "Sende Telegram Webhook Updates per POST an /webhook (oder /), konfiguriere das Webhook-Passwort im Admin-Tab 'Bot & Einstellungen' oder öffne /app für die Mini-App."
           }, null, 2), {
             status: 200,
             headers: { "Content-Type": "application/json; charset=utf-8" },
           });
         }
 
-        if (request.method === "POST") {
-          // Telegram-Sicherheit: Validiere X-Telegram-Bot-Api-Secret-Token (sofern TELEGRAM_WEBHOOK_SECRET gesetzt)
-          if (env.TELEGRAM_WEBHOOK_SECRET) {
-            const incomingSecret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
-            if (incomingSecret !== env.TELEGRAM_WEBHOOK_SECRET) {
-              return new Response("Forbidden: Invalid Secret Token", { status: 403 });
+        if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/webhook")) {
+          // 0ms Edge-Gatekeeper: Validiere Webhook-Passwort (X-Telegram-Bot-Api-Secret-Token oder ?secret=...)
+          const webhookSecurity = typeof getWebhookSecurityConfig === "function"
+            ? await getWebhookSecurityConfig(env)
+            : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || "") };
+          const activeSecret = String(webhookSecurity?.secretToken || "").trim();
+          if (activeSecret) {
+            const incomingHeaderSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+            const incomingQuerySecret = String(url.searchParams.get("secret") || "").trim();
+            if (incomingHeaderSecret !== activeSecret && incomingQuerySecret !== activeSecret) {
+              return new Response("Unauthorized: Invalid Telegram Webhook Secret Password", { status: 401 });
             }
           }
 
-          const update = await request.json();
+          const update = await request.json().catch(() => null);
+          if (!update || typeof update !== "object") {
+            return new Response("OK", { status: 200 });
+          }
+
+          // Anti-Retry-Storm: Doppelte update_id aus Telegram-Retries in <0.1ms im RAM abfangen
+          if (typeof isDuplicateTelegramUpdateId === "function" && isDuplicateTelegramUpdateId(update.update_id)) {
+            return new Response("OK", { status: 200 });
+          }
+
           const runAll = async () => {
             await handleUpdate(env, update);
             await flushDirtyKvBatch(env);

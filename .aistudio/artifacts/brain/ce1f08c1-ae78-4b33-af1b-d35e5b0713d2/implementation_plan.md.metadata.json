@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementierungsplan zur Beseitigung von Timeouts und Ladeverzögerungen auf dem kostenlosen Cloudflare Worker (10ms CPU-Limit & 50-Subrequests-Limit) beim JSON-Import sowie beim Öffnen des Admin-Dashboards und der Playlisten, inklusive umschaltbarem Geschwindigkeits-Profil im Admin-Cockpit.",
-  "updatedAt":  "2026-11-09T19:44:06.596848463Z",
+  "summary":  "Erweiterter Implementierungsplan mit echtem Telegram Webhook-Passwort (X-Telegram-Bot-Api-Secret-Token & URL-Secret, 0ms Edge-Prüfung, Auto-Sync bei setWebhook), Schutz vor Telegram Retry-Stürmen (update_id Deduplizierung, max_connections Drosselung, drop_pending_updates Not-Aus), 0-D1-Read In-Memory Edge-Cache für Katalog-Abrufe sowie Golden-Ratio Dark-Blue/Neon UI.",
+  "updatedAt":  "2026-11-09T21:20:41.067619433Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
