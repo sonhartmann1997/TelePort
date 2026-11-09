@@ -1,6 +1,6 @@
 {
-  "summary":  "Architekturplan für kollisionsfreie 100M-API-ID-Bereiche ohne Modulo-Kürzung, automatische TMDb-ID-Auflösung für Serien/Filme, manuellen Bestätigungs-Dialog für Titel ohne TMDb-ID (900M-Bereich mit D1-Kollisionsschutz) sowie D1- & KV-Speicher-Optimierung (Serien-Write-Deduplizierung & KV-Dirty-Checks).",
-  "updatedAt":  "2026-11-08T21:44:56.147467152Z",
+  "summary":  "Vollständiger Implementierungsplan für die 5 Pipeline-Module, das 900M-ID Abgleich-Modal (Live-Vorschau, Queue-Modus, 1-Klick-TMDb-Migration) sowie die 3 Zusatz-Features: Selbstlernendes Alias-Gedächtnis in D1, Mehrteiler-Vollständigkeitsprüfung (CD1/CD2) und 1-Klick-Nachprüfung alter Konflikte.",
+  "updatedAt":  "2026-11-09T11:33:19.773902395Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

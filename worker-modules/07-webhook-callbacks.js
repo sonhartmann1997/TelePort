@@ -354,6 +354,23 @@
       return best;
     };
 
+    const hasBestYearConflict = () => {
+      if (!parsed?.year || rawPool.length === 0) return false;
+      let bestItem = null;
+      let bestC = -1;
+      for (const item of rawPool) {
+        const c = item._directIdHit ? 100 : computeTmdbMatchConfidence(parsed, item, item._typeCode);
+        if (c > bestC) {
+          bestC = c;
+          bestItem = item;
+        }
+      }
+      if (!bestItem) return false;
+      const rel = String(bestItem.release_date || bestItem.first_air_date || "");
+      const yr = rel ? parseInt(rel.slice(0, 4), 10) : null;
+      return Boolean(yr && Math.abs(Number(parsed.year) - yr) > 2);
+    };
+
     const hasAsciiUmlauts = /(?:ae|oe|ue)/i.test(searchTitle) && !/[äöüß]/i.test(searchTitle);
     const umlautVariant = hasAsciiUmlauts
       ? searchTitle
@@ -361,50 +378,81 @@
           .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
       : searchTitle;
     const romanMovieVariant = cleanMovieQuery(searchTitle);
+    const romanStrippedSubtitleVariant = typeof stripRomanNumeralBeforeSubtitle === "function"
+      ? stripRomanNumeralBeforeSubtitle(searchTitle)
+      : "";
+    let hitsWithArticleTotal = 0;
     if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < 85) {
       const hitsWithYear = parsed.year
         ? await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle)
         : 0;
-      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= 85% geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
-      if (getBestPrimaryConf() < 85 && (!parsed.year || hitsWithYear === 0)) {
-        await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
+      hitsWithArticleTotal += hitsWithYear;
+      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= 85% ohne Jahreskonflikt geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
+      if ((getBestPrimaryConf() < 85 || hasBestYearConflict()) && (!parsed.year || hitsWithYear === 0)) {
+        hitsWithArticleTotal += await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
       }
       if (getBestPrimaryConf() < 85 && rawSearchTitle !== searchTitle && hitsWithYear === 0) {
         const rawHitsYear = await runTmdbQuery(primaryType, rawSearchTitle, parsed.year, searchTitle);
+        hitsWithArticleTotal += rawHitsYear;
         if (getBestPrimaryConf() < 85 && parsed.year && rawHitsYear === 0) {
-          await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
+          hitsWithArticleTotal += await runTmdbQuery(primaryType, rawSearchTitle, null, searchTitle);
+        }
+      }
+      // MODUL 3.2: Römische-Zahlen-Retry bei Jahres-Konflikt ("Star Trek IX Nemesis (2002)" -> "Star Trek Nemesis" mit year = 2002)
+      if (romanStrippedSubtitleVariant && (rawPool.length === 0 || getBestPrimaryConf() < 85 || hasBestYearConflict())) {
+        const rsHits = await runTmdbQuery(primaryType, romanStrippedSubtitleVariant, parsed.year || null, romanStrippedSubtitleVariant);
+        hitsWithArticleTotal += rsHits;
+        if (parsed.year && rsHits === 0) {
+          hitsWithArticleTotal += await runTmdbQuery(primaryType, romanStrippedSubtitleVariant, null, romanStrippedSubtitleVariant);
         }
       }
       if (getBestPrimaryConf() < 85 && romanMovieVariant && romanMovieVariant !== searchTitle.toLowerCase()) {
         const rHits = await runTmdbQuery(primaryType, romanMovieVariant, parsed.year || null, romanMovieVariant);
+        hitsWithArticleTotal += rHits;
         if (getBestPrimaryConf() < 85 && parsed.year && rHits === 0) {
-          await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
+          hitsWithArticleTotal += await runTmdbQuery(primaryType, romanMovieVariant, null, romanMovieVariant);
         }
       }
       // 2. Umlaut-Normalisierung ("Rotkaeppchen.1954.mp4" -> "Rotkäppchen")
       if (umlautVariant !== searchTitle && getBestPrimaryConf() < 85) {
         const uHits = await runTmdbQuery(primaryType, umlautVariant, parsed.year || null, umlautVariant);
+        hitsWithArticleTotal += uHits;
         if (getBestPrimaryConf() < 85 && parsed.year && uHits === 0) {
-          await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
+          hitsWithArticleTotal += await runTmdbQuery(primaryType, umlautVariant, null, umlautVariant);
         }
+      }
+    }
+
+    // MODUL 3.3: Dual-Source-Fallback (Text vs. Dateiname bei Tippfehlern wie "Shootaut" vs. "Shootout")
+    const altSourceCandidates = [parsed?.titleFromFileName, parsed?.titleFromText]
+      .map(s => String(s || "").trim())
+      .filter(s => s.length >= 2 && s.toLowerCase() !== searchTitle.toLowerCase() && s.toLowerCase() !== rawSearchTitle.toLowerCase());
+    if (altSourceCandidates.length > 0 && (rawPool.length === 0 || getBestPrimaryConf() < 82 || hasBestYearConflict())) {
+      for (const altTitle of altSourceCandidates) {
+        const altHits = await runTmdbQuery(primaryType, altTitle, parsed.year || null, altTitle);
+        hitsWithArticleTotal += altHits;
+        if (parsed.year && altHits === 0) {
+          hitsWithArticleTotal += await runTmdbQuery(primaryType, altTitle, null, altTitle);
+        }
+        if (getBestPrimaryConf() >= 85 && !hasBestYearConflict()) break;
       }
     }
 
     // Stufe 3B: Suche mit Originaltitel (nur falls noch kein sicherer Treffer >= 85% vorliegt)
     if (getBestPrimaryConf() < 85 && parsed?.originalTitle && parsed.originalTitle.toLowerCase() !== searchTitle.toLowerCase()) {
-      await runTmdbQuery(primaryType, parsed.originalTitle, parsed.year || null);
+      hitsWithArticleTotal += await runTmdbQuery(primaryType, parsed.originalTitle, parsed.year || null);
     }
 
     let bestPrimaryConf = getBestPrimaryConf();
 
-    // Eiserne Sperre NUR, wenn bereits ein sicherer Film-Treffer (bestPrimaryConf >= 78) mit Jahreszahl vorliegt (z.B. "Iron Man 3 (2013)").
-    // Hat die TMDb-Filmsuche hingegen KEINEN sicheren Treffer geliefert (< 78%), MUSS zwingend auf Serien-Suche (/search/tv + Stufe 5 Episoden-Fallback) gewechselt werden!
+    // Eiserne Sperre NUR, wenn bereits ein sicherer Film-Treffer (bestPrimaryConf >= 78) mit Jahreszahl ohne Jahreskonflikt vorliegt (z.B. "Iron Man 3 (2013)").
+    // Hat die TMDb-Filmsuche hingegen KEINEN sicheren Treffer geliefert (< 78%), MUSS zwingend auf Serien-Suche (/search/tv + Stufe 5 Episoden-Fallback, z.B. "Halo Nightfall (2014)") gewechselt werden!
     const strictMovieWithYearLock = Boolean(
       forceTypeCode === "m" ||
-      (primaryType === "m" && bestPrimaryConf >= 78 && parsed?.year && !parsed?.isSeries && !parsed?.hasExplicitEpisodePattern)
+      (primaryType === "m" && bestPrimaryConf >= 78 && !hasBestYearConflict() && parsed?.year && !parsed?.isSeries && !parsed?.hasExplicitEpisodePattern)
     );
 
-    // Automatischer Movie <-> TV Fallback, falls primäre Kategorie keinen oder nur schwachen Treffer liefert (NICHT bei strictMovieWithYearLock!)
+    // MODUL 3.5: Automatischer Movie <-> TV Fallback (Miniserien-Fallback wie "Halo Nightfall (2014)"), falls primäre Kategorie keinen oder nur schwachen Treffer liefert
     if (!forceTypeCode && !strictMovieWithYearLock && (rawPool.length === 0 || bestPrimaryConf < 78) && searchTitle) {
       const secHits = await runTmdbQuery(secondaryType, searchTitle, parsed.year);
       if (parsed.year && secHits === 0) {
@@ -413,7 +461,7 @@
     }
 
     // Stufe 4: Untertitel-Fallback / Bindestrich- & Doppelpunkt-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road", "7 vs. Wild - Panama" -> "7 vs. Wild")
-    if ((rawPool.length === 0 || bestPrimaryConf < 78) && searchTitle) {
+    if ((rawPool.length === 0 || bestPrimaryConf < 78 || hasBestYearConflict()) && searchTitle) {
       const strippedCutVariant = cleanMediaTitle(
         searchTitle
           .replace(EDITION_CUT_REGEX, " ")
@@ -439,9 +487,9 @@
       if (umlautSplitMain && umlautSplitMain.length >= 2 && !shorterCandidates.includes(umlautSplitMain)) {
         shorterCandidates.push(umlautSplitMain);
       }
-      // 2. "The International"-Fix: Führende Artikel (The/Der/Die/Das/A/An) entfernen
+      // MODUL 3.1 ("The Gentlemen"-Fix): Führende Artikel (The/Der/Die/Das) NUR dann im letzten Fallback-Schritt entfernen, wenn die Suche MIT Artikel 0 Treffer geliefert hat!
       const leadingArticleRegex = /^(?:the|a|an|der|die|das|les|le|la)\s+/i;
-      if (leadingArticleRegex.test(searchTitle)) {
+      if (hitsWithArticleTotal === 0 && rawPool.length === 0 && leadingArticleRegex.test(searchTitle)) {
         const withoutLeadingArticle = cleanMediaTitle(searchTitle.replace(leadingArticleRegex, "").trim());
         if (withoutLeadingArticle && withoutLeadingArticle.length >= 3 && !shorterCandidates.includes(withoutLeadingArticle)) {
           shorterCandidates.push(withoutLeadingArticle);
@@ -484,7 +532,7 @@
           const c = computeTmdbMatchConfidence(parsed, rawPool[k], rawPool[k]._typeCode);
           if (c > bestShortConf) bestShortConf = c;
         }
-        if (bestShortConf >= 78) break;
+        if (bestShortConf >= 78 && !hasBestYearConflict()) break;
       }
     }
 
@@ -619,12 +667,15 @@
         else mScore -= diff * 25;
       }
 
-      if (
+      const isExactTitleMatch =
         tmdbTitle === targetMovieTitleLow ||
         tmdbOrig === targetMovieTitleLow ||
-        (normTargetMovieTitle && (normTmdbT === normTargetMovieTitle || normTmdbO === normTargetMovieTitle))
-      ) {
-        mScore += 50;
+        (normTargetMovieTitle && (normTmdbT === normTargetMovieTitle || normTmdbO === normTargetMovieTitle));
+      const isYearWithinOne = Boolean(!parsed?.year || (releaseYear && Math.abs(Number(parsed.year) - releaseYear) <= 1));
+
+      if (isExactTitleMatch) {
+        // MODUL 3.1 ("The Gentlemen"-Fix): Exakter Titel + passendes Release-Jahr (±1 Jahr) erhält +150 Punkte Bonus!
+        mScore += isYearWithinOne ? 150 : 50;
       } else if (tmdbTitle.startsWith(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.startsWith(normTargetMovieTitle))) {
         mScore += 30;
       } else if (tmdbTitle.includes(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.includes(normTargetMovieTitle))) {
@@ -898,8 +949,12 @@
         (parsed.isSeries && rawEntry.cleanTitle && String(rawEntry.cleanTitle).trim().length >= 2 && String(rawEntry.cleanTitle).trim().length < String(parsed.cleanTitle || "").trim().length)
       ) {
         const rawProvided = String(rawEntry.manualTitle || rawEntry.cleanTitle || rawEntry.title).trim();
-        // "Cocaine Bear"- & "Ted Bundy"-Fix: Wenn rawProvided (> 50 Zeichen, ohne manualTitle) eigentlich eine Filmbeschreibung ist, NIEMALS als Titel übernehmen!
-        if (!rawEntry.manualTitle && rawProvided.length > 50) {
+        // MODUL 2.5 ("Cocaine Bear"- & "Star Wars Episode V"-Fix):
+        // Einzeilige Titel niemals bei 40/50 Zeichen abschneiden (Limit: 120 Zeichen / <= 15 Wörter)!
+        const isPlot = typeof isLikelyPlotDescription === "function"
+          ? isLikelyPlotDescription(rawProvided)
+          : (rawProvided.length > 120 || rawProvided.split(/\s+/).length > 15);
+        if (!rawEntry.manualTitle && isPlot) {
           if (!parsed.contextOverview) parsed.contextOverview = rawProvided;
         } else {
           const cleanedCandidate = cleanMediaTitle(rawProvided);
@@ -908,8 +963,11 @@
           }
         }
       }
-      // Sicherheits-Regel vor der TMDb-Suche: parsed.cleanTitle niemals länger als 50 Zeichen lassen!
-      if (!rawEntry?.manualTitle && parsed.cleanTitle && parsed.cleanTitle.length > 50) {
+      // Sicherheits-Regel vor der TMDb-Suche: Nur bei echten Beschreibungstexten (> 120 Zeichen oder > 15 Wörter) kürzen!
+      const cleanTitleIsPlot = typeof isLikelyPlotDescription === "function"
+        ? isLikelyPlotDescription(parsed.cleanTitle || "")
+        : Boolean(parsed.cleanTitle && (parsed.cleanTitle.length > 120 || parsed.cleanTitle.split(/\s+/).length > 15));
+      if (!rawEntry?.manualTitle && parsed.cleanTitle && cleanTitleIsPlot) {
         if (!parsed.contextOverview) parsed.contextOverview = parsed.cleanTitle;
         const shortFromRawName = rawName
           ? cleanMediaTitle(
@@ -918,11 +976,11 @@
                 .replace(/[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?.*$/i, "")
             )
           : "";
-        parsed.cleanTitle = (shortFromRawName && shortFromRawName.length >= 2 && shortFromRawName.length <= 50)
+        parsed.cleanTitle = (shortFromRawName && shortFromRawName.length >= 2 && shortFromRawName.length <= 120)
           ? shortFromRawName
-          : parsed.cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 40);
+          : parsed.cleanTitle.split(/[\n(]/)[0].trim().slice(0, 120);
       }
-      if (parsed.isSeries && parsed.episode && parsed.cleanTitle) {
+      if (parsed.isSeries && parsed.episode && parsed.cleanTitle && !parsed.isBonus) {
         const epNumRe = new RegExp(`^(.{2,}?)\\s+(?:[-–]\\s*)?(?:teil\\s+|part\\s+|ep\\.?\\s*|folge\\s+)?0*${Number(parsed.episode)}(?:\\s+[-–:]?\\s*.+)?$`, "i");
         const mStrip = String(parsed.cleanTitle).match(epNumRe);
         if (mStrip && mStrip[1] && !/^(?:babylon|apollo|district|oceans?|fast|station|sector|area|studio|room|vault|level|channel|colony|ash\s+vs\s+evil\s+dead)$/i.test(mStrip[1].trim())) {
@@ -930,6 +988,7 @@
         }
       }
     }
+    const parserCleanedSearchTitle = String(parsed.cleanTitle || rawName || "").trim();
 
     // Wenn als VIP-Stream-Playlist importiert wird und kein telegram_file_id im Desktop-Export lag,
     // erzeuge eine eindeutige tg_export_<chatId>_<msgId> Stream-Referenz für D1 movie_files / episode_files!
@@ -1275,9 +1334,11 @@
         });
       }
 
-      const seasonNum = parsed.season || 1;
+      // MODUL 2.2: Bonus- & Special-Clips bekommen season = 0 (Specials) und überschreiben niemals reguläre Folgen!
+      const isBonusClip = Boolean(parsed.isBonus || parsed.season === 0 || (typeof rawEntry === "object" && rawEntry?.isBonus));
+      const seasonNum = isBonusClip ? 0 : (parsed.season || 1);
       const epNum = parsed.episode || 1;
-      const epEndNum = (parsed.episodeEnd && parsed.episodeEnd >= epNum && parsed.episodeEnd <= epNum + 6)
+      const epEndNum = (!isBonusClip && parsed.episodeEnd && parsed.episodeEnd >= epNum && parsed.episodeEnd <= epNum + 6)
         ? Number(parsed.episodeEnd)
         : epNum;
 
@@ -1412,6 +1473,12 @@
             quality: parsed.quality,
             codec: parsed.codec,
             part: parsed.part,
+            partNumber: parsed.partNumber || parsed.partInfo?.partNumber || 1,
+            editionLabel: parsed.editionLabel || (Array.isArray(parsed.editions) && parsed.editions[0] ? parsed.editions[0] : null),
+            isBonus: isBonusClip,
+            durationSec,
+            width: typeof rawEntry === "object" && rawEntry?.width ? Number(rawEntry.width) : null,
+            height: typeof rawEntry === "object" && rawEntry?.height ? Number(rawEntry.height) : null,
             tags: combinedTags,
             versionLabel: curVerLabel,
             episodeTitle: resolvedEpTitle
@@ -1447,6 +1514,9 @@
 
       if (!seriesDetails.poster_path && !seriesDetails.external_poster_url && candidates[0]?.poster) {
         seriesDetails.external_poster_url = candidates[0].poster;
+      }
+      if (options?.manualOverride || (typeof rawEntry === "object" && (rawEntry?.manualOverride || rawEntry?.manualTitle))) {
+        seriesDetails.manualOverride = true;
       }
 
       // Erst JETZT (wenn mindestens ein gültiges Episoden-Video gespeichert wurde oder die Serie bereits mit Episoden existiert oder manuell bestätigt wurde) in D1 `series` schreiben!
@@ -1524,7 +1594,7 @@
 
       return {
         ok: true,
-        status: contextError ? "?" : "ok",
+        status: contextError ? "CONFLICT" : "ok",
         needsReview: Boolean(contextError),
         contextError,
         reviewReasonCode,
@@ -1532,18 +1602,23 @@
         typeCode: "s",
         tmdbId: seriesDetails.id,
         cleanTitle: seriesDetails.title,
+        parsedTitle: parserCleanedSearchTitle || parsed.cleanTitle || seriesDetails.title,
+        matchedTitle: seriesDetails.title,
         year: rawYear,
         poster: posterUrl,
         episodeTitle: finalEpTitle,
         season: seasonNum,
         episode: epNum,
         episodeEnd: epEndNum > epNum ? epEndNum : null,
+        isBonus: isBonusClip,
         versionInfo,
         versionLabel: versionInfo?.versionLabel || "Original- / Standardfassung",
         quality: parsed.quality,
         codec: parsed.codec,
         part: parsed.part,
+        partNumber: parsed.partNumber || parsed.partInfo?.partNumber || 1,
         partInfo: parsed.partInfo || null,
+        editionLabel: parsed.editionLabel || null,
         editions: parsed.editions || [],
         tags: parsed.tags || "",
         languages: parsed.languages || ["de"],
@@ -1640,6 +1715,12 @@
           quality: parsed.quality,
           codec: parsed.codec,
           part: parsed.part,
+          partNumber: parsed.partNumber || parsed.partInfo?.partNumber || 1,
+          editionLabel: parsed.editionLabel || (Array.isArray(parsed.editions) && parsed.editions[0] ? parsed.editions[0] : null),
+          isBonus: Boolean(parsed.isBonus),
+          durationSec,
+          width: typeof rawEntry === "object" && rawEntry?.width ? Number(rawEntry.width) : null,
+          height: typeof rawEntry === "object" && rawEntry?.height ? Number(rawEntry.height) : null,
           tags: parsed.tags || ""
         });
         if (saveMovRes && typeof saveMovRes === "object") {
@@ -1659,6 +1740,9 @@
 
       if (!movieDetails.poster_path && !movieDetails.external_poster_url && candidates[0]?.poster) {
         movieDetails.external_poster_url = candidates[0].poster;
+      }
+      if (options?.manualOverride || (typeof rawEntry === "object" && (rawEntry?.manualOverride || rawEntry?.manualTitle))) {
+        movieDetails.manualOverride = true;
       }
 
       // Kein leerer Film-Eintrag ohne gültige Videodatei in D1:
@@ -1715,7 +1799,7 @@
 
       return {
         ok: true,
-        status: contextError ? "?" : "ok",
+        status: contextError ? "CONFLICT" : "ok",
         needsReview: Boolean(contextError),
         contextError,
         reviewReasonCode,
@@ -1723,6 +1807,8 @@
         typeCode: "m",
         tmdbId: movieDetails.id,
         cleanTitle: movieDetails.title,
+        parsedTitle: parserCleanedSearchTitle || parsed.cleanTitle || movieDetails.title,
+        matchedTitle: movieDetails.title,
         year: rawYear,
         poster: posterUrl,
         season: null,
@@ -1730,7 +1816,9 @@
         quality: parsed.quality,
         codec: parsed.codec,
         part: parsed.part,
+        partNumber: parsed.partNumber || parsed.partInfo?.partNumber || 1,
         partInfo: parsed.partInfo || null,
+        editionLabel: parsed.editionLabel || null,
         editions: parsed.editions || [],
         tags: parsed.tags || "",
         languages: parsed.languages || ["de"],
@@ -1974,7 +2062,7 @@
     const validFilePath = rawFilePath && !rawFilePath.startsWith("(File not included")
       ? rawFilePath.split("/").pop()
       : "";
-    const flatText = flattenTelegramExportText(msg.text || msg.caption || msg.text_entities);
+    const flatText = (typeof extractRawMessageText === "function" ? extractRawMessageText(msg) : "") || flattenTelegramExportText(msg.text || msg.caption || msg.text_entities);
     const rawMsgNum = Number(msg.id || msg.message_id || msg.msg_id || 0);
     const msgId = rawMsgNum > 0 ? rawMsgNum : null;
     const messageLink = buildTelegramMessageLink(chatMeta, msgId);
@@ -1989,7 +2077,7 @@
       const sizeFromText = flatText.match(/\b(\d{1,4}(?:[.,]\d{1,2})?\s*(?:GB|GiB|MB|MiB))\b/i)?.[1] || null;
       const tagsFromText = extractMediaReleaseTags(flatText, rawFileName, gmVideo.durationSec).join(" · ");
       let syntheticName = gmVideo.title || rawFileName || validFilePath;
-      if (gmVideo.mediaType === "tv" && gmVideo.season && gmVideo.episode) {
+      if (gmVideo.mediaType === "tv" && gmVideo.season !== null && gmVideo.episode) {
         syntheticName += ` S${String(gmVideo.season).padStart(2, "0")}E${String(gmVideo.episode).padStart(2, "0")}`;
       }
       if (gmVideo.year) syntheticName += ` (${gmVideo.year})`;
@@ -2000,11 +2088,15 @@
         rawInput: rawFileName || validFilePath || flatText.split(/\r?\n/)[0] || syntheticName,
         raw_file_name: rawFileName || validFilePath || "",
         raw_text: flatText.slice(0, 500),
+        rawText: flatText.slice(0, 500),
         cleanTitle: gmVideo.title,
+        titleFromText: gmVideo.titleFromText || null,
+        titleFromFileName: gmVideo.titleFromFileName || null,
         originalTitle: gmVideo.originalTitle || null,
         year: gmVideo.year || null,
         isSeries: gmVideo.mediaType === "tv",
-        season: gmVideo.season || null,
+        isBonus: Boolean(gmVideo.isBonus || gmVideo.season === 0),
+        season: gmVideo.season !== undefined ? gmVideo.season : null,
         episode: gmVideo.episode || null,
         episodeEnd: gmVideo.episodeEnd || null,
         episodeTitle: gmVideo.episodeTitle || "",
@@ -2012,7 +2104,9 @@
         width: Number(msg.width || msg.video?.width || 0) || null,
         height: Number(msg.height || msg.video?.height || 0) || null,
         part: gmVideo.partInfo ? gmVideo.partInfo.partLabel : null,
+        partNumber: gmVideo.partNumber || gmVideo.partInfo?.partNumber || 1,
         partInfo: gmVideo.partInfo || null,
+        editionLabel: gmVideo.editionLabel || (Array.isArray(gmVideo.editions) && gmVideo.editions[0] ? gmVideo.editions[0] : null),
         editions: gmVideo.editions || [],
         tmdb_id: gmVideo.tmdbId || null,
         imdb_id: gmVideo.imdbId || null,
@@ -2023,6 +2117,7 @@
         source_used: gmVideo.sourceUsed || "file_name",
         pre_context: { ...prevContext },
         telegram_file_id: msg.telegram_file_id || msg.file_id || null,
+        telegram_unique_id: msg.file_unique_id || msg.telegram_unique_id || null,
         file_size: msg.file_size || (sizeFromText ? parseHumanFileSizeToBytes(sizeFromText) : null),
         tags: tagsFromText || null,
         mime_type: msg.mime_type || "video/mp4",
@@ -2248,16 +2343,49 @@
     }
 
     if (Array.isArray(tgMessages)) {
-      // 1. Chronologische Sortierung VOR dem Loop erzwingen (damit prevContext für Episoden 1..N beim 1. Durchlauf greift!)
+      // MODUL 1.1: Streng chronologische Sortierung VOR dem Loop erzwingen + processedMsgIds Set zur Deduplizierung pro Lauf!
       tgMessages.sort((a, b) => Number(a?.id || a?.message_id || 0) - Number(b?.id || b?.message_id || 0));
 
       const rawCandidates = [];
+      const processedMsgIds = new Set();
       let rollingPreContext = {};
       for (let i = 0; i < tgMessages.length; i++) {
         const msg = tgMessages[i];
         if (!msg || (msg.type && msg.type !== "message")) continue;
-        if (isJunkOrSticker(msg)) continue;
         const currentMsgId = Number(msg.id || msg.message_id || 0);
+        if (currentMsgId > 0) {
+          if (processedMsgIds.has(currentMsgId)) continue;
+          processedMsgIds.add(currentMsgId);
+        }
+        // MODUL 1.4: Junk-Filter am Eingang (Sprachlern-Videos & Tutorials als SKIPPED_JUNK protokollieren)
+        if (typeof isLanguageCourseOrTutorialJunk === "function" && isLanguageCourseOrTutorialJunk(msg)) {
+          const junkText = (typeof extractRawMessageText === "function" ? extractRawMessageText(msg) : "") || flattenTelegramExportText(msg.caption || msg.text || msg.text_entities);
+          const junkFile = String(msg.file_name || msg.video?.file_name || msg.document?.file_name || msg.file || "").trim();
+          const memKey = "d1_import_diagnostic_logs";
+          const existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
+          memoryFallback.set(memKey, [{
+            id: Date.now() * 100 + (i % 100),
+            msgId: currentMsgId || "",
+            stage: "GATEKEEPER",
+            status: "SKIPPED_JUNK",
+            reviewReasonCode: null,
+            reason: "Sprachlern-/Tutorial-Clip automatisch durch Gatekeeper gefiltert",
+            fileName: junkFile,
+            textPreview: String(junkText || "").slice(0, 220),
+            parsedTitle: "",
+            matchedTitle: "",
+            season: null,
+            episode: null,
+            tmdbQuery: "",
+            tmdbResult: "SKIPPED_JUNK",
+            tmdbId: null,
+            typeCode: null,
+            details: {},
+            timestamp: Date.now()
+          }, ...existingMem].slice(0, 2500));
+          continue;
+        }
+        if (isJunkOrSticker(msg)) continue;
 
         // Untertitel-Bindung (.srt, .vtt, .sub, .ass, .ssa): automatisch an das zugehörige Video (darüber oder via reply_to_message_id) binden!
         const subAtt = extractSubtitleAttachmentFromMsg(msg, chatMeta);
@@ -2283,7 +2411,7 @@
         // 2. EISERNE REGEL ("Video schlägt Header" — Breaking Bad S03E01 Fix):
         // Wenn eine Nachricht eine Videodatei anhängen hat UND gleichzeitig im Text einen Staffel-/Serien-Header (z.B. "Staffel 3", "vorschauserien")
         // trägt, aktualisiere zuerst rollingPreContext, brich aber NIEMALS mit continue ab, sondern verarbeite die Videodatei sofort!
-        const rawTextCheck = flattenTelegramExportText(msg.caption || msg.text || msg.text_entities);
+        const rawTextCheck = (typeof extractRawMessageText === "function" ? extractRawMessageText(msg) : "") || flattenTelegramExportText(msg.caption || msg.text || msg.text_entities);
         const entitiesCheck = extractEntitiesFromExportMsg(msg);
         const hasSeriesOrSeasonHeaderInMsg = Boolean(
           /\b(?:Staffel|Season)\s*0*\d{1,2}\b/i.test(rawTextCheck) ||
@@ -2303,13 +2431,15 @@
               ? (() => {
                   const enriched = enrichVideoFromNeighborPost(tgMessages, i, {
                     ...rawIt,
-                    title: rawIt.cleanTitle || rawIt.title || ""
+                    title: rawIt.cleanTitle || rawIt.title || "",
+                    part: rawIt.partNumber || rawIt.part || null
                   });
-                  const didEnrich = Boolean(enriched && (enriched.contextOverview || (enriched.title && enriched.title !== rawIt.cleanTitle)));
+                  const didEnrich = Boolean(enriched && (enriched.contextOverview || enriched.tmdbId || (enriched.title && enriched.title !== rawIt.cleanTitle)));
                   return {
                     ...rawIt,
                     cleanTitle: enriched?.cleanTitle || enriched?.title || rawIt.cleanTitle,
                     year: enriched?.year || rawIt.year || null,
+                    tmdb_id: enriched?.tmdbId || rawIt.tmdb_id || null,
                     contextOverview: enriched?.contextOverview || rawIt.contextOverview || "",
                     neighborEnriched: didEnrich
                   };
@@ -2444,6 +2574,10 @@
       return normalizeTitleForConfidence(stripped || rawTitle);
     };
 
+    const processedMsgIds = playlistContext?.processedMsgIds instanceof Set
+      ? playlistContext.processedMsgIds
+      : new Set();
+
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
       // CLOUDFLARE 50-SUBREQUESTS-LIMIT & 8s-WALL-CLOCK-TIMEOUT SCHUTZSCHILD:
       // Stoppt kontrolliert ab >= 26 Subrequests ODER >= 8000ms verstrichener Laufzeit
@@ -2454,18 +2588,21 @@
         nextStartIndex = i;
         pauseReason = elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
         const pausedEntry = entriesList[i];
+        const pausedMsgId = Number(pausedEntry?.msg_id || pausedEntry?.message_id || 0) || "";
+        const pausedRawText = (typeof extractRawMessageText === "function" ? extractRawMessageText(pausedEntry) : "") || String(pausedEntry?.raw_text || pausedEntry?.rawText || "");
         diagLogsToSave.push({
-          msgId: pausedEntry?.msg_id || pausedEntry?.message_id || "",
+          msgId: pausedMsgId,
           stage: "BATCH_GUARD",
           status: "SUBREQUEST_PAUSE",
           reason: elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS
             ? `Zeit-Guard nach ${elapsedWallMs}ms (>8000ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
             : `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
           fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
-          textPreview: String(pausedEntry?.raw_text || "").slice(0, 200),
+          textPreview: pausedRawText.slice(0, 200),
           parsedTitle: pausedEntry?.cleanTitle || "",
-          season: pausedEntry?.season || null,
-          episode: pausedEntry?.episode || null,
+          matchedTitle: "",
+          season: pausedEntry?.season ?? null,
+          episode: pausedEntry?.episode ?? null,
           tmdbQuery: pausedEntry?.cleanTitle || "",
           tmdbResult: "Auto-Resume im Folge-Batch"
         });
@@ -2477,10 +2614,11 @@
       let abortedMidBatchDueToBudget = false;
       let abortBatchIndex = i;
 
-      // Sequenzielle Abarbeitung innerhalb des Mini-Batches + Intra-Batch Serien-Vererbung:
-      // Sobald Folge 1 einer Serie (z.B. S01E01) im Batch aufgelöst wurde, erben alle nachfolgenden Folgen
-      // derselben Serie im selben Batch direkt deren tmdb_id (0 erneute Such-Aufrufe)!
+      // MODUL 1.1 & 1.3: Streng sequenzielle Abarbeitung innerhalb des Batches + Variablen-Hygiene (tmdbId, matchedTitle, parsedItem strikt lokal im Loop!)
       for (let bStep = 0; bStep < batch.length; bStep++) {
+        let tmdbId = null;
+        let matchedTitle = null;
+        let parsedItem = null;
         const stepElapsedWallMs = Date.now() - batchWallStartMs;
         if ((!hasSubrequestBudget(28) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
@@ -2491,14 +2629,24 @@
           subrequestBudgetExhausted = false;
         }
         let entry = batch[bStep];
+        const entryMsgIdNum = Number(entry?.msg_id || entry?.message_id || entry?.messageId || 0);
+        if (entryMsgIdNum > 0) {
+          if (processedMsgIds.has(entryMsgIdNum)) {
+            batchResults.push({ _skippedAlreadyProcessedMsgId: true, msgId: entryMsgIdNum });
+            continue;
+          }
+        }
         const entryNormKey = buildIntraBatchTitleKey(entry);
         const isEntrySeriesHint = typeof entry === "object" && entry !== null && Boolean(
-          entry.isSeries || entry.typeCode === "s" || entry.type === "series" || entry.season || entry.episode ||
+          entry.isSeries || entry.typeCode === "s" || entry.type === "series" || entry.season !== null && entry.season !== undefined || entry.episode ||
           /\b(?:S\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(String(entry.filename || entry.file_name || entry.cleanTitle || ""))
         );
+        // MODUL 2.1: Nachbar-Pairing für Multi-Part-Filme (CD2 übernimmt direkt die tmdbId von CD1 bei gleichem Basis-Titel!)
+        const entryPartNum = Number(entry?.partNumber || entry?.partInfo?.partNumber || (String(entry?.part || "").match(/(\d+)/)?.[1]) || 1) || 1;
         if (typeof entry === "object" && entry !== null && !entry.tmdb_id && !entry.tmdbId && entryNormKey && entryNormKey !== "unbekannt") {
           const inherited = intraBatchResolvedMap.get((isEntrySeriesHint ? "s::" : "m::") + entryNormKey)
-            || (isEntrySeriesHint ? intraBatchResolvedMap.get("any::" + entryNormKey) : null);
+            || (isEntrySeriesHint ? intraBatchResolvedMap.get("any::" + entryNormKey) : null)
+            || (entryPartNum > 1 ? intraBatchResolvedMap.get("m::" + entryNormKey) : null);
           if (inherited && inherited.tmdbId) {
             entry = {
               ...entry,
@@ -2524,14 +2672,15 @@
           const fallbackRaw = typeof entry === "string"
             ? entry
             : String(entry?.filename || entry?.file_name || entry?.rawInput || entry?.title || "");
-          const fallbackParsed = parseMediaFilename(fallbackRaw, entry?.raw_text || entry?.rawText || "");
+          const fallbackRawText = (typeof extractRawMessageText === "function" ? extractRawMessageText(entry) : "") || String(entry?.raw_text || entry?.rawText || "");
+          parsedItem = parseMediaFilename(fallbackRaw, fallbackRawText);
           stepRes = {
             ok: false,
             unmatched: true,
             ingestStatus: "failed",
             confidence: 0,
             rawInput: fallbackRaw,
-            parsed: fallbackParsed,
+            parsed: parsedItem,
             candidates: [],
             error: String(itemErr?.message || itemErr || "Unbekannter Fehler")
           };
@@ -2548,19 +2697,26 @@
           abortBatchIndex = i + bStep;
           break;
         }
+        if (entryMsgIdNum > 0) {
+          processedMsgIds.add(entryMsgIdNum);
+        }
+        if (stepRes && stepRes.ok && stepRes.tmdbId) {
+          tmdbId = Number(stepRes.tmdbId);
+          matchedTitle = String(stepRes.matchedTitle || stepRes.cleanTitle || "");
+        }
         // Intra-Batch Vererbungs-Cache aktualisieren, sobald ein Titel sicher (ab 80% ohne Konflikt) aufgelöst wurde:
-        if (stepRes && stepRes.ok && stepRes.tmdbId && !stepRes.contextError && Number(stepRes.confidence || 100) >= 80) {
+        if (stepRes && stepRes.ok && tmdbId && !stepRes.contextError && Number(stepRes.confidence || 100) >= 80) {
           const resolvedMeta = {
-            tmdbId: Number(stepRes.tmdbId),
+            tmdbId,
             typeCode: stepRes.typeCode === "s" ? "s" : "m",
-            cleanTitle: stepRes.cleanTitle || "",
+            cleanTitle: matchedTitle,
             poster: stepRes.poster || ""
           };
           if (entryNormKey && entryNormKey !== "unbekannt") {
             intraBatchResolvedMap.set(resolvedMeta.typeCode + "::" + entryNormKey, resolvedMeta);
             if (resolvedMeta.typeCode === "s") intraBatchResolvedMap.set("any::" + entryNormKey, resolvedMeta);
           }
-          const resNormKey = buildIntraBatchTitleKey(stepRes.cleanTitle || "");
+          const resNormKey = buildIntraBatchTitleKey(matchedTitle);
           if (resNormKey && resNormKey !== "unbekannt") {
             intraBatchResolvedMap.set(resolvedMeta.typeCode + "::" + resNormKey, resolvedMeta);
             if (resolvedMeta.typeCode === "s") intraBatchResolvedMap.set("any::" + resNormKey, resolvedMeta);
@@ -2571,6 +2727,7 @@
 
       for (let bIdx = 0; bIdx < batchResults.length; bIdx++) {
         const res = batchResults[bIdx];
+        if (res && res._skippedAlreadyProcessedMsgId) continue;
         const rawEntry = batch[bIdx];
         const rawLabel = typeof rawEntry === "string"
           ? rawEntry
@@ -2579,12 +2736,16 @@
         const normMsgId = typeof rawEntry === "object" && rawEntry !== null
           ? (Number(rawEntry.msg_id || rawEntry.message_id || rawEntry.messageId || 0) || null)
           : null;
+        // MODUL 1.2: Stelle sicher, dass rawText in jedem Code-Pfad ("auto" & "series") sauber ausgelesen und an den Logger übergeben wird
+        const unifiedRawText = typeof rawEntry === "object" && rawEntry !== null
+          ? ((typeof extractRawMessageText === "function" ? extractRawMessageText(rawEntry) : "") || String(rawEntry.raw_text || rawEntry.rawText || rawEntry.caption || rawEntry.text || ""))
+          : "";
         const contextDiagnostics = typeof rawEntry === "object" && rawEntry !== null ? {
           msgId: normMsgId,
           messageId: normMsgId,
           messageLink: rawEntry.message_link || rawEntry.messageLink || "",
           rawFileName: rawEntry.raw_file_name || rawEntry.file_name || "",
-          rawText: rawEntry.raw_text || rawEntry.rawText || "",
+          rawText: unifiedRawText,
           sourceUsed: res?.sourceUsed || rawEntry.source_used || "file_name",
           languages: res?.languages || rawEntry.languages || ["de"],
           prevMessages: Array.isArray(rawEntry.prev_messages || rawEntry.prevMessages) ? (rawEntry.prev_messages || rawEntry.prevMessages) : []
@@ -2602,7 +2763,8 @@
         if (!res || res.unmatched) {
           failedItems.push(String(rawLabel).slice(0, 45));
           const failReasonCode = res?.error ? "API_ERROR" : (res?.reviewReasonCode || "TMDB_NOT_FOUND");
-          const failReasonText = res?.error || `Kein passender TMDb-Eintrag für "${res?.parsed?.cleanTitle || rawLabel}" gefunden – bitte manuell suchen oder TMDb-ID zuweisen.`;
+          const cleanedQueryTitle = res?.parsed?.cleanTitle || rawEntry?.cleanTitle || String(rawLabel);
+          const failReasonText = res?.error || `Kein passender TMDb-Eintrag für "${cleanedQueryTitle}" gefunden – bitte manuell suchen oder TMDb-ID zuweisen.`;
           const failItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
@@ -2615,14 +2777,16 @@
             confidence: res?.confidence || 0,
             typeCode: res?.parsed?.isSeries ? "s" : "m",
             tmdbId: null,
-            cleanTitle: res?.parsed?.cleanTitle || String(rawLabel),
+            cleanTitle: cleanedQueryTitle,
+            parsedTitle: cleanedQueryTitle,
+            matchedTitle: "",
             year: res?.parsed?.year || "k.A.",
             poster: "",
             quality: res?.parsed?.quality || null,
             codec: res?.parsed?.codec || "x264",
             part: res?.parsed?.part || null,
-            season: res?.parsed?.season || null,
-            episode: res?.parsed?.episode || null,
+            season: res?.parsed?.season ?? null,
+            episode: res?.parsed?.episode ?? null,
             metadataSource: "Keine",
             ...contextDiagnostics,
             candidates: res?.candidates || []
@@ -2633,13 +2797,14 @@
             stage: "TMDB_LOOKUP",
             status: res?.error ? "API_ERROR" : "TMDB_NOT_FOUND",
             reviewReasonCode: failReasonCode,
-            reason: res?.error || `Kein TMDb-Treffer für "${res?.parsed?.cleanTitle || rawLabel}"`,
+            reason: res?.error || `Kein TMDb-Treffer für "${cleanedQueryTitle}"`,
             fileName: contextDiagnostics.rawFileName || String(rawLabel),
             textPreview: String(contextDiagnostics.rawText || "").slice(0, 220),
-            parsedTitle: res?.parsed?.cleanTitle || String(rawLabel),
-            season: res?.parsed?.season || null,
-            episode: res?.parsed?.episode || null,
-            tmdbQuery: `${res?.parsed?.cleanTitle || rawLabel}${res?.parsed?.year ? ` (${res.parsed.year})` : ""}`,
+            parsedTitle: cleanedQueryTitle,
+            matchedTitle: "",
+            season: res?.parsed?.season ?? null,
+            episode: res?.parsed?.episode ?? null,
+            tmdbQuery: `${cleanedQueryTitle}${res?.parsed?.year ? ` (${res.parsed.year})` : ""}`,
             tmdbResult: "Kein Treffer",
             tmdbId: null,
             typeCode: res?.parsed?.isSeries ? "s" : "m",
@@ -2653,24 +2818,26 @@
 
           const qualLabel = res.quality ? `${res.quality} ` : "";
           if (res.typeCode === "s") {
-            const sCode = `S${String(res.season || 1).padStart(2, "0")}E${String(res.episode || 1).padStart(2, "0")}`;
+            const sCode = `S${String(res.season ?? 1).padStart(2, "0")}E${String(res.episode || 1).padStart(2, "0")}`;
             seriesAdded.push(`${res.cleanTitle} (${sCode} • ${qualLabel}${res.codec})`);
           } else {
             moviesAdded.push(`${res.cleanTitle} (${qualLabel}${res.codec}${res.part ? ` ${res.part}` : ""})`);
           }
 
+          const parserQueryTitle = res.parsedTitle || rawEntry?.cleanTitle || res.cleanTitle;
+          const resolvedMatchedTitle = res.matchedTitle || res.cleanTitle;
           const resolvedReasonCode = res.reviewReasonCode || (
             res.contextError || res.isUncertain ? "PARSER_AMBIGUITY" : null
           );
           const resolvedReviewReason = res.errorReason || (
             res.isUncertain
-              ? `Niedrige Treffer-Sicherheit (${Number(res.confidence || 0)}% Match): "${rawEntry?.cleanTitle || rawLabel}" wurde vorläufig "${res.cleanTitle}" (${res.year || "k.A."}) zugeordnet.`
+              ? `Niedrige Treffer-Sicherheit (${Number(res.confidence || 0)}% Match): "${parserQueryTitle}" wurde vorläufig "${resolvedMatchedTitle}" (${res.year || "k.A."}) zugeordnet.`
               : null
           );
           const okItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
-            status: res.contextError ? "?" : (res.isUncertain ? "uncertain" : (res.ingestStatus || "added")),
+            status: res.contextError ? "CONFLICT" : (res.isUncertain ? "uncertain" : (res.ingestStatus || "added")),
             contextError: Boolean(res.contextError),
             reviewReasonCode: resolvedReasonCode,
             errorReason: resolvedReviewReason,
@@ -2681,13 +2848,15 @@
             typeCode: res.typeCode,
             tmdbId: res.tmdbId,
             cleanTitle: res.cleanTitle,
+            parsedTitle: parserQueryTitle,
+            matchedTitle: resolvedMatchedTitle,
             year: res.year || "k.A.",
             poster: res.poster || "",
             quality: res.quality || null,
             codec: res.codec || "x264",
             part: res.part || null,
-            season: res.season || null,
-            episode: res.episode || null,
+            season: res.season ?? null,
+            episode: res.episode ?? null,
             episodeTitle: res.episodeTitle || null,
             versionInfo: res.versionInfo || null,
             versionLabel: res.versionLabel || null,
@@ -2697,11 +2866,12 @@
           };
           batchItems.push(okItemObj);
 
+          // MODUL 5.2 & 5.3: Einheitlicher Konflikt-Status "CONFLICT" & Trennung von parsedTitle (Suchtitel vor TMDb) und matchedTitle (TMDb-Name)
           const diagStatus = res.contextError
-            ? "CONFLICT_?"
+            ? "CONFLICT"
             : (res.ingestStatus === "skipped_prerelease" ? "SKIPPED_PRERELEASE" : (res.ingestStatus === "duplicate" ? "SKIPPED_DUPLICATE" : "OK"));
           const sEpBadge = res.typeCode === "s"
-            ? ` S${String(res.season || 1).padStart(2, "0")}E${String(res.episode || 1).padStart(2, "0")}`
+            ? ` S${String(res.season ?? 1).padStart(2, "0")}E${String(res.episode || 1).padStart(2, "0")}`
             : "";
           const replacedNote = res.ingestStatus === "replaced_prerelease"
             ? " [⚠️ Alte Vorabversion/TS/MD automatisch gelöscht & ersetzt!]"
@@ -2717,19 +2887,20 @@
               res.ingestStatus === "skipped_prerelease"
                 ? "Vorabversion / TS / MD übersprungen (reguläre Version bereits in D1 vorhanden)"
                 : res.ingestStatus === "duplicate"
-                  ? "Exaktes Stream-Duplikat (identische file_id & message_id) bereits in D1"
+                  ? "Exaktes Stream-Duplikat (identischer fileFingerprint & Part) bereits in D1"
                   : `Gespeichert via ${res.metadataSource || "TMDb"} (${res.confidence || 100}%)${replacedNote}${subsNote}`
             ),
             fileName: contextDiagnostics.rawFileName || String(rawLabel),
             textPreview: String(contextDiagnostics.rawText || "").slice(0, 220),
-            parsedTitle: res.cleanTitle,
-            season: res.season || null,
-            episode: res.episode || null,
-            tmdbQuery: `${rawEntry?.cleanTitle || res.cleanTitle}`,
-            tmdbResult: `${res.cleanTitle} (${res.year || "k.A."})${sEpBadge} [TMDb #${res.tmdbId}]`,
+            parsedTitle: parserQueryTitle,
+            matchedTitle: resolvedMatchedTitle,
+            season: res.season ?? null,
+            episode: res.episode ?? null,
+            tmdbQuery: parserQueryTitle,
+            tmdbResult: `${resolvedMatchedTitle} (${res.year || "k.A."})${sEpBadge} [TMDb #${res.tmdbId}]`,
             tmdbId: res.tmdbId,
             typeCode: res.typeCode,
-            details: { reviewReasonCode: resolvedReasonCode, rawEntry: okItemObj.rawEntry, candidates: (res.candidates || []).slice(0, 5) }
+            details: { reviewReasonCode: resolvedReasonCode, matchedTitle: resolvedMatchedTitle, rawEntry: okItemObj.rawEntry, candidates: (res.candidates || []).slice(0, 5) }
           });
         }
       }
@@ -2740,16 +2911,18 @@
         pauseReason = "SUBREQUEST_LIMIT_GUARD";
         const pausedEntry = entriesList[abortBatchIndex];
         const pausedMsgId = Number(pausedEntry?.msg_id || pausedEntry?.message_id || 0) || "";
+        const pausedRawText = (typeof extractRawMessageText === "function" ? extractRawMessageText(pausedEntry) : "") || String(pausedEntry?.raw_text || pausedEntry?.rawText || "");
         diagLogsToSave.push({
           msgId: pausedMsgId,
           stage: "BATCH_GUARD",
           status: "SUBREQUEST_PAUSE",
           reason: `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${abortBatchIndex})`,
           fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
-          textPreview: String(pausedEntry?.raw_text || "").slice(0, 200),
+          textPreview: pausedRawText.slice(0, 200),
           parsedTitle: pausedEntry?.cleanTitle || "",
-          season: pausedEntry?.season || null,
-          episode: pausedEntry?.episode || null,
+          matchedTitle: "",
+          season: pausedEntry?.season ?? null,
+          episode: pausedEntry?.episode ?? null,
           tmdbQuery: pausedEntry?.cleanTitle || "",
           tmdbResult: "Auto-Resume im Folge-Batch"
         });

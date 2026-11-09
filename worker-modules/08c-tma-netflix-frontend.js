@@ -1808,12 +1808,20 @@
         openManualNoTmdbConfirmForReviewItem(itemId);
       }
 
-      let activeManualNoTmdbContext = null;
+            let activeManualNoTmdbContext = null;
+      let manualNoTmdbLivePreviewTimer = null;
+      const manualNoTmdbQueueState = {
+        active: false,
+        source: "diag",
+        totalInitial: 0,
+        processedCount: 0
+      };
 
       function closeManualNoTmdbConfirmModalClient() {
         const el = document.getElementById("manualNoTmdbConfirmModalOverlay");
         if (el) el.style.display = "none";
         activeManualNoTmdbContext = null;
+        manualNoTmdbQueueState.active = false;
       }
 
       function toggleManualNoTmdbSeriesFieldsClient() {
@@ -1821,6 +1829,175 @@
         const seWrap = document.getElementById("manualNoTmdbSeriesRow");
         if (seWrap && typeSel) {
           seWrap.style.display = typeSel.value === "s" ? "grid" : "none";
+        }
+        scheduleManualNoTmdbLivePreviewClient();
+      }
+
+      function scheduleManualNoTmdbLivePreviewClient() {
+        if (manualNoTmdbLivePreviewTimer) clearTimeout(manualNoTmdbLivePreviewTimer);
+        manualNoTmdbLivePreviewTimer = setTimeout(() => {
+          updateManualNoTmdbLivePreviewClient();
+        }, 180);
+      }
+
+      function selectExisting900mSeriesInModalClient(synthId, seriesTitle, seriesYear) {
+        const titleInp = document.getElementById("manualNoTmdbTitleInp");
+        const yearInp = document.getElementById("manualNoTmdbYearInp");
+        const typeSel = document.getElementById("manualNoTmdbTypeSel");
+        const reuseInp = document.getElementById("manualNoTmdbReuseIdInp");
+        if (titleInp && seriesTitle) titleInp.value = String(seriesTitle);
+        if (yearInp && seriesYear && seriesYear !== "k.A.") yearInp.value = String(seriesYear);
+        if (typeSel) typeSel.value = "s";
+        if (reuseInp) reuseInp.value = String(Number(synthId) || 0);
+        toggleManualNoTmdbSeriesFieldsClient();
+        showHudToast("🔗 Vorhandene 900M-Serie ausgewählt (#" + synthId + ")");
+      }
+
+      async function updateManualNoTmdbLivePreviewClient() {
+        const badgeEl = document.getElementById("manualNoTmdbLivePreviewBox");
+        const suggestEl = document.getElementById("manualNoTmdbExistingSeriesSuggestBox");
+        if (!badgeEl) return;
+        const title = String(document.getElementById("manualNoTmdbTitleInp")?.value || "").trim();
+        const typeCode = document.getElementById("manualNoTmdbTypeSel")?.value === "s" ? "s" : "m";
+        const year = String(document.getElementById("manualNoTmdbYearInp")?.value || "").trim();
+        const reuseInp = document.getElementById("manualNoTmdbReuseIdInp");
+        const forcedReuseId = Number(reuseInp?.value || 0);
+
+        if (!title) {
+          badgeEl.innerHTML = '<span style="color:#94a3b8">Bitte Titel eingeben, um die 900M-ID & Kollisionsprüfung live zu berechnen…</span>';
+          if (suggestEl) suggestEl.style.display = "none";
+          return;
+        }
+
+        try {
+          const qs = "?type=" + encodeURIComponent(typeCode) + "&title=" + encodeURIComponent(title) + "&year=" + encodeURIComponent(year);
+          const r = await apiFetchJson(API_BASE + "/admin/preview-manual-id" + qs);
+          if (!r || !r.ok) return;
+          const displayId = forcedReuseId >= 900000000 ? forcedReuseId : Number(r.allocatedId || 0);
+          const isReusing = forcedReuseId >= 900000000 || Boolean(r.isExistingMatch);
+          const rangeText = esc(r.rangeLabel || (typeCode === "s" ? "945M–989M (Manuelle Serien)" : "900M–944M (Manuelle Filme)"));
+          badgeEl.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div>' +
+                '<span style="font-size:10.5px;color:#cbd5e1">Synthetische Ziel-ID (' + rangeText + '):</span> ' +
+                '<code style="font-size:12.5px;font-weight:900;color:#e9d5ff;background:rgba(168,85,247,0.22);padding:2px 7px;border-radius:5px;border:1px solid rgba(168,85,247,0.5)">#' + displayId + '</code>' +
+              '</div>' +
+              '<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:' + (isReusing ? 'rgba(56,189,248,0.2);color:#38bdf8' : 'rgba(16,185,129,0.2);color:#34d399') + '">' +
+                (isReusing
+                  ? ('♻️ Bestehender 900M-Eintrag erkannt (' + esc(r.existingMatch?.title || title) + ')')
+                  : '🟢 Frei & 100% kollisionsfrei in D1') +
+              '</span>' +
+            '</div>';
+
+          if (suggestEl) {
+            const list900 = Array.isArray(r.existing900mSeries) ? r.existing900mSeries : [];
+            if (typeCode === "s" && list900.length > 0) {
+              suggestEl.style.display = "block";
+              suggestEl.innerHTML =
+                '<div style="font-size:11px;font-weight:800;color:#38bdf8;margin-bottom:5px">🔗 Vorhandene 900M-Serien in D1 (1-Klick-Verknüpfung für weitere Folgen):</div>' +
+                '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
+                  list900.slice(0, 8).map(s => {
+                    const sId = Number(s.id || 0);
+                    const sTitle = String(s.title || "");
+                    const sYear = String(s.year || "");
+                    const activeSel = (forcedReuseId === sId || Number(r.existingMatch?.id || 0) === sId);
+                    return '<button type="button" class="btn" style="padding:3px 8px;font-size:10.5px;' + (activeSel ? 'background:rgba(56,189,248,0.28);border-color:#38bdf8;color:#fff' : 'background:#161826;color:#cbd5e1') + '" onclick="selectExisting900mSeriesInModalClient(' + sId + ',\\'' + esc(sTitle) + '\\',\\'' + esc(sYear) + '\\')">📺 ' + esc(sTitle) + ' (#' + sId + ')</button>';
+                  }).join("") +
+                '</div>';
+            } else {
+              suggestEl.style.display = "none";
+            }
+          }
+        } catch (e) {}
+      }
+
+      function getOpenTmdbNotFoundQueueTargetsClient(source = "diag") {
+        if (source === "review") {
+          return (backupImportJob.reviewItems || []).filter(it => !it.tmdbId || Number(it.tmdbId) >= 900000000 || it.status === "failed");
+        }
+        loadClientDiagnosticLogsFromStorage();
+        const logs = clientDiagnosticLogState.logs || [];
+        const targets = [];
+        logs.forEach((l, idx) => {
+          const st = String(l.status || "").toUpperCase();
+          if (st === "TMDB_NOT_FOUND" || st === "CONFLICT" || st === "CONFLICT_?") {
+            targets.push({ diagIdx: idx, log: l });
+          }
+        });
+        return targets;
+      }
+
+      function startManualNoTmdbQueueModeClient(source = "diag") {
+        const targets = getOpenTmdbNotFoundQueueTargetsClient(source);
+        if (targets.length === 0) {
+          showHudToast("🎉 Keine offenen TMDB_NOT_FOUND / Konflikt-Einträge für den Queue-Modus vorhanden!");
+          return;
+        }
+        manualNoTmdbQueueState.active = true;
+        manualNoTmdbQueueState.source = source;
+        manualNoTmdbQueueState.totalInitial = targets.length;
+        manualNoTmdbQueueState.processedCount = 0;
+        if (source === "review") {
+          openManualNoTmdbConfirmForReviewItem(targets[0].id);
+        } else {
+          openManualNoTmdbConfirmForDiagItem(targets[0].diagIdx);
+        }
+      }
+
+      function skipCurrentManualNoTmdbQueueItemClient() {
+        const ctx = activeManualNoTmdbContext;
+        if (!ctx) return;
+        const targets = getOpenTmdbNotFoundQueueTargetsClient(manualNoTmdbQueueState.source);
+        if (targets.length <= 1) {
+          showHudToast("ℹ️ Kein weiterer offener Eintrag in der Queue.");
+          return;
+        }
+        let nextTarget = targets[0];
+        if (manualNoTmdbQueueState.source === "review") {
+          const curIdx = targets.findIndex(t => String(t.id) === String(ctx.itemId));
+          nextTarget = targets[(curIdx + 1) % targets.length];
+          openManualNoTmdbConfirmForReviewItem(nextTarget.id);
+        } else {
+          const curIdx = targets.findIndex(t => Number(t.diagIdx) === Number(ctx.diagIdx));
+          nextTarget = targets[(curIdx + 1) % targets.length];
+          openManualNoTmdbConfirmForDiagItem(nextTarget.diagIdx);
+        }
+      }
+
+      async function submitMigrate900mToRealTmdbClient() {
+        const oldInp = document.getElementById("manualMigrateOld900mInp");
+        const newInp = document.getElementById("manualMigrateNewTmdbInp");
+        const typeSel = document.getElementById("manualNoTmdbTypeSel");
+        const oldSyntheticId = Number(oldInp?.value || activeManualNoTmdbContext?.existingSyntheticId || 0);
+        const newTmdbId = Number(newInp?.value || 0);
+        const typeCode = typeSel?.value === "s" ? "s" : "m";
+        if (oldSyntheticId < 900000000 || !newTmdbId || newTmdbId >= 900000000) {
+          showHudToast("⚠️ Bitte eine gültige 900M-ID (>= 900.000.000) und eine echte TMDb-ID (< 900.000.000) eingeben.");
+          return;
+        }
+        setBusyState(true, "🔄 Migriere #" + oldSyntheticId + " inkl. Episoden, Streams & Playlisten auf TMDb #" + newTmdbId + "...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/migrate-synthetic-id", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              oldSyntheticId,
+              newTmdbId,
+              typeCode,
+              targetChatId: backupImportJob.targetPlaylistChatId || chatId
+            })
+          });
+          if (r && r.ok) {
+            clearClientMediaCaches();
+            closeManualNoTmdbConfirmModalClient();
+            showHudToast("✅ Migration abgeschlossen: #" + oldSyntheticId + " → TMDb #" + newTmdbId + (r.officialTitle ? (" (" + r.officialTitle + ")") : ""));
+            refreshDiagnosticLogMountDom();
+            if (state.view === "admin") loadAdminPanelView();
+          } else {
+            showHudToast("⚠️ " + (r?.error || "Migration fehlgeschlagen"));
+          }
+        } finally {
+          setBusyState(false);
         }
       }
 
@@ -1841,23 +2018,34 @@
         const initType = ctx.typeCode === "s" ? "s" : "m";
         const initTitle = String(ctx.title || "").trim();
         const initYear = String(ctx.year && ctx.year !== "k.A." ? ctx.year : "").replace(/[^0-9]/g, "").slice(0, 4);
-        const initSeason = Math.max(1, parseInt(ctx.season, 10) || 1);
+        const initSeason = ctx.season !== undefined && ctx.season !== null ? Math.max(0, parseInt(ctx.season, 10) || 0) : 1;
         const initEpisode = Math.max(1, parseInt(ctx.episode, 10) || 1);
         const initPoster = String(ctx.poster || "").trim();
         const initGenres = String(ctx.genres || "Manuell bestätigt").trim();
         const initOverview = String(ctx.overview || "").trim();
         const sibCount = Number(ctx.siblingCount || 0);
+        const existingSynthId = Number(ctx.existingSyntheticId || 0);
+        const openQueueTargets = getOpenTmdbNotFoundQueueTargetsClient(ctx.mode === "review" ? "review" : "diag");
+        const isQueueActive = Boolean(manualNoTmdbQueueState.active);
 
         overlay.style.display = "flex";
         overlay.innerHTML =
-          '<div style="width:min(95vw,500px);background:#12131c;border:1px solid rgba(168,85,247,0.45);border-radius:14px;padding:16px;box-shadow:0 20px 50px rgba(0,0,0,0.85);color:#f8fafc;max-height:90vh;overflow-y:auto">' +
+          '<div style="width:min(95vw,540px);background:#12131c;border:1px solid rgba(168,85,247,0.45);border-radius:14px;padding:16px;box-shadow:0 20px 50px rgba(0,0,0,0.85);color:#f8fafc;max-height:92vh;overflow-y:auto">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">' +
               '<div>' +
-                '<div style="font-size:15px;font-weight:900;color:#fff">✨ Titel ohne TMDb-ID manuell bestätigen</div>' +
-                '<div style="font-size:11.5px;color:#cbd5e1;margin-top:2px">Erhält eine kollisionsfreie synthetische ID im exklusiven <b>900.000.000+</b> Bereich (überschreibt niemals TMDb- oder API-IDs).</div>' +
+                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                  '<span style="font-size:15px;font-weight:900;color:#fff">✨ 900M-ID Abgleich-Modal (Manuelle Bestätigung)</span>' +
+                  (isQueueActive ? (
+                    '<span style="font-size:10.5px;font-weight:900;padding:2px 8px;border-radius:999px;background:rgba(56,189,248,0.22);color:#38bdf8;border:1px solid rgba(56,189,248,0.45)">⚡ Queue-Modus aktiv (' + openQueueTargets.length + ' offen)</span>'
+                  ) : '') +
+                '</div>' +
+                '<div style="font-size:11.5px;color:#cbd5e1;margin-top:2px">Erhält eine kollisionsfreie synthetische ID im exklusiven <b>900.000.000+</b> Bereich (überschreibt niemals TMDb-IDs) und aktiviert den Schreibschutz (<code>manual_override = 1</code>).</div>' +
               '</div>' +
               '<button type="button" class="btn" style="padding:4px 9px;font-size:12px" onclick="closeManualNoTmdbConfirmModalClient()">✕</button>' +
             '</div>' +
+            '<input id="manualNoTmdbReuseIdInp" type="hidden" value="' + (existingSynthId >= 900000000 ? existingSynthId : 0) + '" />' +
+            '<div id="manualNoTmdbLivePreviewBox" style="background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.35);border-radius:8px;padding:8px 10px;margin-bottom:9px;font-size:11.5px">Berechne 900M-ID Vorschau…</div>' +
+            '<div id="manualNoTmdbExistingSeriesSuggestBox" style="display:none;background:rgba(15,23,42,0.9);border:1px solid rgba(56,189,248,0.35);border-radius:8px;padding:8px 10px;margin-bottom:9px"></div>' +
             (ctx.rawFileName ? (
               '<div style="background:#0b0c12;border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:7px 10px;margin-bottom:10px;font-size:11px;color:#94a3b8;word-break:break-all">' +
                 '📄 <b>Datei / Quelle:</b> <code style="color:#e2e8f0">' + esc(ctx.rawFileName) + '</code>' +
@@ -1866,25 +2054,25 @@
             '<div style="display:flex;flex-direction:column;gap:9px">' +
               '<div>' +
                 '<label style="display:block;font-size:11px;font-weight:800;color:#c084fc;margin-bottom:4px">🎬 Titel (Pflichtfeld)</label>' +
-                '<input id="manualNoTmdbTitleInp" value="' + esc(initTitle) + '" placeholder="z.B. Seltene Dokumentation / Eigenproduktion" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
+                '<input id="manualNoTmdbTitleInp" value="' + esc(initTitle) + '" oninput="document.getElementById(\\'manualNoTmdbReuseIdInp\\').value=\\'0\\';scheduleManualNoTmdbLivePreviewClient()" placeholder="z.B. Seltene Dokumentation / Eigenproduktion" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
               '</div>' +
               '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
                 '<div>' +
                   '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📂 Medientyp</label>' +
-                  '<select id="manualNoTmdbTypeSel" onchange="toggleManualNoTmdbSeriesFieldsClient()" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box">' +
+                  '<select id="manualNoTmdbTypeSel" onchange="document.getElementById(\\'manualNoTmdbReuseIdInp\\').value=\\'0\\';toggleManualNoTmdbSeriesFieldsClient()" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box">' +
                     '<option value="m"' + (initType === 'm' ? ' selected' : '') + '>🎬 Film (900M–944M)</option>' +
                     '<option value="s"' + (initType === 's' ? ' selected' : '') + '>📺 Serie (945M–989M)</option>' +
                   '</select>' +
                 '</div>' +
                 '<div>' +
                   '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📅 Erscheinungsjahr (optional)</label>' +
-                  '<input id="manualNoTmdbYearInp" type="number" min="1900" max="2099" value="' + esc(initYear) + '" placeholder="z.B. 2024" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
+                  '<input id="manualNoTmdbYearInp" type="number" min="1900" max="2099" value="' + esc(initYear) + '" oninput="document.getElementById(\\'manualNoTmdbReuseIdInp\\').value=\\'0\\';scheduleManualNoTmdbLivePreviewClient()" placeholder="z.B. 2024" style="width:100%;padding:8px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12.5px;box-sizing:border-box" />' +
                 '</div>' +
               '</div>' +
               '<div id="manualNoTmdbSeriesRow" style="display:' + (initType === 's' ? 'grid' : 'none') + ';grid-template-columns:1fr 1fr;gap:8px;background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.3);border-radius:8px;padding:8px">' +
                 '<div>' +
-                  '<label style="display:block;font-size:11px;font-weight:800;color:#e9d5ff;margin-bottom:3px">📺 Staffel (S)</label>' +
-                  '<input id="manualNoTmdbSeasonInp" type="number" min="1" max="99" value="' + initSeason + '" style="width:100%;padding:6px 8px;border-radius:6px;background:#12131c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
+                  '<label style="display:block;font-size:11px;font-weight:800;color:#e9d5ff;margin-bottom:3px">📺 Staffel (S, 0 = Bonus/Special)</label>' +
+                  '<input id="manualNoTmdbSeasonInp" type="number" min="0" max="99" value="' + initSeason + '" style="width:100%;padding:6px 8px;border-radius:6px;background:#12131c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box" />' +
                 '</div>' +
                 '<div>' +
                   '<label style="display:block;font-size:11px;font-weight:800;color:#e9d5ff;margin-bottom:3px">🎞️ Episode (E)</label>' +
@@ -1909,12 +2097,34 @@
                 '<label style="display:block;font-size:11px;font-weight:800;color:#94a3b8;margin-bottom:4px">📝 Kurzbeschreibung (optional)</label>' +
                 '<textarea id="manualNoTmdbOverviewInp" rows="2" placeholder="Optionale Beschreibung für die Detailansicht..." style="width:100%;padding:7px 10px;border-radius:7px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;box-sizing:border-box;resize:vertical">' + esc(initOverview) + '</textarea>' +
               '</div>' +
+              '<label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:#cbd5e1;cursor:pointer;background:#161824;padding:7px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.08)">' +
+                '<input id="manualNoTmdbQueueContinueChk" type="checkbox" ' + ((isQueueActive || openQueueTargets.length > 1) ? 'checked' : '') + ' />' +
+                '<span>⏭️ <b>Queue-Modus:</b> Nach dem Speichern automatisch nächsten offenen <code>TMDB_NOT_FOUND</code>-Treffer öffnen (' + openQueueTargets.length + ' offen)</span>' +
+              '</label>' +
+              '<details style="background:#0d0f18;border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:8px 10px"' + (existingSynthId >= 900000000 ? ' open' : '') + '>' +
+                '<summary style="cursor:pointer;font-size:11.5px;font-weight:800;color:#38bdf8">🔄 1-Klick-Upgrade: Bestehende 900M-ID später auf echte TMDb-ID umziehen</summary>' +
+                '<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;font-size:11px;color:#94a3b8">' +
+                  '<div>Zieht alle Episoden, Videodateien, Aliase und Playlisten einer synthetischen 900M-ID verlustfrei auf eine offizielle TMDb-ID um und löscht den alten 900M-Datensatz.</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    '<input id="manualMigrateOld900mInp" type="number" value="' + (existingSynthId >= 900000000 ? existingSynthId : '') + '" placeholder="Alte 900M-ID (z.B. 945123456)" style="flex:1;min-width:140px;padding:6px 8px;border-radius:6px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                    '<input id="manualMigrateNewTmdbInp" type="number" placeholder="Neue echte TMDb-ID (z.B. 66732)" style="flex:1;min-width:140px;padding:6px 8px;border-radius:6px;background:#181926;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                    '<button type="button" class="btn blue" style="padding:6px 10px;font-size:11.5px;font-weight:800" onclick="submitMigrate900mToRealTmdbClient()">🔄 Jetzt auf TMDb-ID migrieren</button>' +
+                  '</div>' +
+                '</div>' +
+              '</details>' +
             '</div>' +
-            '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">' +
-              '<button type="button" class="btn" onclick="closeManualNoTmdbConfirmModalClient()">Abbrechen</button>' +
-              '<button type="button" class="btn green" style="background:linear-gradient(90deg,#7c3aed,#059669);border-color:#a855f7;font-weight:800" onclick="submitManualNoTmdbConfirmModalClient()">✨ Ohne TMDb-ID speichern & zuweisen</button>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:14px;flex-wrap:wrap">' +
+              '<div>' +
+                (openQueueTargets.length > 1 ? '<button type="button" class="btn" onclick="skipCurrentManualNoTmdbQueueItemClient()">⏭️ Nächster Treffer (' + openQueueTargets.length + ')</button>' : '') +
+              '</div>' +
+              '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+                '<button type="button" class="btn" onclick="closeManualNoTmdbConfirmModalClient()">Abbrechen</button>' +
+                '<button type="button" class="btn green" style="background:linear-gradient(90deg,#7c3aed,#059669);border-color:#a855f7;font-weight:800" onclick="submitManualNoTmdbConfirmModalClient()">✨ Ohne TMDb-ID speichern & zuweisen</button>' +
+              '</div>' +
             '</div>' +
           '</div>';
+
+        updateManualNoTmdbLivePreviewClient();
       }
 
       function openManualNoTmdbConfirmForReviewItem(itemId) {
@@ -1933,11 +2143,12 @@
           title: (searchInp && searchInp.value.trim()) ? searchInp.value.trim() : (it.cleanTitle || it.rawInput || "Unbekannter Titel"),
           year: it.year && it.year !== "k.A." ? it.year : "",
           typeCode: guessType,
-          season: seasonInp ? seasonInp.value : (it.season || 1),
+          season: seasonInp ? seasonInp.value : (it.season ?? 1),
           episode: epInp ? epInp.value : (it.episode || 1),
           poster: it.poster || "",
           rawFileName,
-          siblingCount: siblings.length
+          siblingCount: siblings.length,
+          existingSyntheticId: Number(it.tmdbId || 0) >= 900000000 ? Number(it.tmdbId) : 0
         });
       }
 
@@ -1953,11 +2164,12 @@
           diagIdx,
           title: item.parsedTitle || item.fileName || "Unbekannter Titel",
           year: "",
-          typeCode: (typeSel ? typeSel.value : (item.detectedType === "series" || item.seasonNumber ? "s" : "m")),
-          season: sInp ? sInp.value : (item.seasonNumber || 1),
+          typeCode: (typeSel ? typeSel.value : (item.detectedType === "series" || item.seasonNumber !== null ? "s" : "m")),
+          season: sInp ? sInp.value : (item.seasonNumber ?? 1),
           episode: eInp ? eInp.value : (item.episodeNumber || 1),
           poster: "",
-          rawFileName: item.fileName || item.rawText || ""
+          rawFileName: item.fileName || item.rawText || "",
+          existingSyntheticId: Number(item.tmdbId || 0) >= 900000000 ? Number(item.tmdbId) : 0
         });
       }
 
@@ -1982,12 +2194,15 @@
         const title = String(document.getElementById("manualNoTmdbTitleInp")?.value || "").trim();
         const typeCode = document.getElementById("manualNoTmdbTypeSel")?.value === "s" ? "s" : "m";
         const year = String(document.getElementById("manualNoTmdbYearInp")?.value || "").trim();
-        const season = Math.max(1, parseInt(document.getElementById("manualNoTmdbSeasonInp")?.value, 10) || 1);
+        const seasonRaw = document.getElementById("manualNoTmdbSeasonInp")?.value;
+        const season = seasonRaw !== undefined && seasonRaw !== "" ? Math.max(0, parseInt(seasonRaw, 10) || 0) : 1;
         const episode = Math.max(1, parseInt(document.getElementById("manualNoTmdbEpInp")?.value, 10) || 1);
         const poster = String(document.getElementById("manualNoTmdbPosterInp")?.value || "").trim();
         const genres = String(document.getElementById("manualNoTmdbGenresInp")?.value || "Manuell bestätigt").trim();
         const overview = String(document.getElementById("manualNoTmdbOverviewInp")?.value || "").trim();
         const applySiblings = Boolean(document.getElementById("manualNoTmdbApplySiblingsChk")?.checked);
+        const continueQueue = Boolean(document.getElementById("manualNoTmdbQueueContinueChk")?.checked);
+        const reuseSyntheticId = Number(document.getElementById("manualNoTmdbReuseIdInp")?.value || 0);
 
         if (!title) {
           showHudToast("⚠️ Bitte einen Titel für die manuelle Bestätigung eingeben.");
@@ -2001,10 +2216,30 @@
           poster,
           genres: genres || "Manuell bestätigt",
           overview: overview || "Manuell ohne TMDb-ID bestätigter Titel.",
+          reuseSyntheticId: reuseSyntheticId >= 900000000 ? reuseSyntheticId : 0,
           source: "Manuell bestätigt"
         };
 
+        const prevMode = ctx.mode;
         closeManualNoTmdbConfirmModalClient();
+        if (continueQueue) {
+          manualNoTmdbQueueState.active = true;
+          manualNoTmdbQueueState.source = prevMode === "review" ? "review" : "diag";
+        }
+
+        const maybeOpenNextInQueue = () => {
+          if (!continueQueue) return;
+          const remaining = getOpenTmdbNotFoundQueueTargetsClient(prevMode === "review" ? "review" : "diag");
+          if (remaining.length > 0) {
+            setTimeout(() => {
+              if (prevMode === "review") openManualNoTmdbConfirmForReviewItem(remaining[0].id);
+              else openManualNoTmdbConfirmForDiagItem(remaining[0].diagIdx);
+            }, 160);
+          } else {
+            manualNoTmdbQueueState.active = false;
+            showHudToast("🎉 Queue abgeschlossen – alle offenen Einträge wurden abgearbeitet!");
+          }
+        };
 
         if (ctx.mode === "review" && ctx.itemId) {
           const baseItem = (backupImportJob.reviewItems || []).find(x => String(x.id) === String(ctx.itemId));
@@ -2025,7 +2260,7 @@
 
           setBusyState(true, "✨ Vergib kollisionsfreie 900M-ID & speichere „" + title + "“ in D1...");
           try {
-            let sharedAllocatedId = 0;
+            let sharedAllocatedId = reuseSyntheticId >= 900000000 ? reuseSyntheticId : 0;
             let okCount = 0;
             for (const sib of targetList) {
               const ok = await applyBackupCandidateRemap(sib.id, sharedAllocatedId, typeCode, {
@@ -2044,6 +2279,7 @@
             }
             clearClientMediaCaches();
             showHudToast("✨ Manuell ohne TMDb-ID gespeichert: " + title + (sharedAllocatedId ? (" (#" + sharedAllocatedId + ")") : "") + (targetList.length > 1 ? (" [" + okCount + " Folgen]") : ""));
+            maybeOpenNextInQueue();
           } finally {
             setBusyState(false);
           }
@@ -2074,10 +2310,12 @@
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                newTmdbId: 0,
+                newTmdbId: reuseSyntheticId >= 900000000 ? reuseSyntheticId : 0,
+                reuseSyntheticId: reuseSyntheticId >= 900000000 ? reuseSyntheticId : 0,
                 newTypeCode: typeCode,
                 confirmManualWithoutTmdb: true,
                 manualCustomMeta,
+                msgId: item.msgId || null,
                 season: typeCode === "s" ? season : null,
                 episode: typeCode === "s" ? episode : null,
                 oldTmdbId: item.tmdbId || null,
@@ -2091,6 +2329,7 @@
             if (r && r.ok && r.matchedItem) {
               item.status = "OK";
               item.tmdbId = r.matchedItem.tmdbId;
+              item.matchedTitle = r.matchedItem.matchedTitle || r.matchedItem.cleanTitle;
               item.detectedType = typeCode === "s" ? "series" : "movie";
               item.seasonNumber = typeCode === "s" ? season : null;
               item.episodeNumber = typeCode === "s" ? episode : null;
@@ -2110,6 +2349,7 @@
               clearClientMediaCaches();
               showHudToast("✨ Manuell ohne TMDb-ID verknüpft: " + r.matchedItem.cleanTitle + " (#" + r.matchedItem.tmdbId + ")");
               refreshDiagnosticLogMountDom();
+              maybeOpenNextInQueue();
             } else {
               showHudToast("⚠️ " + (r?.error || "Manuelle Zuweisung fehlgeschlagen"));
             }
@@ -2133,7 +2373,7 @@
                 action: "upsert",
                 confirmManualWithoutTmdb: true,
                 typeCode,
-                tmdbId: 0,
+                tmdbId: reuseSyntheticId >= 900000000 ? reuseSyntheticId : 0,
                 title,
                 year,
                 poster,
@@ -3141,16 +3381,19 @@
           const normMsgId = (rawMsgVal !== null && rawMsgVal !== "" && Number.isFinite(Number(rawMsgVal)))
             ? Number(rawMsgVal)
             : null;
+          const rawStatusUp = String(raw.status || "OK").toUpperCase();
+          const normStatus = rawStatusUp === "CONFLICT_?" ? "CONFLICT" : rawStatusUp;
           const entry = {
             id: raw.id || ("diag_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)),
             msgId: normMsgId,
             fileName: String(raw.fileName || raw.file_name || raw.rawFileName || "Unbekannt").slice(0, 260),
             rawText: String(raw.rawText || raw.raw_text || "").slice(0, 500),
-            status: String(raw.status || "OK").toUpperCase(),
+            status: normStatus,
             reviewReasonCode: raw.reviewReasonCode || raw.review_reason_code || raw.details?.reviewReasonCode || null,
             reason: String(raw.reason || "").slice(0, 360),
             detectedType: String(raw.detectedType || raw.detected_type || "auto"),
             parsedTitle: String(raw.parsedTitle || raw.parsed_title || raw.cleanTitle || ""),
+            matchedTitle: String(raw.matchedTitle || raw.matched_title || raw.details?.matchedTitle || ""),
             seasonNumber: raw.seasonNumber ?? raw.season_number ?? raw.season ?? null,
             episodeNumber: raw.episodeNumber ?? raw.episode_number ?? raw.episode ?? null,
             tmdbId: raw.tmdbId ?? raw.tmdb_id ?? null,
@@ -3164,6 +3407,7 @@
             clientDiagnosticLogState.logs[existingIdx] = {
               ...clientDiagnosticLogState.logs[existingIdx],
               ...entry,
+              matchedTitle: entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || "",
               tmdbId: entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null
             };
             added.push(clientDiagnosticLogState.logs[existingIdx]);
@@ -3173,8 +3417,23 @@
             added.push(entry);
           }
         }
+        // MODUL 5: Fehler-Priorität im Log-Buffer – OK und SKIPPED_DUPLICATE dürfen niemals echte Problem-Einträge verdrängen
         if (clientDiagnosticLogState.logs.length > 1200) {
-          clientDiagnosticLogState.logs = clientDiagnosticLogState.logs.slice(0, 1200);
+          const priorityProblemLogs = [];
+          const routineLogs = [];
+          for (const l of clientDiagnosticLogState.logs) {
+            const st = String(l.status || "OK").toUpperCase();
+            if (st === "OK" || st === "SKIPPED_DUPLICATE") {
+              routineLogs.push(l);
+            } else {
+              priorityProblemLogs.push(l);
+            }
+          }
+          const remainingSlots = Math.max(0, 1200 - priorityProblemLogs.length);
+          clientDiagnosticLogState.logs = [
+            ...priorityProblemLogs.slice(0, 1200),
+            ...routineLogs.slice(0, remainingSlots)
+          ];
         }
         saveClientDiagnosticLogsToStorage();
         if (syncToServer && added.length > 0) {
@@ -3235,16 +3494,71 @@
         refreshDiagnosticLogMountDom();
       }
 
+      async function rehealOldConflictsWithNewPipelineClient() {
+        loadClientDiagnosticLogsFromStorage();
+        const openProblems = (clientDiagnosticLogState.logs || []).filter(l => {
+          const st = String(l.status || "").toUpperCase();
+          return st === "TMDB_NOT_FOUND" || st === "CONFLICT" || st === "CONFLICT_?";
+        });
+        setBusyState(true, "🩺 Prüfe offene Konflikte & TMDB_NOT_FOUND mit der neuen Modul 2+3 Pipeline...");
+        try {
+          let totalChecked = 0;
+          let totalHealed = 0;
+          let cursor = 0;
+          const maxRounds = 5;
+          for (let round = 0; round < maxRounds; round++) {
+            const slice = openProblems.slice(cursor, cursor + 10);
+            const r = await apiFetchJson(API_BASE + "/admin/reheal-conflicts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                limit: 10,
+                items: slice.length > 0 ? slice : undefined
+              })
+            });
+            if (!r || !r.ok) break;
+            totalChecked += Number(r.checkedCount || 0);
+            totalHealed += Number(r.healedCount || 0);
+            if (Array.isArray(r.healedItems) && r.healedItems.length > 0) {
+              for (const healed of r.healedItems) {
+                const target = (clientDiagnosticLogState.logs || []).find(
+                  l => (healed.msgId && Number(l.msgId) === Number(healed.msgId)) || (healed.fileName && l.fileName === healed.fileName)
+                );
+                if (target) {
+                  target.status = "OK";
+                  target.tmdbId = healed.tmdbId;
+                  target.matchedTitle = healed.matchedTitle || healed.parsedTitle || "";
+                  target.reason = "Automatisch geheilt (Neue Pipeline) → " + (healed.matchedTitle || healed.parsedTitle) + " (#" + healed.tmdbId + ")";
+                }
+              }
+              saveClientDiagnosticLogsToStorage();
+            }
+            cursor += 10;
+            if (!r.remainingCount || slice.length < 10 || cursor >= openProblems.length) break;
+          }
+          clearClientMediaCaches();
+          refreshDiagnosticLogMountDom();
+          showHudToast("🩺 Nachprüfung abgeschlossen: " + totalHealed + " von " + totalChecked + " geprüften Konflikten automatisch geheilt!");
+        } catch (e) {
+          showHudToast("⚠️ Fehler bei der Konflikt-Nachprüfung: " + (e?.message || "Unbekannt"));
+        } finally {
+          setBusyState(false);
+        }
+      }
+
       async function exportDiagnosticLogsForAiClient(onlyProblems = true) {
         loadClientDiagnosticLogsFromStorage();
         const all = clientDiagnosticLogState.logs || [];
-        const list = onlyProblems
-          ? all.filter(l => l.status !== "OK")
-          : all;
+        // MODUL 5: Echte Problem-Einträge haben im Export-Buffer immer Vorrang vor OK und SKIPPED_DUPLICATE
+        const priorityProblems = all.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE");
+        const routineItems = all.filter(l => l.status === "OK" || l.status === "SKIPPED_DUPLICATE");
+        const orderedList = onlyProblems
+          ? priorityProblems
+          : [...priorityProblems, ...routineItems];
         const payload = {
           exportedAt: new Date().toISOString(),
           totalLogs: all.length,
-          exportedCount: list.length,
+          exportedCount: Math.min(250, orderedList.length),
           summaryCounts: {
             OK: all.filter(l => l.status === "OK").length,
             SKIPPED_JUNK: all.filter(l => l.status === "SKIPPED_JUNK").length,
@@ -3255,12 +3569,13 @@
             SUBREQUEST_PAUSE: all.filter(l => l.status === "SUBREQUEST_PAUSE").length,
             API_ERROR: all.filter(l => l.status === "API_ERROR").length
           },
-          entries: list.slice(0, 250).map(l => ({
-            msgId: l.msgId,
-            status: l.status,
+          entries: orderedList.slice(0, 250).map(l => ({
+            msgId: l.msgId !== null && l.msgId !== undefined ? Number(l.msgId) : null,
+            status: l.status === "CONFLICT_?" ? "CONFLICT" : l.status,
             detectedType: l.detectedType,
             fileName: l.fileName,
             parsedTitle: l.parsedTitle,
+            matchedTitle: l.matchedTitle || null,
             season: l.seasonNumber,
             episode: l.episodeNumber,
             tmdbId: l.tmdbId,
@@ -3271,7 +3586,7 @@
         const jsonText = JSON.stringify(payload, null, 2);
         try {
           await navigator.clipboard.writeText(jsonText);
-          showHudToast("📋 Diagnose-JSON (" + list.length + " Einträge) für KI-Analyse in die Zwischenablage kopiert!");
+          showHudToast("📋 Diagnose-JSON (" + payload.exportedCount + " Einträge, Fehler-Priorität aktiv) in die Zwischenablage kopiert!");
         } catch (e) {
           const blob = new Blob([jsonText], { type: "application/json" });
           const url = URL.createObjectURL(blob);
@@ -3293,7 +3608,7 @@
         const eInp = document.getElementById("diagFixEp_" + diagIdx);
         const newTmdbId = Number(tmdbInp?.value || 0);
         const newTypeCode = typeSel?.value === "s" ? "s" : "m";
-        const sNum = Number(sInp?.value || item.seasonNumber || 1);
+        const sNum = Number(sInp?.value ?? item.seasonNumber ?? 1);
         const eNum = Number(eInp?.value || item.episodeNumber || 1);
         if (!newTmdbId) {
           showHudToast("⚠️ Bitte eine gültige TMDb-ID eingeben!");
@@ -3321,6 +3636,7 @@
             body: JSON.stringify({
               newTmdbId,
               newTypeCode,
+              msgId: item.msgId || null,
               oldTmdbId: item.tmdbId || null,
               oldTypeCode: item.detectedType === "series" ? "s" : "m",
               targetChatId: backupImportJob.targetPlaylistChatId || chatId,
@@ -3332,10 +3648,11 @@
           if (r && r.ok) {
             item.status = "OK";
             item.tmdbId = newTmdbId;
+            item.matchedTitle = r.matchedItem?.matchedTitle || r.matchedItem?.cleanTitle || "";
             item.detectedType = newTypeCode === "s" ? "series" : "movie";
             item.seasonNumber = newTypeCode === "s" ? sNum : null;
             item.episodeNumber = newTypeCode === "s" ? eNum : null;
-            item.reason = "Manuell im Diagnose-Log zugewiesen → " + (r.item?.cleanTitle || ("TMDb #" + newTmdbId));
+            item.reason = "Manuell im Diagnose-Log zugewiesen → " + (r.matchedItem?.cleanTitle || ("TMDb #" + newTmdbId));
             saveClientDiagnosticLogsToStorage();
             await apiFetchJson(API_BASE + "/admin/import-logs", {
               method: "POST",
@@ -3349,7 +3666,7 @@
               })
             }).catch(() => {});
             clearClientMediaCaches();
-            showHudToast("✅ Erfolgreich verknüpft: " + (r.item?.cleanTitle || ("TMDb #" + newTmdbId)));
+            showHudToast("✅ Erfolgreich verknüpft: " + (r.matchedItem?.cleanTitle || ("TMDb #" + newTmdbId)));
             refreshDiagnosticLogMountDom();
           } else {
             showHudToast("⚠️ " + (r?.error || "Zuweisung fehlgeschlagen"));
@@ -3386,14 +3703,14 @@
         const filtered = logs.filter((l) => {
           const st = String(l.status || "OK");
           if (fStatus === "PROBLEMS") {
-            if (st === "OK") return false;
+            if (st === "OK" || st === "SKIPPED_DUPLICATE") return false;
           } else if (fStatus === "CONFLICT") {
             if (st !== "CONFLICT_?" && st !== "CONFLICT") return false;
           } else if (fStatus !== "ALL" && st !== fStatus) {
             return false;
           }
           if (q) {
-            const hay = (String(l.msgId || "") + " " + String(l.fileName || "") + " " + String(l.parsedTitle || "") + " " + String(l.reason || "") + " " + String(l.rawText || "")).toLowerCase();
+            const hay = (String(l.msgId || "") + " " + String(l.fileName || "") + " " + String(l.parsedTitle || "") + " " + String(l.matchedTitle || "") + " " + String(l.reason || "") + " " + String(l.rawText || "")).toLowerCase();
             if (!hay.includes(q)) return false;
           }
           return true;
@@ -3406,8 +3723,8 @@
           SKIPPED_DUPLICATE: { bg: "rgba(167,139,250,0.2)", col: "#a78bfa", label: "♻️ SKIPPED_DUPLICATE" },
           SKIPPED_PRERELEASE: { bg: "rgba(245,158,11,0.22)", col: "#fbbf24", label: "⚠️ SKIPPED_PRERELEASE" },
           TMDB_NOT_FOUND: { bg: "rgba(239,68,68,0.25)", col: "#f87171", label: "❌ TMDB_NOT_FOUND" },
-          "CONFLICT_?": { bg: "rgba(245,158,11,0.25)", col: "#fbbf24", label: "⚠️ CONFLICT_?" },
-          CONFLICT: { bg: "rgba(245,158,11,0.25)", col: "#fbbf24", label: "⚠️ CONFLICT_?" },
+          "CONFLICT_?": { bg: "rgba(245,158,11,0.25)", col: "#fbbf24", label: "⚠️ CONFLICT" },
+          CONFLICT: { bg: "rgba(245,158,11,0.25)", col: "#fbbf24", label: "⚠️ CONFLICT" },
           SUBREQUEST_PAUSE: { bg: "rgba(59,130,246,0.25)", col: "#60a5fa", label: "🛡️ SUBREQUEST_PAUSE" },
           API_ERROR: { bg: "rgba(239,68,68,0.25)", col: "#fca5a5", label: "🔥 API_ERROR" }
         };
@@ -3419,6 +3736,8 @@
               '<div style="font-size:11.5px;color:#94a3b8">Lückenlose Nachverfolgung jeder Message-ID inkl. Grund, Typ-Weiche, Subrequest-Guard & Direkt-Korrektur</div>' +
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+              '<button type="button" class="btn green" onclick="rehealOldConflictsWithNewPipelineClient()" title="Prüft alle offenen TMDB_NOT_FOUND & CONFLICT Einträge mit der neuen Modul 2+3 Pipeline nach">🩺 Alt-Konflikte mit neuer Pipeline prüfen</button>' +
+              '<button type="button" class="btn" style="background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="startManualNoTmdbQueueModeClient(\\'diag\\')" title="Öffnet alle offenen Nicht-erkannt-Treffer nacheinander im 900M-Modal">✨ Queue-Modus (900M-ID)</button>' +
               '<button type="button" class="btn amber" onclick="exportDiagnosticLogsForAiClient(true)">📋 Fehler-Log für KI kopieren</button>' +
               '<button type="button" class="btn blue" onclick="exportDiagnosticLogsForAiClient(false)">📋 Komplettes Log kopieren</button>' +
               '<button type="button" class="btn" onclick="syncDiagnosticLogsFromD1Client(false)">🔄 Aus D1 laden</button>' +
@@ -3428,17 +3747,17 @@
 
           '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-bottom:10px;font-size:11.5px">' +
             '<div onclick="setDiagLogFilterClient(\\'ALL\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'ALL' ? 'rgba(56,189,248,0.22)' : '#181822') + ';border:1px solid rgba(255,255,255,0.1)">📋 Gesamt: <b>' + counts.ALL + '</b></div>' +
-            '<div onclick="setDiagLogFilterClient(\\'PROBLEMS\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'PROBLEMS' ? 'rgba(245,158,11,0.22)' : '#181822') + ';border:1px solid rgba(245,158,11,0.35)">🚨 Alle Hinweise/Fehler: <b style="color:#fbbf24">' + (counts.ALL - counts.OK) + '</b></div>' +
+            '<div onclick="setDiagLogFilterClient(\\'PROBLEMS\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'PROBLEMS' ? 'rgba(245,158,11,0.22)' : '#181822') + ';border:1px solid rgba(245,158,11,0.35)">🚨 Alle Hinweise/Fehler: <b style="color:#fbbf24">' + (counts.ALL - counts.OK - counts.SKIPPED_DUPLICATE) + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'OK\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'OK' ? 'rgba(16,185,129,0.22)' : '#181822') + ';border:1px solid rgba(16,185,129,0.3)">🟢 OK: <b style="color:#34d399">' + counts.OK + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'TMDB_NOT_FOUND\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'TMDB_NOT_FOUND' ? 'rgba(239,68,68,0.25)' : '#181822') + ';border:1px solid rgba(239,68,68,0.35)">❌ TMDB_NOT_FOUND: <b style="color:#f87171">' + counts.TMDB_NOT_FOUND + '</b></div>' +
-            '<div onclick="setDiagLogFilterClient(\\'CONFLICT\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'CONFLICT' ? 'rgba(245,158,11,0.25)' : '#181822') + ';border:1px solid rgba(245,158,11,0.35)">⚠️ CONFLICT_?: <b style="color:#fbbf24">' + counts.CONFLICT + '</b></div>' +
+            '<div onclick="setDiagLogFilterClient(\\'CONFLICT\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'CONFLICT' ? 'rgba(245,158,11,0.25)' : '#181822') + ';border:1px solid rgba(245,158,11,0.35)">⚠️ CONFLICT: <b style="color:#fbbf24">' + counts.CONFLICT + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'SKIPPED_HEADER\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'SKIPPED_HEADER' ? 'rgba(56,189,248,0.22)' : '#181822') + ';border:1px solid rgba(56,189,248,0.3)">📌 Header/Poster: <b style="color:#38bdf8">' + counts.SKIPPED_HEADER + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'SKIPPED_DUPLICATE\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'SKIPPED_DUPLICATE' ? 'rgba(167,139,250,0.22)' : '#181822') + ';border:1px solid rgba(167,139,250,0.3)">♻️ Duplikate: <b style="color:#a78bfa">' + counts.SKIPPED_DUPLICATE + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'SUBREQUEST_PAUSE\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'SUBREQUEST_PAUSE' ? 'rgba(59,130,246,0.25)' : '#181822') + ';border:1px solid rgba(59,130,246,0.35)">🛡️ Subrequest-Guard: <b style="color:#60a5fa">' + counts.SUBREQUEST_PAUSE + '</b></div>' +
           '</div>' +
 
           '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
-            '<input value="' + esc(clientDiagnosticLogState.searchQuery || "") + '" oninput="setDiagLogSearchClient(this.value)" placeholder="🔍 Suche nach Message-ID (z.B. 118, 303), Dateiname, Serie (Frontier, Rookie, Breaking Bad)..." style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;background:#161620;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+            '<input value="' + esc(clientDiagnosticLogState.searchQuery || "") + '" oninput="setDiagLogSearchClient(this.value)" placeholder="🔍 Suche nach Message-ID (z.B. 118, 303), Dateiname, Suchtitel, TMDb-Match..." style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;background:#161620;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
           '</div>' +
 
           (filtered.length === 0 ? (
@@ -3451,8 +3770,9 @@
                 const origIdx = logs.indexOf(item);
                 const badge = statusBadgeMap[item.status] || { bg: "rgba(148,163,184,0.2)", col: "#cbd5e1", label: item.status };
                 const isFixable = item.status === "TMDB_NOT_FOUND" || item.status === "CONFLICT_?" || item.status === "CONFLICT" || item.status === "API_ERROR";
+                const isSynthetic900m = Number(item.tmdbId || 0) >= 900000000;
                 const itemReasonMeta = isFixable ? resolveClientReviewReasonMeta(item) : null;
-                const seLabel = item.seasonNumber
+                const seLabel = item.seasonNumber !== null && item.seasonNumber !== undefined
                   ? (' • <b style="color:#38bdf8">S' + String(item.seasonNumber).padStart(2, '0') + 'E' + String(item.episodeNumber || 1).padStart(2, '0') + '</b>')
                   : '';
                 return '<div style="background:#161620;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:9px 11px;display:flex;flex-direction:column;gap:6px">' +
@@ -3464,12 +3784,17 @@
                         (item.msgId ? '<span style="font-family:monospace;font-size:11px;background:#0f172a;color:#38bdf8;padding:2px 6px;border-radius:5px;border:1px solid rgba(56,189,248,0.3)">Msg #' + esc(item.msgId) + '</span>' : '') +
                         '<span style="font-size:11px;color:#94a3b8">[' + esc(item.detectedType || 'auto') + ']</span>' +
                         '<b style="font-size:12.5px;color:#fff">' + esc(item.fileName || item.parsedTitle || 'Eintrag') + '</b>' +
+                        (item.parsedTitle ? ' <span style="font-size:11px;color:#a78bfa">🔍 Suchtitel: „' + esc(item.parsedTitle) + '“</span>' : '') +
+                        (item.matchedTitle ? ' <span style="font-size:11px;color:#34d399">🎯 Match: „' + esc(item.matchedTitle) + '“</span>' : '') +
                         seLabel +
-                        (item.tmdbId ? ' <span style="font-size:11px;color:#34d399">(TMDb #' + esc(item.tmdbId) + ')</span>' : '') +
+                        (item.tmdbId ? ' <span style="font-size:11px;color:' + (isSynthetic900m ? '#e9d5ff' : '#34d399') + '">(' + (isSynthetic900m ? '900M #' : 'TMDb #') + esc(item.tmdbId) + ')</span>' : '') +
                       '</div>' +
                       '<div style="font-size:11.5px;color:#cbd5e1;margin-top:3px">💬 <b>Grund:</b> ' + esc(item.reason || '–') + '</div>' +
                       (item.rawText ? '<div style="font-size:10.5px;color:#64748b;margin-top:2px;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📄 Roh-Text: ' + esc(item.rawText) + '</div>' : '') +
                     '</div>' +
+                    (isSynthetic900m && origIdx >= 0 ? (
+                      '<button type="button" class="btn blue" style="padding:4px 8px;font-size:10.5px" onclick="openManualNoTmdbConfirmForDiagItem(' + origIdx + ')">🔄 900M → TMDb migrieren</button>'
+                    ) : '') +
                   '</div>' +
                   (isFixable && origIdx >= 0 ? (
                     '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:#101018;padding:7px;border-radius:6px;border:1px solid rgba(245,158,11,0.3)">' +
@@ -3479,7 +3804,7 @@
                         '<option value="m" ' + (item.detectedType === 'movie' && !item.seasonNumber ? 'selected' : '') + '>🎬 Film</option>' +
                       '</select>' +
                       '<input id="diagFixTmdb_' + origIdx + '" type="number" value="' + esc(item.tmdbId || '') + '" placeholder="TMDb-ID (z.B. 66732)" style="width:135px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" />' +
-                      '<input id="diagFixSeason_' + origIdx + '" type="number" value="' + esc(item.seasonNumber || 1) + '" placeholder="Staffel" style="width:68px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" title="Staffel" />' +
+                      '<input id="diagFixSeason_' + origIdx + '" type="number" value="' + esc(item.seasonNumber ?? 1) + '" placeholder="Staffel" style="width:68px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" title="Staffel" />' +
                       '<input id="diagFixEp_' + origIdx + '" type="number" value="' + esc(item.episodeNumber || 1) + '" placeholder="Folge" style="width:68px;padding:5px 7px;border-radius:5px;background:#181824;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11px" title="Folge" />' +
                       '<button type="button" class="btn green" style="padding:5px 9px;font-size:11px" onclick="quickAssignDiagLogEntryClient(' + origIdx + ')">💾 Jetzt verknüpfen</button>' +
                       '<button type="button" class="btn purple" style="padding:5px 9px;font-size:11px;background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="openManualNoTmdbConfirmForDiagItem(' + origIdx + ')">✨ Ohne TMDb-ID bestätigen</button>' +
@@ -4496,6 +4821,8 @@
             totalMissingInternal: Number(rawSeriesGaps.totalMissingInternal ?? rawSeriesGaps.totalInternalMissingEpisodes ?? 0),
             totalMissingTrailing: Number(rawSeriesGaps.totalMissingTrailing ?? rawSeriesGaps.totalTrailingMissingEpisodes ?? 0),
             totalPrereleaseOnly: Number(rawSeriesGaps.totalPrereleaseOnly ?? rawSeriesGaps.totalPrereleaseEpisodes ?? 0),
+            incompleteMultipartMoviesCount: Number(rawSeriesGaps.incompleteMultipartMoviesCount ?? (Array.isArray(rawSeriesGaps.incompleteMultipartMovies) ? rawSeriesGaps.incompleteMultipartMovies.length : 0)),
+            incompleteMultipartMovies: Array.isArray(rawSeriesGaps.incompleteMultipartMovies) ? rawSeriesGaps.incompleteMultipartMovies : [],
             items: Array.isArray(rawSeriesGaps.items) ? rawSeriesGaps.items : (Array.isArray(rawSeriesGaps.series) ? rawSeriesGaps.series : [])
           };
           const allReports = Array.isArray(r.reports) ? r.reports : (window._adminReportsCache || []);
@@ -4779,8 +5106,26 @@
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:8px;margin-bottom:12px;font-size:12px">' +
                   '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(239,68,68,0.4)">🚨 <b>Lücken mitten in Staffel/Serie (Prio 1):</b> <span style="color:#f87171;font-weight:900">' + Number(seriesGaps.totalMissingInternal || 0) + ' Folgen</span> in ' + Number(seriesGaps.seriesWithInternalGapsCount || 0) + ' Serien</div>' +
                   '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(56,189,248,0.35)">⏳ <b>Fehlend am Staffelende (Prio 2):</b> <span style="color:#38bdf8;font-weight:900">' + Number(seriesGaps.totalMissingTrailing || 0) + ' Folgen</span></div>' +
+                  '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(168,85,247,0.45)">💿 <b>Unvollständige Mehrteiler (CD1/CD2):</b> <span style="color:#e9d5ff;font-weight:900">' + Number(seriesGaps.incompleteMultipartMoviesCount || 0) + ' Filme</span></div>' +
                   '<div style="background:#161620;padding:9px 11px;border-radius:8px;border:1px solid rgba(245,158,11,0.4)">⚠️ <b>Nur als Vorabversion/TS/MD:</b> <span style="color:#fbbf24;font-weight:900">' + Number(seriesGaps.totalPrereleaseOnly || 0) + ' Folgen</span></div>' +
                 '</div>' +
+                ((seriesGaps.incompleteMultipartMovies && seriesGaps.incompleteMultipartMovies.length > 0) ? (
+                  '<div style="background:#141222;border:1px solid rgba(168,85,247,0.5);border-radius:10px;padding:10px 12px;margin-bottom:12px">' +
+                    '<div style="font-size:12.5px;font-weight:900;color:#e9d5ff;margin-bottom:6px">💿 Unvollständige Mehrteiler-Filme (CD1 oder CD2 fehlt in D1):</div>' +
+                    '<div style="display:flex;flex-direction:column;gap:6px">' +
+                      seriesGaps.incompleteMultipartMovies.map(mp =>
+                        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:#1a172b;padding:7px 10px;border-radius:7px;font-size:12px">' +
+                          '<div>' +
+                            '🎬 <b>' + esc(mp.title) + '</b> <span style="color:#94a3b8">(' + esc(mp.year || 'k.A.') + ' • TMDb #' + Number(mp.tmdbId) + ')</span> — ' +
+                            '<span style="color:#34d399">Vorhanden: ' + esc((mp.presentParts || []).map(p => 'CD ' + p).join(', ')) + '</span> • ' +
+                            '<b style="color:#f87171">Fehlt: ' + esc(mp.missingLabel || ((mp.missingParts || []).map(p => 'CD ' + p).join(', '))) + '</b>' +
+                          '</div>' +
+                          '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'m\\',' + Number(mp.tmdbId) + ',false)">🎬 Film öffnen</button>' +
+                        '</div>'
+                      ).join("") +
+                    '</div>' +
+                  '</div>'
+                ) : '') +
                 '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">💡 <b>Besonders wichtig (rot markiert):</b> Wenn z.B. <code>Folge 1 + 2</code> fehlen, während <code>Folge 3</code> bereits vorhanden ist, oder eine komplette Zwischen-Staffel (z.B. <code>Staffel 2</code> vor <code>Staffel 3</code>) fehlt, steht diese Serie ganz oben.</p>' +
                 ((() => {
                   const gapItems = (seriesGaps.items || []).filter(item => state.adminGapFilter === "internal" ? (item.hasPriorityInternalGaps ?? item.hasInternalGaps) : true);

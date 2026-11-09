@@ -73,6 +73,34 @@
   const BLOCKED_EXTENSIONS = /\.(webp|tgs|webm|gif|mp3|ogg|wav|flac|m4a|idx|apk|exe|msi|dmg|pdf|epub|txt|nfo|jpg|jpeg|png|zip|7z|tar|gz)$/i;
   const BLOCKED_FILENAMES  = /^(?:sticker|animatedsticker|giphy|tenor|video_?\d*)\.(?:webp|tgs|webm|mp4|gif)$/i;
   const TRAILER_KEYWORD_REGEX = /(?:^|[\s._\-(\[])(?:kinotrailer|official\s+trailer|offizieller\s+trailer|teaser\s+trailer|trailer\s+(?:german|deutsch|englisch|english|hd|full\s*hd|1080p|720p|4k)|trailer|teaser|coming\s+soon|zwiastun|vorschau)(?=$|[\s._\-)\]:])/i;
+  const LANGUAGE_COURSE_JUNK_REGEX = /(?:amoozesh|learn_german|sprachkurs|vokabeln|tutorial)/i;
+
+  function extractRawMessageText(msg) {
+    if (!msg || typeof msg !== "object") return "";
+    if (typeof flattenTelegramExportText === "function") {
+      const flat = flattenTelegramExportText(msg.caption ?? msg.text ?? msg.text_entities);
+      if (flat) return String(flat).trim();
+    }
+    const raw = msg.caption ?? msg.text ?? msg.text_entities ?? "";
+    if (typeof raw === "string") return raw.trim();
+    if (Array.isArray(raw)) {
+      return raw.map(part => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object") return String(part.text || "");
+        return "";
+      }).join("").trim();
+    }
+    return "";
+  }
+
+  function isLanguageCourseOrTutorialJunk(msg) {
+    if (!msg || typeof msg !== "object") return false;
+    const rawPath = String(msg.file || "").trim();
+    const validPath = rawPath && !rawPath.startsWith("(File not included") ? rawPath.split("/").pop() : "";
+    const fileName = String(msg.video?.file_name || msg.document?.file_name || msg.file_name || validPath || "").trim();
+    const rawText = extractRawMessageText(msg);
+    return LANGUAGE_COURSE_JUNK_REGEX.test(fileName) || LANGUAGE_COURSE_JUNK_REGEX.test(rawText);
+  }
 
   function extractSubtitleAttachmentFromMsg(msg, chatMeta = {}) {
     if (!msg || typeof msg !== "object") return null;
@@ -80,7 +108,7 @@
     const validPath = rawPath && !rawPath.startsWith("(File not included") ? rawPath.split("/").pop() : "";
     const fileName = String(msg.document?.file_name || msg.file_name || validPath || "").trim();
     if (!fileName || !SUBTITLE_EXTENSIONS.test(fileName)) return null;
-    const msgId = msg.id || msg.message_id || null;
+    const msgId = Number(msg.id || msg.message_id || 0) || null;
     const rawChan = String(chatMeta?.id || msg.chat?.id || "vip").replace(/^-100/, "").replace(/^-/, "");
     const fid = msg.document?.file_id || msg.telegram_file_id || msg.file_id || (msgId ? `tg_export_${rawChan}_${msgId}` : null);
     if (!fid) return null;
@@ -108,6 +136,11 @@
     const isRarArchive  = /\.rar$/i.test(fileName);
     const isSubtitleFile = SUBTITLE_EXTENSIONS.test(fileName);
 
+    // 0. Sprachlern-Videos & Tutorials direkt im Gatekeeper als Junk herausfiltern (MODUL 1.4)
+    if (isLanguageCourseOrTutorialJunk(msg)) {
+      return true;
+    }
+
     // 1. Sticker, GIF-Animationen, Sprachnachrichten & Audio sofort blockieren (Live-Bot & JSON-Backup)
     if (
       msg.sticker ||
@@ -134,7 +167,7 @@
     }
 
     // 3. Explizite Trailer / Teaser / Coming Soon aussortieren (außer es ist ein voller Hauptfilm >= 900s)
-    const rawCaptionPreview = String(typeof msg.text === "string" ? msg.text : (typeof msg.caption === "string" ? msg.caption : "")).slice(0, 220);
+    const rawCaptionPreview = extractRawMessageText(msg).slice(0, 220);
     if (
       (TRAILER_KEYWORD_REGEX.test(fileName) ||
        /^(?:trailer|teaser|coming\s+soon)\b/i.test(rawCaptionPreview) ||
@@ -227,36 +260,46 @@
       const rarPartMatch = combined.match(/(?:\.part|\bpart)[\s._-]*0*([1-9]\d?)\b/i);
       if (rarPartMatch) {
         const pNum = parseInt(rarPartMatch[1], 10);
-        return { isSplit: true, isArchive: true, part: pNum, partType: "RAR", partLabel: `RAR-PART${pNum}` };
+        return { isSplit: true, isArchive: true, part: pNum, partNumber: pNum, partType: "RAR", partLabel: `RAR-PART${pNum}` };
       }
-      return { isSplit: false, isArchive: true, part: 1, partType: "RAR", partLabel: "RAR" };
+      return { isSplit: false, isArchive: true, part: 1, partNumber: 1, partType: "RAR", partLabel: "RAR" };
     }
 
-    // 1. Eindeutige Datei-Splits: CD1, CD 2, CD01, Disc 1, DVD 2, Part 1, oder -001 / -002 am Dateiende -> einheitlich "CD 1", "CD 2"...
-    const cdMatch = combined.match(/(?:^|[\s._\-(])(cd|disc|disk|dvd|part|split)[\s._-]*0*([1-9])(?:$|[\s._\-)])/i)
-                 || combined.match(/AC3\.?(cd)0*([1-9])\b/i);
-    if (cdMatch) {
-      const pNum = parseInt(cdMatch[2], 10);
-      return { isSplit: true, isArchive: false, part: pNum, partType: "CD", partLabel: `CD ${pNum}` };
+    // 1. Explizite Multi-Part-Marker (MODUL 2.1): CD1, CD2, Disc 1, Disk 1, Part 1, Teil 1, Pt 1 (nur wenn nicht "Teil 1 bis 3")
+    const explicitCdMatch = combined.match(/(?:[-_\s.(]|^)(cd|disc|disk|dvd|part|pt|split)[\s._-]*0*([1-4])\b(?![\s._-]*(?:bis|-|–)\s*\d)/i)
+                         || String(rawFileName || "").match(/(?:[-_\s.(]|^)(teil)[\s._-]*0*([1-4])\b(?![\s._-]*(?:bis|-|–)\s*\d)/i)
+                         || combined.match(/AC3\.?(cd)0*([1-9])\b/i);
+    if (explicitCdMatch) {
+      const pNum = parseInt(explicitCdMatch[2], 10);
+      return { isSplit: true, isArchive: false, isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
+    }
+
+    // 2. Impliziter Mehrteiler vor Jahresklammer (MODUL 2.1): Zweistellige Zahl mit führender Null (01, 02, 03, 04) direkt vor (YYYY), z.B. "The Postman 01 (1997)"
+    const implicitZeroBeforeYear = combined.match(/\b0([1-4])[\s._-]*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/i);
+    if (implicitZeroBeforeYear) {
+      const pNum = parseInt(implicitZeroBeforeYear[1], 10);
+      return { isSplit: true, isArchive: false, isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
     }
 
     const splitNumMatch = String(rawFileName || "").match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
     if (splitNumMatch) {
       const pNum = parseInt(splitNumMatch[1], 10);
-      return { isSplit: true, isArchive: false, part: pNum, partType: "CD", partLabel: `CD ${pNum}` };
+      return { isSplit: true, isArchive: false, isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
     }
 
-    return { isSplit: false, isArchive: false, part: 1, partType: null, partLabel: null };
+    return { isSplit: false, isArchive: false, isExplicitMultiPartMovie: false, part: 1, partNumber: 1, partType: null, partLabel: null };
   }
 
+  const BONUS_SPECIAL_REGEX = /\b(bonus|special(?!\s*edition|\s*cut)|making[\s._-]*of|outtakes|extras|behind[\s._-]*the[\s._-]*scenes)\b/i;
+
   const EDITION_RULES = [
+    { label: "Director's Cut",      regex: /\b(?:director'?s?[\s._-]*cut|director’s[\s._-]*cut|dc)\b/gi },
     { label: "Extended Cut",        regex: /\b(?:extended[\s._-]*(?:cut|version|edition|fassung)|langfassung)\b/gi },
-    { label: "Director's Cut",      regex: /\b(?:director'?s?[\s._-]*cut|director’s[\s._-]*cut)\b/gi },
     { label: "Collector's Edition", regex: /\b(?:collector'?s?[\s._-]*(?:edition|cut)|collector’s[\s._-]*(?:edition|cut))\b/gi },
     { label: "Special Edition",     regex: /\b(?:special[\s._-]*(?:edition|cut|version))\b/gi },
     { label: "Ultimate Edition",    regex: /\b(?:ultimate[\s._-]*(?:hunter[\s._-]*)?(?:edition|cut|version))\b/gi },
     { label: "Final Cut",           regex: /\b(?:final[\s._-]*cut)\b/gi },
-    { label: "Theatrical Cut",      regex: /\b(?:theatrical(?:[\s._-]*cut|[\s._-]*version)?|kinofassung)\b/gi },
+    { label: "Kinofassung",         regex: /\b(?:theatrical(?:[\s._-]*cut|[\s._-]*version)?|kinofassung)\b/gi },
     { label: "Uncut",               regex: /\b(?:uncut(?:[\s._-]*(?:edition|version|fassung))?|ungeschnitten)\b/gi },
     { label: "Unrated",             regex: /\b(?:unrated(?:[\s._-]*(?:cut|edition|version))?)\b/gi },
     { label: "Remastered",          regex: /\b(?:(?:4k[\s._-]*)?(?:digitally[\s._-]*)?(?:remastered|restored)|mastered[\s._-]*in[\s._-]*4k)\b/gi },
@@ -277,7 +320,12 @@
         cleaned = cleaned.replace(rule.regex, " ");
       }
     }
-    return { cleaned, editions: Array.from(editions) };
+    const editionsList = Array.from(editions);
+    return {
+      cleaned,
+      editions: editionsList,
+      editionLabel: editionsList[0] || null
+    };
   }
 
   const COUNTRY_TO_LANG = {
@@ -500,6 +548,84 @@
     return s;
   }
 
+  // MODUL 2.4 & 2.5: Umlaut-Normalisierung für ASCII-Umschreibungen (z.B. "schlaegt zurueck" -> "schlägt zurück")
+  const GERMAN_ASCII_UMLAUT_REPLACEMENTS = [
+    [/\bschlaegt\b/gi, (m) => m[0] === "S" ? "Schlägt" : "schlägt"],
+    [/\bzurueck\b/gi, (m) => m[0] === "Z" ? "Zurück" : "zurück"],
+    [/\brueckkehr\b/gi, (m) => m[0] === "R" ? "Rückkehr" : "rückkehr"],
+    [/\bfuer\b/gi, (m) => m[0] === "F" ? "Für" : "für"],
+    [/\bueber\b/gi, (m) => m[0] === "U" ? "Über" : "über"],
+    [/\bkoenig(e|in|reich|s)?\b/gi, (m, suf = "") => (m[0] === "K" ? "König" : "könig") + suf],
+    [/\bmaenner(n)?\b/gi, (m, suf = "") => (m[0] === "M" ? "Männer" : "männer") + suf],
+    [/\bbrueder(n)?\b/gi, (m, suf = "") => (m[0] === "B" ? "Brüder" : "brüder") + suf],
+    [/\bmoerder(n|isch|ische|ischer)?\b/gi, (m, suf = "") => (m[0] === "M" ? "Mörder" : "mörder") + suf],
+    [/\bjaeger(n|in)?\b/gi, (m, suf = "") => (m[0] === "J" ? "Jäger" : "jäger") + suf],
+    [/\bausserirdische(n|r)?\b/gi, (m, suf = "") => (m[0] === "A" ? "Außerirdische" : "außerirdische") + suf],
+    [/\bgroesse(n|r)?\b/gi, (m, suf = "") => (m[0] === "G" ? "Größe" : "größe") + suf],
+    [/\bfluechtling(e|en)?\b/gi, (m, suf = "") => (m[0] === "F" ? "Flüchtling" : "flüchtling") + suf],
+    [/\bsuende(n|r)?\b/gi, (m, suf = "") => (m[0] === "S" ? "Sünde" : "sünde") + suf],
+    [/\btoechter(n)?\b/gi, (m, suf = "") => (m[0] === "T" ? "Töchter" : "töchter") + suf],
+    [/\bvoegel(n)?\b/gi, (m, suf = "") => (m[0] === "V" ? "Vögel" : "vögel") + suf],
+    [/\bwueste(n)?\b/gi, (m, suf = "") => (m[0] === "W" ? "Wüste" : "wüste") + suf],
+    [/\bzwoelf\b/gi, (m) => m[0] === "Z" ? "Zwölf" : "zwölf"],
+    [/\bfuenf\b/gi, (m) => m[0] === "F" ? "Fünf" : "fünf"],
+    [/\bnaechte(n)?\b/gi, (m, suf = "") => (m[0] === "N" ? "Nächte" : "nächte") + suf],
+    [/\bmaechte\b/gi, (m) => m[0] === "M" ? "Mächte" : "mächte"],
+    [/\bvermaechtnis\b/gi, (m) => m[0] === "V" ? "Vermächtnis" : "vermächtnis"],
+    [/\bgefaehrliche(n|r|s)?\b/gi, (m, suf = "") => (m[0] === "G" ? "Gefährliche" : "gefährliche") + suf],
+    [/\bkomoedie\b/gi, (m) => m[0] === "K" ? "Komödie" : "komödie"],
+    [/\bkaempfer(n)?\b/gi, (m, suf = "") => (m[0] === "K" ? "Kämpfer" : "kämpfer") + suf],
+    [/\bschoene(n|r|s)?\b/gi, (m, suf = "") => (m[0] === "S" ? "Schöne" : "schöne") + suf],
+    [/\btodesschuesse\b/gi, (m) => m[0] === "T" ? "Todesschüsse" : "todesschüsse"],
+    [/\bgruselige(n|r|s)?\b/gi, (m, suf = "") => (m[0] === "G" ? "Gruselige" : "gruselige") + suf]
+  ];
+
+  function normalizeGermanAsciiUmlauts(str) {
+    if (!str) return "";
+    let s = String(str);
+    for (const [rx, repl] of GERMAN_ASCII_UMLAUT_REPLACEMENTS) {
+      s = s.replace(rx, repl);
+    }
+    return s;
+  }
+
+  // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (auch ohne Leerzeichen wie "2012SiFi", "1998Action", "2002 Patrick Stewart 465 MB")
+  const HARD_YEAR_CUTOFF_REGEX = /^(.*?)(?:[\s._\-(\[]+)(19[2-9]\d|20[0-2]\d)(?=[\s._\-)\]]|(?:SiFi|SciFi|Sci-Fi|Action|Comedy|Komödie|Komoedie|Drama|Crime|Krimi|Thriller|Horror|Abenteuer|Adventure|Krieg|Geschichte|History|Fantasy|Animation|Familie|Romantik|Romance|Mystery|Western|Musik|Doku|Dokumentation|HD|FullHD|FHD|UHD|4K|1080p|720p|480p|German|Deutsch|DE|EN|AC3|DTS|x264|x265|XviD|DivX|mp4|mkv|avi|$))/i;
+
+  function applyHardYearCutoff(rawString) {
+    if (!rawString) return { titleBeforeYear: "", year: null, hadYearCutoff: false };
+    const s = String(rawString).replace(FULL_DATE_REGEX, " ");
+    // Prüfe zuerst auf eingeklammerte Jahreszahl (schützt Filme wie "Wonder Woman 1984 (2020)" oder "Blade Runner 2049 (2017)")
+    const parenMatch = s.match(/^(.*?)\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]](.*)$/i);
+    if (parenMatch && parenMatch[1] && parenMatch[1].trim().length >= 2) {
+      return {
+        titleBeforeYear: parenMatch[1].trim(),
+        year: parseInt(parenMatch[2], 10),
+        hadYearCutoff: true
+      };
+    }
+    const yearCutMatch = s.match(HARD_YEAR_CUTOFF_REGEX);
+    if (yearCutMatch && yearCutMatch[1] && yearCutMatch[1].trim().length >= 2) {
+      return {
+        titleBeforeYear: yearCutMatch[1].trim(),
+        year: parseInt(yearCutMatch[2], 10),
+        hadYearCutoff: true
+      };
+    }
+    return { titleBeforeYear: s, year: null, hadYearCutoff: false };
+  }
+
+  // MODUL 2.5: Erkennt überlange Beschreibungstexte ("Cocaine Bear"-Schutz) anhand von Wortanzahl (> 15 Wörter) oder mehreren Sätzen statt 40/50-Zeichen-Abschnitt mitten im Wort!
+  function isLikelyPlotDescription(str) {
+    const s = String(str || "").trim();
+    if (!s) return false;
+    if (s.length > 120) return true;
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length > 15) return true;
+    if (/[.!?]\s+[A-ZÄÖÜ]/.test(s) && words.length > 9) return true;
+    return false;
+  }
+
   function cleanMediaTitle(raw) {
     if (!raw) return "";
     let s = normalizeText(raw);
@@ -508,8 +634,18 @@
     s = s.replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|m4v|ts|mov|wmv|flv|mk3d|webm|rar|json))+$/i, "").replace(/󠄿/g, "").replace(/_/g, " ");
     // Volle Datumsangaben wie (21.07.2012) oder 01.12.2018 sowie Länder-Jahresklammern wie (DDR 1976) sofort entfernen
     s = s.replace(/\(\s*\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\s*\)/g, " ");
-    s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/gi, " ");
     s = s.replace(FULL_DATE_REGEX, " ");
+
+    // MODUL 2.1: Führende 01/02/03/04 direkt vor einer Jahresklammer (z.B. "The Postman 01 (1997)") vor dem Jahres-Cut-Off entfernen
+    s = s.replace(/\b0[1-4](?=\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]])/gi, " ");
+
+    // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (schneidet auch Genres ohne Leerzeichen wie "2012SiFi" und Schauspieler/Größen rechts neben der Jahreszahl ab!)
+    const yearCutoffRes = applyHardYearCutoff(s);
+    if (yearCutoffRes.hadYearCutoff && yearCutoffRes.titleBeforeYear) {
+      s = yearCutoffRes.titleBeforeYear;
+    }
+
+    s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/gi, " ");
 
     // Scene-Audio & Release-Group-Kombinationen (z. B. "AC3D.5.1", "BDRiP.XViD-HaN") vor dem Punkt-Splitter bereinigen
     s = s.replace(/\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\s._-]*(?:5\.1|7\.1|2\.0)\b/gi, " ");
@@ -526,9 +662,9 @@
     s = s.replace(/[↩️🔠🔢⤴️⬅️➡️🎦]+.*$/gu, "");
     s = s.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎🩸❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️]/gu, " ");
 
-    // @Mentions und bekannte Kanal-/Qualitäts-Hashtags entfernen, aber Titelwörter mit führendem '#' (wie "#Murder Mystery" oder "#Rim of the World") schützen!
+    // @Mentions und bekannte Kanal-/Qualitäts-Hashtags (#Gutfilm etc.) entfernen, aber Titelwörter mit führendem '#' (wie "#Murder Mystery" oder "#Rim of the World") schützen!
     s = s.replace(/@[A-Za-z0-9_]+/g, "");
-    s = s.replace(/#(?:gutfilm|archemovie|filmwelt|weltderfilme|sauerkraut|hd|fullhd|fhd|uhd|4k|1080p|720p|480p|deutsch|german|kino|serie|serien|film|filme|neu|new|stream|download|vip|ov|omu|horror|action|comedy|thriller|drama|scifi|fantasy|anime)\b/gi, " ");
+    s = s.replace(/#(?:gutfilm|archemovie|filmwelt|weltderfilme|sauerkraut|hd|fullhd|fhd|uhd|4k|1080p|720p|480p|deutsch|german|kino|serie|serien|film|filme|neu|new|stream|download|vip|ov|omu|horror|action|comedy|thriller|drama|scifi|sifi|fantasy|anime)\b/gi, " ");
     s = s.replace(/#(?=[A-Za-zÄÖÜäöüß0-9])/g, " ");
     s = s.replace(/s[\._]to\s*-?\s*Serien.*/i, "").replace(/Sto\s*-\s*Serien.*/i, "");
     s = s.replace(/serien[\._](?:life|show).*/i, "").replace(/HD\s*Filme\s*Serien.*/i, "");
@@ -540,28 +676,31 @@
     s = s.replace(/\bS\d{1,2}\s*E\d{0,3}(?:-E\d{1,3})?(?=[A-Za-z]|\b)/gi, " ");
     s = s.replace(/\b\d{3,4}\s*[x×]\s*\d{3,4}\b/g, "");
 
-    // Getrennte Sub/Dub-Kombinationen & CD/Part-Marker (inkl. part01..part25 bei RAR-Archiven) VOR den Einzelwörtern löschen:
+    // Getrennte Sub/Dub-Kombinationen & CD/Part-Marker (inkl. -CD1, -CD2, Pt 1, Teil 1, part01..part25) VOR den Einzelwörtern löschen:
     s = s.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|de|eng|en|jap|jpn)(?:[\s._-]+(?:ger|deu|de|eng|en|jap|jpn))?[\s._-]+(?:sub|subs|subbed|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
     s = s.replace(/AC3\.?CD0*[1-9]/gi, " "); // Spezialfix für "Klasse84AC3.CD01"
-    s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|part|split)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
+    s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|part|teil|pt|split)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
     s = s.replace(/(?:[-_.]|\s)00[1-9]\b/gi, " ");
 
-    // Editionen (Extended Cut, Director's Cut, Collector's Edition etc.) & Tech-Junk entfernen
+    // Editionen (Extended Cut, Director's Cut, Collector's Edition, DC etc.) & Tech-Junk entfernen
     s = extractAndStripEditions(s).cleaned;
     s = s.replace(EDITION_CUT_REGEX, " ");
     s = s.replace(TECH_JUNK_REGEX, " ");
     // Falls durch vorherige Bereinigung oder Schreibweisen wie "Underworld - Cut" / "Underworld (Cut)" / "Blade Runner - The Final Cut" noch ein angehängtes "Cut" / "Edition" oder "- The" übrig blieb:
     s = s.replace(/[\(\[]\s*(?:the\s+)?(?:cut|dc|edition|version|fassung)\s*[\)\]]/gi, " ");
-    s = s.replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|edition|version|fassung|redux)\s*$/i, "$1");
+    s = s.replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|dc|edition|version|fassung|redux)\s*$/i, "$1");
     s = s.replace(/\s*[-–:]\s*(?:the|der|die|das)\s*$/i, "");
-    // Alleinstehende großgeschriebene 2-Buchstaben-Sprachkürzel am Ende oder in Klammern entfernen (z. B. "Es ist nur eine Phase, Hase (2021) DE #gutFilm.mp4")
-    s = s.replace(/(?:[\(\[_-]\s*(?:DE|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\s*[\)\]]?|\s+(?:DE|EN|FR|ES|IT|TR|RU|JA|KO)(?=\s*$))/g, " ");
+    // Alleinstehende 2-Buchstaben-Sprachkürzel (auch "De" / "DE") am Ende oder in Klammern entfernen (z. B. "Es ist nur eine Phase, Hase (2021) DE #gutFilm.mp4")
+    s = s.replace(/(?:[\(\[_-]\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\s*[\)\]]?|\s+(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO)(?=\s*$))/g, " ");
 
     // Nur echte Katalognummern mit Punkt ("3559. ", "01. ") oder Null-Präfix mit Bindestrich ("01 - ") am Anfang entfernen,
     // NIEMALS Serientitel wie "7 vs. Wild", "4400 - S2E01", "101 Dalmatiner" oder "6000 Euro"! (Fall 12, 13, 14, 18)
     s = s.replace(/^(?:\d{1,4}\.\s+|0\d\s*[-–]\s+)/, "").replace(/-\d{3}$/, "");
     s = s.replace(/\(\s*\)|\[\s*\]/g, "");
     s = s.replace(/\s+/g, " ").replace(/^[\s\-–·‧:.,#"=|⎪&]+|[\s\-–·‧:.,#"=|⎪&]+$/g, "");
+
+    // MODUL 2.5: Umlaut-Normalisierung ("schlaegt zurueck" -> "schlägt zurück")
+    s = normalizeGermanAsciiUmlauts(s);
 
     // Unmittelbar verdoppelte Titelwörter bereinigen (z. B. "Sliders S05E0Sliders" -> "Sliders")
     s = s.replace(/\b([A-Za-zÄÖÜäöüß]{3,})\s+\1\b/gi, "$1");
@@ -766,6 +905,35 @@
     const rawCurrentTitle = String(parsedVideo.title || parsedVideo.cleanTitle || "").trim();
     if (!rawCurrentTitle) return parsedVideo;
 
+    // MODUL 2.1 Nachbar-Pairing für Multi-Part-Filme (CD2 / Part > 1):
+    // Wenn ein Film part > 1 hat und die direkt benachbarte Nachricht (i - 1 oder i + 1) denselben bereinigten Basis-Titel hat, übernimm deren tmdbId / Jahr!
+    const currentPartNum = Number(parsedVideo.partNumber || parsedVideo.partInfo?.part || 1);
+    const currentNormBase = normalizeCompareString(rawCurrentTitle);
+    if (currentPartNum > 1 && currentNormBase) {
+      for (const adjOffset of [-1, 1]) {
+        const adjMsg = messages[currentIndex + adjOffset];
+        if (!adjMsg || typeof adjMsg !== "object") continue;
+        const adjParsed = adjMsg._parsedItem || parseTelegramMessage(adjMsg, {});
+        if (adjParsed && adjParsed.mediaType === "movie") {
+          const adjNormBase = normalizeCompareString(adjParsed.title || adjParsed.cleanTitle || "");
+          if (adjNormBase && adjNormBase === currentNormBase) {
+            if (!parsedVideo.tmdbId && (adjParsed.tmdbId || adjMsg._resolvedTmdbId)) {
+              parsedVideo.tmdbId = Number(adjParsed.tmdbId || adjMsg._resolvedTmdbId);
+            }
+            if (!parsedVideo.year && adjParsed.year) {
+              parsedVideo.year = Number(adjParsed.year);
+            }
+          }
+        }
+      }
+    }
+
+    // MODUL 3.4: Kein Nachbar-Übergriff (-1/+1), wenn das Video bereits einen eigenen klaren Titel UND ein eigenes Jahr im Dateinamen oder in der Caption besitzt!
+    // (Schützt z.B. "Star_Trek_Der_Aufstand_1998" und "The_Watch_Nachbarn_der_3_Art_2012" vor Überschreibung durch benachbarte Info-Posts!)
+    if (rawCurrentTitle.length >= 3 && parsedVideo.year) {
+      return parsedVideo;
+    }
+
     const baseWord = rawCurrentTitle
       .toLowerCase()
       .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\s+/i, "")
@@ -806,9 +974,6 @@
       if (parsedVideo.year && neighborYear && Number(parsedVideo.year) !== neighborYear) continue;
 
       // Collection-Header & Detailtitel-Schutz ("Der König der Löwen 2 - Simbas Königreich (1998)" vs. "König der Löwen teil 1 bis 3"):
-      // 1. Wenn der Nachbar-Post Wörter wie "teil 1 bis 3", "1-3", "collection", "trilogie" oder "box" enthält, darf er NIEMALS parsedVideo.title überschreiben!
-      // 2. Wenn das Video bereits einen eigenen ausführlichen Titel mit Fortsetzungs-Nummer ([1-9]) oder Bindestrich ("-") besitzt,
-      //    ist der eigene Titel hochwertiger als jeder Nachbar-Post und darf nicht überschrieben werden!
       const neighborTitleLower = firstLine.toLowerCase();
       const isCollectionHeader = /(?:teil\s*\d+\s*(?:bis|-|–)\s*\d+|\d+\s*-\s*\d+|collection|trilogie|trilogy|quadrilogie|box)/i.test(neighborTitleLower);
       const videoHasDetailedTitle = Boolean(rawCurrentTitle && (/[1-9]/.test(rawCurrentTitle) || rawCurrentTitle.includes("-") || rawCurrentTitle.includes("–") || rawCurrentTitle.includes(":")));
@@ -820,12 +985,10 @@
         };
       }
 
-      // Beschreibungs-Schutz ("Cocaine Bear" / "Ted Bundy"):
-      // Wenn die erste Zeile des Nachbarn > 60 Zeichen lang ist, ist es ein Beschreibungstext und KEIN Kurztitel!
-      // Behalte in diesem Fall den sauberen Video-Titel bei und übernimm den Nachbar-Text nur in contextOverview.
-      if (firstLine.length > 60) {
+      // Beschreibungs-Schutz ("Cocaine Bear" / "Ted Bundy", MODUL 2.5: > 120 Zeichen oder > 15 Wörter):
+      if (isLikelyPlotDescription(firstLine)) {
         const shortHead = firstLine.split(/[:\n(]/)[0].trim();
-        const candidateShort = (shortHead.length >= 3 && shortHead.length <= 50 && shortHead.toLowerCase().includes(baseWord))
+        const candidateShort = (shortHead.length >= 3 && !isLikelyPlotDescription(shortHead) && shortHead.toLowerCase().includes(baseWord))
           ? (cleanMediaTitle(shortHead.replace(/\s*[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?\s*$/, "")) || parsedVideo.title)
           : (parsedVideo.cleanTitle || parsedVideo.title);
         return {
@@ -842,11 +1005,11 @@
         .trim();
       let cleanedTitle = cleanMediaTitle(rawEnrichedTitle) || rawEnrichedTitle;
       let contextOverview = lines.slice(1).join(" ").trim();
-      if (cleanedTitle && cleanedTitle.length > 50) {
+      if (cleanedTitle && isLikelyPlotDescription(cleanedTitle)) {
         contextOverview = `${cleanedTitle} ${contextOverview}`.trim();
-        cleanedTitle = parsedVideo.cleanTitle && parsedVideo.cleanTitle.length <= 50
+        cleanedTitle = parsedVideo.cleanTitle && !isLikelyPlotDescription(parsedVideo.cleanTitle)
           ? parsedVideo.cleanTitle
-          : cleanedTitle.split(/[:\n(]/)[0].trim().slice(0, 40);
+          : cleanedTitle.split(/[:\n(]/)[0].trim().slice(0, 120);
       }
 
       return {
@@ -854,7 +1017,7 @@
         title: cleanedTitle || parsedVideo.title,
         cleanTitle: cleanedTitle || parsedVideo.cleanTitle || parsedVideo.title,
         year: parsedVideo.year || neighborYear,
-        contextOverview: contextOverview || parsedVideo.contextOverview || "" // Speichert die Filmbeschreibung für den TMDb-Abgleich!
+        contextOverview: contextOverview || parsedVideo.contextOverview || ""
       };
     }
 
@@ -887,7 +1050,7 @@
       : Boolean(prevContext && (prevContext.tmdbId || prevContext.title || prevContext.seriesHeader));
     let activeContext = isContextFresh ? { ...prevContext } : {};
 
-    const rawText = flattenTelegramExportText(msg.caption || msg.text || msg.text_entities);
+    const rawText = extractRawMessageText(msg);
     const durationSec = Number(msg.video?.duration || msg.duration_seconds || msg.duration || 0) || null;
     const videoWidth  = Number(msg.video?.width  || msg.width  || 0) || null;
     const videoHeight = Number(msg.video?.height || msg.height || 0) || null;
@@ -897,11 +1060,16 @@
     // Nur .zip/.7z/.tar/.gz blockieren; .rar/.partXX.rar Archive werden als eigene Kategorie/Version ("📦 RAR-Archiv") importiert!
     if (/\.(zip|7z|tar|gz)$/i.test(rawFileName)) return null;
 
+    // MODUL 2.3: Film-Editionen VOR der Bereinigung extrahieren und editionLabel sichern
+    const editionInfo = extractAndStripEditions(`${rawText || ""} ${rawFileName || ""}`);
+    const editionLabel = editionInfo.editionLabel || null;
+
     const langInfo = detectLanguages(rawText, rawFileName);
     const languages = langInfo.languages;
     const subtitles = langInfo.subtitles;
+    // MODUL 2.1: Multi-Part-Filme (CD1/CD2 & führende 01/02 vor Jahreszahlen) VOR der Serien-Weiche erkennen!
     const partInfo = extractPartInfo(rawText, rawFileName);
-    const editionInfo = extractAndStripEditions(`${rawText || ""} ${rawFileName || ""}`);
+    const isBonusClip = BONUS_SPECIAL_REGEX.test(`${rawFileName || ""} ${rawText || ""}`);
 
     // Regel 4: Entferne "Plot:" und "Beschreibung:" direkt vor dem Zeilen-Check (wichtig für "The Cell (2000) Plot: ...")
     const rawTextWithoutPlot = String(rawText || "")
@@ -922,7 +1090,6 @@
     const isGenericFile = !fileName || /^(?:video|new+|vmp4|\d+|d-[a-z0-9-]+)\.(mp4|mkv|avi|m4v)$/i.test(fileName.trim());
 
     // "Episode 6 Staffel 2 von Little Britain.mp4" Context-Bleeding-Fix:
-    // Extrahiere den Seriennamen hinter "von" VOR jedem Fallback auf prevContext und überschreibe den alten Kontext sofort!
     const rawFnForVon = String(rawFileName || "").replace(/_/g, " ");
     const rawTxtForVon = String(rawTextWithoutPlot || "").replace(/_/g, " ");
     const vonPattern = /(?:(?:Episode|Folge)\s*0*(\d{1,3})(?:[\s.\-&]+0*(\d{1,3}))?\s*(?:(?:\(?Staffel|\(?Season)\s*0*(\d{1,2})\)?\s*)?|(?:Staffel|Season)\s*0*(\d{1,2})\s*(?:Episode|Folge)\s*0*(\d{1,3})\s*|\bS0*(\d{1,2})E0*(\d{1,3})(?:-E0*(\d{1,3}))?\s+)von\s+(.+?)(?:\s*\(\d{1,3}\))?(?:\.(?:mp4|mkv|avi|mov|m4v|webm|ts)|[\s._]*(?:s[_. ]?to(?:[_. ]*Serien)?|_sto_Serien|Sto[\s_-]*Serien|HD|Online|❤)|\r?\n|$)/i;
@@ -955,9 +1122,6 @@
       }
     }
 
-    // THE ROOKIE S01E11 & E01S01 FRONTIER & LITTLE BRITAIN KONTEXT-SCHUTZ:
-    // Wenn eine Videodatei ihren eigenen Seriennamen im Text/Dateinamen hat (z.B. "The Rookie S01E11", "E01S01 Frontier 2016", "Episode 6 Staffel 2 von Little Britain"),
-    // darf dieser NIEMALS vom prevContext (tmdbId, title, seriesHeader) einer vorherigen Serie/Films überschrieben werden!
     const prelimTextSe = extractSePartsFromSource(line1 || text);
     const prelimFileSe = !isGenericFile ? extractSePartsFromSource(fileName) : null;
     const ownSeriesNameInMsg = explicitVonSeriesTitle || pickBestSeriesTitleCandidate(
@@ -1009,9 +1173,11 @@
       EARLY_EXPLICIT_SERIES_MARKER.test(text) ||
       EARLY_EXPLICIT_SERIES_MARKER.test(fileName)
     );
-    // Eiserne Weichen-Regel: Jahreszahl in Klammern (z.B. "Iron Man 3 (2013)") OHNE Serien-Marker ist zu 100% ein Film!
-    // Verhindert, dass ein vorangegangener Serien-Kontext (activeContext) einen darauffolgenden Spielfilm mit Jahreszahl zur Serie macht.
-    if (hasOwnParenYear && !hasOwnSeriesMarkerInMsg) {
+    // MODUL 2.1: Explizite Multi-Part-Filme (CD1/CD2 oder 01/02 vor Jahresklammer) ohne SxxExx sind IMMER Filme!
+    const forceMovieByMultiPart = Boolean(partInfo.isExplicitMultiPartMovie && !hasOwnSeriesMarkerInMsg);
+
+    // Eiserne Weichen-Regel: Jahreszahl in Klammern (z.B. "Iron Man 3 (2013)") oder Multi-Part-Marker OHNE Serien-Marker ist zu 100% ein Film!
+    if ((hasOwnParenYear || forceMovieByMultiPart) && !hasOwnSeriesMarkerInMsg) {
       mediaType = "movie";
       if (activeContext.mediaType === "tv" && !explicitMovUrlHit) {
         tmdbId = null;
@@ -1020,8 +1186,7 @@
     }
 
     // activeContext.title nur heranziehen, wenn der Dateiname generisch ist oder das Basiswort übereinstimmt
-    // (Verhindert, dass z.B. "Tin & Tina 2023" aus index - 1 ein Video "Arielle 2023.mp4" ohne Caption überschreibt!)
-    const ownVideoTitleCandidate = cleanMediaTitle(((line1 && line1.length <= 60 ? line1 : "") || (!isGenericFile ? fileName : "")).replace(YEAR_REGEX, " "));
+    const ownVideoTitleCandidate = cleanMediaTitle(((line1 && !isLikelyPlotDescription(line1) ? line1 : "") || (!isGenericFile ? fileName : "")).replace(YEAR_REGEX, " "));
     const ownBaseWord = ownVideoTitleCandidate
       .toLowerCase()
       .replace(/^(?:der|die|das|the|a|disneys|disney's|marvels|marvel's|pixars|pixar's)\s+/i, "")
@@ -1037,9 +1202,9 @@
     const usePreContextTitle = Boolean(
       !inlineExplicitTitle &&
       !ownSeriesNameInMsg &&
-      !(hasOwnParenYear && !hasOwnSeriesMarkerInMsg && activeContext.mediaType === "tv") &&
+      !((hasOwnParenYear || forceMovieByMultiPart) && !hasOwnSeriesMarkerInMsg && activeContext.mediaType === "tv") &&
       activeContext.title &&
-      activeContext.title.length <= 60 &&
+      !isLikelyPlotDescription(activeContext.title) &&
       preContextMatchesOwnTitle &&
       (
         activeContext.tmdbId ||
@@ -1054,34 +1219,34 @@
     const originalTitle = text.match(/Originaltitel:\s*([^\n]+)/i)?.[1]?.trim() || (usePreContextTitle ? activeContext.originalTitle : null);
     const explicitYear  = inlineExplicitYear || (usePreContextTitle ? activeContext.year : null);
 
-    // Beschreibungs-Schutz ("Ted Bundy" ID 3558 / "Cocaine Bear" ID 3435):
-    // Wenn line1 > 60 Zeichen lang ist, ist es eine Filmbeschreibung im Post-Text und KEIN Titel!
-    // Nutze dann strikt den Dateinamen (vor dem Jahr) bzw. das Kurzsegment vor Doppelpunkt/Klammer und rette den Text in contextOverview!
+    // MODUL 2.4 & 2.5: Jahres-Cut-Off zuerst ausführen, danach Beschreibungs-Schutz (> 15 Wörter oder > 120 Zeichen statt 40/50 Zeichen!)
+    const line1YearCut = applyHardYearCutoff(line1);
+    const fileYearCut = !isGenericFile ? applyHardYearCutoff(fileName) : { titleBeforeYear: "", year: null, hadYearCutoff: false };
+    const effectiveLine1ForTitle = line1YearCut.hadYearCutoff ? line1YearCut.titleBeforeYear : line1;
+
     let extractedContextOverview = lines.length > 1 ? lines.slice(1).join(" ").trim() : "";
     let sourceUsed = "file_name";
     let primarySource = fileName;
-    if (explicitTitle && explicitTitle.length <= 60) {
+    if (explicitTitle && !isLikelyPlotDescription(explicitTitle)) {
       primarySource = explicitTitle;
       sourceUsed = usePreContextTitle ? "pre_context_title" : "explicit_title";
-    } else if (line1 && line1.length >= 2 && line1.length <= 60 && !/^(?:Qualität|Größe|Groesse|Size|Format|Dauer|Laufzeit|Länge|Sprache|Language|Genre|Gener|Studio|Director|Regie|Darsteller|Actors|Cast|Released|Release|FSK|IMDb|Rating|Preis|Free)\s*[:=-]/i.test(line1) && !/^(?:\+?\s*1[268]\s*\+?|Ab\s+\d+\s+Jahren)/i.test(line1)) {
-      primarySource = line1;
+    } else if (effectiveLine1ForTitle && effectiveLine1ForTitle.length >= 2 && !isLikelyPlotDescription(effectiveLine1ForTitle) && !/^(?:Qualität|Größe|Groesse|Size|Format|Dauer|Laufzeit|Länge|Sprache|Language|Genre|Gener|Studio|Director|Regie|Darsteller|Actors|Cast|Released|Release|FSK|IMDb|Rating|Preis|Free)\s*[:=-]/i.test(effectiveLine1ForTitle) && !/^(?:\+?\s*1[268]\s*\+?|Ab\s+\d+\s+Jahren)/i.test(effectiveLine1ForTitle)) {
+      primarySource = line1YearCut.hadYearCutoff ? `${line1YearCut.titleBeforeYear} (${line1YearCut.year})` : line1;
       sourceUsed = "caption_line1";
-    } else if (line1 && line1.length > 60) {
+    } else if (line1 && isLikelyPlotDescription(effectiveLine1ForTitle)) {
       extractedContextOverview = lines.join(" ").trim();
       if (!isGenericFile && fileName) {
         primarySource = fileName;
         sourceUsed = "file_name";
+      } else if (line1YearCut.hadYearCutoff && line1YearCut.titleBeforeYear) {
+        primarySource = `${line1YearCut.titleBeforeYear} (${line1YearCut.year})`;
+        sourceUsed = "caption_line1_shortened";
       } else {
-        const yearInLine1 = (` ${line1.slice(0, 65)} `).match(YEAR_REGEX);
-        if (yearInLine1 && yearInLine1.index >= 2) {
-          primarySource = line1.slice(0, yearInLine1.index).trim();
-        } else {
-          primarySource = line1.split(/[:\n(]/)[0].trim().slice(0, 45);
-        }
+        primarySource = line1.split(/[:\n(]/)[0].trim().slice(0, 120);
         sourceUsed = "caption_line1_shortened";
       }
     } else if (isGenericFile && line1) {
-      primarySource = line1.slice(0, 50);
+      primarySource = line1.slice(0, 120);
       sourceUsed = "caption_line1";
     } else if (isGenericFile && !activeContext.seriesHeader && !tmdbId) {
       return null;
@@ -1098,44 +1263,46 @@
 
     // Regel 3 + Breaking Bad S03E01 Fix: Prüfe bis zu 12 Zeilen nach S01E01 oder "Folge 1" / "Episode 1"
     let multiLineSeHit = null;
-    for (let idx = 1; idx < Math.min(lines.length, 12); idx++) {
-      const mLine = lines[idx].match(/(?:^|[\s._\-(🔸🔶])S(\d{1,2})[\s._-]*E(\d{1,3})(?:[\s._\-+&|/]*E?(\d{1,3}))?(?:$|[\s._\-)|⎪🔸🔶])/i);
-      if (mLine) {
-        multiLineSeHit = { lineIndex: idx, match: mLine, lineText: lines[idx] };
-        break;
-      }
-      const mFolgeLine = lines[idx].match(/(?:^|[\s._\-(🔸🔶])(?:Staffel\s*0*(\d{1,2})[\s._\-·‧,]*)?(?:Folge|Episode)\s*0*(\d{1,3})\b/i);
-      if (mFolgeLine) {
-        const sVal = mFolgeLine[1] ? parseInt(mFolgeLine[1], 10) : (inlineStaffelNum || 1);
-        const eVal = parseInt(mFolgeLine[2], 10);
-        const synthMatch = [`S${String(sVal).padStart(2, "0")}E${String(eVal).padStart(2, "0")}`, String(sVal), String(eVal), null];
-        synthMatch.index = mFolgeLine.index || 0;
-        multiLineSeHit = { lineIndex: idx, match: synthMatch, lineText: lines[idx] };
-        break;
+    if (!forceMovieByMultiPart) {
+      for (let idx = 1; idx < Math.min(lines.length, 12); idx++) {
+        const mLine = lines[idx].match(/(?:^|[\s._\-(🔸🔶])S(\d{1,2})[\s._-]*E(\d{1,3})(?:[\s._\-+&|/]*E?(\d{1,3}))?(?:$|[\s._\-)|⎪🔸🔶])/i);
+        if (mLine) {
+          multiLineSeHit = { lineIndex: idx, match: mLine, lineText: lines[idx] };
+          break;
+        }
+        const mFolgeLine = lines[idx].match(/(?:^|[\s._\-(🔸🔶])(?:Staffel\s*0*(\d{1,2})[\s._\-·‧,]*)?(?:Folge|Episode)\s*0*(\d{1,3})\b/i);
+        if (mFolgeLine) {
+          const sVal = mFolgeLine[1] ? parseInt(mFolgeLine[1], 10) : (inlineStaffelNum || 1);
+          const eVal = parseInt(mFolgeLine[2], 10);
+          const synthMatch = [`S${String(sVal).padStart(2, "0")}E${String(eVal).padStart(2, "0")}`, String(sVal), String(eVal), null];
+          synthMatch.index = mFolgeLine.index || 0;
+          multiLineSeHit = { lineIndex: idx, match: synthMatch, lineText: lines[idx] };
+          break;
+        }
       }
     }
 
-    // Regel 7: Alle Serien- & Episoden-Muster (inkl. Raute-Schema, Mehrzeiler, Cross-Check Text <-> Dateiname)
-    const hashStaffelMatch = primarySource.match(/^(.+?)[_\s]*#[_\s]*(?:Staffel[_\s]*(\d{1,2})[_\s,.\-]*(?:Folge|Episode)[_\s]*(\d{1,3})|S(\d{1,2})E(\d{1,3}))[_\s]*(?:[#\-–]+[_\s]*)(.+)$/i)
-                          || fileName.match(/^(.+?)[_\s]*#[_\s]*(?:Staffel[_\s]*(\d{1,2})[_\s,.\-]*(?:Folge|Episode)[_\s]*(\d{1,3})|S(\d{1,2})E(\d{1,3}))[_\s]*(?:[#\-–]+[_\s]*)(.+)$/i);
-    const epStaffelVon = (primarySource.match(/^(?:Episode|Folge)[_\s.]*(\d{1,3})(?:[_\s.\-&]+(\d{1,3}))?[_\s.\-]*(?:(?:\(?Staffel[_\s.]*(\d{1,2})\)?)[_\s.\-]*(?:von[_\s.]+)?|(?:von[_\s.]+))(.+?)(?:[_\s.]*\(\d{1,3}\))?(?:[_\s.]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|\.(?:mp4|mkv)|$)/i)
+    // Regel 7: Alle Serien- & Episoden-Muster (werden übersprungen, wenn forceMovieByMultiPart = true, damit CD1/CD2 oder "The Postman 01 (1997)" niemals als Serie gilt!)
+    const hashStaffelMatch = !forceMovieByMultiPart && (primarySource.match(/^(.+?)[_\s]*#[_\s]*(?:Staffel[_\s]*(\d{1,2})[_\s,.\-]*(?:Folge|Episode)[_\s]*(\d{1,3})|S(\d{1,2})E(\d{1,3}))[_\s]*(?:[#\-–]+[_\s]*)(.+)$/i)
+                          || fileName.match(/^(.+?)[_\s]*#[_\s]*(?:Staffel[_\s]*(\d{1,2})[_\s,.\-]*(?:Folge|Episode)[_\s]*(\d{1,3})|S(\d{1,2})E(\d{1,3}))[_\s]*(?:[#\-–]+[_\s]*)(.+)$/i));
+    const epStaffelVon = !forceMovieByMultiPart && (primarySource.match(/^(?:Episode|Folge)[_\s.]*(\d{1,3})(?:[_\s.\-&]+(\d{1,3}))?[_\s.\-]*(?:(?:\(?Staffel[_\s.]*(\d{1,2})\)?)[_\s.\-]*(?:von[_\s.]+)?|(?:von[_\s.]+))(.+?)(?:[_\s.]*\(\d{1,3}\))?(?:[_\s.]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|\.(?:mp4|mkv)|$)/i)
                        || fileName.match(/^(?:Episode|Folge)[_\s.]*(\d{1,3})(?:[_\s.\-&]+(\d{1,3}))?[_\s.\-]*(?:(?:\(?Staffel[_\s.]*(\d{1,2})\)?)[_\s.\-]*(?:von[_\s.]+)?|(?:von[_\s.]+))(.+?)(?:[_\s.]*\(\d{1,3}\))?(?:[_\s.]+(?:s[_. ]to|Sto|serien|HD|Online|❤)|\.(?:mp4|mkv)|$)/i));
-    const textSeParts = extractSePartsFromSource(primarySource);
-    const fileSeParts = !isGenericFile ? extractSePartsFromSource(fileName) : null;
-    const seriesFolge = primarySource.match(/^(.+?)[_\s.\-·‧]+(?:Staffel[_\s.]*(\d{1,2})[_\s.\-·‧]+)?(?:Folge|Episode)[_\s.]*(\d{1,3})\b[_\s.\-·‧:]*(.*)$/i)
-                     || fileName.match(/^(.+?)[_\s.\-·‧]+(?:Staffel[_\s.]*(\d{1,2})[_\s.\-·‧]+)?(?:Folge|Episode)[_\s.]*(\d{1,3})\b[_\s.\-·‧:]*(.*)$/i);
-    const leadingFolgeOnly = (primarySource.match(/^(?:Folge|Episode)[_\s.]*(\d{1,3})\b(.*)$/i)
+    const textSeParts = !forceMovieByMultiPart ? extractSePartsFromSource(primarySource) : null;
+    const fileSeParts = (!forceMovieByMultiPart && !isGenericFile) ? extractSePartsFromSource(fileName) : null;
+    const seriesFolge = !forceMovieByMultiPart && (primarySource.match(/^(.+?)[_\s.\-·‧]+(?:Staffel[_\s.]*(\d{1,2})[_\s.\-·‧]+)?(?:Folge|Episode)[_\s.]*(\d{1,3})\b[_\s.\-·‧:]*(.*)$/i)
+                     || fileName.match(/^(.+?)[_\s.\-·‧]+(?:Staffel[_\s.]*(\d{1,2})[_\s.\-·‧]+)?(?:Folge|Episode)[_\s.]*(\d{1,3})\b[_\s.\-·‧:]*(.*)$/i));
+    const leadingFolgeOnly = !forceMovieByMultiPart && (primarySource.match(/^(?:Folge|Episode)[_\s.]*(\d{1,3})\b(.*)$/i)
                            || fileName.match(/^(?:Folge|Episode)[_\s.]*(\d{1,3})\b(.*)$/i));
 
     // Datum vor Jahres-Extraktion entfernen, damit (21.07.2012) oder (01.12.2018) niemals als Jahr 2012/2018 erkannt wird (Fall 17)
-    // Wichtig ("Wonder Woman 1984 (2020)" & "Iron Man 3 (2013)"-Fix): Zuerst nach einer eingeklammerten Jahreszahl (YYYY) suchen!
     const PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]]/i;
     const dateSafePrimary = ` ${primarySource.replace(FULL_DATE_REGEX, " ")} `;
     const dateSafeFile = ` ${fileName.replace(FULL_DATE_REGEX, " ")} `;
     const dateSafeLine1 = ` ${line1.replace(FULL_DATE_REGEX, " ")} `;
     const parenYearMatch = dateSafePrimary.match(PAREN_YEAR_REGEX) || dateSafeLine1.match(PAREN_YEAR_REGEX) || dateSafeFile.match(PAREN_YEAR_REGEX);
-    const yearMatch = parenYearMatch || dateSafePrimary.match(YEAR_REGEX) || dateSafeLine1.match(YEAR_REGEX) || dateSafeFile.match(YEAR_REGEX);
-    const hasAnyYearInMsg = Boolean(explicitYear || parenYearMatch || yearMatch || hasOwnParenYear);
+    const yearMatch = parenYearMatch || dateSafePrimary.match(YEAR_REGEX) || dateSafeLine1.match(YEAR_REGEX) || dateSafeFile.match(YEAR_REGEX) ||
+      (line1YearCut.year ? [String(line1YearCut.year), String(line1YearCut.year)] : null) ||
+      (fileYearCut.year ? [String(fileYearCut.year), String(fileYearCut.year)] : null);
 
     if (hashStaffelMatch) {
       mediaType = "tv";
@@ -1152,13 +1319,11 @@
       episode = parseInt(m[2], 10);
       if (m[3]) episodeEnd = parseInt(m[3], 10);
 
-      // Dateiname hat Vorrang vor Caption bei Episoden-Widersprüchen (z.B. ID 911: Datei "Queen of the South S01E13.mp4" vs. Caption "S01E3")
       if (fileSeParts && fileSeParts.episode && fileSeParts.episode !== episode) {
         episode = fileSeParts.episode;
         if (fileSeParts.season) season = fileSeParts.season;
         episodeEnd = fileSeParts.episodeEnd || null;
       } else if (episodeEnd && (episodeEnd - episode >= 2) && fileSeParts && !fileSeParts.episodeEnd) {
-        // Schutz für Batch-Überschriften auf Einzelfolgen (z. B. ID 45807 Hardcore Pawn "Staffel 5 Folge 19 - 26" bei Datei "S05E19")
         episode = fileSeParts.episode;
         episodeEnd = null;
       }
@@ -1167,7 +1332,6 @@
       const beforeFile = fileSeParts ? (fileSeParts.before || (!fileSeParts.before && fileSeParts.after && !beforeText ? fileSeParts.after : "")) : "";
       seriesTitle = pickBestSeriesTitleCandidate(beforeText, beforeFile, activeContext.seriesHeader);
 
-      // Regel 3: Text hinter S01E01 (z.B. hinter "⎪" oder "-") oder in der Folgezeile (z.B. "Community\nS01-E01\nZurück aufs College !") ist Episodentitel
       let tailEp = cleanMediaTitle(multiLineSeHit.lineText.slice((m.index || 0) + m[0].length));
       if (!tailEp && lines[multiLineSeHit.lineIndex + 1]) {
         const nextLine = lines[multiLineSeHit.lineIndex + 1];
@@ -1175,12 +1339,11 @@
           tailEp = cleanMediaTitle(nextLine);
         }
       }
-      // Regel 2 Cross-Check: Wenn im mehrzeiligen Text kein Episodentitel steht (wie bei "A.D. Rebellen und Märtyrer" 🔶 S01E01 🔶), aus dem Dateinamen holen!
       if (!tailEp && fileSeParts && fileSeParts.after && normalizeCompareString(fileSeParts.after) !== normalizeCompareString(seriesTitle)) {
         tailEp = fileSeParts.after;
       }
       episodeTitle = tailEp;
-    } else if (explicitVonSeriesTitle) {
+    } else if (explicitVonSeriesTitle && !forceMovieByMultiPart) {
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
       episode = explicitVonEpisode || 1;
@@ -1200,8 +1363,6 @@
     } else if (textSeParts || fileSeParts) {
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
-      // Dateiname hat Vorrang vor Caption bei Episoden-Widersprüchen (z.B. ID 911: Datei "Queen of the South S01E13.mp4" vs. Caption "Queen of the South S01E3"):
-      // Wenn der Dateiname ein klares Episoden-Schema besitzt und die Caption abweicht (insb. 2-stellig im Dateinamen vs. 1-stellig/Tippfehler im Text), gewinnt immer der Dateiname!
       const mainSe = (fileSeParts && fileSeParts.episode && (!textSeParts || fileSeParts.episode !== textSeParts.episode))
         ? fileSeParts
         : (textSeParts || fileSeParts);
@@ -1209,15 +1370,11 @@
       episode = mainSe.episode;
       episodeEnd = mainSe.episodeEnd;
 
-      // Regel 2 Cross-Check zwischen Text und Dateiname:
-      // Wenn in einer Quelle vor SxxExx der Serienname leer ist (z.B. Datei "S01E01 - Lust auf Unabhängigkeit.mp4"),
-      // prüfe zwingend die jeweils andere Quelle (Text "What's up, Dad? - S01E01 =Lust auf Unabhängigkeit="), BEVOR auf after oder prevContext zurückgefallen wird!
       let beforeText = textSeParts ? textSeParts.before : "";
       let afterText  = textSeParts ? textSeParts.after  : "";
       let beforeFile = fileSeParts ? fileSeParts.before : "";
       let afterFile  = fileSeParts ? fileSeParts.after  : "";
 
-      // Fall 6 (ID 7068 "Unser Kosmos"): Punkt-getrennter Szene-Name mit Episodentitel vor S01E01 in der Caption
       if (beforeText && beforeFile && !afterText && beforeText.toLowerCase().startsWith(beforeFile.toLowerCase()) && beforeText.length > beforeFile.length + 3) {
         afterText = cleanMediaTitle(beforeText.slice(beforeFile.length));
         beforeText = beforeFile;
@@ -1226,15 +1383,12 @@
       const combinedBefore = pickBestSeriesTitleCandidate(beforeText, beforeFile, "");
       if (combinedBefore) {
         seriesTitle = combinedBefore;
-        // Längeren/vollständigeren Episodentitel bevorzugen (wichtig bei 60-Zeichen-Abschneidung im Dateinamen wie "My Hero Academia Vigilantes")
         if (afterText && afterFile) {
           episodeTitle = afterText.length >= afterFile.length ? afterText : afterFile;
         } else {
           episodeTitle = afterText || afterFile || "";
         }
       } else {
-        // E01S01 Frontier 2016 Fix: Wenn vor S01E01 nichts steht, hat ein expliziter Serienname hinter S01E01 (z.B. "Frontier 2016")
-        // Vorrang, sofern kein passender seriesHeader vorliegt oder im String ein Jahr steht!
         const afterCandidate = afterText || afterFile || "";
         const hasYearInSource = YEAR_REGEX.test(` ${primarySource} `) || YEAR_REGEX.test(` ${fileName} `);
         if (afterCandidate && (hasYearInSource || !activeContext.seriesHeader)) {
@@ -1252,14 +1406,12 @@
       season = (fileSeParts && fileSeParts.season) ? fileSeParts.season : (seriesFolge[2] ? parseInt(seriesFolge[2], 10) : (inlineStaffelNum || 1));
       episode = (fileSeParts && fileSeParts.episode) ? fileSeParts.episode : parseInt(seriesFolge[3], 10);
       episodeTitle = cleanMediaTitle(seriesFolge[4]);
-      // Fall 7 (IDs 12794-12795): "01 - Jacob_2_2_und_der_Kapuzen_Reisszahn_Episode_1.mp4" -> Serie "Jacob 2/2"
       const jacobMatch = seriesTitle.match(/^(Jacob\s*2[\s/_]*2)\s+(und\s+.+)$/i);
       if (jacobMatch) {
         episodeTitle = cleanMediaTitle(`Jacob 2/2 ${jacobMatch[2]}`);
         seriesTitle = "Jacob 2/2";
       }
     } else if (leadingFolgeOnly) {
-      // Fall 17 (ID 131141) & Breaking Bad S03 Folge 1-4: "Folge 1" / "Folge 15 - @ArcheMovie"
       mediaType = "tv";
       hasExplicitEpisodeMarker = true;
       season = (fileSeParts && fileSeParts.season) ? fileSeParts.season : (inlineStaffelNum || 1);
@@ -1271,6 +1423,7 @@
       }
     } else if (
       !partInfo.isSplit &&
+      !forceMovieByMultiPart &&
       !hasOwnParenYear &&
       (!durationSec || durationSec < 4200) &&
       (
@@ -1278,8 +1431,6 @@
         /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(primarySource.trim())
       )
     ) {
-      // Fix 2 ("05 Ein Star ist geboren" ID 4441 / "13 Hochzeitspläne" ID 4449):
-      // Dateinamen oder Zeilen mit führender 2- oder 3-stelliger Folgennummer (/^\d{2,3}[\s\-]/) und Dauer < 4200s zwingend als Serienfolge behandeln!
       const rawLeadSrc = /^\d{2,3}[\s\-]+([A-Za-zÄÖÜäöüß].{2,})/.test(fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim())
         ? fileName.replace(/\.(?:mp4|mkv|avi|mov|m4v|webm|ts)$/i, "").trim()
         : primarySource.trim();
@@ -1299,10 +1450,10 @@
     } else if (
       activeContext.seriesHeader &&
       !partInfo.isSplit &&
+      !forceMovieByMultiPart &&
       !hasOwnParenYear &&
       (!durationSec || durationSec < 4200)
     ) {
-      // Regel 4 & Regel 8: "Endziffer / Mittelziffer = Episode"-Weiche bei aktivem Serien-Header:
       const cleanedLine = cleanMediaTitle((line1 || fileName || primarySource).replace(YEAR_REGEX, " "));
       const headerLow = activeContext.seriesHeader.toLowerCase();
       const lineLow = cleanedLine.toLowerCase();
@@ -1321,7 +1472,6 @@
           sourceUsed = "runtime_series_switch";
         }
       } else {
-        // Auch wenn Wortstellung im Dateinamen gedreht ist (z. B. ID 106-110 "Gormenghast - Das Schloß im Nebel" -> "Das Schloss im Nebel - Die Legende von Gormenghast 1")
         const trailingNum = cleanedLine.match(/^(.{3,}?)\s+0*([1-9]\d?)$/);
         if (trailingNum) {
           const headerWords = headerLow.split(/[^a-zäöüß0-9]+/).filter(w => w.length >= 4);
@@ -1337,16 +1487,13 @@
       }
     }
 
-    // Eingebettete Folgennummer + Episodentitel (z.B. "Pippi Langstrumpf 1 Pippi zieht in die Villa Kunterbunt", "Zur See 1 Die Bewährung")
-    // ODER einfache Endziffern (z.B. "Black Box 1", "Spuk im Hochhaus 1", "Spuk unterm Riesenrad 1"):
     const MOVIE_FRANCHISE_GUARD = /^(?:deep\s+blue\s+sea|deep\s+blue|mad\s+max|sharknado|sector|ghettogangz|burg\s+schreckenstein|fifty\s+shades|jumanji|machete|crank|mechanic|tremors|lake\s+placid|anaconda|piranha|death\s+race|sniper|marine|jarhead|scorpion\s+king|mumie|mummy|vermächtnis|percy\s+jackson|schlümpfe|smurfs|ralph\s+reichts|zoomania|pets|sing|rio|jagdfieber|paddington|ted|kill\s+bill|sin\s+city|300|kick[\s-]*ass|johnny\s+english|austin\s+powers|universal\s+soldier|bloodsport|kickboxer|never\s+back\s+down|boyka|fack\s+ju|ostwind|bibi|conni|vorstadtkrokodile|wilde\s+kerle|fünf\s+freunde|tkkg|drei\s+fragezeichen|rush\s+hour|taken|punisher|blade|ong\s+bak|raid|goal|hooligans|manta|troll|nun|sinister|freitag\s+der|nightmare|saw|spider[\s-]*man|iron\s+man|ninja\s+turtles|teenage\s+mutant\s+ninja\s+turtles|james\s+bond|007|shrek|kingsman|pirates\s+of\s+the\s+caribbean|fluch\s+der\s+karibik|wonder\s+woman|venom|underworld|final\s+destination|insidious|paranormal\s+activity|jurassic\s+park|jurassic\s+world|indiana\s+jones|star\s+wars|star\s+trek|harry\s+potter|fast\s+and\s+furious|the\s+fast\s+and\s+the\s+furious|transporter|russian\s+transporter|bourne|mission\s+impossible|scary\s+movie|american\s+pie|step\s+up|ip\s+man|undisputed|scream|halloween|hellraiser|chucky|annabelle|avengers|captain\s+america|thor|guardians\s+of\s+the\s+galaxy|deadpool|x[\s-]*men|matrix|john\s+wick|equalizer|expendables|rambo|rocky|creed|alien|predator|terminator|robocop|die\s+hard|stirb\s+langsam|lethal\s+weapon|beverly\s+hills\s+cop|bad\s+boys|men\s+in\s+black|ghostbusters|back\s+to\s+the\s+future|zurück\s+in\s+die\s+zukunft|lord\s+of\s+the\s+rings|herr\s+der\s+ringe|hobbit|narnia|twilight|hunger\s+games|tribute\s+von\s+panem|maze\s+runner|divergent|resident\s+evil|silent\s+hill|conjuring|purge|quiet\s+place|hangover|oceans|now\s+you\s+see\s+me|unfassbaren|hotel\s+transsilvanien|hotel\s+transylvania|ice\s+age|madagascar|ich\s+einfach\s+unverbesserlich|despicable\s+me|minions|toy\s+story|cars|planes|kung\s+fu\s+panda|drachenzähmen|how\s+to\s+train\s+your\s+dragon|frozen|eiskönigin)\b/i;
-    // Wichtig ("Deep Blue Sea 3 (2020)-001.mkv"-Fix):
-    // 1. Mehrteilige Video-Splits (partInfo.isSplit, z.B. -001.mkv .. -005.mkv, CD 1..5) ohne explizites SxxExx/Staffel/Folge sind IMMER Filme!
-    // 2. Steht im Originaltext/Dateinamen eine Jahreszahl in Klammern (hasOwnParenYear, z.B. "(2020)"), ist eine Zahl vor (2020) eine Film-Fortsetzungsnummer und NIEMALS eine Serien-Folge!
+
     if (
       mediaType !== "tv" &&
       !tmdbId &&
       !partInfo.isSplit &&
+      !forceMovieByMultiPart &&
       !hasOwnParenYear &&
       (!durationSec || durationSec < 4200)
     ) {
@@ -1356,7 +1503,7 @@
       if (midEp && !/^(?:Teil|Part|CD|Disc|DVD|bd|4k|uhd|1080p|720p)\b/i.test(midEp[3]) && !/\b007\b/.test(cleanedCand) && !MOVIE_FRANCHISE_GUARD.test(midEp[1].trim()) && !MOVIE_FRANCHISE_GUARD.test(cleanedCand)) {
         const candBaseNorm = normalizeCompareString(midEp[1]);
         const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
-        const isKnownClassicNumberedSeries = /^(?:pippi\s+langstrumpf|zur\s+see|spuk\s+im\s+hochhaus|spuk\s+unterm\s+riesenrad|spuk\s+von\s+draußen|spuk\s+von\s+draussen|black\s+box|das\s+schloss\s+im\s+nebel|gormenghast|archiv\s+des\s+todes|front\s+ohne\s+gnade|feuerdrachen|gefährliche\s+fahndung|treffpunkt\s+flughafen|rote\s+bergsteiger)\b/i.test(midEp[1].trim());
+        const isKnownClassicNumberedSeries = /^(?:pippi\s+langstrumpf|zur\s+see|spuk\s+im\s+hochhaus|spuk\s+unterm\s+riesenrad|spuk\s+von\s+draußen|spuk\s+von\s+draussen|black\s+box|das\s+schloss\s+im\s+nebel|gormenghast|archiv\s+des\s+todes|front\s+ohne\s+gnade|feuerdrachen|gefährliche\s+fahndung|treffpunkt\s+flughafen|rote\s+bergsteiger|the\s+chosen)\b/i.test(midEp[1].trim());
         const epNumVal = parseInt(midEp[2], 10);
         if ((headerMatches || isKnownClassicNumberedSeries) && epNumVal >= 1 && epNumVal <= 99) {
           mediaType = "tv";
@@ -1367,12 +1514,11 @@
           hasExplicitEpisodeMarker = true;
         }
       } else {
-        // Einfache Endziffern (z. B. "Black Box 1", "Spuk im Hochhaus 1", "Spuk unterm Riesenrad 1"):
         const tailEpMatch = cleanedCand.match(/^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\s._\-]{2,}?)\s+0*([1-9]\d?)$/);
         if (tailEpMatch && !/\b(?:Teil|Part|CD|Disc|DVD|4K|3D|007)\s*$/i.test(tailEpMatch[1]) && !MOVIE_FRANCHISE_GUARD.test(tailEpMatch[1].trim()) && !MOVIE_FRANCHISE_GUARD.test(cleanedCand)) {
           const candBaseNorm = normalizeCompareString(tailEpMatch[1]);
           const headerMatches = Boolean(normHeader && candBaseNorm && (candBaseNorm.startsWith(normHeader.slice(0, 6)) || normHeader.startsWith(candBaseNorm.slice(0, 6))));
-          const isKnownClassicNumberedSeries = /^(?:pippi\s+langstrumpf|zur\s+see|spuk\s+im\s+hochhaus|spuk\s+unterm\s+riesenrad|spuk\s+von\s+draußen|spuk\s+von\s+draussen|black\s+box|das\s+schloss\s+im\s+nebel|gormenghast|archiv\s+des\s+todes|front\s+ohne\s+gnade|feuerdrachen|gefährliche\s+fahndung|treffpunkt\s+flughafen|rote\s+bergsteiger)\b/i.test(tailEpMatch[1].trim());
+          const isKnownClassicNumberedSeries = /^(?:pippi\s+langstrumpf|zur\s+see|spuk\s+im\s+hochhaus|spuk\s+unterm\s+riesenrad|spuk\s+von\s+draußen|spuk\s+von\s+draussen|black\s+box|das\s+schloss\s+im\s+nebel|gormenghast|archiv\s+des\s+todes|front\s+ohne\s+gnade|feuerdrachen|gefährliche\s+fahndung|treffpunkt\s+flughafen|rote\s+bergsteiger|the\s+chosen)\b/i.test(tailEpMatch[1].trim());
           const epNumVal = parseInt(tailEpMatch[2], 10);
           if ((headerMatches || isKnownClassicNumberedSeries) && epNumVal >= 1 && epNumVal <= 30) {
             mediaType = "tv";
@@ -1385,10 +1531,9 @@
       }
     }
 
-    // Eiserne Weichen-Regel ("Iron Man 3 (2013)" & "The Cell 2 (2009)"-Fix):
-    // 1. Wenn eine EIGENE Jahreszahl in Klammern (YYYY) im Post steht UND kein expliziter Serien-Marker vorliegt -> FILM!
-    // 2. Ein Video OHNE expliziten Episoden-Marker darf bei duration >= 4200 Sek. niemals als TV-Episode gelten!
+    // Eiserne Weichen-Regel ("Iron Man 3 (2013)", "The Postman 01 (1997)", "Bedtime Stories (2008)-cd1.avi"):
     if (
+      forceMovieByMultiPart ||
       (hasOwnParenYear && !hasExplicitEpisodeMarker && !explicitTvUrlHit) ||
       (mediaType === "tv" && !hasExplicitEpisodeMarker && !tmdbId && durationSec && durationSec >= 4200)
     ) {
@@ -1400,18 +1545,32 @@
       episodeTitle = "";
     }
 
-    let year = explicitYear ? parseInt(explicitYear, 10) : (yearMatch ? parseInt(yearMatch[1], 10) : null);
+    // MODUL 2.2: Bonus- & Special-Clips ("The Chosen - 1 - Bonus.mkv"):
+    // Darf NIEMALS als reguläre Episode (season >= 1, episode >= 1) gespeichert werden! Setze season = 0 (Specials) & isBonus = true, damit S01E01 niemals überschrieben wird!
+    if (isBonusClip && mediaType === "tv") {
+      season = 0;
+    }
+
+    let year = explicitYear
+      ? parseInt(explicitYear, 10)
+      : (yearMatch ? parseInt(yearMatch[1], 10) : (line1YearCut.year || fileYearCut.year || null));
     if (!year && mediaType === "tv" && activeContext.year && activeContext.seriesHeader && seriesTitle &&
         normalizeCompareString(seriesTitle) === normalizeCompareString(activeContext.seriesHeader)) {
       year = Number(activeContext.year);
     }
 
     let rawTitle = seriesTitle || explicitTitle || primarySource;
-    if (!seriesTitle && !explicitTitle && yearMatch && yearMatch.index >= 2) {
-      const matchedSource = parenYearMatch
-        ? (dateSafePrimary.match(PAREN_YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(PAREN_YEAR_REGEX) ? dateSafeLine1 : dateSafeFile))
-        : (dateSafePrimary.match(YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(YEAR_REGEX) ? dateSafeLine1 : dateSafeFile));
-      rawTitle = matchedSource.slice(0, yearMatch.index).trim();
+    if (!seriesTitle && !explicitTitle) {
+      const cutoffCheck = applyHardYearCutoff(rawTitle);
+      if (cutoffCheck.hadYearCutoff && cutoffCheck.titleBeforeYear) {
+        rawTitle = cutoffCheck.titleBeforeYear;
+        if (!year && cutoffCheck.year) year = cutoffCheck.year;
+      } else if (yearMatch && typeof yearMatch.index === "number" && yearMatch.index >= 2) {
+        const matchedSource = parenYearMatch
+          ? (dateSafePrimary.match(PAREN_YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(PAREN_YEAR_REGEX) ? dateSafeLine1 : dateSafeFile))
+          : (dateSafePrimary.match(YEAR_REGEX) ? dateSafePrimary : (dateSafeLine1.match(YEAR_REGEX) ? dateSafeLine1 : dateSafeFile));
+        rawTitle = matchedSource.slice(0, yearMatch.index).trim();
+      }
     }
     if (year) {
       const strippedYearTitle = cleanMediaTitle(rawTitle.replace(new RegExp(`\\b${year}\\b`, "g"), " "));
@@ -1419,20 +1578,26 @@
     }
     rawTitle = rawTitle.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]?/gi, "");
     rawTitle = rawTitle.replace(/\s*(?:Plot|Beschreibung)\s*:.*$/i, "");
-    let cleanTitle = cleanMediaTitle(rawTitle) || cleanMediaTitle(fileName) || cleanMediaTitle(line1);
+
+    // MODUL 3.3 Dual-Source-Fallback Vorbereitung: Bereinige sowohl Text-Titel als auch Dateinamen-Titel separat
+    const cleanTitleFromFile = !isGenericFile && fileName
+      ? cleanMediaTitle((fileYearCut.hadYearCutoff ? fileYearCut.titleBeforeYear : fileName).replace(year ? new RegExp(`\\b${year}\\b`, "g") : /$^/, " "))
+      : "";
+    const cleanTitleFromText = line1
+      ? cleanMediaTitle((line1YearCut.hadYearCutoff ? line1YearCut.titleBeforeYear : line1).replace(year ? new RegExp(`\\b${year}\\b`, "g") : /$^/, " "))
+      : "";
+
+    let cleanTitle = cleanMediaTitle(rawTitle) || cleanTitleFromFile || cleanTitleFromText;
     if (!cleanTitle) return null;
 
-    // Harter Beschreibungs-Schutz ("Cocaine Bear" / "Ted Bundy"):
-    // Falls cleanTitle > 50 Zeichen ist, ist versehentlich eine Filmbeschreibung in den Titel gerutscht!
-    if (cleanTitle.length > 50) {
+    // MODUL 2.5: Kein 40/50-Zeichen-Abschneider mitten im Wort ("Star Wars Episode V - Das Imperium schlägt zurück"-Fix)!
+    // Limit auf 120 Zeichen erhöht; überlange Beschreibungstexte ("Cocaine Bear"-Schutz) werden über > 15 Wörter oder > 120 Zeichen erkannt!
+    if (isLikelyPlotDescription(cleanTitle)) {
       if (!extractedContextOverview) extractedContextOverview = cleanTitle;
-      const fnBeforeYear = !isGenericFile && fileName
-        ? cleanMediaTitle(fileName.replace(/[\(\[]?\b(19[2-9]\d|20[0-2]\d)\b[\)\]]?.*$/i, ""))
-        : "";
-      if (fnBeforeYear && fnBeforeYear.length >= 2 && fnBeforeYear.length <= 50) {
-        cleanTitle = fnBeforeYear;
+      if (cleanTitleFromFile && cleanTitleFromFile.length >= 2 && !isLikelyPlotDescription(cleanTitleFromFile)) {
+        cleanTitle = cleanTitleFromFile;
       } else {
-        cleanTitle = cleanMediaTitle(cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 40)) || cleanTitle.slice(0, 40).trim();
+        cleanTitle = cleanMediaTitle(cleanTitle.split(/[:\n(]/)[0].trim().slice(0, 120)) || cleanTitle.slice(0, 120).trim();
       }
     }
 
@@ -1448,9 +1613,12 @@
       message_id: currentMsgId > 0 ? currentMsgId : null,
       mediaType,
       isArchive,
+      isBonus: isBonusClip,
       tmdbId,
       imdbId,
       title: cleanTitle,
+      titleFromText: cleanTitleFromText && !isLikelyPlotDescription(cleanTitleFromText) ? cleanTitleFromText : "",
+      titleFromFileName: cleanTitleFromFile && !isLikelyPlotDescription(cleanTitleFromFile) ? cleanTitleFromFile : "",
       originalTitle,
       year,
       season,
@@ -1464,6 +1632,9 @@
       languages,
       subtitles,
       editions: editionInfo.editions,
+      editionLabel,
+      part: partInfo.part || 1,
+      partNumber: partInfo.part || 1,
       partInfo,
       durationSec,
       sourceUsed,
@@ -1720,11 +1891,14 @@
       return {
         raw,
         cleanTitle: gmParsed.title,
+        titleFromText: gmParsed.titleFromText || "",
+        titleFromFileName: gmParsed.titleFromFileName || "",
         originalTitle: gmParsed.originalTitle || null,
         year: gmParsed.year || null,
         isSeries: gmParsed.mediaType === "tv",
         isArchive: Boolean(gmParsed.isArchive || isRarArchive),
-        season: gmParsed.season || null,
+        isBonus: Boolean(gmParsed.isBonus),
+        season: gmParsed.season !== undefined && gmParsed.season !== null ? gmParsed.season : null,
         episode: gmParsed.episode || null,
         episodeEnd: gmParsed.episodeEnd || null,
         episodeTitle: gmParsed.episodeTitle || "",
@@ -1735,8 +1909,10 @@
         height: gmParsed.height || null,
         codec: gmParsed.isArchive || isRarArchive ? "RAR" : codec,
         part: resolvedPart,
+        partNumber: gmParsed.partNumber || gmParsed.partInfo?.part || partInfo?.part || 1,
         partInfo: gmParsed.partInfo || partInfo || null,
         editions: gmParsed.editions || editionInfo.editions || [],
+        editionLabel: gmParsed.editionLabel || editionInfo.editionLabel || null,
         tags: extractedTagsList.join(" · "),
         languages,
         subtitles,
@@ -1751,46 +1927,58 @@
     let season = null;
     let episode = null;
     let cutIndex = withoutExt.length;
+    const isBonusFallback = BONUS_SPECIAL_REGEX.test(`${raw || ""} ${rawCaptionText || ""}`);
 
     const seRegex = /\bS(\d{1,2})[\s._-]*E(\d{1,3})\b/i;
     const folgeOnlyRegex = /\b(?:Folge|Episode|Ep\.?)\s*(\d{1,3})\b/i;
 
-    const seMatch = withoutExt.match(seRegex);
-    if (seMatch) {
-      isSeries = true;
-      season = parseInt(seMatch[1], 10) || 1;
-      episode = parseInt(seMatch[2], 10) || 1;
-      if (typeof seMatch.index === "number" && seMatch.index > 1) cutIndex = Math.min(cutIndex, seMatch.index);
-    } else {
-      const mf = withoutExt.match(folgeOnlyRegex);
-      if (mf) {
+    if (!partInfo?.isExplicitMultiPartMovie) {
+      const seMatch = withoutExt.match(seRegex);
+      if (seMatch) {
         isSeries = true;
-        season = 1;
-        episode = parseInt(mf[1], 10) || 1;
-        if (typeof mf.index === "number" && mf.index > 1) cutIndex = Math.min(cutIndex, mf.index);
+        season = isBonusFallback ? 0 : (parseInt(seMatch[1], 10) || 1);
+        episode = parseInt(seMatch[2], 10) || 1;
+        if (typeof seMatch.index === "number" && seMatch.index > 1) cutIndex = Math.min(cutIndex, seMatch.index);
+      } else {
+        const mf = withoutExt.match(folgeOnlyRegex);
+        if (mf) {
+          isSeries = true;
+          season = isBonusFallback ? 0 : 1;
+          episode = parseInt(mf[1], 10) || 1;
+          if (typeof mf.index === "number" && mf.index > 1) cutIndex = Math.min(cutIndex, mf.index);
+        }
       }
     }
 
     let year = null;
-    const paddedWithoutExt = ` ${withoutExt} `;
-    const yearMatch = paddedWithoutExt.match(YEAR_REGEX);
-    if (yearMatch) {
-      year = parseInt(yearMatch[1], 10);
-      if (typeof yearMatch.index === "number" && yearMatch.index >= 2) {
-        cutIndex = Math.min(cutIndex, yearMatch.index - 1);
+    const yearCutoffRes = applyHardYearCutoff(withoutExt);
+    if (yearCutoffRes.hadYearCutoff) {
+      year = yearCutoffRes.year;
+      cutIndex = Math.min(cutIndex, yearCutoffRes.titleBeforeYear.length);
+    } else {
+      const paddedWithoutExt = ` ${withoutExt} `;
+      const yearMatch = paddedWithoutExt.match(YEAR_REGEX);
+      if (yearMatch) {
+        year = parseInt(yearMatch[1], 10);
+        if (typeof yearMatch.index === "number" && yearMatch.index >= 2) {
+          cutIndex = Math.min(cutIndex, yearMatch.index - 1);
+        }
       }
     }
 
-    let titleCandidate = withoutExt.slice(0, cutIndex);
+    let titleCandidate = yearCutoffRes.hadYearCutoff ? yearCutoffRes.titleBeforeYear : withoutExt.slice(0, cutIndex);
     if (!titleCandidate.trim()) titleCandidate = withoutExt;
     const cleanTitle = cleanMediaTitle(titleCandidate) || cleanMediaTitle(withoutExt) || "Unbekannt";
 
     return {
       raw,
       cleanTitle,
+      titleFromText: "",
+      titleFromFileName: cleanTitle,
       originalTitle: null,
       year,
       isSeries,
+      isBonus: isBonusFallback,
       season,
       episode,
       episodeEnd: null,
@@ -1798,8 +1986,10 @@
       quality,
       codec,
       part,
+      partNumber: partInfo?.part || 1,
       partInfo: partInfo || null,
       editions: editionInfo.editions || [],
+      editionLabel: editionInfo.editionLabel || null,
       tags: extractedTagsList.join(" · "),
       languages,
       subtitles,

@@ -1,114 +1,128 @@
-# Kollisionsfreie ID-Architektur, Manuelle Titel-Bestätigung & D1/KV-Speicher-Optimierung
+# 5-Modul Pipeline-Upgrade, 900M-ID Abgleich-Konsole & Smart-Heilung
 
-Dieses Update beseitigt jegliche ID-Überlappungen zwischen TMDb, Zusatz-APIs und manuell angelegten Titeln, sorgt dafür, dass Serien wie Filme vorrangig ihre echte TMDb-ID erhalten, ermöglicht das manuelle Bestätigen unbekannter Filme/Serien ohne TMDb-ID über einen eigenen Dialog und reduziert unnötige D1- und KV-Schreibzugriffe drastisch.
+Dieses Upgrade erweitert die Import-, Parser-, TMDb-Scoring-, D1-UPSERT- und Diagnose-Pipeline um 5 präzise abgestimmte Module, ergänzt das manuelle 900M-ID Abgleich-Modal um Live-Kollisionsprüfung, Queue-Abarbeitung und 1-Klick-Migration auf echte TMDb-IDs und fügt 3 intelligente Komfort-Werkzeuge hinzu (selbstlernendes Alias-Gedächtnis, Mehrteiler-Lückenprüfung für CD1/CD2 und 1-Klick-Nachprüfung alter Konflikte).
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Alle Rückfragen aus Phase 1 wurden bestätigt und sind verbindlich in dieser Architektur verankert:
+> Alle bestätigten Entscheidungen und deine 3 ausgewählten Zusatz-Ideen sind fest im Plan verankert (ohne AVI/DivX/Browser-Stream-Priorisierung in Modul 4):
 
-- **Automatische TMDb-Brücke + getrennte Original-IDs für Zusatz-APIs**: Serien und Filme nutzen vorrangig ihre offizielle TMDb-ID (`1 .. 99.999.999`). Findet OMDb, TVMaze oder Wikidata eine externe ID (`imdb_id`, `thetvdb_id`, `wikidata_id`), wird zuerst über TMDb `/3/find/` geprüft, ob ein offizieller TMDb-Eintrag existiert. Nur wenn kein TMDb-Eintrag existiert, wird der Titel automatisch mit seiner nativen Zusatz-API-ID in einem strikt getrennten 100-Millionen-Block (ohne Modulo-Kürzung) gespeichert.
-- **Manueller Bestätigungs-Dialog für Titel ohne API-Treffer**: Filme und Serien, die weder auf TMDb noch in den Zusatz-APIs gefunden werden (oder manuell angelegt werden sollen), können direkt über einen Dialog mit **Titel, Erscheinungsjahr, Typ (Film/Serie inkl. Staffel/Episode) und optionalem Poster-Link** bestätigt werden. Sie erhalten eine kollisionsgeprüfte synthetische ID im exklusiven `900.000.000`-Bereich.
-- **D1- & KV-Limit-Schonung**: Unveränderte Serien-Metadaten werden beim Episoden-Import nicht mehr bei jeder Folge erneut in `series` und `series_seasons` geschrieben (spart >80 % D1-Writes bei Serien), und unnötige KV-Reads/Writes bei `bot_vip` sowie unveränderten Ordner-/Session-Ständen werden per Dirty-Signatur gestoppt.
+- **Bestätigte Entscheidung 1 (900M-ID Abgleich-Modal & Komfort-Funktionen)**:
+  - **Live-Vorschau der 900M-ID & D1-Kollisionsstatus** (`900M–944M` Film, `945M–989M` Serie).
+  - **Automatische Erkennung vorhandener 900M-Serien** in D1, damit weitere Folgen derselben Serie sofort dieselbe ID erhalten.
+  - **Queue-Modus** zum flüssigen Abarbeiten aller offenen `TMDB_NOT_FOUND`-Einträge nacheinander.
+  - **1-Klick-Migration (`900M-ID → echte TMDb-ID`)** inklusive verlustfreiem Umzug aller Episoden, Dateien und Playlists.
+- **Bestätigte Entscheidung 2 (5-Modul Pipeline-Erweiterung – ohne AVI/Browser-Stream-Logik)**:
+  - **Modul 1 (Import-Loop & Variablen-Hygiene)**: Aufsteigende Sortierung nach `msg.id`, Session-Deduplizierung via `processedMsgIds`, lückenlose `rawText`-Extraktion in allen Pfaden, isolierter Variablen-Scope im Schleifenkörper und Gatekeeper-Filterung für Sprachlern-/Tutorial-Videos (`SKIPPED_JUNK`).
+  - **Modul 2 (Parser, CD1/CD2-Pairing, Bonus, Editionen & Jahres-Cut-Off)**: Erkennung von `CD1`/`CD2` und führenden `01`/`02` vor `(YYYY)` **vor** der Serien-Weiche inkl. Nachbar-Pairing (`i - 1` / `i + 1`), Bonus-/Special-Guard (`season = 0` / `isBonus = true`), Editions-Extraktion (`editionLabel`), harter Cut-Off rechts neben der Jahreszahl (auch ohne Leerzeichen wie `2012SiFi`) sowie Anhebung des Titel-Limits auf **120 Zeichen** (mit `> 15 Wörter` Beschreibungs-Schutz).
+  - **Modul 3 (TMDb Smart-Scoring & Fallbacks)**: Exakter Titel-Bonus (`+150 Punkte` bei ±1 Jahr) und Artikel-Schutz (`The`/`Der`/`Die`/`Das` erst im letzten Schritt entfernen), Römische-Zahlen-Retry bei Jahres-Konflikt (> 2 Jahre Abweichung), Dual-Source-Fallback (`titleFromText` ↔ `titleFromFileName`), Nachbar-Überlaufschutz bei eigenem Titel + Jahr sowie `/search/tv`-Miniserien-Fallback.
+  - **Modul 4 (D1 `fileFingerprint`, `part_number`, Jahres-Sperre & `manual_override`)**: Zweistufiger `fileFingerprint` (`file_unique_id || file_id || size_duration_WxH`), sauberes Versions-Badge (`[editionLabel, resolutionLabel, sizeLabel].filter(Boolean).join(" • ")`), eigenes `part_number`-Feld, Jahres-Sperre beim Film-UPSERT (> 1 Jahr Abweichung blockiert Zusammenführung) und unüberschreibbarer Admin-Schreibschutz (`manual_override = 1`).
+  - **Modul 5 (Diagnose-Logger)**: Fehler-Priorisierung im Export-Puffer (`OK`/`SKIPPED_DUPLICATE` verdrängen niemals echte Problemfälle), einheitlicher Status `"CONFLICT"` sowie strikte Trennung zwischen `parsedTitle` und `matchedTitle`.
+- **Bestätigte Entscheidung 3 (Ausgewählte Zusatz-Ideen)**:
+  1. **Selbstlernendes Alias-Gedächtnis bei manueller Korrektur**: Jede manuelle Admin-Zuweisung speichert das normalisierte Roh-Titel-/Dateinamen-Muster dauerhaft als gelernte Alias-Regel in D1 (`manual_override = 1`), sodass künftige Folgen oder Re-Uploads sofort ohne externe API-Abfrage aufgelöst werden.
+  2. **Mehrteiler-Prüfung für fehlende `CD1`- oder `CD2`-Teile**: Automatische Erkennung unvollständiger Mehrteiler-Filme (z. B. `part_number = 2` vorhanden, aber `part_number = 1` fehlt, oder `CD 1` ohne `CD 2`) mit eigener Übersicht im Lücken-Tab.
+  3. **1-Klick-Nachprüfung alter Konflikte mit neuer Pipeline**: Direkt-Button im Konflikt-/Diagnose-Tab, der bestehende `CONFLICT`- und `TMDB_NOT_FOUND`-Einträge aus früheren Durchläufen gesammelt durch die neue Modul-2/3-Pipeline (Jahres-Cut-Off, Roman-Retry, Dual-Source, Miniserien-Fallback) schickt und automatisch heilt.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **Was das System leistet**:
-  1. **Überlappungsfreie ID-Räume ohne Modulo-Kollisionen**: Bisherige Modulo-Rechnungen (`% 290000` / `% 390000`) im engen `8.000.000`-Bereich führten dazu, dass sich Wikidata (`8.4M–8.69M`), Apple iTunes (`8.5M–8.9M`) und Wikipedia (`8.7M–8.99M`) gegenseitig überschreiben konnten. Durch disjunkte 100-Millionen-Bereiche pro Quelle bleibt jede externe ID 1:1 erhalten.
-  2. **Echte TMDb-IDs für Serien & Filme**: Bevor eine Serie auf eine TVMaze- oder OMDb-ID ausweicht, löst eine TMDb-Find-Bridge (`imdb_id` / `tvdb_id` -> TMDb TV ID) die echte TMDb-Serien-ID auf.
-  3. **Manuelle Bestätigung ohne TMDb-ID**: Unbekannte Eigenproduktionen, seltene Dokus oder regionale Titel können ohne TMDb-Zwang bestätigt werden; weitere Episoden derselben Serie erben automatisch dieselbe manuelle Serien-ID.
-  4. **Maximale D1- & KV-Effizienz**: Schreibzugriffe erfolgen nur noch bei echten Datenänderungen (Dirty-Hash-Guard).
+- **Was das System leistet**: Große Telegram-Kanal-Exporte (`result.json`) werden streng chronologisch dedupliziert, Mehrteiler (`CD1`/`CD2`, `01 (1997)`), Sondereditionen (`Director's Cut`) und Bonus-Clips sauber getrennt, über mehrstufiges TMDb-Smart-Scoring aufgelöst und kollisionsfrei mit `fileFingerprint` in D1 gespeichert. Manuelle Korrekturen trainieren automatisch das D1-Alias-Gedächtnis, während unvollständige `CD1`/`CD2`-Mehrteiler und offene 900M-Titel übersichtlich verwaltet werden.
+- **Zielgruppe / Einsatzkontext**: Administratoren der Telegram Mini App & des Cloudflare Workers zur vollautomatischen und kuratierten Katalogpflege.
+- **Kernmehrwert**: Deutlich weniger Fehlzuordnungen bei Filmreihen und Zweiteilern, null falsche Duplikat-Verwerfungen bei JSON-Backups ohne `file_id`, dauerhaftes Lernen aus jeder Admin-Korrektur und schnelle Stapel-Heilung alter Konflikte.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Manueller Bestätigungs-Dialog (ohne TMDb-ID)**:
-  - Im **Konflikt- & Review-Bereich** des Backup-Importers, im **Diagnose-Log** sowie in der **Film/Serien-CRUD-Verwaltung** erscheint neben der TMDb-Kandidaten-Suche der Button **✨ Ohne TMDb-ID manuell bestätigen**.
-  - Ein aufgeräumtes Modal im dunklen Streaming-Design (`#12121a`, klare Typografie, 0 überflüssige Badges) öffnet sich mit vorausgefüllten Werten aus dem Dateinamen:
-    - **Titel** (Textfeld, vorausgefüllt mit erkanntem `cleanTitle`)
-    - **Erscheinungsjahr** (z. B. `2024` oder leer für `k.A.`)
-    - **Medientyp-Umschalter** (`🎬 Film` / `📺 Serie` – bei Serie mit Feldern für **Staffel** und **Episode**)
-    - **Optionaler Poster-/Cover-Link** (`https://...`) und **Optionale Genres / Kurzinfo**
-  - Mit Klick auf **✅ Jetzt mit synthetischer ID speichern** wird der Eintrag sofort in D1 angelegt, aus der Konfliktliste als gelöst markiert und im Katalog sichtbar.
+- **Zentrale User Flows**:
+  1. **900M-ID Abgleich-Modal mit Live-Vorschau, Serien-Erkennung & Queue-Modus**:
+     - Zeigt während der Eingabe live die deterministische 900M-ID (`900M–944M` Film, `945M–989M` Serie) und den D1-Kollisionsstatus.
+     - Erkennt automatisch bereits in D1 vorhandene 900M-Serien mit gleichem Titel und schlägt deren ID per 1-Klick vor.
+     - Im **Queue-Modus** werden alle offenen `TMDB_NOT_FOUND`-Einträge nacheinander im selben Dialog durchgeblättert (`Eintrag 1 von N`).
+  2. **1-Klick-Migration (`900M-ID → echte TMDb-ID`)**:
+     - Zieht alle Episoden, Videodateien und Playlist-Einträge einer synthetischen 900M-ID verlustfrei auf eine echte TMDb-ID um und setzt `manual_override = 1`.
+  3. **1-Klick „Alt-Konflikte mit neuer Pipeline heilen“**:
+     - Im Konflikt- und Diagnose-Tab prüft ein Button alle offenen `CONFLICT`- und `TMDB_NOT_FOUND`-Einträge mit der neuen Modul-2/3-Pipeline nach, aktualisiert geheilte Treffer direkt in D1 und zeigt eine Erfolgsbilanz (`X von Y Konflikten automatisch geheilt`).
+  4. **Mehrteiler-Lücken-Anzeige (`CD1` / `CD2` Vollständigkeit)**:
+     - Im Lücken-Finder werden neben fehlenden Serienfolgen auch unvollständige Mehrteiler-Filme (`CD 1 fehlt` oder `CD 2 fehlt`) hervorgehoben.
+- **Visual Identity & Theme**:
+  - *Aesthetic Direction*: Kontrastreiches Dark-Slate Admin- & Katalog-Interface (`#101016` / `#161622`) mit klarer typografischer Hierarchie und ruhigen, unverschnörkelten Text-Metadaten (`Director's Cut • 1080p • 1.8 GB`).
+  - *Color Palette & Semantik*: Smaragdgrün (`#10B981`) für verifizierte D1-Einträge und geheilte Konflikte, Amber (`#F59E0B`) für `"CONFLICT"`-Prüffälle und fehlende `CD1`/`CD2`-Teile, Violett/Blau (`#A855F7` / `#38BDF8`) für den 900M-Abgleich und Karmesinrot (`#EF4444`) für Fehler.
+  - *Typography & Tabular Numerals*: Alle IDs, Message-IDs und Zähler nutzen `font-variant-numeric: tabular-nums` bzw. Monospace-Schrift.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Entscheidung 1: Disjunkte 100-Millionen-ID-Blöcke statt Modulo-Kompression**
-  - *Gewählter Ansatz*:
-    - `1 .. 99.999.999`: **Offizielle TMDb-ID** (Filme & Serien in getrennten Tabellen `movies` und `series`)
-    - `100.000.000 .. 199.999.999`: **OMDb / IMDb** (`100_000_000 + numerische IMDb-ID`, z. B. `tt1234567` $\rightarrow$ `101234567`)
-    - `200.000.000 .. 299.999.999`: **TVMaze** (`200_000_000 + tvmazeId`)
-    - `300.000.000 .. 399.999.999`: **AniList** (`300_000_000 + anilistId`)
-    - `400.000.000 .. 499.999.999`: **MyAnimeList / Jikan** (`400_000_000 + malId`)
-    - `500.000.000 .. 599.999.999`: **Wikidata** (`500_000_000 + Q-Nummer`)
-    - `600.000.000 .. 699.999.999`: **MediaWiki / Wikipedia** (`600_000_000 + pageid`)
-    - `700.000.000 .. 899.999.999`: **Apple iTunes DE** (`700_000_000 + track/collectionId`)
-    - `900.000.000 .. 999.999.999`: **Manuell bestätigte Titel ohne TMDb-ID** (deterministischer Hash aus `typeCode + normalisierter Titel + Jahr` im `900M`-Raum + aktive D1-Kollisionsprüfung mit Linear-Probing, falls ein Hash jemals durch einen anderen Titel belegt sein sollte).
-  - *Warum*: Keine zwei APIs können jemals dieselbe ID erzeugen, und innerhalb einer API entfällt die Modulo-Kollision (`% 290000`). Bestehende Fallback-IDs (`>= 8.000.000`) bleiben voll abwärtskompatibel.
-
-- **Entscheidung 2: D1 Write-Deduplizierung bei Serien-Episoden & KV-Dirty-Guard**
-  - *Gewählter Ansatz*: Beim Import von 20 Folgen einer Serie wurde bisher 20-mal `saveSeriesToD1` (inkl. Schleife über alle Staffeln in `series_seasons`) ausgeführt. Ein In-Memory-Signatur-Check (`d1_series_sig_${id}`) überspringt redundante Schreibvorgänge auf `series` und `series_seasons`, solange sich die Serien-Stammdaten nicht geändert haben; es wird nur die neue Episode in `episode_files` geschrieben.
-  - *Warum*: Senkt die D1-Row-Writes beim Serien-Import um über 80 % und hält die Worker-Latenz dauerhaft niedrig.
+- **Entscheidung 1: Zweistufiger `fileFingerprint` ohne Format-Diskriminierung**
+  - *Gewählter Ansatz*: `fileFingerprint = msg.file_unique_id || msg.file_id || "${msg.file_size || 0}_${msg.duration_seconds || 0}_${msg.width || 0}x${msg.height || 0}"`.
+  - *Warum*: Verhindert den `null === null`-Duplikat-Bug bei JSON-Backups zuverlässig, ohne `.avi`- oder `.mp4`-Dateien unterschiedlich zu werten.
+- **Entscheidung 2: Selbstlernendes Alias-Gedächtnis + `manual_override = 1`**
+  - *Gewählter Ansatz*: Jede manuelle Zuweisung speichert sowohl die bereinigte Titel-Variante als auch den rohen Dateinamen-Stamm (ohne `SxxExx`/`CDx`/Jahr) mit `manual_override = 1` in D1 `entity_cache` sowie auf dem Film-/Serien-Datensatz.
+  - *Warum*: Künftige Episoden derselben Serie oder erneute Backup-Läufe erkennen das gelernte Muster sofort in Stufe 0 (D1-First) und überschreiben niemals manuelle Admin-Entscheidungen.
+- **Entscheidung 3: Harter Jahres-Cut-Off + 120-Zeichen-Titellimit mit 15-Wörter-Schutz**
+  - *Gewählter Ansatz*: Alles rechts neben einer erkannten Jahreszahl `(1920..2029)` (inkl. `2012SiFi`) wird sofort abgeschnitten; einzeilige Titel dürfen bis zu 120 Zeichen lang sein, während Fließtext-Beschreibungen ab `> 15 Wörtern` erkannt werden.
+  - *Warum*: Schützt lange deutsche Filmtitel (*Star Wars: Episode V – Das Imperium schlägt zurück*) vor dem 40-Zeichen-Abschneider und entfernt gleichzeitig angeklebte Genre-/Cast-Ketten hinter dem Jahr.
 
 ---
 
-## 4. Technical Architecture & Data Strategy
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+
+### Architecture & Pipeline Diagram
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                     Eingehende Datei / Manuelle Eingabe                    │
-└─────────────────────────────────────┬──────────────────────────────────────┘
-                                      │
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 1. TMDb-Suche & Externe-ID-Brücke (/3/find/{imdb_id | tvdb_id})            │
-│    • Liefert für Filme UND Serien vorrangig die echte TMDb-ID (1..99M)     │
-└──────────────────┬──────────────────────────────────────┬──────────────────┘
-                   │ Gefunden auf TMDb                    │ Nicht auf TMDb
-                   ▼                                      ▼
-┌─────────────────────────────────────┐ ┌────────────────────────────────────┐
-│ Echte TMDb-ID (1 .. 99.999.999)     │ │ 2. Zusatz-API-Kaskade              │
-│ • Filme -> Tabelle `movies`         │ │ • OMDb     : 100M + IMDb-Nummer    │
-│ • Serien -> Tabelle `series`        │ │ • TVMaze   : 200M + TVMaze-ID      │
-└──────────────────┬──────────────────┘ │ • AniList  : 300M + AniList-ID     │
-                   │                    │ • MAL/Jikan: 400M + MAL-ID         │
-                   │                    │ • Wikidata : 500M + Q-ID           │
-                   │                    │ • Wikipedia: 600M + Page-ID        │
-                   │                    │ • iTunes   : 700M + Collection-ID  │
-                   │                    └────────┬──────────────────┬────────┘
-                   │                             │ Treffer          │ Kein Treffer
-                   │                             │                  ▼
-                   │                             │ ┌─────────────────────────┐
-                   │                             │ │ 3. Manuelle Bestätigung │
-                   │                             │ │ • Dialog: Titel, Jahr,  │
-                   │                             │ │   Typ (m/s), Poster-URL │
-                   │                             │ │ • ID: 900M + Hash +     │
-                   │                             │ │   D1-Kollisionsprüfung  │
-                   │                             │ └────────┬────────────────┘
-                   ▼                             ▼          ▼
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 4. D1 & KV Persistence Layer (Optimiert)                                   │
-│    • D1 Signature-Guard verhindert doppelte `series`/`movies`-Writes       │
-│    • `entity_cache` merkt sich auch manuelle 900M-Serien für Folge-Eps     │
-│    • KV Dirty-Check verhindert redundante `u_bundle` & `bot_vip` Writes    │
-└────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ MODUL 1: Chronologischer Import-Loop & Gatekeeper                            │
+│  • messages.sort((a,b) => Number(a.id) - Number(b.id))                       │
+│  • processedMsgIds = new Set() (keine Mehrfachverarbeitung bei Resume)       │
+│  • rawText-Extraktion (String & Array-Entities) + isolierter Loop-Scope      │
+│  • Gatekeeper: Sprachlern-/Tutorial-Videos -> status: "SKIPPED_JUNK"         │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ MODUL 2: Parser, CD1/CD2-Pairing, Bonus-Schutz, Editionen & Jahres-Cut-Off   │
+│  • Multi-Part vor Serien-Weiche: -CD1/-CD2 & "01 (1997)" -> movie + part     │
+│  • Nachbar-Pairing (i-1 / i+1): Übernimmt tmdbId für Part 2 bei gleichem Name│
+│  • Bonus/Special-Guard: season = 0 / isBonus = true (überschreibt nie S01E01)│
+│  • Edition-Extractor -> editionLabel | Harter Jahres-Cut-Off (inkl. 2012SiFi)│
+│  • Umlaut-Normalisierung + 120-Zeichen-Limit (Satz/Wort-Check > 15 Wörter)   │
+└──────────────────────────────────────┬───────────────────────────────────────┘
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ MODUL 3: Selbstlernender D1-Alias-Cache & TMDb Smart-Scoring                 │
+│  • Stufe 0: D1-Alias-Gedächtnis (gelernte Admin-Muster -> 0 API-Requests)    │
+│  • Exakter Titel + Jahr (±1) = +150 Punkte Bonus | Artikel erst zuletzt ab   │
+│  • Römische-Zahlen-Retry (I..XIII) bei Jahres-Abweichung > 2 Jahre           │
+│  • Dual-Source-Fallback: titleFromText <-> titleFromFileName                 │
+│  • Kein Nachbar-Überlauf bei eigenem Titel + Jahr | /search/tv Fallback      │
+└──────────────────┬───────────────────────────────────────┬───────────────────┘
+                   │ Treffer gefunden                      │ Kein API-Treffer
+                   ▼                                       ▼
+┌─────────────────────────────────────────┐ ┌──────────────────────────────────┐
+│ MODUL 4: D1 Smart-UPSERT & Mehrteiler   │ │ 900M-ID Abgleich-Modal & Heilung │
+│  • fileFingerprint (Size_Dur_WxH)       │ │  • Live-Vorschau 900M-ID & Status│
+│  • part_number + CD1/CD2-Lücken-Prüfung │ │  • Auto-Vorschlag 900M-Serien    │
+│  • Jahres-Sperre (>1J) & manual_override│ │  • Queue-Modus & 1-Klick-Upgrade │
+└──────────────────┬──────────────────────┘ │  • 1-Klick Konflikt-Auto-Heilung │
+                   │                        └──────────────┬───────────────────┘
+                   └───────────────────┬───────────────────┘
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ MODUL 5: Diagnose-Logger (ImportLogger)                                      │
+│  • Problem-Priorität im Puffer (OK/SKIPPED_DUPLICATE verdrängen nie Fehler)  │
+│  • Einheitlicher Status "CONFLICT" | parsedTitle vs. matchedTitle getrennt   │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Interaktive Abläufe & State-Mapping
-1. **Automatische TMDb-Brücke für Serien (`fetchTvMazeSeriesFallback` / `fetchOmdbFallback`)**:
-   - Liefert TVMaze `show.externals.thetvdb` oder `show.externals.imdb` (bzw. OMDb `data.imdbID`), prüft `resolveExternalIdToTmdb(env, externalId, source, typeCode)` per `/3/find/`, ob TMDb die Serie unter einer offiziellen TMDb-ID führt, und gibt direkt die echten TMDb-Stammdaten zurück.
-2. **Kollisionsfreie synthetische ID-Vergabe (`allocateCollisionFreeManualSyntheticId`)**:
-   - Berechnet aus `normalizeCompareString(title) + "_" + year + "_" + typeCode` eine Start-ID im Bereich `900.000.000 .. 989.999.999`.
-   - Prüft in D1 (`movies` bzw. `series`), ob diese ID bereits existiert:
-     - Ist sie frei $\rightarrow$ sofort verwenden.
-     - Gehört sie bereits exakt zu demselben normalisierten Titel $\rightarrow$ wiederverwenden (damit z. B. Folge 2 bis 10 derselben manuellen Serie in derselben Serie landen).
-     - Gehört sie zu einem anderen Titel $\rightarrow$ inkrementiert (`candidateId + 1`), bis ein freier Slot gefunden ist.
-3. **Manueller Bestätigungs-Dialog im Admin-Panel**:
-   - Neuer Button `✨ Manuell ohne TMDb-ID` bei jedem Konflikt-/Unmatched-Eintrag sowie im CRUD-Tab.
-   - Öffnet das Modal `openManualNoTmdbConfirmModalClient(indexOrContext)` mit Eingabefeldern für Titel, Jahr, Typ (`Film`/`Serie`), Staffel/Episode (bei Serien) und Poster-URL.
-   - Sendet den Request an `/api/tma/admin/remap-import-item` mit `confirmManualWithoutTmdb: true` und aktualisiert die UI-Liste sowie den D1-Auflösungs-Cache sofort.
+### Data Model & Endpoints
+
+- **D1-Tabellen (`movies`, `series`, `movie_files`, `episode_files`, `entity_cache`)**:
+  - `movies` & `series`: `manual_override INTEGER DEFAULT 0` schützt manuell zugewiesene Titel vor dem Überschreiben durch spätere automatische Läufe.
+  - `movie_files` & `episode_files`: `file_fingerprint TEXT`, `part_number INTEGER DEFAULT 1`, `edition_label TEXT` und `is_bonus INTEGER DEFAULT 0`.
+  - `entity_cache`: Speichert bei jeder manuellen Admin-Korrektur zusätzlich das normalisierte Dateinamen-Stammmuster (`alias_learned_<normStem>`) mit `manualOverride: true`.
+- **Neue & erweiterte Admin-Endpunkte**:
+  - `/api/tma/admin/preview-manual-id`: Berechnet live die kollisionsfreie 900M-ID und prüft, ob bereits eine gleichnamige 900M-Serie oder ein 900M-Film in D1 existiert.
+  - `/api/tma/admin/migrate-synthetic-id`: Migriert einen synthetischen 900M-Eintrag inkl. aller Episoden, Dateien und Playlists per 1-Klick auf eine echte TMDb-ID.
+  - `/api/tma/admin/reheal-conflicts`: Führt die 1-Klick-Nachprüfung offener `CONFLICT`- und `TMDB_NOT_FOUND`-Einträge mit der neuen Modul-2/3-Pipeline aus und speichert geheilte Treffer direkt in D1.
+  - Erweiterung von `computeSeriesGapsOverview`: Meldet neben fehlenden Serienfolgen/Staffeln auch `incompleteMultipartMovies` (Filme mit `CD 2` ohne `CD 1` oder `CD 1` mit Hinweis auf Mehrteiler ohne `CD 2`).

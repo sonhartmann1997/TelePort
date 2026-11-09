@@ -763,8 +763,11 @@
           const rawEntry = body.rawEntry && typeof body.rawEntry === "object" ? body.rawEntry : {};
           const isManualWithoutTmdb = Boolean(body.confirmManualWithoutTmdb || (!newTmdbId && body.manualCustomMeta));
           const manualCustomMeta = body.manualCustomMeta && typeof body.manualCustomMeta === "object" ? body.manualCustomMeta : null;
+          const reuseSyntheticId = Number(body.reuseSyntheticId || manualCustomMeta?.reuseSyntheticId || 0);
 
-          if (isManualWithoutTmdb && (!newTmdbId || newTmdbId < 900000000)) {
+          if (isManualWithoutTmdb && reuseSyntheticId >= 900000000) {
+            newTmdbId = reuseSyntheticId;
+          } else if (isManualWithoutTmdb && (!newTmdbId || newTmdbId < 900000000)) {
             const manualTitle = String(
               manualCustomMeta?.title ||
               body.candidateMeta?.title ||
@@ -805,12 +808,24 @@
 
           // 2. Neuen Wunsch-Titel (inkl. evtl. vorhandener Datei-/Qualitäts-Infos aus dem Backup) in D1 speichern
           const entryFileMeta = rawEntry.telegram_file_id
-            ? { fileId: rawEntry.telegram_file_id, fileUniqueId: rawEntry.telegram_unique_id || null, fileSize: rawEntry.file_size || null, mimeType: rawEntry.mime_type || "video/mp4" }
+            ? {
+                fileId: rawEntry.telegram_file_id,
+                fileUniqueId: rawEntry.telegram_unique_id || null,
+                fileSize: rawEntry.file_size || null,
+                mimeType: rawEntry.mime_type || "video/mp4",
+                durationSec: rawEntry.duration_seconds || rawEntry.durationSec || 0,
+                width: rawEntry.width || 0,
+                height: rawEntry.height || 0
+              }
             : null;
 
           const registerAsVipStream = playlistMode === "vip_stream" || playlistMode === "both";
-          const manualSeason = body.season ? Math.max(1, parseInt(body.season, 10) || 1) : null;
-          const manualEpisode = body.episode ? Math.max(1, parseInt(body.episode, 10) || 1) : null;
+          const manualSeason = body.season !== undefined && body.season !== null && body.season !== ""
+            ? Math.max(0, parseInt(body.season, 10) || 0)
+            : null;
+          const manualEpisode = body.episode !== undefined && body.episode !== null && body.episode !== ""
+            ? Math.max(1, parseInt(body.episode, 10) || 1)
+            : null;
           const effectiveCandidateMeta = isManualWithoutTmdb
             ? {
                 id: newTmdbId,
@@ -833,13 +848,15 @@
             typeCode: newTypeCode,
             type: newTypeCode === "s" ? "series" : "movie",
             isSeries: newTypeCode === "s",
-            ...(newTypeCode === "s" && manualSeason ? { season: manualSeason, manualSeason } : {}),
-            ...(newTypeCode === "s" && manualEpisode ? { episode: manualEpisode, manualEpisode } : {})
+            manualOverride: true,
+            ...(newTypeCode === "s" && manualSeason !== null ? { season: manualSeason, manualSeason } : {}),
+            ...(newTypeCode === "s" && manualEpisode !== null ? { episode: manualEpisode, manualEpisode } : {})
           }, entryFileMeta, {
             registerAsVipStream,
             bypassNegativeTitleCache: true,
             confirmManualWithoutTmdb: isManualWithoutTmdb,
             allowCreateWithoutVideoFile: true,
+            manualOverride: true,
             candidateMeta: effectiveCandidateMeta,
             sourceChannelId: body.sourceChannelId || ""
           });
@@ -848,20 +865,36 @@
             return new Response(JSON.stringify({ ok: false, error: "Eintrag konnte nicht geladen oder gespeichert werden." }), { status: 404, headers: corsHeaders });
           }
 
-          await invalidateOrUpdateTitleResolutionCacheInD1(
-            env,
-            rawEntry.cleanTitle || rawEntry.filename || rawEntry.raw_file_name || resolved.cleanTitle || "",
-            rawEntry.year || resolved.year,
-            newTypeCode,
-            {
-              tmdbId: Number(resolved.tmdbId),
-              typeCode: resolved.typeCode,
-              title: resolved.cleanTitle,
-              confidence: 100,
-              source: resolved.metadataSource || (isManualWithoutTmdb ? "Manuell bestätigt" : "Admin-Remap"),
-              notFound: false
+          // Selbstlernendes Alias-Gedächtnis: Sowohl bereinigten Titel als auch rohen Dateinamen-Stamm mit manualOverride=true in D1 cachen
+          const aliasCachePayload = {
+            tmdbId: Number(resolved.tmdbId),
+            typeCode: resolved.typeCode,
+            title: resolved.cleanTitle,
+            confidence: 100,
+            manualOverride: true,
+            source: resolved.metadataSource || (isManualWithoutTmdb ? "Manuell bestätigt" : "Admin-Remap"),
+            notFound: false
+          };
+          const primaryAliasTitle = String(rawEntry.cleanTitle || rawEntry.title || resolved.cleanTitle || "").trim();
+          const rawFileStem = String(rawEntry.filename || rawEntry.raw_file_name || "")
+            .replace(/\.[a-z0-9]{2,4}$/i, "")
+            .replace(/(?:[-_\s.]|^)(?:s\d{1,2}[\s._-]*e\d{1,3}|\d{1,2}x\d{1,3}|staffel[\s._-]*\d+|folge[\s._-]*\d+|episode[\s._-]*\d+|ep[\s._-]*\d+|cd[\s._-]*\d+|part[\s._-]*\d+|teil[\s._-]*\d+)\b.*$/i, "")
+            .replace(/[._-]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+          const aliasCandidates = new Set([primaryAliasTitle, rawFileStem, String(resolved.cleanTitle || "").trim()].filter(s => s && s.length >= 2));
+          for (const aliasStr of aliasCandidates) {
+            await invalidateOrUpdateTitleResolutionCacheInD1(env, aliasStr, rawEntry.year || resolved.year, newTypeCode, aliasCachePayload);
+            if (newTypeCode === "s") {
+              await invalidateOrUpdateTitleResolutionCacheInD1(env, aliasStr, "", "s", aliasCachePayload);
             }
-          );
+          }
+
+          // Falls ein Diagnose-Log-Eintrag (msgId) übergeben wurde, Status direkt in D1 aktualisieren
+          const logMsgId = Number(body.msgId || rawEntry.source_message_id || rawEntry.msg_id || 0);
+          if (logMsgId > 0 && typeof updateImportDiagnosticLogStatusInD1 === "function") {
+            await updateImportDiagnosticLogStatusInD1(env, logMsgId, "OK", resolved.tmdbId, resolved.cleanTitle);
+          }
 
           // 3. In Ziel-Playlist eintragen
           if (playlistFolderId && (playlistMode === "watchlist" || playlistMode === "both" || targetChatId === "bot_vip")) {
@@ -875,16 +908,169 @@
               typeCode: resolved.typeCode,
               tmdbId: resolved.tmdbId,
               cleanTitle: resolved.cleanTitle,
+              matchedTitle: resolved.matchedTitle || resolved.cleanTitle,
               year: resolved.year || "k.A.",
               poster: resolved.poster || "",
               quality: resolved.quality || "1080p",
               codec: resolved.codec || "x264",
               part: resolved.part || null,
-              season: resolved.season || null,
+              season: resolved.season ?? null,
               episode: resolved.episode || null,
               metadataSource: resolved.metadataSource || (isManualWithoutTmdb ? "Manuell bestätigt" : "TMDb"),
+              manualOverride: true,
               confidence: 100
             }
+          }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/preview-manual-id" && request.method === "GET") {
+          const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
+          const title = (url.searchParams.get("title") || "").trim();
+          const year = (url.searchParams.get("year") || "").trim();
+          const preview = await previewManualSyntheticIdInD1(env, typeCode, title, year);
+          return new Response(JSON.stringify(preview), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/migrate-synthetic-id" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const oldSyntheticId = Number(body.oldSyntheticId || 0);
+          const newTmdbId = Number(body.newTmdbId || 0);
+          const typeCode = body.typeCode === "s" ? "s" : "m";
+          if (oldSyntheticId < 900000000 || !newTmdbId || newTmdbId >= 900000000) {
+            return new Response(JSON.stringify({ ok: false, error: "Bitte eine gültige synthetische 900M-ID und eine echte TMDb-Ziel-ID (< 900M) angeben." }), { status: 400, headers: corsHeaders });
+          }
+
+          // 1. Offizielle TMDb-Metadaten für die neue ID laden und mit manualOverride=1 in D1 anlegen
+          let officialDetails = null;
+          try {
+            if (typeCode === "s") {
+              officialDetails = await fetchSeriesDetails(env, newTmdbId);
+              if (officialDetails && !officialDetails.error) {
+                await saveSeriesToD1(env, officialDetails, "TMDb", { manualOverride: true });
+              }
+            } else {
+              officialDetails = await fetchMovieDetails(env, newTmdbId);
+              if (officialDetails && !officialDetails.error) {
+                await saveMovieToD1(env, officialDetails, null, "TMDb", { manualOverride: true });
+              }
+            }
+          } catch (e) {}
+
+          // 2. Alle Episoden, Videodateien, Aliase und Logs von 900M auf die echte TMDb-ID migrieren
+          const migrationResult = await migrateSyntheticIdToRealTmdbInD1(env, oldSyntheticId, newTmdbId, typeCode);
+          if (!migrationResult || !migrationResult.ok) {
+            return new Response(JSON.stringify({ ok: false, error: migrationResult?.error || "Migration fehlgeschlagen." }), { status: 500, headers: corsHeaders });
+          }
+
+          // 3. Auch in der VIP-Liste / Ziel-Playlist aktualisieren
+          const targetChatId = String(body.targetChatId || auth.chatId || "bot_vip");
+          try {
+            let list = await getSavedList(env, targetChatId);
+            let changed = false;
+            const officialTitle = officialDetails?.title || officialDetails?.name || null;
+            const officialPoster = officialDetails?.poster_path ? `https://image.tmdb.org/t/p/w342${officialDetails.poster_path}` : null;
+            for (const item of list) {
+              if (Number(item.tmdbId) === oldSyntheticId) {
+                item.tmdbId = newTmdbId;
+                if (officialTitle) item.title = officialTitle;
+                if (officialPoster) item.poster = officialPoster;
+                changed = true;
+              }
+            }
+            if (changed) {
+              await saveRawList(env, targetChatId, list);
+            }
+          } catch (e) {}
+
+          return new Response(JSON.stringify({
+            ok: true,
+            ...migrationResult,
+            officialTitle: officialDetails?.title || officialDetails?.name || null,
+            officialYear: (officialDetails?.release_date || officialDetails?.first_air_date || "").slice(0, 4) || null
+          }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/reheal-conflicts" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const rawProblemLogs = Array.isArray(body.items) && body.items.length > 0
+            ? body.items
+            : await listImportDiagnosticLogsFromD1(env, "PROBLEMS", "", 250);
+          const eligibleLogs = (rawProblemLogs || []).filter(item => {
+            const st = String(item.status || "").toUpperCase();
+            return st === "TMDB_NOT_FOUND" || st === "CONFLICT" || st === "CONFLICT_?";
+          });
+          const batchLimit = Math.min(Math.max(1, Number(body.limit) || 10), 15);
+          const slice = eligibleLogs.slice(0, batchLimit);
+          const healedItems = [];
+          const stillOpenItems = [];
+
+          for (const logItem of slice) {
+            const fileName = String(logItem.fileName || logItem.file_name || "").trim();
+            const rawText = String(logItem.rawText || logItem.raw_text || "").trim();
+            const msgId = Number(logItem.msgId || logItem.msg_id || 0);
+            if (!fileName && !rawText) continue;
+
+            const reparsed = parseMediaFilename(fileName || rawText, rawText);
+            if (!reparsed || reparsed.skippedReason) {
+              stillOpenItems.push({ msgId, status: logItem.status, reason: reparsed?.skippedReason || "SKIPPED" });
+              continue;
+            }
+
+            const candidateEntry = {
+              cleanTitle: reparsed.title || logItem.parsedTitle || "",
+              title: reparsed.title || logItem.parsedTitle || "",
+              titleFromFileName: reparsed.titleFromFileName || "",
+              titleFromText: reparsed.titleFromText || "",
+              year: reparsed.year || logItem.parsedYear || null,
+              type: reparsed.isSeries ? "series" : "movie",
+              typeCode: reparsed.isSeries ? "s" : "m",
+              isSeries: Boolean(reparsed.isSeries),
+              season: reparsed.isBonus ? 0 : (reparsed.season ?? null),
+              episode: reparsed.episode ?? null,
+              isBonus: Boolean(reparsed.isBonus),
+              part: reparsed.part || null,
+              editionLabel: reparsed.editionLabel || null,
+              quality: reparsed.quality || "HD",
+              filename: fileName,
+              raw_file_name: fileName,
+              raw_caption: rawText,
+              source_message_id: msgId || null
+            };
+
+            const resolved = await resolveAndIngestMediaEntry(env, candidateEntry, null, {
+              bypassNegativeTitleCache: true,
+              allowCreateWithoutVideoFile: true,
+              registerAsVipStream: false
+            });
+
+            if (resolved && resolved.ok && resolved.tmdbId && resolved.confidence >= 62) {
+              if (msgId > 0 && typeof updateImportDiagnosticLogStatusInD1 === "function") {
+                await updateImportDiagnosticLogStatusInD1(env, msgId, "OK", resolved.tmdbId, resolved.matchedTitle || resolved.cleanTitle);
+              }
+              healedItems.push({
+                msgId,
+                fileName,
+                parsedTitle: candidateEntry.cleanTitle,
+                matchedTitle: resolved.matchedTitle || resolved.cleanTitle,
+                tmdbId: resolved.tmdbId,
+                typeCode: resolved.typeCode,
+                year: resolved.year || "k.A.",
+                confidence: resolved.confidence || 100
+              });
+            } else {
+              stillOpenItems.push({
+                msgId,
+                fileName,
+                parsedTitle: candidateEntry.cleanTitle,
+                status: logItem.status
+              });
+            }
+          }
+
+          return new Response(JSON.stringify({
+            ok: true,
+            checkedCount: slice.length,
+            healedCount: healedItems.length,
+            remainingCount: Math.max(0, eligibleLogs.length - slice.length),
+            healedItems,
+            stillOpenItems
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-queue" && request.method === "POST") {
