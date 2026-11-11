@@ -67,11 +67,12 @@
     "et the extra terrestrial": "E.T. – Der Außerirdische"
   };
 
-  // .rar / .partXX.rar Archive sind erlaubt und erhalten eine eigene Kategorie/Version ("📦 RAR-Archiv")
+  // .rar / .zip / .7z / .iso / .tar / .gz Archive sind erlaubt und werden als Zusatz-Downloads (type: "archive", isDownloadOnly: true) gespeichert!
   // Untertitel (.srt, .vtt, .sub, .ass, .ssa) werden NICHT als Junk verworfen, sondern automatisch an das zugehörige Video gebunden!
   const SUBTITLE_EXTENSIONS = /\.(?:srt|vtt|sub|ass|ssa)$/i;
-  const BLOCKED_EXTENSIONS = /\.(webp|tgs|webm|gif|mp3|ogg|wav|flac|m4a|idx|apk|exe|msi|dmg|pdf|epub|txt|nfo|jpg|jpeg|png|zip|7z|tar|gz)$/i;
-  const BLOCKED_FILENAMES  = /^(?:sticker|animatedsticker|giphy|tenor|video_?\d*)\.(?:webp|tgs|webm|mp4|gif)$/i;
+  const ARCHIVE_EXTENSIONS  = /\.(?:rar|zip|7z|iso|tar|gz)$/i;
+  const BLOCKED_EXTENSIONS  = /\.(webp|tgs|webm|gif|mp3|ogg|wav|flac|m4a|idx|apk|exe|msi|dmg|pdf|epub|txt|nfo|jpg|jpeg|png)$/i;
+  const BLOCKED_FILENAMES   = /^(?:sticker|animatedsticker|giphy|tenor|video_?\d*)\.(?:webp|tgs|webm|mp4|gif)$/i;
   const TRAILER_KEYWORD_REGEX = /(?:^|[\s._\-(\[])(?:kinotrailer|official\s+trailer|offizieller\s+trailer|teaser\s+trailer|trailer\s+(?:german|deutsch|englisch|english|hd|full\s*hd|1080p|720p|4k)|trailer|teaser|coming\s+soon|zwiastun|vorschau)(?=$|[\s._\-)\]:])/i;
   const LANGUAGE_COURSE_JUNK_REGEX = /(?:amoozesh|learn_german|sprachkurs|vokabeln|tutorial)/i;
 
@@ -133,7 +134,7 @@
     const fileName  = String(msg.video?.file_name || msg.document?.file_name || msg.file_name || validPath || "").trim();
     const duration  = msg.video?.duration ?? msg.duration_seconds ?? msg.duration ?? null;
     const isPhotoHeader = Boolean(msg.photo && !msg.sticker && mediaType !== "sticker" && !mimeType.includes("webp"));
-    const isRarArchive  = /\.rar$/i.test(fileName);
+    const isRarArchive  = ARCHIVE_EXTENSIONS.test(fileName) || /\.part\d+\.rar\b/i.test(fileName);
     const isSubtitleFile = SUBTITLE_EXTENSIONS.test(fileName);
 
     // 0. Sprachlern-Videos & Tutorials direkt im Gatekeeper als Junk herausfiltern (MODUL 1.4)
@@ -260,43 +261,59 @@
       });
   }
 
-  function extractPartInfo(rawText = "", rawFileName = "") {
-    const combined = `${rawFileName || ""} ${rawText || ""}`;
-    const isRar = /\.rar$/i.test(String(rawFileName || "").trim()) || /\.part\d+\.rar\b/i.test(combined);
+  function extractPartInfo(rawText = "", rawFileName = "", isSeriesHint = false) {
+    const fnStr = String(rawFileName || "").trim();
+    const combined = `${fnStr} ${rawText || ""}`;
+    const isArchive = ARCHIVE_EXTENSIONS.test(fnStr) || /\.part\d+\.(?:rar|zip|7z)\b/i.test(combined);
 
-    // 0. Mehrteilige oder einzelne RAR-Archive (eigene Kategorie/Version "📦 RAR-Archiv", z.B. part1.rar .. part20.rar)
-    if (isRar) {
-      const rarPartMatch = combined.match(/(?:\.part|\bpart)[\s._-]*0*([1-9]\d?)\b/i);
-      if (rarPartMatch) {
-        const pNum = parseInt(rarPartMatch[1], 10);
-        return { isSplit: true, isArchive: true, part: pNum, partNumber: pNum, partType: "RAR", partLabel: `RAR-PART${pNum}` };
-      }
-      return { isSplit: false, isArchive: true, part: 1, partNumber: 1, partType: "RAR", partLabel: "RAR" };
+    // MODUL 5.1: Bei Serien ist part_number IMMER 1!
+    if (isSeriesHint) {
+      return { isSplit: false, isArchive, isDownloadOnly: isArchive, type: isArchive ? "archive" : "video", isExplicitMultiPartMovie: false, part: 1, partNumber: 1, partType: isArchive ? "ARCHIVE" : null, partLabel: isArchive ? "ARCHIV" : null };
     }
 
-    // 1. Explizite Multi-Part-Marker (MODUL 2.1): CD1, CD2, Disc 1, Disk 1, Part 1, Teil 1, Pt 1 (nur wenn nicht "Teil 1 bis 3")
-    const explicitCdMatch = combined.match(/(?:[-_\s.(]|^)(cd|disc|disk|dvd|part|pt|split)[\s._-]*0*([1-4])\b(?![\s._-]*(?:bis|-|–)\s*\d)/i)
-                         || String(rawFileName || "").match(/(?:[-_\s.(]|^)(teil)[\s._-]*0*([1-4])\b(?![\s._-]*(?:bis|-|–)\s*\d)/i)
-                         || combined.match(/AC3\.?(cd)0*([1-9])\b/i);
+    // MODUL 2: Mehrteilige oder einzelne Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Download-Dateien (type: "archive", isDownloadOnly: true)
+    if (isArchive) {
+      const archivePartMatch = combined.match(/(?:\.part|\bpart)[\s._-]*0*([1-9]\d?)\b/i);
+      if (archivePartMatch) {
+        const pNum = parseInt(archivePartMatch[1], 10);
+        return { isSplit: true, isArchive: true, isDownloadOnly: true, type: "archive", part: pNum, partNumber: pNum, partType: "ARCHIVE", partLabel: `ARCHIV-PART${pNum}` };
+      }
+      return { isSplit: false, isArchive: true, isDownloadOnly: true, type: "archive", part: 1, partNumber: 1, partType: "ARCHIVE", partLabel: "ARCHIV" };
+    }
+
+    // 1. Explizite CD/Disc/Disk/Split Marker MIT Ziffer 1..4 (MODUL 5.1):
+    // WICHTIG: Niemals bei Scene-Präfixen ohne Zahl wie "cd-salazarsrache.mp4" auslösen!
+    const explicitCdMatch = combined.match(/\b(cd|disc|disk|dvd|split)[\s._-]*0*([1-4])\b(?![\s._-]*(?:bis|-|–)\s*\d)/i)
+                         || combined.match(/AC3\.?(cd)0*([1-4])\b/i);
     if (explicitCdMatch) {
       const pNum = parseInt(explicitCdMatch[2], 10);
-      return { isSplit: true, isArchive: false, isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
+      return { isSplit: true, isArchive: false, isDownloadOnly: false, type: "video", isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
     }
 
-    // 2. Impliziter Mehrteiler vor Jahresklammer (MODUL 2.1): Zweistellige Zahl mit führender Null (01, 02, 03, 04) direkt vor (YYYY), z.B. "The Postman 01 (1997)"
-    const implicitZeroBeforeYear = combined.match(/\b0([1-4])[\s._-]*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/i);
-    if (implicitZeroBeforeYear) {
-      const pNum = parseInt(implicitZeroBeforeYear[1], 10);
-      return { isSplit: true, isArchive: false, isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
-    }
-
-    const splitNumMatch = String(rawFileName || "").match(/-00([1-9])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
+    // 2. 3-stelliger Split-Suffix am Ende: -(00[1-4]).(mkv|mp4|avi) ("Berlin Alexanderplatz (2020)-003.mkv")
+    const splitNumMatch = fnStr.match(/-(00[1-4])(?:\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
     if (splitNumMatch) {
       const pNum = parseInt(splitNumMatch[1], 10);
-      return { isSplit: true, isArchive: false, isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
+      return { isSplit: true, isArchive: false, isDownloadOnly: false, type: "video", isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
     }
 
-    return { isSplit: false, isArchive: false, isExplicitMultiPartMovie: false, part: 1, partNumber: 1, partType: null, partLabel: null };
+    // 3. Impliziter Mehrteiler direkt vor Jahresklammer: "01 (1997)" / "02 (1997)" ("The Postman 01 (1997)")
+    const implicitZeroBeforeYear = combined.match(/\b0([1-4])[\s._-]*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\b\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]/i);
+    if (implicitZeroBeforeYear) {
+      const pNum = parseInt(implicitZeroBeforeYear[1], 10);
+      return { isSplit: true, isArchive: false, isDownloadOnly: false, type: "video", isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
+    }
+
+    // 4. MODUL 5.1 ("Teil 2" vs. "-CD2"):
+    // Steht "Part [1-4]" / "Teil [1-4]" / "Film [1-4]" NACH der Jahreszahl ("Hogfather - 2006 - Part 2.mp4"), ist es ein Datei-Split (part_number = 1..4)!
+    // Steht "Teil 2" VOR der Jahreszahl ("Mockingjay Teil 2 (2015)"), gehört es zum Filmtitel (part_number bleibt 1)!
+    const partAfterYearMatch = combined.match(/\b(?:19[2-9]\d|20[0-2]\d)\b[\)\]]?[\s._\-–—:]+(?:part|teil|pt|film)[\s._-]*0*([1-4])\b(?![\s._-]*(?:bis|-|–)\s*\d)/i);
+    if (partAfterYearMatch) {
+      const pNum = parseInt(partAfterYearMatch[1], 10);
+      return { isSplit: true, isArchive: false, isDownloadOnly: false, type: "video", isExplicitMultiPartMovie: true, part: pNum, partNumber: pNum, partType: "CD", partLabel: `CD ${pNum}` };
+    }
+
+    return { isSplit: false, isArchive: false, isDownloadOnly: false, type: "video", isExplicitMultiPartMovie: false, part: 1, partNumber: 1, partType: null, partLabel: null };
   }
 
   const BONUS_SPECIAL_REGEX = /\b(bonus|special(?!\s*edition|\s*cut)|making[\s._-]*of|outtakes|extras|behind[\s._-]*the[\s._-]*scenes)\b/i;
@@ -386,8 +403,8 @@
   // Erweitertes Edition-/Cut-Pattern (muss vor Einzelwörtern greifen, damit aus "Extended Cut" niemals "Cut" übrig bleibt!)
   const EDITION_CUT_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\s._-]*duper[\s._-]*cut|extended[\s._-]*director'?s?[\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\s._-]*matte|international|rough|workprint)[\s._-]*(?:cut|edition|version|fassung|ed\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\s._-]*(?:fassung|version|edition|cut)|(?:4k[\s._-]*)?(?:digitally[\s._-]*)?(?:remastered|restored)|mastered[\s._-]*in[\s._-]*4k|open[\s._-]*matte)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
-  // Erweiterter Cleaner-Regex mit Umlaut-sicheren Wortgrenzen (schützt "Geisterjäger", "Jäger", "Bürger", "World Wide Web" & "Grundkurs Spanish"):
-  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|264|265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\.?1|5\.1|7\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
+  // Erweiterter Cleaner-Regex mit Umlaut-sicheren Wortgrenzen (schützt "Geisterjäger", "Jäger", "Bürger", "Body Cam", "Pines", "Fences", "World Wide Web" & "Grundkurs Spanish"):
+  const TECH_JUNK_REGEX = /(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|264|265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\s._-]*audio|dual|multi|multilang|(?<!world\s+wide\s+)web|web-dl|webrip|webr|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\s*720|\s*1080)?|hd|sd|dt__ov|dt[\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|dubbed|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\s._-]*cut|extendet[\s._-]*cut|extendet|director'?s?[\s._-]*cut|theatrical[\s._-]*cut|ultimate[\s._-]*cut|final[\s._-]*cut|special[\s._-]*(?:cut|edition)|collector'?s?[\s._-]*edition|extended[\s._-]*(?:edition|version)|uncut[\s._-]*(?:edition|version)?|unrated[\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3md|ac3d|ac3|eac3|dts|dd5\.?1|5\.1|7\.1|aac|6ch|proper|repack|limited|doku|camrip|cam-rip|hdcam|hd-cam|ts-cam|mp4|mkv|avi|m4v|flv|mk3d|rar|zip|7z|iso|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi;
 
   // Volle Datumsangaben (DD.MM.YYYY wie 21.07.2012 oder 01.12.2018) erkennen & schützen (Regel 6 / Fall 17)
   const FULL_DATE_REGEX = /\b\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\b/g;
@@ -484,7 +501,9 @@
   // Regel 1: Vorab-Normalisierung aller Episoden-Schreibweisen & Leerzeichen-Reduzierung in normalizeText()
   function normalizeText(str) {
     if (!str) return "";
+    // MODUL 4.1: Zwingend .normalize("NFC") ganz am Anfang ausführen (wandelt u\u0308 -> ü für "Ein Rezept für die Liebe" um!)
     let s = String(str)
+      .normalize("NFC")
       .replace(/%26/gi, "&")
       .replace(/%20/g, " ");
 
@@ -560,55 +579,63 @@
     return s;
   }
 
-  // MODUL 2.4 & 2.5: Umlaut-Normalisierung für ASCII-Umschreibungen (z.B. "schlaegt zurueck" -> "schlägt zurück")
-  const GERMAN_ASCII_UMLAUT_REPLACEMENTS = [
-    [/\bschlaegt\b/gi, (m) => m[0] === "S" ? "Schlägt" : "schlägt"],
-    [/\bzurueck\b/gi, (m) => m[0] === "Z" ? "Zurück" : "zurück"],
-    [/\brueckkehr\b/gi, (m) => m[0] === "R" ? "Rückkehr" : "rückkehr"],
-    [/\bfuer\b/gi, (m) => m[0] === "F" ? "Für" : "für"],
-    [/\bueber\b/gi, (m) => m[0] === "U" ? "Über" : "über"],
-    [/\bkoenig(e|in|reich|s)?\b/gi, (m, suf = "") => (m[0] === "K" ? "König" : "könig") + suf],
-    [/\bmaenner(n)?\b/gi, (m, suf = "") => (m[0] === "M" ? "Männer" : "männer") + suf],
-    [/\bbrueder(n)?\b/gi, (m, suf = "") => (m[0] === "B" ? "Brüder" : "brüder") + suf],
-    [/\bmoerder(n|isch|ische|ischer)?\b/gi, (m, suf = "") => (m[0] === "M" ? "Mörder" : "mörder") + suf],
-    [/\bjaeger(n|in)?\b/gi, (m, suf = "") => (m[0] === "J" ? "Jäger" : "jäger") + suf],
-    [/\bausserirdische(n|r)?\b/gi, (m, suf = "") => (m[0] === "A" ? "Außerirdische" : "außerirdische") + suf],
-    [/\bgroesse(n|r)?\b/gi, (m, suf = "") => (m[0] === "G" ? "Größe" : "größe") + suf],
-    [/\bfluechtling(e|en)?\b/gi, (m, suf = "") => (m[0] === "F" ? "Flüchtling" : "flüchtling") + suf],
-    [/\bsuende(n|r)?\b/gi, (m, suf = "") => (m[0] === "S" ? "Sünde" : "sünde") + suf],
-    [/\btoechter(n)?\b/gi, (m, suf = "") => (m[0] === "T" ? "Töchter" : "töchter") + suf],
-    [/\bvoegel(n)?\b/gi, (m, suf = "") => (m[0] === "V" ? "Vögel" : "vögel") + suf],
-    [/\bwueste(n)?\b/gi, (m, suf = "") => (m[0] === "W" ? "Wüste" : "wüste") + suf],
-    [/\bzwoelf\b/gi, (m) => m[0] === "Z" ? "Zwölf" : "zwölf"],
-    [/\bfuenf\b/gi, (m) => m[0] === "F" ? "Fünf" : "fünf"],
-    [/\bnaechte(n)?\b/gi, (m, suf = "") => (m[0] === "N" ? "Nächte" : "nächte") + suf],
-    [/\bmaechte\b/gi, (m) => m[0] === "M" ? "Mächte" : "mächte"],
-    [/\bvermaechtnis\b/gi, (m) => m[0] === "V" ? "Vermächtnis" : "vermächtnis"],
-    [/\bgefaehrliche(n|r|s)?\b/gi, (m, suf = "") => (m[0] === "G" ? "Gefährliche" : "gefährliche") + suf],
-    [/\bkomoedie\b/gi, (m) => m[0] === "K" ? "Komödie" : "komödie"],
-    [/\bkaempfer(n)?\b/gi, (m, suf = "") => (m[0] === "K" ? "Kämpfer" : "kämpfer") + suf],
-    [/\bschoene(n|r|s)?\b/gi, (m, suf = "") => (m[0] === "S" ? "Schöne" : "schöne") + suf],
-    [/\btodesschuesse\b/gi, (m) => m[0] === "T" ? "Todesschüsse" : "todesschüsse"],
-    [/\bgruselige(n|r|s)?\b/gi, (m, suf = "") => (m[0] === "G" ? "Gruselige" : "gruselige") + suf]
-  ];
+  // MODUL 4.1: Globale Umlaut-Normalisierung mit /g für alle Wörter im String ("Vier Faeuste fuer ein Halleluja" -> "Vier Fäuste für ein Halleluja")
+  const NON_UMLAUT_AE_OE_UE_WORDS = /^(?:abenteuer\w*|feuer\w*|steuer\w*|ungeheuer\w*|teuer\w*|heute|leute\w*|freund\w*|neu(?:e|en|er|es|em)?|treu(?:e|en|er|es)?|reu(?:e|en)?|blau(?:e|en|er|es)?|mauer\w*|trauer\w*|dauer\w*|schau(?:en|er)?|bau(?:en|er|ern)?|vertrau(?:en|er)?|frau(?:en)?|grau(?:en|er|es)?|klau(?:en)?|brau(?:en|er)?|au(?:e|en)|duell\w*|aktuell\w*|virtuell\w*|manuell\w*|eventuell\w*|visuell\w*|sexuell\w*|rituell\w*|individuell\w*|intellektuell\w*|spirituell\w*|statue\w*|michael\w*|raphael\w*|israel\w*|maelstrom|aero\w*|poesie|poet\w*|noel|joel|coen|boeing|phoenix|goethe\w*|soest|true|blue\w*|clue\w*|due|sue|avenue\w*|rescue\w*|value\w*|issue\w*|rogue\w*|vogue|league\w*|colleague\w*|dialogue\w*|prologue\w*|epilogue\w*|catalogue\w*|fatigue|intrigue\w*|plague\w*|vague\w*|morgue|tongue\w*|queue\w*|fuel\w*|cruel\w*|duel\w*|jewel\w*|sequel\w*|prequel\w*|queen\w*|queer\w*|quest\w*|guest\w*|guess\w*|guard\w*|guarantee\w*|guilt\w*|guitar\w*|guide\w*|guise|guillotine)$/i;
 
   function normalizeGermanAsciiUmlauts(str) {
     if (!str) return "";
-    let s = String(str);
-    for (const [rx, repl] of GERMAN_ASCII_UMLAUT_REPLACEMENTS) {
-      s = s.replace(rx, repl);
-    }
-    return s;
+    return String(str).replace(/\b([A-Za-zÄÖÜäöüß]+)\b/g, (word) => {
+      if (!/(?:ae|oe|ue)/i.test(word)) return word;
+      if (NON_UMLAUT_AE_OE_UE_WORDS.test(word)) return word;
+      // Schütze "qu" (wie Quelle, quer) vor qü
+      return word
+        .replace(/ae/g, "ä")
+        .replace(/oe/g, "ö")
+        .replace(/(?<![qQ])ue/g, "ü")
+        .replace(/Ae/g, "Ä")
+        .replace(/Oe/g, "Ö")
+        .replace(/Ue/g, "Ü")
+        .replace(/AE/g, "Ä")
+        .replace(/OE/g, "Ö")
+        .replace(/(?<![qQ])UE/g, "Ü");
+    });
   }
 
-  // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (auch ohne Leerzeichen wie "2012SiFi", "1998Action", "2002 Patrick Stewart 465 MB")
-  const HARD_YEAR_CUTOFF_REGEX = /^(.*?)(?:[\s._\-(\[]+)(19[2-9]\d|20[0-2]\d)(?=[\s._\-)\]]|(?:SiFi|SciFi|Sci-Fi|Action|Comedy|Komödie|Komoedie|Drama|Crime|Krimi|Thriller|Horror|Abenteuer|Adventure|Krieg|Geschichte|History|Fantasy|Animation|Familie|Romantik|Romance|Mystery|Western|Musik|Doku|Dokumentation|HD|FullHD|FHD|UHD|4K|1080p|720p|480p|German|Deutsch|DE|EN|AC3|DTS|x264|x265|XviD|DivX|mp4|mkv|avi|$))/i;
+  const OFFICIAL_HYPHEN_TITLE_WHITELIST = /^(?:x-men|a-team|k-pax|g-force|u-571|k-19|t-rex|v-wars|wall-e|spider-man|ant-man|kick-ass|non-stop|hi-hi)\b/i;
+
+  function stripSceneGroupPrefix(str) {
+    if (!str) return "";
+    const trimmed = String(str).trim();
+    if (/^[a-z]{2,6}-[a-z0-9._-]+/.test(trimmed) && !OFFICIAL_HYPHEN_TITLE_WHITELIST.test(trimmed)) {
+      return trimmed.replace(/^[a-z]{2,6}-/, "");
+    }
+    return trimmed;
+  }
+
+  function splitParenthesizedAltTitle(str) {
+    if (!str) return { primaryTitle: "", altTitle: null };
+    const m = String(str).trim().match(/^(.{2,}?)\s*\(([A-Za-zÄÖÜäöüß][^()]{3,80})\)\s*$/);
+    if (!m) return { primaryTitle: String(str).trim(), altTitle: null };
+    const primary = m[1].trim();
+    const inside = m[2].trim();
+    // Nicht trennen bei Jahreszahlen, Ländern, Editionen oder technischen Tags
+    if (/^(?:19\d{2}|20\d{2}|DDR|BRD|USA|UK|DE|FR|IT|ES|AT|CH|OV|OmU|Uncut|Unrated|Extended|Director|Theatrical|Kinofassung|Langfassung|Cut|Edition|Version|Fassung|3D|4K|HD|UHD|IMAX|Teil\s*\d+|Part\s*\d+)\b/i.test(inside)) {
+      return { primaryTitle: String(str).trim(), altTitle: null };
+    }
+    return { primaryTitle: primary, altTitle: inside };
+  }
+
+  // MODUL 5.3: Harter Cut-Off nach der Jahreszahl (auch ohne Leerzeichen wie "2012SiFi", "1998Action", "2002 Patrick Stewart 465 MB")
+  const HARD_YEAR_CUTOFF_REGEX = /^(.*?)(?:[\s._\-(\[]+)(19[2-9]\d|20[0-2]\d)(?=[\s._\-)\]]|(?:SiFi|SciFi|Sci-Fi|Action|Comedy|Komödie|Komoedie|Drama|Crime|Krimi|Thriller|Horror|Abenteuer|Adventure|Krieg|Geschichte|History|Fantasy|Animation|Familie|Romantik|Romance|Mystery|Western|Musik|Doku|Dokumentation|HD|FullHD|FHD|UHD|4K|1080p|720p|480p|German|Deutsch|DE|EN|AC3|AC3MD|DTS|x264|x265|XviD|DivX|mp4|mkv|avi|rar|zip|$))/i;
 
   function applyHardYearCutoff(rawString) {
     if (!rawString) return { titleBeforeYear: "", year: null, hadYearCutoff: false };
-    const s = String(rawString).replace(FULL_DATE_REGEX, " ");
-    // 1. Prüfe zuerst auf eingeklammerte Jahreszahl oder Jahres-Spanne wie "(2003 - 2006)" oder "(USA 2023) HD 264" (schützt auch "Wonder Woman 1984 (2020)")
-    const parenMatch = s.match(/^(.*?)\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)(?:\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)?)?\s*[\)\]](.*)$/i);
+    // Entferne alleinstehendes " von" direkt vor einer Jahreszahl ("Die Studentin von 1988" -> "Die Studentin 1988")
+    const s = String(rawString)
+      .replace(FULL_DATE_REGEX, " ")
+      .replace(/\s+von(?=\s+(?:19[2-9]\d|20[0-2]\d)\b)/gi, " ");
+    // 1. Prüfe zuerst auf eingeklammerte Jahreszahl mit zwingender öffnender Klammer [(\[] und \b Wortgrenzen (schützt "The Place Beyond the Pines (2012)"!)
+    const parenMatch = s.match(/^(.*?)\s*[\(\[]\s*(?:\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\b\s+)?(19[2-9]\d|20[0-2]\d)(?:\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)?)?\s*[\)\]](.*)$/i);
     if (parenMatch && parenMatch[1] && parenMatch[1].trim().length >= 2) {
       return {
         titleBeforeYear: parenMatch[1].trim(),
@@ -627,7 +654,7 @@
     return { titleBeforeYear: s, year: null, hadYearCutoff: false };
   }
 
-  // MODUL 2.5: Erkennt überlange Beschreibungstexte ("Cocaine Bear"-Schutz) anhand von Wortanzahl (> 15 Wörter) oder mehreren Sätzen statt 40/50-Zeichen-Abschnitt mitten im Wort!
+  // MODUL 5.3: Erkennt überlange Beschreibungstexte ("Cocaine Bear"-Schutz) anhand von Wortanzahl (> 15 Wörter) oder > 120 Zeichen statt 40-Zeichen-Abschnitt!
   function isLikelyPlotDescription(str) {
     const s = String(str || "").trim();
     if (!s) return false;
@@ -640,89 +667,112 @@
 
   function cleanMediaTitle(raw) {
     if (!raw) return "";
-    let s = normalizeText(raw);
+    // MODUL 4.1, 4.2 & 4.4: Zuerst NFC + Kanal-Präfixe (@German_Vid, @ GERMAN MOVIES_) + Scene-Group-Kürzel (cyd-, cd-, nge-, inkl-) VOR der _-Umwandlung entfernen!
+    let preCleaned = String(raw).normalize("NFC").trim();
+    preCleaned = preCleaned
+      .replace(/^@\s*(?:german[\s._-]*(?:movies?|vid(?:eo)?s?|filme?|cinema|kinofilme?)|[\w.-]+)[\s_:\-]*/gi, "")
+      .replace(/^@\s*movies\b[\s_:\-]*/gi, "")
+      .replace(/\b(?:german[\s._-]+(?:movies?|vid(?:eo)?s?|filme?)|@[\w.-]+)\b/gi, " ");
+    preCleaned = stripSceneGroupPrefix(preCleaned);
 
-    // Mehrfache Dateiendungen (wie .mkv.mp4, .part1.rar, .rar) sowie .flv und .mk3d entfernen
-    s = s.replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|m4v|ts|mov|wmv|flv|mk3d|webm|rar|json))+$/i, "").replace(/󠄿/g, "").replace(/_/g, " ");
-    // Volle Datumsangaben wie (21.07.2012) oder 01.12.2018 sowie Länder-Jahresklammern wie (DDR 1976) sofort entfernen
+    // Echte Zweiteiler-Kinofilme ("Twilight Saga (4.1) - Breaking Dawn..." / "Twilight_Saga_01..03"):
+    if (/twilight[\s._-]*saga/i.test(preCleaned)) {
+      const twPartMatch = preCleaned.match(/\b4\.?([12])\b/);
+      preCleaned = preCleaned.replace(/^(?:the[\s._-]+)?twilight[\s._-]*saga[\s._()-]*(?:0?[1-3]|4\.?[12]|complete)?[\s._\-:)]*/i, "");
+      if (twPartMatch && !/teil\s*[12]/i.test(preCleaned)) {
+        preCleaned = `${preCleaned} - Teil ${twPartMatch[1]}`;
+      }
+    }
+
+    let s = normalizeText(preCleaned);
+
+    // Mehrfache Dateiendungen (wie .mkv.mp4, .part1.rar, .rar, .zip, .7z, .iso) sowie .flv, .mk3d und .DOKU entfernen
+    s = s.replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|m4v|ts|mov|wmv|flv|mk3d|webm|rar|zip|7z|iso|tar|gz|json))+$/i, "")
+         .replace(/\.doku\b/gi, " ")
+         .replace(/󠄿/g, "")
+         .replace(/_/g, " ");
+    // Volle Datumsangaben wie (21.07.2012) oder 01.12.2018 sofort entfernen
     s = s.replace(/\(\s*\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\s*\)/g, " ");
     s = s.replace(FULL_DATE_REGEX, " ");
 
-    // MODUL 2.1: Führende 01/02/03/04 direkt vor einer Jahresklammer (z.B. "The Postman 01 (1997)") vor dem Jahres-Cut-Off entfernen
-    s = s.replace(/\b0[1-4](?=\s*[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]])/gi, " ");
+    // MODUL 5.1: Führende 01/02/03/04 direkt vor einer Jahresklammer (z.B. "The Postman 01 (1997)") vor dem Jahres-Cut-Off entfernen
+    s = s.replace(/\b0[1-4](?=\s*[\(\[]\s*(?:\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\b\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]])/gi, " ");
 
-    // MODUL 2.4: Harter Cut-Off nach der Jahreszahl (schneidet auch Genres ohne Leerzeichen wie "2012SiFi" und Tech-Reste wie "(USA 2023) HD 264" ab!)
+    // MODUL 5.3: Harter Cut-Off nach der Jahreszahl (schneidet alles rechts neben (YYYY) ab, lässt aber "Teil 2" VOR (2015) unberührt!)
     const yearCutoffRes = applyHardYearCutoff(s);
     if (yearCutoffRes.hadYearCutoff && yearCutoffRes.titleBeforeYear) {
       s = yearCutoffRes.titleBeforeYear;
     }
 
-    // Jahres-Spannen wie "(2003 - 2006)" oder "2003 - 2006" sowie einzelne Jahresklammern restlos entfernen (verhindert "( - )" bei Little Britain!)
-    s = s.replace(/[\(\[]?\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)\s*[\)\]]?/gi, " ");
-    s = s.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—]?\s*[\)\]]/gi, " ");
+    // Jahres-Spannen wie "(2003 - 2006)" sowie einzelne Jahresklammern restlos entfernen
+    s = s.replace(/[\(\[]?\s*(?:\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\b\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—/bis]+\s*(?:19[2-9]\d|20[0-2]\d|heute|present)\s*[\)\]]?/gi, " ");
+    s = s.replace(/[\(\[]\s*(?:\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\b\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[-–—]?\s*[\)\]]/gi, " ");
 
     // Scene-Audio & Release-Group-Kombinationen (z. B. "AC3D.5.1", "BDRiP.XViD-HaN") vor dem Punkt-Splitter bereinigen
-    s = s.replace(/\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\s._-]*(?:5\.1|7\.1|2\.0)\b/gi, " ");
-    s = s.replace(/\b(?:XViD|DivX|x264|x265|H\.?264|H\.?265|HEVC|BDRiP|BRRiP|DVDRiP|WEBRiP|WEB-DL)-[A-Za-z0-9]{2,12}\b/gi, " ");
+    s = s.replace(/\b(?:AC3MD|AC3D?|EAC3|AAC|DTS|DDP?)[\s._-]*(?:5\.1|7\.1|2\.0)?\b/gi, " ");
+    s = s.replace(/\b(?:XViD|DivX|x264|x265|H\.?264|H\.?265|HEVC|BDRiP|BRRiP|DVDRiP|WEBRiP|WEBR|WEB-DL)-[A-Za-z0-9]{2,12}\b/gi, " ");
     if (((s.match(/\./g) || []).length >= 2 || /[A-Za-zÄÖÜäöüß]{2,}\.[A-Za-zÄÖÜäöüß0-9]{2,}/.test(s)) && !/^(?:e\.t\.?|a\.d\.?|o\.c\.?|l\.a\.?|k\.o\.?|s\.h\.i\.e\.l\.d\.?)$/i.test(s.trim())) {
       s = s.replace(/(?<=[A-Za-zÄÖÜäöüß0-9]{2})\.(?=[A-Za-zÄÖÜäöüß0-9])/g, " ")
            .replace(/(?<=[A-Za-zÄÖÜäöüß0-9])\.(?=[A-Za-zÄÖÜäöüß0-9]{2})/g, " ");
     }
 
-    // Flaggen, Deko-Klammern 《》«»⟨⟩, führende Deko-Emojis & Inline-Emojis (wie 🐉 in "DRAGON 🐉 BALL DAIMA") restlos entfernen
+    // Flaggen, Deko-Klammern 《》«»⟨⟩, führende Deko-Emojis & Inline-Emojis restlos entfernen
     s = s.replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "");
     s = s.replace(/[《》«»⟨⟩]/g, " ");
     s = s.replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\s]+/gu, "");
     s = s.replace(/[↩️🔠🔢⤴️⬅️➡️🎦]+.*$/gu, "");
     s = s.replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎🩸❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️]/gu, " ");
 
-    // @Mentions und bekannte Kanal-/Qualitäts-Hashtags (#Gutfilm etc.) entfernen, aber Titelwörter mit führendem '#' (wie "#Murder Mystery" oder "#Rim of the World") schützen!
-    s = s.replace(/@[A-Za-z0-9_]+/g, "");
+    // @Mentions und bekannte Kanal-/Qualitäts-Hashtags entfernen
+    s = s.replace(/@[A-Za-z0-9_.-]+/g, "");
     s = s.replace(/#(?:gutfilm|archemovie|filmwelt|weltderfilme|sauerkraut|hd|fullhd|fhd|uhd|4k|1080p|720p|480p|deutsch|german|kino|serie|serien|film|filme|neu|new|stream|download|vip|ov|omu|horror|action|comedy|thriller|drama|scifi|sifi|fantasy|anime)\b/gi, " ");
     s = s.replace(/#(?=[A-Za-zÄÖÜäöüß0-9])/g, " ");
     s = s.replace(/s[\._]to\s*-?\s*Serien.*/i, "").replace(/Sto\s*-\s*Serien.*/i, "");
     s = s.replace(/serien[\._](?:life|show).*/i, "").replace(/HD\s*Filme\s*Serien.*/i, "");
     s = s.replace(/^(?:Title|Titel)\s*:\s*/i, "").replace(/^(?:vs-|cd-|spy-|d-|4sf-|arc-|tvp-)/i, "");
-    // Studio-Präfixe am Anfang (wie "Disneys Arielle, die Meerjungfrau" -> "Arielle, die Meerjungfrau") entfernen
+    // Studio-Präfixe am Anfang entfernen
     s = s.replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\s+/i, "");
-    // Führende S01E01 / E01S01 / 1x01 Präfixe sowie defekte S05E0Fragmente entfernen (Fall 1, Fall 4)
+    // Führende S01E01 / E01S01 / 1x01 Präfixe sowie defekte S05E0Fragmente entfernen
     s = s.replace(/^(?:s\d{1,2}\s*e\d{1,3}(?:-e\d{1,3})?|e\d{1,3}\s*s\d{1,2}|\d{1,2}x\d{2,3})\b[\s._\-–:]*/i, "");
     s = s.replace(/\bS\d{1,2}\s*E\d{0,3}(?:-E\d{1,3})?(?=[A-Za-z]|\b)/gi, " ");
     s = s.replace(/\b\d{3,4}\s*[x×]\s*\d{3,4}\b/g, "");
 
-    // Getrennte Sub/Dub-Kombinationen & CD/Part-Marker (inkl. -CD1, -CD2, Pt 1, Teil 1, part01..part25) VOR den Einzelwörtern löschen:
+    // Getrennte Sub/Dub-Kombinationen & echte CD/Disc/Split-Marker VOR den Einzelwörtern löschen.
+    // WICHTIG (MODUL 5.1): Wenn "Teil 2" oder "Part 2" VOR der Jahreszahl stand (yearCutoffRes.hadYearCutoff === true, wie "Mockingjay Teil 2 (2015)"),
+    // darf "Teil 2" / "Part 2" NIEMALS gelöscht werden!
     s = s.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|de|eng|en|jap|jpn)(?:[\s._-]+(?:ger|deu|de|eng|en|jap|jpn))?[\s._-]+(?:sub|subs|subbed|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
-    s = s.replace(/AC3\.?CD0*[1-9]/gi, " "); // Spezialfix für "Klasse84AC3.CD01"
-    s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|part|teil|pt|split)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
+    s = s.replace(/AC3\.?CD0*[1-9]/gi, " ");
+    s = s.replace(/(?:^|[\s._\-(])(?:cd|disc|disk|dvd|split)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
+    if (!yearCutoffRes.hadYearCutoff) {
+      s = s.replace(/(?:^|[\s._\-(])(?:part|pt)[\s._-]*0*([1-9]\d?)(?:$|[\s._\-)])/gi, " ");
+    }
     // Nur echte Split-Archiv-Endungen (.001 bis .004 am Ende) entfernen, NIEMALS "007" in "James Bond 007"!
     s = s.replace(/(?:[-_.]|\s)00[1-4]\s*$/gi, " ");
 
-    // Editionen (Extended Cut, Director's Cut, Collector's Edition, DC etc.) & Tech-Junk entfernen
+    // MODUL 5.2: Editionen (Extended Cut, Director's Cut, Collector's Edition, DC etc.) & Tech-Junk entfernen
     s = extractAndStripEditions(s).cleaned;
     s = s.replace(EDITION_CUT_REGEX, " ");
     s = s.replace(TECH_JUNK_REGEX, " ");
-    // Falls durch vorherige Bereinigung oder Schreibweisen wie "Underworld - Cut" / "Underworld (Cut)" / "Blade Runner - The Final Cut" noch ein angehängtes "Cut" / "Edition" oder "- The" übrig blieb:
     s = s.replace(/[\(\[]\s*(?:the\s+)?(?:cut|dc|edition|version|fassung)\s*[\)\]]/gi, " ");
     s = s.replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|dc|edition|version|fassung|redux)\s*$/i, "$1");
     s = s.replace(/\s*[-–:]\s*(?:the|der|die|das)\s*$/i, "");
-    // Alleinstehende 2-Buchstaben-Sprachkürzel (auch "De" / "DE") NUR in Klammern oder ganz am Ende entfernen (NIEMALS "- Der" in "Shrek - Der tollkühne Held" oder "James Bond 007 - Der Morgen Stirbt Nie" anschneiden!)
-    s = s.replace(/[\(\[]\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\s*[\)\]]/g, " ");
-    s = s.replace(/(?:[-_]\s*|\s+)(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\b(?=\s*$)/g, " ");
+    // MODUL 4.3: Strenge Wortgrenzen \b bei Sprachkürzeln (nur in Klammern oder am Wortende mit Trennzeichen, niemals Endungen von "Pines" oder "Fences" abschneiden!)
+    s = s.replace(/[\(\[]\s*\b(?:DE|De|de|EN|en|FR|fr|ES|es|IT|it|TR|RU|JA|KO|DDR|BRD|GER|ITA)\b\s*[\)\]]/g, " ");
+    s = s.replace(/(?:[-_]\s*|\s+)\b(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD|GER|ITA)\b(?=\s*$)/g, " ");
 
-    // Nur echte Katalognummern mit Punkt ("3559. ", "01. ") oder Null-Präfix mit Bindestrich ("01 - ") am Anfang entfernen,
-    // NIEMALS Serientitel wie "7 vs. Wild", "4400 - S2E01", "101 Dalmatiner" oder "6000 Euro"! (Fall 12, 13, 14, 18)
+    // Nur echte Katalognummern mit Punkt ("3559. ", "01. ") oder Null-Präfix mit Bindestrich ("01 - ") am Anfang entfernen
     s = s.replace(/^(?:\d{1,4}\.\s+|0\d\s*[-–]\s+)/, "").replace(/-\d{3}$/, "");
     // Leere oder nur aus Bindestrichen/Satzzeichen bestehende Klammern wie "( - )" restlos entfernen
     s = s.replace(/[\(\[]\s*[-–—/:.,;]*\s*[\)\]]/g, " ");
     s = s.replace(/\s+/g, " ").replace(/^[\s\-–·‧:.,#"=|⎪&]+|[\s\-–·‧:.,#"=|⎪&]+$/g, "");
 
-    // MODUL 2.5: Umlaut-Normalisierung ("schlaegt zurueck" -> "schlägt zurück")
+    // MODUL 4.1: Globale Umlaut-Normalisierung ("Vier Faeuste fuer ein Halleluja" -> "Vier Fäuste für ein Halleluja")
     s = normalizeGermanAsciiUmlauts(s);
 
     // Unmittelbar verdoppelte Titelwörter bereinigen (z. B. "Sliders S05E0Sliders" -> "Sliders")
     s = s.replace(/\b([A-Za-zÄÖÜäöüß]{3,})\s+\1\b/gi, "$1");
 
-    // Unbalancierte Klammern bereinigen (Fall 14)
+    // Unbalancierte Klammern bereinigen
     const openCount  = (s.match(/\(/g) || []).length;
     const closeCount = (s.match(/\)/g) || []).length;
     if (openCount > closeCount) s = s.replace(/\(/g, "");
@@ -1079,7 +1129,8 @@
       ? rawFilePath.split("/").pop()
       : "";
     const rawFileName = String(msg.video?.file_name || msg.document?.file_name || msg.file_name || validFilePath || "").trim();
-    const isArchive = /\.rar$/i.test(rawFileName);
+    // MODUL 2: Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Download-Dateien durchlassen!
+    const isArchive = ARCHIVE_EXTENSIONS.test(rawFileName);
     const isVideo = Boolean(
       msg.video ||
       msg.media_type === "video_file" ||
@@ -1103,9 +1154,6 @@
     const quality     = detectVideoQuality(msg, rawText, rawFileName);
     const entities = extractEntitiesFromExportMsg(msg);
 
-    // Nur .zip/.7z/.tar/.gz blockieren; .rar/.partXX.rar Archive werden als eigene Kategorie/Version ("📦 RAR-Archiv") importiert!
-    if (/\.(zip|7z|tar|gz)$/i.test(rawFileName)) return null;
-
     // MODUL 2.3: Film-Editionen VOR der Bereinigung extrahieren und editionLabel sichern
     const editionInfo = extractAndStripEditions(`${rawText || ""} ${rawFileName || ""}`);
     const editionLabel = editionInfo.editionLabel || null;
@@ -1113,8 +1161,8 @@
     const langInfo = detectLanguages(rawText, rawFileName);
     const languages = langInfo.languages;
     const subtitles = langInfo.subtitles;
-    // MODUL 2.1: Multi-Part-Filme (CD1/CD2 & führende 01/02 vor Jahreszahlen) VOR der Serien-Weiche erkennen!
-    const partInfo = extractPartInfo(rawText, rawFileName);
+    // MODUL 5.1: Multi-Part-Filme (CD1/CD2 & führende 01/02 vor Jahreszahlen) VOR der Serien-Weiche erkennen!
+    let partInfo = extractPartInfo(rawText, rawFileName, false);
     const isBonusClip = BONUS_SPECIAL_REGEX.test(`${rawFileName || ""} ${rawText || ""}`);
 
     // Regel 4: Entferne "Plot:" und "Beschreibung:" direkt vor dem Zeilen-Check (wichtig für "The Cell (2000) Plot: ...")
@@ -1605,6 +1653,21 @@
       year = Number(activeContext.year);
     }
 
+    // MODUL 5.1: Bei Serien ist part_number IMMER 1! (Keine CD-Buttons bei Serien!)
+    if (mediaType === "tv") {
+      partInfo = {
+        isSplit: false,
+        isArchive,
+        isDownloadOnly: isArchive,
+        type: isArchive ? "archive" : "video",
+        isExplicitMultiPartMovie: false,
+        part: 1,
+        partNumber: 1,
+        partType: isArchive ? "ARCHIVE" : null,
+        partLabel: isArchive ? "ARCHIV" : null
+      };
+    }
+
     let rawTitle = seriesTitle || explicitTitle || primarySource;
     if (!seriesTitle && !explicitTitle) {
       const cutoffCheck = applyHardYearCutoff(rawTitle);
@@ -1618,25 +1681,35 @@
         rawTitle = matchedSource.slice(0, yearMatch.index).trim();
       }
     }
+
+    // MODUL 4 (Zweit-Titel in Klammern): z.B. "Little Italy (Ein Rezept für die Liebe)" oder "Freunde mit gewissen Vorzügen (Friends With Benefits)"
+    const rawSplitCheck = splitParenthesizedAltTitle(rawTitle);
+    const fileSplitCheck = !isGenericFile && fileName ? splitParenthesizedAltTitle(fileYearCut.hadYearCutoff ? fileYearCut.titleBeforeYear : fileName) : { primaryTitle: "", altTitle: null };
+    const line1SplitCheck = line1 ? splitParenthesizedAltTitle(line1YearCut.hadYearCutoff ? line1YearCut.titleBeforeYear : line1) : { primaryTitle: "", altTitle: null };
+    if (rawSplitCheck.altTitle) {
+      rawTitle = rawSplitCheck.primaryTitle;
+    }
+    const resolvedAltTitle = originalTitle || rawSplitCheck.altTitle || fileSplitCheck.altTitle || line1SplitCheck.altTitle || null;
+
     if (year) {
-      const strippedYearTitle = cleanMediaTitle(rawTitle.replace(new RegExp(`\\b${year}\\b`, "g"), " "));
+      const strippedYearTitle = cleanMediaTitle(rawTitle.replace(new RegExp(`\\b${year}\\b`, "g"), " "), { hadYearCutoff: true });
       if (strippedYearTitle.length >= 2) rawTitle = strippedYearTitle;
     }
-    rawTitle = rawTitle.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]?/gi, "");
+    rawTitle = rawTitle.replace(/[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\b\s+)?(?:19[2-9]\d|20[0-2]\d)\s*[\)\]]?/gi, "");
     rawTitle = rawTitle.replace(/\s*(?:Plot|Beschreibung)\s*:.*$/i, "");
 
     // MODUL 3.3 Dual-Source-Fallback Vorbereitung: Bereinige sowohl Text-Titel als auch Dateinamen-Titel separat
     const cleanTitleFromFile = !isGenericFile && fileName
-      ? cleanMediaTitle((fileYearCut.hadYearCutoff ? fileYearCut.titleBeforeYear : fileName).replace(year ? new RegExp(`\\b${year}\\b`, "g") : /$^/, " "))
+      ? cleanMediaTitle((fileSplitCheck.primaryTitle || (fileYearCut.hadYearCutoff ? fileYearCut.titleBeforeYear : fileName)).replace(year ? new RegExp(`\\b${year}\\b`, "g") : /$^/, " "), { hadYearCutoff: fileYearCut.hadYearCutoff })
       : "";
     const cleanTitleFromText = line1
-      ? cleanMediaTitle((line1YearCut.hadYearCutoff ? line1YearCut.titleBeforeYear : line1).replace(year ? new RegExp(`\\b${year}\\b`, "g") : /$^/, " "))
+      ? cleanMediaTitle((line1SplitCheck.primaryTitle || (line1YearCut.hadYearCutoff ? line1YearCut.titleBeforeYear : line1)).replace(year ? new RegExp(`\\b${year}\\b`, "g") : /$^/, " "), { hadYearCutoff: line1YearCut.hadYearCutoff })
       : "";
 
-    let cleanTitle = cleanMediaTitle(rawTitle) || cleanTitleFromFile || cleanTitleFromText;
+    let cleanTitle = cleanMediaTitle(rawTitle, { hadYearCutoff: Boolean(year) }) || cleanTitleFromFile || cleanTitleFromText;
     if (!cleanTitle) return null;
 
-    // MODUL 2.5: Kein 40/50-Zeichen-Abschneider mitten im Wort ("Star Wars Episode V - Das Imperium schlägt zurück"-Fix)!
+    // MODUL 5.3: Kein 40/50-Zeichen-Abschneider mitten im Wort ("Star Wars Episode V - Das Imperium schlägt zurück"-Fix)!
     // Limit auf 120 Zeichen erhöht; überlange Beschreibungstexte ("Cocaine Bear"-Schutz) werden über > 15 Wörter oder > 120 Zeichen erkannt!
     if (isLikelyPlotDescription(cleanTitle)) {
       if (!extractedContextOverview) extractedContextOverview = cleanTitle;
@@ -1658,14 +1731,16 @@
       msgId: currentMsgId > 0 ? currentMsgId : null,
       message_id: currentMsgId > 0 ? currentMsgId : null,
       mediaType,
+      type: isArchive ? "archive" : (mediaType === "tv" ? "series" : "movie"),
       isArchive,
+      isDownloadOnly: Boolean(isArchive),
       isBonus: isBonusClip,
       tmdbId,
       imdbId,
       title: cleanTitle,
       titleFromText: cleanTitleFromText && !isLikelyPlotDescription(cleanTitleFromText) ? cleanTitleFromText : "",
       titleFromFileName: cleanTitleFromFile && !isLikelyPlotDescription(cleanTitleFromFile) ? cleanTitleFromFile : "",
-      originalTitle,
+      originalTitle: resolvedAltTitle ? cleanMediaTitle(resolvedAltTitle) || resolvedAltTitle : null,
       year,
       season,
       episode,
@@ -1679,8 +1754,8 @@
       subtitles,
       editions: editionInfo.editions,
       editionLabel,
-      part: partInfo.part || 1,
-      partNumber: partInfo.part || 1,
+      part: mediaType === "tv" ? 1 : (partInfo.part || 1),
+      partNumber: mediaType === "tv" ? 1 : (partInfo.partNumber || partInfo.part || 1),
       partInfo,
       durationSec,
       sourceUsed,
@@ -1891,26 +1966,26 @@
     }
 
     const combinedRaw = `${raw} ${rawCaptionText || ""}`.trim();
-    const isRarArchive = /\.rar$/i.test(raw) || /\.part\d+\.rar\b/i.test(combinedRaw);
+    const isArchiveFile = ARCHIVE_EXTENSIONS.test(raw) || /\.part\d+\.(?:rar|zip|7z)\b/i.test(combinedRaw);
     const extractedTagsList = extractMediaReleaseTags(rawCaptionText || raw, raw, durationSec);
     const langInfo = detectLanguages(rawCaptionText, raw);
     const languages = langInfo.languages;
     const subtitles = langInfo.subtitles;
     const editionInfo = extractAndStripEditions(combinedRaw);
-    const partInfo = extractPartInfo(rawCaptionText, raw, durationSec);
+    const partInfo = extractPartInfo(rawCaptionText, raw, false);
     const sizeInTextMatch = combinedRaw.match(/\b(\d{1,4}(?:[.,]\d{1,2})?\s*(?:GB|GiB|MB|MiB))\b/i);
     const parsedFileSize = sizeInTextMatch ? parseHumanFileSizeToBytes(sizeInTextMatch[1]) : null;
 
     // 1. Mehrfache Dateiendungen entfernen & Text normalisieren (Regel 1 & 4)
     const normalizedRaw = normalizeText(raw);
-    const withoutExt = normalizedRaw.replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|json))+$/i, "");
+    const withoutExt = normalizedRaw.replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
 
     // 2. Echte Video-Auflösung via detectVideoQuality (Pixelmaße width/height zuerst, danach Text/Dateiname, niemals blind "1080p" raten!)
     const quality = detectVideoQuality(mediaDimensions || {}, rawCaptionText, raw);
 
-    // 3. Codec extrahieren (x264, x265/HEVC, AV1 oder RAR für Archive)
-    let codec = isRarArchive ? "RAR" : "x264";
-    const codecMatch = !isRarArchive ? combinedRaw.match(/\b(x265|h\.?265|hevc|x264|h\.?264|avc|av1|xvid)\b/i) : null;
+    // 3. Codec extrahieren (x264, x265/HEVC, AV1 oder ARCHIVE für Archive)
+    let codec = isArchiveFile ? "RAR" : "x264";
+    const codecMatch = !isArchiveFile ? combinedRaw.match(/\b(x265|h\.?265|hevc|x264|h\.?264|avc|av1|xvid)\b/i) : null;
     if (codecMatch) {
       const cRaw = codecMatch[1].toLowerCase().replace(/\./g, "");
       if (cRaw === "x265" || cRaw === "h265" || cRaw === "hevc") codec = "x265";
@@ -1919,7 +1994,7 @@
       else codec = codecMatch[1];
     }
 
-    // 4. Part extrahieren (CD1, CD2, Disc 1, DVD 2, Part 1, -001/-002, RAR-PART1..20)
+    // 4. Part extrahieren (CD1, CD2, Disc 1, DVD 2, Part 1, -001/-002, ARCHIV-PART1..20)
     let part = partInfo ? partInfo.partLabel : null;
 
     // 5. Nutze Gold-Master parseTelegramMessage Logik für Serien/Episoden, Cross-Check & Datums-Schutz
@@ -1929,11 +2004,13 @@
       duration_seconds: durationSec,
       width: mediaDimensions?.width || mediaDimensions?.video?.width || null,
       height: mediaDimensions?.height || mediaDimensions?.video?.height || null,
-      media_type: isRarArchive ? "document" : "video_file"
+      media_type: isArchiveFile ? "document" : "video_file"
     }, preContext || {});
 
     if (gmParsed && gmParsed.title && gmParsed.title !== "Unbekannt") {
-      const resolvedPart = (gmParsed.partInfo && gmParsed.partInfo.partLabel) || part || null;
+      const isTvSeries = gmParsed.mediaType === "tv";
+      const isArc = Boolean(gmParsed.isArchive || isArchiveFile);
+      const resolvedPart = isTvSeries ? null : ((gmParsed.partInfo && gmParsed.partInfo.partLabel) || part || null);
       return {
         raw,
         cleanTitle: gmParsed.title,
@@ -1941,8 +2018,10 @@
         titleFromFileName: gmParsed.titleFromFileName || "",
         originalTitle: gmParsed.originalTitle || null,
         year: gmParsed.year || null,
-        isSeries: gmParsed.mediaType === "tv",
-        isArchive: Boolean(gmParsed.isArchive || isRarArchive),
+        isSeries: isTvSeries,
+        type: isArc ? "archive" : (isTvSeries ? "series" : "movie"),
+        isArchive: isArc,
+        isDownloadOnly: isArc,
         isBonus: Boolean(gmParsed.isBonus),
         season: gmParsed.season !== undefined && gmParsed.season !== null ? gmParsed.season : null,
         episode: gmParsed.episode || null,
@@ -1953,9 +2032,9 @@
         quality: gmParsed.quality !== undefined ? gmParsed.quality : quality,
         width: gmParsed.width || null,
         height: gmParsed.height || null,
-        codec: gmParsed.isArchive || isRarArchive ? "RAR" : codec,
+        codec: isArc ? "RAR" : codec,
         part: resolvedPart,
-        partNumber: gmParsed.partNumber || gmParsed.partInfo?.part || partInfo?.part || 1,
+        partNumber: isTvSeries ? 1 : (gmParsed.partNumber || gmParsed.partInfo?.part || partInfo?.part || 1),
         partInfo: gmParsed.partInfo || partInfo || null,
         editions: gmParsed.editions || editionInfo.editions || [],
         editionLabel: gmParsed.editionLabel || editionInfo.editionLabel || null,
@@ -2014,16 +2093,20 @@
 
     let titleCandidate = yearCutoffRes.hadYearCutoff ? yearCutoffRes.titleBeforeYear : withoutExt.slice(0, cutIndex);
     if (!titleCandidate.trim()) titleCandidate = withoutExt;
-    const cleanTitle = cleanMediaTitle(titleCandidate) || cleanMediaTitle(withoutExt) || "Unbekannt";
+    const fallbackSplit = splitParenthesizedAltTitle(titleCandidate);
+    const cleanTitle = cleanMediaTitle(fallbackSplit.primaryTitle || titleCandidate, { hadYearCutoff: yearCutoffRes.hadYearCutoff }) || cleanMediaTitle(withoutExt) || "Unbekannt";
 
     return {
       raw,
       cleanTitle,
       titleFromText: "",
       titleFromFileName: cleanTitle,
-      originalTitle: null,
+      originalTitle: fallbackSplit.altTitle ? cleanMediaTitle(fallbackSplit.altTitle) : null,
       year,
       isSeries,
+      type: isArchiveFile ? "archive" : (isSeries ? "series" : "movie"),
+      isArchive: isArchiveFile,
+      isDownloadOnly: isArchiveFile,
       isBonus: isBonusFallback,
       season,
       episode,
@@ -2031,8 +2114,8 @@
       episodeTitle: "",
       quality,
       codec,
-      part,
-      partNumber: partInfo?.part || 1,
+      part: isSeries ? null : part,
+      partNumber: isSeries ? 1 : (partInfo?.part || 1),
       partInfo: partInfo || null,
       editions: editionInfo.editions || [],
       editionLabel: editionInfo.editionLabel || null,

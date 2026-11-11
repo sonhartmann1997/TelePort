@@ -151,9 +151,33 @@
 
     const titleDe = String(candidate.title || candidate.name || "").trim();
     const titleOrig = String(candidate.original_title || candidate.original_name || "").trim();
-    const simDe = computeStringSimilarityScore(queryNorm, normalizeTitleForConfidence(titleDe));
-    const simOrig = computeStringSimilarityScore(queryNorm, normalizeTitleForConfidence(titleOrig));
+    const normDe = normalizeTitleForConfidence(titleDe);
+    const normOrig = normalizeTitleForConfidence(titleOrig);
+    const simDe = computeStringSimilarityScore(queryNorm, normDe);
+    const simOrig = computeStringSimilarityScore(queryNorm, normOrig);
     let score = Math.max(simDe, simOrig);
+
+    // MODUL 6.2: 100%-Titel-Match & Untertitel-Match (z.B. "Alien 2 - Die Rückkehr" <-> "Aliens - Die Rückkehr")
+    const extractSubtitleAfterHyphen = (str) => {
+      const parts = String(str || "").split(/\s*[-–—:]\s*/);
+      return parts.length >= 2 ? normalizeTitleForConfidence(parts.slice(1).join(" ")) : "";
+    };
+    const querySubNorm = extractSubtitleAfterHyphen(queryRaw);
+    const candSubDeNorm = extractSubtitleAfterHyphen(titleDe);
+    const candSubOrigNorm = extractSubtitleAfterHyphen(titleOrig);
+    const isExactSubtitleMatch = Boolean(
+      querySubNorm && querySubNorm.length >= 4 && (
+        querySubNorm === candSubDeNorm ||
+        querySubNorm === candSubOrigNorm ||
+        querySubNorm === normDe ||
+        querySubNorm === normOrig
+      )
+    );
+    const isExactFullTitleMatch = Boolean(queryNorm && (queryNorm === normDe || queryNorm === normOrig));
+    const isExactTitleOrSubtitleMatch = isExactFullTitleMatch || isExactSubtitleMatch;
+    if (isExactTitleOrSubtitleMatch) {
+      score = Math.max(score, 96);
+    }
 
     // Unicode-sicherer Vergleich (damit CJK-/japanische Titel wie "夢で見たあの子のために" nicht zu Leerstrings/Ziffern gestrippt werden!)
     const rawLowerA = queryRaw.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
@@ -175,7 +199,6 @@
     if (parsed.year && candYear) {
       const diff = Math.abs(Number(parsed.year) - candYear);
       // Spezial-Schutz für Serien-Episoden mit Ausstrahlungsjahr im Dateinamen (z. B. "Maxe Baumann · 03 Max auf Reisen (DDR 1978)" bis "(DDR 1982)" bei Serienstart 1976):
-      // Wenn es explizit eine Serie ist, der Serientitel übereinstimmt (score >= 88) und parsed.year >= candYear (innerhalb von 20 Jahren Laufzeit), ist es KEIN Jahres-Konflikt!
       const isOngoingSeriesEp = Boolean(
         parsed.isSeries &&
         parsed.hasExplicitEpisodePattern &&
@@ -189,12 +212,14 @@
       } else if (diff === 0) {
         score += 10;
       } else if (diff === 1) {
+        score += 6;
+      } else if (diff <= 3 && isExactTitleOrSubtitleMatch) {
+        // MODUL 6.2: Bei 100% Titel- oder Untertitel-Übereinstimmung bis zu ±3 Jahre Produktions-/Release-Toleranz gewähren!
         score += 4;
       } else if (diff === 2) {
         score -= 5;
       } else {
-        // HARTE SPERRE GEGEN FALSCHE JAHRZEHNTE (Math.abs(tmdbYear - parsed.year) > 2, z.B. "Rotkäppchen (1954)" vs. "Die Rotkäppchen-Verschwörung (2005)"):
-        // Ein Treffer mit > 2 Jahren Abweichung darf NIEMALS automatisch als "ok" (>= 74) durchgewunken oder hoch bewertet werden!
+        // HARTE SPERRE GEGEN FALSCHE JAHRZEHNTE:
         score = Math.min(score - 35, 48);
       }
     } else if (!parsed.year) {
@@ -387,11 +412,23 @@
       : "";
     let hitsWithArticleTotal = 0;
     if (searchTitle && searchTitle !== "Unbekannt" && getBestPrimaryConf() < earlyStopConf) {
-      const hitsWithYear = parsed.year
+      let hitsWithYear = parsed.year
         ? await runTmdbQuery(primaryType, searchTitle, parsed.year, searchTitle)
         : 0;
       hitsWithArticleTotal += hitsWithYear;
-      // SOFORT-STOPP: Wenn Suche mit Jahr bereits einen Treffer >= earlyStopConf ohne Jahreskonflikt geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
+      // MODUL 6.2: Prüfe vor einer jahreslosen Suche zuerst year + 1 und year - 1 (z.B. "300 (2006)" -> TMDb Release 2007!)
+      if (parsed.year && (hitsWithYear === 0 || getBestPrimaryConf() < earlyStopConf)) {
+        const yNum = Number(parsed.year);
+        const hitsPlus1 = await runTmdbQuery(primaryType, searchTitle, yNum + 1, searchTitle);
+        hitsWithArticleTotal += hitsPlus1;
+        hitsWithYear += hitsPlus1;
+        if (getBestPrimaryConf() < earlyStopConf) {
+          const hitsMinus1 = await runTmdbQuery(primaryType, searchTitle, yNum - 1, searchTitle);
+          hitsWithArticleTotal += hitsMinus1;
+          hitsWithYear += hitsMinus1;
+        }
+      }
+      // SOFORT-STOPP: Wenn Suche mit Jahr (±1) bereits einen Treffer >= earlyStopConf ohne Jahreskonflikt geliefert hat, KEINE Zweitsuche ohne Jahr abfeuern!
       if ((getBestPrimaryConf() < earlyStopConf || hasBestYearConflict()) && (!parsed.year || hitsWithYear === 0)) {
         hitsWithArticleTotal += await runTmdbQuery(primaryType, searchTitle, null, searchTitle);
       }
@@ -471,22 +508,38 @@
           .replace(EDITION_CUT_REGEX, " ")
           .replace(/^(.{2,}?)\s+(?:[-–:]\s*)?(?:the\s+)?(?:cut|edition|version|fassung|redux|special|extended|uncut|unrated)\s*$/i, "$1")
       );
-      const rawHyphenShort = rawSearchTitle.includes("-") || rawSearchTitle.includes("–") || rawSearchTitle.includes("—") || rawSearchTitle.includes(":")
-        ? rawSearchTitle.split(/\s*[:–—\-]\s*/)[0].trim()
-        : "";
-      const splitMain = (strippedCutVariant || searchTitle).split(/\s*[:–—\-]\s*/)[0].trim();
+      const rawHyphenParts = (rawSearchTitle.includes("-") || rawSearchTitle.includes("–") || rawSearchTitle.includes("—") || rawSearchTitle.includes(":"))
+        ? rawSearchTitle.split(/\s*[:–—\-]\s*/).map(s => s.trim()).filter(Boolean)
+        : [];
+      const rawHyphenShort = rawHyphenParts[0] || "";
+      // MODUL 6.1 (Rechte-Bindestrich-Suche): Teil RECHTS vom ersten Bindestrich (z.B. "Michel aus Lönneberga - Michel bringt die Welt in Ordnung" -> "Michel bringt die Welt in Ordnung")
+      const rawHyphenRight = rawHyphenParts.length >= 2 ? rawHyphenParts.slice(1).join(" - ").trim() : "";
+      const rawHyphenFirstRight = rawHyphenParts.length >= 2 ? rawHyphenParts[1].trim() : "";
+      const searchHyphenParts = (strippedCutVariant || searchTitle).split(/\s*[:–—\-]\s*/).map(s => s.trim()).filter(Boolean);
+      const splitMain = searchHyphenParts[0] || "";
+      const splitRight = searchHyphenParts.length >= 2 ? searchHyphenParts.slice(1).join(" - ").trim() : "";
       const umlautSplitMain = (umlautVariant !== searchTitle && (umlautVariant.includes("-") || umlautVariant.includes("–") || umlautVariant.includes(":")))
         ? umlautVariant.split(/\s*[:–—\-]\s*/)[0].trim()
         : "";
       const words = (strippedCutVariant || searchTitle).split(/\s+/).filter(Boolean);
       const lastWordIsSequelNum = /^[2-9]$/.test(words[words.length - 1] || "");
       const shorterCandidates = [];
-      // 1. Untertitel-Cutter ("Silk Road - Gebieter des Darknets" -> "Silk Road") hat höchste Priorität in Stufe 4!
+      // 1. Linker Teil vor dem Bindestrich ("Silk Road - Gebieter des Darknets" -> "Silk Road")
       if (rawHyphenShort && rawHyphenShort.length >= 2 && rawHyphenShort.toLowerCase() !== rawSearchTitle.toLowerCase()) {
         shorterCandidates.push(rawHyphenShort);
       }
       if (splitMain && splitMain.length >= 2 && splitMain.toLowerCase() !== searchTitle.toLowerCase() && !shorterCandidates.includes(splitMain)) {
         shorterCandidates.push(splitMain);
+      }
+      // 2. MODUL 6.1: Rechter Teil nach dem Bindestrich ("Michel aus Lönneberga - Michel bringt die Welt in Ordnung" -> "Michel bringt die Welt in Ordnung")
+      if (splitRight && splitRight.length >= 3 && !/^(?:teil|part|cd|disc|staffel|folge|episode)\s*\d+$/i.test(splitRight) && !shorterCandidates.includes(splitRight)) {
+        shorterCandidates.push(splitRight);
+      }
+      if (rawHyphenRight && rawHyphenRight.length >= 3 && !/^(?:teil|part|cd|disc|staffel|folge|episode)\s*\d+$/i.test(rawHyphenRight) && !shorterCandidates.includes(rawHyphenRight)) {
+        shorterCandidates.push(rawHyphenRight);
+      }
+      if (rawHyphenFirstRight && rawHyphenFirstRight.length >= 3 && !/^(?:teil|part|cd|disc|staffel|folge|episode)\s*\d+$/i.test(rawHyphenFirstRight) && !shorterCandidates.includes(rawHyphenFirstRight)) {
+        shorterCandidates.push(rawHyphenFirstRight);
       }
       if (umlautSplitMain && umlautSplitMain.length >= 2 && !shorterCandidates.includes(umlautSplitMain)) {
         shorterCandidates.push(umlautSplitMain);
@@ -515,7 +568,7 @@
           shorterCandidates.push(firstThree);
         }
       }
-      const cappedShorterCandidates = isTurboMode ? shorterCandidates.slice(0, 2) : shorterCandidates;
+      const cappedShorterCandidates = isTurboMode ? shorterCandidates.slice(0, 4) : shorterCandidates;
       for (const shorterTitle of cappedShorterCandidates) {
         if (isTurboMode && !hasSubrequestBudget(16)) break;
         const beforeLen = rawPool.length;
@@ -524,7 +577,7 @@
           const hasYearMatch = rawPool.slice(beforeLen).some(it => {
             const rel = String(it.release_date || it.first_air_date || "");
             const y = rel ? parseInt(rel.slice(0, 4), 10) : null;
-            return y && Math.abs(Number(parsed.year) - y) <= 2;
+            return y && Math.abs(Number(parsed.year) - y) <= 3;
           });
           if (!hasYearMatch && (!isTurboMode || rawPool.length === beforeLen)) {
             await runTmdbQuery(primaryType, shorterTitle, null, shorterTitle);
@@ -535,7 +588,11 @@
         }
         let bestShortConf = 0;
         for (let k = beforeLen; k < rawPool.length; k++) {
-          const c = computeTmdbMatchConfidence(parsed, rawPool[k], rawPool[k]._typeCode);
+          const candItem = rawPool[k];
+          const confParsed = candItem._baseTitleForConf
+            ? { ...parsed, cleanTitle: candItem._baseTitleForConf }
+            : parsed;
+          const c = computeTmdbMatchConfidence(confParsed, candItem, candItem._typeCode);
           if (c > bestShortConf) bestShortConf = c;
         }
         if (bestShortConf >= (isTurboMode ? 72 : 78) && !hasBestYearConflict()) break;
@@ -656,6 +713,8 @@
       .toLowerCase()
       .trim();
     const normTargetMovieTitle = normalizeCompareString(targetMovieTitleLow);
+    const targetSubtitleParts = targetMovieTitleLow.split(/\s*[-–—:]\s*/);
+    const normTargetSubtitle = targetSubtitleParts.length >= 2 ? normalizeCompareString(targetSubtitleParts.slice(1).join(" ")) : "";
 
     const computeMoviePickerScore = (movie) => {
       let mScore = 0;
@@ -663,25 +722,41 @@
       const tmdbOrig  = String(movie.original_title || movie.original_name || "").toLowerCase().trim();
       const normTmdbT = normalizeCompareString(tmdbTitle);
       const normTmdbO = normalizeCompareString(tmdbOrig);
+      const tmdbSubPartsDe = tmdbTitle.split(/\s*[-–—:]\s*/);
+      const tmdbSubPartsOrig = tmdbOrig.split(/\s*[-–—:]\s*/);
+      const normTmdbSubDe = tmdbSubPartsDe.length >= 2 ? normalizeCompareString(tmdbSubPartsDe.slice(1).join(" ")) : "";
+      const normTmdbSubOrig = tmdbSubPartsOrig.length >= 2 ? normalizeCompareString(tmdbSubPartsOrig.slice(1).join(" ")) : "";
       const relStr = String(movie.release_date || movie.first_air_date || "");
       const releaseYear = relStr ? parseInt(relStr.slice(0, 4), 10) : null;
-
-      if (parsed?.year && releaseYear) {
-        const diff = Math.abs(Number(parsed.year) - releaseYear);
-        if (diff === 0) mScore += 40;
-        else if (diff === 1) mScore += 15;
-        else mScore -= diff * 25;
-      }
 
       const isExactTitleMatch =
         tmdbTitle === targetMovieTitleLow ||
         tmdbOrig === targetMovieTitleLow ||
         (normTargetMovieTitle && (normTmdbT === normTargetMovieTitle || normTmdbO === normTargetMovieTitle));
-      const isYearWithinOne = Boolean(!parsed?.year || (releaseYear && Math.abs(Number(parsed.year) - releaseYear) <= 1));
+      const isExactSubMatch = Boolean(
+        normTargetSubtitle && normTargetSubtitle.length >= 4 && (
+          normTargetSubtitle === normTmdbSubDe ||
+          normTargetSubtitle === normTmdbSubOrig ||
+          normTargetSubtitle === normTmdbT ||
+          normTargetSubtitle === normTmdbO
+        )
+      );
+      const isExactTitleOrSub = isExactTitleMatch || isExactSubMatch;
 
-      if (isExactTitleMatch) {
-        // MODUL 3.1 ("The Gentlemen"-Fix): Exakter Titel + passendes Release-Jahr (±1 Jahr) erhält +150 Punkte Bonus!
-        mScore += isYearWithinOne ? 150 : 50;
+      if (parsed?.year && releaseYear) {
+        const diff = Math.abs(Number(parsed.year) - releaseYear);
+        if (diff === 0) mScore += 40;
+        else if (diff === 1) mScore += 20;
+        else if (diff <= 3 && isExactTitleOrSub) mScore += 10;
+        else mScore -= diff * 25;
+      }
+
+      // MODUL 6.2: Stimmt der TMDb-Titel zu 100% mit dem Such-Titel ODER dem Untertitel (Teil nach dem Bindestrich) überein,
+      // gib ihm +150 Punkte Bonus und erlaube eine Jahres-Toleranz von ±3 Jahren!
+      const isYearWithinThree = Boolean(!parsed?.year || (releaseYear && Math.abs(Number(parsed.year) - releaseYear) <= 3));
+
+      if (isExactTitleOrSub) {
+        mScore += isYearWithinThree ? 150 : 50;
       } else if (tmdbTitle.startsWith(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.startsWith(normTargetMovieTitle))) {
         mScore += 30;
       } else if (tmdbTitle.includes(targetMovieTitleLow) || (normTargetMovieTitle && normTmdbT.includes(normTargetMovieTitle))) {
@@ -947,25 +1022,16 @@
       }
       const isNeighborEnrichedMovieTitle = Boolean(
         !parsed.isSeries &&
-        (rawEntry.cleanTitle || rawEntry.title) &&
-        (
-          rawEntry.neighborEnriched ||
-          rawEntry.contextOverview ||
-          (
-            parsed.cleanTitle &&
-            String(rawEntry.cleanTitle || rawEntry.title).toLowerCase().includes(String(parsed.cleanTitle).toLowerCase()) &&
-            String(rawEntry.cleanTitle || rawEntry.title).trim().length > String(parsed.cleanTitle).trim().length
-          )
-        )
+        rawEntry.neighborEnriched &&
+        (rawEntry.cleanTitle || rawEntry.title)
       );
       if (
         rawEntry.manualTitle ||
         isNeighborEnrichedMovieTitle ||
-        ((!parsed.cleanTitle || parsed.cleanTitle === "Unbekannt") && (rawEntry.cleanTitle || rawEntry.title)) ||
-        (parsed.isSeries && rawEntry.cleanTitle && String(rawEntry.cleanTitle).trim().length >= 2 && String(rawEntry.cleanTitle).trim().length < String(parsed.cleanTitle || "").trim().length)
+        (!parsed.cleanTitle || parsed.cleanTitle === "Unbekannt") && (rawEntry.cleanTitle || rawEntry.title)
       ) {
         const rawProvided = String(rawEntry.manualTitle || rawEntry.cleanTitle || rawEntry.title).trim();
-        // MODUL 2.5 ("Cocaine Bear"- & "Star Wars Episode V"-Fix):
+        // MODUL 5.3 ("Cocaine Bear"- & "Star Wars Episode V"-Fix):
         // Einzeilige Titel niemals bei 40/50 Zeichen abschneiden (Limit: 120 Zeichen / <= 15 Wörter)!
         const isPlot = typeof isLikelyPlotDescription === "function"
           ? isLikelyPlotDescription(rawProvided)
@@ -973,7 +1039,7 @@
         if (!rawEntry.manualTitle && isPlot) {
           if (!parsed.contextOverview) parsed.contextOverview = rawProvided;
         } else {
-          const cleanedCandidate = cleanMediaTitle(rawProvided);
+          const cleanedCandidate = cleanMediaTitle(rawProvided, { hadYearCutoff: Boolean(parsed.year || rawEntry.year) });
           if (cleanedCandidate && cleanedCandidate !== "Unbekannt") {
             parsed.cleanTitle = cleanedCandidate;
           }
@@ -1547,31 +1613,56 @@
       const tmdbYearNum = rawYear && /^\d{4}$/.test(rawYear) ? parseInt(rawYear, 10) : null;
       const yearDiff = (parsed.year && tmdbYearNum) ? Math.abs(parsed.year - tmdbYearNum) : 0;
       const isOngoingSeriesEpisodeYear = Boolean(
+        parsed.isSeries &&
         parsed.year &&
         tmdbYearNum &&
         Number(parsed.year) >= tmdbYearNum &&
         (Number(parsed.year) - tmdbYearNum) <= 20 &&
         bestConfidence >= 80
       );
+      const tmdbTitlesCombined = normalizeTitleForConfidence(`${seriesDetails.title || ""} ${seriesDetails.originalTitle || seriesDetails.original_name || ""}`);
+      const queryTitleNorm = normalizeTitleForConfidence(parsed.cleanTitle || "");
+      const isExactSeriesTitleMatch = Boolean(
+        queryTitleNorm && (
+          normalizeTitleForConfidence(seriesDetails.title || "") === queryTitleNorm ||
+          normalizeTitleForConfidence(seriesDetails.originalTitle || seriesDetails.original_name || "") === queryTitleNorm
+        )
+      );
+      const maxAllowedSeriesYearDiff = isExactSeriesTitleMatch ? 3 : 2;
       const trailingSeqMatch = String(parsed.cleanTitle || "").match(/\b([2-9])\s*$/);
       const seqNum = trailingSeqMatch ? trailingSeqMatch[1] : null;
-      const tmdbTitlesCombined = normalizeTitleForConfidence(`${seriesDetails.title || ""} ${seriesDetails.originalTitle || seriesDetails.original_name || ""}`);
       const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && yearDiff >= 1 && bestConfidence < 88);
-      // "Little Britain" Staffel 4 Fix: Prüfe auch, ob die geforderte Staffel höher ist als die Gesamtzahl der Staffeln des TMDb-Treffers (z.B. Staffel 4 bei "Little Britain USA" mit nur 1 Staffel)
+      // "Little Britain" Staffel 4 & "The Walking Dead" S01E08 Fix:
+      // Prüfe sowohl die Gesamtzahl der Staffeln als auch die Episodenanzahl der gewählten Staffel gegen TMDb!
       const maxTmdbSeasons = Number(
         seriesDetails.numberOfSeasons ||
         seriesDetails.number_of_seasons ||
         (Array.isArray(seriesDetails.seasons) ? seriesDetails.seasons.filter(s => Number(s?.season_number) > 0).length : 0) ||
         0
       );
-      const seasonOverflowConflict = Boolean(!explicitTmdbId && maxTmdbSeasons > 0 && seasonNum > maxTmdbSeasons && Number(seriesDetails.id) < 8000000);
-      // Harte Sperre: Wenn parsed.year angegeben ist und mehr als 2 Jahre abweicht (yearDiff > 2) oder Staffel-Konflikt vorliegt, immer als Konflikt markieren!
-      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch || seasonOverflowConflict));
+      const officialSeasonEpCount = Number(
+        seasonData?.episodes?.length ||
+        seasonData?.seasonEpisodeCount ||
+        (Array.isArray(seriesDetails.seasons) ? seriesDetails.seasons.find(s => Number(s?.season_number) === Number(seasonNum))?.episode_count : 0) ||
+        0
+      );
+      const episodeExceedsOfficialSeason = Boolean(
+        !explicitTmdbId &&
+        !isBonusClip &&
+        officialSeasonEpCount > 0 &&
+        epNum > officialSeasonEpCount &&
+        Number(seriesDetails.id) < 8000000
+      );
+      const seasonOverflowConflict = Boolean(
+        (!explicitTmdbId && maxTmdbSeasons > 0 && seasonNum > maxTmdbSeasons && Number(seriesDetails.id) < 8000000) ||
+        episodeExceedsOfficialSeason
+      );
+      const contextError = Boolean(!explicitTmdbId && !isOngoingSeriesEpisodeYear && (yearDiff > maxAllowedSeriesYearDiff || (yearDiff >= maxAllowedSeriesYearDiff && bestConfidence < 88) || sequelMismatch || seasonOverflowConflict));
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const reviewReasonCode = contextError
         ? (seasonOverflowConflict
             ? "SEASON_CONFLICT"
-            : (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88))
+            : (yearDiff > maxAllowedSeriesYearDiff || (yearDiff >= maxAllowedSeriesYearDiff && bestConfidence < 88))
               ? "YEAR_CONFLICT"
               : sequelMismatch
                 ? "SEQUEL_CONFLICT"
@@ -1579,8 +1670,10 @@
         : (isUncertain ? "PARSER_AMBIGUITY" : null);
       const errorReason = contextError
         ? (seasonOverflowConflict
-            ? `Staffel-Konflikt: Datei verlangt Staffel ${seasonNum} von "${parsed.cleanTitle}", aber TMDb-Treffer "${seriesDetails.title}" (${tmdbYearNum || "?"}) hat nur ${maxTmdbSeasons} Staffel(n). Bitte im Konflikt-Tab die richtige TMDb-ID zuweisen!`
-            : yearDiff > 2
+            ? (episodeExceedsOfficialSeason
+                ? `Staffel-/Episoden-Konflikt: Datei nennt S${String(seasonNum).padStart(2, "0")}E${String(epNum).padStart(2, "0")} von "${parsed.cleanTitle}", aber Staffel ${seasonNum} von "${seriesDetails.title}" hat auf TMDb nur ${officialSeasonEpCount} Folge(n).`
+                : `Staffel-Konflikt: Datei verlangt Staffel ${seasonNum} von "${parsed.cleanTitle}", aber TMDb-Treffer "${seriesDetails.title}" (${tmdbYearNum || "?"}) hat nur ${maxTmdbSeasons} Staffel(n). Bitte im Konflikt-Tab die richtige TMDb-ID zuweisen!`)
+            : yearDiff > maxAllowedSeriesYearDiff
               ? `Jahres-Konflikt: Datei/Post nennt Jahr ${parsed.year}, aber TMDb-Treffer "${seriesDetails.title}" ist von ${tmdbYearNum || "?"} (${yearDiff} Jahre Abweichung).`
               : sequelMismatch
                 ? `Fortsetzungs-/Teil-Konflikt: Dateiname nennt "${parsed.cleanTitle}" (Teil ${seqNum}), weicht aber vom TMDb-Titel "${seriesDetails.title}" (${tmdbYearNum || "?"}) ab.`
@@ -1778,20 +1871,43 @@
       const trailingSeqMatch = String(parsed.cleanTitle || "").match(/\b([2-9])\s*$/);
       const seqNum = trailingSeqMatch ? trailingSeqMatch[1] : null;
       const tmdbTitlesCombined = normalizeTitleForConfidence(`${movieDetails.title || ""} ${movieDetails.originalTitle || movieDetails.original_title || ""}`);
-      const sequelMismatch = Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && !(seqNum === "7" && tmdbTitlesCombined.includes("3d")) && yearDiff >= 1 && bestConfidence < 88);
-      // Harte Sperre gegen falsche Jahrzehnte: Wenn parsed.year angegeben ist und der beste TMDb-Treffer > 2 Jahre abweicht (wie 2013 vs. 1994),
-      // darf dieser Treffer NIEMALS automatisch als "ok" übernommen werden!
-      const contextError = Boolean(!explicitTmdbId && (yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88) || sequelMismatch));
+      const queryMovieNorm = normalizeTitleForConfidence(parsed.cleanTitle || "");
+      const querySubParts = String(parsed.cleanTitle || "").split(/\s*[-–—:]\s*/);
+      const querySubNorm = querySubParts.length >= 2 ? normalizeTitleForConfidence(querySubParts.slice(1).join(" ")) : "";
+      const movieDeSubParts = String(movieDetails.title || "").split(/\s*[-–—:]\s*/);
+      const movieOrigSubParts = String(movieDetails.originalTitle || movieDetails.original_title || "").split(/\s*[-–—:]\s*/);
+      const movieDeSubNorm = movieDeSubParts.length >= 2 ? normalizeTitleForConfidence(movieDeSubParts.slice(1).join(" ")) : "";
+      const movieOrigSubNorm = movieOrigSubParts.length >= 2 ? normalizeTitleForConfidence(movieOrigSubParts.slice(1).join(" ")) : "";
+      const isExactMovieOrSubtitleMatch = Boolean(
+        (queryMovieNorm && (
+          normalizeTitleForConfidence(movieDetails.title || "") === queryMovieNorm ||
+          normalizeTitleForConfidence(movieDetails.originalTitle || movieDetails.original_title || "") === queryMovieNorm
+        )) ||
+        (querySubNorm && querySubNorm.length >= 4 && (
+          querySubNorm === movieDeSubNorm ||
+          querySubNorm === movieOrigSubNorm ||
+          querySubNorm === normalizeTitleForConfidence(movieDetails.title || "") ||
+          querySubNorm === normalizeTitleForConfidence(movieDetails.originalTitle || movieDetails.original_title || "")
+        ))
+      );
+      // MODUL 5.1: Deaktiviere bei part_number > 1 (echter Datei-Split wie CD2 / Part 2 nach Jahr) oder exaktem Untertitel-Match ("Alien 2 - Die Rückkehr" <-> "Aliens - Die Rückkehr") den Sequel-Konflikt-Check!
+      const effectivePartNum = Number(parsed.partNumber || parsed.partInfo?.partNumber || 1) || 1;
+      const sequelMismatch = (effectivePartNum > 1 || parsed.partInfo?.isSplit || isExactMovieOrSubtitleMatch)
+        ? false
+        : Boolean(seqNum && !tmdbTitlesCombined.includes(seqNum) && !(seqNum === "7" && tmdbTitlesCombined.includes("3d")) && yearDiff >= 1 && bestConfidence < 88);
+      // MODUL 6.2: Bei 100% Titel-/Untertitel-Match sind bis zu ±3 Jahre Abweichung erlaubt (kein YEAR_CONFLICT!)
+      const maxAllowedMovieYearDiff = isExactMovieOrSubtitleMatch ? 3 : 2;
+      const contextError = Boolean(!explicitTmdbId && (yearDiff > maxAllowedMovieYearDiff || (yearDiff >= maxAllowedMovieYearDiff && !isExactMovieOrSubtitleMatch && bestConfidence < 88) || sequelMismatch));
       const isUncertain = Boolean(contextError || (!explicitTmdbId && bestConfidence < 74));
       const reviewReasonCode = contextError
-        ? ((yearDiff > 2 || (yearDiff >= 2 && bestConfidence < 88))
+        ? ((yearDiff > maxAllowedMovieYearDiff || (yearDiff >= maxAllowedMovieYearDiff && !isExactMovieOrSubtitleMatch && bestConfidence < 88))
             ? "YEAR_CONFLICT"
             : sequelMismatch
               ? "SEQUEL_CONFLICT"
               : "PARSER_AMBIGUITY")
         : (isUncertain ? "PARSER_AMBIGUITY" : null);
       const errorReason = contextError
-        ? (yearDiff > 2
+        ? (yearDiff > maxAllowedMovieYearDiff
             ? `Jahres-Konflikt: Datei/Post nennt Jahr ${parsed.year}, aber TMDb-Treffer "${movieDetails.title}" ist von ${tmdbYearNum || "?"} (${yearDiff} Jahre Abweichung). Bitte prüfen!`
             : sequelMismatch
               ? `Fortsetzungs-/Teil-Konflikt: Dateiname nennt "${parsed.cleanTitle}" (Teil ${seqNum}), weicht aber vom TMDb-Titel "${movieDetails.title}" (${tmdbYearNum || "?"}) ab.`
@@ -2562,12 +2678,22 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     const batchWallStartMs = Date.now();
+    // MODUL 1.2: Cloudflare Free-Tier Turbo Subrequest-Guard auf 38 und Zeit-Guard auf 6000ms angehoben!
     const speedProfileObj = typeof getWorkerSpeedProfile === "function"
       ? await getWorkerSpeedProfile(env, playlistContext?.speedProfile || null)
-      : { id: "free_turbo", wallClockLimitMs: 3200, subrequestGuard: 20, fallbackMode: "smart_emergency" };
-    const BATCH_WALL_CLOCK_LIMIT_MS = Number(speedProfileObj.wallClockLimitMs || 3200);
-    const SUBREQUEST_GUARD_LIMIT = Number(speedProfileObj.subrequestGuard || 20);
+      : { id: "free_turbo", wallClockLimitMs: 6000, subrequestGuard: 38, fallbackMode: "smart_emergency" };
+    const BATCH_WALL_CLOCK_LIMIT_MS = Math.max(6000, Number(speedProfileObj.wallClockLimitMs || 6000));
+    const SUBREQUEST_GUARD_LIMIT = Math.max(38, Number(speedProfileObj.subrequestGuard || 38));
     resetSubrequestBudget();
+
+    // MODUL 1.1: Sortiere messages/entries vor dem Loop zwingend aufsteigend nach msg.id!
+    if (Array.isArray(entriesList) && entriesList.length > 1) {
+      const hasMsgIds = entriesList.some(e => e && typeof e === "object" && Number(e.msg_id || e.message_id || e.id || 0) > 0);
+      if (hasMsgIds) {
+        entriesList.sort((a, b) => Number(a?.msg_id || a?.message_id || a?.id || 0) - Number(b?.msg_id || b?.message_id || b?.id || 0));
+      }
+    }
+
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
     }
@@ -2583,6 +2709,7 @@
     let duplicatesCount = 0;
     let mergedQualitiesCount = 0;
     let uncertainCount = 0;
+    let subrequestPauseCount = 0;
     let partialBatch = false;
     let nextStartIndex = entriesList.length;
     let pauseReason = null;
@@ -2604,33 +2731,15 @@
       : new Set();
 
     for (let i = 0; i < total; i += JSON_INGEST_CONCURRENCY) {
-      // CLOUDFLARE FREE-TIER CPU & SUBREQUEST SCHUTZSCHILD:
-      // Stoppt kontrolliert ab >= SUBREQUEST_GUARD_LIMIT Subrequests ODER >= BATCH_WALL_CLOCK_LIMIT_MS verstrichener Laufzeit
-      // und liefert PARTIAL_BATCH + nextStartIndex zurück, damit niemals ein Timeout erreicht wird!
+      // MODUL 1.2: CLOUDFLARE FREE-TIER TURBO GUARD (Subrequest-Guard = 38, Zeit-Guard = 6000ms)
+      // WICHTIG: Wenn der Guard auslöst, zähle SUBREQUEST_PAUSE nur in summaryCounts hoch,
+      // aber schreibe diesen Eintrag NIEMALS in das entries-Array des Loggers! Gib als nextStartIndex exakt i zurück.
       const elapsedWallMs = Date.now() - batchWallStartMs;
       if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT) || elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && i > 0) {
         partialBatch = true;
         nextStartIndex = i;
+        subrequestPauseCount++;
         pauseReason = elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
-        const pausedEntry = entriesList[i];
-        const pausedMsgId = Number(pausedEntry?.msg_id || pausedEntry?.message_id || 0) || "";
-        const pausedRawText = (typeof extractRawMessageText === "function" ? extractRawMessageText(pausedEntry) : "") || String(pausedEntry?.raw_text || pausedEntry?.rawText || "");
-        diagLogsToSave.push({
-          msgId: pausedMsgId,
-          stage: "BATCH_GUARD",
-          status: "SUBREQUEST_PAUSE",
-          reason: elapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS
-            ? `Zeit-Guard (${speedProfileObj.label || speedProfileObj.id}) nach ${elapsedWallMs}ms (>${BATCH_WALL_CLOCK_LIMIT_MS}ms) ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`
-            : `Subrequest-Guard (${speedProfileObj.label || speedProfileObj.id}) bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${i})`,
-          fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
-          textPreview: pausedRawText.slice(0, 200),
-          parsedTitle: pausedEntry?.cleanTitle || "",
-          matchedTitle: "",
-          season: pausedEntry?.season ?? null,
-          episode: pausedEntry?.episode ?? null,
-          tmdbQuery: pausedEntry?.cleanTitle || "",
-          tmdbResult: "Auto-Resume im Folge-Batch"
-        });
         break;
       }
 
@@ -2639,13 +2748,13 @@
       let abortedMidBatchDueToBudget = false;
       let abortBatchIndex = i;
 
-      // MODUL 1.1 & 1.3: Streng sequenzielle Abarbeitung innerhalb des Batches + Variablen-Hygiene (tmdbId, matchedTitle, parsedItem strikt lokal im Loop!)
+      // MODUL 1.1 & 6.3: Streng sequenzielle Abarbeitung + Variablen-Hygiene (tmdbId, matchedTitle, parsedItem strikt lokal im Loop!)
       for (let bStep = 0; bStep < batch.length; bStep++) {
         let tmdbId = null;
         let matchedTitle = null;
         let parsedItem = null;
         const stepElapsedWallMs = Date.now() - batchWallStartMs;
-        if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT + 2) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
+        if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
@@ -2654,8 +2763,9 @@
           subrequestBudgetExhausted = false;
         }
         let entry = batch[bStep];
-        const entryMsgIdNum = Number(entry?.msg_id || entry?.message_id || entry?.messageId || 0);
+        const entryMsgIdNum = Number(entry?.msg_id || entry?.message_id || entry?.messageId || entry?.id || 0);
         if (entryMsgIdNum > 0) {
+          // MODUL 1.1: Ist msg.id schon in processedMsgIds, überspringe die Nachricht sofort (ohne Logging!), um 3-fache Durchläufe bei Resumes zu verhindern.
           if (processedMsgIds.has(entryMsgIdNum)) {
             batchResults.push({ _skippedAlreadyProcessedMsgId: true, msgId: entryMsgIdNum });
             continue;
@@ -2666,7 +2776,7 @@
           entry.isSeries || entry.typeCode === "s" || entry.type === "series" || entry.season !== null && entry.season !== undefined || entry.episode ||
           /\b(?:S\d{1,2}\s*E\d{1,3}|\d{1,2}x\d{1,3}|Staffel\s*\d+|Folge\s*\d+)\b/i.test(String(entry.filename || entry.file_name || entry.cleanTitle || ""))
         );
-        // MODUL 2.1: Nachbar-Pairing für Multi-Part-Filme (CD2 übernimmt direkt die tmdbId von CD1 bei gleichem Basis-Titel!)
+        // MODUL 5.1: Nachbar-Pairing für Multi-Part-Filme (CD2 übernimmt direkt die tmdbId von CD1 bei gleichem Basis-Titel!)
         const entryPartNum = Number(entry?.partNumber || entry?.partInfo?.partNumber || (String(entry?.part || "").match(/(\d+)/)?.[1]) || 1) || 1;
         if (typeof entry === "object" && entry !== null && !entry.tmdb_id && !entry.tmdbId && entryNormKey && entryNormKey !== "unbekannt") {
           const inherited = intraBatchResolvedMap.get((isEntrySeriesHint ? "s::" : "m::") + entryNormKey)
@@ -2713,12 +2823,10 @@
             error: String(itemErr?.message || itemErr || "Unbekannter Fehler")
           };
         }
-        // Falls das Element während der Auflösung ans Subrequest-Limit gestoßen ist und deshalb keinen Treffer fand (und nicht aus dem Negativ-Cache kam):
-        // NICHT als TMDB_NOT_FOUND fehlschlagen lassen (Breaking Bad S01E01 Fix!), sondern diesen Index sauber für den nächsten Batch vormerken!
         if (
           (!stepRes || stepRes.unmatched) &&
           !stepRes?.fromNegativeCache &&
-          (stepRes?.abortedDueToSubrequestBudget || (typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34)) &&
+          (stepRes?.abortedDueToSubrequestBudget || (typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT)) &&
           (i + bStep) > 0
         ) {
           abortedMidBatchDueToBudget = true;
@@ -2732,7 +2840,6 @@
           tmdbId = Number(stepRes.tmdbId);
           matchedTitle = String(stepRes.matchedTitle || stepRes.cleanTitle || "");
         }
-        // Intra-Batch Vererbungs-Cache aktualisieren, sobald ein Titel sicher (ab 80% ohne Konflikt) aufgelöst wurde:
         if (stepRes && stepRes.ok && tmdbId && !stepRes.contextError && Number(stepRes.confidence || 100) >= 80) {
           const resolvedMeta = {
             tmdbId,
@@ -2764,7 +2871,6 @@
         const normMsgId = typeof rawEntry === "object" && rawEntry !== null
           ? (Number(rawEntry.msg_id || rawEntry.message_id || rawEntry.messageId || 0) || null)
           : null;
-        // MODUL 1.2: Stelle sicher, dass rawText in jedem Code-Pfad ("auto" & "series") sauber ausgelesen und an den Logger übergeben wird
         const unifiedRawText = typeof rawEntry === "object" && rawEntry !== null
           ? ((typeof extractRawMessageText === "function" ? extractRawMessageText(rawEntry) : "") || String(rawEntry.raw_text || rawEntry.rawText || rawEntry.caption || rawEntry.text || ""))
           : "";
@@ -2793,6 +2899,7 @@
           const failReasonCode = res?.error ? "API_ERROR" : (res?.reviewReasonCode || "TMDB_NOT_FOUND");
           const cleanedQueryTitle = res?.parsed?.cleanTitle || rawEntry?.cleanTitle || String(rawLabel);
           const failReasonText = res?.error || `Kein passender TMDb-Eintrag für "${cleanedQueryTitle}" gefunden – bitte manuell suchen oder TMDb-ID zuweisen.`;
+          // MODUL 6.3: Variablen-Leck im Logger schließen! Bei TMDB_NOT_FOUND oder API_ERROR müssen matchedTitle und tmdbId zwingend null sein!
           const failItemObj = {
             rawInput: String(rawLabel),
             rawEntry: typeof rawEntry === "object" ? rawEntry : { filename: String(rawLabel) },
@@ -2807,7 +2914,7 @@
             tmdbId: null,
             cleanTitle: cleanedQueryTitle,
             parsedTitle: cleanedQueryTitle,
-            matchedTitle: "",
+            matchedTitle: null,
             year: res?.parsed?.year || "k.A.",
             poster: "",
             quality: res?.parsed?.quality || null,
@@ -2829,14 +2936,14 @@
             fileName: contextDiagnostics.rawFileName || String(rawLabel),
             textPreview: String(contextDiagnostics.rawText || "").slice(0, 220),
             parsedTitle: cleanedQueryTitle,
-            matchedTitle: "",
+            matchedTitle: null,
             season: res?.parsed?.season ?? null,
             episode: res?.parsed?.episode ?? null,
             tmdbQuery: `${cleanedQueryTitle}${res?.parsed?.year ? ` (${res.parsed.year})` : ""}`,
             tmdbResult: "Kein Treffer",
             tmdbId: null,
             typeCode: res?.parsed?.isSeries ? "s" : "m",
-            details: { reviewReasonCode: failReasonCode, rawEntry: failItemObj.rawEntry, candidates: (res?.candidates || []).slice(0, 5) }
+            details: { reviewReasonCode: failReasonCode, matchedTitle: null, rawEntry: failItemObj.rawEntry, candidates: (res?.candidates || []).slice(0, 5) }
           });
         } else {
           resolvedObjects.push(res);
@@ -2894,7 +3001,6 @@
           };
           batchItems.push(okItemObj);
 
-          // MODUL 5.2 & 5.3: Einheitlicher Konflikt-Status "CONFLICT" & Trennung von parsedTitle (Suchtitel vor TMDb) und matchedTitle (TMDb-Name)
           const diagStatus = res.contextError
             ? "CONFLICT"
             : (res.ingestStatus === "skipped_prerelease" ? "SKIPPED_PRERELEASE" : (res.ingestStatus === "duplicate" ? "SKIPPED_DUPLICATE" : "OK"));
@@ -2936,24 +3042,9 @@
       if (abortedMidBatchDueToBudget) {
         partialBatch = true;
         nextStartIndex = abortBatchIndex;
+        subrequestPauseCount++;
         pauseReason = "SUBREQUEST_LIMIT_GUARD";
-        const pausedEntry = entriesList[abortBatchIndex];
-        const pausedMsgId = Number(pausedEntry?.msg_id || pausedEntry?.message_id || 0) || "";
-        const pausedRawText = (typeof extractRawMessageText === "function" ? extractRawMessageText(pausedEntry) : "") || String(pausedEntry?.raw_text || pausedEntry?.rawText || "");
-        diagLogsToSave.push({
-          msgId: pausedMsgId,
-          stage: "BATCH_GUARD",
-          status: "SUBREQUEST_PAUSE",
-          reason: `Subrequest-Guard bei ${currentInvocationSubrequests}/50 externen Requests ausgelöst – fahre nahtlos im nächsten Batch fort (Index #${abortBatchIndex})`,
-          fileName: pausedEntry?.raw_file_name || pausedEntry?.file_name || pausedEntry?.filename || "",
-          textPreview: pausedRawText.slice(0, 200),
-          parsedTitle: pausedEntry?.cleanTitle || "",
-          matchedTitle: "",
-          season: pausedEntry?.season ?? null,
-          episode: pausedEntry?.episode ?? null,
-          tmdbQuery: pausedEntry?.cleanTitle || "",
-          tmdbResult: "Auto-Resume im Folge-Batch"
-        });
+        // MODUL 1.2: SUBREQUEST_PAUSE NIEMALS in diagLogsToSave / entries pushen!
         break;
       }
 
@@ -3023,6 +3114,7 @@
       partialBatch,
       nextStartIndex: partialBatch ? nextStartIndex : total,
       pauseReason,
+      subrequestPauseCount,
       subrequestCount: currentInvocationSubrequests,
       moviesAdded,
       seriesAdded,

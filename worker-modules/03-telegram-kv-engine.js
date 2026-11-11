@@ -760,21 +760,21 @@
     free_turbo: {
       id: "free_turbo",
       label: "🛡️ Cloudflare Free-Tier Turbo (<10ms CPU Micro-Batch)",
-      batchSize: 5,
-      wallClockLimitMs: 2400,
-      subrequestGuard: 14,
-      midBatchSubrequestGuard: 16,
-      tmdbTimeoutMs: 1900,
+      batchSize: 8,
+      wallClockLimitMs: 6000,
+      subrequestGuard: 38,
+      midBatchSubrequestGuard: 38,
+      tmdbTimeoutMs: 2200,
       fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,6s Notfall-Parallel-Fallback wenn 0 TMDb-Treffer & Budget frei
       fallbackTimeoutMs: 1600
     },
     balanced: {
       id: "balanced",
       label: "⚖️ Ausgewogen (Standard)",
-      batchSize: 10,
-      wallClockLimitMs: 3800,
-      subrequestGuard: 22,
-      midBatchSubrequestGuard: 24,
+      batchSize: 12,
+      wallClockLimitMs: 6000,
+      subrequestGuard: 38,
+      midBatchSubrequestGuard: 38,
       tmdbTimeoutMs: 2500,
       fallbackMode: "balanced",
       fallbackTimeoutMs: 2100
@@ -784,8 +784,8 @@
       label: "🚀 Cloudflare Paid ($5 Plan / High-Throughput)",
       batchSize: 24,
       wallClockLimitMs: 6800,
-      subrequestGuard: 34,
-      midBatchSubrequestGuard: 36,
+      subrequestGuard: 40,
+      midBatchSubrequestGuard: 40,
       tmdbTimeoutMs: 3500,
       fallbackMode: "deep",
       fallbackTimeoutMs: 3200

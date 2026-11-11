@@ -522,7 +522,10 @@
     const now = Date.now();
     const memKey = "d1_import_diagnostic_logs";
     const existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
-    const normalizedBatch = logsArray.map((item, idx) => {
+    // MODUL 1.2: SUBREQUEST_PAUSE NIEMALS in das entries-Array des Loggers schreiben (verdrängt sonst echte Fehler!)
+    const validLogsInput = logsArray.filter(item => item && String(item.status || "").trim() !== "SUBREQUEST_PAUSE" && String(item.status || "").trim() !== "SKIPPED_HEADER");
+    if (validLogsInput.length === 0) return;
+    const normalizedBatch = validLogsInput.map((item, idx) => {
       const rawMsgNum = Number(item.msgId ?? item.msg_id ?? item.message_id ?? 0);
       const normMsgId = Number.isFinite(rawMsgNum) && rawMsgNum > 0
         ? rawMsgNum
@@ -534,8 +537,16 @@
       if (resolvedReasonCode && !rawDetails.reviewReasonCode) {
         rawDetails.reviewReasonCode = resolvedReasonCode;
       }
-      const matchedTitleVal = String(item.matchedTitle || item.matched_title || rawDetails.matchedTitle || "").trim();
-      if (matchedTitleVal && !rawDetails.matchedTitle) {
+      // MODUL 6.3: Variablen-Leck im Logger schließen! Bei TMDB_NOT_FOUND, API_ERROR oder SUBREQUEST_PAUSE müssen matchedTitle und tmdbId zwingend null sein!
+      const isUnmatchedErrorStatus = normStatus === "TMDB_NOT_FOUND" || normStatus === "API_ERROR" || normStatus === "SUBREQUEST_PAUSE";
+      const matchedTitleVal = isUnmatchedErrorStatus
+        ? null
+        : (String(item.matchedTitle || item.matched_title || rawDetails.matchedTitle || "").trim() || null);
+      const resolvedTmdbId = isUnmatchedErrorStatus ? null : (item.tmdbId ? Number(item.tmdbId) : null);
+      if (isUnmatchedErrorStatus) {
+        delete rawDetails.matchedTitle;
+        rawDetails.matchedTitle = null;
+      } else if (matchedTitleVal && !rawDetails.matchedTitle) {
         rawDetails.matchedTitle = matchedTitleVal;
       }
       return {
@@ -552,8 +563,8 @@
         season: item.season !== undefined && item.season !== null ? Number(item.season) : null,
         episode: item.episode !== undefined && item.episode !== null ? Number(item.episode) : null,
         tmdbQuery: String(item.tmdbQuery || ""),
-        tmdbResult: String(item.tmdbResult || ""),
-        tmdbId: item.tmdbId ? Number(item.tmdbId) : null,
+        tmdbResult: isUnmatchedErrorStatus ? "Kein Treffer" : String(item.tmdbResult || ""),
+        tmdbId: resolvedTmdbId,
         typeCode: item.typeCode ? String(item.typeCode) : null,
         details: rawDetails,
         timestamp: Number(item.timestamp || now)
@@ -655,6 +666,7 @@
               if (r.details_json) details = JSON.parse(r.details_json);
             } catch (e) {}
             const normStatus = r.status === "CONFLICT_?" ? "CONFLICT" : (r.status || "OK");
+            const isUnmatchedError = normStatus === "TMDB_NOT_FOUND" || normStatus === "API_ERROR" || normStatus === "SUBREQUEST_PAUSE";
             const inferredCode = inferReviewReasonCodeFromLogItem({
               reviewReasonCode: r.review_reason_code || details.reviewReasonCode,
               status: normStatus,
@@ -671,12 +683,12 @@
               fileName: r.file_name || "",
               textPreview: r.text_preview || "",
               parsedTitle: r.parsed_title || "",
-              matchedTitle: r.matched_title || details.matchedTitle || "",
+              matchedTitle: isUnmatchedError ? null : (r.matched_title || details.matchedTitle || null),
               season: r.season !== undefined && r.season !== null ? r.season : null,
               episode: r.episode !== undefined && r.episode !== null ? r.episode : null,
               tmdbQuery: r.tmdb_query || "",
-              tmdbResult: r.tmdb_result || "",
-              tmdbId: r.tmdb_id || null,
+              tmdbResult: isUnmatchedError ? "Kein Treffer" : (r.tmdb_result || ""),
+              tmdbId: isUnmatchedError ? null : (r.tmdb_id || null),
               typeCode: r.type_code || null,
               details,
               timestamp: r.created_at || Date.now()
@@ -688,18 +700,17 @@
     const memRows = Array.isArray(memoryFallback.get("d1_import_diagnostic_logs"))
       ? memoryFallback.get("d1_import_diagnostic_logs")
       : [];
-    const resolvedMsgIdsAll = new Set();
-    for (const r of [...memRows, ...d1Rows]) {
-      if (r && r.msgId && r.status && r.status !== "SUBREQUEST_PAUSE") {
-        resolvedMsgIdsAll.add(String(r.msgId));
-      }
-    }
     const mergedMap = new Map();
     for (const r of [...memRows, ...d1Rows]) {
       if (!r) continue;
       if (r.status === "CONFLICT_?") r.status = "CONFLICT";
-      if (r.status === "SUBREQUEST_PAUSE" && r.msgId && resolvedMsgIdsAll.has(String(r.msgId))) {
+      // MODUL 1.2: SUBREQUEST_PAUSE niemals in den Diagnose-Einträgen ausgeben
+      if (r.status === "SUBREQUEST_PAUSE" || r.status === "SKIPPED_HEADER") {
         continue;
+      }
+      if (r.status === "TMDB_NOT_FOUND" || r.status === "API_ERROR") {
+        r.matchedTitle = null;
+        r.tmdbId = null;
       }
       if (!r.reviewReasonCode) {
         r.reviewReasonCode = inferReviewReasonCodeFromLogItem(r) || null;
@@ -1735,13 +1746,14 @@
       if (!fKey || seenFileKeys.has(fKey)) continue;
       if (item._msgId && seenMsgIds.has(item._msgId)) continue;
 
-      // Verhindert doppelte identische Sende-Buttons, behält aber unterschiedliche Schnittfassungen (versionLabel) strikt getrennt!
+      // MODUL 3: Behält unterschiedliche Fingerprints (Qualitäts-Versionen) und Schnittfassungen strikt getrennt!
       const qNorm = String(item.quality || "1080p").trim().toUpperCase();
       const cNorm = String(item.codec || "x264").trim().toUpperCase();
       const pNorm = String(item.part || "").trim().toUpperCase();
       const vNorm = extractEpisodeVersionLabel(item).toUpperCase();
+      const fpSig = String(item.file_fingerprint || "").trim();
       const szBucket = item.file_size ? Math.round(Number(item.file_size) / (1024 * 512)) : 0;
-      const streamSig = `${qNorm}|${cNorm}|${pNorm}|${vNorm}|${szBucket}`;
+      const streamSig = `${qNorm}|${cNorm}|${pNorm}|${vNorm}|${fpSig || szBucket}`;
       if (seenStreamSigs.has(streamSig)) continue;
 
       seenFileKeys.add(fKey);
@@ -1923,25 +1935,71 @@
     const incomingSubs = mergeSubtitleArrays([], fileInfo.subtitles || fileInfo.subtitle_files || []);
     const incomingIsPrerelease = isPrereleaseOrMicDub(rawCaption, rawFilename, fileInfo.tags || "");
 
-    // MODUL 4: Zweistufiger fileFingerprint & part_number Trennung (CD1 vs CD2)
+    // MODUL 3: Der "fileFingerprint" (Echte Telegram-IDs vs. JSON) — Verhindere zwingend den null === null Bug!
     const parsedBytes = parseHumanFileSizeToBytes(fileInfo.fileSize ?? fileInfo.file_size);
     const durSecVal = Number(fileInfo.durationSec ?? fileInfo.duration_sec ?? fileInfo.duration_seconds ?? 0) || 0;
     const widthVal = Number(fileInfo.width || 0) || 0;
     const heightVal = Number(fileInfo.height || 0) || 0;
-    const realUniqueId = fileInfo.fileUniqueId || fileInfo.telegram_unique_id ? String(fileInfo.fileUniqueId || fileInfo.telegram_unique_id).trim() : "";
-    const isSyntheticUniqueId = realUniqueId.startsWith("u_");
-    const realFileIdForFp = scoreTelegramFileIdValidity(normalizedFid) === 3 ? normalizedFid : "";
+    const realUniqueId = fileInfo.fileUniqueId || fileInfo.file_unique_id || fileInfo.telegram_unique_id
+      ? String(fileInfo.fileUniqueId || fileInfo.file_unique_id || fileInfo.telegram_unique_id).trim()
+      : "";
+    const isSyntheticUniqueId = !realUniqueId || realUniqueId === "null" || realUniqueId === "undefined" || realUniqueId.startsWith("u_") || realUniqueId.startsWith("tg_export_");
+    const realFileIdForFp = (scoreTelegramFileIdValidity(normalizedFid) === 3 && normalizedFid !== "null" && normalizedFid !== "undefined") ? normalizedFid : "";
     const fileFingerprint = String(
       fileInfo.fileFingerprint ||
       fileInfo.file_fingerprint ||
-      (!isSyntheticUniqueId && realUniqueId ? realUniqueId : "") ||
+      (!isSyntheticUniqueId ? realUniqueId : "") ||
       realFileIdForFp ||
-      `${parsedBytes || 0}_${durSecVal}_${widthVal}x${heightVal}`
+      `${parsedBytes || 0}_${durSecVal || 0}_${widthVal || 0}x${heightVal || 0}`
     ).trim();
     const partMatchFromStr = String(fileInfo.part || "").match(/(\d+)/);
     const partNumber = Number(fileInfo.partNumber || fileInfo.part_number || (partMatchFromStr ? partMatchFromStr[1] : 1)) || 1;
     const editionLabel = fileInfo.editionLabel || fileInfo.edition_label ? String(fileInfo.editionLabel || fileInfo.edition_label).trim() : null;
     const isBonus = Boolean(fileInfo.isBonus || fileInfo.is_bonus);
+    // MODUL 2: Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Download-Dateien in movieObj.downloads speichern (NICHT als abspielbaren Videostream!)
+    const isArchiveDownload = Boolean(
+      fileInfo.isDownloadOnly ||
+      fileInfo.is_download_only ||
+      fileInfo.isArchive ||
+      fileInfo.type === "archive" ||
+      /\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFilename)
+    );
+
+    if (isArchiveDownload) {
+      const dlEntry = {
+        telegram_file_id: normalizedFid,
+        telegram_unique_id: (!isSyntheticUniqueId ? realUniqueId : null) || null,
+        file_fingerprint: fileFingerprint,
+        type: "archive",
+        isDownloadOnly: true,
+        part: fileInfo.part ? String(fileInfo.part) : (partNumber > 1 ? `ARCHIV-PART${partNumber}` : "ARCHIV"),
+        part_number: partNumber,
+        file_size: parsedBytes,
+        raw_filename: rawFilename || "Archiv.rar",
+        raw_caption: rawCaption,
+        message_link: messageLink,
+        updated_at: Date.now()
+      };
+      const existingMovie = await getMovieFromD1(env, mid);
+      const currentDownloads = Array.isArray(existingMovie?.downloads) ? [...existingMovie.downloads] : [];
+      const isDupArchive = currentDownloads.some(d =>
+        d && Number(d.part_number || 1) === partNumber &&
+        ((d.file_fingerprint && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0") || d.telegram_file_id === normalizedFid)
+      );
+      if (isDupArchive) {
+        return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, isArchiveDownload: true, skippedPrerelease: false, replacedPrereleaseCount: 0 };
+      }
+      const nextDownloads = [
+        dlEntry,
+        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid)
+      ];
+      if (existingMovie) {
+        existingMovie.downloads = nextDownloads;
+        existingMovie.hasDownloads = true;
+        await saveMovieToD1(env, existingMovie);
+      }
+      memoryFallback.set(`d1_movie_downloads_${mid}`, nextDownloads);
+    }
 
     const memKey = `d1_movie_files_${mid}`;
     const memLoadedTsKey = `d1_movie_files_ts_${mid}`;
@@ -2000,7 +2058,8 @@
 
     const msgId = Number(fileInfo.messageId || fileInfo.msgId || fileInfo.message_id || extractExportMessageIdFromFileId(normalizedFid) || 0) || null;
     const validExistingMovieRows = allExistingRows.filter(r => r && r.telegram_file_id && scoreTelegramFileIdValidity(r.telegram_file_id) > 0);
-    // MODUL 4.1: Nur dann als SKIPPED_DUPLICATE werten, wenn (tmdb_id, part_number, fileFingerprint) bzw. identische msgId bereits in D1 existiert!
+    // MODUL 3: Nur wenn (tmdb_id, part_number, fileFingerprint) in D1 exakt identisch ist: status = "SKIPPED_DUPLICATE".
+    // Weicht der Fingerabdruck ab, speichere es als neue Qualitäts-Version desselben Films in D1!
     let matchedDuplicateRow = null;
     const isExactDuplicate = validExistingMovieRows.some(r => {
       const exFid = String(r.telegram_file_id || "").trim();
@@ -2008,11 +2067,13 @@
       const exPartNum = Number(r.part_number || (String(r.part || "").match(/(\d+)/)?.[1]) || 1) || 1;
       if (exPartNum !== partNumber) return false;
       const exFp = String(r.file_fingerprint || "").trim();
-      if (exFp && fileFingerprint && fileFingerprint !== "0_0_0x0" && exFp === fileFingerprint) {
-        matchedDuplicateRow = r;
-        return true;
+      if (exFp && fileFingerprint && exFp !== "null" && fileFingerprint !== "null" && exFp === fileFingerprint) {
+        if (fileFingerprint !== "0_0_0x0" || (msgId && exMsgId && msgId === exMsgId) || exFid === normalizedFid) {
+          matchedDuplicateRow = r;
+          return true;
+        }
       }
-      const fidMatch = exFid === normalizedFid;
+      const fidMatch = exFid && normalizedFid && exFid !== "null" && exFid === normalizedFid;
       const msgMatch = (msgId && exMsgId) ? (msgId === exMsgId) : fidMatch;
       if (fidMatch && msgMatch) {
         matchedDuplicateRow = r;
@@ -2021,36 +2082,31 @@
       return false;
     }) && incomingSubs.length === 0;
 
-    const incomingQualNorm = String(fileInfo.quality || "1080p").toUpperCase();
-    const incomingPartNorm = String(fileInfo.part || "").toUpperCase();
-    const hasDifferentQuality = !isExactDuplicate && validExistingMovieRows.some(r =>
-      String(r.quality || "1080p").toUpperCase() !== incomingQualNorm ||
-      String(r.part || "").toUpperCase() !== incomingPartNorm ||
-      Number(r.part_number || 1) !== partNumber ||
-      String(r.edition_label || "") !== String(editionLabel || "")
-    );
-    const isUpdated = !isExactDuplicate && validExistingMovieRows.length > 0 && !hasDifferentQuality;
-    const isMergedQuality = !isExactDuplicate && hasDifferentQuality;
+    const hasDifferentFingerprintOrQuality = !isExactDuplicate && validExistingMovieRows.length > 0;
+    const isUpdated = false;
+    const isMergedQuality = hasDifferentFingerprintOrQuality;
 
     // Wenn die identische Datei nachweislich bereits in D1 (_fromD1 === true) liegt und keine Untertitel/Vorabversionen hinzukamen, spare den redundanten D1-Write!
     if (isExactDuplicate && matchedDuplicateRow && matchedDuplicateRow._fromD1 === true && replacedPrereleaseCount === 0) {
-      return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, skippedPrerelease: false, replacedPrereleaseCount: 0 };
+      return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount: 0 };
     }
 
     const entry = {
       movie_id: mid,
       telegram_file_id: normalizedFid,
-      telegram_unique_id: realUniqueId || null,
+      telegram_unique_id: (!isSyntheticUniqueId ? realUniqueId : null) || null,
       file_fingerprint: fileFingerprint,
-      quality: String(fileInfo.quality || "1080p"),
-      codec: String(fileInfo.codec || "x264"),
+      quality: isArchiveDownload ? "ARCHIV" : String(fileInfo.quality || "1080p"),
+      codec: isArchiveDownload ? "ARCHIVE" : String(fileInfo.codec || "x264"),
       part: fileInfo.part ? String(fileInfo.part) : (partNumber > 1 ? `CD ${partNumber}` : null),
       part_number: partNumber,
       edition_label: editionLabel,
-      is_bonus: isBonus ? 1 : 0,
-      tags: effectiveTags,
+      is_bonus: isArchiveDownload ? 2 : (isBonus ? 1 : 0),
+      isDownloadOnly: isArchiveDownload,
+      type: isArchiveDownload ? "archive" : "video",
+      tags: isArchiveDownload ? ([effectiveTags, "📦 Archiv-Download"].filter(Boolean).join(" · ")) : effectiveTags,
       file_size: parsedBytes,
-      mime_type: String(fileInfo.mimeType || fileInfo.mime_type || "video/mp4"),
+      mime_type: isArchiveDownload ? "application/x-rar-compressed" : String(fileInfo.mimeType || fileInfo.mime_type || "video/mp4"),
       raw_filename: rawFilename,
       raw_caption: rawCaption,
       message_link: messageLink,
@@ -2066,19 +2122,20 @@
     memoryFallback.set(memKey, nextMem);
     memoryFallback.set(memLoadedTsKey, Date.now());
 
-    if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
+    if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
+      // MODUL 3: Nur identische Fingerprints oder defekte Platzhalter ersetzen; abweichende Fingerprints bleiben als zusätzliche Qualitäts-Versionen erhalten!
       const stmts = [
         db.prepare(
           `DELETE FROM movie_files WHERE movie_id = ?1 AND (
             telegram_file_id IS NULL OR telegram_file_id = ''
             OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
             ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (quality = ?2 AND codec = ?3 AND COALESCE(part, '') = ?4 AND COALESCE(part_number, 1) = ?5 AND COALESCE(edition_label, '') = ?6 AND telegram_file_id != ?7)
+            OR (COALESCE(part_number, 1) = ?2 AND COALESCE(file_fingerprint, '') = ?3 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?4)
           )`
-        ).bind(mid, entry.quality, entry.codec, entry.part || "", entry.part_number, entry.edition_label || "", entry.telegram_file_id)
+        ).bind(mid, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
       ];
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
@@ -2139,20 +2196,26 @@
           )
       );
       await db.batch(stmts);
-      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     } catch (e) {
-      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     }
   }
 
-  async function getMovieFilesFromD1(env, movieId) {
+  async function getMovieFilesFromD1(env, movieId, includeArchives = false) {
     if (!movieId) return [];
     const mid = Number(movieId);
     const memKey = `d1_movie_files_${mid}`;
     const memLoadedTsKey = `d1_movie_files_ts_${mid}`;
+    const filterStreamRows = (rows) => {
+      const sorted = sortAndDedupeStreamFiles((rows || []).map(enrichStreamFileRowMeta));
+      if (includeArchives) return sorted;
+      const nonArchive = sorted.filter(r => r && r.codec !== "ARCHIVE" && Number(r.is_bonus || 0) !== 2 && !/\.(?:rar|zip|7z|iso|tar|gz)$/i.test(String(r.raw_filename || "")));
+      return nonArchive;
+    };
     const memFiles = memoryFallback.get(memKey);
     if (Array.isArray(memFiles) && memFiles.length > 0 && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 180000) {
-      return sortAndDedupeStreamFiles(memFiles.map(enrichStreamFileRowMeta));
+      return filterStreamRows(memFiles);
     }
     const db = await ensureD1Schema(env);
     if (db) {
@@ -2163,14 +2226,14 @@
           .bind(mid)
           .all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
-          const sorted = sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
-          memoryFallback.set(memKey, sorted);
+          const sortedAll = sortAndDedupeStreamFiles(res.results.map(enrichStreamFileRowMeta));
+          memoryFallback.set(memKey, sortedAll);
           memoryFallback.set(memLoadedTsKey, Date.now());
-          return sorted;
+          return filterStreamRows(res.results);
         }
       } catch (e) {}
     }
-    return Array.isArray(memFiles) ? sortAndDedupeStreamFiles(memFiles.map(enrichStreamFileRowMeta)) : [];
+    return Array.isArray(memFiles) ? filterStreamRows(memFiles) : [];
   }
 
   async function saveEpisodeFileToD1(env, seriesId, seasonNumber, episodeNumber, fileInfo) {
@@ -2192,23 +2255,70 @@
     const incomingSubs = mergeSubtitleArrays([], fileInfo.subtitles || fileInfo.subtitle_files || []);
     const incomingIsPrerelease = isPrereleaseOrMicDub(rawCaption, rawFilename, fileInfo.tags || fileInfo.versionLabel || "");
 
+    // MODUL 3: Der "fileFingerprint" (Echte Telegram-IDs vs. JSON) — Verhindere zwingend den null === null Bug!
     const parsedBytes = parseHumanFileSizeToBytes(fileInfo.fileSize ?? fileInfo.file_size);
     const durSecVal = Number(fileInfo.durationSec ?? fileInfo.duration_sec ?? fileInfo.duration_seconds ?? 0) || 0;
     const widthVal = Number(fileInfo.width || 0) || 0;
     const heightVal = Number(fileInfo.height || 0) || 0;
-    const realUniqueId = fileInfo.fileUniqueId || fileInfo.telegram_unique_id ? String(fileInfo.fileUniqueId || fileInfo.telegram_unique_id).trim() : "";
-    const isSyntheticUniqueId = realUniqueId.startsWith("u_");
-    const realFileIdForFp = scoreTelegramFileIdValidity(normalizedFid) === 3 ? normalizedFid : "";
+    const realUniqueId = fileInfo.fileUniqueId || fileInfo.file_unique_id || fileInfo.telegram_unique_id
+      ? String(fileInfo.fileUniqueId || fileInfo.file_unique_id || fileInfo.telegram_unique_id).trim()
+      : "";
+    const isSyntheticUniqueId = !realUniqueId || realUniqueId === "null" || realUniqueId === "undefined" || realUniqueId.startsWith("u_") || realUniqueId.startsWith("tg_export_");
+    const realFileIdForFp = (scoreTelegramFileIdValidity(normalizedFid) === 3 && normalizedFid !== "null" && normalizedFid !== "undefined") ? normalizedFid : "";
     const fileFingerprint = String(
       fileInfo.fileFingerprint ||
       fileInfo.file_fingerprint ||
-      (!isSyntheticUniqueId && realUniqueId ? realUniqueId : "") ||
+      (!isSyntheticUniqueId ? realUniqueId : "") ||
       realFileIdForFp ||
-      `${parsedBytes || 0}_${durSecVal}_${widthVal}x${heightVal}`
+      `${parsedBytes || 0}_${durSecVal || 0}_${widthVal || 0}x${heightVal || 0}`
     ).trim();
-    const partMatchFromStr = String(fileInfo.part || "").match(/(\d+)/);
-    const partNumber = Number(fileInfo.partNumber || fileInfo.part_number || (partMatchFromStr ? partMatchFromStr[1] : 1)) || 1;
+    // MODUL 5.1: Bei Serien ist part_number IMMER 1!
+    const partNumber = 1;
     const editionLabel = fileInfo.editionLabel || fileInfo.edition_label ? String(fileInfo.editionLabel || fileInfo.edition_label).trim() : null;
+    const isArchiveDownload = Boolean(
+      fileInfo.isDownloadOnly ||
+      fileInfo.is_download_only ||
+      fileInfo.isArchive ||
+      fileInfo.type === "archive" ||
+      /\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFilename)
+    );
+
+    if (isArchiveDownload) {
+      const dlEntry = {
+        telegram_file_id: normalizedFid,
+        telegram_unique_id: (!isSyntheticUniqueId ? realUniqueId : null) || null,
+        file_fingerprint: fileFingerprint,
+        type: "archive",
+        isDownloadOnly: true,
+        season_number: sNum,
+        episode_number: eNum,
+        part_number: 1,
+        file_size: parsedBytes,
+        raw_filename: rawFilename || "Archiv.rar",
+        raw_caption: rawCaption,
+        message_link: messageLink,
+        updated_at: Date.now()
+      };
+      const existingSeries = await getSeriesFromD1(env, sid);
+      const currentDownloads = Array.isArray(existingSeries?.downloads) ? [...existingSeries.downloads] : [];
+      const isDupArchive = currentDownloads.some(d =>
+        d && Number(d.season_number || 1) === sNum && Number(d.episode_number || 1) === eNum &&
+        ((d.file_fingerprint && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0") || d.telegram_file_id === normalizedFid)
+      );
+      if (isDupArchive) {
+        return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, isArchiveDownload: true, skippedPrerelease: false, replacedPrereleaseCount: 0 };
+      }
+      const nextDownloads = [
+        dlEntry,
+        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid)
+      ];
+      if (existingSeries) {
+        existingSeries.downloads = nextDownloads;
+        existingSeries.hasDownloads = true;
+        await saveSeriesToD1(env, existingSeries);
+      }
+      memoryFallback.set(`d1_series_downloads_${sid}`, nextDownloads);
+    }
 
     const memKey = `d1_ep_files_${sid}_${sNum}`;
     const memSeasonTsKey = `d1_ep_files_season_ts_${sid}_${sNum}`;
@@ -2267,26 +2377,28 @@
     const prevSubs = prevSameRow ? enrichStreamFileRowMeta(prevSameRow).subtitles : [];
     const mergedSubs = mergeSubtitleArrays(prevSubs, incomingSubs);
 
-    const versionLabel = incomingIsPrerelease ? "⚠️ Vorabversion" : extractEpisodeVersionLabel(fileInfo);
+    const versionLabel = isArchiveDownload ? "📦 Archiv-Download" : (incomingIsPrerelease ? "⚠️ Vorabversion" : extractEpisodeVersionLabel(fileInfo));
     const sizeBadgeLabel = parsedBytes ? formatFileSizeBytes(parsedBytes) : "";
     const autoBadgeLabel = [editionLabel, fileInfo.quality || "", sizeBadgeLabel].filter(Boolean).join(" • ");
     const cleanTags = normalizeCompactVersionTags(fileInfo.tags || autoBadgeLabel || versionLabel);
 
-    // MODUL 4.1: Smart-UPSERT mit zweistufigem fileFingerprint & part_number
+    // MODUL 3: Smart-UPSERT mit zweistufigem fileFingerprint & part_number
     const msgId = Number(fileInfo.messageId || fileInfo.msgId || fileInfo.message_id || extractExportMessageIdFromFileId(normalizedFid) || 0) || null;
     const validExistingEpRows = allExistingEpRows.filter(r => r && r.telegram_file_id && scoreTelegramFileIdValidity(r.telegram_file_id) > 0);
     let matchedDuplicateEpRow = null;
     const isExactDuplicate = validExistingEpRows.some(r => {
       const exFid = String(r.telegram_file_id || "").trim();
       const exMsgId = Number(r.message_id || extractExportMessageIdFromFileId(exFid) || 0) || null;
-      const exPartNum = Number(r.part_number || (String(r.part || "").match(/(\d+)/)?.[1]) || 1) || 1;
+      const exPartNum = Number(r.part_number || 1) || 1;
       if (exPartNum !== partNumber) return false;
       const exFp = String(r.file_fingerprint || "").trim();
-      if (exFp && fileFingerprint && fileFingerprint !== "0_0_0x0" && exFp === fileFingerprint) {
-        matchedDuplicateEpRow = r;
-        return true;
+      if (exFp && fileFingerprint && exFp !== "null" && fileFingerprint !== "null" && exFp === fileFingerprint) {
+        if (fileFingerprint !== "0_0_0x0" || (msgId && exMsgId && msgId === exMsgId) || exFid === normalizedFid) {
+          matchedDuplicateEpRow = r;
+          return true;
+        }
       }
-      const fidMatch = exFid === normalizedFid;
+      const fidMatch = exFid && normalizedFid && exFid !== "null" && exFid === normalizedFid;
       const msgMatch = (msgId && exMsgId) ? (msgId === exMsgId) : fidMatch;
       if (fidMatch && msgMatch) {
         matchedDuplicateEpRow = r;
@@ -2295,21 +2407,13 @@
       return false;
     }) && incomingSubs.length === 0;
 
-    const incomingQualNorm = String(fileInfo.quality || "1080p").toUpperCase();
-    const incomingVerNorm = String(versionLabel || "Originalfassung").toUpperCase();
-    const incomingPartNorm = String(fileInfo.part || "").toUpperCase();
-    const hasDifferentQualityOrVersion = !isExactDuplicate && validExistingEpRows.some(r =>
-      String(r.quality || "1080p").toUpperCase() !== incomingQualNorm ||
-      String(r.version_label || "Originalfassung").toUpperCase() !== incomingVerNorm ||
-      String(r.part || "").toUpperCase() !== incomingPartNorm ||
-      Number(r.part_number || 1) !== partNumber
-    );
-    const isUpdated = !isExactDuplicate && validExistingEpRows.length > 0 && !hasDifferentQualityOrVersion;
-    const isMergedQuality = !isExactDuplicate && hasDifferentQualityOrVersion;
+    const hasDifferentFingerprintOrQuality = !isExactDuplicate && validExistingEpRows.length > 0;
+    const isUpdated = false;
+    const isMergedQuality = hasDifferentFingerprintOrQuality;
 
     // Wenn die identische Episode nachweislich bereits in D1 (_fromD1 === true) liegt und keine Untertitel/Vorabversionen hinzukamen, spare den redundanten D1-Write!
     if (isExactDuplicate && matchedDuplicateEpRow && matchedDuplicateEpRow._fromD1 === true && replacedPrereleaseCount === 0) {
-      return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, skippedPrerelease: false, replacedPrereleaseCount: 0 };
+      return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount: 0 };
     }
 
     const entry = {
@@ -2318,19 +2422,21 @@
       episode_number: eNum,
       episode_title: epTitle,
       telegram_file_id: normalizedFid,
-      telegram_unique_id: realUniqueId || null,
+      telegram_unique_id: (!isSyntheticUniqueId ? realUniqueId : null) || null,
       file_fingerprint: fileFingerprint,
-      quality: String(fileInfo.quality || "1080p"),
-      codec: String(fileInfo.codec || "x264"),
-      part: fileInfo.part ? String(fileInfo.part) : (partNumber > 1 ? `CD ${partNumber}` : null),
-      part_number: partNumber,
+      quality: isArchiveDownload ? "ARCHIV" : String(fileInfo.quality || "1080p"),
+      codec: isArchiveDownload ? "ARCHIVE" : String(fileInfo.codec || "x264"),
+      part: null,
+      part_number: 1,
       edition_label: editionLabel,
-      is_bonus: isBonus ? 1 : 0,
+      is_bonus: isArchiveDownload ? 2 : (isBonus ? 1 : 0),
+      isDownloadOnly: isArchiveDownload,
+      type: isArchiveDownload ? "archive" : "video",
       tags: cleanTags,
       version_label: versionLabel,
       versionLabel: versionLabel,
       file_size: parsedBytes,
-      mime_type: String(fileInfo.mimeType || fileInfo.mime_type || "video/mp4"),
+      mime_type: isArchiveDownload ? "application/x-rar-compressed" : String(fileInfo.mimeType || fileInfo.mime_type || "video/mp4"),
       raw_filename: rawFilename,
       raw_caption: rawCaption,
       message_link: messageLink,
@@ -2349,24 +2455,22 @@
     memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
     memoryFallback.delete("d1_series_gaps_cache");
 
-    const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped));
+    const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped.filter(x => x.codec !== "ARCHIVE" && Number(x.is_bonus || 0) !== 2)));
 
-    if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
+    if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
-      // Multi-Qualitäten & Multi-Versionen-Schutz:
-      // Leere Slots (NULL/'') oder alte Dateien DERSELBEN Qualität + Fassung + part_number werden aktualisiert,
-      // während verschiedene Qualitäten (720p, 1080p, 4K), Fassungen und CD1/CD2 nebeneinander auswählbar bleiben!
+      // MODUL 3: Nur identische Fingerprints oder defekte Platzhalter ersetzen; abweichende Fingerprints bleiben als zusätzliche Qualitäts-Versionen erhalten!
       const stmts = [
         db.prepare(
           `DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND (
             telegram_file_id IS NULL OR telegram_file_id = ''
             OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
             ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (quality = ?4 AND codec = ?5 AND COALESCE(part, '') = ?6 AND COALESCE(part_number, 1) = ?7 AND telegram_file_id != ?8 AND COALESCE(version_label, 'Originalfassung') = ?9)
+            OR (COALESCE(part_number, 1) = ?4 AND COALESCE(file_fingerprint, '') = ?5 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?6)
           )`
-        ).bind(sid, sNum, eNum, entry.quality, entry.codec, entry.part || "", entry.part_number, entry.telegram_file_id, entry.version_label)
+        ).bind(sid, sNum, eNum, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
       ];
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
@@ -4067,6 +4171,14 @@
     }
     const isManualOverride = Boolean(movieObj.manualOverride || movieObj.manual_override || prevMovie?.manualOverride || knownInD1?.manualOverride);
     if (isManualOverride) movieObj.manualOverride = true;
+    // MODUL 2: Vorhandene Zusatz-Downloads (downloads-Array für Archive) beim Speichern erhalten
+    const existingDownloads = Array.isArray(movieObj.downloads)
+      ? movieObj.downloads
+      : (Array.isArray(prevMovie?.downloads) ? prevMovie.downloads : (memoryFallback.get(`d1_movie_downloads_${mid}`) || []));
+    if (existingDownloads.length > 0) {
+      movieObj.downloads = existingDownloads;
+      movieObj.hasDownloads = true;
+    }
     memoryFallback.set(`d1_catalog_movie_${mid}`, movieObj);
     const releaseYearForIdx = movieObj.releaseDate && movieObj.releaseDate !== "Keine Angabe"
       ? parseInt(String(movieObj.releaseDate).split("-")[0], 10) || null
@@ -4081,7 +4193,8 @@
       knownInD1.title === movieObj.title &&
       (knownInD1.poster_path || null) === (movieObj.poster_path || null) &&
       (knownInD1.external_poster_url || null) === (movieObj.external_poster_url || null) &&
-      (knownInD1.telegraphUrl || null) === (movieObj.telegraphUrl || null)
+      (knownInD1.telegraphUrl || null) === (movieObj.telegraphUrl || null) &&
+      Number(knownInD1.downloadsCount || 0) === existingDownloads.length
     ) {
       movieObj._persistedInD1 = true;
       return;
@@ -4159,6 +4272,7 @@
         poster_path: movieObj.poster_path || null,
         external_poster_url: movieObj.external_poster_url || null,
         telegraphUrl: movieObj.telegraphUrl || null,
+        downloadsCount: Array.isArray(movieObj.downloads) ? movieObj.downloads.length : 0,
         ts: Date.now()
       });
       memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
@@ -4253,6 +4367,13 @@
     }
     const isManualOverride = Boolean(seriesObj.manualOverride || seriesObj.manual_override || prevSeries?.manualOverride || knownInD1?.manualOverride);
     if (isManualOverride) seriesObj.manualOverride = true;
+    const existingSeriesDownloads = Array.isArray(seriesObj.downloads)
+      ? seriesObj.downloads
+      : (Array.isArray(prevSeries?.downloads) ? prevSeries.downloads : (memoryFallback.get(`d1_series_downloads_${sid}`) || []));
+    if (existingSeriesDownloads.length > 0) {
+      seriesObj.downloads = existingSeriesDownloads;
+      seriesObj.hasDownloads = true;
+    }
     memoryFallback.set(`d1_catalog_series_${sid}`, seriesObj);
     const releaseYearForIdx = seriesObj.releaseDate && seriesObj.releaseDate !== "Keine Angabe"
       ? parseInt(String(seriesObj.releaseDate).split("-")[0], 10) || null
@@ -4267,7 +4388,8 @@
       knownInD1.title === seriesObj.title &&
       (knownInD1.poster_path || null) === (seriesObj.poster_path || null) &&
       (knownInD1.external_poster_url || null) === (seriesObj.external_poster_url || null) &&
-      (knownInD1.telegraphUrl || null) === (seriesObj.telegraphUrl || null)
+      (knownInD1.telegraphUrl || null) === (seriesObj.telegraphUrl || null) &&
+      Number(knownInD1.downloadsCount || 0) === existingSeriesDownloads.length
     ) {
       seriesObj._persistedInD1 = true;
       return;

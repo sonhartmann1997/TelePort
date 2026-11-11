@@ -1,6 +1,6 @@
 {
-  "summary":  "Erweiterter Implementierungsplan mit echtem Telegram Webhook-Passwort (X-Telegram-Bot-Api-Secret-Token & URL-Secret, 0ms Edge-Prüfung, Auto-Sync bei setWebhook), Schutz vor Telegram Retry-Stürmen (update_id Deduplizierung, max_connections Drosselung, drop_pending_updates Not-Aus), 0-D1-Read In-Memory Edge-Cache für Katalog-Abrufe sowie Golden-Ratio Dark-Blue/Neon UI.",
-  "updatedAt":  "2026-11-09T21:20:41.067619433Z",
+  "summary":  "Aktualisierter Implementierungsplan ohne Staffel-Flip: Chronologische Import-Schleife mit processedMsgIds-Deduplizierung, Subrequest-Guard 38 / 6000ms ohne Logger-Verschmutzung, Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Zusatz-Downloads (isDownloadOnly / downloads) in D1, kollisionsfreier fileFingerprint (kein null===null Bug), Parser-Vorreinigung (NFC, globale Umlaute, Kanal-Tags, \\b Sprachkürzel, Scene-Präfixe mit Whitelist, Klammer-Alternativtitel), Multi-Part (Teil 2 vor Jahr vs. CD/Part nach Jahr, Editionen, 120-Zeichen Jahres-Cutoff) sowie Rechte-Bindestrich-Suche, +150 Untertitel-Match-Bonus (±3 Jahre) und Logger-Bereinigung.",
+  "updatedAt":  "2026-11-11T10:47:47.866865967Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

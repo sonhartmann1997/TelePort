@@ -1957,14 +1957,17 @@
 
                 /* TAB 1: STAFFELN & EPISODEN (bzw. STREAMS & DATEIEN bei Filmen) */
                 '<div id="flixTabPanel_streams" style="display:' + (initialTab === 'streams' ? 'block' : 'none') + '">' +
-                  ((vipAllowed && type === 'm' && d.files && d.files.length > 0) ? (
+                  ((vipAllowed && type === 'm' && ((d.files && d.files.length > 0) || (d.downloads && d.downloads.length > 0))) ? (
                     buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia)
                   ) : (!vipAllowed && type === 'm' ? (
                     '<div class="panel-box" style="margin:6px 0;text-align:center;color:#94a3b8;font-size:12.5px">' +
                       '🔒 Direkt-Streams & Downloads sind exklusiv für freigeschaltete <b>VIP-Mitglieder</b> sichtbar. Nutze die Tabs oben für <b>Versionen</b> & <b>Details / Trailer</b>.' +
                     '</div>'
                   ) : '')) +
-                  (type === 's' ? '<div id="seasonBox" style="margin-top:4px">Lade Episoden...</div>' : '') +
+                  (type === 's' ? (
+                    '<div id="seasonBox" style="margin-top:4px">Lade Episoden...</div>' +
+                    (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '')
+                  ) : '') +
                 '</div>' +
 
                 /* TAB 2: VERSIONEN (Übersicht aller Schnittfassungen, Episode-Groups & Dateien) */
@@ -2995,8 +2998,48 @@
           .join(" · ");
       }
 
+      function buildArchiveDownloadsSectionHtml(d, isAdminUser) {
+        const rawDownloads = Array.isArray(d?.downloads) ? d.downloads.filter(dl => dl && (dl.telegram_file_id || dl.file_id)) : [];
+        if (rawDownloads.length === 0) return "";
+        return '<div style="margin-top:12px">' +
+          '<div class="season-toolbar-row" style="margin-bottom:6px">' +
+            '<div style="font-size:12.5px;font-weight:800;color:#fde68a">📦 Zusatz-Downloads & Archive (' + rawDownloads.length + ')</div>' +
+          '</div>' +
+          '<div style="display:flex;flex-direction:column;gap:8px">' +
+            rawDownloads.map(dl => {
+              const fid = dl.telegram_file_id || dl.file_id || "";
+              const sizeLabel = formatFileSizeClient(dl.file_size);
+              const fnLabel = dl.file_name || dl.raw_filename || "Archiv-Download";
+              const codecLabel = dl.codec || (/\\.zip$/i.test(fnLabel) ? "ZIP" : /\\.7z$/i.test(fnLabel) ? "7Z" : "RAR");
+              const partLabel = normalizeClientPartLabel(dl.part, fnLabel);
+              return '<div class="ep-row" style="margin-bottom:0;border-color:rgba(245,158,11,0.4);background:rgba(245,158,11,0.06)">' +
+                '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">' +
+                  '<span class="ep-code-badge" style="background:rgba(245,158,11,0.2);color:#fde68a;border-color:rgba(245,158,11,0.45)">📦 ' + esc(codecLabel) + '</span>' +
+                  '<span class="ep-name-text">' + esc(fnLabel) + (partLabel ? ' · ' + esc(partLabel) : '') + '</span>' +
+                  (sizeLabel ? '<span class="stream-meta-pill size" title="Dateigröße">' + esc(sizeLabel) + '</span>' : '') +
+                '</div>' +
+                '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                  '<button class="btn-stream-clean prerelease" onclick="requestTelegramStream(\\'' + esc(fid) + '\\',\\'' + esc((d.title || 'Download') + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(codecLabel) + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'📦 Archiv-Download\\'})">📦 Archiv-Download senden</button>' +
+                '</div>' +
+              '</div>';
+            }).join("") +
+          '</div>' +
+        '</div>';
+      }
+
       function buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) {
-        const rawFiles = Array.isArray(d.files) ? d.files.filter(f => f && f.telegram_file_id) : [];
+        const allRawFiles = Array.isArray(d.files) ? d.files.filter(f => f && f.telegram_file_id) : [];
+        const rawFiles = allRawFiles.filter(f => !f.is_download_only && !f.isArchive && f.type !== "archive" && !/\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(String(f.raw_filename || "")));
+        const inlineArchiveFiles = allRawFiles.filter(f => f.is_download_only || f.isArchive || f.type === "archive" || /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(String(f.raw_filename || "")));
+        const combinedDownloads = [
+          ...(Array.isArray(d.downloads) ? d.downloads : []),
+          ...inlineArchiveFiles
+        ].filter((dl, idx, arr) => {
+          const fid = String(dl?.telegram_file_id || dl?.file_id || "");
+          if (!fid) return false;
+          return arr.findIndex(x => String(x?.telegram_file_id || x?.file_id || "") === fid) === idx;
+        });
+
         const normalizedFiles = rawFiles.map(f => {
           const isRarFile = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
           const normPart = normalizeClientPartLabel(f.part, f.raw_filename || "");
@@ -3045,6 +3088,21 @@
         }
 
         const totalReleaseCount = finalBlocks.length;
+        const archiveSectionHtml = combinedDownloads.length > 0
+          ? buildArchiveDownloadsSectionHtml({ ...d, downloads: combinedDownloads }, isAdminUser)
+          : "";
+
+        if (totalReleaseCount === 0) {
+          return '<div>' +
+            '<div class="season-toolbar-row">' +
+              '<div style="font-size:12.5px;font-weight:800;color:var(--text)">📦 Archiv-Downloads</div>' +
+              '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+                buildModalDeliveryTargetSelectorHtml() +
+              '</div>' +
+            '</div>' +
+            archiveSectionHtml +
+          '</div>';
+        }
 
         return '<div>' +
           '<div class="season-toolbar-row">' +
@@ -3122,6 +3180,7 @@
               '</div>';
             }).join("") +
           '</div>' +
+          archiveSectionHtml +
         '</div>';
       }
 
@@ -4840,15 +4899,15 @@
         if (fName === "sticker.webp" || fName.endsWith(".webp") || fName.endsWith(".tgs") || fName.endsWith(".gif.mp4") || fName.endsWith(".gif")) {
           return "🎭 Sticker / GIF-Animation übersprungen";
         }
-        // .rar und .partXX.rar sind als eigene Kategorie ("📦 RAR-Archiv") erlaubt!
-        if (/\\.rar$/i.test(fName)) {
+        // MODUL 2: Alle Archive (.rar, .zip, .7z, .iso, .tar, .gz) sind als Zusatz-Downloads erlaubt!
+        if (/\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(fName)) {
           return null;
         }
         // Untertitel (.srt, .vtt, .sub, .ass, .ssa) werden NICHT als Junk verworfen, sondern an das darüberliegende Video gebunden!
         if (/\\.(?:srt|vtt|sub|ass|ssa)$/i.test(fName)) {
           return null;
         }
-        if (/\\.(?:idx|mp3|m4a|flac|ogg|wav|opus|aac|apk|exe|msi|dmg|iso|pdf|epub|mobi|txt|nfo|jpg|jpeg|png|zip|7z|tar|gz)$/i.test(fName)) {
+        if (/\\.(?:idx|mp3|m4a|flac|ogg|wav|opus|aac|apk|exe|msi|dmg|pdf|epub|mobi|txt|nfo|jpg|jpeg|png)$/i.test(fName)) {
           return "📄 Dokument / PDF / Audio / Bilddatei übersprungen";
         }
         const dur = Number(msg.duration_seconds || msg.duration || 0);
@@ -4878,60 +4937,160 @@
         return Boolean(classifyClientJunkReason(msg));
       }
 
+      const CLIENT_OFFICIAL_HYPHEN_TITLE_PREFIXES = new Set([
+        "x-men", "a-team", "k-pax", "g-force", "u-571", "k-19", "t-rex", "v-wars",
+        "wall-e", "spider-man", "ant-man", "kick-ass", "non-stop", "hi-hi"
+      ]);
+
+      function stripClientSceneGroupPrefix(str) {
+        if (!str) return "";
+        const s = String(str).trim();
+        const m = s.match(/^([a-z]{2,6})-([a-z0-9._-]+)$/i);
+        if (!m) return s;
+        const prefix = m[1].toLowerCase();
+        const restFirstToken = m[2].split(/[._-]/)[0].toLowerCase();
+        const hyphenCandidate = prefix + "-" + restFirstToken;
+        if (CLIENT_OFFICIAL_HYPHEN_TITLE_PREFIXES.has(hyphenCandidate)) return s;
+        if (
+          /^[a-z]{2,6}-[a-z0-9._-]+$/.test(s) ||
+          /^(?:cyd|cd|nge|inkl|vs|spy|4sf|arc|tvp|itg|sot|wdc|fgt|rarbg|yts|psa|evo|ntb|play|flt|skidrow|codex|rune)$/i.test(prefix)
+        ) {
+          return m[2];
+        }
+        return s;
+      }
+
+      function normalizeClientGermanAsciiUmlauts(str) {
+        if (!str) return "";
+        return String(str).replace(/\\b([A-Za-zÄÖÜäöüß]+)\\b/g, (word) => {
+          const low = word.toLowerCase();
+          if (!/(?:ae|oe|ue)/.test(low)) return word;
+          if (
+            /(?:blue|true|clue|glue|flue|due|sue|cue|issue|value|statue|rescue|continue|avenue|league|colleague|rogue|vogue|plague|vague|intrig|fatig|unigue|unique|opaque|baroque|utorrent|duell|aktuell|eventuell|individuell|virtuell|visuell|sexuell|manuell|rituell|intellektuell|spirituell|konzeptuell|graduell|punktuell|textuell|kontextuell|sensuell|habituel|cruel|fuel|duel|feud|zeus|museum|kolosseum|linoleum|petroleum|jubileum|mausoleum|atheist|poet|poesie|noel|joel|israel|michael|raphael|gabriel|samuel|emanuel|manuel|daniel|nathaniel|gael|aerob|aero|maestro|paella|caesar|daemon|phoenix|boeing|cohen|koexist|koeduk|kooper|koordin|koalition|koeffizient|bauern|mauer|trauer|schauer|dauer|lauer|sauer|knauer|hauer|power|tower|shower|flower|abenteuer|ungeheuer|feuer|steuer|teuer|heuer|scheuer|neuer|treue|reue|freuen|freude|freund|feind|euer|eure|euern|eurem|euren|neuen|neue|neuer|neues|neuem|blauen|blaue|blauer|blaues|blauem|grauen|graue|grauer|graues|grauem|schlauen|schlaue|schlauer|frau|frauen|bauen|schauen|hauen|kauen|trauen|vertrauen|brauen|klauen|tauen|stauen|verdauen|genaue|genauen|genauer|genaues|zuschauer)$/i.test(low)
+          ) {
+            return word;
+          }
+          if (
+            /(?:faeust|faeus|fuer|fues|fuell|fuenf|fuehr|fuehl|furcht|brued|mued|sued|suend|gruen|gruend|glueck|zurueck|stueck|drueck|brueck|rueck|lueg|flueg|pflueg|zueg|anzueg|aufzueg|auszueg|umzueg|vorzueg|kuehl|kuehn|kuech|kuest|kuenst|kuend|kuenft|koenig|koenn|koerp|voegel|moeg|moecht|moerd|hoell|hoer|gehoer|stoer|zerstoer|schwoer|empfohl|woelf|zwoelf|loew|loes|loeffel|oeffn|oel|schluessel|schuessel|kuesse|kuess|muess|muesst|fluesse|fluess|nuesse|nuess|gruss|gruess|fuess|suess|buess|wuest|wuesst|duester|fluester|ruest|geruest|bruest|geluest|hueft|huegel|huebsch|huette|huet|schuetz|stuetz|nuetz|pfuetz|muetz|schueler|spuel|wuehl|kuehl|gefuehl|schwuere|schwuel|bluet|bluete|guet|guelt|huend|buend|muend|stuend|gruend|zuend|kuend|suend|wuensch|muench|muenz|kuerz|stuerz|wuerz|schuerz|fuerst|duerf|beduerf|wuerf|entwuerf|wuerd|wuerdig|wuerg|buerg|buero|tuer|tueren|tuerk|natuerlich|spuer|schnuer|schuer|geschwuer|gebuehr|verfuehr|entfuehr|auffuehr|ausfuehr|durchfuehr|einfuehr|beruehr|ruehr|jaeger|kaefer|kaefig|kaempf|kaese|kaelt|waerm|waehl|zaehl|itaet|paedagog|aehnlich|aendern|aerger|aermel|aerzt|aeuss|baecker|baer|baender|baend|blaetter|braeut|daemmer|daempf|daem|draeng|faehig|faehr|faell|faelsch|faerb|gaert|gaest|gefaehr|gefaeng|gefaess|gebaerd|gebaeu|gemaeld|gepaeck|gespraech|getraenk|gewaehr|gewaess|glaeser|glaeub|graeb|graef|haeft|haelft|haals|haeng|haert|haesslich|haeuf|haeus|haelt|jaehrlich|kaemm|klaer|klaeng|kraeft|kraeh|laechel|laehm|laend|laeng|laerm|laess|laeuf|maecht|maedchen|maerchen|maerz|maessig|maenn|maeus|naechst|naecht|naeh|naehr|naegel|itaet|plaene|plaetz|praeg|praesident|raech|raeum|raetsel|saenger|saeug|saeul|schaed|schaef|schael|schaem|schaer|schaetz|schlaef|schlaeg|schlaeuch|schwaech|schwaerz|schwaeger|spaet|staedt|staend|staerk|staett|straehn|taet|taeter|taeusch|traog|traeg|traenen|traeum|vaeter|verraet|waecht|waend|waesch|zaehn|zaert)/i.test(low)
+          ) {
+            return word
+              .replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")
+              .replace(/Ae/g, "Ä").replace(/Oe/g, "Ö").replace(/Ue/g, "Ü")
+              .replace(/AE/g, "Ä").replace(/OE/g, "Ö").replace(/UE/g, "Ü");
+          }
+          return word;
+        });
+      }
+
+      function extractClientEditionInfo(rawStr) {
+        if (!rawStr) return { cleanStr: "", editionLabel: null };
+        let editionLabel = null;
+        const s = String(rawStr).replace(
+          /\\b(super[\\s._-]*duper[\\s._-]*cut|extended[\\s._-]*director'?s?[\\s._-]*cut|director'?s?[\\s._-]*cut|extended[\\s._-]*(?:cut|edition|version)|special[\\s._-]*(?:edition|cut)|ultimate[\\s._-]*(?:cut|edition)|theatrical[\\s._-]*cut|final[\\s._-]*cut|unrated[\\s._-]*(?:cut|edition)?|uncut[\\s._-]*(?:edition|version)?|dc)\\b/gi,
+          (match) => {
+            if (!editionLabel) {
+              const low = match.toLowerCase();
+              if (low === "dc" || low.includes("director")) editionLabel = "Director's Cut";
+              else if (low.includes("extended")) editionLabel = "Extended Edition";
+              else if (low.includes("special")) editionLabel = "Special Edition";
+              else if (low.includes("ultimate")) editionLabel = "Ultimate Cut";
+              else if (low.includes("unrated")) editionLabel = "Unrated";
+              else if (low.includes("uncut")) editionLabel = "Uncut";
+              else editionLabel = match.trim();
+            }
+            return " ";
+          }
+        );
+        return { cleanStr: s, editionLabel };
+      }
+
+      function splitClientParenthesizedAltTitle(titleStr) {
+        if (!titleStr) return { primaryTitle: "", altTitle: null };
+        const s = String(titleStr).trim();
+        const m = s.match(/^(.{2,}?)\\s*\\(([^()]{3,80})\\)\\s*$/);
+        if (!m) return { primaryTitle: s, altTitle: null };
+        const left = m[1].trim();
+        const inside = m[2].trim();
+        if (
+          /^(?:19\\d{2}|20\\d{2}|de|en|fr|es|it|ger|eng|ddr|brd|usa|uk|cut|dc|uncut|unrated|extended|4k|uhd|hd|1080p|720p|ova|ona|tv|movie|film|serie|teil\\s*\\d+|part\\s*\\d+|cd\\s*\\d+)$/i.test(inside)
+        ) {
+          return { primaryTitle: s, altTitle: null };
+        }
+        return { primaryTitle: left, altTitle: inside };
+      }
+
       function extractClientPartInfo(rawText, rawFileName, durationSec = 0) {
         const rawFnStr = String(rawFileName || "").trim();
         const combinedRaw = (rawFnStr + " " + String(rawText || "")).trim();
-        const isRar = /\\.rar$/i.test(rawFnStr) || /\\.part\\d+\\.rar\\b/i.test(combinedRaw);
-        if (isRar) {
+        const isArchive = /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFnStr) || /\\.part\\d+\\.rar\\b/i.test(combinedRaw);
+        if (isArchive) {
+          const extMatch = rawFnStr.match(/\\.(rar|zip|7z|iso|tar|gz)$/i);
+          const archType = extMatch ? extMatch[1].toUpperCase() : "RAR";
           const rarPartMatch = combinedRaw.match(/(?:\\.part|\\bpart)[\\s._-]*0*([1-9]\\d?)\\b/i);
           if (rarPartMatch) {
             const num = parseInt(rarPartMatch[1], 10);
-            return { isMultiPart: true, isArchive: true, partNumber: num, partType: "RAR", partLabel: "RAR-PART" + num };
+            return { isMultiPart: true, isArchive: true, isDownloadOnly: true, partNumber: num, partType: archType, partLabel: archType + "-PART" + num };
           }
-          return { isMultiPart: false, isArchive: true, partNumber: 1, partType: "RAR", partLabel: "RAR" };
+          return { isMultiPart: false, isArchive: true, isDownloadOnly: true, partNumber: 1, partType: archType, partLabel: archType };
         }
         const fn = rawFnStr.replace(/(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d))+$/i, "");
         const combined = (fn + " " + String(rawText || "")).trim();
-        const cdMatch = combined.match(/\\b(CD|Disc|Disk|DVD|Split)[\\s._-]*0*([1-9])\\b/i);
+        const cdMatch = combined.match(/\\b(CD|Disc|Disk|DVD|Split)[\\s._-]*0*([1-4])\\b/i);
         if (cdMatch) {
           const num = parseInt(cdMatch[2], 10);
-          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
+          return { isMultiPart: true, isArchive: false, isDownloadOnly: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
         }
-        const splitMatch = fn.match(/(?:[-_.]|\\s)00([1-9])$/);
+        const splitMatch = fn.match(/-(00[1-4])$/);
         if (splitMatch) {
           const num = parseInt(splitMatch[1], 10);
-          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
+          return { isMultiPart: true, isArchive: false, isDownloadOnly: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
         }
-        const partMatch = combined.match(/\\bPart[\\s._-]*0*([1-9])\\b/i);
-        if (partMatch && (!durationSec || durationSec < 5000)) {
-          const num = parseInt(partMatch[1], 10);
-          return { isMultiPart: true, isArchive: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
+        // "01 (YYYY)" / "02 (YYYY)" direkt vor Jahreszahl ("The Postman 01 (1997)")
+        const preYearSplitMatch = combined.match(/\\b0([1-4])\\s*\\(\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*\\)/i);
+        if (preYearSplitMatch) {
+          const num = parseInt(preYearSplitMatch[1], 10);
+          return { isMultiPart: true, isArchive: false, isDownloadOnly: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
+        }
+        // MODUL 5: Part/Teil NACH der Jahreszahl ("Hogfather - 2006 - Part 2.mp4") -> echter Datei-Split (CD)
+        const postYearPartMatch = combined.match(/\\b(?:19[2-9]\\d|20[0-2]\\d)\\b[\\s._\\-()\\[\\]]+(?:Part|Teil|Film)[\\s._-]*0*([1-4])\\b/i);
+        if (postYearPartMatch) {
+          const num = parseInt(postYearPartMatch[1], 10);
+          return { isMultiPart: true, isArchive: false, isDownloadOnly: false, partNumber: num, partType: "CD", partLabel: "CD " + num };
         }
         return null;
       }
 
       function normalizeClientEpisodeText(str) {
         if (!str) return "";
+        // MODUL 4.1: NFC-Normalisierung ganz am Anfang erzwingen ("u\\u0308" -> "ü" in "Ein Rezept für die Liebe")
         let s = String(str)
+          .normalize("NFC")
           .replace(/%26/gi, "&")
           .replace(/%20/g, " ")
           .replace(/[۰-۹]/g, d => "۰۱۲۳۴۵۶۷۸۹".indexOf(d))
           .replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d))
           .replace(/\\u1D34\\u1D30/g, " HD ")
           .replace(/\\u2074\\u1D37/g, " 4K ");
+        // MODUL 4.2: Kanal-Tags & Uploader-Wasserzeichen VOR der _-Ersetzung entfernen (@German_Vid, @ GERMAN MOVIES_, @movies)
+        s = s
+          .replace(/^@\\s*(?:german[\\s._-]*(?:movies?|vid(?:eo)?s?)|[\\w.-]+)[\\s_:\\-]*/gi, " ")
+          .replace(/^@\\s*movies\\s+/gi, " ")
+          .replace(/\\b(?:german[\\s._-]+(?:movies?|vid(?:eo)?s?)|@[\\w.-]+)\\b/gi, " ");
         s = Array.from(s).map(ch => {
           return (ch.charCodeAt(0) > 127 && !"äöüÄÖÜßéèêàáâóòôúùûíìîçñøåÆØÅ–—„“”’´‧·".includes(ch))
             ? ch.normalize("NFKD")
             : ch;
-        }).join("");
+        }).join("").normalize("NFC");
         s = s.replace(/[\\p{Script=Arabic}\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF،؛؟]+/gu, " ")
           .replace(/󠄿/g, "")
           .replace(/_/g, " ")
           .replace(/[\\u00A0 \\t]+/g, " ");
+        // MODUL 4.1: Globale Umlaut-Konvertierung (/g) für "Vier Faeuste fuer ein Halleluja"
+        s = normalizeClientGermanAsciiUmlauts(s);
         // Senkrechte Striche als römische Zahlen am Wortende umwandeln ("Creed |||" -> "Creed III")
         s = s.replace(/(?<=[A-Za-zÄÖÜäöüß])\\s+(\\|{2,3})(?=$|[\\s)\\]._-])/g, (_, pipes) => pipes.length === 3 ? " III" : " II");
         // Regel 1: Episoden-Muster in S01E01 umwandeln
-        s = s.replace(/\\b(?:Staffel|Season)\\s*0*(\\d{1,2})\\s*(?:[-–,·‧:|\\/]|\\s)+\\s*(?:Folge|Episode|Ep\\.?)\\s*0*(\\d{1,3})(?!\\s*[-–]\\s*\\d{1,3})\\b/gi, (_, st, ep) => "S" + String(st).padStart(2, "0") + "E" + String(ep).padStart(2, "0"));
+        s = s.replace(/\\b(?:Staffel|Season)\\s*0*(\\d{1,2})\\s*(?:[-–,·‧:|\\/]|\\s)+\\s*(?:Folge|Episode|Ep\\.?|Teil|Part)\\s*0*(\\d{1,3})(?!\\s*[-–]\\s*\\d{1,3})\\b/gi, (_, st, ep) => "S" + String(st).padStart(2, "0") + "E" + String(ep).padStart(2, "0"));
         s = s.replace(/\\bS0*(\\d{1,2})\\s*[-–]\\s*E0*(\\d{1,3})\\b/gi, (_, st, ep) => "S" + String(st).padStart(2, "0") + "E" + String(ep).padStart(2, "0"));
         s = s.replace(/\\bS0*(\\d{1,2})\\s+E0*(\\d{1,3})\\b/gi, (_, st, ep) => "S" + String(st).padStart(2, "0") + "E" + String(ep).padStart(2, "0"));
         s = s.replace(/(?<![\\d.])\\b0*(\\d{1,2})x0*(\\d{2,3})\\b(?![\\d.])/gi, (_, st, ep) => {
@@ -4941,12 +5100,6 @@
             return "S" + String(stNum).padStart(2, "0") + "E" + String(epNum).padStart(2, "0");
           }
           return _;
-        });
-        // E01S01 / E01S02 strikt umkehren (E01 ist Episode 1, S02 ist Staffel 2 -> S$2E$1)
-        s = s.replace(/\\bE0*(\\d{1,3})[\\s._-]*S0*(\\d{1,2})\\b/gi, (_, epNum, sNum) => {
-          const season = parseInt(sNum, 10) || 1;
-          const episode = parseInt(epNum, 10) || 1;
-          return "S" + String(season).padStart(2, "0") + "E" + String(episode).padStart(2, "0");
         });
         // Mittelpunkt-Episodenschema: "Maxe Baumann · 01 Ferien ohne Ende" -> "Maxe Baumann S01E01 Ferien ohne Ende"
         s = s.replace(/([A-Za-zÄÖÜäöüß]{2,})\\s+[·‧•]\\s+0*(\\d{1,2})\\s+([A-Za-zÄÖÜäöüß])/g, (_, name, ep, nextChar) => {
@@ -4975,30 +5128,44 @@
       function applyClientHardYearCutoff(rawString) {
         if (!rawString) return { titleBeforeYear: "", year: null, hadYearCutoff: false };
         const s = String(rawString).replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
-        const parenMatch = s.match(/^(.*?)\\s*[\\(\\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)(?:\\s*[-–—/bis]+\\s*(?:19[2-9]\\d|20[0-2]\\d|heute|present)?)?\\s*[\\)\\]](.*)$/i);
+        const parenMatch = s.match(/^(.*?)\\s*[\\(\\[]\\s*(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(19[2-9]\\d|20[0-2]\\d)(?:\\s*[-–—/bis]+\\s*(?:19[2-9]\\d|20[0-2]\\d|heute|present)?)?\\s*[\\)\\]](.*)$/i);
         if (parenMatch && parenMatch[1] && parenMatch[1].trim().length >= 2) {
           return { titleBeforeYear: parenMatch[1].trim(), year: parseInt(parenMatch[2], 10), hadYearCutoff: true };
         }
-        const yearCutMatch = s.match(/^(.*?)(?:[\\s._\\-(\\[\\]]+)(19[2-9]\\d|20[0-2]\\d)(?=[\\s._\\-)\\]]|(?:SiFi|SciFi|Sci-Fi|Action|Comedy|Komödie|Komoedie|Drama|Crime|Krimi|Thriller|Horror|Abenteuer|Adventure|Krieg|Geschichte|History|Fantasy|Animation|Familie|Romantik|Romance|Mystery|Western|Musik|Doku|Dokumentation|HD|FullHD|FHD|UHD|4K|1080p|720p|480p|German|Deutsch|DE|EN|AC3|DTS|x264|x265|264|265|XviD|DivX|mp4|mkv|avi|$))/i);
+        const yearCutMatch = s.match(/^(.*?)(?:[\\s._\\-(\\[\\]]+)(19[2-9]\\d|20[0-2]\\d)(?=[\\s._\\-\\)\\]]|(?:SiFi|SciFi|Sci-Fi|Action|Comedy|Komödie|Komoedie|Drama|Crime|Krimi|Thriller|Horror|Abenteuer|Adventure|Krieg|Geschichte|History|Fantasy|Animation|Familie|Romantik|Romance|Mystery|Western|Musik|Doku|Dokumentation|HD|FullHD|FHD|UHD|4K|1080p|720p|480p|German|Deutsch|DE|EN|AC3|DTS|x264|x265|264|265|XviD|DivX|mp4|mkv|avi|$))/i);
         if (yearCutMatch && yearCutMatch[1] && yearCutMatch[1].trim().length >= 2) {
           return { titleBeforeYear: yearCutMatch[1].trim(), year: parseInt(yearCutMatch[2], 10), hadYearCutoff: true };
         }
         return { titleBeforeYear: s, year: null, hadYearCutoff: false };
       }
 
-      function cleanClientMediaTitle(raw) {
+      function cleanClientMediaTitle(raw, opts = {}) {
         if (!raw) return "";
-        let t = normalizeClientEpisodeText(raw)
-          .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|json))+$/i, "");
+        const rawTrimmed = String(raw)
+          .normalize("NFC")
+          .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "")
+          .trim();
+        const sceneCleaned = stripClientSceneGroupPrefix(rawTrimmed);
+        let t = normalizeClientEpisodeText(sceneCleaned)
+          .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
+        // Twilight Saga (4.1) / (4.2) Spezial-Regel: eigene Kinofilme ("Breaking Dawn - Teil 1" / "Teil 2")
+        if (/twilight/i.test(t) && /breaking[\\s._-]*dawn/i.test(t)) {
+          t = t.replace(/^(?:the\\s+)?twilight[\\s._-]*saga[\\s._()-]*(?:0?[1-5]|complete)?[\\s._\\-:)]*/i, "");
+          t = t.replace(/[\\s._()-]*\\b4\\.?1\\b[\\s._()-]*/g, " - Teil 1 ");
+          t = t.replace(/[\\s._()-]*\\b4\\.?2\\b[\\s._()-]*/g, " - Teil 2 ");
+        } else if (/^(?:the\\s+)?twilight[\\s._-]*saga[\\s._-]*0*[1-3]\\b/i.test(t)) {
+          t = t.replace(/^(?:the\\s+)?twilight[\\s._-]*saga[\\s._-]*0*[1-3][\\s._\\-:]*/i, "");
+        }
         t = t.replace(/\\(\\s*\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\s*\\)/g, " ");
         t = t.replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
-        t = t.replace(/\\b0[1-4](?=\\s*[\\(\\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[\\)\\]])/gi, " ");
+        t = t.replace(/\\b0[1-4](?=\\s*[\\(\\[]\\s*(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[\\)\\]])/gi, " ");
         const cutoffRes = applyClientHardYearCutoff(t);
+        const hadYearCutoff = Boolean(opts.hadYearCutoff || cutoffRes.hadYearCutoff);
         if (cutoffRes.hadYearCutoff && cutoffRes.titleBeforeYear) {
           t = cutoffRes.titleBeforeYear;
         }
-        t = t.replace(/[\\(\\[]?\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[-–—/bis]+\\s*(?:19[2-9]\\d|20[0-2]\\d|heute|present)\\s*[\\)\\]]?/gi, " ");
-        t = t.replace(/[\\(\\[]\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[-–—]?\\s*[\\)\\]]/gi, " ");
+        t = t.replace(/[\\(\\[]?\\s*(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[-–—/bis]+\\s*(?:19[2-9]\\d|20[0-2]\\d|heute|present)\\s*[\\)\\]]?/gi, " ");
+        t = t.replace(/[\\(\\[]\\s*(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(?:19[2-9]\\d|20[0-2]\\d)\\s*[-–—]?\\s*[\\)\\]]/gi, " ");
         t = t.replace(/\\b(?:AC3D?|EAC3|AAC|DTS|DDP?)[\\s._-]*(?:5\\.1|7\\.1|2\\.0)\\b/gi, " ");
         t = t.replace(/\\b(?:XViD|DivX|x264|x265|H\\.?264|H\\.?265|HEVC|BDRiP|BRRiP|DVDRiP|WEBRiP|WEB-DL)-[A-Za-z0-9]{2,12}\\b/gi, " ");
         if (((t.match(/\\./g) || []).length >= 2 || /[A-Za-zÄÖÜäöüß]{2,}\\.[A-Za-zÄÖÜäöüß0-9]{2,}/.test(t)) && !/^(?:e\\.t\\.?|a\\.d\\.?|o\\.c\\.?|l\\.a\\.?|k\\.o\\.?|s\\.h\\.i\\.e\\.l\\.d\\.?)$/i.test(t.trim())) {
@@ -5008,33 +5175,37 @@
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:ger|deu|eng|jap|jpn|fr|es|it|tr|ru)[\\s._-]+(?:sub|subs|dub|dubbed)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:ger|deu|german|deutsch|eng|english|englisch|jap|jpn|japanisch|fr|fra|es|spa|it|ita|tr|tur|ru|rus)[\\s._-]+(?:sub|subs|ut|untertitel|dub|dubbed|forced)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/(?:AC3|AAC|DTS|DD5\\.?1)?[\\s._-]*(?:CD|Disc|Disk|DVD|Split)[\\s._-]*0*[1-9]\\b/gi, " ");
-        t = t.replace(/(?:^|[\\s._\\-(])(?:Part|Teil|Pt)[\\s._-]*0*([1-9]\\d?)(?:$|[\\s._\\-)])/gi, " ");
-        // Nur echte Split-Archiv-Endungen (.001 bis .004 am Ende) entfernen, NIEMALS "007" in "James Bond 007"!
+        // MODUL 5.1: Wenn "Teil 2" oder "Part 2" VOR der Jahreszahl stand (hadYearCutoff === true, z.B. "Mockingjay Teil 2 (2015)"),
+        // gehört es zwingend zum Filmtitel und darf NIEMALS weggeschnitten werden!
+        if (!hadYearCutoff) {
+          t = t.replace(/(?:^|[\\s._\\-(])(?:Part|Pt)[\\s._-]*0*([1-9]\\d?)(?:$|[\\s._\\-)])/gi, " ");
+        }
+        // Nur echte Split-Archiv-Endungen (-001 bis -004 am Ende) entfernen, NIEMALS "007" in "James Bond 007"!
         t = t.replace(/(?:[-_.]|\\s)00[1-4]\\s*$/gi, " ");
         t = t.replace(/[\\u{1F1E6}-\\u{1F1FF}]{2}/gu, "");
         t = t.replace(/[《》«»⟨⟩]/g, " ");
         t = t.replace(/^[🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎➡️▶️🍿⭐️❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️\\s]+/gu, "");
         t = t.replace(/[↩️🔠🔢⤴️⬅️➡️🎦]+.*$/gu, "");
         t = t.replace(/[\\p{Emoji_Presentation}\\p{Extended_Pictographic}🟢🔵🟡🔴🟣🟠⚫⚪🎬🎞️📺🍭✨🔸🔶💎🩸❖➠✔️🔞👉👈👇👆⬇️⬆️🔥💥⚡🌟🎭🎧🔊💿📀📽️🎥❤️♥️]/gu, " ");
-        t = t.replace(/@[A-Za-z0-9_]+/g, "");
+        t = t.replace(/@[A-Za-z0-9_.-]+/g, "");
         t = t.replace(/#(?:gutfilm|archemovie|filmwelt|weltderfilme|sauerkraut|hd|fullhd|fhd|uhd|4k|1080p|720p|480p|deutsch|german|kino|serie|serien|film|filme|neu|new|stream|download|vip|ov|omu|horror|action|comedy|thriller|drama|scifi|sifi|fantasy|anime)\\b/gi, " ");
         t = t.replace(/#(?=[A-Za-zÄÖÜäöüß0-9])/g, " ");
         t = t.replace(/s[\\._]to\\s*-?\\s*Serien.*/i, "").replace(/Sto\\s*-\\s*Serien.*/i, "");
         t = t.replace(/serien[\\._](?:life|show).*/i, "").replace(/HD\\s*Filme\\s*Serien.*/i, "");
-        t = t.replace(/^(?:Title|Titel)\\s*:\\s*/i, "").replace(/^(?:vs-|cd-|spy-|d-|4sf-|arc-|tvp-)/i, "");
+        t = t.replace(/^(?:Title|Titel)\\s*:\\s*/i, "").replace(/^(?:vs-|cyd-|cd-|nge-|inkl-|spy-|d-|4sf-|arc-|tvp-)/i, "");
         t = t.replace(/^(?:disney'?s|disneys|marvel'?s|marvels|pixar'?s|pixars)\\s+/i, "");
         t = t.replace(/^(?:s\\d{1,2}[\\s._-]*e\\d{1,3}|e\\d{1,3}[\\s._-]*s\\d{1,2}|\\d{1,2}x\\d{1,3})\\b[\\s._\\-–:]*/i, "");
         t = t.replace(/\\bS\\d{1,2}\\s*E\\d{0,3}(?=[A-Za-z]|\\b)/gi, " ");
         t = t.replace(/\\b\\d{3,4}\\s*[x×]\\s*\\d{3,4}\\b/g, "");
         t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(?:super[\\s._-]*duper[\\s._-]*cut|extended[\\s._-]*director'?s?[\\s._-]*cut|(?:extended|director'?s?|director’s|theatrical|ultimate|final|special|unrated|uncut|recut|producer'?s?|television|tv|fan|snyder|remastered|restored|collector'?s?|collector’s|anniversary|limited|deluxe|diamond|platinum|imax|open[\\s._-]*matte|international|rough|workprint)[\\s._-]*(?:cut|edition|version|fassung|ed\\.?)|(?:kino|lang|kurz|fernseh|tv|schnitt|rohschnitt|farb|original|alternativ|jubiläums|jubilaeums|directors|extended|uncut|unrated)[\\s._-]*(?:fassung|version|edition|cut)|(?:4k[\\s._-]*)?(?:digitally[\\s._-]*)?(?:remastered|restored)|mastered[\\s._-]*in[\\s._-]*4k|open[\\s._-]*matte|3d|hsbs|sbs|hou)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
-        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|264|265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\\.?1|5\\.1|7\\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
+        t = t.replace(/(?<![A-Za-zÄÖÜäöüß0-9])(1080p|720p|2160p|480p|4k|uhd|h265|h264|x264|x265|264|265|hevc|av1|xvid(?:-[a-z0-9]{2,12})?|divx|10bit|de-en|en-de|de-fr|fr-de|de-es|es-de|de-it|it-de|de-tr|tr-de|de-ru|ru-de|de-ja|de-jp|german|deutsch|germany|deu|ger|englisch|english|eng|französisch|franzoesisch|french|fra|fre|vff|vf|(?<!grundkurs\\s+)(?:spanisch|spanish)|spa|esp|castellano|latino|italienisch|italian|ita|türkisch|tuerkisch|turkish|tur|russisch|russian|rus|japanisch|japanese|jap|jpn|koreanisch|korean|kor|dl|dual[\\s._-]*audio|dual|multi|multilang|(?<!world\\s+wide\\s+)web|web-dl|webrip|bluray|bdrip|brrip|dvdrip|dvdscr|hdrip|remux|fullhd|fhd|microhd(?:\\s*720|\\s*1080)?|hd|sd|dt__ov|dt[\\s._-]*ov|ov|omu|omeu|oton|originalton|gerdub|engdub|japdub|gersub|engsub|softsub|hardsub|subbed|forced|germanforced|extended[\\s._-]*cut|director'?s?[\\s._-]*cut|theatrical[\\s._-]*cut|ultimate[\\s._-]*cut|final[\\s._-]*cut|special[\\s._-]*(?:cut|edition)|collector'?s?[\\s._-]*edition|extended[\\s._-]*(?:edition|version)|uncut[\\s._-]*(?:edition|version)?|unrated[\\s._-]*(?:cut|edition|version)?|farbfassung|langfassung|kinofassung|fernsehfassung|schnittfassung|remastered|restored|uncut|unrated|extended|recut|ac3d|ac3|eac3|dts|dd5\\.?1|5\\.1|7\\.1|aac|6ch|proper|repack|limited|mp4|mkv|avi|m4v|flv|mk3d|rar|zip|7z|iso|tar|gz|archemovie|gutfilm|filmwelt|weltderfilme|sauerkraut|wayne|wvf|dollhead|empir|tvnation|contribution|vivo|watch|camrip|cam-rip|hdcam|hd-cam|ts-cam)(?![A-Za-zÄÖÜäöüß0-9])/gi, " ");
         t = t.replace(/[\\(\\[]\\s*(?:the\\s+)?(?:cut|dc|edition|version|fassung)\\s*[\\)\\]]/gi, " ");
-        t = t.replace(/[\\(\\[]\\s*(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s*[\\)\\]]/gi, " ");
+        t = t.replace(/[\\(\\[]\\s*\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s*[\\)\\]]/gi, " ");
         t = t.replace(/^(.{2,}?)\\s+(?:[-–:]\\s*)?(?:the\\s+)?(?:cut|dc|edition|version|fassung|redux)\\s*$/i, "$1");
         t = t.replace(/\\s*[-–:]\\s*(?:the|der|die|das)\\s*$/i, "");
-        // Alleinstehende 2-Buchstaben-Sprachkürzel NUR in Klammern oder ganz am Ende entfernen (NIEMALS "- Der" in "Shrek - Der tollkühne Held" oder "James Bond 007 - Der Morgen Stirbt Nie" anschneiden!)
-        t = t.replace(/[\\(\\[]\\s*(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\\s*[\\)\\]]/g, " ");
-        t = t.replace(/(?:[-_]\\s*|\\s+)(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\\b(?=\\s*$)/g, " ");
+        // MODUL 4.3: Strikte Wortgrenzen \\b bei Sprachkürzeln (verhindert "Pin" statt "Pines" und "Fenc" statt "Fences")
+        t = t.replace(/[\\(\\[]\\s*\\b(?:DE|De|de|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\\b\\s*[\\)\\]]/g, " ");
+        t = t.replace(/(?:[-_]\\s*|\\s+)\\b(?:DE|De|EN|FR|ES|IT|TR|RU|JA|KO|DDR|BRD)\\b(?=\\s*$)/g, " ");
         t = t.replace(/^(?:\\d{1,4}\\.\\s+|0\\d\\s*[-–]\\s+)/, "").replace(/-\\d{3}$/, "");
         t = t.replace(/[\\(\\[]\\s*[-–—/:.,;]*\\s*[\\)\\]]/g, " ");
         t = t.replace(/\\s+/g, " ").replace(/^[\\s\\-–·‧:.,#"=|⎪&]+|[\\s\\-–·‧:.,#"=|⎪&]+$/g, "");
@@ -5053,18 +5224,25 @@
         if (CLIENT_SERIES_ALIASES[lower]) return CLIENT_SERIES_ALIASES[lower];
         const prefixKey = lower.split(/\\s*[-–]\\s*/)[0];
         if (CLIENT_SERIES_ALIASES[prefixKey]) return CLIENT_SERIES_ALIASES[prefixKey];
-        return t;
+        return t.slice(0, 120).trim();
       }
 
       function parseClientMediaPreview(rawFilenameOrTitle, durationSec = 0, msgObj = null) {
-        const raw = String(rawFilenameOrTitle || "").trim();
-        const rawCapText = msgObj && typeof msgObj === "object" ? String(msgObj.raw_text || msgObj.text || msgObj.caption || "") : "";
-        const isRarArchive = /\\.rar$/i.test(raw) || /\\.rar$/i.test(String(msgObj?.raw_file_name || msgObj?.file_name || "")) || /\\.part\\d+\\.rar\\b/i.test(raw + " " + rawCapText);
-        let withoutExt = normalizeClientEpisodeText(raw).replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|json))+$/i, "");
+        const raw = String(rawFilenameOrTitle || "").normalize("NFC").trim();
+        const rawCapText = msgObj && typeof msgObj === "object" ? String(msgObj.raw_text || msgObj.text || msgObj.caption || "").normalize("NFC") : "";
+        const rawFileNameField = String(msgObj?.raw_file_name || msgObj?.file_name || "");
+        const isArchive = /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(raw) ||
+          /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFileNameField) ||
+          /\\.part\\d+\\.rar\\b/i.test(raw + " " + rawCapText);
+        const strippedExtRaw = raw.replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
+        const sceneCleanRaw = stripClientSceneGroupPrefix(strippedExtRaw);
+        const editionRes = extractClientEditionInfo(sceneCleanRaw);
+        let withoutExt = normalizeClientEpisodeText(editionRes.cleanStr).replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
         withoutExt = withoutExt.replace(/\\(\\s*\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\s*\\)/g, " ").replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
         let quality = detectClientVideoQuality(msgObj, withoutExt, raw);
-        let codec = isRarArchive ? "RAR" : "x264";
-        const cm = !isRarArchive ? withoutExt.match(/\\b(x265|h\\.?265|hevc|x264|h\\.?264|avc|av1)\\b/i) : null;
+        const archExtMatch = (rawFileNameField || raw).match(/\\.(rar|zip|7z|iso|tar|gz)$/i);
+        let codec = isArchive ? (archExtMatch ? archExtMatch[1].toUpperCase() : "RAR") : "x264";
+        const cm = !isArchive ? withoutExt.match(/\\b(x265|h\\.?265|hevc|x264|h\\.?264|avc|av1)\\b/i) : null;
         if (cm) {
           const cLow = cm[1].toLowerCase().replace(/\\./g, "");
           codec = (cLow === "x265" || cLow === "h265" || cLow === "hevc") ? "x265" : (cLow === "av1" ? "AV1" : "x264");
@@ -5124,7 +5302,6 @@
           episode = parseInt(seMatch[2], 10) || 1;
           const afterRaw = withoutExt.slice(seMatch.index + seMatch[0].length).replace(/^[\\s._\\-–:·‧|⎪=]+/, "");
           if (seMatch.index === 0) {
-            // Fall E01S01 Frontier 2016: S01E01 steht am Anfang, danach folgt der Serienname (+ ggf. Jahr)
             withoutExt = afterRaw;
             cutIdx = withoutExt.length;
             explicitTitle = afterRaw;
@@ -5145,8 +5322,7 @@
             season = 1;
             episode = parseInt(epOnly[1], 10) || 1;
             if (typeof epOnly.index === "number" && epOnly.index > 1) cutIdx = Math.min(cutIdx, epOnly.index);
-          } else if (!pInfo?.isMultiPart && !/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
-            // Fall "05 Ein Star ist geboren" / "13 Hochzeitspläne": Anführende 2- oder 3-stellige Zahl + Leerzeichen/Bindestrich bei < 4200s
+          } else if (!pInfo?.isMultiPart && !/[\\(\\[]\\s*(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\\)\\]]/i.test(withoutExt) && (durationSec <= 0 || durationSec <= 4200)) {
             const leadEpNumMatch = withoutExt.match(/^(?:0*(\\d{2,3}))[\\s\\-]+([A-Za-zÄÖÜäöüß].{2,})$/);
             const numberedMovieGuardRe = /^(?:12\\s+angry\\s+men|12\\s+years\\s+a\\s+slave|12\\s+monkeys|13\\s+hours|13\\s+assassins|13\\s+going\\s+on\\s+30|13\\s+geister|13\\s+ghosts|13\\s+sins|16\\s+blocks|17\\s+again|21\\s+jump\\s+street|22\\s+jump\\s+street|24\\s+hour\\s+party|27\\s+dresses|28\\s+days|28\\s+weeks|28\\s+years|30\\s+days\\s+of\\s+night|40\\s+year\\s+old|47\\s+ronin|47\\s+meters|50\\s+first\\s+dates|50\\s+shades|65\\s+million|88\\s+minutes|96\\s+hours|99\\s+homes|100\\s+things|100\\s+dinge|101\\s+dalmat|102\\s+dalmat|127\\s+hours|300\\s+rise|500\\s+days)\\b/i;
             const leadEpVal = leadEpNumMatch ? parseInt(leadEpNumMatch[1], 10) : 0;
@@ -5157,9 +5333,8 @@
               episodeTitle = cleanClientMediaTitle(leadEpNumMatch[2]);
               explicitTitle = (msgObj?.pre_context?.seriesHeader || msgObj?.pre_context?.title || episodeTitle);
             }
-            // Fall Black Box 1 bis 6, Spuk im Hochhaus 1..7 & Pippi Langstrumpf 1 Pippi zieht...:
             const strippedTrailingQual = !isSeries ? withoutExt
-              .replace(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/gi, " ")
+              .replace(/[\\(\\[]\\s*(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\\)\\]]/gi, " ")
               .replace(/\\b(?:1080p|720p|2160p|480p|4k|uhd|x264|x265|h264|h265|hevc|ger|deu|german|deutsch|web-dl|webrip|bluray|hd|mp4|mkv|avi)\\b/gi, " ")
               .replace(/\\s+/g, " ")
               .trim() : "";
@@ -5206,28 +5381,56 @@
           }
         }
 
+        // Keine CD-Buttons bei Serien ("The Walking Dead"-Fix): part ist bei Serien immer null (part_number = 1)
+        if (isSeries && !isArchive) {
+          part = null;
+        }
+
         let year = null;
-        const parenYm = (" " + withoutExt + " ").match(/[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?[(\\[\\s]*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[)\\]]/i);
-        const ym = parenYm || (" " + withoutExt + " ").match(/(?:[(\\[\\-\\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[)\\]\\s._\\-·‧]|$)/i);
+        let hadYearCutoff = false;
+        const parenYm = (" " + withoutExt + " ").match(/[\\(\\[]\\s*(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(19[2-9]\\d|20[0-2]\\d)\\s*[\\)\\]]/i);
+        const ym = parenYm || (" " + withoutExt + " ").match(/(?:[\\(\\[\\-\\s_.·‧])(?:\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\b\\s+)?(?<!\\d{1,2}[./-]\\d{1,2}[./-])(19[2-9]\\d|20[0-2]\\d)(?![./-]\\d|\\d)(?:[\\)\\]\\s._\\-·‧]|$)/i);
         if (ym) {
           year = parseInt(ym[1], 10);
+          hadYearCutoff = true;
           if (!explicitTitle && typeof ym.index === "number" && ym.index >= 2) cutIdx = Math.min(cutIdx, ym.index - 1);
         }
 
         let titleCand = explicitTitle ? explicitTitle : (withoutExt.slice(0, cutIdx).trim() || withoutExt);
         if (year) {
           titleCand = titleCand
-            .replace(new RegExp("[(\\\\[]\\\\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\\\s+)?" + year + "\\\\s*[)\\\\]]", "gi"), " ")
+            .replace(new RegExp("[(\\\\[]\\\\s*(?:\\\\b(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\\\\b\\\\s+)?" + year + "\\\\s*[)\\\\]]", "gi"), " ")
             .replace(new RegExp("\\\\b" + year + "\\\\b", "g"), " ");
         }
-        let cleanTitle = cleanClientMediaTitle(titleCand) || "Unbekannt";
+        let cleanTitle = cleanClientMediaTitle(titleCand, { hadYearCutoff }) || "Unbekannt";
+        const altSplit = splitClientParenthesizedAltTitle(cleanTitle);
+        let altTitle = null;
+        if (altSplit.altTitle && altSplit.primaryTitle) {
+          cleanTitle = altSplit.primaryTitle;
+          altTitle = altSplit.altTitle;
+        }
         if (cleanTitle && isLikelyClientPlotDescription(cleanTitle)) {
           cleanTitle = cleanTitle.split(/[:\\n(]/)[0].trim();
         }
         const jacobMatch = cleanTitle.match(/^(Jacob\\s*2[\\s/_]*2)\\s+(und\\s+.+)$/i);
         if (jacobMatch) cleanTitle = "Jacob 2/2";
 
-        return { cleanTitle, year, isSeries, isArchive: isRarArchive, season, episode, episodeTitle, quality, codec, part };
+        return {
+          cleanTitle,
+          altTitle,
+          editionLabel: editionRes.editionLabel || null,
+          year,
+          isSeries,
+          isArchive,
+          isDownloadOnly: isArchive,
+          type: isArchive ? "archive" : (isSeries ? "series" : "movie"),
+          season,
+          episode,
+          episodeTitle,
+          quality,
+          codec,
+          part
+        };
       }
 
       function repairAndParseClientBackupJson(rawText) {
@@ -5390,8 +5593,8 @@
             : String(item.filename || item.file_name || item.title || item.name || "").trim();
           if (!rawStr || rawStr.length < 2) continue;
 
-          // .rar und .partXX.rar sind als eigene Kategorie ("📦 RAR-Archiv") erlaubt!
-          if (/\\.(zip|7z|tar|gz|iso|exe|apk|pdf|txt|nfo|srt|sub|webp|tgs|gif|mp3|m4a|flac|ogg|wav)$/i.test(rawStr) || /\\.gif\\.mp4$/i.test(rawStr)) {
+          // MODUL 2: Alle Archive (.rar, .zip, .7z, .iso, .tar, .gz) sind als Zusatz-Downloads erlaubt!
+          if (/\\.(exe|apk|pdf|txt|nfo|srt|sub|webp|tgs|gif|mp3|m4a|flac|ogg|wav)$/i.test(rawStr) || /\\.gif\\.mp4$/i.test(rawStr)) {
             continue;
           }
 
@@ -5417,9 +5620,13 @@
             } else if (item.quality !== undefined) {
               parsed.quality = item.quality ? String(item.quality) : null;
             }
-            if (item.part) parsed.part = String(item.part);
+            if (item.part && !parsed.isSeries) parsed.part = String(item.part);
             if (item.codec) parsed.codec = String(item.codec);
-            if (item.isArchive) parsed.isArchive = true;
+            if (item.isArchive || item.isDownloadOnly || item.type === "archive") {
+              parsed.isArchive = true;
+              parsed.isDownloadOnly = true;
+              parsed.type = "archive";
+            }
           }
 
           const normTitle = normalizeClientCompareTitle(parsed.cleanTitle);
@@ -5436,16 +5643,20 @@
           const fileSizeBytes = (typeof item === "object" && item !== null)
             ? Number(item.file_size || item.fileSize || 0)
             : 0;
+          const widthVal = (typeof item === "object" && item !== null) ? Number(item.width || 0) : 0;
+          const heightVal = (typeof item === "object" && item !== null) ? Number(item.height || 0) : 0;
+          const fileUniqueId = (typeof item === "object" && (item.file_unique_id || item.telegram_unique_id))
+            ? String(item.file_unique_id || item.telegram_unique_id)
+            : "";
+          // MODUL 3: Eindeutiger fileFingerprint verhindert den null === null Bug bei JSON-Imports
+          const fileFingerprint = fileUniqueId || fileId || ((fileSizeBytes || 0) + "_" + (durationSec || 0) + "_" + (widthVal || 0) + "x" + (heightVal || 0));
           const rawFileNameKey = (typeof item === "object" && item !== null)
             ? String(item.raw_file_name || item.file_name || item.rawInput || rawStr).trim().toLowerCase()
             : rawStr.trim().toLowerCase();
-          const partSuffix = String(parsed.part || "").toUpperCase();
+          const partSuffix = parsed.isSeries ? "" : String(parsed.part || "").toUpperCase();
 
           const workKey = normTitle + "|" + (parsed.year || "") + "|" + (parsed.isSeries ? ("s_" + (parsed.season || 1) + "_" + (parsed.episode || 1)) : "m");
-          // Ohne Telegram file_id gilt ein Eintrag NUR als exaktes Duplikat, wenn Dateigröße + Dauer + Dateiname + Part 100% übereinstimmen (CD2 & RAR-PART2 werden nie verworfen!)
-          const exactKey = (fileSizeBytes > 0 || durationSec > 0)
-            ? ("file|" + rawFileNameKey + "|sz:" + fileSizeBytes + "|dur:" + durationSec + "|part:" + partSuffix)
-            : (workKey + "|" + String(parsed.quality || "UNBEKANNT").toUpperCase() + "|" + String(parsed.codec || "x264").toUpperCase() + "|part:" + partSuffix + "|" + rawFileNameKey);
+          const exactKey = workKey + "|part:" + partSuffix + "|fp:" + fileFingerprint + "|fn:" + rawFileNameKey;
 
           if (seenExactKeys.has(exactKey)) {
             duplicatesSkippedInFile++;
@@ -5463,22 +5674,28 @@
             else detectedMoviesCount++;
           }
 
+          const isArchFlag = Boolean(parsed.isArchive || item?.isArchive || item?.isDownloadOnly || item?.type === "archive");
           const entryObj = typeof item === "object" && item !== null
             ? {
                 ...item,
                 filename: rawStr,
                 rawInput: item.rawInput || rawStr,
                 cleanTitle: parsed.cleanTitle,
+                originalTitle: parsed.altTitle || item.originalTitle || null,
+                edition: parsed.editionLabel || item.edition || null,
                 year: parsed.year,
                 isSeries: parsed.isSeries,
-                isArchive: Boolean(parsed.isArchive || item.isArchive),
+                isArchive: isArchFlag,
+                isDownloadOnly: isArchFlag,
+                type: isArchFlag ? "archive" : (parsed.isSeries ? "series" : "movie"),
                 season: parsed.season,
                 episode: parsed.episode,
                 episodeTitle: parsed.episodeTitle || item.episodeTitle || "",
                 quality: parsed.quality,
                 codec: parsed.codec,
-                part: parsed.part,
-                tags: parsed.isArchive ? "📦 RAR-Archiv" : (item.tags || ""),
+                part: parsed.isSeries && !isArchFlag ? null : parsed.part,
+                fileFingerprint,
+                tags: isArchFlag ? "📦 Archiv-Download" : (parsed.editionLabel || item.tags || ""),
                 contextOverview: item.contextOverview || "",
                 neighborEnriched: Boolean(item.neighborEnriched),
                 isQualityVariant
@@ -5487,16 +5704,21 @@
                 filename: rawStr,
                 rawInput: rawStr,
                 cleanTitle: parsed.cleanTitle,
+                originalTitle: parsed.altTitle || null,
+                edition: parsed.editionLabel || null,
                 year: parsed.year,
                 isSeries: parsed.isSeries,
-                isArchive: Boolean(parsed.isArchive),
+                isArchive: isArchFlag,
+                isDownloadOnly: isArchFlag,
+                type: isArchFlag ? "archive" : (parsed.isSeries ? "series" : "movie"),
                 season: parsed.season,
                 episode: parsed.episode,
                 episodeTitle: parsed.episodeTitle || "",
                 quality: parsed.quality,
                 codec: parsed.codec,
-                part: parsed.part,
-                tags: parsed.isArchive ? "📦 RAR-Archiv" : "",
+                part: parsed.isSeries && !isArchFlag ? null : parsed.part,
+                fileFingerprint,
+                tags: isArchFlag ? "📦 Archiv-Download" : (parsed.editionLabel || ""),
                 contextOverview: "",
                 neighborEnriched: false,
                 isQualityVariant

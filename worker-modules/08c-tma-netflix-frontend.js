@@ -43,8 +43,9 @@
 
         if (Array.isArray(tgMessages)) {
           await new Promise(r => setTimeout(r, 0));
-          // 1. Chronologische Sortierung vor dem Loop erzwingen (Id aufsteigend)
+          // MODUL 1.1: Chronologische Sortierung vor dem Loop erzwingen (msg.id aufsteigend) + Deduplizierung via processedMsgIds
           tgMessages.sort((a, b) => Number(a?.id || a?.message_id || 0) - Number(b?.id || b?.message_id || 0));
+          const processedMsgIds = new Set();
 
           const rawCandidates = [];
           const clientPreLogs = [];
@@ -67,8 +68,15 @@
             const msg = tgMessages[i];
             if (!msg || (msg.type && msg.type !== "message")) continue;
             const currentMsgId = Number(msg.id || msg.message_id || 0);
+            if (currentMsgId > 0) {
+              if (processedMsgIds.has(currentMsgId)) continue;
+              processedMsgIds.add(currentMsgId);
+            }
             const junkReason = classifyClientJunkReason(msg);
             if (junkReason) {
+              if (clientDiagnosticLogState?.summaryCounts) {
+                clientDiagnosticLogState.summaryCounts.SKIPPED_JUNK = (clientDiagnosticLogState.summaryCounts.SKIPPED_JUNK || 0) + 1;
+              }
               if (clientPreLogs.length < 350) {
                 clientPreLogs.push({
                   msgId: currentMsgId || null,
@@ -95,7 +103,7 @@
             const flatTextRaw = flattenClientTgText(msg.text || msg.caption || msg.text_entities);
             const flatText = normalizeClientEpisodeText(flatTextRaw);
             const normFileName = normalizeClientEpisodeText(rawFileName || validFilePath);
-            // 2. Eiserne Regel ("Video schlägt Header") + eigene Kategorie für .rar-Archive + Untertitel-Bindung (.srt/.vtt/.sub):
+            // 2. Eiserne Regel ("Video schlägt Header") + MODUL 2 Archive (.rar/.zip/.7z/.iso/.tar/.gz) + Untertitel-Bindung (.srt/.vtt/.sub):
             const isSubMsg = /\\.(?:srt|vtt|sub|ass|ssa)$/i.test(rawFileName || validFilePath);
             if (isSubMsg) {
               const targetVideo = rawCandidates.length > 0 ? rawCandidates[rawCandidates.length - 1] : null;
@@ -114,7 +122,7 @@
               }
               continue;
             }
-            const isRarMsg = /\\.rar$/i.test(rawFileName || validFilePath);
+            const isRarMsg = /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFileName || validFilePath);
             const isVideoMsg =
               msg.media_type === "video_file" ||
               Boolean(msg.video) ||
@@ -122,7 +130,7 @@
               /\\.(?:mp4|mkv|avi|mov|m4v|webm|ts|flv|mk3d)$/i.test(rawFileName || validFilePath);
             const isPhotoMsg = !isVideoMsg && !isRarMsg && Boolean(msg.photo || msg.media_type === "photo" || /^image\\//i.test(msg.mime_type || ""));
 
-            // Wenn eine Videodatei oder RAR-Datei anhängt UND gleichzeitig ein Staffel-/Serien-Header im Text steht (Breaking Bad S03E01 Fix):
+            // Wenn eine Videodatei oder Archiv-Datei anhängt UND gleichzeitig ein Staffel-/Serien-Header im Text steht (Breaking Bad S03E01 Fix):
             // Aktualisiere zuerst den rollingPreContext, aber brich NIEMALS mit continue ab!
             if (isVideoMsg || isRarMsg) {
               const hasHeaderCue = /\\b(?:Staffel\\s*\\d+|vorschauserien|Miniserie|\\d+\\s+Folgen\\s+in\\s+\\d+\\s+Staffel)/i.test(flatText) ||
@@ -132,20 +140,10 @@
               }
             } else if (!rawFileName && !validFilePath) {
               const prevCtxBeforeMsg = { ...rollingPreContext };
-              const ownCtxOnly = extractClientPreContextFromMsg(msg, {});
-              const ownExtractedHeaderTitle = ownCtxOnly.seriesHeader || ownCtxOnly.title || "";
               rollingPreContext = extractClientPreContextFromMsg(msg, prevCtxBeforeMsg);
               if (isPhotoMsg) {
-                if (clientPreLogs.length < 350) {
-                  clientPreLogs.push({
-                    msgId: currentMsgId || null,
-                    fileName: "Foto/Poster-Header",
-                    rawText: flatTextRaw.slice(0, 140),
-                    status: "SKIPPED_HEADER",
-                    reason: "Serien-/Film-Poster als Vorab-Kontext gespeichert (" + (ownExtractedHeaderTitle || "Reset") + ")",
-                    detectedType: "header",
-                    parsedTitle: ownExtractedHeaderTitle
-                  });
+                if (clientDiagnosticLogState?.summaryCounts) {
+                  clientDiagnosticLogState.summaryCounts.SKIPPED_HEADER = (clientDiagnosticLogState.summaryCounts.SKIPPED_HEADER || 0) + 1;
                 }
                 continue;
               }
@@ -228,18 +226,8 @@
             }
 
             if (!isVideoMsg && !isRarMsg && !rawFileName && !validFilePath) {
-              if (clientPreLogs.length < 350 && flatTextRaw.trim()) {
-                const ownTextCtxOnly = extractClientPreContextFromMsg(msg, {});
-                const ownTextHeaderTitle = ownTextCtxOnly.seriesHeader || ownTextCtxOnly.title || "";
-                clientPreLogs.push({
-                  msgId: currentMsgId || null,
-                  fileName: "Text-Header",
-                  rawText: flatTextRaw.slice(0, 140),
-                  status: "SKIPPED_HEADER",
-                  reason: "Text-/Serien-Header ohne Videodatei (" + (ownTextHeaderTitle || "Info") + ")",
-                  detectedType: "header",
-                  parsedTitle: ownTextHeaderTitle
-                });
+              if (flatTextRaw.trim() && clientDiagnosticLogState?.summaryCounts) {
+                clientDiagnosticLogState.summaryCounts.SKIPPED_HEADER = (clientDiagnosticLogState.summaryCounts.SKIPPED_HEADER || 0) + 1;
               }
               continue;
             }
@@ -3320,8 +3308,13 @@
       // PERSISTENTES DIAGNOSE-LOG (D1 + Browser localStorage + KI-Analyse-Export)
       // =========================================================================
       const CLIENT_DIAG_LOG_STORAGE_KEY = "tma_import_diagnostic_logs_v1";
-      let clientDiagnosticLogState = {
+            let clientDiagnosticLogState = {
         logs: [],
+        summaryCounts: {
+          SUBREQUEST_PAUSE: 0,
+          SKIPPED_HEADER: 0,
+          SKIPPED_JUNK: 0
+        },
         loadedFromLocal: false,
         filterStatus: "ALL",
         searchQuery: "",
@@ -3335,7 +3328,18 @@
           const raw = localStorage.getItem(CLIENT_DIAG_LOG_STORAGE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) clientDiagnosticLogState.logs = parsed.slice(0, 1200);
+            if (Array.isArray(parsed)) {
+              clientDiagnosticLogState.logs = parsed
+                .filter(l => l && l.status !== "SUBREQUEST_PAUSE" && l.status !== "SKIPPED_HEADER")
+                .map(l => {
+                  const st = String(l.status || "OK").toUpperCase();
+                  if (st === "TMDB_NOT_FOUND" || st === "API_ERROR" || st === "SUBREQUEST_PAUSE") {
+                    return { ...l, matchedTitle: null, tmdbId: null };
+                  }
+                  return l;
+                })
+                .slice(0, 1200);
+            }
           }
         } catch (e) {}
         return clientDiagnosticLogState.logs;
@@ -3355,14 +3359,13 @@
       function appendClientDiagnosticLogs(newEntries = [], syncToServer = true) {
         if (!Array.isArray(newEntries) || newEntries.length === 0) return;
         loadClientDiagnosticLogsFromStorage();
+        if (!clientDiagnosticLogState.summaryCounts) {
+          clientDiagnosticLogState.summaryCounts = { SUBREQUEST_PAUSE: 0, SKIPPED_HEADER: 0, SKIPPED_JUNK: 0 };
+        }
         const existingIndexByKey = new Map();
-        const existingPauseIndexByMsgId = new Map();
         (clientDiagnosticLogState.logs || []).forEach((l, idx) => {
           const k = String(l.msgId || "") + "|" + String(l.fileName || "");
           if (!existingIndexByKey.has(k)) existingIndexByKey.set(k, idx);
-          if (l.msgId && String(l.status || "").toUpperCase() === "SUBREQUEST_PAUSE" && !existingPauseIndexByMsgId.has(Number(l.msgId))) {
-            existingPauseIndexByMsgId.set(Number(l.msgId), idx);
-          }
         });
         const added = [];
         for (const raw of newEntries) {
@@ -3373,7 +3376,19 @@
             : null;
           const rawStatusUp = String(raw.status || "OK").toUpperCase();
           const normStatus = rawStatusUp === "CONFLICT_?" ? "CONFLICT" : rawStatusUp;
-          const isSystemPause = raw.detectedType === "system" || raw.parsedTitle === "PARTIAL_BATCH";
+
+          // MODUL 1.2: SUBREQUEST_PAUSE und SKIPPED_HEADER NIEMALS in das entries-Array schreiben (nur in summaryCounts hochzählen!)
+          if (normStatus === "SUBREQUEST_PAUSE") {
+            clientDiagnosticLogState.summaryCounts.SUBREQUEST_PAUSE = (clientDiagnosticLogState.summaryCounts.SUBREQUEST_PAUSE || 0) + 1;
+            continue;
+          }
+          if (normStatus === "SKIPPED_HEADER") {
+            clientDiagnosticLogState.summaryCounts.SKIPPED_HEADER = (clientDiagnosticLogState.summaryCounts.SKIPPED_HEADER || 0) + 1;
+            continue;
+          }
+
+          // MODUL 6.3: Variablen-Leck im Logger schließen! Bei TMDB_NOT_FOUND oder API_ERROR sind matchedTitle & tmdbId zwingend null!
+          const isUnmatchedStatus = normStatus === "TMDB_NOT_FOUND" || normStatus === "API_ERROR" || normStatus === "SUBREQUEST_PAUSE";
           const entry = {
             id: raw.id || ("diag_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7)),
             msgId: normMsgId,
@@ -3384,54 +3399,31 @@
             reason: String(raw.reason || "").slice(0, 360),
             detectedType: String(raw.detectedType || raw.detected_type || "auto"),
             parsedTitle: String(raw.parsedTitle || raw.parsed_title || raw.cleanTitle || ""),
-            matchedTitle: isSystemPause ? "" : String(raw.matchedTitle || raw.matched_title || raw.details?.matchedTitle || ""),
+            matchedTitle: isUnmatchedStatus ? null : (String(raw.matchedTitle || raw.matched_title || raw.details?.matchedTitle || "") || null),
             seasonNumber: raw.seasonNumber ?? raw.season_number ?? raw.season ?? null,
             episodeNumber: raw.episodeNumber ?? raw.episode_number ?? raw.episode ?? null,
-            tmdbId: isSystemPause ? null : (raw.tmdbId ?? raw.tmdb_id ?? null),
+            tmdbId: isUnmatchedStatus ? null : (raw.tmdbId ?? raw.tmdb_id ?? null),
             details: raw.details && typeof raw.details === "object" ? raw.details : null,
             rawEntry: raw.rawEntry || raw.details?.rawEntry || (raw.raw_entry_json ? (() => { try { return JSON.parse(raw.raw_entry_json); } catch (_) { return null; } })() : null),
             createdAt: Number(raw.createdAt || raw.created_at || Date.now())
           };
           const dedupeKey = String(entry.msgId || "") + "|" + entry.fileName;
-          // Wenn für dieselbe msgId bereits ein temporärer SUBREQUEST_PAUSE-Eintrag existiert und sie nun im Folge-Batch aufgelöst wurde:
-          // Überschreibe den SUBREQUEST_PAUSE-Eintrag direkt in-place statt einen zweiten Eintrag für dieselbe msgId anzulegen!
-          const pauseIdxForMsg = (normMsgId && normStatus !== "SUBREQUEST_PAUSE" && existingPauseIndexByMsgId.has(normMsgId))
-            ? existingPauseIndexByMsgId.get(normMsgId)
-            : undefined;
-          if (pauseIdxForMsg !== undefined) {
-            clientDiagnosticLogState.logs[pauseIdxForMsg] = {
-              ...clientDiagnosticLogState.logs[pauseIdxForMsg],
-              ...entry,
-              matchedTitle: entry.matchedTitle || clientDiagnosticLogState.logs[pauseIdxForMsg]?.matchedTitle || "",
-              tmdbId: entry.tmdbId ?? clientDiagnosticLogState.logs[pauseIdxForMsg]?.tmdbId ?? null
-            };
-            existingPauseIndexByMsgId.delete(normMsgId);
-            existingIndexByKey.set(dedupeKey, pauseIdxForMsg);
-            added.push(clientDiagnosticLogState.logs[pauseIdxForMsg]);
-          } else if (existingIndexByKey.has(dedupeKey)) {
+          if (existingIndexByKey.has(dedupeKey)) {
             const existingIdx = existingIndexByKey.get(dedupeKey);
-            const prevStatus = String(clientDiagnosticLogState.logs[existingIdx]?.status || "").toUpperCase();
-            // Ein bereits erfolgreich aufgelöster Eintrag (OK/CONFLICT/SKIPPED_DUPLICATE) darf niemals nachträglich wieder durch SUBREQUEST_PAUSE überschrieben werden!
-            if (normStatus === "SUBREQUEST_PAUSE" && prevStatus && prevStatus !== "SUBREQUEST_PAUSE") {
-              continue;
-            }
             clientDiagnosticLogState.logs[existingIdx] = {
               ...clientDiagnosticLogState.logs[existingIdx],
               ...entry,
-              matchedTitle: isSystemPause ? "" : (entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || ""),
-              tmdbId: isSystemPause ? null : (entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null)
+              matchedTitle: isUnmatchedStatus ? null : (entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || null),
+              tmdbId: isUnmatchedStatus ? null : (entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null)
             };
             added.push(clientDiagnosticLogState.logs[existingIdx]);
           } else {
             existingIndexByKey.set(dedupeKey, 0);
-            if (normMsgId && normStatus === "SUBREQUEST_PAUSE") {
-              existingPauseIndexByMsgId.set(normMsgId, 0);
-            }
             clientDiagnosticLogState.logs.unshift(entry);
             added.push(entry);
           }
         }
-        // MODUL 5: Fehler-Priorität im Log-Buffer – OK und SKIPPED_DUPLICATE dürfen niemals echte Problem-Einträge verdrängen
+        // Fehler-Priorität im Log-Buffer – OK und SKIPPED_DUPLICATE dürfen niemals echte Problem-Einträge verdrängen
         if (clientDiagnosticLogState.logs.length > 1200) {
           const priorityProblemLogs = [];
           const routineLogs = [];
@@ -3486,16 +3478,17 @@
       function refreshDiagnosticLogMountDom() {
         const mount = document.getElementById("diagLogStandaloneMount");
         if (mount) {
-          mount.innerHTML = renderImportDiagnosticLogBoxHtml();
+          mount.outerHTML = renderImportDiagnosticLogBoxHtml();
         } else {
           renderBackupImportBoxDom();
         }
       }
 
       async function clearAllDiagnosticLogsClient() {
-        const ok = await showCustomConfirm("Diagnose-Log in D1 und im Browser wirklich komplett leeren?", "🗑️ Diagnose-Log leeren");
+        const ok = await showCustomConfirm("Diagnose-Log in D1 und im Browser wirklich komplett leeren?", "🗑️ Logs leeren");
         if (!ok) return;
         clientDiagnosticLogState.logs = [];
+        clientDiagnosticLogState.summaryCounts = { SUBREQUEST_PAUSE: 0, SKIPPED_HEADER: 0, SKIPPED_JUNK: 0 };
         saveClientDiagnosticLogsToStorage();
         try {
           await apiFetchJson(API_BASE + "/admin/import-logs", {
@@ -3504,7 +3497,7 @@
             body: JSON.stringify({ action: "clear" })
           });
         } catch (e) {}
-        showHudToast("🗑️ Diagnose-Log geleert");
+        showHudToast("🗑️ Diagnose-Logs geleert");
         refreshDiagnosticLogMountDom();
       }
 
@@ -3514,7 +3507,7 @@
           const st = String(l.status || "").toUpperCase();
           return st === "TMDB_NOT_FOUND" || st === "CONFLICT" || st === "CONFLICT_?";
         });
-        setBusyState(true, "🩺 Prüfe offene Konflikte & TMDB_NOT_FOUND mit der neuen Modul 2+3 Pipeline...");
+        setBusyState(true, "🩺 Prüfe offene Konflikte & TMDB_NOT_FOUND mit der neuen Modul 1-6 Pipeline...");
         try {
           let totalChecked = 0;
           let totalHealed = 0;
@@ -3562,8 +3555,9 @@
 
       async function exportDiagnosticLogsForAiClient(onlyProblems = true) {
         loadClientDiagnosticLogsFromStorage();
-        const all = clientDiagnosticLogState.logs || [];
-        // MODUL 5: Echte Problem-Einträge haben im Export-Buffer immer Vorrang vor OK und SKIPPED_DUPLICATE
+        const all = (clientDiagnosticLogState.logs || []).filter(l => l && l.status !== "SUBREQUEST_PAUSE" && l.status !== "SKIPPED_HEADER");
+        const sc = clientDiagnosticLogState.summaryCounts || {};
+        // Echte Problem-Einträge haben im Export-Buffer immer Vorrang vor OK und SKIPPED_DUPLICATE
         const priorityProblems = all.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE");
         const routineItems = all.filter(l => l.status === "OK" || l.status === "SKIPPED_DUPLICATE");
         const orderedList = onlyProblems
@@ -3575,27 +3569,31 @@
           exportedCount: Math.min(250, orderedList.length),
           summaryCounts: {
             OK: all.filter(l => l.status === "OK").length,
-            SKIPPED_JUNK: all.filter(l => l.status === "SKIPPED_JUNK").length,
-            SKIPPED_HEADER: all.filter(l => l.status === "SKIPPED_HEADER").length,
+            SKIPPED_JUNK: Math.max(Number(sc.SKIPPED_JUNK || 0), all.filter(l => l.status === "SKIPPED_JUNK").length),
+            SKIPPED_HEADER: Number(sc.SKIPPED_HEADER || 0),
             SKIPPED_DUPLICATE: all.filter(l => l.status === "SKIPPED_DUPLICATE").length,
             TMDB_NOT_FOUND: all.filter(l => l.status === "TMDB_NOT_FOUND").length,
             CONFLICT: all.filter(l => l.status === "CONFLICT_?" || l.status === "CONFLICT").length,
-            SUBREQUEST_PAUSE: all.filter(l => l.status === "SUBREQUEST_PAUSE").length,
+            SUBREQUEST_PAUSE: Number(sc.SUBREQUEST_PAUSE || 0),
             API_ERROR: all.filter(l => l.status === "API_ERROR").length
           },
-          entries: orderedList.slice(0, 250).map(l => ({
-            msgId: l.msgId !== null && l.msgId !== undefined ? Number(l.msgId) : null,
-            status: l.status === "CONFLICT_?" ? "CONFLICT" : l.status,
-            detectedType: l.detectedType,
-            fileName: l.fileName,
-            parsedTitle: l.parsedTitle,
-            matchedTitle: l.matchedTitle || null,
-            season: l.seasonNumber,
-            episode: l.episodeNumber,
-            tmdbId: l.tmdbId,
-            reason: l.reason,
-            rawText: (l.rawText || "").slice(0, 220)
-          }))
+          entries: orderedList.slice(0, 250).map(l => {
+            const st = l.status === "CONFLICT_?" ? "CONFLICT" : l.status;
+            const isUnmatched = st === "TMDB_NOT_FOUND" || st === "API_ERROR" || st === "SUBREQUEST_PAUSE";
+            return {
+              msgId: l.msgId !== null && l.msgId !== undefined ? Number(l.msgId) : null,
+              status: st,
+              detectedType: l.detectedType,
+              fileName: l.fileName,
+              parsedTitle: l.parsedTitle,
+              matchedTitle: isUnmatched ? null : (l.matchedTitle || null),
+              season: l.seasonNumber,
+              episode: l.episodeNumber,
+              tmdbId: isUnmatched ? null : (l.tmdbId ?? null),
+              reason: l.reason,
+              rawText: (l.rawText || "").slice(0, 220)
+            };
+          })
         };
         const jsonText = JSON.stringify(payload, null, 2);
         try {
@@ -3692,7 +3690,8 @@
 
       function renderImportDiagnosticLogBoxHtml() {
         loadClientDiagnosticLogsFromStorage();
-        const logs = clientDiagnosticLogState.logs || [];
+        const logs = (clientDiagnosticLogState.logs || []).filter(l => l && l.status !== "SUBREQUEST_PAUSE" && l.status !== "SKIPPED_HEADER");
+        const sc = clientDiagnosticLogState.summaryCounts || {};
         const fStatus = clientDiagnosticLogState.filterStatus || "ALL";
         const q = (clientDiagnosticLogState.searchQuery || "").trim().toLowerCase();
 
@@ -3700,12 +3699,12 @@
           ALL: logs.length,
           OK: 0,
           SKIPPED_JUNK: 0,
-          SKIPPED_HEADER: 0,
+          SKIPPED_HEADER: Number(sc.SKIPPED_HEADER || 0),
           SKIPPED_DUPLICATE: 0,
           SKIPPED_PRERELEASE: 0,
           TMDB_NOT_FOUND: 0,
           CONFLICT: 0,
-          SUBREQUEST_PAUSE: 0,
+          SUBREQUEST_PAUSE: Number(sc.SUBREQUEST_PAUSE || 0),
           API_ERROR: 0
         };
         for (const l of logs) {
@@ -3750,12 +3749,12 @@
               '<div style="font-size:11.5px;color:#94a3b8">Lückenlose Nachverfolgung jeder Message-ID inkl. Grund, Typ-Weiche, Subrequest-Guard & Direkt-Korrektur</div>' +
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-              '<button type="button" class="btn green" onclick="rehealOldConflictsWithNewPipelineClient()" title="Prüft alle offenen TMDB_NOT_FOUND & CONFLICT Einträge mit der neuen Modul 2+3 Pipeline nach">🩺 Alt-Konflikte mit neuer Pipeline prüfen</button>' +
+              '<button type="button" class="btn green" onclick="rehealOldConflictsWithNewPipelineClient()" title="Prüft alle offenen TMDB_NOT_FOUND & CONFLICT Einträge mit der neuen Modul 1-6 Pipeline nach">🩺 Alt-Konflikte mit neuer Pipeline prüfen</button>' +
               '<button type="button" class="btn" style="background:rgba(168,85,247,0.22);border:1px solid rgba(168,85,247,0.55);color:#e9d5ff" onclick="startManualNoTmdbQueueModeClient(\\'diag\\')" title="Öffnet alle offenen Nicht-erkannt-Treffer nacheinander im 900M-Modal">✨ Queue-Modus (900M-ID)</button>' +
               '<button type="button" class="btn amber" onclick="exportDiagnosticLogsForAiClient(true)">📋 Fehler-Log für KI kopieren</button>' +
               '<button type="button" class="btn blue" onclick="exportDiagnosticLogsForAiClient(false)">📋 Komplettes Log kopieren</button>' +
               '<button type="button" class="btn" onclick="syncDiagnosticLogsFromD1Client(false)">🔄 Aus D1 laden</button>' +
-              '<button type="button" class="btn red" onclick="clearAllDiagnosticLogsClient()">🗑️ Log leeren</button>' +
+              '<button type="button" class="btn red" onclick="clearAllDiagnosticLogsClient()">🗑️ Logs leeren</button>' +
             '</div>' +
           '</div>' +
 
@@ -3765,9 +3764,9 @@
             '<div onclick="setDiagLogFilterClient(\\'OK\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'OK' ? 'rgba(16,185,129,0.22)' : '#181822') + ';border:1px solid rgba(16,185,129,0.3)">🟢 OK: <b style="color:#34d399">' + counts.OK + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'TMDB_NOT_FOUND\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'TMDB_NOT_FOUND' ? 'rgba(239,68,68,0.25)' : '#181822') + ';border:1px solid rgba(239,68,68,0.35)">❌ TMDB_NOT_FOUND: <b style="color:#f87171">' + counts.TMDB_NOT_FOUND + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'CONFLICT\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'CONFLICT' ? 'rgba(245,158,11,0.25)' : '#181822') + ';border:1px solid rgba(245,158,11,0.35)">⚠️ CONFLICT: <b style="color:#fbbf24">' + counts.CONFLICT + '</b></div>' +
-            '<div onclick="setDiagLogFilterClient(\\'SKIPPED_HEADER\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'SKIPPED_HEADER' ? 'rgba(56,189,248,0.22)' : '#181822') + ';border:1px solid rgba(56,189,248,0.3)">📌 Header/Poster: <b style="color:#38bdf8">' + counts.SKIPPED_HEADER + '</b></div>' +
+            '<div style="padding:7px 9px;border-radius:6px;background:#181822;border:1px solid rgba(56,189,248,0.3)" title="Wird nur in summaryCounts gezählt und verdrängt keine Fehler im Log">📌 Header/Poster: <b style="color:#38bdf8">' + counts.SKIPPED_HEADER + '</b></div>' +
             '<div onclick="setDiagLogFilterClient(\\'SKIPPED_DUPLICATE\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'SKIPPED_DUPLICATE' ? 'rgba(167,139,250,0.22)' : '#181822') + ';border:1px solid rgba(167,139,250,0.3)">♻️ Duplikate: <b style="color:#a78bfa">' + counts.SKIPPED_DUPLICATE + '</b></div>' +
-            '<div onclick="setDiagLogFilterClient(\\'SUBREQUEST_PAUSE\\')" style="cursor:pointer;padding:7px 9px;border-radius:6px;background:' + (fStatus === 'SUBREQUEST_PAUSE' ? 'rgba(59,130,246,0.25)' : '#181822') + ';border:1px solid rgba(59,130,246,0.35)">🛡️ Subrequest-Guard: <b style="color:#60a5fa">' + counts.SUBREQUEST_PAUSE + '</b></div>' +
+            '<div style="padding:7px 9px;border-radius:6px;background:#181822;border:1px solid rgba(59,130,246,0.35)" title="Wird nur in summaryCounts gezählt und verdrängt keine Fehler im Log">🛡️ Subrequest-Guard: <b style="color:#60a5fa">' + counts.SUBREQUEST_PAUSE + '</b></div>' +
           '</div>' +
 
           '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
@@ -3841,8 +3840,19 @@
         backupImportJob.verifiedChannelId = activeChan;
 
         const inpEl = document.getElementById("backupPlaylistNameInp");
-        if (inpEl && inpEl.value.trim()) {
+        if ( inpEl && inpEl.value.trim()) {
           backupImportJob.customPlaylistName = inpEl.value.trim().slice(0, 48);
+        }
+        // MODUL 6.3 + MODUL 1.1: Bei einem neuen Import ab Index 0 alte Logs & processedMsgIds sauber zurücksetzen
+        if (backupImportJob.cursor === 0 && !backupImportJob._freshLogsResetDone) {
+          backupImportJob._freshLogsResetDone = true;
+          backupImportJob._processedMsgIds = new Set();
+          clientDiagnosticLogState.logs = [];
+          clientDiagnosticLogState.summaryCounts = { SUBREQUEST_PAUSE: 0, SKIPPED_HEADER: 0, SKIPPED_JUNK: 0 };
+          saveClientDiagnosticLogsToStorage();
+        }
+        if (!(backupImportJob._processedMsgIds instanceof Set)) {
+          backupImportJob._processedMsgIds = new Set();
         }
         backupImportJob.running = true;
         backupImportJob.paused = false;
@@ -3901,8 +3911,10 @@
             reason: "Nach Wiederholungsversuch isoliert: " + String(reasonMsg || "Unbekannter Fehler"),
             detectedType: fallbackItem.typeCode === "s" ? "series" : "movie",
             parsedTitle: fallbackItem.cleanTitle,
+            matchedTitle: null,
             seasonNumber: fallbackItem.season,
             episodeNumber: fallbackItem.episode,
+            tmdbId: null,
             rawEntry: fallbackItem.rawEntry
           }], true);
           saveBackupCheckpointClient();
@@ -3963,7 +3975,6 @@
         }
 
         while (backupImportJob.running && !backupImportJob.paused && backupImportJob.cursor < backupImportJob.entries.length) {
-          // Wenn der Admin gerade aktiv eine Übersicht lädt, kurz warten, damit es keinen HTTP 503 Konflikt gibt
           let waitGuard = 0;
           while (window._adminPriorityRequestInFlight && waitGuard < 25) {
             await new Promise(res => setTimeout(res, 150));
@@ -3972,7 +3983,6 @@
           if (!backupImportJob.running || backupImportJob.paused) break;
 
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
-          // Lookahead auf die nächsten 16 Einträge für adaptive Batch-Größe (🚀 Turbo bei bekannten D1-/Serien-Titeln, 🛡️ Gedrosselt nach Cooldown)
           const lookaheadSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + 16);
           let lookaheadCacheHits = 0;
           for (const lkItem of lookaheadSlice) {
@@ -4025,7 +4035,7 @@
           }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
 
-          // 1. Set-basierte Deduplizierung identischer Payload-Einträge innerhalb des Batches VOR dem D1-/Worker-Check
+          // MODUL 1.1: Set-basierte Deduplizierung inkl. processedMsgIds (bereits abgearbeitete msg.id ohne Logging überspringen!)
           const seenBatchItemKeys = new Set();
           const dedupedRawSlice = [];
           const dedupedOrigIndices = [];
@@ -4037,9 +4047,13 @@
               dedupedOrigIndices.push(sIdx);
               continue;
             }
+            const itemMsgId = Number(item.msg_id || item.message_id || item.messageId || 0);
+            if (itemMsgId > 0 && backupImportJob._processedMsgIds.has(itemMsgId)) {
+              continue;
+            }
             const rawTitle = String(item.cleanTitle || item.title || item.filename || item.file_name || item.raw_file_name || item.rawInput || "").trim();
             const normTitle = normClientTitleKey(rawTitle);
-            const tgIdKey = String(item.telegram_unique_id || item.file_unique_id || item.telegram_file_id || item.file_id || item.msg_id || item.message_id || "").trim();
+            const tgIdKey = String(item.fileFingerprint || item.telegram_unique_id || item.file_unique_id || item.telegram_file_id || item.file_id || item.msg_id || item.message_id || "").trim();
             const seKey = (item.season || item.episode) ? ("s" + (item.season || 0) + "e" + (item.episode || 0)) : "";
             const yKey = String(item.year || "").trim();
             if (tgIdKey || normTitle) {
@@ -4135,14 +4149,19 @@
                 backupImportJob.customPlaylistName = r.playlistFolder.name;
               }
               const batchStartIdx = backupImportJob.cursor;
-              // 40-Subrequest- & 8s-Zeit-Guard: Wenn der Worker PARTIAL_BATCH meldet, rückt der Cursor exakt zum nächsten unverarbeiteten Original-Index vor!
-              const processedSliceCount = (r.status === "PARTIAL_BATCH" && typeof r.nextStartIndex === "number" && r.nextStartIndex > 0)
+              // MODUL 1.2: 38-Subrequest- & 6000ms-Zeit-Guard: Wenn der Worker PARTIAL_BATCH meldet, rückt der Cursor exakt zum nächsten unverarbeiteten Original-Index vor!
+              const processedSliceCount = (r.status === "PARTIAL_BATCH" && typeof r.nextStartIndex === "number" && r.nextStartIndex >= 0)
                 ? r.nextStartIndex
                 : slice.length;
               const rawAdvanceCount = (r.status === "PARTIAL_BATCH" && processedSliceCount < dedupedOrigIndices.length)
                 ? dedupedOrigIndices[processedSliceCount]
                 : rawSlice.length;
               const processedCount = processedSliceCount;
+              for (let pi = 0; pi < processedSliceCount; pi++) {
+                const pEntry = dedupedRawSlice[pi];
+                const pMsgId = Number(pEntry?.msg_id || pEntry?.message_id || pEntry?.messageId || 0);
+                if (pMsgId > 0) backupImportJob._processedMsgIds.add(pMsgId);
+              }
               backupImportJob.cursor += rawAdvanceCount;
               backupImportJob.moviesSaved += Number(r.moviesAddedCount || 0);
               backupImportJob.seriesSaved += Number(r.seriesAddedCount || 0);
@@ -4157,7 +4176,7 @@
                 for (let bi = 0; bi < r.batchItems.length; bi++) {
                   const bItem = r.batchItems[bi];
                   const isFailedItem = bItem.status === "failed" || !bItem.tmdbId;
-                  // Browser-Titel-Cache aktualisieren (positiv ab 75% Sicherheit + negativ bei TMDB_NOT_FOUND)
+                  if (bItem.msgId) backupImportJob._processedMsgIds.add(Number(bItem.msgId));
                   const origEntry = rawSlice[bi] || bItem.rawEntry || {};
                   const rawInTitle = origEntry.cleanTitle || origEntry.title || bItem.cleanTitle || "";
                   const normInKey = normClientTitleKey(rawInTitle);
@@ -4200,7 +4219,7 @@
                       : bItem.ingestStatus === "skipped_prerelease"
                         ? "Vorabversion/TS/MD übersprungen (gute Version bereits in D1)"
                         : bItem.ingestStatus === "duplicate"
-                          ? "Identische Datei (file_id + message_id) bereits in D1 vorhanden (" + (bItem.cleanTitle || "") + ")"
+                          ? "Identische Datei (fileFingerprint) bereits in D1 vorhanden (" + (bItem.cleanTitle || "") + ")"
                           : bItem.ingestStatus === "updated"
                             ? "Bestehender Episoden-/Film-Slot per UPSERT mit neuer Datei verknüpft → " + (bItem.cleanTitle || "")
                             : "Erfolgreich zugeordnet → " + (bItem.cleanTitle || "") + (bItem.tmdbId ? " (TMDb #" + bItem.tmdbId + ")" : "") + (Number(bItem.replacedPrereleaseCount || 0) > 0 ? (" [🧹 " + bItem.replacedPrereleaseCount + " Vorabversion ersetzt!]") : ""));
@@ -4208,6 +4227,8 @@
                   const itemObj = {
                     ...bItem,
                     status: isFailedItem ? "failed" : bItem.status,
+                    tmdbId: isFailedItem ? null : (bItem.tmdbId || null),
+                    matchedTitle: isFailedItem ? null : (bItem.matchedTitle || bItem.cleanTitle || null),
                     reviewReasonCode: computedReasonCode,
                     errorReason: bItem.errorReason || (isFailedItem || bItem.isUncertain ? computedReason : null),
                     reason: computedReason,
@@ -4215,7 +4236,7 @@
                     id: "rev_" + (batchStartIdx + bi) + "_" + Date.now()
                   };
                   backupImportJob.reviewItems.push(itemObj);
-                  if (bItem.tmdbId) {
+                  if (bItem.tmdbId && !isFailedItem) {
                     backupImportJob.livePosterFeed.unshift(itemObj);
                   }
                   const diagStatus = isFailedItem
@@ -4235,27 +4256,22 @@
                     reviewReasonCode: computedReasonCode,
                     reason: computedReason,
                     detectedType: bItem.typeCode === "s" ? "series" : "movie",
-                    parsedTitle: bItem.cleanTitle || "",
+                    parsedTitle: bItem.parsedTitle || bItem.cleanTitle || "",
+                    matchedTitle: isFailedItem ? null : (bItem.matchedTitle || bItem.cleanTitle || null),
                     seasonNumber: bItem.season || null,
                     episodeNumber: bItem.episode || null,
-                    tmdbId: bItem.tmdbId || null,
+                    tmdbId: isFailedItem ? null : (bItem.tmdbId || null),
                     rawEntry: bItem.rawEntry || null
                   });
                 }
                 if (r.status === "PARTIAL_BATCH") {
                   const isTimeGuard = r.pauseReason === "TIME_LIMIT_GUARD";
-                  batchDiagEntries.push({
-                    msgId: null,
-                    fileName: (isTimeGuard ? "8s-Zeit-Guard" : "Subrequest-Guard") + " (Pause bei Index +" + processedCount + ")",
-                    rawText: "",
-                    status: "SUBREQUEST_PAUSE",
-                    reason: isTimeGuard
-                      ? "8s-Laufzeit-Schutz erreicht (" + batchLatencyMs + "ms) – nahtlose Fortsetzung im nächsten Batch"
-                      : "Subrequest-Schutz erreicht (" + (r.subrequestCount || 26) + " Subrequests) – nahtlose Fortsetzung im nächsten Batch",
-                    detectedType: "system",
-                    parsedTitle: "PARTIAL_BATCH"
-                  });
-                  backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "8s-Zeit-Guard" : "Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
+                  if (!clientDiagnosticLogState.summaryCounts) {
+                    clientDiagnosticLogState.summaryCounts = { SUBREQUEST_PAUSE: 0, SKIPPED_HEADER: 0, SKIPPED_JUNK: 0 };
+                  }
+                  // MODUL 1.2: SUBREQUEST_PAUSE NUR in summaryCounts hochzählen, NIEMALS in batchDiagEntries / entries schreiben!
+                  clientDiagnosticLogState.summaryCounts.SUBREQUEST_PAUSE = (clientDiagnosticLogState.summaryCounts.SUBREQUEST_PAUSE || 0) + 1;
+                  backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "6s-Zeit-Guard" : "38-Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
                 }
                 appendClientDiagnosticLogs(batchDiagEntries, false);
                 if (backupImportJob.livePosterFeed.length > 16) {

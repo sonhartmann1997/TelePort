@@ -1,73 +1,73 @@
-# Implementierungsplan (Revidiert): Webhook-Passwortschutz, Anti-Retry-Storm Engine, Worker-Health-Monitor & Golden-Ratio UI
+# Implementierungsplan: Strukturierte Pipeline-Erweiterung (MODUL 1 bis MODUL 6 – ohne Staffel-Flip)
 
-## 1. Weiter gedacht: Warum das Webhook-Passwort & Edge-Schutz entscheidend für deinen Cloudflare Free-Tier sind
-Ein Passwort direkt für den **Telegram Webhook** (`secret_token` + optionaler URL-Key) löst nicht nur ein Sicherheitsproblem, sondern schützt auch aktiv dein **Cloudflare CPU- & D1-Kontingent**:
-1. **Echter Telegram Webhook-Passwortschutz (`X-Telegram-Bot-Api-Secret-Token` + `?secret=`)**:
-   - Ohne Webhook-Passwort kann jeder Bot oder Scanner im Internet gefälschte POST-Requests an `https://teleport.sonhartmann-1997.workers.dev/webhook` senden und damit dein D1-Lese-Limit (5 Mio. Zeilen/Tag) oder deine 10ms CPU-Zeit verbrauchen.
-   - **Unsere Lösung (0ms Gatekeeper)**: Du vergibst auf der neuen Seite `🤖 Bot & Einstellungen` ein eigenes **Webhook-Passwort** (oder lässt per 1-Klick ein kryptografisch sicheres generieren).
-   - Beim Klick auf **„Webhook + Passwort aktivieren“** übermittelt der Worker dieses Passwort als offiziellen `secret_token` an Telegram (`setWebhook`) und zeigt dir zusätzlich die geschützte URL (`.../webhook?secret=DEIN_PASSWORT`).
-   - **0-D1-Read Edge-Prüfung**: Der Worker hält das Webhook-Passwort im Warm-Memory (`globalThis`) bereit und prüft jeden eingehenden Webhook-Aufruf **in unter 0,1ms CPU-Zeit noch vor dem JSON-Parsing und vor jedem D1-Zugriff**. Unbefugte Requests werden sofort mit `401 Unauthorized` abgewiesen (0 D1-Reads!).
-2. **Weiter gedacht #1 – Schutz vor „Telegram Retry-Stürmen“ (Endlos-Schleifen bei Timeouts)**:
-   - *Das versteckte Problem*: Wenn ein Webhook-Aufruf auf dem Free-Tier einmal in ein 503-CPU-Limit läuft, versucht Telegram **denselben Befehl 24 Stunden lang immer wieder alle paar Sekunden erneut zuzustellen** – das legt den Worker und die D1-Datenbank lahm.
-   - *Unsere Lösung*:
-     - **`update_id` Ring-Buffer im Worker-Speicher**: Jede `update_id` von Telegram wird sofort im Arbeitsspeicher gemerkt. Schickt Telegram ein Update doppelt, antwortet der Worker sofort in `0,1ms` mit `200 OK`, ohne die Aufgabe noch einmal auszuführen.
-     - **`max_connections` Free-Tier-Bremse**: Beim Setzen des Webhooks kannst du `max_connections` für den Cloudflare Free-Tier auf z. B. `5–10` (statt Standard `40`) begrenzen, damit Telegram deinen Worker niemals mit 40 gleichzeitigen Requests überflutet.
-     - **1-Klick „Hängende Telegram-Updates leeren (`drop_pending_updates`)“**: Ein Not-Aus-Schalter auf der Bot-Seite, falls sich bei Telegram jemals eine Warteschlange aufgestaut hat.
-     - **`allowed_updates` Filter**: Telegram weckt deinen Worker nur noch bei echten Ereignissen (`message`, `callback_query`, `inline_query`, `channel_post`) und ignoriert unnötige Status-Updates.
-3. **Weiter gedacht #2 – In-Memory Katalog-Cache (95 % weniger D1-Reads beim Öffnen der Mini-App)**:
-   - Bisher hat jedes Öffnen der Mini-App (`/api/tma/bootstrap`) alle Filme, Serien und Playlisten frisch aus D1 gelesen.
-   - Wir bauen einen **intelligenten In-Memory Edge-Cache (`globalThis.__CATALOG_EDGE_CACHE`)** ein, der den Katalog im Worker-RAM hält und **nur dann automatisch invalidiert wird, wenn du im Admin-Panel etwas importierst, bearbeitest oder löschst**. Ergebnis: Das Öffnen der Mini-App dauert **`< 1ms` CPU-Zeit** und verbraucht **0 D1 Row-Reads**!
+## MODUL 1: Import-Schleife & Limits (`/worker-modules/03-telegram-kv-engine.js`, `/worker-modules/07-webhook-callbacks.js`, `/worker-modules/08c-tma-netflix-frontend.js`)
+1. **Streng chronologische Abarbeitung & `processedMsgIds`-Deduplizierung:**
+   - Sowohl im Client-Vorab-Parser (`detectAndParseClientBackupJson` in `08c`) als auch im Server-Batch-Ingester (`detectAndExtractTelegramBackupOrJson` & `processEntriesBatchWithLimit` in `07`) werden `messages` vor dem Loop zwingend aufsteigend nach `Number(msg.id || msg.message_id || 0)` sortiert.
+   - Nachrichten werden strikt sequenziell (`for (let i = startIndex; i < messages.length; i++)`) abgearbeitet.
+   - Ein `const processedMsgIds = new Set()` (sowie sitzungsübergreifend im Batch-State) stellt sicher: Ist `msg.id` bereits in `processedMsgIds` enthalten, wird die Nachricht sofort übersprungen (ohne Log-Eintrag), um mehrfache Durchläufe bei Resumes zu verhindern.
+2. **Cloudflare Free-Tier Turbo anpassen (`subrequestGuard: 38`, `wallClockLimitMs: 6000`):**
+   - In `WORKER_SPEED_PROFILES.free_turbo` (`03-telegram-kv-engine.js`) und `processEntriesBatchWithLimit` (`07-webhook-callbacks.js`) wird der Subrequest-Guard von `14` auf **`38`** und der Zeit-Guard auf **`6000ms`** angehoben.
+   - **Kein Logger-Overflow durch Pausen:** Löst der Guard aus, wird `SUBREQUEST_PAUSE` ausschließlich in `summaryCounts` hochgezählt, aber **niemals** in das `entries`-Array des Diagnose-Loggers geschrieben. Als `nextIndex` wird exakt der aktuelle Index `i` zurückgegeben.
 
 ---
 
-## 2. Geplante Features im Detail
-
-### A. Neue zentrale Admin-Seite: `🤖 Bot & Einstellungen`
-Alle Bot-, Sicherheits- und Worker-Funktionen sind auf **einer einzigen, nach dem Goldenen Schnitt (`61,8% : 38,2%`) aufgebauten Seite** gebündelt:
-1. **🔗 Telegram Webhook-Zentrale & Webhook-Passwort (`secret_token`)**:
-   - **Webhook-URL Anzeige**: `https://teleport.sonhartmann-1997.workers.dev/webhook` (inkl. 1-Klick-Kopieren).
-   - **Webhook-Passwort setzen / ändern / generieren**:
-     - Eingabefeld für dein Webhook-Passwort (`A-Za-z0-9_-`, kompatibel mit Telegrams `secret_token`-Spezifikation) + Button **„🎲 Sicheres Passwort generieren“**.
-     - Live-Sicherheitsbadge: `🟢 Webhook geschützt (Header + URL-Secret aktiv)` vs. `🟡 Ungeschützt`.
-   - **Erweiterte Webhook-Steuerung (1-Klick)**:
-     - **„🔒 Webhook mit Passwort bei Telegram registrieren (`setWebhook`)“** (setzt URL, `secret_token`, `max_connections` für Free-Tier und `allowed_updates`).
-     - **„🔍 Live Webhook-Diagnose (`getWebhookInfo`)“** (zeigt ausstehende Updates `pending_update_count`, letzten Telegram-Fehler mit Uhrzeit, gesetzte `max_connections` und Verbindungsstatus).
-     - **„🧹 Hängende Updates verwerfen (`drop_pending_updates`)“** (stoppt sofort eventuelle Telegram-Retry-Schleifen).
-     - **„🧪 Webhook-Selbsttest (Ping mit Passwort)“** (prüft live, ob der Worker unautorisierte Aufrufe blockiert und autorisierte durchlässt).
-     - **„🤖 Bot-Befehle & Mini-App Menü-Button synchronisieren“**.
-2. **🎨 BotFather Asset-Studio (inkl. 512×512 Single-`<path>` SVG & WEBP)**:
-   - Exakt nach der offiziellen `@BotFather`-Vorgabe (*"Please send an SVG file with a canvas size of 512x512 and a single `<path>` element inside, or a WEBP or TGS file with the same size"*):
-     - **1-Klick Download: `bot-splashscreen-512x512.svg`** → Reines SVG mit `width="512" height="512" viewBox="0 0 512 512"` und **exakt einem einzigen `<path d="..." />`-Element** im Inneren.
-     - **1-Klick Download: `bot-splashscreen-512x512.webp`** → Direkt per Canvas erzeugtes `512×512` `.webp` im neuen Dark-Blue/Neon-Cinema-Stil.
-     - Zusätzlich: **512×512 Bot-Foto (PNG)**, **640×360 Intro-Banner (PNG)** sowie die **Header-/Body-Farbcodes** (`#060A14` / `#0B1222` / `#00E5FF`) mit 1-Klick-Übernahme in das Telegram WebApp SDK.
-3. **⚡ Worker-Speed-Profil, D1-Cache-Kontrolle & Anti-Spam-Cockpit**:
-   - Umschalter zwischen **Free-Tier Safe Mode (<10ms CPU, Micro-Batches, Edge-Cache aktiv)** und **Paid Unbound Mode**, Button zum manuellen Leeren des Edge-Caches sowie die Anti-Spam-Einstellungen an einem Ort.
+## MODUL 2: Archive (`.rar`/`.zip`/`.7z`/`.iso`/`.tar`/`.gz`) als Download-Dateien speichern (`/worker-modules/02-parser-ingester.js`, `/worker-modules/04-d1-database.js`, `/worker-modules/07-webhook-callbacks.js`, `/worker-modules/08b-tma-netflix-frontend.js`)
+1. **Erkennung als Download-Archiv statt Junk:**
+   - Ganz oben im Client- und Server-Parser prüfen wir:
+     `const isArchive = /\.(?:rar|zip|7z|iso|tar|gz)$/i.test(fileName || "");`
+   - Wenn `isArchive === true`: Die Datei durchläuft regulär die Bereinigungs- und TMDb-Pipeline und erhält zwingend `type: "archive"` und `isDownloadOnly: true` (`isArchive: true`) im `parsedItem`.
+2. **Speicherung in D1 unter `downloads` (nicht als abspielbarer Videostream):**
+   - Beim D1-UPSERT (`saveMovieToD1` / `saveSeriesToD1` / `saveMovieFileToD1` / `saveEpisodeFileToD1` in `04-d1-database.js` & `resolveAndIngestMediaEntry` in `07-webhook-callbacks.js`) werden Archive mit `isDownloadOnly: true` **nicht** als regulärer Videostream für den Video-Player eingereiht, sondern im `downloads`-Array (`details_json.downloads` sowie mit `is_download_only` / `codec: "ARCHIVE"`-Kennzeichnung) des jeweiligen Films bzw. der Serie/Staffel gespeichert, sodass das Frontend dafür dedizierte Download-Buttons (`📦 Download-Archiv`) rendert.
 
 ---
 
-### B. Echtzeit `Worker-Health-Monitor` & Automatische Aufgaben-Teilung (Micro-Batching)
-- **Live CPU- & Subrequest-Telemetrie**:
-  - Jede Worker-Antwort liefert `_workerHealth` (`cpuEstimateMs`, `wallTimeMs`, `subrequests`, `d1Ops`, `cacheHit`).
-- **Echtzeit `Worker-Health-Monitor` im UI**:
-  - Zeigt die CPU-Laufzeit (ms) der letzten Requests als Live-Anzeige + Mini-Sparkline.
-  - **Vollautomatische Drosselung & Cooldown**:
-    - Nähert sich ein Request der **7ms-Marke**, halbiert das UI automatisch die Batch-Größe auf **1 bis 2 Aufgaben pro Request** und legt einen kurzen Cooldown (1,5–3s) ein.
-    - Bei `HTTP 503 exceededCpu` teilt der **Smart-Split** das Paket sofort in Einzel-Aufgaben (`batchSize = 1`) und arbeitet sie Stück für Stück ab.
-- **Beseitigung der Log-Bremsen**:
-  - Wegfall des 27-KB-Checkpoint-Payloads bei `/api/tma/admin/import-batch` (spart ~15ms JSON-CPU pro Batch).
-  - Gezielte SQL-Index-Abfragen statt Tabellen-Scans in `prefetchBatchMediaFromD1`.
-  - Abschaltung des 1,2-Sekunden Dauer-Pollings auf `/api/tma/anti-spam-queue`.
+## MODUL 3: Der `"fileFingerprint"` (Echte Telegram-IDs vs. JSON) (`/worker-modules/04-d1-database.js`, `/worker-modules/07-webhook-callbacks.js`)
+1. **Verhinderung des `null === null`-Duplikat-Bugs:**
+   - Für jede Datei wird der eindeutige Fingerabdruck gebildet:
+     ```javascript
+     const fileFingerprint = msg.file_unique_id || msg.file_id || `${msg.file_size || 0}_${msg.duration_seconds || 0}_${msg.width || 0}x${msg.height || 0}`;
+     ```
+2. **Exakter 5-Tupel-Abgleich in D1 (`saveMovieFileToD1` & `saveEpisodeFileToD1`):**
+   - Nur wenn `(tmdb_id, season, episode, part_number, fileFingerprint)` in D1 exakt identisch ist (und `fileFingerprint !== "0_0_0x0"`), wird `status: "SKIPPED_DUPLICATE"` zurückgegeben.
+   - Weicht `fileFingerprint` ab (z. B. andere Dateigröße, Auflösung oder Dauer), wird die Datei als **neue Qualitäts- bzw. Schnitt-Version** desselben Films bzw. derselben Episode in D1 gespeichert.
 
 ---
 
-### C. Neues Dark-Blue / Subtle-Neon Farbschema, Merklisten-Long-Press & Key-Navigation
-1. **Edles Dark-Blue / Subtle-Neon Designsystem (`#060A14` / `#0B1222` / `#00E5FF` / `#6366F1`)**:
-   - Hochwertige Midnight-Sapphire-Oberfläche mit feinen Cyan-Konturen – modern, augenschonend und frei von Kitsch.
-2. **Goldener Schnitt (`1 : 1.618` / `61,8% : 38,2%`) & Entschlackung**:
-   - **Entfernt**: Überflüssiger Tab `🏠 Hauptseite` in der Admin-Leiste sowie der manuelle Button `🧹 Doppelte Buttons bereinigen` (defekte/doppelte Stream-Buttons werden vollautomatisch im Hintergrund gefiltert und bereinigt).
-   - **JSON-Import & Detail-Modal**: Aufgeräumtes 2-Spalten-Layout im Verhältnis **`61,8%` Hauptfokus** zu **`38,2%` Live-Status / Stream-Panel**.
-3. **Merklisten-Badge & „Gedrückt halten zum Speichern“ (Long-Press)**:
-   - Jeder Film in der Merkliste trägt direkt auf dem Poster ein klares **Electric-Cyan Badge (`✓ Merkliste`)** samt feiner Cyan-Kartenkontur.
-   - **Gedrückt halten (Touch, Maus & langes `Enter`)** speichert oder entfernt den Titel sofort mit visuellem Impuls und Haptik-Feedback.
-4. **Vollständige Tastatur- & Smart-TV Key-Navigation**:
-   - Durchgängige Steuerung per Pfeiltasten (`ArrowUp/Down/Left/Right`), `Enter` (inkl. Langdruck bzw. Taste `M`/`W` für Merkliste), `Escape`/`Backspace` und `/` (Suche) mit klarem Cyan-Fokusring.
+## MODUL 4: Parser-Vorreinigung (Umlaute, Kanal-Tags & Wortgrenzen) (`/worker-modules/02-parser-ingester.js`, `/worker-modules/08b-tma-netflix-frontend.js`)
+Sowohl im Server-Parser (`02`) als auch im Client-Vorab-Parser (`08b`) werden `rawText` und `fileName` exakt in dieser Reihenfolge vorgereinigt:
+1. **NFC-Normalisierung & Globale Umlaute:**
+   - `.normalize("NFC")` ganz am Anfang (`u\u0308` $\rightarrow$ `ü` für *Ein Rezept für die Liebe*), gefolgt von globaler ASCII-Umlaut-Konvertierung mit `/g`-Flag (`.replace(/ae/g, "ä").replace(/oe/g, "ö").replace(/ue/g, "ü")` inkl. Großbuchstaben `Ae`/`Oe`/`Ue` und Schutz echter Wörter wie *Abenteuer* / *Feuer* / *Duell*), damit bei `"Vier Faeuste fuer ein Halleluja"` beide Wörter umgewandelt werden.
+2. **Kanal-Präfixe löschen (vor `_`-Umwandlung & Sprachfilter):**
+   - `.replace(/^@\s*(?:german[\s._-]*(?:movies?|vid(?:eo)?s?|filme?)|[\w.-]+)[\s_:\-]*/gi, "")` sowie `^@\s*movies\s+/i` und `\b(?:german[\s._-]+movies|@[\w.-]+)\b/gi`, damit niemals `"MOVIES Nur eine Frau"` oder `"Vid Fack ju Goethe"` übrig bleibt.
+3. **Strenge Wortgrenzen `\b` bei Sprach- und Länderkürzeln (`"Pines"`- & `"Fences"`-Fix):**
+   - Entferne Sprachkürzel ausschließlich mit echten Wortgrenzen `\b`: `.replace(/\b(?:de|en|fr|es|ger|ita)\b/gi, "")`.
+   - Korrigiere den Jahresklammern-Regex in `08b-tma-netflix-frontend.js` (Zeile 5210), sodass zwingend eine öffnende Klammer `[\(\[]` und `\b` vor `(?:DDR|BRD|USA|UK|DE|FR|IT|ES)` stehen muss.
+4. **Scene-Group-Präfixe mit Whitelist:**
+   - Entferne am Dateianfang kleingeschriebene Scene-Kürzel `^[a-z]{2,6}-` (wie `cyd-`, `cd-`, `nge-`, `inkl-`), **außer** der Anfang gehört zur Whitelist offizieller Bindestrich-Titel (`x-men`, `a-team`, `k-pax`, `g-force`, `u-571`, `k-19`, `t-rex`, `v-wars`, `wall-e`, `spider-man`, `ant-man`, `kick-ass`, `non-stop`, `hi-hi`).
+5. **Klammer-Titel aufspalten:**
+   - Bei Titeln wie `"Little Italy (Ein Rezept für die Liebe)"` oder `"Freunde mit gewissen Vorzügen (Friends With Benefits)"` wird der Teil vor der Klammer als `primaryTitle` (`cleanTitle`) und der Klammerinhalt als `altTitle` (`originalTitle`) extrahiert und getrennt bei TMDb abgefragt.
+
+---
+
+## MODUL 5: Multi-Part (`CD1`/`CD2`), Editionen & Jahres-Schnitt (`/worker-modules/02-parser-ingester.js`, `/worker-modules/07-webhook-callbacks.js`, `/worker-modules/08b-tma-netflix-frontend.js`)
+1. **Die `"Teil 2"` vs. `"-CD2"` Positions-Regel:**
+   - Steht `Teil [1-4]` oder `Part [1-4]` **VOR** der Jahreszahl `(YYYY)` (wie bei `"Die Tribute von Panem – Mockingjay Teil 2 (2015)"`), gehört es zum offiziellen Filmtitel (`part_number = 1`, wird **nicht** gelöscht!).
+   - Steht `CD`, `Disc`, `Disk` oder `Part`/`Teil` **HINTER** der Jahreszahl (`"Hogfather - 2006 - Part 2"`), oder ist es ein Split-Suffix (`-001`..`-004`), `01`/`02` direkt vor `(YYYY)` (`"The Postman 01 (1997)"`) oder ein mehrteiliges Archiv (`.part01.rar`), wird es vom Suchtitel abgeschnitten und `part_number = 1..4` gesetzt.
+   - Bei Serien (`isSeries === true`) ist `part_number` immer `1` (`Teil`/`Part`/`F10` ist dort die Episodennummer).
+   - Bei `part_number > 1` wird der Sequel-Konflikt-Check (`sequelMismatch`) deaktiviert.
+2. **Edition extrahieren:**
+   - `\b(director'?s[\s._-]*cut|extended(?:\s*cut|\s*edition)?|special[\s._-]*edition|dc)\b/i` wird als `editionLabel` für den Versionen-Switcher gespeichert und vor der TMDb-Suche aus dem Suchtitel entfernt.
+3. **Cut-Off nach der Jahreszahl & 120-Zeichen-Limit:**
+   - Alles rechts neben der vierstelligen Jahreszahl `(YYYY)` (Auflösungen, Genres wie `2012SiFi`, Codecs, Container) wird rigoros abgeschnitten.
+   - Das harte Titel-Limit liegt bei **120 Zeichen** (kein 40/50-Zeichen-Abschneider mitten im Wort).
+
+---
+
+## MODUL 6: TMDb-Scoring, Rechte-Bindestrich-Suche & Logger-Variablen-Leck (`/worker-modules/07-webhook-callbacks.js`, `/worker-modules/08c-tma-netflix-frontend.js`)
+1. **Rechte-Bindestrich-Suche (`"Michel aus Lönneberga - Michel bringt die Welt in Ordnung"`):**
+   - Liefert die Suche nach dem Gesamttitel und dem Teil links vom Bindestrich 0 passende Treffer, durchsucht `searchTmdbCandidatesForImport` TMDb automatisch auch nach dem Sub-String **rechts** vom ersten Bindestrich (`split(/\s*[-–—:]\s*/)[1]`).
+2. **100% Titel-/Untertitel-Match (`+150` Punkte & `±3` Jahre Toleranz):**
+   - Stimmt der TMDb-Titel exakt mit dem Suchtitel **oder** mit dem Untertitel (Teil nach dem Bindestrich, wie `"Die Rückkehr"` bei `"Alien 2 - Die Rückkehr (1986)"` $\leftrightarrow$ `"Aliens - Die Rückkehr"`) überein, vergibt das Scoring **+150 Bonuspunkte** und erlaubt eine Produktionsjahr-Toleranz von **±3 Jahren** ohne `YEAR_CONFLICT` oder `SEQUEL_CONFLICT`.
+   - Zudem wird vor einer jahreslosen Suche zuerst `year + 1` und `year - 1` geprüft (`"300 (2006)"` $\rightarrow$ `"300"` aus `2007` mit 100%).
+3. **Variablen-Leck im Logger schließen:**
+   - Bei `TMDB_NOT_FOUND`, `API_ERROR` und `SUBREQUEST_PAUSE` werden beim Erstellen des Log-Eintrags (sowohl im Server-Logger in `07` als auch im Client-Logger in `08c`) zwingend `matchedTitle = null` und `tmdbId = null` gesetzt.
