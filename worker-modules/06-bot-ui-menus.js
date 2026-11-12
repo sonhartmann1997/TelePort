@@ -133,13 +133,12 @@
     ];
 
     const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
-    if (effectiveWebAppBase) {
+    if (effectiveWebAppBase && !isGroupOrChannelChat(chatId)) {
+      const signedMainWebAppUrl = await buildSignedWebAppUrl(env, effectiveWebAppBase, chatId);
       inline_keyboard.unshift([
-        { text: "🍿 Netflix Mini-App öffnen", web_app: { url: `${effectiveWebAppBase}?chatId=${chatId}` } }
+        { text: "🍿 Netflix Mini-App öffnen", web_app: { url: signedMainWebAppUrl } }
       ]);
-      if (!isGroupOrChannelChat(chatId)) {
-        tgApi(env).setChatMenuButton(chatId, effectiveWebAppBase, "🍿 Mediathek").catch(() => {});
-      }
+      tgApi(env).setChatMenuButton(chatId, effectiveWebAppBase, "🍿 Mediathek").catch(() => {});
     }
 
     if (isGroupOrChannelChat(chatId)) {
@@ -987,9 +986,10 @@
     }
 
     const effectiveColWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
-    if (effectiveColWebAppBase) {
+    if (effectiveColWebAppBase && !isGroupOrChannelChat(chatId)) {
+      const signedColUrl = await buildSignedWebAppUrl(env, effectiveColWebAppBase, chatId, { openCol: collectionId });
       inline_keyboard.push([
-        { text: "🍿 Reihe in Mini-App öffnen", web_app: { url: `${effectiveColWebAppBase}?openCol=${collectionId}` } }
+        { text: "🍿 Reihe in Mini-App öffnen", web_app: { url: signedColUrl } }
       ]);
     }
 
@@ -1123,9 +1123,10 @@
     }
 
     const effectiveUniWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
-    if (effectiveUniWebAppBase) {
+    if (effectiveUniWebAppBase && !isGroupOrChannelChat(chatId)) {
+      const signedUniUrl = await buildSignedWebAppUrl(env, effectiveUniWebAppBase, chatId, { openUni: universeId });
       inline_keyboard.push([
-        { text: "🌌 Universum in Mini-App öffnen", web_app: { url: `${effectiveUniWebAppBase}?openUni=${universeId}` } }
+        { text: "🌌 Universum in Mini-App öffnen", web_app: { url: signedUniUrl } }
       ]);
     }
 
@@ -1197,9 +1198,10 @@
     ];
 
     const effectivePerWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
-    if (effectivePerWebAppBase) {
+    if (effectivePerWebAppBase && !isGroupOrChannelChat(chatId)) {
+      const signedPerUrl = await buildSignedWebAppUrl(env, effectivePerWebAppBase, chatId, { openPerson: personId });
       inline_keyboard.push([
-        { text: "🍿 Person in Mini-App öffnen", web_app: { url: `${effectivePerWebAppBase}?openPerson=${personId}` } }
+        { text: "🍿 Person in Mini-App öffnen", web_app: { url: signedPerUrl } }
       ]);
     }
 
@@ -3184,8 +3186,9 @@
     ];
     const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
     if (effectiveWebAppBase && !isGroupOrChannelChat(chatId)) {
+      const signedDetailWebAppUrl = await buildSignedWebAppUrl(env, effectiveWebAppBase, chatId, { openType: typeCode, openId: itemId });
       inline_keyboard.push([
-        { text: "🍿 Direkt in Mini-App öffnen", web_app: { url: `${effectiveWebAppBase}?chatId=${chatId}&openType=${typeCode}&openId=${itemId}` } }
+        { text: "🍿 Direkt in Mini-App öffnen", web_app: { url: signedDetailWebAppUrl } }
       ]);
     }
     for (let i = 0; i < providerButtons.length; i += 2) {

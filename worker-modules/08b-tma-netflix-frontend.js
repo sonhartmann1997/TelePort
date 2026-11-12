@@ -238,8 +238,14 @@
 
       async function apiFetchJson(url, opts = {}) {
         const headers = { ...(opts.headers || {}) };
+        if (!rawInitData && typeof extractClientTelegramInitData === "function") {
+          rawInitData = extractClientTelegramInitData();
+        }
         if (sessionToken) headers["Authorization"] = "Bearer " + sessionToken;
         if (rawInitData) headers["X-Telegram-Init-Data"] = rawInitData;
+        if (typeof rawLaunchToken === "string" && rawLaunchToken) {
+          headers["X-Telegram-Launch-Token"] = rawLaunchToken;
+        }
         if (state.settings && Object.keys(state.settings).length > 0) {
           try {
             headers["X-Tma-Settings"] = encodeURIComponent(JSON.stringify(state.settings));
@@ -1966,7 +1972,9 @@
                   ) : '')) +
                   (type === 's' ? (
                     '<div id="seasonBox" style="margin-top:4px">Lade Episoden...</div>' +
-                    (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '')
+                    '<div id="seriesArchiveDownloadsMount">' +
+                      (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '') +
+                    '</div>'
                   ) : '') +
                 '</div>' +
 
@@ -2972,11 +2980,20 @@
       function normalizeClientPartLabel(rawPart, rawFilename = "") {
         const pStr = String(rawPart || "").trim();
         if (!pStr && !rawFilename) return "";
-        if (/^RAR/i.test(pStr)) return pStr.toUpperCase();
+        if (/^(?:RAR|ZIP|7Z|ISO|TAR|GZ)/i.test(pStr)) return pStr.toUpperCase();
         const m = pStr.match(/^(?:SPLIT|PART|TEIL|CD|DISC|DISK|DVD)[\\s._-]*0*([1-9]\\d?)$/i);
         if (m) return "CD " + parseInt(m[1], 10);
         if (!pStr && rawFilename) {
-          const fnSplit = String(rawFilename).match(/-00([1-9])(?:\\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
+          const fnStr = String(rawFilename).trim();
+          const fnArchPart = fnStr.match(/\\.part0*([1-9]\\d?)\\.rar$/i);
+          if (fnArchPart) return "RAR-PART" + parseInt(fnArchPart[1], 10);
+          const fn7zSplit = fnStr.match(/\\.(7z|zip|rar)\\.0*([1-9]\\d{0,2})$/i);
+          if (fn7zSplit) return fn7zSplit[1].toUpperCase() + "-PART" + parseInt(fn7zSplit[2], 10);
+          const fnR00 = fnStr.match(/\\.r0*(\\d{1,2})$/i);
+          if (fnR00) return "RAR-PART" + (parseInt(fnR00[1], 10) + 2);
+          const fnZ01 = fnStr.match(/\\.z0*([1-9]\\d?)$/i);
+          if (fnZ01) return "ZIP-PART" + parseInt(fnZ01[1], 10);
+          const fnSplit = fnStr.match(/-00([1-9])(?:\\.(?:mp4|mkv|avi|m4v|mk3d|flv|ts|mov|wmv))+$/i);
           if (fnSplit) return "CD " + parseInt(fnSplit[1], 10);
         }
         return pStr;
@@ -2999,27 +3016,60 @@
       }
 
       function buildArchiveDownloadsSectionHtml(d, isAdminUser) {
-        const rawDownloads = Array.isArray(d?.downloads) ? d.downloads.filter(dl => dl && (dl.telegram_file_id || dl.file_id)) : [];
-        if (rawDownloads.length === 0) return "";
-        return '<div style="margin-top:12px">' +
-          '<div class="season-toolbar-row" style="margin-bottom:6px">' +
-            '<div style="font-size:12.5px;font-weight:800;color:#fde68a">📦 Zusatz-Downloads & Archive (' + rawDownloads.length + ')</div>' +
+        const rawList = Array.isArray(d?.downloads) ? d.downloads.filter(dl => dl && (dl.telegram_file_id || dl.file_id)) : [];
+        const deduped = rawList.filter((dl, idx, arr) => {
+          const fid = String(dl.telegram_file_id || dl.file_id || "");
+          return fid && arr.findIndex(x => String(x.telegram_file_id || x.file_id || "") === fid) === idx;
+        });
+        if (deduped.length === 0) {
+          window._activeModalArchiveDownloads = [];
+          return "";
+        }
+        const rawDownloads = deduped.slice().sort((a, b) => {
+          const sDiff = Number(a.season_number || 0) - Number(b.season_number || 0);
+          if (sDiff !== 0) return sDiff;
+          const eDiff = Number(a.episode_number || 0) - Number(b.episode_number || 0);
+          if (eDiff !== 0) return eDiff;
+          const pA = Number(a.part_number || extractClientPartNumber(normalizeClientPartLabel(a.part, a.file_name || a.raw_filename || "")) || 1);
+          const pB = Number(b.part_number || extractClientPartNumber(normalizeClientPartLabel(b.part, b.file_name || b.raw_filename || "")) || 1);
+          return pA - pB;
+        });
+        window._activeModalArchiveDownloads = rawDownloads;
+        const totalBytes = rawDownloads.reduce((acc, dl) => acc + (Number(dl.file_size) || 0), 0);
+        const totalSizeStr = formatFileSizeClient(totalBytes);
+        const batchBtnHtml = rawDownloads.length >= 2
+          ? ('<button type="button" class="btn-action-glass" style="padding:4px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllArchiveDownloadsToTelegram()" title="Alle ' + rawDownloads.length + ' Archiv-Teile geordnet nacheinander an dein gewähltes Ziel senden">' +
+              '📦 Alle ' + rawDownloads.length + ' Archiv-Teile senden' +
+            '</button>')
+          : '';
+        return '<div style="margin-top:12px;font-variant-numeric:tabular-nums">' +
+          '<div class="season-toolbar-row" style="margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+            '<div style="font-size:12.5px;font-weight:800;color:#fde68a">📦 Zusatz-Downloads & Archive (' + rawDownloads.length + (totalSizeStr ? ' · Gesamt ' + esc(totalSizeStr) : '') + ')</div>' +
+            batchBtnHtml +
           '</div>' +
           '<div style="display:flex;flex-direction:column;gap:8px">' +
-            rawDownloads.map(dl => {
+            rawDownloads.map((dl, idx) => {
               const fid = dl.telegram_file_id || dl.file_id || "";
               const sizeLabel = formatFileSizeClient(dl.file_size);
               const fnLabel = dl.file_name || dl.raw_filename || "Archiv-Download";
-              const codecLabel = dl.codec || (/\\.zip$/i.test(fnLabel) ? "ZIP" : /\\.7z$/i.test(fnLabel) ? "7Z" : "RAR");
+              const codecLabel = dl.codec || (/\\.(?:zip|z\\d{2}|zip\\.\\d{3})$/i.test(fnLabel) ? "ZIP" : /\\.7z(?:\\.\\d{3})?$/i.test(fnLabel) ? "7Z" : /\\.iso$/i.test(fnLabel) ? "ISO" : /\\.(?:tar|gz)$/i.test(fnLabel) ? "TAR" : "RAR");
               const partLabel = normalizeClientPartLabel(dl.part, fnLabel);
+              const partNum = Number(dl.part_number || extractClientPartNumber(partLabel) || 0);
+              const hasSeEp = Number(dl.season_number || 0) > 0 && Number(dl.episode_number || 0) > 0;
+              const seEpCode = hasSeEp ? ('S' + String(dl.season_number).padStart(2, '0') + 'E' + String(dl.episode_number).padStart(2, '0')) : '';
+              const btnCaption = (rawDownloads.length > 1 && partNum > 0)
+                ? ('📦 Teil ' + partNum + ' senden')
+                : (rawDownloads.length > 1 ? ('📦 Teil ' + (idx + 1) + ' senden') : '📦 Archiv-Download senden');
+              const streamTitle = (d?.title || 'Download') + (seEpCode ? (' ' + seEpCode) : '') + (partLabel ? (' (' + partLabel + ')') : '');
               return '<div class="ep-row" style="margin-bottom:0;border-color:rgba(245,158,11,0.4);background:rgba(245,158,11,0.06)">' +
                 '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">' +
                   '<span class="ep-code-badge" style="background:rgba(245,158,11,0.2);color:#fde68a;border-color:rgba(245,158,11,0.45)">📦 ' + esc(codecLabel) + '</span>' +
+                  (seEpCode ? '<span class="ep-code-badge">' + esc(seEpCode) + '</span>' : '') +
                   '<span class="ep-name-text">' + esc(fnLabel) + (partLabel ? ' · ' + esc(partLabel) : '') + '</span>' +
                   (sizeLabel ? '<span class="stream-meta-pill size" title="Dateigröße">' + esc(sizeLabel) + '</span>' : '') +
                 '</div>' +
                 '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                  '<button class="btn-stream-clean prerelease" onclick="requestTelegramStream(\\'' + esc(fid) + '\\',\\'' + esc((d.title || 'Download') + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(codecLabel) + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'📦 Archiv-Download\\'})">📦 Archiv-Download senden</button>' +
+                  '<button class="btn-stream-clean prerelease" onclick="requestTelegramStream(\\'' + esc(fid) + '\\',\\'' + esc(streamTitle) + '\\',\\'' + esc(codecLabel) + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'📦 Archiv-Download\\'})">' + esc(btnCaption) + '</button>' +
                 '</div>' +
               '</div>';
             }).join("") +
@@ -3027,10 +3077,82 @@
         '</div>';
       }
 
+      async function sendAllArchiveDownloadsToTelegram() {
+        if (!isCurrentUserVip()) {
+          showHudToast("🔒 Exklusiv für VIP-Mitglieder verfügbar.");
+          return;
+        }
+        const d = state.activeDetails || {};
+        const rawList = (Array.isArray(window._activeModalArchiveDownloads) && window._activeModalArchiveDownloads.length > 0)
+          ? window._activeModalArchiveDownloads
+          : (Array.isArray(d.downloads) ? d.downloads : []);
+        const targetList = rawList.filter(dl => dl && (dl.telegram_file_id || dl.file_id));
+        if (targetList.length === 0) {
+          showHudToast("⚠️ Keine Archiv-Downloads zum Senden gefunden.");
+          return;
+        }
+        const prefs = getDeliveryPreferencesClient();
+        const isSeriesModal = Array.isArray(d.seasons) && d.seasons.length > 0;
+        let sentCount = 0;
+        let queuedCount = 0;
+        for (let i = 0; i < targetList.length; i++) {
+          const dl = targetList[i];
+          const fid = dl.telegram_file_id || dl.file_id || "";
+          if (!fid) continue;
+          const fnLabel = dl.file_name || dl.raw_filename || "Archiv-Download";
+          const codecLabel = dl.codec || (/\\.(?:zip|z\\d{2}|zip\\.\\d{3})$/i.test(fnLabel) ? "ZIP" : /\\.7z(?:\\.\\d{3})?$/i.test(fnLabel) ? "7Z" : "RAR");
+          const partLabel = normalizeClientPartLabel(dl.part, fnLabel) || ("Teil " + (i + 1));
+          const hasSeEp = Number(dl.season_number || 0) > 0 && Number(dl.episode_number || 0) > 0;
+          const seEpCode = hasSeEp ? (' S' + String(dl.season_number).padStart(2, '0') + 'E' + String(dl.episode_number).padStart(2, '0')) : '';
+          const sizeLabel = formatFileSizeClient(dl.file_size);
+          const itemTitle = (d.title || "Archiv") + seEpCode + " (" + partLabel + ")";
+          setBusyState(true, "📦 Sende Archiv " + (i + 1) + "/" + targetList.length + ": " + itemTitle + "...");
+          try {
+            const r = await apiFetchJson(API_BASE + "/stream", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chatId,
+                fileId: fid,
+                title: itemTitle,
+                quality: codecLabel,
+                fileSize: sizeLabel,
+                tags: "📦 Archiv-Download",
+                targetMode: prefs.targetMode || "dm",
+                targetGroupChatId: prefs.targetGroupChatId || "",
+                targetTopicId: prefs.targetTopicId || "",
+                sourceBridgeChatId: prefs.sourceBridgeChatId || "",
+                customBotToken: prefs.customBotToken || "",
+                typeCode: isSeriesModal ? "s" : "m",
+                tmdbId: d.id || null,
+                posterUrl: d.poster || d.poster_path || "",
+                backdropUrl: d.backdrop || d.backdrop_path || ""
+              })
+            });
+            if (r && r.antiSpam) {
+              clientAntiSpamSnapshot = r.antiSpam;
+              renderAntiSpamLiveHudBannerClient(r.antiSpam);
+            }
+            if (r && r.ok) {
+              if (r.queued) queuedCount++;
+              else sentCount++;
+            }
+          } catch (e) {}
+        }
+        setBusyState(false);
+        scheduleAntiSpamPollClient(950);
+        if (queuedCount > 0) {
+          showHudToast("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Archiv-Teil(e) in Anti-Spam Warteschleife eingereiht!");
+        } else {
+          showHudToast("✅ Alle " + sentCount + "/" + targetList.length + " Archiv-Teile gesendet!");
+        }
+      }
+
       function buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) {
         const allRawFiles = Array.isArray(d.files) ? d.files.filter(f => f && f.telegram_file_id) : [];
-        const rawFiles = allRawFiles.filter(f => !f.is_download_only && !f.isArchive && f.type !== "archive" && !/\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(String(f.raw_filename || "")));
-        const inlineArchiveFiles = allRawFiles.filter(f => f.is_download_only || f.isArchive || f.type === "archive" || /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(String(f.raw_filename || "")));
+        const isClientArchRow = (f) => Boolean(f.is_download_only || f.isArchive || f.type === "archive" || /\\.(?:rar|zip|7z|iso|tar|gz|r\\d{2}|z\\d{2})$|\\.(?:7z|zip|rar)\\.\\d{3}$/i.test(String(f.raw_filename || f.file_name || "")));
+        const rawFiles = allRawFiles.filter(f => !isClientArchRow(f));
+        const inlineArchiveFiles = allRawFiles.filter(f => isClientArchRow(f));
         const combinedDownloads = [
           ...(Array.isArray(d.downloads) ? d.downloads : []),
           ...inlineArchiveFiles
@@ -3516,6 +3638,19 @@
               '</div>' +
             '</div>';
           }).join("");
+        const seriesArchMount = document.getElementById("seriesArchiveDownloadsMount");
+        if (seriesArchMount && vipAllowed) {
+          const mergedSeriesDownloads = [
+            ...(Array.isArray(state.activeDetails?.downloads) ? state.activeDetails.downloads : []),
+            ...(Array.isArray(s.downloads) ? s.downloads : [])
+          ];
+          if (mergedSeriesDownloads.length > 0) {
+            seriesArchMount.innerHTML = buildArchiveDownloadsSectionHtml(
+              { ...(state.activeDetails || {}), downloads: mergedSeriesDownloads },
+              Boolean(state.authUser?.isAdmin)
+            );
+          }
+        }
         if (jumpToFirstEpisode) {
           const nextOrFirstEpEl = box.querySelector(".ep-row.ep-next-up .ep-title, .ep-row.ep-watched .ep-title, .ep-title");
           if (nextOrFirstEpEl && typeof jumpSpatialFocus === "function") {
@@ -5022,14 +5157,33 @@
       function extractClientPartInfo(rawText, rawFileName, durationSec = 0) {
         const rawFnStr = String(rawFileName || "").trim();
         const combinedRaw = (rawFnStr + " " + String(rawText || "")).trim();
-        const isArchive = /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFnStr) || /\\.part\\d+\\.rar\\b/i.test(combinedRaw);
+        const isArchive = /\\.(?:rar|zip|7z|iso|tar|gz|r\\d{2}|z\\d{2})$|\\.(?:7z|zip|rar)\\.\\d{3}$/i.test(rawFnStr) ||
+          /(?:\\.part\\d+\\.rar|\\.(?:7z|zip|rar)\\.\\d{3}|\\.[rz]\\d{2})\\b/i.test(combinedRaw);
         if (isArchive) {
-          const extMatch = rawFnStr.match(/\\.(rar|zip|7z|iso|tar|gz)$/i);
-          const archType = extMatch ? extMatch[1].toUpperCase() : "RAR";
+          let archType = "RAR";
+          if (/\\.(?:zip|z\\d{2})(?:\\.\\d{3})?$/i.test(rawFnStr)) archType = "ZIP";
+          else if (/\\.7z(?:\\.\\d{3})?$/i.test(rawFnStr)) archType = "7Z";
+          else if (/\\.iso$/i.test(rawFnStr)) archType = "ISO";
+          else if (/\\.(?:tar|gz)$/i.test(rawFnStr)) archType = "TAR";
           const rarPartMatch = combinedRaw.match(/(?:\\.part|\\bpart)[\\s._-]*0*([1-9]\\d?)\\b/i);
           if (rarPartMatch) {
             const num = parseInt(rarPartMatch[1], 10);
             return { isMultiPart: true, isArchive: true, isDownloadOnly: true, partNumber: num, partType: archType, partLabel: archType + "-PART" + num };
+          }
+          const splitExtNumMatch = rawFnStr.match(/\\.(?:7z|zip|rar)\\.0*([1-9]\\d{0,2})$/i);
+          if (splitExtNumMatch) {
+            const num = parseInt(splitExtNumMatch[1], 10);
+            return { isMultiPart: true, isArchive: true, isDownloadOnly: true, partNumber: num, partType: archType, partLabel: archType + "-PART" + num };
+          }
+          const rVolMatch = rawFnStr.match(/\\.r0*(\\d{1,2})$/i);
+          if (rVolMatch) {
+            const num = parseInt(rVolMatch[1], 10) + 2;
+            return { isMultiPart: true, isArchive: true, isDownloadOnly: true, partNumber: num, partType: "RAR", partLabel: "RAR-PART" + num };
+          }
+          const zVolMatch = rawFnStr.match(/\\.z0*([1-9]\\d?)$/i);
+          if (zVolMatch) {
+            const num = parseInt(zVolMatch[1], 10);
+            return { isMultiPart: true, isArchive: true, isDownloadOnly: true, partNumber: num, partType: "ZIP", partLabel: "ZIP-PART" + num };
           }
           return { isMultiPart: false, isArchive: true, isDownloadOnly: true, partNumber: 1, partType: archType, partLabel: archType };
         }
@@ -5143,11 +5297,11 @@
         if (!raw) return "";
         const rawTrimmed = String(raw)
           .normalize("NFC")
-          .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "")
+          .replace(/(?:\\.part0*\\d{1,3}\\.rar|\\.(?:7z|zip|rar)\\.0*\\d{1,3}|\\.[rz]\\d{2,3}|\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "")
           .trim();
         const sceneCleaned = stripClientSceneGroupPrefix(rawTrimmed);
         let t = normalizeClientEpisodeText(sceneCleaned)
-          .replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
+          .replace(/(?:\\.part0*\\d{1,3}\\.rar|\\.(?:7z|zip|rar)\\.0*\\d{1,3}|\\.[rz]\\d{2,3}|\\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
         // Twilight Saga (4.1) / (4.2) Spezial-Regel: eigene Kinofilme ("Breaking Dawn - Teil 1" / "Teil 2")
         if (/twilight/i.test(t) && /breaking[\\s._-]*dawn/i.test(t)) {
           t = t.replace(/^(?:the\\s+)?twilight[\\s._-]*saga[\\s._()-]*(?:0?[1-5]|complete)?[\\s._\\-:)]*/i, "");
@@ -5231,23 +5385,22 @@
         const raw = String(rawFilenameOrTitle || "").normalize("NFC").trim();
         const rawCapText = msgObj && typeof msgObj === "object" ? String(msgObj.raw_text || msgObj.text || msgObj.caption || "").normalize("NFC") : "";
         const rawFileNameField = String(msgObj?.raw_file_name || msgObj?.file_name || "");
-        const isArchive = /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(raw) ||
-          /\\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFileNameField) ||
-          /\\.part\\d+\\.rar\\b/i.test(raw + " " + rawCapText);
-        const strippedExtRaw = raw.replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
+        const isArchive = /\\.(?:rar|zip|7z|iso|tar|gz|r\\d{2}|z\\d{2})$|\\.(?:7z|zip|rar)\\.\\d{3}$/i.test(raw) ||
+          /\\.(?:rar|zip|7z|iso|tar|gz|r\\d{2}|z\\d{2})$|\\.(?:7z|zip|rar)\\.\\d{3}$/i.test(rawFileNameField) ||
+          /(?:\\.part\\d+\\.rar|\\.(?:7z|zip|rar)\\.\\d{3}|\\.[rz]\\d{2})\\b/i.test(raw + " " + rawCapText);
+        const strippedExtRaw = raw.replace(/(?:\\.part0*\\d{1,3}\\.rar|\\.(?:7z|zip|rar)\\.0*\\d{1,3}|\\.[rz]\\d{2,3}|\\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
         const sceneCleanRaw = stripClientSceneGroupPrefix(strippedExtRaw);
         const editionRes = extractClientEditionInfo(sceneCleanRaw);
-        let withoutExt = normalizeClientEpisodeText(editionRes.cleanStr).replace(/(?:\\.part0*\\d{1,2})?(?:\\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
+        let withoutExt = normalizeClientEpisodeText(editionRes.cleanStr).replace(/(?:\\.part0*\\d{1,3}\\.rar|\\.(?:7z|zip|rar)\\.0*\\d{1,3}|\\.[rz]\\d{2,3}|\\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
         withoutExt = withoutExt.replace(/\\(\\s*\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\s*\\)/g, " ").replace(/\\b\\d{1,2}\\.\\d{1,2}\\.(?:19\\d{2}|20\\d{2}|\\d{2})\\b/g, " ");
         let quality = detectClientVideoQuality(msgObj, withoutExt, raw);
-        const archExtMatch = (rawFileNameField || raw).match(/\\.(rar|zip|7z|iso|tar|gz)$/i);
-        let codec = isArchive ? (archExtMatch ? archExtMatch[1].toUpperCase() : "RAR") : "x264";
+        const pInfo = extractClientPartInfo(rawCapText || raw, String(msgObj?.raw_file_name || msgObj?.file_name || raw), durationSec);
+        let codec = isArchive ? (pInfo?.partType || "RAR") : "x264";
         const cm = !isArchive ? withoutExt.match(/\\b(x265|h\\.?265|hevc|x264|h\\.?264|avc|av1)\\b/i) : null;
         if (cm) {
           const cLow = cm[1].toLowerCase().replace(/\\./g, "");
           codec = (cLow === "x265" || cLow === "h265" || cLow === "hevc") ? "x265" : (cLow === "av1" ? "AV1" : "x264");
         }
-        const pInfo = extractClientPartInfo(rawCapText || raw, String(msgObj?.raw_file_name || msgObj?.file_name || raw), durationSec);
         let part = pInfo ? pInfo.partLabel : null;
 
         let isSeries = false;

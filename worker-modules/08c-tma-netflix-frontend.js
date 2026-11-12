@@ -6393,11 +6393,18 @@
 
       async function initAuthSession() {
         try {
-          if (rawInitData) {
+          if (!rawInitData && typeof extractClientTelegramInitData === "function") {
+            rawInitData = extractClientTelegramInitData();
+          }
+          if (!rawLaunchToken && typeof extractClientTelegramLaunchToken === "function") {
+            rawLaunchToken = extractClientTelegramLaunchToken();
+          }
+          let loggedInViaInitOrLaunch = false;
+          if (rawInitData || rawLaunchToken) {
             const r = await apiFetchJson(API_BASE + "/auth/init", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ initData: rawInitData })
+              body: JSON.stringify({ initData: rawInitData || "", tgLaunch: rawLaunchToken || "" })
             });
             if (r && r.ok && r.user) {
               sessionToken = r.sessionToken || sessionToken;
@@ -6406,11 +6413,14 @@
               state.hasInitData = true;
               state.authUser = r.user;
               chatId = String(r.user.telegramId);
+              loggedInViaInitOrLaunch = true;
             }
-          } else if (sessionToken) {
+          }
+          if (!loggedInViaInitOrLaunch && sessionToken) {
             const r = await apiFetchJson(API_BASE + "/auth/me");
             if (r && r.ok && r.isAuthenticated && r.user) {
               state.isAuthenticated = true;
+              state.hasInitData = Boolean(r.hasInitData);
               state.authUser = r.user;
               chatId = String(r.user.telegramId);
             } else {
@@ -6420,7 +6430,7 @@
               state.authUser = null;
               chatId = "guest";
             }
-          } else {
+          } else if (!loggedInViaInitOrLaunch) {
             state.isAuthenticated = false;
             state.authUser = null;
             chatId = "guest";
@@ -6444,7 +6454,11 @@
           const openCol = params.get("openCol") || (startParam.startsWith("col_") ? startParam.replace("col_", "") : "");
           const openUni = params.get("openUni") || (startParam.startsWith("uni_") ? startParam.replace("uni_", "") : "");
           const openPerson = params.get("openPerson") || "";
-          const openItem = params.get("openItem") || ((startParam.startsWith("m_") || startParam.startsWith("s_")) ? startParam : "");
+          const directOpenType = params.get("openType") || "";
+          const directOpenId = params.get("openId") || "";
+          const openItem = params.get("openItem")
+            || ((directOpenType === "m" || directOpenType === "s") && directOpenId ? (directOpenType + "_" + directOpenId) : "")
+            || ((startParam.startsWith("m_") || startParam.startsWith("s_")) ? startParam : "");
 
           if (openCol) {
             deepLinkOpened = true;

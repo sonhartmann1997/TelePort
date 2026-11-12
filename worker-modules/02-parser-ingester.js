@@ -67,10 +67,55 @@
     "et the extra terrestrial": "E.T. – Der Außerirdische"
   };
 
-  // .rar / .zip / .7z / .iso / .tar / .gz Archive sind erlaubt und werden als Zusatz-Downloads (type: "archive", isDownloadOnly: true) gespeichert!
+  // .rar / .zip / .7z / .iso / .tar / .gz sowie Split-Archive (.part1.rar, .r00-.r99, .z01-.z99, .7z.001, .zip.001) sind erlaubt und werden als Zusatz-Downloads (type: "archive", isDownloadOnly: true) gespeichert!
   // Untertitel (.srt, .vtt, .sub, .ass, .ssa) werden NICHT als Junk verworfen, sondern automatisch an das zugehörige Video gebunden!
   const SUBTITLE_EXTENSIONS = /\.(?:srt|vtt|sub|ass|ssa)$/i;
-  const ARCHIVE_EXTENSIONS  = /\.(?:rar|zip|7z|iso|tar|gz)$/i;
+  const ARCHIVE_EXTENSIONS  = /\.(?:rar|zip|7z|iso|tar|gz|r\d{2,3}|z\d{2,3}|\b(?:7z|zip|rar|tar)\.0*\d{1,3})$/i;
+  const SPLIT_ARCHIVE_PATTERN = /(?:\.part0*\d{1,3}\.(?:rar|zip|7z)|\.(?:7z|zip|rar|tar)\.0*\d{1,3}|\.(?:r\d{2,3}|z\d{2,3}))\b/i;
+
+  function isArchiveFilenameOrText(fileName = "", rawText = "") {
+    const fn = String(fileName || "").trim();
+    const combined = `${fn} ${rawText || ""}`.trim();
+    return ARCHIVE_EXTENSIONS.test(fn) || SPLIT_ARCHIVE_PATTERN.test(fn) || SPLIT_ARCHIVE_PATTERN.test(combined);
+  }
+
+  function detectArchiveCodecAndPart(fileName = "", rawText = "") {
+    const fn = String(fileName || "").trim();
+    const combined = `${fn} ${rawText || ""}`.trim();
+    let archCodec = "RAR";
+    if (/\.(?:7z|7z\.0*\d{1,3})$/i.test(fn)) archCodec = "7Z";
+    else if (/\.(?:zip|zip\.0*\d{1,3}|z\d{2,3})$/i.test(fn)) archCodec = "ZIP";
+    else if (/\.iso$/i.test(fn)) archCodec = "ISO";
+    else if (/\.(?:tar|gz|tar\.gz|tar\.0*\d{1,3})$/i.test(fn)) archCodec = "TAR";
+    else if (/\.(?:rar|r\d{2,3})$/i.test(fn)) archCodec = "RAR";
+
+    // 1. .part01.rar / Part 1
+    const partMatch = combined.match(/(?:\.part|\bpart)[\s._-]*0*([1-9]\d{0,2})\b/i);
+    if (partMatch) {
+      const pNum = parseInt(partMatch[1], 10);
+      return { codec: archCodec, isSplit: true, partNumber: pNum, partLabel: `${archCodec}-PART${pNum}` };
+    }
+    // 2. .7z.001 / .zip.002 / .rar.001
+    const dotNumMatch = fn.match(/\.(?:7z|zip|rar|tar)\.0*([1-9]\d{0,2})$/i);
+    if (dotNumMatch) {
+      const pNum = parseInt(dotNumMatch[1], 10);
+      return { codec: archCodec, isSplit: true, partNumber: pNum, partLabel: `${archCodec}-PART${pNum}` };
+    }
+    // 3. .r00, .r01 .. .r99 (r00 = Part 1 oder Teil nach .rar, wir nummerieren r00 -> 1, r01 -> 2 bzw. Label R00/R01)
+    const rSplitMatch = fn.match(/\.r(\d{2,3})$/i);
+    if (rSplitMatch) {
+      const rawNum = parseInt(rSplitMatch[1], 10);
+      const pNum = rawNum + 1;
+      return { codec: "RAR", isSplit: true, partNumber: pNum, partLabel: `RAR-PART${pNum} (.r${rSplitMatch[1]})` };
+    }
+    // 4. .z01, .z02 .. .z99
+    const zSplitMatch = fn.match(/\.z0*([1-9]\d{0,2})$/i);
+    if (zSplitMatch) {
+      const pNum = parseInt(zSplitMatch[1], 10);
+      return { codec: "ZIP", isSplit: true, partNumber: pNum, partLabel: `ZIP-PART${pNum}` };
+    }
+    return { codec: archCodec, isSplit: false, partNumber: 1, partLabel: archCodec };
+  }
   const BLOCKED_EXTENSIONS  = /\.(webp|tgs|webm|gif|mp3|ogg|wav|flac|m4a|idx|apk|exe|msi|dmg|pdf|epub|txt|nfo|jpg|jpeg|png)$/i;
   const BLOCKED_FILENAMES   = /^(?:sticker|animatedsticker|giphy|tenor|video_?\d*)\.(?:webp|tgs|webm|mp4|gif)$/i;
   const TRAILER_KEYWORD_REGEX = /(?:^|[\s._\-(\[])(?:kinotrailer|official\s+trailer|offizieller\s+trailer|teaser\s+trailer|trailer\s+(?:german|deutsch|englisch|english|hd|full\s*hd|1080p|720p|4k)|trailer|teaser|coming\s+soon|zwiastun|vorschau)(?=$|[\s._\-)\]:])/i;
@@ -134,7 +179,7 @@
     const fileName  = String(msg.video?.file_name || msg.document?.file_name || msg.file_name || validPath || "").trim();
     const duration  = msg.video?.duration ?? msg.duration_seconds ?? msg.duration ?? null;
     const isPhotoHeader = Boolean(msg.photo && !msg.sticker && mediaType !== "sticker" && !mimeType.includes("webp"));
-    const isRarArchive  = ARCHIVE_EXTENSIONS.test(fileName) || /\.part\d+\.rar\b/i.test(fileName);
+    const isRarArchive  = isArchiveFilenameOrText(fileName, extractRawMessageText(msg));
     const isSubtitleFile = SUBTITLE_EXTENSIONS.test(fileName);
 
     // 0. Sprachlern-Videos & Tutorials direkt im Gatekeeper als Junk herausfiltern (MODUL 1.4)
@@ -264,21 +309,27 @@
   function extractPartInfo(rawText = "", rawFileName = "", isSeriesHint = false) {
     const fnStr = String(rawFileName || "").trim();
     const combined = `${fnStr} ${rawText || ""}`;
-    const isArchive = ARCHIVE_EXTENSIONS.test(fnStr) || /\.part\d+\.(?:rar|zip|7z)\b/i.test(combined);
+    const isArchive = isArchiveFilenameOrText(fnStr, rawText);
+
+    // MODUL 2: Mehrteilige oder einzelne Archive (.rar/.zip/.7z/.iso/.tar/.gz/.part1.rar/.r00/.z01/.7z.001) als Download-Dateien (type: "archive", isDownloadOnly: true)
+    if (isArchive) {
+      const archMeta = detectArchiveCodecAndPart(fnStr, rawText);
+      return {
+        isSplit: archMeta.isSplit,
+        isArchive: true,
+        isDownloadOnly: true,
+        type: "archive",
+        isExplicitMultiPartMovie: false,
+        part: archMeta.partNumber,
+        partNumber: archMeta.partNumber,
+        partType: archMeta.codec,
+        partLabel: archMeta.partLabel
+      };
+    }
 
     // MODUL 5.1: Bei Serien ist part_number IMMER 1!
     if (isSeriesHint) {
-      return { isSplit: false, isArchive, isDownloadOnly: isArchive, type: isArchive ? "archive" : "video", isExplicitMultiPartMovie: false, part: 1, partNumber: 1, partType: isArchive ? "ARCHIVE" : null, partLabel: isArchive ? "ARCHIV" : null };
-    }
-
-    // MODUL 2: Mehrteilige oder einzelne Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Download-Dateien (type: "archive", isDownloadOnly: true)
-    if (isArchive) {
-      const archivePartMatch = combined.match(/(?:\.part|\bpart)[\s._-]*0*([1-9]\d?)\b/i);
-      if (archivePartMatch) {
-        const pNum = parseInt(archivePartMatch[1], 10);
-        return { isSplit: true, isArchive: true, isDownloadOnly: true, type: "archive", part: pNum, partNumber: pNum, partType: "ARCHIVE", partLabel: `ARCHIV-PART${pNum}` };
-      }
-      return { isSplit: false, isArchive: true, isDownloadOnly: true, type: "archive", part: 1, partNumber: 1, partType: "ARCHIVE", partLabel: "ARCHIV" };
+      return { isSplit: false, isArchive: false, isDownloadOnly: false, type: "video", isExplicitMultiPartMovie: false, part: 1, partNumber: 1, partType: null, partLabel: null };
     }
 
     // 1. Explizite CD/Disc/Disk/Split Marker MIT Ziffer 1..4 (MODUL 5.1):
@@ -686,8 +737,8 @@
 
     let s = normalizeText(preCleaned);
 
-    // Mehrfache Dateiendungen (wie .mkv.mp4, .part1.rar, .rar, .zip, .7z, .iso) sowie .flv, .mk3d und .DOKU entfernen
-    s = s.replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|m4v|ts|mov|wmv|flv|mk3d|webm|rar|zip|7z|iso|tar|gz|json))+$/i, "")
+    // Mehrfache Dateiendungen (wie .mkv.mp4, .part1.rar, .7z.001, .r00-.r99, .z01, .rar, .zip, .7z, .iso) sowie .flv, .mk3d und .DOKU entfernen
+    s = s.replace(/(?:\.part0*\d{1,3})?(?:\.(?:7z|zip|rar|tar)\.0*\d{1,3}|\.(?:mp4|mkv|avi|m4v|ts|mov|wmv|flv|mk3d|webm|rar|zip|7z|iso|tar|gz|r\d{2,3}|z\d{2,3}|json))+$/i, "")
          .replace(/\.doku\b/gi, " ")
          .replace(/󠄿/g, "")
          .replace(/_/g, " ");
@@ -1129,8 +1180,8 @@
       ? rawFilePath.split("/").pop()
       : "";
     const rawFileName = String(msg.video?.file_name || msg.document?.file_name || msg.file_name || validFilePath || "").trim();
-    // MODUL 2: Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Download-Dateien durchlassen!
-    const isArchive = ARCHIVE_EXTENSIONS.test(rawFileName);
+    // MODUL 2: Archive (.rar/.zip/.7z/.iso/.tar/.gz/.part1.rar/.r00/.z01/.7z.001) als Download-Dateien durchlassen!
+    const isArchive = isArchiveFilenameOrText(rawFileName, extractRawMessageText(msg));
     const isVideo = Boolean(
       msg.video ||
       msg.media_type === "video_file" ||
@@ -1653,18 +1704,18 @@
       year = Number(activeContext.year);
     }
 
-    // MODUL 5.1: Bei Serien ist part_number IMMER 1! (Keine CD-Buttons bei Serien!)
-    if (mediaType === "tv") {
+    // MODUL 5.1: Bei Serien ist part_number für Video-Streams IMMER 1 (bei mehrteiligen Serien-Archiven bleibt die Archiv-Part-Nummer für den Sammel-/Einzel-Download erhalten!)
+    if (mediaType === "tv" && !isArchive) {
       partInfo = {
         isSplit: false,
-        isArchive,
-        isDownloadOnly: isArchive,
-        type: isArchive ? "archive" : "video",
+        isArchive: false,
+        isDownloadOnly: false,
+        type: "video",
         isExplicitMultiPartMovie: false,
         part: 1,
         partNumber: 1,
-        partType: isArchive ? "ARCHIVE" : null,
-        partLabel: isArchive ? "ARCHIV" : null
+        partType: null,
+        partLabel: null
       };
     }
 
@@ -1966,7 +2017,8 @@
     }
 
     const combinedRaw = `${raw} ${rawCaptionText || ""}`.trim();
-    const isArchiveFile = ARCHIVE_EXTENSIONS.test(raw) || /\.part\d+\.(?:rar|zip|7z)\b/i.test(combinedRaw);
+    const isArchiveFile = isArchiveFilenameOrText(raw, rawCaptionText);
+    const archMeta = isArchiveFile ? detectArchiveCodecAndPart(raw, rawCaptionText) : null;
     const extractedTagsList = extractMediaReleaseTags(rawCaptionText || raw, raw, durationSec);
     const langInfo = detectLanguages(rawCaptionText, raw);
     const languages = langInfo.languages;
@@ -1976,15 +2028,15 @@
     const sizeInTextMatch = combinedRaw.match(/\b(\d{1,4}(?:[.,]\d{1,2})?\s*(?:GB|GiB|MB|MiB))\b/i);
     const parsedFileSize = sizeInTextMatch ? parseHumanFileSizeToBytes(sizeInTextMatch[1]) : null;
 
-    // 1. Mehrfache Dateiendungen entfernen & Text normalisieren (Regel 1 & 4)
+    // 1. Mehrfache Dateiendungen inkl. Split-Archiv-Endungen entfernen & Text normalisieren (Regel 1 & 4)
     const normalizedRaw = normalizeText(raw);
-    const withoutExt = normalizedRaw.replace(/(?:\.part0*\d{1,2})?(?:\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|json))+$/i, "");
+    const withoutExt = normalizedRaw.replace(/(?:\.part0*\d{1,3})?(?:\.(?:7z|zip|rar|tar)\.0*\d{1,3}|\.(?:mp4|mkv|avi|mov|webm|m4v|ts|flv|wmv|mk3d|rar|zip|7z|iso|tar|gz|r\d{2,3}|z\d{2,3}|json))+$/i, "");
 
     // 2. Echte Video-Auflösung via detectVideoQuality (Pixelmaße width/height zuerst, danach Text/Dateiname, niemals blind "1080p" raten!)
     const quality = detectVideoQuality(mediaDimensions || {}, rawCaptionText, raw);
 
-    // 3. Codec extrahieren (x264, x265/HEVC, AV1 oder ARCHIVE für Archive)
-    let codec = isArchiveFile ? "RAR" : "x264";
+    // 3. Codec extrahieren (x264, x265/HEVC, AV1 oder RAR/ZIP/7Z/ISO/TAR für Archive)
+    let codec = isArchiveFile ? (archMeta?.codec || "RAR") : "x264";
     const codecMatch = !isArchiveFile ? combinedRaw.match(/\b(x265|h\.?265|hevc|x264|h\.?264|avc|av1|xvid)\b/i) : null;
     if (codecMatch) {
       const cRaw = codecMatch[1].toLowerCase().replace(/\./g, "");
@@ -1994,7 +2046,7 @@
       else codec = codecMatch[1];
     }
 
-    // 4. Part extrahieren (CD1, CD2, Disc 1, DVD 2, Part 1, -001/-002, ARCHIV-PART1..20)
+    // 4. Part extrahieren (CD1, CD2, Disc 1, DVD 2, Part 1, -001/-002, RAR-PART1..99)
     let part = partInfo ? partInfo.partLabel : null;
 
     // 5. Nutze Gold-Master parseTelegramMessage Logik für Serien/Episoden, Cross-Check & Datums-Schutz
@@ -2010,7 +2062,7 @@
     if (gmParsed && gmParsed.title && gmParsed.title !== "Unbekannt") {
       const isTvSeries = gmParsed.mediaType === "tv";
       const isArc = Boolean(gmParsed.isArchive || isArchiveFile);
-      const resolvedPart = isTvSeries ? null : ((gmParsed.partInfo && gmParsed.partInfo.partLabel) || part || null);
+      const resolvedPart = (isTvSeries && !isArc) ? null : ((gmParsed.partInfo && gmParsed.partInfo.partLabel) || part || null);
       return {
         raw,
         cleanTitle: gmParsed.title,
@@ -2032,9 +2084,9 @@
         quality: gmParsed.quality !== undefined ? gmParsed.quality : quality,
         width: gmParsed.width || null,
         height: gmParsed.height || null,
-        codec: isArc ? "RAR" : codec,
+        codec: isArc ? (archMeta?.codec || gmParsed.partInfo?.partType || "RAR") : codec,
         part: resolvedPart,
-        partNumber: isTvSeries ? 1 : (gmParsed.partNumber || gmParsed.partInfo?.part || partInfo?.part || 1),
+        partNumber: (isTvSeries && !isArc) ? 1 : (gmParsed.partNumber || gmParsed.partInfo?.part || partInfo?.part || 1),
         partInfo: gmParsed.partInfo || partInfo || null,
         editions: gmParsed.editions || editionInfo.editions || [],
         editionLabel: gmParsed.editionLabel || editionInfo.editionLabel || null,

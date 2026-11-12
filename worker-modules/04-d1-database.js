@@ -241,6 +241,7 @@
             part_number INTEGER DEFAULT 1,
             edition_label TEXT,
             is_bonus INTEGER DEFAULT 0,
+            is_download_only INTEGER DEFAULT 0,
             tags TEXT,
             file_size INTEGER,
             mime_type TEXT,
@@ -265,6 +266,7 @@
             part_number INTEGER DEFAULT 1,
             edition_label TEXT,
             is_bonus INTEGER DEFAULT 0,
+            is_download_only INTEGER DEFAULT 0,
             tags TEXT,
             version_label TEXT DEFAULT 'Originalfassung',
             file_size INTEGER,
@@ -447,6 +449,8 @@
           ["episode_files", "part_number", "ALTER TABLE episode_files ADD COLUMN part_number INTEGER DEFAULT 1"],
           ["episode_files", "edition_label", "ALTER TABLE episode_files ADD COLUMN edition_label TEXT"],
           ["episode_files", "is_bonus", "ALTER TABLE episode_files ADD COLUMN is_bonus INTEGER DEFAULT 0"],
+          ["movie_files", "is_download_only", "ALTER TABLE movie_files ADD COLUMN is_download_only INTEGER DEFAULT 0"],
+          ["episode_files", "is_download_only", "ALTER TABLE episode_files ADD COLUMN is_download_only INTEGER DEFAULT 0"],
           ["import_diagnostic_logs", "review_reason_code", "ALTER TABLE import_diagnostic_logs ADD COLUMN review_reason_code TEXT"],
           ["import_diagnostic_logs", "matched_title", "ALTER TABLE import_diagnostic_logs ADD COLUMN matched_title TEXT"]
         ];
@@ -1908,13 +1912,27 @@
         if (Array.isArray(parsed)) subs = parsed;
       } catch (_) {}
     }
+    const rawFn = row.raw_filename || row.rawFilename || "";
+    const isDlOnly = Boolean(
+      row.is_download_only ||
+      row.isDownloadOnly ||
+      row.isArchive ||
+      row.type === "archive" ||
+      row.codec === "ARCHIVE" ||
+      Number(row.is_bonus || 0) === 2 ||
+      isArchiveFilenameOrText(rawFn, row.raw_caption || row.rawCaption || "")
+    );
     return {
       ...row,
       part: normPart,
       tags: cleanTags,
       version_label: vLabel,
       versionLabel: vLabel,
-      raw_filename: row.raw_filename || row.rawFilename || "",
+      is_download_only: isDlOnly ? 1 : 0,
+      isDownloadOnly: isDlOnly,
+      isArchive: isDlOnly,
+      type: isDlOnly ? "archive" : (row.type || "video"),
+      raw_filename: rawFn,
       raw_caption: row.raw_caption || row.rawCaption || "",
       message_link: inferTelegramMessageLinkFromFileId(row.telegram_file_id, row.message_link || row.messageLink || ""),
       subtitles: subs,
@@ -1956,14 +1974,18 @@
     const partNumber = Number(fileInfo.partNumber || fileInfo.part_number || (partMatchFromStr ? partMatchFromStr[1] : 1)) || 1;
     const editionLabel = fileInfo.editionLabel || fileInfo.edition_label ? String(fileInfo.editionLabel || fileInfo.edition_label).trim() : null;
     const isBonus = Boolean(fileInfo.isBonus || fileInfo.is_bonus);
-    // MODUL 2: Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Download-Dateien in movieObj.downloads speichern (NICHT als abspielbaren Videostream!)
+    // MODUL 2: Archive (.rar/.zip/.7z/.iso/.tar/.gz/.part1.rar/.r00/.z01/.7z.001) als Download-Dateien in movieObj.downloads UND mit is_download_only = 1 in D1 speichern!
     const isArchiveDownload = Boolean(
       fileInfo.isDownloadOnly ||
       fileInfo.is_download_only ||
       fileInfo.isArchive ||
       fileInfo.type === "archive" ||
-      /\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFilename)
+      isArchiveFilenameOrText(rawFilename, rawCaption)
     );
+    const archMeta = isArchiveDownload ? detectArchiveCodecAndPart(rawFilename, rawCaption) : null;
+    const effectivePartNumber = isArchiveDownload
+      ? Number(fileInfo.partNumber || fileInfo.part_number || archMeta?.partNumber || partNumber || 1)
+      : partNumber;
 
     if (isArchiveDownload) {
       const dlEntry = {
@@ -1972,8 +1994,10 @@
         file_fingerprint: fileFingerprint,
         type: "archive",
         isDownloadOnly: true,
-        part: fileInfo.part ? String(fileInfo.part) : (partNumber > 1 ? `ARCHIV-PART${partNumber}` : "ARCHIV"),
-        part_number: partNumber,
+        is_download_only: 1,
+        codec: archMeta?.codec || String(fileInfo.codec || "RAR").toUpperCase(),
+        part: fileInfo.part ? String(fileInfo.part) : (archMeta?.partLabel || (effectivePartNumber > 1 ? `RAR-PART${effectivePartNumber}` : "RAR")),
+        part_number: effectivePartNumber,
         file_size: parsedBytes,
         raw_filename: rawFilename || "Archiv.rar",
         raw_caption: rawCaption,
@@ -1981,24 +2005,20 @@
         updated_at: Date.now()
       };
       const existingMovie = await getMovieFromD1(env, mid);
-      const currentDownloads = Array.isArray(existingMovie?.downloads) ? [...existingMovie.downloads] : [];
-      const isDupArchive = currentDownloads.some(d =>
-        d && Number(d.part_number || 1) === partNumber &&
-        ((d.file_fingerprint && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0") || d.telegram_file_id === normalizedFid)
-      );
-      if (isDupArchive) {
-        return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, isArchiveDownload: true, skippedPrerelease: false, replacedPrereleaseCount: 0 };
-      }
+      const memDownloads = Array.isArray(memoryFallback.get(`d1_movie_downloads_${mid}`)) ? memoryFallback.get(`d1_movie_downloads_${mid}`) : [];
+      const currentDownloads = Array.isArray(existingMovie?.downloads) && existingMovie.downloads.length > 0
+        ? [...existingMovie.downloads]
+        : [...memDownloads];
       const nextDownloads = [
         dlEntry,
-        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid)
-      ];
+        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid && !(Number(d.part_number || 1) === effectivePartNumber && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0"))
+      ].sort((a, b) => (Number(a.part_number || 1) - Number(b.part_number || 1)) || String(a.raw_filename || "").localeCompare(String(b.raw_filename || ""), "de", { numeric: true }));
+      memoryFallback.set(`d1_movie_downloads_${mid}`, nextDownloads);
       if (existingMovie) {
         existingMovie.downloads = nextDownloads;
         existingMovie.hasDownloads = true;
         await saveMovieToD1(env, existingMovie);
       }
-      memoryFallback.set(`d1_movie_downloads_${mid}`, nextDownloads);
     }
 
     const memKey = `d1_movie_files_${mid}`;
@@ -2010,7 +2030,7 @@
     if (db && !memFresh && (!Array.isArray(activeD1WriteBuffer) || hasSubrequestBudget(32))) {
       try {
         const res = await db
-          .prepare("SELECT id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id = ?1")
+          .prepare("SELECT id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, file_size, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id = ?1")
           .bind(mid)
           .all();
         existingDbRows = Array.isArray(res?.results) ? res.results.map(r => ({ ...r, _fromD1: true })) : [];
@@ -2097,12 +2117,16 @@
       telegram_unique_id: (!isSyntheticUniqueId ? realUniqueId : null) || null,
       file_fingerprint: fileFingerprint,
       quality: isArchiveDownload ? "ARCHIV" : String(fileInfo.quality || "1080p"),
-      codec: isArchiveDownload ? "ARCHIVE" : String(fileInfo.codec || "x264"),
-      part: fileInfo.part ? String(fileInfo.part) : (partNumber > 1 ? `CD ${partNumber}` : null),
-      part_number: partNumber,
+      codec: isArchiveDownload ? (archMeta?.codec || "ARCHIVE") : String(fileInfo.codec || "x264"),
+      part: isArchiveDownload
+        ? (fileInfo.part ? String(fileInfo.part) : (archMeta?.partLabel || (effectivePartNumber > 1 ? `RAR-PART${effectivePartNumber}` : "RAR")))
+        : (fileInfo.part ? String(fileInfo.part) : (partNumber > 1 ? `CD ${partNumber}` : null)),
+      part_number: effectivePartNumber,
       edition_label: editionLabel,
       is_bonus: isArchiveDownload ? 2 : (isBonus ? 1 : 0),
+      is_download_only: isArchiveDownload ? 1 : 0,
       isDownloadOnly: isArchiveDownload,
+      isArchive: isArchiveDownload,
       type: isArchiveDownload ? "archive" : "video",
       tags: isArchiveDownload ? ([effectiveTags, "📦 Archiv-Download"].filter(Boolean).join(" · ")) : effectiveTags,
       file_size: parsedBytes,
@@ -2157,8 +2181,8 @@
       }
       stmts.push(
         db.prepare(`INSERT INTO movie_files (
-          movie_id, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+          movie_id, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
         ON CONFLICT(movie_id, telegram_file_id) DO UPDATE SET
           file_fingerprint = COALESCE(excluded.file_fingerprint, movie_files.file_fingerprint),
           quality = excluded.quality,
@@ -2167,6 +2191,7 @@
           part_number = COALESCE(excluded.part_number, movie_files.part_number, 1),
           edition_label = COALESCE(excluded.edition_label, movie_files.edition_label),
           is_bonus = COALESCE(excluded.is_bonus, movie_files.is_bonus, 0),
+          is_download_only = COALESCE(excluded.is_download_only, movie_files.is_download_only, 0),
           tags = CASE WHEN excluded.tags != '' THEN excluded.tags ELSE COALESCE(movie_files.tags, '') END,
           file_size = COALESCE(excluded.file_size, movie_files.file_size),
           raw_filename = CASE WHEN excluded.raw_filename != '' THEN excluded.raw_filename ELSE COALESCE(movie_files.raw_filename, '') END,
@@ -2185,6 +2210,7 @@
             entry.part_number,
             entry.edition_label,
             entry.is_bonus,
+            entry.is_download_only,
             entry.tags,
             entry.file_size,
             entry.mime_type,
@@ -2210,7 +2236,7 @@
     const filterStreamRows = (rows) => {
       const sorted = sortAndDedupeStreamFiles((rows || []).map(enrichStreamFileRowMeta));
       if (includeArchives) return sorted;
-      const nonArchive = sorted.filter(r => r && r.codec !== "ARCHIVE" && Number(r.is_bonus || 0) !== 2 && !/\.(?:rar|zip|7z|iso|tar|gz)$/i.test(String(r.raw_filename || "")));
+      const nonArchive = sorted.filter(r => r && !r.is_download_only && !r.isDownloadOnly && r.codec !== "ARCHIVE" && Number(r.is_bonus || 0) !== 2 && !isArchiveFilenameOrText(r.raw_filename || "", r.raw_caption || ""));
       return nonArchive;
     };
     const memFiles = memoryFallback.get(memKey);
@@ -2222,7 +2248,7 @@
       try {
         trackStat("d1Reads");
         const res = await db
-          .prepare("SELECT id, movie_id, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM movie_files WHERE movie_id = ?1 ORDER BY COALESCE(part_number, 1) ASC, updated_at DESC")
+          .prepare("SELECT id, movie_id, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM movie_files WHERE movie_id = ?1 ORDER BY COALESCE(part_number, 1) ASC, updated_at DESC")
           .bind(mid)
           .all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
@@ -2272,16 +2298,19 @@
       realFileIdForFp ||
       `${parsedBytes || 0}_${durSecVal || 0}_${widthVal || 0}x${heightVal || 0}`
     ).trim();
-    // MODUL 5.1: Bei Serien ist part_number IMMER 1!
-    const partNumber = 1;
     const editionLabel = fileInfo.editionLabel || fileInfo.edition_label ? String(fileInfo.editionLabel || fileInfo.edition_label).trim() : null;
     const isArchiveDownload = Boolean(
       fileInfo.isDownloadOnly ||
       fileInfo.is_download_only ||
       fileInfo.isArchive ||
       fileInfo.type === "archive" ||
-      /\.(?:rar|zip|7z|iso|tar|gz)$/i.test(rawFilename)
+      isArchiveFilenameOrText(rawFilename, rawCaption)
     );
+    const archEpMeta = isArchiveDownload ? detectArchiveCodecAndPart(rawFilename, rawCaption) : null;
+    // MODUL 5.1: Bei Serien-Videos ist part_number IMMER 1; bei mehrteiligen Serien-Archiven (.part1.rar / .r00 / .7z.001) bleibt die Archiv-Part-Nummer erhalten!
+    const partNumber = isArchiveDownload
+      ? Number(fileInfo.partNumber || fileInfo.part_number || archEpMeta?.partNumber || 1)
+      : 1;
 
     if (isArchiveDownload) {
       const dlEntry = {
@@ -2290,9 +2319,12 @@
         file_fingerprint: fileFingerprint,
         type: "archive",
         isDownloadOnly: true,
+        is_download_only: 1,
+        codec: archEpMeta?.codec || String(fileInfo.codec || "RAR").toUpperCase(),
         season_number: sNum,
         episode_number: eNum,
-        part_number: 1,
+        part: fileInfo.part ? String(fileInfo.part) : (archEpMeta?.partLabel || (partNumber > 1 ? `RAR-PART${partNumber}` : "RAR")),
+        part_number: partNumber,
         file_size: parsedBytes,
         raw_filename: rawFilename || "Archiv.rar",
         raw_caption: rawCaption,
@@ -2300,24 +2332,20 @@
         updated_at: Date.now()
       };
       const existingSeries = await getSeriesFromD1(env, sid);
-      const currentDownloads = Array.isArray(existingSeries?.downloads) ? [...existingSeries.downloads] : [];
-      const isDupArchive = currentDownloads.some(d =>
-        d && Number(d.season_number || 1) === sNum && Number(d.episode_number || 1) === eNum &&
-        ((d.file_fingerprint && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0") || d.telegram_file_id === normalizedFid)
-      );
-      if (isDupArchive) {
-        return { ok: true, isExactDuplicate: true, isUpdated: false, isMergedQuality: false, isArchiveDownload: true, skippedPrerelease: false, replacedPrereleaseCount: 0 };
-      }
+      const memDownloads = Array.isArray(memoryFallback.get(`d1_series_downloads_${sid}`)) ? memoryFallback.get(`d1_series_downloads_${sid}`) : [];
+      const currentDownloads = Array.isArray(existingSeries?.downloads) && existingSeries.downloads.length > 0
+        ? [...existingSeries.downloads]
+        : [...memDownloads];
       const nextDownloads = [
         dlEntry,
-        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid)
-      ];
+        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid && !(Number(d.season_number || 1) === sNum && Number(d.episode_number || 1) === eNum && Number(d.part_number || 1) === partNumber && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0"))
+      ].sort((a, b) => (Number(a.season_number || 1) - Number(b.season_number || 1)) || (Number(a.episode_number || 1) - Number(b.episode_number || 1)) || (Number(a.part_number || 1) - Number(b.part_number || 1)));
+      memoryFallback.set(`d1_series_downloads_${sid}`, nextDownloads);
       if (existingSeries) {
         existingSeries.downloads = nextDownloads;
         existingSeries.hasDownloads = true;
         await saveSeriesToD1(env, existingSeries);
       }
-      memoryFallback.set(`d1_series_downloads_${sid}`, nextDownloads);
     }
 
     const memKey = `d1_ep_files_${sid}_${sNum}`;
@@ -2329,7 +2357,7 @@
       try {
         // Lade alle vorhandenen Episoden-Dateien dieser Staffel in 1 einziger Abfrage (statt 1 Abfrage pro Folge!)
         const res = await db
-          .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id = ?1 AND season_number = ?2")
+          .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, version_label, file_size, raw_filename, raw_caption, subtitles_json FROM episode_files WHERE series_id = ?1 AND season_number = ?2")
           .bind(sid, sNum)
           .all();
         const loadedSeasonRows = Array.isArray(res?.results) ? res.results.map(r => ({ ...r, _fromD1: true })) : [];
@@ -2425,12 +2453,14 @@
       telegram_unique_id: (!isSyntheticUniqueId ? realUniqueId : null) || null,
       file_fingerprint: fileFingerprint,
       quality: isArchiveDownload ? "ARCHIV" : String(fileInfo.quality || "1080p"),
-      codec: isArchiveDownload ? "ARCHIVE" : String(fileInfo.codec || "x264"),
-      part: null,
-      part_number: 1,
+      codec: isArchiveDownload ? (archEpMeta?.codec || "ARCHIVE") : String(fileInfo.codec || "x264"),
+      part: isArchiveDownload ? (fileInfo.part ? String(fileInfo.part) : (archEpMeta?.partLabel || (partNumber > 1 ? `RAR-PART${partNumber}` : "RAR"))) : null,
+      part_number: partNumber,
       edition_label: editionLabel,
       is_bonus: isArchiveDownload ? 2 : (isBonus ? 1 : 0),
+      is_download_only: isArchiveDownload ? 1 : 0,
       isDownloadOnly: isArchiveDownload,
+      isArchive: isArchiveDownload,
       type: isArchiveDownload ? "archive" : "video",
       tags: cleanTags,
       version_label: versionLabel,
@@ -2452,10 +2482,12 @@
     const otherEps = existingMem.filter(x => x && Number(x.episode_number) !== eNum);
     memoryFallback.set(memKey, [...sameEpDeduped, ...otherEps]);
     memoryFallback.set(memSeasonTsKey, Date.now());
-    memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
+    if (!isArchiveDownload) {
+      memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
+    }
     memoryFallback.delete("d1_series_gaps_cache");
 
-    const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped.filter(x => x.codec !== "ARCHIVE" && Number(x.is_bonus || 0) !== 2)));
+    const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped.filter(x => !x.is_download_only && !x.isDownloadOnly && x.codec !== "ARCHIVE" && Number(x.is_bonus || 0) !== 2)));
 
     if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     try {
@@ -2492,8 +2524,8 @@
       }
       stmts.push(
         db.prepare(`INSERT INTO episode_files (
-          series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+          series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
         ON CONFLICT(series_id, season_number, episode_number, telegram_file_id) DO UPDATE SET
           file_fingerprint = COALESCE(excluded.file_fingerprint, episode_files.file_fingerprint),
           quality = excluded.quality,
@@ -2502,6 +2534,7 @@
           part_number = COALESCE(excluded.part_number, episode_files.part_number, 1),
           edition_label = COALESCE(excluded.edition_label, episode_files.edition_label),
           is_bonus = COALESCE(excluded.is_bonus, episode_files.is_bonus, 0),
+          is_download_only = COALESCE(excluded.is_download_only, episode_files.is_download_only, 0),
           tags = CASE WHEN excluded.tags != '' THEN excluded.tags ELSE COALESCE(episode_files.tags, '') END,
           version_label = COALESCE(NULLIF(excluded.version_label, ''), episode_files.version_label, 'Originalfassung'),
           file_size = COALESCE(excluded.file_size, episode_files.file_size),
@@ -2523,6 +2556,7 @@
             entry.part_number,
             entry.edition_label,
             entry.is_bonus,
+            entry.is_download_only,
             entry.tags,
             entry.version_label,
             entry.file_size,
@@ -2543,9 +2577,9 @@
           .bind(entry.series_id, entry.season_number, entry.episode_number, epTitle, versionsPayload, entry.updated_at)
       );
       await db.batch(stmts);
-      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     } catch (e) {
-      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, skippedPrerelease: false, replacedPrereleaseCount };
+      return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     }
   }
 
@@ -3598,6 +3632,76 @@
     return resultObj;
   }
 
+  async function getMediaDownloadsFromD1(env, typeCode, tmdbId, detailsObj = null) {
+    if (!tmdbId) return [];
+    const idNum = Number(tmdbId);
+    const isSeries = typeCode === "s";
+    const memKey = isSeries ? `d1_series_downloads_${idNum}` : `d1_movie_downloads_${idNum}`;
+    const combined = [];
+    if (Array.isArray(detailsObj?.downloads)) {
+      combined.push(...detailsObj.downloads);
+    }
+    const memDownloads = memoryFallback.get(memKey);
+    if (Array.isArray(memDownloads)) {
+      combined.push(...memDownloads);
+    }
+    const db = await ensureD1Schema(env);
+    if (db) {
+      try {
+        trackStat("d1Reads");
+        const sql = isSeries
+          ? "SELECT series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, is_download_only, file_size, raw_filename, raw_caption, message_link, updated_at FROM episode_files WHERE series_id = ?1 AND (COALESCE(is_download_only, 0) = 1 OR codec = 'ARCHIVE' OR COALESCE(is_bonus, 0) = 2) ORDER BY season_number ASC, episode_number ASC, COALESCE(part_number, 1) ASC"
+          : "SELECT movie_id, telegram_file_id, telegram_unique_id, file_fingerprint, quality, codec, part, part_number, is_download_only, file_size, raw_filename, raw_caption, message_link, updated_at FROM movie_files WHERE movie_id = ?1 AND (COALESCE(is_download_only, 0) = 1 OR codec = 'ARCHIVE' OR COALESCE(is_bonus, 0) = 2) ORDER BY COALESCE(part_number, 1) ASC, updated_at DESC";
+        const res = await db.prepare(sql).bind(idNum).all();
+        if (Array.isArray(res?.results) && res.results.length > 0) {
+          for (const r of res.results) {
+            const archMeta = detectArchiveCodecAndPart(r.raw_filename || "", r.raw_caption || "");
+            const pNum = Number(r.part_number || archMeta?.partNumber || 1) || 1;
+            combined.push({
+              ...r,
+              type: "archive",
+              isDownloadOnly: true,
+              is_download_only: 1,
+              codec: (r.codec && r.codec !== "ARCHIVE") ? r.codec : (archMeta?.codec || "RAR"),
+              part: r.part || archMeta?.partLabel || (pNum > 1 ? `RAR-PART${pNum}` : "RAR"),
+              part_number: pNum
+            });
+          }
+        }
+      } catch (e) {}
+    }
+    const dedupMap = new Map();
+    for (const item of combined) {
+      const fid = String(item?.telegram_file_id || item?.file_id || "").trim();
+      if (!fid) continue;
+      const archMeta = detectArchiveCodecAndPart(item.raw_filename || item.file_name || "", item.raw_caption || "");
+      const pNum = Number(item.part_number || item.partNumber || archMeta?.partNumber || 1) || 1;
+      const key = `${Number(item.season_number || 0)}_${Number(item.episode_number || 0)}_${pNum}_${fid}`;
+      if (!dedupMap.has(key)) {
+        dedupMap.set(key, {
+          ...item,
+          telegram_file_id: fid,
+          type: "archive",
+          isDownloadOnly: true,
+          is_download_only: 1,
+          codec: (item.codec && item.codec !== "ARCHIVE") ? item.codec : (archMeta?.codec || "RAR"),
+          part: item.part || archMeta?.partLabel || (pNum > 1 ? `RAR-PART${pNum}` : "RAR"),
+          part_number: pNum
+        });
+      }
+    }
+    const sortedDownloads = Array.from(dedupMap.values()).sort((a, b) =>
+      (Number(a.season_number || 0) - Number(b.season_number || 0)) ||
+      (Number(a.episode_number || 0) - Number(b.episode_number || 0)) ||
+      (Number(a.part_number || 1) - Number(b.part_number || 1)) ||
+      String(a.raw_filename || "").localeCompare(String(b.raw_filename || ""), "de", { numeric: true })
+    );
+    if (sortedDownloads.length > 0) {
+      memoryFallback.set(memKey, sortedDownloads);
+    }
+    return sortedDownloads;
+  }
+
   async function getEpisodeFilesFromD1(env, seriesId, seasonNumber, episodeNumber = null) {
     if (!seriesId) return [];
     const sid = Number(seriesId);
@@ -3621,7 +3725,7 @@
         if (episodeNumber !== null) {
           const eNum = Number(episodeNumber);
           const res = await db
-            .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 ORDER BY updated_at DESC")
+            .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, part_number, is_bonus, is_download_only, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 ORDER BY updated_at DESC")
             .bind(sid, sNum, eNum)
             .all();
           if (Array.isArray(res?.results) && res.results.length > 0) {
@@ -3634,7 +3738,7 @@
           }
         } else {
           const resAll = await db
-            .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 ORDER BY episode_number ASC, updated_at DESC")
+            .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, part_number, is_bonus, is_download_only, tags, version_label, file_size, mime_type, raw_filename, raw_caption, message_link, subtitles_json, updated_at FROM episode_files WHERE series_id = ?1 AND season_number = ?2 ORDER BY episode_number ASC, updated_at DESC")
             .bind(sid, sNum)
             .all();
           if (Array.isArray(resAll?.results) && resAll.results.length > 0) {
@@ -4937,13 +5041,13 @@
     if (movFileIdArr.length > 0) {
       const placeholders = movFileIdArr.map((_, i) => `?${i + 1}`).join(",");
       movFilesPreloadIdx = batchStmts.length;
-      batchStmts.push(rawDb.prepare(`SELECT id, movie_id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, file_size, raw_filename FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...movFileIdArr));
+      batchStmts.push(rawDb.prepare(`SELECT id, movie_id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, file_size, raw_filename FROM movie_files WHERE movie_id IN (${placeholders})`).bind(...movFileIdArr));
     }
 
     if (serFileIdArr.length > 0) {
       const placeholders = serFileIdArr.map((_, i) => `?${i + 1}`).join(",");
       serFilesPreloadIdx = batchStmts.length;
-      batchStmts.push(rawDb.prepare(`SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, tags, version_label, file_size, raw_filename FROM episode_files WHERE series_id IN (${placeholders})`).bind(...serFileIdArr));
+      batchStmts.push(rawDb.prepare(`SELECT id, series_id, season_number, episode_number, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, version_label, file_size, raw_filename FROM episode_files WHERE series_id IN (${placeholders})`).bind(...serFileIdArr));
     }
 
     if (batchStmts.length === 0) return;

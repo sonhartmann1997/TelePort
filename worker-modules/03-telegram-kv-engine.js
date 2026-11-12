@@ -992,6 +992,96 @@
     return WORKER_SPEED_PROFILES[valid];
   }
 
+  async function signTelegramChatLaunchToken(chatId, env, ttlMs = 24 * 60 * 60 * 1000) {
+    const cleanChatId = String(chatId || "").trim();
+    if (!cleanChatId || cleanChatId.startsWith("-") || !/^\d+$/.test(cleanChatId)) return "";
+    try {
+      const enc = new TextEncoder();
+      const dataObj = {
+        cid: cleanChatId,
+        iat: Date.now(),
+        exp: Date.now() + (Number(ttlMs) > 0 ? Number(ttlMs) : 24 * 60 * 60 * 1000)
+      };
+      const payloadHex = Array.from(enc.encode(JSON.stringify(dataObj))).map(b => b.toString(16).padStart(2, "0")).join("");
+      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+      const key = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`tglaunch:${payloadHex}`));
+      const sigHex = Array.from(new Uint8Array(sigBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+      return `${payloadHex}.${sigHex}`;
+    } catch (e) {
+      return "";
+    }
+  }
+
+  async function verifyTelegramChatLaunchToken(token, env) {
+    const raw = String(token || "").trim();
+    if (!raw || !raw.includes(".")) return { ok: false, error: "Ungültiger Launch-Token" };
+    try {
+      const [payloadHex, sigHex] = raw.split(".");
+      if (!payloadHex || !sigHex || payloadHex.length % 2 !== 0) return { ok: false, error: "Formatfehler im Launch-Token" };
+      const enc = new TextEncoder();
+      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+      const key = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(secret),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`tglaunch:${payloadHex}`));
+      const expectedSigHex = Array.from(new Uint8Array(expectedSigBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+      if (expectedSigHex.toLowerCase() !== sigHex.toLowerCase()) {
+        return { ok: false, error: "Ungültige Launch-Token Signatur" };
+      }
+      const bytes = new Uint8Array(payloadHex.length / 2);
+      for (let i = 0; i < payloadHex.length; i += 2) {
+        bytes[i / 2] = parseInt(payloadHex.slice(i, i + 2), 16) || 0;
+      }
+      const data = JSON.parse(new TextDecoder().decode(bytes));
+      if (!data || !data.cid || !/^\d+$/.test(String(data.cid))) {
+        return { ok: false, error: "Keine gültige Chat-ID im Launch-Token" };
+      }
+      if (!data.exp || Date.now() > Number(data.exp)) {
+        return { ok: false, error: "Launch-Token abgelaufen (24h Limit)" };
+      }
+      return { ok: true, chatId: String(data.cid), exp: Number(data.exp) };
+    } catch (e) {
+      return { ok: false, error: "Launch-Token Prüfung fehlgeschlagen" };
+    }
+  }
+
+  async function buildSignedWebAppUrl(env, baseUrl, chatId = null, extraParams = {}) {
+    const base = String(baseUrl || env?.WEBAPP_URL || env?.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    if (!base) return "";
+    try {
+      const u = new URL(base);
+      const cleanChatId = String(chatId || "").trim();
+      if (cleanChatId && !cleanChatId.startsWith("-") && /^\d+$/.test(cleanChatId)) {
+        if (!u.searchParams.has("chatId")) u.searchParams.set("chatId", cleanChatId);
+        if (!u.searchParams.has("tgLaunch")) {
+          const launchToken = await signTelegramChatLaunchToken(cleanChatId, env, 24 * 60 * 60 * 1000);
+          if (launchToken) u.searchParams.set("tgLaunch", launchToken);
+        }
+      }
+      if (extraParams && typeof extraParams === "object") {
+        for (const [k, v] of Object.entries(extraParams)) {
+          if (v !== undefined && v !== null && v !== "") {
+            u.searchParams.set(k, String(v));
+          }
+        }
+      }
+      return u.toString();
+    } catch (e) {
+      return base;
+    }
+  }
+
   // @ANCHOR: TELEGRAM_API
   // --- Telegram API Client (Nutzt stabiles HTML-Parsing gegen kaputte Links + 429 Anti-Spam Schutz!) ---
   function tgApi(env) {
@@ -1053,8 +1143,8 @@
         try {
           trackStat("telegramCalls");
           const base = String(webAppUrl || env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
-          const finalUrl = chatId && !String(base).includes("chatId=")
-            ? `${base}?chatId=${encodeURIComponent(String(chatId))}`
+          const finalUrl = chatId
+            ? await buildSignedWebAppUrl(env, base, chatId)
             : base;
           const payload = {
             menu_button: {

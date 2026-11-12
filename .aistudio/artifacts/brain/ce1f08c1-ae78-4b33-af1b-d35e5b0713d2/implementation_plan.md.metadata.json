@@ -1,6 +1,0 @@
-{
-  "summary":  "Aktualisierter Implementierungsplan ohne Staffel-Flip: Chronologische Import-Schleife mit processedMsgIds-Deduplizierung, Subrequest-Guard 38 / 6000ms ohne Logger-Verschmutzung, Archive (.rar/.zip/.7z/.iso/.tar/.gz) als Zusatz-Downloads (isDownloadOnly / downloads) in D1, kollisionsfreier fileFingerprint (kein null===null Bug), Parser-Vorreinigung (NFC, globale Umlaute, Kanal-Tags, \\b Sprachkürzel, Scene-Präfixe mit Whitelist, Klammer-Alternativtitel), Multi-Part (Teil 2 vor Jahr vs. CD/Part nach Jahr, Editionen, 120-Zeichen Jahres-Cutoff) sowie Rechte-Bindestrich-Suche, +150 Untertitel-Match-Bonus (±3 Jahre) und Logger-Bereinigung.",
-  "updatedAt":  "2026-11-11T10:47:47.866865967Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

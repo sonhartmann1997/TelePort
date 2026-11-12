@@ -13,7 +13,7 @@
     return {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Telegram-Init-Data, X-Tma-Settings",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Telegram-Init-Data, X-Telegram-Launch-Token, X-Tma-Settings",
       "Content-Type": "application/json; charset=utf-8"
     };
   }
@@ -384,7 +384,34 @@
       }
     }
 
-    // Kein gültiges initData & kein eingeloggter Account -> Gast-Modus ohne Speicher!
+    let rawLaunchToken = request.headers.get("X-Telegram-Launch-Token") || "";
+    if (!rawLaunchToken) {
+      try {
+        rawLaunchToken = new URL(request.url).searchParams.get("tgLaunch") || "";
+      } catch (e) {}
+    }
+    if (rawLaunchToken && typeof verifyTelegramChatLaunchToken === "function") {
+      const verifiedLaunch = await verifyTelegramChatLaunchToken(rawLaunchToken, env);
+      if (verifiedLaunch && verifiedLaunch.ok && verifiedLaunch.chatId) {
+        const existingRow = await getUserByTelegramIdFromD1(env, verifiedLaunch.chatId).catch(() => null);
+        const userProfile = await upsertTelegramUserInD1(env, {
+          id: Number(verifiedLaunch.chatId),
+          first_name: existingRow?.first_name || "Telegram User",
+          last_name: existingRow?.last_name || "",
+          username: existingRow?.tg_username || ""
+        });
+        return {
+          isAuthenticated: true,
+          isGuest: false,
+          authMethod: "tgLaunch",
+          hasInitData: true,
+          chatId: String(verifiedLaunch.chatId),
+          user: userProfile
+        };
+      }
+    }
+
+    // Kein gültiges initData, kein gültiger Launch-Token & kein eingeloggter Account -> Gast-Modus ohne Speicher!
     return {
       isAuthenticated: false,
       isGuest: true,
@@ -3657,7 +3684,46 @@
       const API_BASE = "${workerOrigin}/api/tma";
       const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
       if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
-      const rawInitData = (tg && typeof tg.initData === "string" && tg.initData.length > 0) ? tg.initData : "";
+      function extractClientTelegramInitData() {
+        try {
+          const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+          if (liveTg && typeof liveTg.initData === "string" && liveTg.initData.trim().length > 0) {
+            return liveTg.initData.trim();
+          }
+        } catch (e) {}
+        try {
+          const hashStr = String(window.location.hash || "").replace(/^#/, "");
+          if (hashStr) {
+            const hashParams = new URLSearchParams(hashStr);
+            const fromHash = hashParams.get("tgWebAppData");
+            if (fromHash && fromHash.trim().length > 0) return fromHash.trim();
+          }
+        } catch (e) {}
+        try {
+          const searchParams = new URLSearchParams(window.location.search || "");
+          const fromSearch = searchParams.get("tgWebAppData");
+          if (fromSearch && fromSearch.trim().length > 0) return fromSearch.trim();
+        } catch (e) {}
+        return "";
+      }
+      function extractClientTelegramLaunchToken() {
+        try {
+          const searchParams = new URLSearchParams(window.location.search || "");
+          const fromSearch = searchParams.get("tgLaunch");
+          if (fromSearch && fromSearch.trim().length > 0) return fromSearch.trim();
+        } catch (e) {}
+        try {
+          const hashStr = String(window.location.hash || "").replace(/^#/, "");
+          if (hashStr) {
+            const hashParams = new URLSearchParams(hashStr);
+            const fromHash = hashParams.get("tgLaunch");
+            if (fromHash && fromHash.trim().length > 0) return fromHash.trim();
+          }
+        } catch (e) {}
+        return "";
+      }
+      let rawInitData = extractClientTelegramInitData();
+      let rawLaunchToken = extractClientTelegramLaunchToken();
       let sessionToken = "";
       try { sessionToken = localStorage.getItem("tma_session_token") || ""; } catch (e) {}
       let chatId = "guest";

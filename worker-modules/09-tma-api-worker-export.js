@@ -77,33 +77,73 @@
         }
       }
 
-      // 1. Telegram initData Erst-Authentifizierung & automatische D1 User-Registrierung
+      // 1. Telegram initData & signierter Chat-Button Launch-Token (24h) Erst-Authentifizierung
       if (path === "/api/tma/auth/init" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const rawInit = String(body.initData || request.headers.get("X-Telegram-Init-Data") || "").trim();
-        if (!rawInit) {
-          return new Response(JSON.stringify({ ok: false, error: "Keine Telegram initData übermittelt." }), { status: 400, headers: corsHeaders });
+        const rawLaunch = String(body.tgLaunch || request.headers.get("X-Telegram-Launch-Token") || url.searchParams.get("tgLaunch") || "").trim();
+
+        if (!rawInit && !rawLaunch) {
+          return new Response(JSON.stringify({ ok: false, error: "Keine Telegram initData oder Launch-Token übermittelt." }), { status: 400, headers: corsHeaders });
         }
-        const verified = await verifyTelegramInitDataHmac(rawInit, env.TELEGRAM_BOT_TOKEN);
-        if (!verified.ok || !verified.user) {
-          return new Response(JSON.stringify({ ok: false, error: verified.error || "initData Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
+
+        if (rawInit) {
+          const verified = await verifyTelegramInitDataHmac(rawInit, env.TELEGRAM_BOT_TOKEN);
+          if (verified.ok && verified.user) {
+            const userProfile = await upsertTelegramUserInD1(env, verified.user);
+            const sessionToken = await signTmaSessionToken({
+              telegramId: String(verified.user.id),
+              tgUsername: verified.user.username || "",
+              firstName: verified.user.first_name || "",
+              isAdmin: Boolean(userProfile?.isAdmin),
+              isVip: Boolean(userProfile?.isVip),
+              authMethod: "initData",
+              hasInitData: true
+            }, env);
+            return new Response(JSON.stringify({
+              ok: true,
+              isAuthenticated: true,
+              authMethod: "initData",
+              user: userProfile,
+              sessionToken
+            }), { status: 200, headers: corsHeaders });
+          }
+          if (!rawLaunch) {
+            return new Response(JSON.stringify({ ok: false, error: verified.error || "initData Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
+          }
         }
-        const userProfile = await upsertTelegramUserInD1(env, verified.user);
-        const sessionToken = await signTmaSessionToken({
-          telegramId: String(verified.user.id),
-          tgUsername: verified.user.username || "",
-          firstName: verified.user.first_name || "",
-          isAdmin: Boolean(userProfile?.isAdmin),
-          isVip: Boolean(userProfile?.isVip),
-          authMethod: "initData",
-          hasInitData: true
-        }, env);
-        return new Response(JSON.stringify({
-          ok: true,
-          isAuthenticated: true,
-          user: userProfile,
-          sessionToken
-        }), { status: 200, headers: corsHeaders });
+
+        if (rawLaunch && typeof verifyTelegramChatLaunchToken === "function") {
+          const verifiedLaunch = await verifyTelegramChatLaunchToken(rawLaunch, env);
+          if (verifiedLaunch && verifiedLaunch.ok && verifiedLaunch.chatId) {
+            const existingRow = await getUserByTelegramIdFromD1(env, verifiedLaunch.chatId).catch(() => null);
+            const userProfile = await upsertTelegramUserInD1(env, {
+              id: Number(verifiedLaunch.chatId),
+              first_name: existingRow?.first_name || "Telegram User",
+              last_name: existingRow?.last_name || "",
+              username: existingRow?.tg_username || ""
+            });
+            const sessionToken = await signTmaSessionToken({
+              telegramId: String(verifiedLaunch.chatId),
+              tgUsername: userProfile?.tgUsername || "",
+              firstName: userProfile?.firstName || "Telegram User",
+              isAdmin: Boolean(userProfile?.isAdmin),
+              isVip: Boolean(userProfile?.isVip),
+              authMethod: "tgLaunch",
+              hasInitData: true
+            }, env);
+            return new Response(JSON.stringify({
+              ok: true,
+              isAuthenticated: true,
+              authMethod: "tgLaunch",
+              user: userProfile,
+              sessionToken
+            }), { status: 200, headers: corsHeaders });
+          }
+          return new Response(JSON.stringify({ ok: false, error: verifiedLaunch?.error || "Chat-Button Launch-Token abgelaufen oder ungültig." }), { status: 401, headers: corsHeaders });
+        }
+
+        return new Response(JSON.stringify({ ok: false, error: "Authentifizierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
       }
 
       // 2. Aktuellen Session-Status abfragen
@@ -2550,7 +2590,7 @@
         const vote = details.vote_average ? Math.round(details.vote_average * 10) / 10 : "–";
 
         // Parallel & mit Timeout-Schutz für Telegraph ausführen, damit Detailansicht auch nach langer Standzeit sofort lädt!
-        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta] = await Promise.all([
+        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads] = await Promise.all([
           Promise.race([
             ensureMovieOrSeriesTelegraphUrl(env, typeCode, details).catch(() => ""),
             new Promise(resolve => setTimeout(() => resolve(details.telegraphUrl || ""), 2200))
@@ -2558,7 +2598,8 @@
           auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
           (isMovie && hasVipStreamAccess) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
           tgApi(env).getBotUsername(env).catch(() => ""),
-          (!isMovie && hasVipStreamAccess) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} })
+          (!isMovie && hasVipStreamAccess) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
+          (hasVipStreamAccess || auth.isAdmin) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([])
         ]);
         // Falls Details ein Poster gefunden haben, sofort in D1, Bot-VIP-Playlist und User-Merkliste zurückschreiben!
         if (details.poster_path || details.external_poster_url) {
@@ -2676,6 +2717,7 @@
           isSaved,
           trailers,
           files: movieFiles,
+          downloads: mediaDownloads,
           allStreamFiles: sanitizedStreamFiles,
           availableVersions,
           primaryVersionLabel,
@@ -2843,6 +2885,9 @@
           }
         }
 
+        const seasonDownloads = hasVipStreamAccess
+          ? (seasonFiles || []).filter(f => f && (f.is_download_only || f.isDownloadOnly || f.isArchive || f.type === "archive" || f.codec === "ARCHIVE"))
+          : [];
         const mergedRawEpisodes = Array.from(epMap.values()).sort((a, b) => a.episode_number - b.episode_number);
         const rawEpisodesArray = mergedRawEpisodes.map(ep => {
           const isSaved = savedList.some(
@@ -2853,7 +2898,7 @@
           );
           const epFiles = hasVipStreamAccess
             ? (seasonFiles || [])
-                .filter(f => Number(f.episode_number) === Number(ep.episode_number))
+                .filter(f => Number(f.episode_number) === Number(ep.episode_number) && !f.is_download_only && !f.isDownloadOnly && !f.isArchive && f.type !== "archive" && f.codec !== "ARCHIVE")
                 .map(f => ({
                   ...f,
                   versionLabel: extractEpisodeVersionLabel(f),
@@ -2886,7 +2931,7 @@
           seasonCounts[seasonNum] = maxAllowedEpisodes;
         }
 
-        return new Response(JSON.stringify({ ok: true, seriesId, seasonNum, seasons, seasonCounts, seasonEpisodeCount, episodes }), {
+        return new Response(JSON.stringify({ ok: true, seriesId, seasonNum, seasons, seasonCounts, seasonEpisodeCount, episodes, downloads: seasonDownloads }), {
           status: 200,
           headers: corsHeaders
         });
