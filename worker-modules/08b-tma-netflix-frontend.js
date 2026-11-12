@@ -1008,7 +1008,7 @@
           modeOrScopeHtml +
           providerSelectHtml +
           sortGroupHtml +
-          (!state.isSearchMode ? '<button class="btn ' + (isFranchiseActive ? 'red' : '') + '" onclick="toggleWorldsTray()" title="Filmuniversen & Filmreihen Portal-Dock ein- oder ausklappen">🌌 Welten & Reihen ' + (state.worldsTrayOpen ? '▴' : '▾') + '</button>' : '') +
+          (!state.isSearchMode ? '<button class="btn ' + (isFranchiseActive ? 'blue' : '') + '" onclick="toggleWorldsTray()" title="Filmuniversen & Filmreihen Portal-Dock ein- oder ausklappen">🌌 Welten & Reihen ' + (state.worldsTrayOpen ? '▴' : '▾') + '</button>' : '') +
           ((state.isSearchMode || isColView || isUniView || isPerView || state.currentCompanyId) ? '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' : '');
 
         return '<div class="floating-filter-bar">' +
@@ -1138,8 +1138,8 @@
         return '<div class="worlds-portal-tray">' +
           '<div class="worlds-portal-header">' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-              '<button type="button" class="btn ' + (!isColsTab ? 'red' : '') + '" onclick="switchWorldsTrayTab(\\'universes\\')">🌌 Universen (' + (CINEMATIC_UNIVERSES_CLIENT ? CINEMATIC_UNIVERSES_CLIENT.length : 0) + ')</button>' +
-              '<button type="button" class="btn ' + (isColsTab ? 'red' : '') + '" onclick="switchWorldsTrayTab(\\'collections\\')">🍿 Filmreihen (' + (FEATURED_COLLECTIONS_CLIENT ? FEATURED_COLLECTIONS_CLIENT.length : 0) + '+)</button>' +
+              '<button type="button" class="btn ' + (!isColsTab ? 'blue' : '') + '" onclick="switchWorldsTrayTab(\\'universes\\')">🌌 Universen (' + (CINEMATIC_UNIVERSES_CLIENT ? CINEMATIC_UNIVERSES_CLIENT.length : 0) + ')</button>' +
+              '<button type="button" class="btn ' + (isColsTab ? 'blue' : '') + '" onclick="switchWorldsTrayTab(\\'collections\\')">🍿 Filmreihen (' + (FEATURED_COLLECTIONS_CLIENT ? FEATURED_COLLECTIONS_CLIENT.length : 0) + '+)</button>' +
             '</div>' +
             '<input type="text" class="worlds-search-input" value="' + esc(state.worldsTrayQuery || '') + '" oninput="onWorldsTraySearchInput(this.value)" placeholder="🔍 Welt oder Filmreihe suchen (z.B. Marvel, Star Wars, Saw, Dune)..." />' +
             '<button type="button" class="btn" onclick="state.worldsTrayOpen=false;loadFranchisesHub(\\'' + (isColsTab ? 'collections' : 'universes') + '\\')" title="Große Vollbild-Übersicht öffnen">🗂️ Vollbild-Hub</button>' +
@@ -1321,10 +1321,10 @@
                   '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="' + (isCardSaved ? 'In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)' : 'In Merkliste speichern (Tipp oder Karte gedrückt halten)') + '">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
                   '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')" title="Details öffnen">ℹ️ Details</button>' +
                   '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
-                  '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : 'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%231c1c24%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2371717a%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E') + '" onerror="this.onerror=null;this.src=\\\'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%231c1c24%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2371717a%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E\\\';" loading="lazy" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
+                  '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : 'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2364748b%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E') + '" onerror="this.onerror=null;this.src=\\\'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2364748b%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E\\\';" loading="lazy" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
                 '</div>' +
                 '<div class="card-body">' +
-                  '<div class="card-title">' + itemTitleSafe + '</div>' +
+                  '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
                   '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
                 '</div>' +
               '</div>';
@@ -1359,13 +1359,13 @@
             '<div id="floatingFilterMount">' + buildFloatingFilterBarHtml() + '</div>' +
             '<div class="section-title" style="margin-top:6px"><span>🍿 Filmreihen & 🌌 Filmuniversen</span><div style="display:flex;gap:6px"><button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button></div></div>' +
             '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
-              '<button class="btn ' + (!isUni ? 'red' : '') + '" onclick="loadFranchisesHub(\\'collections\\')">🍿 Beliebte Filmreihen (' + cols.length + ')</button>' +
-              '<button class="btn ' + (isUni ? 'red' : '') + '" onclick="loadFranchisesHub(\\'universes\\')">🌌 Große Filmuniversen (' + unis.length + ')</button>' +
+              '<button class="btn ' + (!isUni ? 'blue' : '') + '" onclick="loadFranchisesHub(\\'collections\\')">🍿 Beliebte Filmreihen (' + cols.length + ')</button>' +
+              '<button class="btn ' + (isUni ? 'blue' : '') + '" onclick="loadFranchisesHub(\\'universes\\')">🌌 Große Filmuniversen (' + unis.length + ')</button>' +
             '</div>' +
             (!isUni ? (
               '<div style="display:flex;gap:6px;margin-bottom:12px">' +
-                '<input id="colSearchInput" style="flex:1;background:var(--card);border:1px solid rgba(148,163,184,0.35);color:var(--text);padding:8px 12px;border-radius:6px;font-size:13px" placeholder="🔍 Beliebige Filmreihe auf TMDB suchen (z.B. Saw, Matrix, John Wick)..." onkeydown="if(event.key===\\'Enter\\')searchCollectionsInHub()" />' +
-                '<button class="btn red" onclick="searchCollectionsInHub()">Reihe suchen</button>' +
+                '<input id="colSearchInput" class="tma-input" style="flex:1;padding:8px 12px;border-radius:8px;font-size:13px" placeholder="🔍 Beliebige Filmreihe auf TMDB suchen (z.B. Saw, Matrix, John Wick)..." onkeydown="if(event.key===\\'Enter\\')searchCollectionsInHub()" />' +
+                '<button class="btn blue" onclick="searchCollectionsInHub()">Reihe suchen</button>' +
               '</div>' +
               '<div id="colHubGrid" class="chip-grid">' +
                 cols.map(c => '<button class="btn" style="padding:9px 12px;font-size:12.5px" onclick="openCollectionView(' + c.id + ')">' + esc(c.icon || '🍿') + ' ' + esc(c.name) + '</button>').join("") +
@@ -1492,11 +1492,11 @@
                 const itemTitle = it.title || it.name || 'Titel';
                 const fbSvg = buildPosterFallbackSvg(itemTitle, tc === 's');
                 const simPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '') || fbSvg;
-                return '<div class="card" tabindex="0" onclick="openDetails(\\''+tc+'\\','+it.id+',false)">' +
+                return '<div class="card" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false)">' +
                   '<div class="card-poster-wrap">' +
                     '<img src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" loading="lazy" draggable="false" oncontextmenu="return false;" onerror="this.onerror=null;this.src=\\'' + fbSvg + '\\'" />' +
                   '</div>' +
-                  '<div class="card-body"><div class="card-title">' + esc(itemTitle) + '</div><div class="card-sub"><span>⭐ ' + (it.vote_average ? Number(it.vote_average).toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
+                  '<div class="card-body"><div class="card-title"><span class="card-title-text">' + esc(itemTitle) + '</span></div><div class="card-sub"><span>⭐ ' + (it.vote_average ? Number(it.vote_average).toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
                 '</div>';
               }).join("") +
             '</div>' +
@@ -1631,7 +1631,7 @@
             const pid = b.getAttribute("data-detail-tp-id") || "";
             const tpObj = TRAILER_PROVIDERS_CLIENT.find(x => x.id === pid);
             const isMatch = pid === activeKey;
-            b.className = "btn " + (isMatch ? "red" : "");
+            b.className = "btn " + (isMatch ? "blue" : "");
             if (tpObj) b.textContent = tpObj.label + (isMatch ? " ✓ Standard" : "");
           });
         }
@@ -1885,7 +1885,7 @@
                   '<div style="display:flex;gap:6px;align-items:center">' +
                     (prevAdj ? '<button id="modalAdjPrevBtn" class="btn" onclick="navigateDetailModalAdjacent(-1)" title="Vorheriger Titel: ' + esc(prevAdj.title) + '">◀</button>' : '') +
                     (nextAdj ? '<button id="modalAdjNextBtn" class="btn" onclick="navigateDetailModalAdjacent(1)" title="Nächster Titel: ' + esc(nextAdj.title) + '">▶</button>' : '') +
-                    '<button class="btn red" onclick="closeDetailModal()" title="Schließen">✖</button>' +
+                    '<button class="btn close-slate" onclick="closeDetailModal()" title="Schließen">✖</button>' +
                   '</div>' +
                 '</div>' +
 
@@ -1956,7 +1956,7 @@
                   (posterOrig ? '<button class="btn" onclick="openLightbox(\\''+esc(posterOrig)+'\\',\\''+esc(d.title)+' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
                   (backdropOrig ? '<button class="btn" onclick="openLightbox(\\''+esc(backdropOrig)+'\\',\\''+esc(d.title)+' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
                   (d.tmdbDeUrl ? '<a class="btn" href="' + esc(d.tmdbDeUrl) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
-                  (!tr ? '<a class="btn red" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '') +
+                  (!tr ? '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '') +
                 '</div>' +
 
                 '<div id="similarModalBox"></div>' +
@@ -2021,7 +2021,7 @@
                     '<div style="font-size:12px;color:var(--text);margin-bottom:7px">🎬 <b>Trailer direkt abspielen & Standard-Quelle wählen:</b></div>' +
                     '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                       TRAILER_PROVIDERS_CLIENT.map(tp =>
-                        '<button class="btn ' + (trailerProvider === tp.id ? 'red' : '') + '" data-detail-tp-id="' + esc(tp.id) + '" onclick="switchEmbedSource(\\'' + esc(tp.id) + '\\',true)">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
+                        '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" data-detail-tp-id="' + esc(tp.id) + '" onclick="switchEmbedSource(\\'' + esc(tp.id) + '\\',true)">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
                       ).join("") +
                     '</div>' +
                     '<div id="trailerEmbedContainer"></div>' +
@@ -2172,10 +2172,10 @@
           box.innerHTML =
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">' +
               '<div style="font-size:13px;font-weight:800;color:#e9d5ff">🖼️ Cover / Poster auswählen (' + posters.length + ' gefunden)</div>' +
-              '<button type="button" class="btn" style="padding:2px 8px;font-size:11px" onclick="document.getElementById(\\'modalPosterPickerBox\\').style.display=\\'none\\'">✖ Schließen</button>' +
+              '<button type="button" class="btn close-slate" style="padding:2px 8px;font-size:11px" onclick="document.getElementById(\\'modalPosterPickerBox\\').style.display=\\'none\\'">✖ Schließen</button>' +
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-              '<input id="customPosterUrlInp" placeholder="Eigene Bild-URL (https://...jpg/png) oder TMDb /path.jpg" style="flex:1;min-width:210px;padding:6px 9px;border-radius:6px;background:#090d16;color:#fff;border:1px solid rgba(168,85,247,0.4);font-size:12px" />' +
+              '<input id="customPosterUrlInp" class="tma-input" placeholder="Eigene Bild-URL (https://...jpg/png) oder TMDb /path.jpg" style="flex:1;min-width:210px;padding:6px 9px;border-color:rgba(168,85,247,0.4);font-size:12px" />' +
               '<button type="button" class="btn purple" onclick="applyCustomModalPoster(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">💾 URL als Cover speichern</button>' +
             '</div>' +
             (posters.length > 0 ? (
@@ -2278,19 +2278,19 @@
         box.innerHTML =
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">' +
             '<div style="font-size:13px;font-weight:800;color:#38bdf8">🔄 Falsch zugeordnet? Titel / Serie neu zuordnen</div>' +
-            '<button type="button" class="btn" style="padding:2px 8px;font-size:11px" onclick="document.getElementById(\\'modalRemapMediaBox\\').style.display=\\'none\\'">✖ Schließen</button>' +
+            '<button type="button" class="btn close-slate" style="padding:2px 8px;font-size:11px" onclick="document.getElementById(\\'modalRemapMediaBox\\').style.display=\\'none\\'">✖ Schließen</button>' +
           '</div>' +
           filesMetaHtml +
           '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' +
-            '<input id="modalRemapSearchInp" value="' + esc(origSeedQuery) + '" placeholder="Suchbegriff oder TMDb-ID (z.B. Zur See, Pippi Langstrumpf, tmdb:40964)..." style="flex:1;min-width:190px;padding:6px 9px;border-radius:6px;background:#090d16;color:#fff;border:1px solid rgba(56,189,248,0.4);font-size:12px" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ');}" />' +
-            '<select id="modalRemapTypeSel" style="padding:6px 8px;border-radius:6px;background:#090d16;color:#fff;border:1px solid rgba(56,189,248,0.4);font-size:12px">' +
+            '<input id="modalRemapSearchInp" class="tma-input" value="' + esc(origSeedQuery) + '" placeholder="Suchbegriff oder TMDb-ID (z.B. Zur See, Pippi Langstrumpf, tmdb:40964)..." style="flex:1;min-width:190px;padding:6px 9px;font-size:12px" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ');}" />' +
+            '<select id="modalRemapTypeSel" class="tma-select" style="padding:6px 8px;font-size:12px">' +
               '<option value="">Alle (Film & Serie)</option>' +
               '<option value="m">🎬 Nur Filme</option>' +
               '<option value="s">📺 Nur Serien / Anime</option>' +
             '</select>' +
-            '<span style="font-size:11px;color:#94a3b8">Staffel/Folge (bei Serie):</span>' +
-            '<input id="modalRemapSeasonInp" type="number" min="1" max="99" value="1" title="Ziel-Staffel" style="width:48px;padding:5px;border-radius:6px;background:#090d16;color:#fff;border:1px solid rgba(56,189,248,0.4);font-size:12px;text-align:center" />' +
-            '<input id="modalRemapEpisodeInp" type="number" min="1" max="999" value="1" title="Ziel-Folge" style="width:54px;padding:5px;border-radius:6px;background:#090d16;color:#fff;border:1px solid rgba(56,189,248,0.4);font-size:12px;text-align:center" />' +
+            '<span style="font-size:11px;color:var(--muted)">Staffel/Folge (bei Serie):</span>' +
+            '<input id="modalRemapSeasonInp" class="tma-input" type="number" min="1" max="99" value="1" title="Ziel-Staffel" style="width:48px;padding:5px;font-size:12px;text-align:center" />' +
+            '<input id="modalRemapEpisodeInp" class="tma-input" type="number" min="1" max="999" value="1" title="Ziel-Folge" style="width:54px;padding:5px;font-size:12px;text-align:center" />' +
             '<button type="button" class="btn blue" onclick="searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Suchen (8 APIs)</button>' +
           '</div>' +
           '<div id="modalRemapResultsBox" style="display:flex;flex-direction:column;gap:6px"></div>';
@@ -2452,20 +2452,20 @@
             '<div class="delivery-config-drawer">' +
               '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">' +
                 '<div>' +
-                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (<code>/id</code>):</div>' +
-                  '<input id="modalDelivGroupIdInp" value="' + esc(prefs.targetGroupChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="z.B. -1001987654321" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (<code>/id</code>):</div>' +
+                  '<input id="modalDelivGroupIdInp" class="tma-input" value="' + esc(prefs.targetGroupChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="z.B. -1001987654321" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
-                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">🧵 Topic / Thread-ID (optional):</div>' +
-                  '<input id="modalDelivTopicIdInp" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">🧵 Topic / Thread-ID (optional):</div>' +
+                  '<input id="modalDelivTopicIdInp" class="tma-input" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
-                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">📦 Quellgruppen-ID (Auto-Copy):</div>' +
-                  '<input id="modalDelivSourceGroupInp" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (Auto-Copy):</div>' +
+                  '<input id="modalDelivSourceGroupInp" class="tma-input" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
-                  '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:3px">🤖 Eigenes Bot-Token (optional):</div>' +
-                  '<input id="modalDelivBotTokenInp" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;border-radius:6px;background:#14141c;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:11.5px" />' +
+                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">🤖 Eigenes Bot-Token (optional):</div>' +
+                  '<input id="modalDelivBotTokenInp" class="tma-input" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
               '</div>' +
             '</div>'
@@ -3763,20 +3763,20 @@
           '<div class="submodal-backdrop" onclick="if(event.target===this)closeSubModalOverlayClient()">' +
             '<div class="submodal-box">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">' +
-                '<div style="font-size:15px;font-weight:900;color:#fff">✏️ Folge / Datei korrigieren</div>' +
-                '<button type="button" class="btn red" onclick="closeSubModalOverlayClient()">✖</button>' +
+                '<div style="font-size:15px;font-weight:900;color:var(--text)">✏️ Folge / Datei korrigieren</div>' +
+                '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">✖</button>' +
               '</div>' +
 
-              '<div style="padding:9px 11px;border-radius:8px;background:rgba(56,189,248,0.1);border:1px solid rgba(56,189,248,0.35);margin-bottom:10px;font-size:12px">' +
-                '<div style="font-weight:800;color:#f8fafc">' + esc(st.title) + ' <span style="color:#38bdf8">(' + epBadge + ')</span></div>' +
-                '<div style="color:#94a3b8;font-size:11px;margin-top:3px">' +
-                  'Aktuelle Version: <b style="color:#fbbf24">' + esc(st.versionLabel) + '</b> • Qualität: <b>' + esc(st.quality) + '</b>' +
-                  (String(st.telegramFileId || "").startsWith("tg_export_") ? ' • <span style="color:#38bdf8">🔗 Quellgruppe (Auto-Copy)</span>' : (st.telegramFileId ? ' • <span style="color:#34d399">⚡ Direkte Telegram File-ID</span>' : '')) +
-                  (st.reportId ? (' • <span style="color:#34d399">🚨 Verknüpft mit Meldung #' + st.reportId + ' (wird beim Speichern automatisch gelöst)</span>') : '') +
+              '<div style="padding:9px 11px;border-radius:8px;background:rgba(14,165,233,0.1);border:1px solid rgba(14,165,233,0.35);margin-bottom:10px;font-size:12px">' +
+                '<div style="font-weight:800;color:var(--text)">' + esc(st.title) + ' <span style="color:#0284c7">(' + epBadge + ')</span></div>' +
+                '<div style="color:var(--muted);font-size:11px;margin-top:3px">' +
+                  'Aktuelle Version: <b style="color:#f59e0b">' + esc(st.versionLabel) + '</b> • Qualität: <b>' + esc(st.quality) + '</b>' +
+                  (String(st.telegramFileId || "").startsWith("tg_export_") ? ' • <span style="color:#0284c7">🔗 Quellgruppe (Auto-Copy)</span>' : (st.telegramFileId ? ' • <span style="color:#10b981">⚡ Direkte Telegram File-ID</span>' : '')) +
+                  (st.reportId ? (' • <span style="color:#10b981">🚨 Verknüpft mit Meldung #' + st.reportId + ' (wird beim Speichern automatisch gelöst)</span>') : '') +
                 '</div>' +
-                (st.rawFilename ? '<div style="margin-top:4px;font-family:monospace;font-size:10.5px;color:#cbd5e1;word-break:break-all">📄 Original-Datei: ' + esc(st.rawFilename) + '</div>' : '') +
-                (st.telegramFileId ? '<div style="margin-top:2px;font-family:monospace;font-size:10px;color:#64748b;word-break:break-all">🔑 File-Ref: ' + esc(st.telegramFileId) + '</div>' : '') +
-                (st.messageLink ? '<div style="margin-top:4px"><a href="' + esc(st.messageLink) + '" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;font-size:11px;text-decoration:underline">🔗 Original-Nachricht in Telegram öffnen</a></div>' : '') +
+                (st.rawFilename ? '<div style="margin-top:4px;font-family:monospace;font-size:10.5px;color:var(--text);word-break:break-all">📄 Original-Datei: ' + esc(st.rawFilename) + '</div>' : '') +
+                (st.telegramFileId ? '<div style="margin-top:2px;font-family:monospace;font-size:10px;color:var(--muted);word-break:break-all">🔑 File-Ref: ' + esc(st.telegramFileId) + '</div>' : '') +
+                (st.messageLink ? '<div style="margin-top:4px"><a href="' + esc(st.messageLink) + '" target="_blank" rel="noopener noreferrer" style="color:#0284c7;font-size:11px;text-decoration:underline">🔗 Original-Nachricht in Telegram öffnen</a></div>' : '') +
               '</div>' +
 
               /* Modus-Umschalter */
@@ -3790,16 +3790,16 @@
 
               /* MODUS 1: Staffel & Folge anpassen */
               (st.mode === "move_se" ? (
-                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;margin-bottom:12px">' +
-                  '<div style="font-size:12px;color:#cbd5e1;margin-bottom:8px">Wähle die korrekte <b>Staffel</b> und <b>Folge</b> innerhalb von <b>' + esc(st.title) + '</b>:</div>' +
+                '<div class="admin-sub-box" style="padding:12px;margin-bottom:12px">' +
+                  '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Wähle die korrekte <b>Staffel</b> und <b>Folge</b> innerhalb von <b>' + esc(st.title) + '</b>:</div>' +
                   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
                     '<div>' +
-                      '<label style="font-size:11px;color:#94a3b8;font-weight:700;display:block;margin-bottom:4px">Ziel-Staffel</label>' +
-                      '<input id="epCorrNewSeasonInp" type="number" min="1" max="99" value="' + st.season + '" style="width:100%;padding:8px 10px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.22);font-size:13px;font-weight:800" />' +
+                      '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Staffel</label>' +
+                      '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + st.season + '" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
                     '</div>' +
                     '<div>' +
-                      '<label style="font-size:11px;color:#94a3b8;font-weight:700;display:block;margin-bottom:4px">Ziel-Folge</label>' +
-                      '<input id="epCorrNewEpisodeInp" type="number" min="1" max="999" value="' + st.episode + '" style="width:100%;padding:8px 10px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.22);font-size:13px;font-weight:800" />' +
+                      '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Folge</label>' +
+                      '<input id="epCorrNewEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + st.episode + '" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
                     '</div>' +
                   '</div>' +
                 '</div>'
@@ -3807,50 +3807,50 @@
 
               /* MODUS 2: Version / Schnittfassung wechseln */
               (st.mode === "change_version" ? (
-                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;margin-bottom:12px">' +
-                  '<div style="font-size:12px;color:#cbd5e1;margin-bottom:8px">Ordne diese Datei einer anderen <b>Schnittfassung / Version</b> zu (keine Version geht verloren, beide erscheinen im Versions-Switcher):</div>' +
+                '<div class="admin-sub-box" style="padding:12px;margin-bottom:12px">' +
+                  '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Ordne diese Datei einer anderen <b>Schnittfassung / Version</b> zu (keine Version geht verloren, beide erscheinen im Versions-Switcher):</div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
                     VERSION_PRESETS.map(vp =>
                       '<button type="button" class="btn ' + (st.versionLabel === vp ? 'amber' : '') + '" onclick="document.getElementById(\\'epCorrVersionInp\\').value=\\'' + esc(vp) + '\\'">' + esc(vp) + '</button>'
                     ).join("") +
                   '</div>' +
-                  '<input id="epCorrVersionInp" value="' + esc(st.versionLabel) + '" placeholder="Eigene Versions-Bezeichnung (z.B. Netflix-Fassung)..." style="width:100%;padding:8px 10px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.22);font-size:12.5px" />' +
+                  '<input id="epCorrVersionInp" class="tma-input" value="' + esc(st.versionLabel) + '" placeholder="Eigene Versions-Bezeichnung (z.B. Netflix-Fassung)..." style="width:100%;padding:8px 10px;font-size:12.5px" />' +
                 '</div>'
               ) : '') +
 
               /* MODUS 3: Mit anderer TMDb-ID (Serie + Staffel/Folge oder Film) verknüpfen */
               (st.mode === "relink_tmdb" ? (
-                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:12px;margin-bottom:12px">' +
-                  '<div style="font-size:12px;color:#cbd5e1;margin-bottom:8px"><b>Umfang der Neu-Verknüpfung:</b></div>' +
+                '<div class="admin-sub-box" style="padding:12px;margin-bottom:12px">' +
+                  '<div style="font-size:12px;color:var(--text);margin-bottom:8px"><b>Umfang der Neu-Verknüpfung:</b></div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
                     '<button type="button" class="btn ' + (st.relinkScope === 'single_episode' ? 'green' : '') + '" onclick="activeEpisodeCorrectionState.relinkScope=\\'single_episode\\';renderEpisodeCorrectionModalDomClient()">🎯 Nur diese einzelne Folge / Datei zuweisen</button>' +
                     '<button type="button" class="btn ' + (st.relinkScope === 'entire_series' ? 'amber' : '') + '" onclick="activeEpisodeCorrectionState.relinkScope=\\'entire_series\\';renderEpisodeCorrectionModalDomClient()">📦 Ganze Serie / Alle Folgen umziehen</button>' +
                   '</div>' +
 
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
-                    '<input id="epCorrTmdbSearchInp" value="' + esc(st.title) + '" placeholder="Richtigen Titel oder TMDb-ID suchen..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchEpisodeCorrectionTmdbClient()}" style="flex:1;min-width:170px;padding:8px 10px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.22);font-size:12px" />' +
+                    '<input id="epCorrTmdbSearchInp" class="tma-input" value="' + esc(st.title) + '" placeholder="Richtigen Titel oder TMDb-ID suchen..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchEpisodeCorrectionTmdbClient()}" style="flex:1;min-width:170px;padding:8px 10px;font-size:12px" />' +
                     '<button type="button" class="btn blue" onclick="searchEpisodeCorrectionTmdbClient()">🔍 Suchen</button>' +
                   '</div>' +
 
                   '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px">' +
                     '<div>' +
-                      '<label style="font-size:10.5px;color:#94a3b8;display:block;margin-bottom:2px">Ziel-Typ</label>' +
-                      '<select id="epCorrNewTypeSel" onchange="activeEpisodeCorrectionState.selectedNewTypeCode=this.value" style="width:100%;padding:7px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px">' +
+                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Typ</label>' +
+                      '<select id="epCorrNewTypeSel" class="tma-select" onchange="activeEpisodeCorrectionState.selectedNewTypeCode=this.value" style="width:100%;padding:7px;font-size:12px">' +
                         '<option value="s" ' + (st.selectedNewTypeCode === 's' ? 'selected' : '') + '>📺 Serie</option>' +
                         '<option value="m" ' + (st.selectedNewTypeCode === 'm' ? 'selected' : '') + '>🎬 Film</option>' +
                       '</select>' +
                     '</div>' +
                     '<div>' +
-                      '<label style="font-size:10.5px;color:#94a3b8;display:block;margin-bottom:2px">Ziel TMDb-ID</label>' +
-                      '<input id="epCorrNewTmdbIdInp" type="number" value="' + st.selectedNewTmdbId + '" style="width:100%;padding:7px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;font-weight:800" />' +
+                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel TMDb-ID</label>' +
+                      '<input id="epCorrNewTmdbIdInp" class="tma-input" type="number" value="' + st.selectedNewTmdbId + '" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
                     '</div>' +
                     '<div>' +
-                      '<label style="font-size:10.5px;color:#94a3b8;display:block;margin-bottom:2px">Staffel</label>' +
-                      '<input id="epCorrRelinkSeasonInp" type="number" min="1" max="99" value="' + st.season + '" style="width:100%;padding:7px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;font-weight:800" />' +
+                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Staffel</label>' +
+                      '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + st.season + '" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
                     '</div>' +
                     '<div>' +
-                      '<label style="font-size:10.5px;color:#94a3b8;display:block;margin-bottom:2px">Folge</label>' +
-                      '<input id="epCorrRelinkEpisodeInp" type="number" min="1" max="999" value="' + st.episode + '" style="width:100%;padding:7px;border-radius:6px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;font-weight:800" />' +
+                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Folge</label>' +
+                      '<input id="epCorrRelinkEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + st.episode + '" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
                     '</div>' +
                   '</div>' +
 
@@ -3870,7 +3870,7 @@
         const q = (document.getElementById("epCorrTmdbSearchInp")?.value || "").trim();
         const resBox = document.getElementById("epCorrTmdbResultsBox");
         if (!q || !resBox) return;
-        resBox.innerHTML = '<div style="font-size:11.5px;color:#38bdf8;padding:6px">⏳ Suche auf TMDb & Fallback-APIs...</div>';
+        resBox.innerHTML = '<div style="font-size:11.5px;color:#0284c7;padding:6px">⏳ Suche auf TMDb & Fallback-APIs...</div>';
         try {
           const r = await apiFetchJson(API_BASE + "/search?chatId=" + encodeURIComponent(chatId) + "&q=" + encodeURIComponent(q) + "&bypass=1");
           const items = r?.items || [];
@@ -3883,12 +3883,12 @@
             const yr = String(item.release_date || item.first_air_date || "").split("-")[0] || "k.A.";
             const tName = item.title || item.name || "Unbekannt";
             const pUrl = resolvePosterUrlClient(item.poster_path, "w92", item.external_poster_url || "");
-            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:7px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1)">' +
+            return '<div class="admin-sub-box" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px">' +
               '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">' +
                 (pUrl ? '<img src="' + esc(pUrl) + '" style="width:28px;height:42px;object-fit:cover;border-radius:4px;flex-shrink:0" />' : '') +
                 '<div style="min-width:0;flex:1">' +
-                  '<div style="font-size:12px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (tc === "s" ? "📺 " : "🎬 ") + esc(tName) + ' (' + esc(yr) + ')</div>' +
-                  '<div style="font-size:10.5px;color:#38bdf8">TMDb #' + Number(item.id) + '</div>' +
+                  '<div style="font-size:12px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (tc === "s" ? "📺 " : "🎬 ") + esc(tName) + ' (' + esc(yr) + ')</div>' +
+                  '<div style="font-size:10.5px;color:#0284c7">TMDb #' + Number(item.id) + '</div>' +
                 '</div>' +
               '</div>' +
               '<button type="button" class="btn green" style="padding:4px 8px;font-size:11px" onclick="selectEpisodeCorrectionTmdbCandidateClient(\\'' + tc + '\\',' + Number(item.id) + ',\\'' + esc(tName) + '\\')">Auswählen</button>' +
@@ -4036,28 +4036,28 @@
           '<div class="submodal-backdrop" onclick="if(event.target===this)closeSubModalOverlayClient()">' +
             '<div class="submodal-box">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">' +
-                '<div style="font-size:15px;font-weight:900;color:#fbbf24">⚠️ Fehler melden</div>' +
-                '<button type="button" class="btn red" onclick="closeSubModalOverlayClient()">✖</button>' +
+                '<div style="font-size:15px;font-weight:900;color:#f59e0b">⚠️ Fehler melden</div>' +
+                '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">✖</button>' +
               '</div>' +
 
               '<div style="padding:9px 11px;border-radius:8px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.35);margin-bottom:12px;font-size:12px">' +
-                '<div style="font-weight:800;color:#fff">' + esc(st.title) + '<span style="color:#fbbf24">' + epTag + '</span></div>' +
-                (st.versionLabel ? '<div style="font-size:11px;color:#94a3b8;margin-top:2px">Version: <b>' + esc(st.versionLabel) + '</b></div>' : '') +
+                '<div style="font-weight:800;color:var(--text)">' + esc(st.title) + '<span style="color:#f59e0b">' + epTag + '</span></div>' +
+                (st.versionLabel ? '<div style="font-size:11px;color:var(--muted);margin-top:2px">Version: <b>' + esc(st.versionLabel) + '</b></div>' : '') +
               '</div>' +
 
-              '<div style="font-size:12px;color:#cbd5e1;font-weight:700;margin-bottom:6px">Was stimmt mit diesem Eintrag nicht?</div>' +
+              '<div style="font-size:12px;color:var(--text);font-weight:700;margin-bottom:6px">Was stimmt mit diesem Eintrag nicht?</div>' +
               '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">' +
                 REASONS.map(r => {
                   const isSel = st.reasonCode === r.code;
-                  return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;text-align:left;' + (isSel ? '' : 'background:rgba(255,255,255,0.04);') + '" onclick="activeMediaReportState.reasonCode=\\'' + r.code + '\\';renderMediaReportModalDomClient()">' +
+                  return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;text-align:left;' + (isSel ? '' : 'background:var(--card);') + '" onclick="activeMediaReportState.reasonCode=\\'' + r.code + '\\';renderMediaReportModalDomClient()">' +
                     (isSel ? '🔘 ' : '⚪ ') + esc(r.label) +
                   '</button>';
                 }).join("") +
               '</div>' +
 
               '<div style="margin-bottom:12px">' +
-                '<label style="font-size:11.5px;color:#94a3b8;font-weight:700;display:block;margin-bottom:4px">Kurze Notiz (optional, z.B. „Ist eigentlich Staffel 2 Folge 5“):</label>' +
-                '<textarea id="mediaReportNoteInp" rows="2" placeholder="Optionale Hinweise für den Admin..." style="width:100%;padding:8px 10px;border-radius:8px;background:#101015;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px;resize:vertical"></textarea>' +
+                '<label style="font-size:11.5px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Kurze Notiz (optional, z.B. „Ist eigentlich Staffel 2 Folge 5“):</label>' +
+                '<textarea id="mediaReportNoteInp" class="tma-textarea" rows="2" placeholder="Optionale Hinweise für den Admin..." style="width:100%;padding:8px 10px;border-radius:8px;font-size:12px;resize:vertical"></textarea>' +
               '</div>' +
 
               '<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">' +
@@ -4362,7 +4362,7 @@
                 '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM')) + '" onerror="this.onerror=null;this.src=buildPosterFallbackSvg(\\'' + itemTitleSafe + '\\',\\'' + (isSer ? 'SERIE' : 'FILM') + '\\');" loading="lazy" draggable="false" alt="' + itemTitleSafe + '" />' +
               '</div>' +
               '<div class="card-body">' +
-                '<div class="card-title">' + itemTitleSafe + '</div>' +
+                '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
                 '<div class="card-sub"><span>' + subLeftTxt + '</span><span>' + yrStr + '</span></div>' +
               '</div>' +
             '</div>';
@@ -4376,24 +4376,24 @@
           const targetId = isEp ? it.seriesId : it.tmdbId;
           const badge = isEp ? '💿 Folge' : isSer ? '📺 Serie' : '🎬 Film';
           const plObj = it.folderId ? folders.find(f => f.id === it.folderId) : null;
-          const plTag = plObj ? ' <span style="color:#38bdf8;font-size:10.5px">[' + esc(plObj.name) + ']</span>' : '';
+          const plTag = plObj ? ' <span style="color:var(--blue);font-size:10.5px">[' + esc(plObj.name) + ']</span>' : '';
           const thumbUrl = resolvePosterUrlClient(it.poster, 'w185', '');
           const epsList = Array.isArray(it.episodes) ? it.episodes : [];
           const drawerId = 'wl_' + esc(it.uid || (targetId + '_' + idx));
           const epPreviewCodes = epsList.slice(0, 3).map(e => e.code || ('S' + String(e.season || 1).padStart(2, '0') + 'E' + String(e.episode || 1).padStart(2, '0'))).join(', ');
           const epSummaryBtnHtml = (isSer && epsList.length > 0)
-            ? ('<button type="button" class="btn" style="padding:3px 8px;font-size:11px;background:rgba(56,189,248,0.16);border-color:rgba(56,189,248,0.45);color:#38bdf8" onclick="toggleSeriesEpisodesDrawerClient(event,\\'' + drawerId + '\\')">📺 ' + epsList.length + ' Folge' + (epsList.length === 1 ? '' : 'n') + ' (' + esc(epPreviewCodes) + (epsList.length > 3 ? '…' : '') + ') <span id="epDrawerIcon_' + drawerId + '">▾</span></button>')
+            ? ('<button type="button" class="btn" style="padding:3px 8px;font-size:11px;background:rgba(56,189,248,0.14);border-color:rgba(56,189,248,0.45);color:var(--blue)" onclick="toggleSeriesEpisodesDrawerClient(event,\\'' + drawerId + '\\')">📺 ' + epsList.length + ' Folge' + (epsList.length === 1 ? '' : 'n') + ' (' + esc(epPreviewCodes) + (epsList.length > 3 ? '…' : '') + ') <span id="epDrawerIcon_' + drawerId + '">▾</span></button>')
             : '';
           const epDrawerHtml = (isSer && epsList.length > 0)
-            ? ('<div id="epDrawer_' + drawerId + '" style="display:none;flex-direction:column;gap:4px;margin-top:6px;padding:8px;border-radius:8px;background:rgba(15,23,42,0.85);border:1px solid rgba(56,189,248,0.3)">' +
+            ? ('<div id="epDrawer_' + drawerId + '" style="display:none;flex-direction:column;gap:4px;margin-top:6px;padding:8px;border-radius:8px;background:var(--surface);border:1px solid rgba(56,189,248,0.3)">' +
                 epsList.map(ep => {
                   const epCode = ep.code || ('S' + String(ep.season || 1).padStart(2, '0') + 'E' + String(ep.episode || 1).padStart(2, '0'));
                   const epTitle = ep.title || ('Folge ' + (ep.episode || 1));
                   const qStr = [ep.quality || '1080p', ep.codec || ''].filter(Boolean).join(' • ');
-                  return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.04);font-size:11.5px">' +
+                  return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;background:var(--card);border:1px solid rgba(148,163,184,0.12);font-size:11.5px">' +
                     '<div style="cursor:pointer;flex:1" onclick="openDetails(\\'s\\',' + Number(targetId) + ',false,\\'\\',\\'\\',' + Number(ep.season || 1) + ')">' +
-                      '<b style="color:#38bdf8">' + esc(epCode) + '</b> – <span style="color:#f8fafc">' + esc(epTitle) + '</span>' +
-                      (qStr ? ' <span style="color:#94a3b8;font-size:10.5px">[' + esc(qStr) + ']</span>' : '') +
+                      '<b style="color:var(--blue)">' + esc(epCode) + '</b> – <span style="color:var(--text)">' + esc(epTitle) + '</span>' +
+                      (qStr ? ' <span style="color:var(--text-muted);font-size:10.5px">[' + esc(qStr) + ']</span>' : '') +
                     '</div>' +
                     '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="openDetails(\\'s\\',' + Number(targetId) + ',false,\\'\\',\\'\\',' + Number(ep.season || 1) + ')">Staffel ' + Number(ep.season || 1) + ' öffnen</button>' +
                   '</div>';
@@ -4405,10 +4405,10 @@
               '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:180px;cursor:pointer" tabindex="0" onclick="openDetails(\\''+(isSer?'s':'m')+'\\','+targetId+',false)">' +
                 (thumbUrl
                   ? '<img src="' + esc(thumbUrl) + '" style="width:32px;height:46px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
-                  : '<div style="width:32px;height:46px;background:#1e293b;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (isSer ? '📺' : '🎬') + '</div>') +
+                  : '<div style="width:32px;height:46px;background:var(--card);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (isSer ? '📺' : '🎬') + '</div>') +
                 '<div>' +
-                  '<div style="font-size:12.5px;font-weight:800;color:#fff"><span style="color:#aaa;font-size:11px;margin-right:6px">' + badge + '</span>' + esc(it.title) + (it.year && it.year !== 'K. A.' ? ' <span style="color:#888;font-size:11px">(' + esc(it.year) + ')</span>' : '') + plTag + '</div>' +
-                  (it.allQualities || it.quality ? '<div style="font-size:10.5px;color:#94a3b8;margin-top:2px">' + esc(it.allQualities || it.quality) + '</div>' : '') +
+                  '<div style="font-size:12.5px;font-weight:800;color:var(--text)"><span style="color:var(--text-muted);font-size:11px;margin-right:6px">' + badge + '</span>' + esc(it.title) + (it.year && it.year !== 'K. A.' ? ' <span style="color:var(--text-muted);font-size:11px">(' + esc(it.year) + ')</span>' : '') + plTag + '</div>' +
+                  (it.allQualities || it.quality ? '<div style="font-size:10.5px;color:var(--text-muted);margin-top:2px">' + esc(it.allQualities || it.quality) + '</div>' : '') +
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
@@ -4419,6 +4419,11 @@
             epDrawerHtml +
           '</div>';
         }).join("");
+      }
+
+      function toggleWishlistFoldersManager() {
+        state.wlManageFoldersOpen = !state.wlManageFoldersOpen;
+        renderWishlistViewDomOnly();
       }
 
       function renderWishlistViewDomOnly() {
@@ -4432,6 +4437,7 @@
         const filteredItems = getFilteredAndSortedWishlistItems();
         const activeFolderObj = folders.find(f => f.id === cur) || null;
         const isGridMode = state.wlViewMode !== "list";
+        const isManageOpen = Boolean(state.wlManageFoldersOpen);
 
         const folderBtns = [
           '<button class="btn '+(cur==='root'?'active':'')+'" onclick="loadWishlist(\\'root\\')">📂 Alle Aktiven ('+enabledItems.length+')</button>',
@@ -4445,11 +4451,11 @@
           })
         ].join(" ");
 
-        const smartPlaylistsPanelHtml = folders.length > 0 ? (
-          '<div class="panel-box" style="margin-bottom:12px;border-color:rgba(16,185,129,0.35)">' +
+        const smartPlaylistsPanelHtml = (folders.length > 0 && isManageOpen) ? (
+          '<div class="panel-box" style="margin-bottom:10px;border-color:rgba(14,165,233,0.35)">' +
             '<div class="section-title">' +
               '<span>🎵 Smarte Playlisten & Ordner verwalten (' + folders.length + ')</span>' +
-              '<span style="font-size:11px;color:#94a3b8">Einschalten • Ausschalten • Umbenennen • Löschen</span>' +
+              '<button type="button" class="btn close-slate" onclick="toggleWishlistFoldersManager()" title="Verwaltung einklappen">✖</button>' +
             '</div>' +
             folders.map(f => {
               const isEn = f.enabled !== false;
@@ -4457,16 +4463,16 @@
               const badgeType = (f.type === 'playlist' || f.isJsonPlaylist) ? '📦 JSON-Playlist' : '📁 Ordner';
               return '<div class="ep-row" style="' + (isEn ? '' : 'opacity:0.68;') + '">' +
                 '<div class="ep-title" tabindex="0" onclick="loadWishlist(\\'' + esc(f.id) + '\\')">' +
-                  '<span style="font-size:11px;padding:2px 6px;border-radius:999px;margin-right:6px;background:' + (isEn ? 'rgba(16,185,129,0.2);color:#34d399' : 'rgba(148,163,184,0.2);color:#94a3b8') + '">' +
-                    (isEn ? '🟢 Eingeschaltet' : '⚪ Ausgeschaltet') +
+                  '<span style="font-size:11px;padding:2px 7px;border-radius:999px;margin-right:6px;background:' + (isEn ? 'rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4)' : 'rgba(148,163,184,0.18);color:var(--text-muted);border:1px solid rgba(148,163,184,0.3)') + '">' +
+                    (isEn ? '🟢 Aktiv' : '⚪ Pausiert') +
                   '</span>' +
-                  '<b>' + esc(f.name) + '</b> <span style="color:#94a3b8;font-size:11px">(' + count + ' Titel • ' + badgeType + ')</span>' +
+                  '<b style="color:var(--text)">' + esc(f.name) + '</b> <span style="color:var(--text-muted);font-size:11px">(' + count + ' Titel • ' + badgeType + ')</span>' +
                 '</div>' +
                 '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-                  '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="togglePlaylistFolderTma(\\'' + esc(f.id) + '\\')">' + (isEn ? '🟢 Ein (Ausschalten)' : '⚪ Aus (Einschalten)') + '</button>' +
+                  '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="togglePlaylistFolderTma(\\'' + esc(f.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
                   '<button class="btn" onclick="loadWishlist(\\'' + esc(f.id) + '\\')">📂 Öffnen</button>' +
                   '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">✏️ Name</button>' +
-                  '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">🗑️ Löschen</button>' +
+                  '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">🗑️</button>' +
                 '</div>' +
               '</div>';
             }).join("") +
@@ -4474,12 +4480,12 @@
         ) : '';
 
         const activeFolderBannerHtml = activeFolderObj ? (
-          '<div class="panel-box" style="margin-bottom:10px;border-color:' + (activeFolderObj.enabled !== false ? 'rgba(16,185,129,0.45)' : 'rgba(251,191,36,0.45)') + '">' +
+          '<div class="panel-box" style="margin-bottom:10px;border-color:' + (activeFolderObj.enabled !== false ? 'rgba(16,185,129,0.4)' : 'rgba(148,163,184,0.35)') + '">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div>' +
-                '<div style="font-size:14px;font-weight:800;color:#fff">' + ((activeFolderObj.type === 'playlist' || activeFolderObj.isJsonPlaylist) ? '🎵 Custom Playlist: ' : '📁 Ordner: ') + esc(activeFolderObj.name) + '</div>' +
-                '<div style="font-size:11.5px;color:#aaa;margin-top:2px">' +
-                  'Status: <b style="color:' + (activeFolderObj.enabled !== false ? '#34d399' : '#fbbf24') + '">' + (activeFolderObj.enabled !== false ? '🟢 Eingeschaltet (In Merkliste sichtbar)' : '⚪ Ausgeschaltet (In Haupt-Merkliste ausgeblendet)') + '</b>' +
+                '<div style="font-size:13.5px;font-weight:800;color:var(--text)">' + ((activeFolderObj.type === 'playlist' || activeFolderObj.isJsonPlaylist) ? '🎵 Custom Playlist: ' : '📁 Ordner: ') + esc(activeFolderObj.name) + '</div>' +
+                '<div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">' +
+                  'Status: <b style="color:' + (activeFolderObj.enabled !== false ? '#10b981' : 'var(--text-muted)') + '">' + (activeFolderObj.enabled !== false ? '🟢 In Haupt-Merkliste sichtbar' : '⚪ In Haupt-Merkliste ausgeblendet') + '</b>' +
                   (activeFolderObj.sourceLabel ? ' • Quelle: ' + esc(activeFolderObj.sourceLabel) : '') +
                 '</div>' +
               '</div>' +
@@ -4490,9 +4496,9 @@
                 (activeFolderObj.linked && activeFolderObj.tmdbRefId && activeFolderObj.type === 'universe'
                   ? '<button class="btn purple" onclick="openUniverseView(\\'' + esc(activeFolderObj.tmdbRefId) + '\\')">🌌 Komplettes Universum öffnen</button>'
                   : '') +
-                '<button class="btn ' + (activeFolderObj.enabled !== false ? 'green' : 'amber') + '" onclick="togglePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\')">' + (activeFolderObj.enabled !== false ? '🟢 Ausschalten' : '⚪ Einschalten') + '</button>' +
+                '<button class="btn ' + (activeFolderObj.enabled !== false ? 'green' : 'blue') + '" onclick="togglePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\')">' + (activeFolderObj.enabled !== false ? '🟢 Ausschalten' : '⚪ Einschalten') + '</button>' +
                 '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">✏️ Umbenennen</button>' +
-                '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">🗑️ Playlist löschen</button>' +
+                '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">🗑️ Löschen</button>' +
               '</div>' +
             '</div>' +
           '</div>'
@@ -4506,7 +4512,7 @@
           ).join("") +
         '</div>';
 
-        const quickFilterBarHtml = '<div class="panel-box" style="margin-bottom:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
+        const quickFilterBarHtml = '<div class="floating-filter-bar" style="margin-bottom:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
           '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
             '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Typ:</span>' +
             '<button class="btn ' + (state.wlFilterType === 'all' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'all\\')">📂 Alle</button>' +
@@ -4524,16 +4530,24 @@
             '<button class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster-Grid</button>' +
             '<button class="btn ' + (!isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'list\\')" title="Als kompakte Liste mit Episoden-Auswahl anzeigen">📋 Liste</button>' +
           '</div>' +
-          '<input id="wishlistSearchInp" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:160px;flex:1;padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);color:var(--text);font-size:12px" />' +
+          '<input id="wishlistSearchInp" class="tma-input" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:160px;flex:1;padding:6px 10px;border-radius:8px;font-size:12px" />' +
         '</div>';
 
         root.innerHTML = '<div class="section">' +
-          '<div class="section-title"><span>💾 Synchronisierte Bot-Merkliste (<span id="wishlistCountSpan">' + filteredItems.length + '</span> Einträge)</span><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn green" onclick="createNewFolderPrompt(true)">➕ Neue Custom Playlist</button><button class="btn" onclick="createNewFolderPrompt(false)">📁 Neuer Ordner</button><button class="btn" onclick="goHome()">🏠 Hauptseite</button></div></div>' +
+          '<div class="section-title">' +
+            '<span>💾 Synchronisierte Bot-Merkliste (<span id="wishlistCountSpan">' + filteredItems.length + '</span> Einträge)</span>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+              '<button class="btn blue" onclick="createNewFolderPrompt(true)">➕ Neue Playlist</button>' +
+              '<button class="btn" onclick="createNewFolderPrompt(false)">📁 Neuer Ordner</button>' +
+              (folders.length > 0 ? '<button class="btn ' + (isManageOpen ? 'active' : '') + '" onclick="toggleWishlistFoldersManager()">🗂️ Verwalten (' + folders.length + ') ' + (isManageOpen ? '▴' : '▾') + '</button>' : '') +
+              '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' +
+            '</div>' +
+          '</div>' +
           '<div class="chip-grid" style="margin-bottom:10px">' + folderBtns + '</div>' +
-          quickFilterBarHtml +
-          azBarHtml +
           smartPlaylistsPanelHtml +
           activeFolderBannerHtml +
+          quickFilterBarHtml +
+          azBarHtml +
           '<div id="wishlistItemsMount"></div>' +
         '</div>';
 
@@ -4546,14 +4560,14 @@
         const root = document.getElementById("appRoot");
         if (!state.isAuthenticated) {
           root.innerHTML = '<div class="section">' +
-            '<div class="panel-box" style="border-color:rgba(251,191,36,0.45)">' +
+            '<div class="panel-box" style="border-color:rgba(14,165,233,0.4)">' +
               '<div class="section-title"><span>🔒 Merkliste im Gast-Modus nicht verfügbar</span><button class="btn" onclick="goHome()">🏠 Hauptseite</button></div>' +
-              '<p style="font-size:12.5px;color:#ddd;line-height:1.5;margin-bottom:12px">' +
+              '<p style="font-size:12.5px;color:var(--text-muted);line-height:1.5;margin-bottom:12px">' +
                 'Du nutzt die Seite aktuell <b>ohne Telegram initData und ohne eingeloggten Account</b>.<br>' +
                 'Im Gast-Modus steht kein persönlicher Speicher (Merkliste) zur Verfügung und ein Zugriff auf andere Telegram-IDs ist gesperrt.' +
               '</p>' +
               '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-                '<button class="btn green" onclick="openAccountModal()">🔑 Mit abgesichertem Account (Username & Passwort) einloggen</button>' +
+                '<button class="btn blue" onclick="openAccountModal()">🔑 Mit abgesichertem Account (Username & Passwort) einloggen</button>' +
                 '<button class="btn" onclick="goHome()">🎬 Weiter als Gast stöbern</button>' +
               '</div>' +
             '</div>' +
@@ -4669,11 +4683,11 @@
               '<div class="section-title">' +
                 '<span>🔐 Account & Sicherheit (' + (isAuth ? ('Verbunden: ID ' + esc(u.telegramId)) : '👤 Gast-Modus ohne Speicher') + ')</span>' +
                 '<div style="display:flex;gap:6px">' +
-                  (u.isAdmin ? '<button class="btn amber" onclick="loadAdminPanelView()">👑 Admin-Panel</button>' : '') +
+                  (u.isAdmin ? '<button class="btn blue" onclick="loadAdminPanelView()">👑 Admin-Panel</button>' : '') +
                   '<button class="btn purple" onclick="openAccountModal()">🔑 ' + (isAuth ? (u.hasPasswordAccount ? 'Zugangsdaten verwalten' : 'Account mit Passwort absichern') : 'Jetzt einloggen') + '</button>' +
                 '</div>' +
               '</div>' +
-              '<p style="font-size:12px;color:var(--text-muted);line-height:1.5">' +
+              '<p style="font-size:12px;color:var(--muted);line-height:1.5">' +
                 (isAuth
                   ? (u.hasPasswordAccount
                       ? '✅ Dein Account ist als <b>' + esc(u.customUsername) + '</b> mit Passwort abgesichert. Du kannst dich von jedem Gerät und Browser (auch ohne Telegram <code>initData</code>) einloggen.'
@@ -4689,57 +4703,57 @@
               return '<div class="panel-box">' +
                 '<div class="section-title">' +
                   '<span>📤 Standard-Versandziel, Gruppen-Delivery & Eigener Bot</span>' +
-                  '<span style="font-size:11px;color:#38bdf8;font-weight:700">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
+                  '<span style="font-size:11px;color:#0284c7;font-weight:700">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
                 '</div>' +
-                '<p style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:10px">' +
+                '<p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">' +
                   'Bestimme, wohin Filme & Serien standardmäßig gesendet werden: in deinen <b>💬 Bot-Privatchat</b>, in eine <b>👥 eigene Ziel-Gruppe</b> oder über deinen <b>🤖 eigenen Telegram-Bot-Token</b>. ' +
                   'Wenn der Bot Mitglied deiner Quellgruppe (aus <code>result.json</code>) ist, löst er Dateien automatisch per <code>copyMessage</code> auf und speichert die File-ID in D1.' +
                 '</p>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-                  '<button class="btn ' + (dMode === 'dm' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
-                  '<button class="btn ' + (dMode === 'group' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
-                  '<button class="btn ' + (dMode === 'custom_bot' ? 'active' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
+                  '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
+                  '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
+                  '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
-                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +
-                    '<input id="settingsTargetGroupIdInp" value="' + esc(deliv.targetGroupChatId || '') + '" placeholder="-1001234567890" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +
+                    '<input id="settingsTargetGroupIdInp" class="tma-input" value="' + esc(deliv.targetGroupChatId || '') + '" placeholder="-1001234567890" style="width:100%" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">🧵 Topic / Thread-ID in Ziel-Gruppe (optional):</div>' +
-                    '<input id="settingsTargetTopicIdInp" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">🧵 Topic / Thread-ID in Ziel-Gruppe (optional):</div>' +
+                    '<input id="settingsTargetTopicIdInp" class="tma-input" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
-                    '<input id="settingsSourceBridgeIdInp" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
+                    '<input id="settingsSourceBridgeIdInp" class="tma-input" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
-                    '<input id="settingsCustomBotTokenInp" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%;padding:7px 9px;border-radius:8px;background:var(--bg-elevated);color:var(--text);border:1px solid rgba(255,255,255,0.14);font-size:12px" />' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
+                    '<input id="settingsCustomBotTokenInp" class="tma-input" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%" />' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
                   '<button class="btn green" onclick="verifyAndConnectCustomBotInSettingsClient()">💾 Speichern & optionalen Bot-Webhook verbinden</button>' +
-                  '<span style="font-size:11px;color:var(--text-muted)">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
+                  '<span style="font-size:11px;color:var(--muted)">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
                 '</div>' +
-                '<div id="customBotVerifyStatus" style="font-size:12px;color:#38bdf8;margin-top:6px">' +
+                '<div id="customBotVerifyStatus" style="font-size:12px;color:#0284c7;margin-top:6px">' +
                   (deliv.customBotUsername ? ('✅ Aktiver eigener Bot: @' + esc(deliv.customBotUsername)) : '') +
                 '</div>' +
-                '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08)">' +
+                '<div class="sidebar-sub-divider" style="margin-top:12px;padding-top:10px">' +
                   '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
                     '<div>' +
                       '<div style="font-size:12px;font-weight:700;color:var(--text)">🧹 Retention Policy (KV-Performance & Log-Aufbewahrung)</div>' +
-                      '<div style="font-size:11px;color:var(--text-muted)">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
+                      '<div style="font-size:11px;color:var(--muted)">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
                     '</div>' +
                     '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
-                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
-                      '<button type="button" class="btn" style="padding:4px 8px;font-size:11px;color:#fb7185" onclick="clearTmaActivityLogClient()" title="Alle gespeicherten Telegram-Zustelllogs in KV sofort löschen">🗑️ Log leeren</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
+                      '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
+                      '<button type="button" class="btn danger" style="padding:4px 8px;font-size:11px" onclick="clearTmaActivityLogClient()" title="Alle gespeicherten Telegram-Zustelllogs in KV sofort löschen">🗑️ Log leeren</button>' +
                     '</div>' +
                   '</div>' +
-                  '<div style="font-size:10.5px;color:#38bdf8;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MY_KV</code>)</div>' +
-                  '<div id="tmaActivityLogMount"><div style="font-size:11px;color:var(--text-muted)">Lade letzte Zustell-Aktivitäten...</div></div>' +
+                  '<div style="font-size:10.5px;color:#0284c7;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MY_KV</code>)</div>' +
+                  '<div id="tmaActivityLogMount"><div style="font-size:11px;color:var(--muted)">Lade letzte Zustell-Aktivitäten...</div></div>' +
                 '</div>' +
               '</div>' +
               buildAntiSpamCockpitBoxHtmlClient();
@@ -4750,15 +4764,15 @@
                 '<span>🧭 Steuerung, Maus-Hover & Slider-Einstellungen</span>' +
               '</div>' +
               '<div style="display:flex;flex-direction:column;gap:8px">' +
-                '<button id="settingsMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleMouseHoverNav()">' +
+                '<button id="settingsMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleMouseHoverNav()">' +
                   '<span>🖱️ Maus-Hover Navigation (Mauszeiger verschiebt Auswahl)</span>' +
                   '<b>' + (mouseHoverNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
                 '</button>' +
-                '<button id="settingsModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleModalHoldNav()">' +
+                '<button id="settingsModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleModalHoldNav()">' +
                   '<span>⏩ Detailansicht: Pfeiltaste ⬅️/➡️ gedrückt halten (~450ms) für nächsten/vorherigen Titel</span>' +
                   '<b>' + (modalHoldNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
                 '</button>' +
-                '<button id="settingsHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
+                '<button id="settingsHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
                   '<span>🎬 Spotlight-Banner auf der Startseite</span>' +
                   '<b>' + (state.heroHidden ? 'AUSGEBLENDET' : 'SICHTBAR') + '</b>' +
                 '</button>' +
@@ -4768,9 +4782,9 @@
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>⚡ Telegram-Bot Schnellbefehls-Übersicht</span>' +
-                '<span style="font-size:11px;color:#38bdf8;font-weight:700">f = Film • s = Serie</span>' +
+                '<span style="font-size:11px;color:#0284c7;font-weight:700">f = Film • s = Serie</span>' +
               '</div>' +
-              '<p style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Nutze diese Kurzbefehle jederzeit direkt im Telegram-Bot-Chat (optional auch mit Genre dahinter, z. B. <code>/t f Action</code>):</p>' +
+              '<p style="font-size:12px;color:var(--muted);margin-bottom:6px">Nutze diese Kurzbefehle jederzeit direkt im Telegram-Bot-Chat (optional auch mit Genre dahinter, z. B. <code>/t f Action</code>):</p>' +
               '<div class="shortcut-cheat-grid">' +
                 '<div class="shortcut-cheat-card"><b>🔥 Trending (Filme & Serien)</b><code>/t f   • /trnd f   • /trend f   • /trending f</code><br><code>/t s   • /trnd s   • /trend s   • /trending s</code></div>' +
                 '<div class="shortcut-cheat-card"><b>🌟 Populär / Beliebt</b><code>/p f   • /pop f    • /popular f • /populär f</code><br><code>/p s   • /pop s    • /popular s • /populär s</code></div>' +
@@ -4782,12 +4796,12 @@
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🎬 Instant-Trailer Provider (Direktwiedergabe aus der Übersicht)</span>' +
-                '<span style="font-size:11.5px;color:var(--text-muted);font-weight:700">Aktiv: <b style="color:var(--text)">' + esc(getTrailerProviderLabel(trailerProvider)) + '</b></span>' +
+                '<span style="font-size:11.5px;color:var(--muted);font-weight:700">Aktiv: <b style="color:var(--text)">' + esc(getTrailerProviderLabel(trailerProvider)) + '</b></span>' +
               '</div>' +
-              '<p style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Wähle deinen bevorzugten Video-Anbieter, wenn du auf einer Film-/Serienkarte direkt auf <b>▶ Trailer</b> tippst:</p>' +
+              '<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Wähle deinen bevorzugten Video-Anbieter, wenn du auf einer Film-/Serienkarte direkt auf <b>▶ Trailer</b> tippst:</p>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 TRAILER_PROVIDERS_CLIENT.map(tp =>
-                  '<button class="btn ' + (trailerProvider === tp.id ? 'active' : '') + '" onclick="setTrailerProvider(\\'' + esc(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
+                  '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" onclick="setTrailerProvider(\\'' + esc(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
                 ).join("") +
               '</div>' +
             '</div>' +
@@ -4798,9 +4812,9 @@
                   '<button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button>' +
                 '</div>' +
               '</div>' +
-              '<p style="font-size:12px;color:#aaa;margin-bottom:10px">Filter lassen sich gezielt über <b>✓ (Positiv)</b> und <b>✕ (Negativ)</b> schalten (der Text selbst ist nicht auswählbar). Ist ein Filter aktiv, gibt dessen Auswahl direkt <b>○ Neutral</b> vor, während daneben die Gegenoption wählbar bleibt.</p>' +
+              '<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Filter lassen sich gezielt über <b>✓ (Positiv)</b> und <b>✕ (Negativ)</b> schalten (der Text selbst ist nicht auswählbar). Ist ein Filter aktiv, gibt dessen Auswahl direkt <b>○ Neutral</b> vor, während daneben die Gegenoption wählbar bleibt.</p>' +
               (isCurrentUserVip() ? (
-                '<div style="font-size:12.5px;font-weight:700;margin:8px 0 6px;color:#fbbf24">🌟 Exklusiver VIP-Stream Filter (#13):</div>' +
+                '<div style="font-size:12.5px;font-weight:700;margin:8px 0 6px;color:#0284c7">🌟 Exklusiver VIP-Stream Filter (#13):</div>' +
                 '<div class="direct-filter-grid" style="margin-bottom:10px">' +
                   renderDirectFilterOptionCard("vip_streams", "vip_streams", "🌟 Nur Titel mit verfügbarem VIP-Stream", Boolean(s.onlyVipStreams), false) +
                 '</div>'

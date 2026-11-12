@@ -666,12 +666,22 @@
         background: #e2e8f0;
         border-color: #94a3b8;
       }
-      body[data-theme="light"] .btn:not(.red):not(.danger):not(.blue):not(.green):not(.purple):not(.amber):not(.active) {
+      body[data-theme="light"] .btn:not(.red):not(.danger):not(.blue):not(.green):not(.purple):not(.amber):not(.active):not(.close-slate) {
         background: #f1f5f9;
         color: #0f172a;
         border-color: #cbd5e1;
       }
-      body[data-theme="light"] .btn:not(.red):not(.danger):not(.blue):not(.green):not(.purple):not(.amber):not(.active):hover {
+      body[data-theme="light"] .btn:not(.red):not(.danger):not(.blue):not(.green):not(.purple):not(.amber):not(.active):not(.close-slate):hover {
+        background: #e2e8f0;
+        color: #0f172a;
+        border-color: #94a3b8;
+      }
+      body[data-theme="light"] .btn.close-slate {
+        background: #f1f5f9;
+        color: #1e293b;
+        border-color: #cbd5e1;
+      }
+      body[data-theme="light"] .btn.close-slate:hover {
         background: #e2e8f0;
         color: #0f172a;
         border-color: #94a3b8;
@@ -801,9 +811,9 @@
         border-color: #94a3b8;
       }
       body[data-theme="light"] .ff-tab-btn.open {
-        background: #e0e7ff;
-        border-color: #6366f1;
-        color: #312e81;
+        background: #e0f2fe;
+        border-color: #0284c7;
+        color: #075985;
       }
       body[data-theme="light"] .sort-select,
       body[data-theme="light"] .mode-filter-select,
@@ -918,9 +928,12 @@
         background: #f8fafc;
         border-color: #cbd5e1;
       }
+      body[data-theme="light"] .sidebar-sub-divider {
+        border-top-color: #cbd5e1;
+      }
       body[data-theme="light"] .sidebar-sec-title,
       body[data-theme="light"] .sidebar-section-title {
-        color: #334155;
+        color: #0f172a;
       }
       body[data-theme="light"] .sidebar-acc-toggle,
       body[data-theme="light"] .sidebar-collapse-btn {
@@ -933,21 +946,71 @@
       }
       body[data-theme="light"] .sidebar-acc-summary,
       body[data-theme="light"] .sidebar-collapse-meta {
-        color: #475569;
+        color: #0369a1;
+      }
+      body[data-theme="light"] .sidebar-account-btn.is-auth {
+        background: #ecfdf5 !important;
+        border-color: #10b981 !important;
+        color: #065f46 !important;
+      }
+      body[data-theme="light"] .sidebar-account-btn.is-auth:hover {
+        background: #d1fae5 !important;
+        border-color: #059669 !important;
+        color: #064e3b !important;
+      }
+      body[data-theme="light"] .sidebar-account-btn.is-guest {
+        background: #f0f9ff !important;
+        border-color: #38bdf8 !important;
+        color: #075985 !important;
+      }
+      body[data-theme="light"] .sidebar-account-btn.is-guest:hover {
+        background: #e0f2fe !important;
+        border-color: #0284c7 !important;
+        color: #0c4a6e !important;
+      }
+      body[data-theme="light"] .sidebar-account-btn .sidebar-account-cta {
+        color: #334155 !important;
       }
       body[data-theme="light"] .sync-badge {
         background: rgba(16, 185, 129, 0.14);
         border-color: #059669;
         color: #047857;
       }
-      body[data-theme="light"] .direct-filter-card {
+      body[data-theme="light"] .direct-filter-card:not(.state-inc):not(.state-exc) {
         background: #ffffff;
         border-color: #cbd5e1;
       }
-      body[data-theme="light"] .df-btn {
+      body[data-theme="light"] .direct-filter-card.state-inc {
+        background: var(--inc-bg);
+        border-color: var(--inc-border);
+      }
+      body[data-theme="light"] .direct-filter-card.state-exc {
+        background: var(--exc-bg);
+        border-color: var(--exc-border);
+      }
+      body[data-theme="light"] .direct-filter-card.state-inc .df-label {
+        color: var(--inc-text);
+      }
+      body[data-theme="light"] .direct-filter-card.state-exc .df-label {
+        color: var(--exc-text);
+        text-decoration: line-through;
+      }
+      body[data-theme="light"] .df-btn:not(.active) {
         background: #f1f5f9;
         color: #334155;
         border-color: #cbd5e1;
+      }
+      body[data-theme="light"] .df-btn.inc:hover,
+      body[data-theme="light"] .df-btn.inc.active {
+        background: var(--inc-solid);
+        border-color: var(--inc-border);
+        color: #ffffff;
+      }
+      body[data-theme="light"] .df-btn.exc:hover,
+      body[data-theme="light"] .df-btn.exc.active {
+        background: var(--exc-solid);
+        border-color: var(--exc-border);
+        color: #ffffff;
       }
       body[data-theme="light"] .f-pill.neutral {
         background: #f1f5f9;
@@ -1023,9 +1086,55 @@
         color: #1e1b4b;
       }
       body[data-theme="light"] .section-title,
-      body[data-theme="light"] .df-label,
+      body[data-theme="light"] .direct-filter-card:not(.state-inc):not(.state-exc) .df-label,
       body[data-theme="light"] .card-title {
         color: #0f172a;
+      }
+      body[data-theme="light"] .card-body {
+        background: #ffffff;
+        border-top-color: #e2e8f0;
+      }
+      body[data-theme="light"] .card-poster-wrap,
+      body[data-theme="light"] .card-poster-wrap img,
+      body[data-theme="light"] .card > img {
+        background: #e2e8f0;
+      }
+      body[data-theme="light"] .skeleton-poster,
+      body[data-theme="light"] .skeleton-line {
+        background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+        background-size: 200% 100%;
+      }
+      body[data-theme="light"] .floating-filter-bar,
+      body[data-theme="light"] .pagination-bar {
+        background: rgba(255, 255, 255, 0.92);
+        border-color: #cbd5e1;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+      }
+      body[data-theme="light"] .sort-select,
+      body[data-theme="light"] .mode-filter-select,
+      body[data-theme="light"] .new-filter-select {
+        background-color: #f8fafc;
+        color: #0f172a;
+        border-color: #cbd5e1;
+        color-scheme: light;
+      }
+      body[data-theme="light"] .sort-select option,
+      body[data-theme="light"] .mode-filter-select option,
+      body[data-theme="light"] .new-filter-select option {
+        background-color: #ffffff;
+        color: #0f172a;
+      }
+      body[data-theme="light"] .sort-select:hover,
+      body[data-theme="light"] .sort-select.spatial-focus,
+      body[data-theme="light"] .mode-filter-select:hover,
+      body[data-theme="light"] .mode-filter-select.spatial-focus,
+      body[data-theme="light"] .mode-filter-select.active-mode,
+      body[data-theme="light"] .new-filter-select:hover,
+      body[data-theme="light"] .new-filter-select.spatial-focus,
+      body[data-theme="light"] .new-filter-select.active-new {
+        background-color: #e0f2fe;
+        border-color: #0284c7;
+        color: #0c4a6e;
       }
       body[data-theme="light"] .hero {
         margin: 10px 14px 4px;
@@ -1035,12 +1144,12 @@
       }
       body[data-theme="light"] .hero::after {
         background:
-          linear-gradient(90deg, rgba(10, 14, 24, 0.92) 0%, rgba(10, 14, 24, 0.68) 50%, rgba(10, 14, 24, 0.22) 100%),
-          linear-gradient(to top, rgba(10, 14, 24, 0.94) 0%, rgba(10, 14, 24, 0.28) 55%, rgba(10, 14, 24, 0.55) 100%);
+          linear-gradient(90deg, rgba(10, 15, 29, 0.92) 0%, rgba(10, 15, 29, 0.68) 50%, rgba(10, 15, 29, 0.22) 100%),
+          linear-gradient(to top, rgba(10, 15, 29, 0.94) 0%, rgba(10, 15, 29, 0.28) 55%, rgba(10, 15, 29, 0.55) 100%);
       }
       body[data-theme="light"] .hero-collapsed-strip {
-        background: #ffffff;
-        border-color: #cbd5e1;
+        background: linear-gradient(90deg, #f0f9ff 0%, #ffffff 50%, #f8fafc 100%);
+        border-color: #bae6fd;
         color: #0f172a;
         box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
       }
@@ -1106,9 +1215,28 @@
       /* Light-Mode Lesbarkeits-Schutz für Inline-Farben in Modals, Panels & Formularen */
       body[data-theme="light"] .modal-body [style*="background:#090d16"],
       body[data-theme="light"] .modal-body [style*="background:#14141c"],
+      body[data-theme="light"] .modal-body [style*="background:#14141d"],
       body[data-theme="light"] .modal-body [style*="background:#141414"],
+      body[data-theme="light"] .modal-body [style*="background:#09090d"],
       body[data-theme="light"] .panel-box [style*="background:#141414"],
+      body[data-theme="light"] .panel-box [style*="background:#101015"],
+      body[data-theme="light"] .panel-box [style*="background:#101016"],
+      body[data-theme="light"] .panel-box [style*="background:#101018"],
+      body[data-theme="light"] .panel-box [style*="background:#12121a"],
+      body[data-theme="light"] .panel-box [style*="background:#141222"],
+      body[data-theme="light"] .panel-box [style*="background:#15151e"],
+      body[data-theme="light"] .panel-box [style*="background:#16161e"],
+      body[data-theme="light"] .panel-box [style*="background:#16161f"],
+      body[data-theme="light"] .panel-box [style*="background:#161620"],
+      body[data-theme="light"] .panel-box [style*="background:#181822"],
+      body[data-theme="light"] .panel-box [style*="background:#181824"],
+      body[data-theme="light"] .panel-box [style*="background:#0c0c12"],
+      body[data-theme="light"] .panel-box [style*="background:#0d0d14"],
+      body[data-theme="light"] .panel-box [style*="background:#050a14"],
+      body[data-theme="light"] .panel-box [style*="background:#0d131f"],
+      body[data-theme="light"] .panel-box [style*="background:#141b2d"],
       body[data-theme="light"] .submodal-box [style*="background:#090d16"],
+      body[data-theme="light"] .submodal-box [style*="background:#101015"],
       body[data-theme="light"] .submodal-box [style*="background:#141414"] {
         background: #f8fafc !important;
         color: #0f172a !important;
@@ -1121,6 +1249,7 @@
       body[data-theme="light"] .panel-box [style*="color:#f8fafc"],
       body[data-theme="light"] .panel-box [style*="color:#e2e8f0"],
       body[data-theme="light"] .panel-box [style*="color:#cbd5e1"],
+      body[data-theme="light"] .panel-box [style*="color:#fff"],
       body[data-theme="light"] .panel-box [style*="color:#ddd"],
       body[data-theme="light"] .panel-box [style*="color:#ccc"],
       body[data-theme="light"] .sidebar-body [style*="color:#f8fafc"],
@@ -1128,7 +1257,8 @@
       body[data-theme="light"] .sidebar-body [style*="color:#cbd5e1"],
       body[data-theme="light"] .submodal-box [style*="color:#f8fafc"],
       body[data-theme="light"] .submodal-box [style*="color:#e2e8f0"],
-      body[data-theme="light"] .submodal-box [style*="color:#cbd5e1"] {
+      body[data-theme="light"] .submodal-box [style*="color:#cbd5e1"],
+      body[data-theme="light"] .submodal-box [style*="color:#fff"] {
         color: #0f172a !important;
       }
       body[data-theme="light"] .modal-body [style*="color:#fde68a"],
@@ -1139,11 +1269,14 @@
       body[data-theme="light"] .modal-body [style*="color:#7dd3fc"],
       body[data-theme="light"] .panel-box [style*="color:#7dd3fc"],
       body[data-theme="light"] .panel-box [style*="color:#00f0ff"],
-      body[data-theme="light"] .panel-box [style*="color:#38bdf8"] {
+      body[data-theme="light"] .panel-box [style*="color:#00e5ff"],
+      body[data-theme="light"] .panel-box [style*="color:#38bdf8"],
+      body[data-theme="light"] .submodal-box [style*="color:#38bdf8"] {
         color: #0369a1 !important;
       }
       body[data-theme="light"] .modal-body [style*="color:#c4b5fd"],
       body[data-theme="light"] .panel-box [style*="color:#c4b5fd"],
+      body[data-theme="light"] .panel-box [style*="color:#e9d5ff"],
       body[data-theme="light"] .sidebar-body [style*="color:#c4b5fd"] {
         color: #4338ca !important;
       }
@@ -1154,6 +1287,74 @@
       body[data-theme="light"] .btn.purple:hover,
       body[data-theme="light"] .btn.amber:hover {
         color: #ffffff !important;
+      }
+      /* Theme-adaptive Formular-, Karten- & Sub-Container-Klassen (Dark + Light) */
+      .tma-input,
+      .tma-select,
+      .tma-textarea,
+      .admin-field-input {
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid rgba(14, 165, 233, 0.32);
+        border-radius: 7px;
+        padding: 7px 10px;
+        font-size: 12px;
+        box-sizing: border-box;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .tma-input:focus,
+      .tma-select:focus,
+      .tma-textarea:focus,
+      .admin-field-input:focus {
+        outline: none;
+        border-color: #0ea5e9;
+        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+      }
+      .admin-surface-card {
+        background: var(--surface);
+        border: 1px solid rgba(14, 165, 233, 0.24);
+        border-radius: 10px;
+        padding: 12px;
+        color: var(--text);
+      }
+      .admin-sub-box {
+        background: var(--card);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 8px;
+        padding: 9px 11px;
+        color: var(--text);
+      }
+      .admin-code-pill {
+        background: rgba(15, 23, 42, 0.85);
+        color: #e2e8f0;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        border-radius: 5px;
+        padding: 2px 6px;
+        font-family: monospace;
+      }
+      body[data-theme="light"] .tma-input,
+      body[data-theme="light"] .tma-select,
+      body[data-theme="light"] .tma-textarea,
+      body[data-theme="light"] .admin-field-input {
+        background: #ffffff !important;
+        color: #0f172a !important;
+        border-color: #94a3b8 !important;
+      }
+      body[data-theme="light"] .admin-surface-card {
+        background: #ffffff !important;
+        border-color: #cbd5e1 !important;
+        color: #0f172a !important;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+      }
+      body[data-theme="light"] .admin-sub-box {
+        background: #f8fafc !important;
+        border-color: #cbd5e1 !important;
+        color: #0f172a !important;
+      }
+      body[data-theme="light"] .admin-code-pill {
+        background: #e2e8f0 !important;
+        color: #0f172a !important;
+        border-color: #cbd5e1 !important;
       }
       /* JSON-Backup-Import Schnellstart, Ziel-Auswahl & Cockpit Design (Dark + Light) */
       .backup-step-card {
@@ -1489,6 +1690,8 @@
       .btn.purple:hover { background: rgba(99, 102, 241, 0.3); border-color: #818cf8; color: #fff; }
       .btn.amber { background: rgba(245, 158, 11, 0.16); border-color: rgba(251, 191, 36, 0.42); color: #fef3c7; font-weight: 700; }
       .btn.amber:hover { background: rgba(245, 158, 11, 0.26); border-color: #fbbf24; color: #fff; }
+      .btn.close-slate { background: rgba(30, 41, 59, 0.85); border-color: rgba(148, 163, 184, 0.35); color: #e2e8f0; font-weight: 700; }
+      .btn.close-slate:hover { background: #334155; border-color: #94a3b8; color: #f8fafc; }
       .btn.active { background: #f8fafc; color: #0f172a; border-color: #f8fafc; font-weight: 800; }
 
       /* Linke Off-Canvas Sidebar für Filter, Größe, Themes & Farbenblind-Modus */
@@ -1513,8 +1716,8 @@
         bottom: 0;
         width: min(350px, 90vw);
         z-index: 145;
-        background: #14141b;
-        border-right: 1px solid rgba(255, 255, 255, 0.14);
+        background: var(--surface);
+        border-right: 1px solid rgba(14, 165, 233, 0.24);
         box-shadow: 16px 0 48px rgba(0, 0, 0, 0.85);
         transform: translateX(-104%);
         transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
@@ -1527,12 +1730,12 @@
       }
       .sidebar-header {
         padding: 10px 12px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.16);
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 6px;
-        background: rgba(255, 255, 255, 0.02);
+        background: rgba(16, 26, 48, 0.65);
       }
       .sidebar-body {
         flex: 1;
@@ -1545,15 +1748,45 @@
         gap: 8px;
       }
       .sidebar-section {
-        background: rgba(255, 255, 255, 0.025);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: var(--card);
+        border: 1px solid rgba(148, 163, 184, 0.16);
         border-radius: 10px;
-        padding: 8px 10px;
+        padding: 9px 11px;
+      }
+      .sidebar-sub-divider {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(148, 163, 184, 0.16);
+      }
+      .sidebar-account-btn.is-auth {
+        background: rgba(16, 185, 129, 0.14);
+        border-color: rgba(16, 185, 129, 0.42);
+        color: #6ee7b7;
+      }
+      .sidebar-account-btn.is-auth:hover {
+        background: rgba(16, 185, 129, 0.24);
+        border-color: #34d399;
+        color: #ecfdf5;
+      }
+      .sidebar-account-btn.is-guest {
+        background: rgba(14, 165, 233, 0.14);
+        border-color: rgba(56, 189, 248, 0.4);
+        color: #bae6fd;
+      }
+      .sidebar-account-btn.is-guest:hover {
+        background: rgba(14, 165, 233, 0.24);
+        border-color: #38bdf8;
+        color: #f0f9ff;
+      }
+      .sidebar-account-btn .sidebar-account-cta {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 700;
       }
       .sidebar-section-title {
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 800;
-        color: #cbd5e1;
+        color: #e2e8f0;
         margin-bottom: 6px;
         display: flex;
         align-items: center;
@@ -1578,12 +1811,12 @@
       }
       .sidebar-collapse-btn:hover {
         color: #fff;
-        background: rgba(255, 255, 255, 0.05);
+        background: rgba(14, 165, 233, 0.12);
       }
       .sidebar-collapse-meta {
         font-size: calc(11px * var(--scale-text));
         font-weight: 700;
-        color: #94a3b8;
+        color: #38bdf8;
         display: inline-flex;
         align-items: center;
         gap: 5px;
@@ -1594,7 +1827,7 @@
         justify-content: space-between;
         gap: 6px;
         padding: 4px 0;
-        border-top: 1px solid rgba(255, 255, 255, 0.05);
+        border-top: 1px solid rgba(148, 163, 184, 0.12);
       }
       .scale-label {
         font-size: calc(11px * var(--scale-text));
@@ -1910,8 +2143,8 @@
         inset: 0 0 -1px 0;
         pointer-events: none;
         background:
-          linear-gradient(90deg, rgba(15, 15, 19, 0.95) 0%, rgba(15, 15, 19, 0.72) 48%, rgba(15, 15, 19, 0.18) 100%),
-          linear-gradient(to top, var(--bg) 0%, rgba(15, 15, 19, 0.35) 55%, rgba(15, 15, 19, 0.65) 100%);
+          linear-gradient(90deg, rgba(10, 15, 29, 0.95) 0%, rgba(10, 15, 29, 0.72) 48%, rgba(10, 15, 29, 0.18) 100%),
+          linear-gradient(to top, var(--bg) 0%, rgba(10, 15, 29, 0.35) 55%, rgba(10, 15, 29, 0.65) 100%);
       }
       .hero-inner {
         position: relative;
@@ -2166,8 +2399,8 @@
         margin: 8px 14px 2px;
         padding: 7px 12px;
         border-radius: 12px;
-        background: linear-gradient(90deg, rgba(14, 165, 233, 0.16) 0%, rgba(22, 22, 30, 0.92) 45%, rgba(22, 22, 30, 0.95) 100%);
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: linear-gradient(90deg, rgba(14, 165, 233, 0.16) 0%, rgba(15, 23, 42, 0.92) 45%, rgba(15, 23, 42, 0.96) 100%);
+        border: 1px solid rgba(148, 163, 184, 0.18);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -2298,12 +2531,13 @@
 
       /* Schlanke Kategorie- & Sortier-Leiste ohne mehrzeiliges Flattern */
       .floating-filter-bar {
-        background: rgba(18, 21, 30, 0.78);
+        background: var(--surface);
         backdrop-filter: blur(12px);
-        border: 1px solid rgba(255,255,255,0.07);
+        border: 1px solid rgba(148, 163, 184, 0.16);
         border-radius: 12px;
         padding: 8px 10px;
         margin: 4px 0 10px;
+        box-shadow: 0 6px 20px rgba(2, 6, 23, 0.35);
       }
       .ff-controls-grid {
         display: flex;
@@ -2342,8 +2576,8 @@
         gap: 5px;
         transition: all 0.14s ease;
       }
-      .ff-tab-btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
-      .ff-tab-btn.open { background: rgba(99, 102, 241, 0.24); border-color: #818cf8; color: #fff; box-shadow: 0 3px 12px rgba(99,102,241,0.25); }
+      .ff-tab-btn:hover { background: rgba(14, 165, 233, 0.14); border-color: rgba(56, 189, 248, 0.35); }
+      .ff-tab-btn.open { background: rgba(2, 132, 199, 0.28); border-color: #38bdf8; color: #fff; box-shadow: 0 3px 12px rgba(2, 132, 199, 0.25); }
       .ff-tab-btn.has-inc { border-color: var(--inc-border); background: var(--inc-bg); color: var(--inc-text); }
       .ff-tab-btn.has-exc { border-color: var(--exc-border); }
 
@@ -2531,7 +2765,7 @@
         width: 100%;
         aspect-ratio: 2/3;
         overflow: hidden;
-        background: #202028;
+        background: #0f172a;
         flex-shrink: 0;
         touch-action: pan-y;
       }
@@ -2541,7 +2775,7 @@
         aspect-ratio: 2/3;
         height: 100%;
         object-fit: cover;
-        background: #262626;
+        background: #0f172a;
         display: block;
         pointer-events: none;
         -webkit-user-drag: none;
@@ -3100,9 +3334,54 @@
         background: #f8fafc;
         border-color: #cbd5e1;
       }
-      .card-body { padding: 7px 8px; display: flex; flex-direction: column; flex: 1; justify-content: space-between; gap: 4px; }
-      .card-title { font-size: calc(12px * var(--scale-text)); font-weight: 700; line-height: 1.3; white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
-      .card-sub { font-size: calc(10.5px * var(--scale-text)); color: var(--muted); display: flex; justify-content: space-between; margin-top: 2px; }
+      .card-body {
+        padding: 8px 9px 7px;
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        justify-content: space-between;
+        gap: 4px;
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.35) 0%, rgba(15, 23, 42, 0.72) 100%);
+        border-top: 1px solid rgba(148, 163, 184, 0.08);
+      }
+      .card-title {
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 700;
+        line-height: 1.3;
+        min-height: calc(12px * var(--scale-text) * 2.6);
+        max-height: calc(12px * var(--scale-text) * 2.6);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        position: relative;
+      }
+      .card-title-text {
+        display: inline;
+      }
+      @keyframes cardTitleMarquee {
+        0%, 14% { transform: translateX(0); }
+        82%, 94% { transform: translateX(var(--marquee-dist, -45%)); }
+        100% { transform: translateX(0); }
+      }
+      .card-title.is-marquee-overflow {
+        display: flex !important;
+        align-items: center;
+        -webkit-line-clamp: unset !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+      }
+      .card-title.is-marquee-overflow .card-title-text {
+        display: inline-block;
+        white-space: nowrap;
+        padding-right: 18px;
+        will-change: transform;
+        animation: cardTitleMarquee var(--marquee-dur, 5.5s) ease-in-out infinite;
+      }
+      .card-sub { font-size: calc(10.5px * var(--scale-text)); color: var(--muted); display: flex; justify-content: space-between; margin-top: 2px; font-weight: 600; }
       @keyframes cardFadeIn {
         from { opacity: 0.35; }
         to { opacity: 1; }
@@ -3118,7 +3397,7 @@
         border-radius: 10px;
         overflow: hidden;
         background: var(--surface);
-        border: 1px solid rgba(255, 255, 255, 0.07);
+        border: 1px solid rgba(148, 163, 184, 0.12);
         display: flex;
         flex-direction: column;
         pointer-events: none;
@@ -3126,7 +3405,7 @@
       .skeleton-poster {
         width: 100%;
         aspect-ratio: 2/3;
-        background: linear-gradient(90deg, rgba(32,32,42,0.9) 25%, rgba(56,56,72,0.95) 50%, rgba(32,32,42,0.9) 75%);
+        background: linear-gradient(90deg, rgba(15, 23, 42, 0.9) 25%, rgba(30, 41, 59, 0.95) 50%, rgba(15, 23, 42, 0.9) 75%);
         background-size: 200% 100%;
         animation: skeletonShimmer 1.35s infinite linear;
       }
@@ -3134,7 +3413,7 @@
         height: 11px;
         margin: 8px 8px 4px;
         border-radius: 5px;
-        background: linear-gradient(90deg, rgba(40,40,52,0.9) 25%, rgba(68,68,86,0.95) 50%, rgba(40,40,52,0.9) 75%);
+        background: linear-gradient(90deg, rgba(30, 41, 59, 0.9) 25%, rgba(51, 65, 85, 0.95) 50%, rgba(30, 41, 59, 0.9) 75%);
         background-size: 200% 100%;
         animation: skeletonShimmer 1.35s infinite linear;
       }
@@ -3154,8 +3433,9 @@
         margin-top: 16px;
         padding: 12px 10px;
         border-radius: 12px;
-        background: rgba(18, 21, 30, 0.72);
-        border: 1px solid rgba(255, 255, 255, 0.07);
+        background: var(--surface);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+        box-shadow: 0 6px 20px rgba(2, 6, 23, 0.35);
       }
       .page-counter-pill {
         display: inline-flex;
@@ -3328,8 +3608,8 @@
       .scale-opts { display: flex; gap: 4px; flex-wrap: wrap; }
 
       /* Premium Detail-Modal im Flixnet- & Netflix-Design */
-      .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.88); backdrop-filter: blur(10px); overflow-y: auto; padding: 14px 10px 40px; scroll-padding-top: 64px; scroll-padding-bottom: 28px; animation: fadeIn 0.16s ease; }
-      .modal { background: #121318; border-radius: 16px; max-width: 820px; margin: 0 auto; overflow: hidden; border: 1px solid rgba(255,255,255,0.14); box-shadow: 0 24px 65px rgba(0,0,0,0.92); }
+      .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(2, 6, 23, 0.86); backdrop-filter: blur(10px); overflow-y: auto; padding: 14px 10px 40px; scroll-padding-top: 64px; scroll-padding-bottom: 28px; animation: fadeIn 0.16s ease; }
+      .modal { background: var(--surface); border-radius: 16px; max-width: 820px; margin: 0 auto; overflow: hidden; border: 1px solid rgba(148, 163, 184, 0.18); box-shadow: 0 24px 65px rgba(0,0,0,0.92); }
       .modal-hero-banner {
         position: relative;
         min-height: 280px;
@@ -3339,13 +3619,13 @@
         flex-direction: column;
         justify-content: space-between;
         padding: 16px 20px 20px;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.12);
       }
       .modal-hero-banner::after {
         content: "";
         position: absolute;
         inset: 0;
-        background: linear-gradient(to top, #121318 4%, rgba(18,19,24,0.82) 52%, rgba(18,19,24,0.55) 100%), radial-gradient(circle at 20% 50%, rgba(18,19,24,0.75) 0%, transparent 70%);
+        background: linear-gradient(to top, rgba(10, 15, 29, 0.98) 4%, rgba(10, 15, 29, 0.8) 52%, rgba(10, 15, 29, 0.5) 100%), radial-gradient(circle at 20% 50%, rgba(10, 15, 29, 0.72) 0%, transparent 70%);
       }
       .modal-hero-top {
         position: relative;
@@ -3386,7 +3666,7 @@
         box-shadow: 0 12px 28px rgba(0,0,0,0.78);
         flex-shrink: 0;
         cursor: zoom-in;
-        background: #1a1b22;
+        background: #0f172a;
         transition: transform 0.16s ease, border-color 0.16s ease;
       }
       .flix-poster-card:hover {
@@ -3424,8 +3704,8 @@
         display: flex;
         gap: 6px;
         padding: 0 20px;
-        background: #161820;
-        border-bottom: 1px solid rgba(255,255,255,0.09);
+        background: var(--card);
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
         overflow-x: auto;
         scrollbar-width: none;
       }
@@ -3447,7 +3727,7 @@
       }
       .flix-tab-btn:hover, .flix-tab-btn.spatial-focus {
         color: #f8fafc;
-        background: rgba(255,255,255,0.04);
+        background: rgba(14, 165, 233, 0.08);
       }
       .flix-tab-btn.active {
         color: #ffffff;
@@ -3471,7 +3751,7 @@
         position: fixed;
         inset: 0;
         z-index: 240;
-        background: rgba(0,0,0,0.82);
+        background: rgba(2, 6, 23, 0.84);
         backdrop-filter: blur(6px);
         display: flex;
         align-items: center;
@@ -3480,8 +3760,8 @@
         animation: fadeIn 0.14s ease;
       }
       .submodal-box {
-        background: #161821;
-        border: 1px solid rgba(255,255,255,0.18);
+        background: var(--surface);
+        border: 1px solid rgba(148, 163, 184, 0.22);
         border-radius: 14px;
         width: 100%;
         max-width: 520px;
@@ -3904,7 +4184,7 @@
             <defs>
               <linearGradient id="tpGradHeader" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
                 <stop offset="0%" stop-color="#38bdf8"/>
-                <stop offset="50%" stop-color="#a855f7"/>
+                <stop offset="50%" stop-color="#0284c7"/>
                 <stop offset="100%" stop-color="#6366f1"/>
               </linearGradient>
             </defs>
@@ -3940,7 +4220,7 @@
         </span>
         <div style="display:flex;gap:6px">
           <button class="btn danger" style="padding:4px 8px;font-size:11px" onclick="setDirectFilter('reset_all','','neutral')" title="Alle aktiven Filter zurücksetzen">🗑️ Reset</button>
-          <button class="btn" onclick="closeFilterSidebar()" title="Sidebar schließen">✖</button>
+          <button class="btn close-slate" onclick="closeFilterSidebar()" title="Sidebar schließen">✖</button>
         </div>
       </div>
       <div id="sidebarDrawerBody" class="sidebar-body"></div>
@@ -4210,19 +4490,19 @@
         const b = document.getElementById("syncBadge");
         const admBtn = document.getElementById("adminHeaderBtn");
         if (b) {
+          b.style.color = "";
+          b.style.borderColor = "";
           if (state && state.isAuthenticated && state.authUser) {
             const u = state.authUser;
             const label = u.customUsername || (u.tgUsername ? "@" + u.tgUsername : ("ID " + u.telegramId));
             const vipTag = u.isVip ? " 🌟VIP" : "";
             const admTag = u.isAdmin ? " 👑" : "";
-            b.textContent = "🟢 " + label + vipTag + admTag;
-            b.style.color = "#34d399";
-            b.style.borderColor = "rgba(16,185,129,0.4)";
+            b.className = "btn sidebar-account-btn is-auth";
+            b.innerHTML = '<span>🟢 ' + esc(label + vipTag + admTag) + '</span><span class="sidebar-account-cta">🔐 Konto öffnen ▸</span>';
             if (admBtn) admBtn.style.display = u.isAdmin ? "inline-flex" : "none";
           } else {
-            b.textContent = "👤 Gast • Login";
-            b.style.color = "#fbbf24";
-            b.style.borderColor = "rgba(251,191,36,0.4)";
+            b.className = "btn sidebar-account-btn is-guest";
+            b.innerHTML = '<span>👤 Gast • Login</span><span class="sidebar-account-cta">🔐 Konto öffnen ▸</span>';
             if (admBtn) admBtn.style.display = "none";
           }
         }
@@ -4412,7 +4692,7 @@
         if (state && state.currentView === "settings") {
           const stBtn = document.getElementById("settingsMouseHoverNavBtn");
           if (stBtn) {
-            stBtn.className = "btn " + (mouseHoverNavEnabled ? "green" : "");
+            stBtn.className = "btn " + (mouseHoverNavEnabled ? "blue" : "");
             stBtn.innerHTML = '<span>🖱️ Maus-Hover Navigation (Mauszeiger verschiebt Auswahl)</span><b>' + (mouseHoverNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>';
             if (!state.sidebarOpen && typeof jumpSpatialFocus === "function") jumpSpatialFocus(stBtn, false);
           }
@@ -4431,7 +4711,7 @@
         if (state && state.currentView === "settings") {
           const stBtn = document.getElementById("settingsModalHoldNavBtn");
           if (stBtn) {
-            stBtn.className = "btn " + (modalHoldNavEnabled ? "green" : "");
+            stBtn.className = "btn " + (modalHoldNavEnabled ? "blue" : "");
             stBtn.innerHTML = '<span>⏩ Detailansicht: Pfeiltaste ⬅️/➡️ gedrückt halten (~450ms) für nächsten/vorherigen Titel</span><b>' + (modalHoldNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>';
             if (!state.sidebarOpen && typeof jumpSpatialFocus === "function") jumpSpatialFocus(stBtn, false);
           }
@@ -4734,10 +5014,10 @@
         const buildScaleRow = (label, key, presets) => {
           const cur = Number(uiScale[key] || 100);
           return '<div class="scale-row">' +
-            '<span class="scale-label">' + label + ' <b style="color:#a78bfa">' + cur + '%</b></span>' +
+            '<span class="scale-label">' + label + ' <b style="color:var(--blue)">' + cur + '%</b></span>' +
             '<div class="scale-opts">' +
               '<button id="sbScale_' + key + '_dec" class="btn" onclick="setUiScaleValue(\\'' + key + '\\',' + (cur - 5) + ')">➖</button>' +
-              presets.map(p => '<button id="sbScale_' + key + '_' + p.v + '" class="btn ' + (cur === p.v ? 'purple' : '') + '" onclick="setUiScaleValue(\\'' + key + '\\',' + p.v + ')">' + p.l + '</button>').join("") +
+              presets.map(p => '<button id="sbScale_' + key + '_' + p.v + '" class="btn ' + (cur === p.v ? 'blue' : '') + '" onclick="setUiScaleValue(\\'' + key + '\\',' + p.v + ')">' + p.l + '</button>' ).join("") +
               '<button id="sbScale_' + key + '_inc" class="btn" onclick="setUiScaleValue(\\'' + key + '\\',' + (cur + 5) + ')">➕</button>' +
             '</div>' +
           '</div>';
@@ -4815,8 +5095,8 @@
               '<span>⚡ Navigation & Konto</span>' +
             '</div>' +
             '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
-              '<button id="syncBadge" class="btn" style="grid-column:1 / -1;justify-content:space-between;background:rgba(255,255,255,0.04);color:' + (isAuth ? '#34d399' : '#fbbf24') + ';border-color:' + (isAuth ? 'rgba(16,185,129,0.32)' : 'rgba(251,191,36,0.32)') + '" onclick="closeFilterSidebar();openAccountModal()">' +
-                '<span>' + esc(accLabel) + '</span><span style="color:var(--text-muted);font-size:11px">🔐 Konto öffnen ▸</span>' +
+              '<button id="syncBadge" class="btn sidebar-account-btn ' + (isAuth ? 'is-auth' : 'is-guest') + '" style="grid-column:1 / -1;justify-content:space-between" onclick="closeFilterSidebar();openAccountModal()">' +
+                '<span>' + esc(accLabel) + '</span><span class="sidebar-account-cta">🔐 Konto öffnen ▸</span>' +
               '</button>' +
               '<button id="sidebarRandomBtn" class="btn" onclick="closeFilterSidebar();triggerRandom()" title="Zufälligen Titel mit aktiven Filtern ziehen">' +
                 (state.type === 's' ? '🎲 Zufalls-Serie' : '🎲 Zufalls-Film') +
@@ -4843,7 +5123,7 @@
                 '📲 Home-Icon' +
               '</button>' +
               (u.isAdmin ? (
-                '<button id="adminHeaderBtn" class="btn amber" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'
+                '<button id="adminHeaderBtn" class="btn blue" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'
               ) : '') +
             '</div>' +
           '</div>' +
@@ -4852,7 +5132,7 @@
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
               '<span>🎛️ Katalog-Filter</span>' +
-              '<span style="font-size:10px;color:var(--text-muted)">✓ Einschluss • ✕ Ausschluss</span>' +
+              '<span style="font-size:10px;color:var(--muted)">✓ Einschluss • ✕ Ausschluss</span>' +
             '</div>' +
             '<div style="display:flex;gap:5px;flex-wrap:wrap;' + (catGridHtml || isCurrentUserVip() ? 'margin-bottom:8px' : '') + '">' +
               '<button id="sidebarCatTab_genres" class="ff-tab-btn ' + (curTab === 'genres' ? 'open' : '') + (gCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'genres\\')">🎞️ Genres' + (gCount ? ' (' + gCount + ')' : '') + '</button>' +
@@ -4863,7 +5143,7 @@
             '</div>' +
             /* Optimierung #13: Exklusiver VIP-Filter "Nur Titel mit verfügbarem Stream anzeigen" */
             (isCurrentUserVip() ? (
-              '<button id="sidebarVipStreamsOnlyBtn" class="btn ' + (s.onlyVipStreams ? 'green' : '') + '" style="width:100%;justify-content:space-between;' + (catGridHtml ? 'margin-bottom:8px' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
+              '<button id="sidebarVipStreamsOnlyBtn" class="btn ' + (s.onlyVipStreams ? 'blue' : '') + '" style="width:100%;justify-content:space-between;' + (catGridHtml ? 'margin-bottom:8px' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
                 '<span>🌟 Nur mit verfügbarem Stream</span>' +
                 '<b>' + (s.onlyVipStreams ? 'AKTIV' : 'ALLE') + '</b>' +
               '</button>'
@@ -4878,25 +5158,25 @@
               '<span class="sidebar-collapse-meta">' + themeBadge + ' ' + (state.sidebarDesignOpen ? '▾' : '▸') + '</span>' +
             '</button>' +
             (state.sidebarDesignOpen ? (
-              '<div id="sidebarDesignBody" style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.08)">' +
+              '<div id="sidebarDesignBody" class="sidebar-sub-divider">' +
                 '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">' +
-                  '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'active' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
-                  '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'active' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
-                  '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'active' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
+                  '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'blue' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
+                  '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'blue' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
+                  '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'blue' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
                 '</div>' +
                 '<button id="sidebarColorblindBtn" class="btn ' + (colorblindMode ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleColorblindMode()">' +
                   '<span>👁️ Farbenblind-Modus</span>' +
                   '<b>' + (colorblindMode ? 'EIN' : 'AUS') + '</b>' +
                 '</button>' +
-                '<button id="sidebarMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'green' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleMouseHoverNav()">' +
+                '<button id="sidebarMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleMouseHoverNav()">' +
                   '<span>🖱️ Maus-Hover Fokus</span>' +
                   '<b>' + (mouseHoverNavEnabled ? 'EIN' : 'AUS') + '</b>' +
                 '</button>' +
-                '<button id="sidebarModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'green' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleModalHoldNav()">' +
+                '<button id="sidebarModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleModalHoldNav()">' +
                   '<span>⏩ Pfeil halten (450ms) = Nächster</span>' +
                   '<b>' + (modalHoldNavEnabled ? 'EIN' : 'AUS') + '</b>' +
                 '</button>' +
-                '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'green' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
+                '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
                   '<span>🎬 Spotlight-Banner</span>' +
                   '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
                 '</button>' +
@@ -4911,9 +5191,9 @@
               '<span class="sidebar-collapse-meta">' + scaleBadge + ' ' + (state.sidebarScaleOpen ? '▾' : '▸') + '</span>' +
             '</button>' +
             (state.sidebarScaleOpen ? (
-              '<div id="sidebarScaleBody" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08)">' +
+              '<div id="sidebarScaleBody" class="sidebar-sub-divider">' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
-                  '<span style="font-size:10.5px;color:var(--text-muted)">Tastatur: <b>+</b> / <b>-</b></span>' +
+                  '<span style="font-size:10.5px;color:var(--muted)">Tastatur: <b>+</b> / <b>-</b></span>' +
                   '<button id="sidebarScaleResetBtn" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="resetUiScale()">↺ 100%</button>' +
                 '</div>' +
                 buildScaleRow("📐 Gesamt", "all", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"130%",v:130}]) +
@@ -5181,11 +5461,11 @@
                 '<p style="font-size:12px;color:#cbd5e1;line-height:1.45;margin:0 0 4px 0">' +
                   'Logge dich mit deinem abgesicherten <b>Username & Passwort</b> (sowie optionalem 6-stelligem 2FA-Code) ein:' +
                 '</p>' +
-                '<input id="loginUsernameInp" placeholder="Username" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
-                '<input id="loginPasswordInp" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
+                '<input id="loginUsernameInp" class="tma-input" placeholder="Username" style="padding:8px 10px;font-size:13px" />' +
+                '<input id="loginPasswordInp" class="tma-input" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;font-size:13px" />' +
                 '<div id="login2faWrap" style="display:none;flex-direction:column;gap:6px;padding:8px;border-radius:6px;background:rgba(91,70,245,0.14);border:1px solid rgba(91,70,245,0.4)">' +
                   '<div style="font-size:11.5px;font-weight:700;color:#c4b5fd">🛡️ 2FA-Schutz aktiv: Bitte 6-stelligen Authenticator-Code eingeben</div>' +
-                  '<input id="loginTotpInp" placeholder="6-stelliger 2FA-Code (z. B. 123456)" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(167,139,250,0.5);background:#141414;color:#fff;font-size:14px;letter-spacing:3px;font-weight:800;text-align:center" />' +
+                  '<input id="loginTotpInp" class="tma-input" placeholder="6-stelliger 2FA-Code (z. B. 123456)" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-color:rgba(167,139,250,0.5);font-size:14px;letter-spacing:3px;font-weight:800;text-align:center" />' +
                 '</div>' +
                 '<button class="btn green" onclick="submitWebLogin()">🔑 Mit Username & Passwort einloggen</button>' +
                 '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
@@ -5196,11 +5476,11 @@
 
         if (canCreateOrUpdateAccount || isAuth) {
           bodyHtml += '<div class="panel-box">' +
-            '<div style="font-size:13px;font-weight:800;color:#fff;margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Account-Zugangsdaten ändern' : 'Account zusätzlich mit Username & Passwort absichern') + '</div>' +
-            '<p style="font-size:11.5px;color:#aaa;margin-bottom:10px">Sobald dein Account mit Username & Passwort abgesichert ist, kannst du dich jederzeit auch per Passwort auf jedem Gerät (TV, PC, Browser) einloggen.</p>' +
+            '<div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Account-Zugangsdaten ändern' : 'Account zusätzlich mit Username & Passwort absichern') + '</div>' +
+            '<p style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Sobald dein Account mit Username & Passwort abgesichert ist, kannst du dich jederzeit auch per Passwort auf jedem Gerät (TV, PC, Browser) einloggen.</p>' +
             '<div style="display:flex;flex-direction:column;gap:8px">' +
-              '<input id="setAccUsernameInp" value="' + esc(u.customUsername || u.tgUsername || '') + '" placeholder="Gewünschter Username (3–32 Zeichen)" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
-              '<input id="setAccPasswordInp" type="password" placeholder="Neues sicheres Passwort (mind. 6 Zeichen)" style="padding:8px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:13px" />' +
+              '<input id="setAccUsernameInp" class="tma-input" value="' + esc(u.customUsername || u.tgUsername || '') + '" placeholder="Gewünschter Username (3–32 Zeichen)" style="padding:8px 10px;font-size:13px" />' +
+              '<input id="setAccPasswordInp" class="tma-input" type="password" placeholder="Neues sicheres Passwort (mind. 6 Zeichen)" style="padding:8px 10px;font-size:13px" />' +
               '<button class="btn purple" onclick="submitSaveAccountCredentials()">💾 Account mit Username & Passwort absichern</button>' +
               '<div id="setAccFeedback" style="font-size:12px;color:#fbbf24"></div>' +
             '</div>' +
@@ -5209,14 +5489,14 @@
           bodyHtml += '<div class="panel-box" style="border-color:rgba(91,70,245,0.35)">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
               '<div style="font-size:13px;font-weight:800;color:#c4b5fd">🛡️ Zwei-Faktor-Authentifizierung (TOTP 2FA)</div>' +
-              '<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:' + (u.totpEnabled ? 'rgba(16,185,129,0.2);color:#34d399' : 'rgba(255,255,255,0.08);color:#94a3b8') + '">' +
+              '<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:' + (u.totpEnabled ? 'rgba(16,185,129,0.2);color:#34d399' : 'rgba(148,163,184,0.16);color:var(--muted)') + '">' +
                 (u.totpEnabled ? '🟢 2FA AKTIV' : '⚪ INAKTIV') +
               '</span>' +
             '</div>' +
-            '<p style="font-size:11.5px;color:#aaa;margin-bottom:10px">Schütze deinen Web-Login zusätzlich mit einem 6-stelligen Einmalcode (kompatibel mit Google Authenticator, Authy, 1Password & Apple Passwörter).</p>' +
+            '<p style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Schütze deinen Web-Login zusätzlich mit einem 6-stelligen Einmalcode (kompatibel mit Google Authenticator, Authy, 1Password & Apple Passwörter).</p>' +
             (u.totpEnabled ? (
               '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-                '<input id="disable2faCodeInp" placeholder="6-stelliger 2FA-Code zur Bestätigung" maxlength="6" style="padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:#141414;color:#fff;font-size:12.5px;width:230px" />' +
+                '<input id="disable2faCodeInp" class="tma-input" placeholder="6-stelliger 2FA-Code zur Bestätigung" maxlength="6" style="padding:7px 10px;font-size:12.5px;width:230px" />' +
                 '<button class="btn danger" onclick="disable2faProtection()">🔓 2FA deaktivieren</button>' +
               '</div>'
             ) : (
@@ -5230,7 +5510,7 @@
         }
 
         m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this){stopBotCodePollClient();this.parentElement.innerHTML=\\'\\';}"><div class="modal"><div class="modal-body">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:18px">🔐 Account, Telegram-Login & 2FA</h2><button class="btn" onclick="stopBotCodePollClient();document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖</button></div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:18px">🔐 Account, Telegram-Login & 2FA</h2><button class="btn close-slate" onclick="stopBotCodePollClient();document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖</button></div>' +
           bodyHtml +
         '</div></div></div>';
 
@@ -5255,13 +5535,13 @@
           }
           if (fb) fb.textContent = "";
           if (mount) {
-            mount.innerHTML = '<div style="background:#141414;border:1px solid rgba(255,255,255,0.14);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center">' +
-              '<div style="font-size:12px;color:#e2e8f0;font-weight:700">1. Scanne diesen QR-Code mit Google Authenticator oder Authy:</div>' +
+            mount.innerHTML = '<div class="admin-sub-box" style="padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center">' +
+              '<div style="font-size:12px;color:var(--text);font-weight:700">1. Scanne diesen QR-Code mit Google Authenticator oder Authy:</div>' +
               '<img src="' + esc(r.qrCodeUrl) + '" alt="TOTP QR Code" style="width:180px;height:180px;border-radius:8px;background:#fff;padding:6px" />' +
-              '<div style="font-size:11px;color:#94a3b8">Manueller Setup-Schlüssel (Base32):<br><code style="color:#fbbf24;font-size:12px;user-select:all;letter-spacing:1px">' + esc(r.secret) + '</code></div>' +
-              '<div style="font-size:12px;color:#e2e8f0;font-weight:700;margin-top:4px">2. Gib zur Aktivierung den 6-stelligen Code aus der App ein:</div>' +
+              '<div style="font-size:11px;color:var(--muted)">Manueller Setup-Schlüssel (Base32):<br><code style="color:#fbbf24;font-size:12px;user-select:all;letter-spacing:1px">' + esc(r.secret) + '</code></div>' +
+              '<div style="font-size:12px;color:var(--text);font-weight:700;margin-top:4px">2. Gib zur Aktivierung den 6-stelligen Code aus der App ein:</div>' +
               '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
-                '<input id="verifyTotpSetupInp" placeholder="123456" maxlength="6" inputmode="numeric" style="padding:8px 12px;border-radius:6px;border:1px solid rgba(16,185,129,0.5);background:#1c1c22;color:#fff;font-size:15px;letter-spacing:3px;font-weight:800;width:140px;text-align:center" />' +
+                '<input id="verifyTotpSetupInp" class="tma-input" placeholder="123456" maxlength="6" inputmode="numeric" style="padding:8px 12px;border-color:rgba(16,185,129,0.5);font-size:15px;letter-spacing:3px;font-weight:800;width:140px;text-align:center" />' +
                 '<button class="btn green" onclick="confirm2faSetupEnable()">✅ Code prüfen & 2FA aktivieren</button>' +
               '</div>' +
             '</div>';
@@ -5428,7 +5708,7 @@
             '<div style="font-size:13.5px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(titleText || 'Großansicht') + '</div>' +
             '<div style="display:flex;gap:6px">' +
               '<button class="btn" onclick="const im=document.getElementById(\\'lbImg\\');if(im)im.classList.toggle(\\'zoomed\\')">🔍 Zoom</button>' +
-              '<button class="btn red" onclick="closeLightbox()">✖ Schließen</button>' +
+              '<button class="btn close-slate" onclick="closeLightbox()">✖ Schließen</button>' +
             '</div>' +
           '</div>' +
           '<img id="lbImg" class="lightbox-img" src="' + esc(imgUrl) + '" onclick="this.classList.toggle(\\'zoomed\\')" alt="Poster" />' +
@@ -5594,11 +5874,11 @@
                 '<div class="modal-body">' +
                   '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">' +
                     '<div style="font-size:15px;font-weight:900">🎬 Trailer: ' + esc(d.title || titleText || 'Titel') + '</div>' +
-                    '<button class="btn red" onclick="closeDetailModal()">✖</button>' +
+                    '<button class="btn close-slate" onclick="closeDetailModal()">✖</button>' +
                   '</div>' +
-                  '<p style="font-size:12.5px;color:#cbd5e1;margin-bottom:12px">Für diesen Titel ist aktuell kein direkter TMDB-Trailer hinterlegt. Du kannst direkt auf YouTube suchen oder die Detailansicht öffnen:</p>' +
+                  '<p style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Für diesen Titel ist aktuell kein direkter TMDB-Trailer hinterlegt. Du kannst direkt auf YouTube suchen oder die Detailansicht öffnen:</p>' +
                   '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-                    '<a class="btn red" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Auf YouTube suchen</a>' +
+                    '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Auf YouTube suchen</a>' +
                     '<button class="btn purple" onclick="openDetails(\\'' + tc + '\\',' + Number(d.id || id) + ',false)">ℹ️ Vollständige Details öffnen</button>' +
                   '</div>' +
                 '</div>' +
@@ -5619,13 +5899,13 @@
                   '<div style="display:flex;gap:6px;align-items:center">' +
                     '<button class="btn purple" onclick="openDetails(\\'' + tc + '\\',' + Number(d.id || id) + ',false)">ℹ️ Alle Details</button>' +
                     '<button class="btn blue" onclick="openInBot(\\'' + tc + '_' + Number(d.id || id) + '\\')" title="Im Telegram-Bot öffnen">🤖</button>' +
-                    '<button class="btn red" onclick="closeDetailModal()" title="Schließen">✖</button>' +
+                    '<button class="btn close-slate" onclick="closeDetailModal()" title="Schließen">✖</button>' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:6px">' +
                   '<span style="font-size:11px;color:var(--text-muted);margin-right:4px">⚡ Standard-Quelle wählen:</span>' +
                   TRAILER_PROVIDERS_CLIENT.map(tp =>
-                    '<button class="btn ' + (trailerProvider === tp.id ? 'red' : '') + '" style="padding:3px 8px;font-size:11px" data-tp-id="' + esc(tp.id) + '" onclick="switchInstantTrailerModalProvider(\\'' + esc(tp.id) + '\\')">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
+                    '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" style="padding:3px 8px;font-size:11px" data-tp-id="' + esc(tp.id) + '" onclick="switchInstantTrailerModalProvider(\\'' + esc(tp.id) + '\\')">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
                   ).join("") +
                 '</div>' +
                 '<div id="trailerEmbedContainer">' +
@@ -5647,7 +5927,7 @@
           const pid = b.getAttribute("data-tp-id") || "";
           const tpObj = TRAILER_PROVIDERS_CLIENT.find(x => x.id === pid);
           const isMatch = pid === sourceKey;
-          b.className = "btn " + (isMatch ? "red" : "");
+          b.className = "btn " + (isMatch ? "blue" : "");
           if (tpObj) b.textContent = tpObj.label + (isMatch ? " ✓ Standard" : "");
         });
       }
@@ -5812,11 +6092,73 @@
         }
       }, { passive: false });
 
+      // Intelligenter Lauftext (Marquee) für überlange Kartentitel bei Hover, Fokus oder Auswahl
+      function activateCardTitleMarquee(card) {
+        if (!card || !card.querySelector) return;
+        const titleEl = card.querySelector(".card-title");
+        if (!titleEl || titleEl.classList.contains("is-marquee-overflow")) return;
+        const rawText = (card.getAttribute("data-card-title") || titleEl.textContent || "").trim();
+        const isClamped = (titleEl.scrollHeight > titleEl.clientHeight + 2) || (rawText.length > 30);
+        if (!isClamped) return;
+        let textSpan = titleEl.querySelector(".card-title-text");
+        if (!textSpan) {
+          titleEl.innerHTML = '<span class="card-title-text">' + esc(rawText) + '</span>';
+          textSpan = titleEl.querySelector(".card-title-text");
+        }
+        titleEl.classList.add("is-marquee-overflow");
+        const overflowPx = Math.max(0, (textSpan ? textSpan.scrollWidth : titleEl.scrollWidth) - titleEl.clientWidth);
+        if (overflowPx > 4) {
+          const durSec = Math.max(4.2, Math.min(11.5, 2.5 + overflowPx / 36)).toFixed(2) + "s";
+          titleEl.style.setProperty("--marquee-dist", "-" + (overflowPx + 10) + "px");
+          titleEl.style.setProperty("--marquee-dur", durSec);
+        } else {
+          titleEl.classList.remove("is-marquee-overflow");
+        }
+      }
+
+      function deactivateCardTitleMarquee(card) {
+        if (!card || !card.querySelector) return;
+        const titleEl = card.querySelector(".card-title");
+        if (!titleEl || !titleEl.classList.contains("is-marquee-overflow")) return;
+        titleEl.classList.remove("is-marquee-overflow");
+        titleEl.style.removeProperty("--marquee-dist");
+        titleEl.style.removeProperty("--marquee-dur");
+      }
+
+      window.syncActiveCardMarquee = function(focusedEl) {
+        const activeCard = focusedEl && focusedEl.closest ? focusedEl.closest(".card") : null;
+        document.querySelectorAll(".card-title.is-marquee-overflow").forEach(el => {
+          const parentCard = el.closest(".card");
+          if (parentCard && parentCard !== activeCard && !parentCard.matches(":hover")) {
+            deactivateCardTitleMarquee(parentCard);
+          }
+        });
+        if (activeCard) {
+          activateCardTitleMarquee(activeCard);
+        }
+      };
+
+      document.addEventListener("mouseover", function(ev) {
+        const card = ev.target && ev.target.closest ? ev.target.closest(".card") : null;
+        if (card) activateCardTitleMarquee(card);
+      }, { passive: true });
+
+      document.addEventListener("mouseout", function(ev) {
+        const card = ev.target && ev.target.closest ? ev.target.closest(".card") : null;
+        if (!card) return;
+        const rel = ev.relatedTarget;
+        if (rel && card.contains(rel)) return;
+        if (!card.classList.contains("spatial-focus") && !card.classList.contains("card-subnav-active")) {
+          deactivateCardTitleMarquee(card);
+        }
+      }, { passive: true });
+
       document.addEventListener("touchstart", function(ev) {
         if (!ev.touches || ev.touches.length !== 1) return;
         if (ev.target && ev.target.closest && ev.target.closest("button, a, select, input")) return;
         const card = ev.target && ev.target.closest ? ev.target.closest(".card[data-card-key]") : null;
         if (!card) return;
+        if (typeof window.syncActiveCardMarquee === "function") window.syncActiveCardMarquee(card);
         const rawKey = card.getAttribute("data-card-key") || "";
         const parts = rawKey.split("_");
         if (parts.length < 2) return;
@@ -6062,7 +6404,7 @@
         if (state.currentView === "settings") {
           const stHeroBtn = document.getElementById("settingsHeroToggleBtn");
           if (stHeroBtn) {
-            stHeroBtn.className = "btn " + (!state.heroHidden ? "green" : "");
+            stHeroBtn.className = "btn " + (!state.heroHidden ? "blue" : "");
             stHeroBtn.innerHTML = '<span>🎬 Empfehlungs-Slider auf der Startseite</span><b>' + (state.heroHidden ? 'AUSGEBLENDET' : 'SICHTBAR') + '</b>';
             if (!state.sidebarOpen && typeof jumpSpatialFocus === "function") jumpSpatialFocus(stHeroBtn, false);
           }
