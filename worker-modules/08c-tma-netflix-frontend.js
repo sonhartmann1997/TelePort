@@ -926,6 +926,7 @@
                 customPlaylistName: bestCp.customPlaylistName || bestCp.playlistName || "",
                 playlistFolderId: bestCp.playlistFolderId || "",
                 playlistMode: bestCp.playlistMode || "both",
+                targetPlaylistChatId: bestCp.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId,
                 verifiedChannelId: bestCp.verifiedChannelId || getSavedVerifiedChannelIdClient()
               };
               backupImportJob.savedCheckpoint = normCp;
@@ -949,6 +950,8 @@
                 uncertainCount: (sameFile && cpToApply) ? Math.max(Number(idbJob.uncertainCount || 0), Number(cpToApply.uncertainCount || 0)) : Number(idbJob.uncertainCount || 0),
                 failedCount: (sameFile && cpToApply) ? Math.max(Number(idbJob.failedCount || 0), Number(cpToApply.failedCount || 0)) : Number(idbJob.failedCount || 0),
                 playlistFolderId: idbJob.playlistFolderId || cpToApply?.playlistFolderId || "",
+                playlistMode: idbJob.playlistMode || cpToApply?.playlistMode || "both",
+                targetPlaylistChatId: idbJob.targetPlaylistChatId || cpToApply?.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId,
                 customPlaylistName: idbJob.customPlaylistName || cpToApply?.customPlaylistName || "🎵 JSON-Import",
                 verifiedChannelId: idbJob.verifiedChannelId || cpToApply?.verifiedChannelId || getSavedVerifiedChannelIdClient()
               };
@@ -965,6 +968,7 @@
               backupImportJob.customPlaylistName = cp.customPlaylistName || "🎵 JSON-Import";
               backupImportJob.playlistFolderId = cp.playlistFolderId || "";
               backupImportJob.playlistMode = cp.playlistMode || "both";
+              backupImportJob.targetPlaylistChatId = cp.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId;
               if (cp.verifiedChannelId) backupImportJob.verifiedChannelId = cp.verifiedChannelId;
             }
 
@@ -1036,6 +1040,7 @@
           customPlaylistName: backupImportJob.customPlaylistName || "",
           playlistFolderId: backupImportJob.playlistFolderId || "",
           playlistMode: backupImportJob.playlistMode || "both",
+          targetPlaylistChatId: backupImportJob.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId,
           savedMovies: Number(backupImportJob.moviesSaved || 0),
           moviesSaved: Number(backupImportJob.moviesSaved || 0),
           savedEpisodes: Number(backupImportJob.seriesSaved || 0),
@@ -1301,9 +1306,18 @@
           ) ? existingCp : null;
 
           const cleanBase = String(file.name || "Import").replace(/\\.json$/i, "").trim();
+          const preservedFolderId = matchingCp?.playlistFolderId || backupImportJob.playlistFolderId || "";
+          const preservedTargetChatId = String(matchingCp?.targetPlaylistChatId || backupImportJob.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId);
+          const preservedMode = matchingCp?.playlistMode || backupImportJob.playlistMode || (preservedTargetChatId === "bot_vip" ? "vip_stream" : "both");
+          const hasExplicitCustomName = Boolean(
+            (preservedFolderId && backupImportJob.customPlaylistName) ||
+            backupImportJob._userEditedPlaylistName
+          );
           const suggestedPlaylistName = matchingCp?.customPlaylistName
             ? matchingCp.customPlaylistName
-            : (info.isTelegramBackup ? ("📦 " + info.backupChatName) : (info.backupChatName || ("🎵 " + cleanBase)));
+            : hasExplicitCustomName
+              ? backupImportJob.customPlaylistName
+              : (info.isTelegramBackup ? ("📦 " + info.backupChatName) : (info.backupChatName || ("🎵 " + cleanBase)));
 
           backupImportJob = {
             ...info,
@@ -1313,9 +1327,10 @@
             savedCheckpoint: matchingCp,
             splitChunkSize: 250,
             customPlaylistName: String(suggestedPlaylistName).slice(0, 48),
-            playlistMode: matchingCp?.playlistMode || backupImportJob.playlistMode || "both",
-            targetPlaylistChatId: String(state.adminPlaylistTargetChatId || chatId),
-            playlistFolderId: matchingCp?.playlistFolderId || "",
+            _userEditedPlaylistName: hasExplicitCustomName,
+            playlistMode: preservedMode,
+            targetPlaylistChatId: preservedTargetChatId,
+            playlistFolderId: preservedFolderId,
             cursor: matchingCp ? Number(matchingCp.cursor || 0) : 0,
             moviesSaved: matchingCp ? Number(matchingCp.moviesSaved || 0) : 0,
             seriesSaved: matchingCp ? Number(matchingCp.seriesSaved || 0) : 0,
@@ -1337,12 +1352,13 @@
           saveBackupJobToIndexedDbClient(true);
           saveBackupCheckpointClient(true);
           if (statusEl) {
-            statusEl.style.color = matchingCp ? "#fbbf24" : (info.repaired ? "#38bdf8" : "#34d399");
+            statusEl.style.color = matchingCp ? "#f59e0b" : (info.repaired ? "#0284c7" : "#10b981");
             const chunksCount = Math.max(1, Math.ceil(info.entries.length / 250));
             statusEl.textContent = matchingCp
               ? ("📌 Checkpoint erkannt: Bei #" + matchingCp.cursor.toLocaleString("de-DE") + " von " + info.entries.length.toLocaleString("de-DE") + " fortsetzen oder ab 0 neu starten!")
-              : ("✅ " + info.entries.length.toLocaleString("de-DE") + " Video-Einträge erkannt [Kanal " + activeChannelId + "] (" + chunksCount + " Chunks à 250 Videos bereit)!");
+              : ("✅ " + info.entries.length.toLocaleString("de-DE") + " Einträge erkannt [Kanal " + activeChannelId + "] (" + chunksCount + " Chunks bereit)!");
           }
+          refreshBackupTargetControlsDom();
           renderBackupImportBoxDom();
         } catch (err) {
           if (statusEl) {
@@ -1690,12 +1706,169 @@
         startOrResumeBackupImport();
       }
 
+      function getBackupTargetPlaylistsForChatClient(targetChatVal) {
+        const key = String(targetChatVal || backupImportJob.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId);
+        if (window._adminBackupPlaylistsByChatId && Array.isArray(window._adminBackupPlaylistsByChatId[key])) {
+          return window._adminBackupPlaylistsByChatId[key];
+        }
+        if (String(state.adminPlaylistTargetChatId || chatId) === key && Array.isArray(window._lastAdminOverviewCache?.playlists)) {
+          return window._lastAdminOverviewCache.playlists;
+        }
+        return [];
+      }
+
+      function getBackupTargetSummaryLabelClient() {
+        const j = backupImportJob;
+        const targetChat = String(j.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId);
+        const accountLabel = targetChat === "bot_vip"
+          ? "🤖 Globale Bot-VIP-Playlist"
+          : (targetChat === String(chatId) ? "👑 Eigene Admin-Merkliste" : ("👤 User ID " + targetChat));
+        const modeMap = {
+          both: "⚡ VIP + Merkliste",
+          vip_stream: "🌟 Nur VIP-Stream",
+          watchlist: "🔖 Nur Merkliste"
+        };
+        const modeLabel = modeMap[j.playlistMode || "both"] || modeMap.both;
+        const folders = getBackupTargetPlaylistsForChatClient(targetChat);
+        const existingFolder = j.playlistFolderId
+          ? folders.find(f => String(f.id) === String(j.playlistFolderId))
+          : null;
+        const plLabel = existingFolder
+          ? ("📂 " + existingFolder.name)
+          : ("➕ Neu: „" + (j.customPlaylistName || "🎵 JSON-Import") + "“");
+        return accountLabel + " · " + plLabel + " · " + modeLabel;
+      }
+
+      function renderBackupTargetControlsHtml() {
+        const j = backupImportJob;
+        const curTargetChat = String(j.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId);
+        const curFolderId = String(j.playlistFolderId || "");
+        const curMode = ["vip_stream", "watchlist", "both"].includes(j.playlistMode)
+          ? j.playlistMode
+          : (curTargetChat === "bot_vip" ? "vip_stream" : "both");
+        const curName = j.customPlaylistName || "🎵 JSON-Import";
+        const users = Array.isArray(window._lastAdminOverviewCache?.users) ? window._lastAdminOverviewCache.users : [];
+        const folders = getBackupTargetPlaylistsForChatClient(curTargetChat);
+
+        const accountOptionsHtml = [
+          '<option value="bot_vip"' + (curTargetChat === "bot_vip" ? " selected" : "") + '>🤖 Globale Bot-VIP-Playlist (bot_vip)</option>',
+          '<option value="' + esc(chatId) + '"' + (curTargetChat === String(chatId) ? " selected" : "") + '>👑 Eigene Admin-Merkliste (ID ' + esc(chatId) + ')</option>',
+          ...users.filter(u => String(u.telegramId) !== String(chatId)).map(u =>
+            '<option value="' + esc(u.telegramId) + '"' + (curTargetChat === String(u.telegramId) ? " selected" : "") + '>👤 ID ' + esc(u.telegramId) + (u.tgUsername ? ' (@' + esc(u.tgUsername) + ')' : '') + (u.customUsername ? ' [' + esc(u.customUsername) + ']' : '') + '</option>'
+          )
+        ].join("");
+
+        const folderOptionsHtml = [
+          '<option value=""' + (!curFolderId ? " selected" : "") + '>➕ Neue Playlist anlegen / per Name</option>',
+          ...folders.map(pl => {
+            const pMode = pl.playlistMode === "vip_stream" ? "VIP-Stream" : pl.playlistMode === "watchlist" ? "Merkliste" : "VIP + Merkliste";
+            return '<option value="' + esc(pl.id) + '"' + (String(pl.id) === curFolderId ? " selected" : "") + '>📂 ' + esc(pl.name) + ' (' + Number(pl.itemCount || 0) + ' Titel · ' + pMode + ')</option>';
+          })
+        ].join("");
+
+        return '<div class="backup-target-grid">' +
+          '<div>' +
+            '<label class="backup-field-label">🎯 1. Ziel-Account / Bereich</label>' +
+            '<select class="backup-select" onchange="changeBackupTargetAccountClient(this.value)">' +
+              accountOptionsHtml +
+            '</select>' +
+          '</div>' +
+          '<div>' +
+            '<label class="backup-field-label">📂 2. Vorhandene Playlist oder Neu</label>' +
+            '<select class="backup-select" onchange="changeBackupTargetFolderClient(this.value)">' +
+              folderOptionsHtml +
+            '</select>' +
+          '</div>' +
+          '<div>' +
+            '<label class="backup-field-label">⚙️ 3. Playlist-Modus</label>' +
+            '<select class="backup-select" onchange="setBackupPlaylistModeClient(this.value)">' +
+              '<option value="both"' + (curMode === "both" ? " selected" : "") + '>⚡ Beides (VIP-Streams + Merkliste)</option>' +
+              '<option value="vip_stream"' + (curMode === "vip_stream" ? " selected" : "") + '>🌟 Nur VIP-Stream-Katalog</option>' +
+              '<option value="watchlist"' + (curMode === "watchlist" ? " selected" : "") + '>🔖 Nur persönliche Merkliste</option>' +
+            '</select>' +
+          '</div>' +
+          '<div>' +
+            '<label class="backup-field-label">' + (curFolderId ? '🏷️ 4. Gewählte Playlist (Name)' : '✏️ 4. Name der neuen Playlist') + '</label>' +
+            '<input id="backupPlaylistNameInp" class="backup-input backup-playlist-name-inp" value="' + esc(curName) + '" oninput="updateBackupCustomPlaylistName(this.value)" placeholder="z.B. 🎵 JSON-Import..." />' +
+          '</div>' +
+        '</div>';
+      }
+
+      function refreshBackupTargetControlsDom() {
+        const mountEl = document.getElementById("backupTargetControlsMount");
+        if (mountEl) {
+          mountEl.innerHTML = renderBackupTargetControlsHtml();
+        }
+        const summaryEl = document.getElementById("backupTargetLiveSummaryBadge");
+        if (summaryEl) {
+          summaryEl.textContent = getBackupTargetSummaryLabelClient();
+        }
+      }
+
+      async function changeBackupTargetAccountClient(newTargetChatId) {
+        const nextChat = String(newTargetChatId || chatId);
+        backupImportJob.targetPlaylistChatId = nextChat;
+        state.adminPlaylistTargetChatId = nextChat;
+        backupImportJob.playlistFolderId = "";
+        if (nextChat === "bot_vip") {
+          backupImportJob.playlistMode = "vip_stream";
+        } else if (!backupImportJob.playlistMode) {
+          backupImportJob.playlistMode = "both";
+        }
+        saveBackupCheckpointClient(false);
+        refreshBackupTargetControlsDom();
+        renderBackupImportBoxDom();
+        try {
+          const r = await apiFetchJson(
+            API_BASE + "/admin/overview?mediaType=" + encodeURIComponent(state.adminMediaType || "m") +
+            "&playlistChatId=" + encodeURIComponent(nextChat) +
+            "&tab=backup"
+          );
+          if (r && r.ok && Array.isArray(r.playlists)) {
+            if (!window._adminBackupPlaylistsByChatId) window._adminBackupPlaylistsByChatId = {};
+            window._adminBackupPlaylistsByChatId[nextChat] = r.playlists;
+            if (window._lastAdminOverviewCache) {
+              window._lastAdminOverviewCache.playlists = r.playlists;
+              if (Array.isArray(r.users)) window._lastAdminOverviewCache.users = r.users;
+            }
+            refreshBackupTargetControlsDom();
+            renderBackupImportBoxDom();
+          }
+        } catch (e) {}
+      }
+
+      function changeBackupTargetFolderClient(folderId) {
+        const fId = String(folderId || "");
+        backupImportJob.playlistFolderId = fId;
+        const curTargetChat = String(backupImportJob.targetPlaylistChatId || state.adminPlaylistTargetChatId || chatId);
+        const folders = getBackupTargetPlaylistsForChatClient(curTargetChat);
+        const found = fId ? folders.find(f => String(f.id) === fId) : null;
+        if (found) {
+          backupImportJob.customPlaylistName = String(found.name || "🎵 JSON-Import").slice(0, 48);
+          backupImportJob._userEditedPlaylistName = true;
+          if (["vip_stream", "watchlist", "both"].includes(found.playlistMode)) {
+            backupImportJob.playlistMode = found.playlistMode;
+          }
+          showHudToast("📂 Ziel-Playlist gewählt: " + found.name);
+        }
+        saveBackupCheckpointClient(false);
+        refreshBackupTargetControlsDom();
+        renderBackupImportBoxDom();
+      }
+
       function updateBackupCustomPlaylistName(val) {
         backupImportJob.customPlaylistName = String(val || "").trim().slice(0, 48);
+        backupImportJob._userEditedPlaylistName = true;
+        const summaryEl = document.getElementById("backupTargetLiveSummaryBadge");
+        if (summaryEl) {
+          summaryEl.textContent = getBackupTargetSummaryLabelClient();
+        }
       }
 
       function setBackupPlaylistModeClient(modeVal) {
         backupImportJob.playlistMode = ["vip_stream", "watchlist", "both"].includes(modeVal) ? modeVal : "both";
+        saveBackupCheckpointClient(false);
+        refreshBackupTargetControlsDom();
         renderBackupImportBoxDom();
       }
 
@@ -3164,10 +3337,24 @@
         );
 
         if (!hasRestoredOrActiveData) {
-          mount.innerHTML = '<div style="font-size:12px;color:#94a3b8">' +
-            (isChanVerified
-              ? ('✅ Quell-Kanal <code>' + esc(activeChan) + '</code> ist verifiziert. Bitte wähle jetzt oben deine <code>result.json</code> Datei aus.')
-              : '🔒 <b>JSON-Upload gesperrt:</b> Bitte gib zuerst in Schritt 1 die Telegram Kanal-ID (<code>-100...</code>) oder einen Nachrichten-Link ein und klicke auf <b>🔍 Kanal prüfen & freischalten</b>.') +
+          mount.innerHTML =
+            '<div class="backup-cockpit-box">' +
+              '<div class="golden-grid">' +
+                '<div style="display:flex;flex-direction:column;justify-content:center;gap:10px;min-width:0">' +
+                  '<div style="font-size:13px;font-weight:800;color:var(--text)">' +
+                    (isChanVerified
+                      ? ('✅ Quell-Kanal <code>' + esc(activeChan) + '</code> ist verifiziert. Bitte wähle oben in Schritt 2 deine <code>result.json</code> Datei aus.')
+                      : '🔒 <b>JSON-Upload noch gesperrt:</b> Bitte gib oben in Schritt 1 die Telegram Kanal-ID (<code>-100...</code>) oder einen Nachrichten-Link ein und klicke auf <b>🔍 Kanal prüfen</b>.') +
+                  '</div>' +
+                  '<div style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                    '<span>🎯 Aktuelles Ziel:</span>' +
+                    '<b id="backupTargetLiveSummaryBadge" style="color:var(--blue)">' + esc(getBackupTargetSummaryLabelClient()) + '</b>' +
+                  '</div>' +
+                '</div>' +
+                '<div style="min-width:0">' +
+                  (typeof renderWorkerHealthMonitorWidgetHtml === "function" ? renderWorkerHealthMonitorWidgetHtml(true) : '') +
+                '</div>' +
+              '</div>' +
             '</div>';
           return;
         }
@@ -3176,61 +3363,60 @@
         const openReviewCount = (j.reviewItems || []).filter(x => !x.resolvedByAdmin && (x.status === "failed" || x.isUncertain)).length;
         const totalDeduplicated = Number(j.duplicatesSkippedInFile || 0) + Number(j.duplicatesInDb || 0);
         const totalMergedStreams = Number(j.mergedQualitiesInDb || 0) + (done === 0 ? Number(j.qualityVariantsInFile || 0) : 0);
-        const curMode = j.playlistMode || "both";
 
-        const checkpointBannerHtml = (!j.running && done > 0 && done < total)
-          ? ('<div style="background:rgba(245,158,11,0.16);border:1px solid rgba(251,191,36,0.5);border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
-              '<div style="font-size:12px;color:#fde68a">' +
-                '📌 <b>Gespeicherter Fortschritts-Checkpoint bei Eintrag #' + done.toLocaleString('de-DE') + ' / ' + total.toLocaleString('de-DE') + ' (' + pct + '%)</b> erkannt!' +
-              '</div>' +
-              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn green" onclick="resumeBackupFromCheckpointClient()">▶️ Bei #' + done.toLocaleString('de-DE') + ' fortsetzen</button>' +
-                '<button class="btn amber" onclick="restartBackupFromZeroNoDupesClient()">🔄 Neu starten ab 0 (ohne Duplikate)</button>' +
+        // Gelber Hinweis-Banner erscheint NUR nach einem Seiten-Reload (F5), wenn noch keine Datei im Speicher liegt (j.entries.length === 0).
+        // Während einer aktiven Import-Pause (j.entries.length > 0) stehen Fortsetzen, Neustart und Reset direkt in der Kopfzeile – niemals doppelt!
+        const checkpointBannerHtml = (!j.running && j.entries.length === 0 && done > 0 && done < total)
+          ? ('<div style="background:rgba(245,158,11,0.14);border:1px solid rgba(245,158,11,0.45);border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div style="font-size:12px;color:#fbbf24">' +
+                '📌 <b>Gespeicherter D1-Checkpoint bei Eintrag #' + done.toLocaleString('de-DE') + ' / ' + total.toLocaleString('de-DE') + ' (' + pct + '%)</b> erkannt – bitte wähle oben in Schritt 2 kurz die JSON-Datei aus, um nahtlos fortzusetzen.' +
               '</div>' +
             '</div>')
           : '';
 
         mount.innerHTML =
-          '<div style="background:var(--surface);border:1px solid rgba(0,229,255,0.22);border-radius:12px;padding:12px;margin-top:10px">' +
+          '<div class="backup-cockpit-box">' +
             checkpointBannerHtml +
             (j.repaired ? (
-              '<div style="background:rgba(2,132,199,0.18);border:1px solid rgba(56,189,248,0.45);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:#e0f2fe">' +
+              '<div style="background:rgba(2,132,199,0.14);border:1px solid rgba(14,165,233,0.4);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:var(--text)">' +
                 '🛠️ <b>JSON Auto-Repair erfolgreich:</b> ' + esc((j.repairNotes || []).join(" • ")) +
               '</div>'
             ) : '') +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">' +
               '<div>' +
-                '<span style="font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px;background:' + (j.isTelegramBackup ? 'rgba(0,229,255,0.16);color:#00e5ff;border:1px solid rgba(0,229,255,0.4)' : 'rgba(16,185,129,0.2);color:#34d399') + '">' +
-                  (j.isTelegramBackup ? ('📦 TELEGRAM CHAT-BACKUP: ' + esc(j.backupChatName)) : '📄 STANDARD JSON-TITELLISTE') +
-                '</span>' +
-                '<span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;background:rgba(16,185,129,0.2);color:#34d399;margin-left:6px">📡 Kanal: ' + esc(activeChan || 'Verifiziert') + '</span>' +
-                '<div style="font-size:12px;color:#cbd5e1;margin-top:6px">' +
-                  'Datei: <b>' + esc(effectiveFileName) + '</b>' + (j.fileSizeMb ? (' (' + j.fileSizeMb + ' MB)') : '') + ' • Zu verarbeitende Einträge: <b style="color:#00e5ff">' + total.toLocaleString('de-DE') + '</b>' +
-                  (j.entries.length === 0 && total > 0 ? ' <span style="color:#38bdf8;font-size:11px">(📌 D1-Checkpoint aktiv – zum Weiterlaufen Datei oben kurz auswählen)</span>' : '') +
+                '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                  '<span style="font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:6px;background:' + (j.isTelegramBackup ? 'rgba(2,132,199,0.18);color:#38bdf8;border:1px solid rgba(14,165,233,0.4)' : 'rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.35)') + '">' +
+                    (j.isTelegramBackup ? ('📦 TELEGRAM CHAT-BACKUP: ' + esc(j.backupChatName)) : '📄 STANDARD JSON-TITELLISTE') +
+                  '</span>' +
+                  '<span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:6px;background:rgba(16,185,129,0.16);color:#34d399;border:1px solid rgba(16,185,129,0.32)">📡 Kanal: ' + esc(activeChan || 'Verifiziert') + '</span>' +
+                  (!j.running && done > 0 && done < total ? '<span style="font-size:11px;font-weight:800;padding:3px 9px;border-radius:6px;background:rgba(245,158,11,0.18);color:#fbbf24;border:1px solid rgba(245,158,11,0.4)">⏸️ Import pausiert bei #' + done.toLocaleString('de-DE') + '</span>' : '') +
+                '</div>' +
+                '<div style="font-size:12px;color:var(--muted);margin-top:6px">' +
+                  'Datei: <b style="color:var(--text)">' + esc(effectiveFileName) + '</b>' + (j.fileSizeMb ? (' (' + j.fileSizeMb + ' MB)') : '') + ' · Einträge gesamt: <b style="color:var(--blue)">' + total.toLocaleString('de-DE') + '</b>' +
                 '</div>' +
               '</div>' +
-              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                (!j.running && j.entries.length > 0 && done < total ? '<button class="btn green" onclick="startOrResumeBackupImport()">🚀 ' + (done > 0 ? ('Fortsetzen ab #' + done.toLocaleString('de-DE')) : ('Smart-Import starten (' + total.toLocaleString('de-DE') + ')')) + '</button>' : '') +
+              '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+                (!j.running && j.entries.length > 0 && done < total ? '<button class="btn green" onclick="startOrResumeBackupImport()">' + (done > 0 ? ('▶️ Fortsetzen ab #' + done.toLocaleString('de-DE')) : ('🚀 Smart-Import starten (' + total.toLocaleString('de-DE') + ')')) + '</button>' : '') +
                 (j.running ? '<button class="btn amber" onclick="pauseBackupImport()">⏸️ Pausieren</button>' : '') +
                 (done > 0 && !j.running && j.entries.length > 0 ? '<button class="btn amber" onclick="restartBackupFromZeroNoDupesClient()">🔄 Ab 0 neu starten</button>' : '') +
-                ((done > 0 || (j.reviewItems && j.reviewItems.length > 0)) ? '<button class="btn danger" onclick="resetBackupImport(true)">↺ Zurücksetzen</button>' : '') +
+                ((done > 0 || j.entries.length > 0 || (j.reviewItems && j.reviewItems.length > 0)) ? '<button class="btn danger" onclick="resetBackupImport(true)">↺ Zurücksetzen</button>' : '') +
               '</div>' +
             '</div>' +
 
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;align-items:center;justify-content:space-between">' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;border-bottom:1px solid rgba(148,163,184,0.18);padding-bottom:10px;align-items:center;justify-content:space-between">' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn ' + (j.activeSubTab !== 'review' && j.activeSubTab !== 'diaglog' ? 'blue' : '') + '" onclick="switchBackupSubTab(\\'dashboard\\')">📊 Live-Cockpit (62:38)</button>' +
+                '<button class="btn ' + (j.activeSubTab !== 'review' && j.activeSubTab !== 'diaglog' ? 'blue' : '') + '" onclick="switchBackupSubTab(\\'dashboard\\')">📊 Live-Cockpit</button>' +
                 '<button id="revSubTabBtn" class="btn ' + (j.activeSubTab === 'review' ? 'amber' : '') + '" onclick="switchBackupSubTab(\\'review\\')">' +
                   '🛠️ Prüfen & Korrigieren' +
-                  (openReviewCount > 0 ? ' <span style="background:#ef4444;color:#fff;padding:1px 6px;border-radius:999px;font-size:10.5px;margin-left:4px">' + openReviewCount + '</span>' : ' (' + (j.reviewItems || []).length + ')') +
+                  (openReviewCount > 0 ? ' <span style="background:#e11d48;color:#fff;padding:1px 6px;border-radius:999px;font-size:10.5px;margin-left:4px">' + openReviewCount + '</span>' : ' (' + (j.reviewItems || []).length + ')') +
                 '</button>' +
                 '<button class="btn ' + (j.activeSubTab === 'diaglog' ? 'blue' : '') + '" onclick="switchBackupSubTab(\\'diaglog\\')">' +
                   '📋 Diagnose-Log (' + getDiagnosticLogTotalCountClient() + ')' +
                 '</button>' +
               '</div>' +
-              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-                '<span style="font-size:11px;color:#94a3b8">🎵 Ziel-Playlist:</span>' +
-                '<input id="backupPlaylistNameInp" value="' + esc(j.customPlaylistName || "🎵 JSON-Import") + '" oninput="updateBackupCustomPlaylistName(this.value)" placeholder="Playlist Name..." style="width:170px;padding:5px 8px;border-radius:6px;background:#090f1d;color:#fff;border:1px solid rgba(255,255,255,0.18);font-size:11.5px" />' +
+              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--muted)">' +
+                '<span>🎯 Ziel:</span>' +
+                '<b id="backupTargetLiveSummaryBadge" style="color:var(--blue)">' + esc(getBackupTargetSummaryLabelClient()) + '</b>' +
               '</div>' +
             '</div>' +
 
@@ -3238,38 +3424,38 @@
               '<div class="golden-grid">' +
                 /* Linke Hauptspalte (61.8%): Fortschritt, Kern-Kennzahlen & Live-Poster-Feed */
                 '<div style="display:flex;flex-direction:column;gap:10px;min-width:0">' +
-                  '<div style="width:100%;height:24px;background:#080e1c;border-radius:999px;overflow:hidden;border:1px solid rgba(0,229,255,0.3);position:relative">' +
-                    '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0284c7,#00e5ff,#10b981);transition:width 0.25s ease"></div>' +
-                    '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:900;color:#fff;text-shadow:0 1px 4px #000">' +
+                  '<div class="backup-progress-track">' +
+                    '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0284c7,#4f46e5,#10b981);transition:width 0.25s ease"></div>' +
+                    '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:900;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,0.85)">' +
                       pct + '% (' + done.toLocaleString('de-DE') + ' / ' + total.toLocaleString('de-DE') + ')' +
                     '</div>' +
                   '</div>' +
                   '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;font-size:11.5px">' +
-                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">🎬 Filme in D1: <b style="color:#34d399">' + j.moviesSaved.toLocaleString('de-DE') + '</b></div>' +
-                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">📺 Serien in D1: <b style="color:#38bdf8">' + j.seriesSaved.toLocaleString('de-DE') + '</b></div>' +
-                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">♻️ Duplikate: <b style="color:#a78bfa">' + totalDeduplicated.toLocaleString('de-DE') + '</b></div>' +
-                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07)">🔗 Gemerged: <b style="color:#fbbf24">' + totalMergedStreams.toLocaleString('de-DE') + '</b></div>' +
-                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07);cursor:pointer" onclick="switchBackupSubTab(\\'review\\')">⚠️ Prüfen: <b style="color:#f59e0b">' + j.uncertainCount.toLocaleString('de-DE') + '</b></div>' +
-                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.07);cursor:pointer" onclick="setBackupReviewFilter(\\'failed\\');switchBackupSubTab(\\'review\\')">❌ Offen: <b style="color:#f87171">' + j.failedCount.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(148,163,184,0.14)">🎬 Filme in D1: <b style="color:#10b981">' + j.moviesSaved.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(148,163,184,0.14)">📺 Serien in D1: <b style="color:#0ea5e9">' + j.seriesSaved.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(148,163,184,0.14)">♻️ Duplikate: <b style="color:#818cf8">' + totalDeduplicated.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(148,163,184,0.14)">🔗 Gemerged: <b style="color:#f59e0b">' + totalMergedStreams.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(148,163,184,0.14);cursor:pointer" onclick="switchBackupSubTab(\\'review\\')">⚠️ Prüfen: <b style="color:#f59e0b">' + j.uncertainCount.toLocaleString('de-DE') + '</b></div>' +
+                    '<div style="background:var(--card);padding:8px 10px;border-radius:8px;border:1px solid rgba(148,163,184,0.14);cursor:pointer" onclick="setBackupReviewFilter(\\'failed\\');switchBackupSubTab(\\'review\\')">❌ Offen: <b style="color:#e11d48">' + j.failedCount.toLocaleString('de-DE') + '</b></div>' +
                   '</div>' +
                   (Array.isArray(j.livePosterFeed) && j.livePosterFeed.length > 0 ? (
                     '<div>' +
-                      '<div style="font-size:11.5px;font-weight:800;color:#cbd5e1;margin-bottom:6px">🎞️ Zuletzt zugeordnete Titel (Live-Feed):</div>' +
+                      '<div style="font-size:11.5px;font-weight:800;color:var(--muted);margin-bottom:6px">🎞️ Zuletzt zugeordnete Titel (Live-Feed):</div>' +
                       '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">' +
                         j.livePosterFeed.slice(0, 8).map(f => {
                           const fSeCode = (f.typeCode === 's' && f.season)
                             ? ('S' + String(f.season).padStart(2, '0') + 'E' + String(f.episode || 1).padStart(2, '0'))
                             : '';
                           const fPoster = resolvePosterUrlClient(f.poster, 'w185', '');
-                          return '<div style="min-width:155px;max-width:185px;background:var(--card);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:6px;display:flex;gap:7px;align-items:center;flex-shrink:0">' +
+                          return '<div style="min-width:155px;max-width:185px;background:var(--card);border:1px solid rgba(148,163,184,0.16);border-radius:8px;padding:6px;display:flex;gap:7px;align-items:center;flex-shrink:0">' +
                             (fPoster
                               ? '<img src="' + esc(fPoster) + '" style="width:34px;height:50px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
-                              : '<div style="width:34px;height:50px;background:#13203b;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (f.typeCode === 's' ? '📺' : '🎬') + '</div>') +
+                              : '<div style="width:34px;height:50px;background:rgba(14,165,233,0.15);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (f.typeCode === 's' ? '📺' : '🎬') + '</div>') +
                             '<div style="min-width:0;flex:1">' +
-                              '<div style="font-size:11px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(f.cleanTitle) + '</div>' +
-                              '<div style="font-size:10px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (fSeCode ? ('<b style="color:#00e5ff">' + esc(fSeCode) + '</b> • ') : '') + esc(f.year || 'k.A.') + ' • ' + esc(f.quality || '1080p') + '</div>' +
-                              '<div style="font-size:9.5px;margin-top:2px;color:' + (f.isUncertain ? '#fbbf24' : f.ingestStatus === 'merged_quality' ? '#38bdf8' : '#34d399') + '">' +
-                                esc(f.metadataSource || 'TMDb') + ' • ' + (f.isUncertain ? ('⚠️ ' + f.confidence + '%') : f.ingestStatus === 'merged_quality' ? '🔗 Merge' : f.ingestStatus === 'duplicate' ? '♻️ In D1' : ('✅ ' + f.confidence + '%')) +
+                              '<div style="font-size:11px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(f.cleanTitle) + '</div>' +
+                              '<div style="font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (fSeCode ? ('<b style="color:var(--blue)">' + esc(fSeCode) + '</b> · ') : '') + esc(f.year || 'k.A.') + ' · ' + esc(f.quality || '1080p') + '</div>' +
+                              '<div style="font-size:9.5px;margin-top:2px;color:' + (f.isUncertain ? '#f59e0b' : f.ingestStatus === 'merged_quality' ? '#0ea5e9' : '#10b981') + '">' +
+                                esc(f.metadataSource || 'TMDb') + ' · ' + (f.isUncertain ? ('⚠️ ' + f.confidence + '%') : f.ingestStatus === 'merged_quality' ? '🔗 Merge' : f.ingestStatus === 'duplicate' ? '♻️ In D1' : ('✅ ' + f.confidence + '%')) +
                               '</div>' +
                             '</div>' +
                           '</div>';
@@ -3278,19 +3464,19 @@
                     '</div>'
                   ) : '') +
                 '</div>' +
-                /* Rechte Begleitspalte (38.2%): Echtzeit Worker-Health-Monitor & Kompakt-Log */
+                /* Rechte Begleitspalte (38.2%): EINZIGER Echtzeit Worker-Health-Monitor & Kompakt-Log */
                 '<div style="display:flex;flex-direction:column;gap:10px;min-width:0">' +
                   (typeof renderWorkerHealthMonitorWidgetHtml === "function" ? renderWorkerHealthMonitorWidgetHtml(true) : '') +
-                  '<div style="background:var(--card);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:9px">' +
-                    '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#cbd5e1;margin-bottom:5px">' +
-                      '<span>🎛️ Batch: <b style="color:' + (j.currentBatchModeColor || '#00e5ff') + '">' + esc(j.currentBatchModeLabel || '🛡️ Free-Turbo (5/Batch)') + '</b></span>' +
-                      '<span>⚡ <b>' + speedPerSec + ' Titel/s</b>' + (j.running && etaSec > 0 ? ' (~' + etaStr + ')' : '') + '</span>' +
+                  '<div style="background:var(--card);border:1px solid rgba(148,163,184,0.16);border-radius:10px;padding:9px">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);margin-bottom:5px">' +
+                      '<span>🎛️ Batch: <b style="color:' + (j.currentBatchModeColor || 'var(--blue)') + '">' + esc(j.currentBatchModeLabel || '🛡️ Free-Turbo (5/Batch)') + '</b></span>' +
+                      '<span>⚡ <b style="color:var(--text)">' + speedPerSec + ' Titel/s</b>' + (j.running && etaSec > 0 ? ' (~' + etaStr + ')' : '') + '</span>' +
                     '</div>' +
                     (j.recentLog.length > 0 ? (
-                      '<div style="font-size:10.5px;color:#94a3b8;max-height:86px;overflow-y:auto;background:#070c18;padding:6px 8px;border-radius:6px;font-family:monospace;line-height:1.45">' +
+                      '<div style="font-size:10.5px;color:var(--muted);max-height:86px;overflow-y:auto;background:#070c18;padding:6px 8px;border-radius:6px;font-family:monospace;line-height:1.45">' +
                         j.recentLog.slice(-5).map(l => '<div>' + esc(l) + '</div>').join("") +
                       '</div>'
-                    ) : '<div style="font-size:11px;color:#64748b">Bereit zum Start. Alle Batches werden automatisch unter 10ms CPU gehalten.</div>') +
+                    ) : '<div style="font-size:11px;color:var(--muted)">Bereit zum Start. Alle Batches werden automatisch unter 10ms CPU gehalten.</div>') +
                   '</div>' +
                 '</div>' +
               '</div>'
@@ -5216,15 +5402,15 @@
         const isCrit = cpuMs >= 8.2 || st.status === "critical";
         const isWarn = !isCrit && (cpuMs >= 6.8 || st.status === "warning" || st.throttled);
         const barColor = isCrit
-          ? "linear-gradient(90deg,#f59e0b,#ef4444)"
+          ? "linear-gradient(90deg,#f59e0b,#e11d48)"
           : isWarn
-            ? "linear-gradient(90deg,#00e5ff,#f59e0b)"
-            : "linear-gradient(90deg,#00e5ff,#10b981)";
+            ? "linear-gradient(90deg,#0284c7,#f59e0b)"
+            : "linear-gradient(90deg,#0284c7,#4f46e5,#10b981)";
         const badgeBg = isCrit
-          ? "rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.5)"
+          ? "rgba(225,29,72,0.2);color:#fda4af;border:1px solid rgba(244,63,94,0.5)"
           : isWarn
             ? "rgba(245,158,11,0.2);color:#fde68a;border:1px solid rgba(245,158,11,0.5)"
-            : "rgba(16,185,129,0.18);color:#6ee7b7;border:1px solid rgba(16,185,129,0.45)";
+            : "rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4)";
         const badgeText = isCrit
           ? "🚨 CPU NAHE 10ms – AUTO-COOLDOWN (1/Batch)"
           : isWarn
@@ -5235,32 +5421,32 @@
           : [{ cpuMs: 0.9, status: "healthy" }, { cpuMs: 1.2, status: "healthy" }, { cpuMs: cpuMs, status: st.status }];
         const sparkBars = hist.map(h => {
           const hPct = Math.min(100, Math.max(12, Math.round((Number(h.cpuMs || 1) / 10) * 100)));
-          const c = h.cpuMs >= 8.2 ? "#ef4444" : h.cpuMs >= 6.8 ? "#f59e0b" : "#00e5ff";
+          const c = h.cpuMs >= 8.2 ? "#e11d48" : h.cpuMs >= 6.8 ? "#f59e0b" : "#0ea5e9";
           return '<div title="CPU ' + Number(h.cpuMs || 0).toFixed(2) + 'ms (' + esc(h.route || '') + ')" style="flex:1;height:' + hPct + '%;background:' + c + ';border-radius:2px;min-width:5px"></div>';
         }).join("");
 
-        return '<div class="worker-health-monitor-mount" style="background:linear-gradient(145deg,#091122,#0d1830);border:1px solid ' + (isCrit ? 'rgba(239,68,68,0.55)' : isWarn ? 'rgba(245,158,11,0.5)' : 'rgba(0,229,255,0.32)') + ';border-radius:10px;padding:' + (compact ? '10px' : '12px') + '">' +
+        return '<div class="worker-health-monitor-mount" style="background:var(--card);border:1px solid ' + (isCrit ? 'rgba(225,29,72,0.55)' : isWarn ? 'rgba(245,158,11,0.5)' : 'rgba(14,165,233,0.3)') + ';border-radius:10px;padding:' + (compact ? '10px' : '12px') + '">' +
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">' +
-            '<div style="font-size:12px;font-weight:900;color:#f8fafc;display:flex;align-items:center;gap:6px">' +
+            '<div style="font-size:12px;font-weight:900;color:var(--text);display:flex;align-items:center;gap:6px">' +
               '<span>🩺 Echtzeit Worker-Health-Monitor</span>' +
               '<span style="font-size:10px;padding:2px 7px;border-radius:999px;' + badgeBg + '">' + badgeText + '</span>' +
             '</div>' +
-            '<span style="font-size:11px;font-family:monospace;color:#00e5ff;font-weight:800">' + cpuMs.toFixed(2) + ' ms / 10.0 ms CPU</span>' +
+            '<span style="font-size:11px;font-family:monospace;color:var(--blue);font-weight:800">' + cpuMs.toFixed(2) + ' ms / 10.0 ms CPU</span>' +
           '</div>' +
-          '<div style="width:100%;height:10px;background:#050913;border-radius:999px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);margin-bottom:8px;position:relative">' +
+          '<div style="width:100%;height:10px;background:#050913;border-radius:999px;overflow:hidden;border:1px solid rgba(148,163,184,0.2);margin-bottom:8px;position:relative">' +
             '<div style="width:' + cpuPct + '%;height:100%;background:' + barColor + ';transition:width 0.25s ease"></div>' +
             '<div title="7ms Auto-Throttle Schwelle" style="position:absolute;left:70%;top:0;bottom:0;width:2px;background:rgba(245,158,11,0.85)"></div>' +
           '</div>' +
           '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:10.5px;margin-bottom:8px">' +
-            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">⚡ CPU: <b style="color:#00e5ff">' + cpuMs.toFixed(2) + 'ms</b></div>' +
-            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">⏱️ Netz: <b style="color:#e2e8f0">' + Number(st.lastWallMs || 40) + 'ms</b></div>' +
-            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">🔌 Subreq: <b style="color:#38bdf8">' + Number(st.lastSubrequests || 1) + '/50</b></div>' +
-            '<div style="background:rgba(255,255,255,0.03);padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,0.06)">📦 Batch: <b style="color:#34d399">' + Number(st.recommendedBatchSize || 5) + '/Req</b></div>' +
+            '<div style="background:rgba(14,165,233,0.06);padding:5px 7px;border-radius:6px;border:1px solid rgba(148,163,184,0.14)">⚡ CPU: <b style="color:var(--blue)">' + cpuMs.toFixed(2) + 'ms</b></div>' +
+            '<div style="background:rgba(14,165,233,0.06);padding:5px 7px;border-radius:6px;border:1px solid rgba(148,163,184,0.14)">⏱️ Netz: <b style="color:var(--text)">' + Number(st.lastWallMs || 40) + 'ms</b></div>' +
+            '<div style="background:rgba(14,165,233,0.06);padding:5px 7px;border-radius:6px;border:1px solid rgba(148,163,184,0.14)">🔌 Subreq: <b style="color:#0ea5e9">' + Number(st.lastSubrequests || 1) + '/50</b></div>' +
+            '<div style="background:rgba(14,165,233,0.06);padding:5px 7px;border-radius:6px;border:1px solid rgba(148,163,184,0.14)">📦 Batch: <b style="color:#10b981">' + Number(st.recommendedBatchSize || 5) + '/Req</b></div>' +
           '</div>' +
-          '<div style="display:flex;align-items:flex-end;gap:3px;height:24px;background:#050913;padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,0.07)">' +
+          '<div style="display:flex;align-items:flex-end;gap:3px;height:24px;background:#050913;padding:4px 6px;border-radius:6px;border:1px solid rgba(148,163,184,0.15)">' +
             sparkBars +
           '</div>' +
-          (st.throttleReason ? '<div style="font-size:10.5px;color:#fbbf24;margin-top:6px">🛡️ ' + esc(st.throttleReason) + '</div>' : '<div style="font-size:10px;color:#64748b;margin-top:5px">Ab 7.0ms CPU halbiert der Monitor die Batch-Größe vollautomatisch auf 1–2 und legt einen kurzen Cooldown ein.</div>') +
+          (st.throttleReason ? '<div style="font-size:10.5px;color:#f59e0b;margin-top:6px">🛡️ ' + esc(st.throttleReason) + '</div>' : '<div style="font-size:10px;color:var(--muted);margin-top:5px">Ab 7.0ms CPU halbiert der Monitor die Batch-Größe vollautomatisch auf 1–2 und legt einen kurzen Cooldown ein.</div>') +
         '</div>';
       }
 
@@ -5517,6 +5703,8 @@
           const mediaList = r.media || [];
           const qStats = r.queueStats || { pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 };
           const adminPlaylists = r.playlists || [];
+          if (!window._adminBackupPlaylistsByChatId) window._adminBackupPlaylistsByChatId = {};
+          window._adminBackupPlaylistsByChatId[String(state.adminPlaylistTargetChatId || chatId)] = adminPlaylists;
           const rawSeriesGaps = r.seriesGaps || {};
           const seriesGaps = {
             totalSeriesChecked: Number(rawSeriesGaps.totalSeriesChecked ?? (Array.isArray(rawSeriesGaps.items || rawSeriesGaps.series) ? (rawSeriesGaps.items || rawSeriesGaps.series).length : 0)),
@@ -6195,36 +6383,61 @@
             ) : state.adminTab === "diaglog" ? (
               renderImportDiagnosticLogBoxHtml()
             ) : state.adminTab === "backup" ? (
-              '<div class="panel-box" style="border-color:rgba(0,229,255,0.38)">' +
-                '<div class="golden-grid">' +
-                  '<div style="display:flex;flex-direction:column;gap:8px;min-width:0">' +
-                    '<div style="font-size:13px;font-weight:900;color:#fff">📦 JSON-Backup-Import (Schnellstart in 2 Schritten)</div>' +
-                    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-                      '<span style="font-size:11.5px;font-weight:800;color:#00e5ff">1️⃣ Quell-Kanal:</span>' +
-                      '<input id="backupSourceChannelInp" value="' + esc(savedChanVal) + '" placeholder="-1001234567890 oder https://t.me/c/1234567890/42" style="flex:1;min-width:200px;padding:7px 10px;border-radius:6px;background:#070d1b;color:#fff;border:1px solid rgba(0,229,255,0.4);font-family:monospace;font-size:12px" />' +
-                      '<input id="backupSampleMsgIdInp" type="number" placeholder="Msg-ID (opt.)" style="width:110px;padding:7px 9px;border-radius:6px;background:#070d1b;color:#fff;border:1px solid rgba(255,255,255,0.18);font-family:monospace;font-size:12px" />' +
-                      '<button class="btn green" onclick="verifyBackupChannelClient()">🔍 Kanal prüfen</button>' +
-                    '</div>' +
-                    '<div id="backupChannelVerifyBanner" style="display:' + (isChanReady ? 'block' : 'none') + ';padding:6px 10px;border-radius:6px;background:rgba(16,185,129,0.14);border:1px solid rgba(16,185,129,0.4);font-size:11.5px;color:#34d399">' +
-                      (isChanReady ? ('✅ Quell-Kanal aktiv: <code>' + esc(savedChanVal) + '</code> — Schritt 2 freigeschaltet!') : '') +
-                    '</div>' +
-                    '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding-top:4px">' +
-                      '<span style="font-size:11.5px;font-weight:800;color:#34d399">2️⃣ JSON-Datei:</span>' +
-                      '<input id="backupJsonFileInputEl" type="file" accept=".json,application/json" ' + (!isChanReady ? 'disabled' : '') + ' onchange="handleBackupFileInput(event)" style="font-size:12px;color:#fff;background:#070d1b;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);opacity:' + (isChanReady ? '1' : '0.45') + '" />' +
-                      '<button type="button" class="btn" onclick="runSimulatedJsonImportTestSuiteClient()" title="Testet die Import-Pipeline mit 7 Testfällen">🧪 E2E-Test</button>' +
-                      '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ &gt;200 MB Hilfe</button>' +
-                      '<span id="backupParseNotice" style="font-size:12px;color:#fbbf24"></span>' +
-                    '</div>' +
+              '<div class="panel-box" style="border-color:rgba(14,165,233,0.35)">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">' +
+                  '<div>' +
+                    '<div style="font-size:14px;font-weight:900;color:var(--text)">📦 JSON-Backup-Import & Ziel-Playlist-Steuerung</div>' +
+                    '<div style="font-size:11.5px;color:var(--muted)">1. Quell-Kanal verifizieren · 2. JSON-Backup wählen · 3. Ziel-Account, Playlist, Modus & Name festlegen</div>' +
                   '</div>' +
-                  '<div style="min-width:0">' +
-                    renderWorkerHealthMonitorWidgetHtml(true) +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn" onclick="runSimulatedJsonImportTestSuiteClient()" title="Testet die Import-Pipeline mit 7 Testfällen">🧪 E2E-Test</button>' +
+                    '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ &gt;200 MB Hilfe</button>' +
                   '</div>' +
                 '</div>' +
+
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;margin-bottom:10px">' +
+                  '<div class="backup-step-card">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px">' +
+                      '<span style="font-size:12px;font-weight:800;color:var(--blue)">1️⃣ Quell-Kanal verifizieren</span>' +
+                      (isChanReady ? '<span style="font-size:10.5px;font-weight:800;color:#10b981">✅ Freigeschaltet</span>' : '<span style="font-size:10.5px;color:#f59e0b">Pflichtschritt</span>') +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                      '<input id="backupSourceChannelInp" class="backup-input" value="' + esc(savedChanVal) + '" placeholder="-1001234567890 oder https://t.me/c/1234567890/42" style="flex:1;min-width:170px;font-family:monospace" />' +
+                      '<input id="backupSampleMsgIdInp" class="backup-input" type="number" placeholder="Msg-ID (opt.)" style="width:105px;font-family:monospace" />' +
+                      '<button class="btn green" onclick="verifyBackupChannelClient()">🔍 Kanal prüfen</button>' +
+                    '</div>' +
+                    '<div id="backupChannelVerifyBanner" style="display:' + (isChanReady ? 'block' : 'none') + ';padding:5px 9px;border-radius:6px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.35);font-size:11px;color:#10b981">' +
+                      (isChanReady ? ('✅ Quell-Kanal aktiv: <code>' + esc(savedChanVal) + '</code> — Schritt 2 freigeschaltet!') : '') +
+                    '</div>' +
+                  '</div>' +
+
+                  '<div class="backup-step-card">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px">' +
+                      '<span style="font-size:12px;font-weight:800;color:#10b981">2️⃣ JSON-Backup-Datei auswählen</span>' +
+                      '<span style="font-size:10.5px;color:var(--muted)">Telegram <code>result.json</code> oder Titelliste</span>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                      '<input id="backupJsonFileInputEl" class="backup-input" type="file" accept=".json,application/json" ' + (!isChanReady ? 'disabled' : '') + ' onchange="handleBackupFileInput(event)" style="flex:1;min-width:200px;opacity:' + (isChanReady ? '1' : '0.45') + '" />' +
+                    '</div>' +
+                    '<div id="backupParseNotice" style="font-size:11.5px;color:#f59e0b;min-height:16px"></div>' +
+                  '</div>' +
+                '</div>' +
+
+                '<div class="backup-step-card" style="margin-bottom:10px">' +
+                  '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+                    '<span style="font-size:12px;font-weight:800;color:var(--blue)">3️⃣ Ziel-Playlist & Modus festlegen (Wo soll die Liste reingeladen werden?)</span>' +
+                    '<span style="font-size:11px;color:var(--muted)">Wähle Account, bestehende Playlist oder lege eine neue Playlist an</span>' +
+                  '</div>' +
+                  '<div id="backupTargetControlsMount">' +
+                    renderBackupTargetControlsHtml() +
+                  '</div>' +
+                '</div>' +
+
                 '<div id="e2eSimReportMount" style="display:' + (window._lastE2eSimReportHtml ? 'block' : 'none') + ';margin-top:10px">' + (window._lastE2eSimReportHtml || '') + '</div>' +
                 '<div id="backupImportLiveMount" style="margin-top:10px"></div>' +
                 (qStats.pendingCount > 0 ? (
-                  '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.1);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
-                    '<div style="font-size:12px;font-weight:800;color:#fbbf24">📥 Server-Queue (vom Bot hochgeladen): ' + qStats.pendingCount + ' offen</div>' +
+                  '<div style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(148,163,184,0.18);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">' +
+                    '<div style="font-size:12px;font-weight:800;color:#f59e0b">📥 Server-Queue (vom Bot hochgeladen): ' + qStats.pendingCount + ' offen</div>' +
                     '<div style="display:flex;gap:8px">' +
                       '<button class="btn green" onclick="runServerD1QueueStepAdmin(2)">▶️ Nächste verarbeiten</button>' +
                       '<button class="btn danger" onclick="clearServerD1QueueAdmin()">🗑️ Queue leeren</button>' +

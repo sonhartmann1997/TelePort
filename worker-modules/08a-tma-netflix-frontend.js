@@ -1155,6 +1155,99 @@
       body[data-theme="light"] .btn.amber:hover {
         color: #ffffff !important;
       }
+      /* JSON-Backup-Import Schnellstart, Ziel-Auswahl & Cockpit Design (Dark + Light) */
+      .backup-step-card {
+        background: var(--card);
+        border: 1px solid rgba(14, 165, 233, 0.24);
+        border-radius: 10px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .backup-target-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+        gap: 10px;
+        align-items: end;
+      }
+      .backup-field-label {
+        display: block;
+        font-size: 11px;
+        font-weight: 800;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .backup-input,
+      .backup-select {
+        width: 100%;
+        padding: 7px 10px;
+        border-radius: 7px;
+        background: var(--surface);
+        color: var(--text);
+        border: 1px solid rgba(14, 165, 233, 0.32);
+        font-size: 12px;
+        box-sizing: border-box;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+      .backup-input:focus,
+      .backup-select:focus {
+        outline: none;
+        border-color: #0ea5e9;
+        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+      }
+      .backup-cockpit-box {
+        background: var(--surface);
+        border: 1px solid rgba(14, 165, 233, 0.28);
+        border-radius: 12px;
+        padding: 14px;
+        margin-top: 10px;
+        font-variant-numeric: tabular-nums;
+      }
+      .backup-progress-track {
+        width: 100%;
+        height: 24px;
+        background: var(--bg);
+        border-radius: 999px;
+        overflow: hidden;
+        border: 1px solid rgba(14, 165, 233, 0.35);
+        position: relative;
+      }
+      .worker-health-monitor-mount {
+        font-variant-numeric: tabular-nums;
+      }
+      body[data-theme="light"] .backup-step-card {
+        background: #f8fafc;
+        border-color: #cbd5e1;
+        color: #0f172a;
+      }
+      body[data-theme="light"] .backup-input,
+      body[data-theme="light"] .backup-select {
+        background: #ffffff !important;
+        color: #0f172a !important;
+        border-color: #94a3b8 !important;
+      }
+      body[data-theme="light"] .backup-cockpit-box {
+        background: #ffffff;
+        border-color: #cbd5e1;
+        box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+      }
+      body[data-theme="light"] .backup-progress-track {
+        background: #e2e8f0;
+        border-color: #94a3b8;
+      }
+      body[data-theme="light"] .worker-health-monitor-mount {
+        background: #f8fafc !important;
+        border-color: #cbd5e1 !important;
+        color: #0f172a !important;
+      }
+      body[data-theme="light"] .worker-health-monitor-mount [style*="background:#050913"],
+      body[data-theme="light"] .worker-health-monitor-mount [style*="background:#070c18"],
+      body[data-theme="light"] .backup-cockpit-box [style*="background:#070c18"] {
+        background: #e2e8f0 !important;
+        color: #0f172a !important;
+        border-color: #cbd5e1 !important;
+      }
       body[data-theme="cyberpunk"] {
         --bg: #070510;
         --surface: #110b22;
