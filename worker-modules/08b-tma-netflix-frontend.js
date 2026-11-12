@@ -1019,7 +1019,7 @@
           (pills.length > 0 ? (
             '<div class="ff-active-pills" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(148,163,184,0.2)">' +
               pills.join("") +
-              '<button class="btn red" style="padding:2px 8px;font-size:10.5px" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')" title="Alle aktiven Filter löschen">🗑️ Reset</button>' +
+              '<button class="btn danger" style="padding:2px 8px;font-size:10.5px" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')" title="Alle aktiven Filter löschen">🗑️ Reset</button>' +
             '</div>'
           ) : '') +
         '</div>';
@@ -1334,7 +1334,7 @@
                 '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Passe in der linken Sidebar (☰ Filter) einzelne Filter an oder setze alle Filter zurück:</div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
                   '<button class="btn purple" onclick="toggleFilterSidebar()">☰ Filter-Sidebar öffnen</button>' +
-                  '<button class="btn red" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')">🗑️ Alle Filter zurücksetzen</button>' +
+                  '<button class="btn danger" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')">🗑️ Alle Filter zurücksetzen</button>' +
                 '</div>' +
               '</div>'
             )) + '</div>' +
@@ -1931,7 +1931,7 @@
                   '<div class="modal-actions-primary">' +
                     ((d.providerButtons && d.providerButtons.length > 0) ? (
                       d.providerButtons.map(pb =>
-                        '<a class="btn-action-glass" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(229,9,20,0.22)') + ';border-color:' + esc(pb.border || '#e50914') + ';color:#fff">' + esc(pb.buttonText) + '</a>'
+                        '<a class="btn-action-glass" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(14,165,233,0.18)') + ';border-color:' + esc(pb.border || '#0284c7') + ';color:#fff">' + esc(pb.buttonText) + '</a>'
                       ).join("")
                     ) : '') +
                     '<button id="modalWishlistBtn" class="btn-action-glass ' + (d.isSaved ? 'saved green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
@@ -2017,7 +2017,7 @@
                     '</div>'
                   ) : '') +
 
-                  (tr ? '<div class="modal-sub-box" style="margin:10px 0;padding:10px;background:var(--card);border-radius:10px;border:1px solid rgba(229,9,20,0.32)">' +
+                  (tr ? '<div class="modal-sub-box" style="margin:10px 0;padding:10px;background:var(--card);border-radius:10px;border:1px solid rgba(14,165,233,0.35)">' +
                     '<div style="font-size:12px;color:var(--text);margin-bottom:7px">🎬 <b>Trailer direkt abspielen & Standard-Quelle wählen:</b></div>' +
                     '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                       TRAILER_PROVIDERS_CLIENT.map(tp =>
@@ -4413,7 +4413,7 @@
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                 epSummaryBtnHtml +
-                '<button class="btn red" onclick="deleteSavedUid(\\''+esc(it.uid)+'\\')">🗑️</button>' +
+                '<button class="btn danger" onclick="deleteSavedUid(\\''+esc(it.uid)+'\\')">🗑️</button>' +
               '</div>' +
             '</div>' +
             epDrawerHtml +
@@ -4466,7 +4466,7 @@
                   '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="togglePlaylistFolderTma(\\'' + esc(f.id) + '\\')">' + (isEn ? '🟢 Ein (Ausschalten)' : '⚪ Aus (Einschalten)') + '</button>' +
                   '<button class="btn" onclick="loadWishlist(\\'' + esc(f.id) + '\\')">📂 Öffnen</button>' +
                   '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">✏️ Name</button>' +
-                  '<button class="btn red" onclick="deletePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">🗑️ Löschen</button>' +
+                  '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">🗑️ Löschen</button>' +
                 '</div>' +
               '</div>';
             }).join("") +
@@ -4492,7 +4492,7 @@
                   : '') +
                 '<button class="btn ' + (activeFolderObj.enabled !== false ? 'green' : 'amber') + '" onclick="togglePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\')">' + (activeFolderObj.enabled !== false ? '🟢 Ausschalten' : '⚪ Einschalten') + '</button>' +
                 '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">✏️ Umbenennen</button>' +
-                '<button class="btn red" onclick="deletePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">🗑️ Playlist löschen</button>' +
+                '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">🗑️ Playlist löschen</button>' +
               '</div>' +
             '</div>' +
           '</div>'
@@ -4794,7 +4794,7 @@
             '<div class="panel-box">' +
               '<div class="section-title"><span>🛡️ Bot-Filter Cockpit (Steuerung über ✓ Positiv & ✕ Negativ)</span>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                  '<button class="btn red" onclick="restartApp()">🗑️ Alle Filter zurücksetzen</button>' +
+                  '<button class="btn danger" onclick="restartApp()">🗑️ Alle Filter zurücksetzen</button>' +
                   '<button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button>' +
                 '</div>' +
               '</div>' +
@@ -4847,7 +4847,7 @@
                 (sync.enabled ? (
                   '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
                     '<button class="btn green" onclick="runTmdbSyncNow()">🔄 Jetzt Watchlist & Favoriten synchronisieren</button>' +
-                    '<button class="btn red" onclick="disconnectTmdbSync()">🔌 TMDB-Verbindung trennen</button>' +
+                    '<button class="btn danger" onclick="disconnectTmdbSync()">🔌 TMDB-Verbindung trennen</button>' +
                   '</div>'
                 ) : (
                   '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +

@@ -3213,7 +3213,7 @@
                 (!j.running && j.entries.length > 0 && done < total ? '<button class="btn green" onclick="startOrResumeBackupImport()">🚀 ' + (done > 0 ? ('Fortsetzen ab #' + done.toLocaleString('de-DE')) : ('Smart-Import starten (' + total.toLocaleString('de-DE') + ')')) + '</button>' : '') +
                 (j.running ? '<button class="btn amber" onclick="pauseBackupImport()">⏸️ Pausieren</button>' : '') +
                 (done > 0 && !j.running && j.entries.length > 0 ? '<button class="btn amber" onclick="restartBackupFromZeroNoDupesClient()">🔄 Ab 0 neu starten</button>' : '') +
-                ((done > 0 || (j.reviewItems && j.reviewItems.length > 0)) ? '<button class="btn red" onclick="resetBackupImport(true)">↺ Zurücksetzen</button>' : '') +
+                ((done > 0 || (j.reviewItems && j.reviewItems.length > 0)) ? '<button class="btn danger" onclick="resetBackupImport(true)">↺ Zurücksetzen</button>' : '') +
               '</div>' +
             '</div>' +
 
@@ -3754,7 +3754,7 @@
               '<button type="button" class="btn amber" onclick="exportDiagnosticLogsForAiClient(true)">📋 Fehler-Log für KI kopieren</button>' +
               '<button type="button" class="btn blue" onclick="exportDiagnosticLogsForAiClient(false)">📋 Komplettes Log kopieren</button>' +
               '<button type="button" class="btn" onclick="syncDiagnosticLogsFromD1Client(false)">🔄 Aus D1 laden</button>' +
-              '<button type="button" class="btn red" onclick="clearAllDiagnosticLogsClient()">🗑️ Logs leeren</button>' +
+              '<button type="button" class="btn danger" onclick="clearAllDiagnosticLogsClient()">🗑️ Logs leeren</button>' +
             '</div>' +
           '</div>' +
 
@@ -5634,7 +5634,7 @@
                           (idx < activeFolderItems.length - 1 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach unten" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'down\\')">⬇️</button>' : '') +
                           '<button class="btn" style="padding:4px 8px;font-size:11px" title="Details & Streams öffnen" onclick="openDetails(\\'' + tc + '\\',' + Number(it.tmdbId) + ',false)">👁️</button>' +
                           '<button class="btn" style="padding:4px 8px;font-size:11px;border-color:rgba(245,158,11,0.45);color:#fbbf24" title="Nur aus dieser Playlist entfernen (Film/Serie bleibt in D1 erhalten)" onclick="adminRemovePlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\')">➖ Aus Playlist</button>' +
-                          '<button class="btn red" style="padding:4px 8px;font-size:11px" title="Komplett aus D1-Datenbank + Telegram-Bot UND aus Playlist löschen" onclick="adminDeletePlaylistItemFromD1(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'' + tc + '\\',' + Number(it.tmdbId) + ',\\'' + esc(it.title) + '\\')">🗑️ Aus D1 + Bot</button>' +
+                          '<button class="btn danger" style="padding:4px 8px;font-size:11px" title="Komplett aus D1-Datenbank + Telegram-Bot UND aus Playlist löschen" onclick="adminDeletePlaylistItemFromD1(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'' + tc + '\\',' + Number(it.tmdbId) + ',\\'' + esc(it.title) + '\\')">🗑️ Aus D1 + Bot</button>' +
                         '</div>' +
                       '</div>' +
                       epDrawerBodyHtml +
@@ -5690,7 +5690,7 @@
                         '<button class="btn green" onclick="adminCopyPlaylistBatchClient(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\',\\'' + esc(pl.name) + '\\')" title="Kopiert diese Playlist in 25er-Batches ohne API-Limit">📋 25er-Batch Kopie</button>' +
                         '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="adminTogglePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
                         '<button class="btn" onclick="adminRenamePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\',\\'' + esc(pl.name) + '\\')">✏️</button>' +
-                        '<button class="btn red" onclick="adminDeletePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\',\\'' + esc(pl.name) + '\\')">🗑️</button>' +
+                        '<button class="btn danger" onclick="adminDeletePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\',\\'' + esc(pl.name) + '\\')">🗑️</button>' +
                       '</div>' +
                     '</div>';
                   }).join("")
@@ -5986,7 +5986,7 @@
                   '<div class="section-title" style="margin-bottom:6px"><span>🧰 Datenbank-Wartung & Komplett-Reset</span></div>' +
                   '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:8px">Defekte oder doppelte Stream-Buttons werden jetzt vollautomatisch ausgefiltert. Bei Bedarf kannst du hier einen Datenbank-Reset ausführen:</div>' +
                   '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-                    '<button type="button" class="btn red" onclick="adminRunCompleteMediaResetClient()">🧨 Komplett-Reset (Alle Medien & Playlisten löschen)</button>' +
+                    '<button type="button" class="btn danger" onclick="adminRunCompleteMediaResetClient()">🧨 Komplett-Reset (Alle Medien & Playlisten löschen)</button>' +
                   '</div>' +
                 '</div>' +
               '</div>' +
@@ -6043,7 +6043,7 @@
                     '<button type="button" class="btn ' + (reportFilter === 'resolved' ? 'green' : '') + '" onclick="state.adminReportFilter=\\'resolved\\';loadAdminPanelView()">✅ Gelöst (' + (allReports.length - openReportsCount) + ')</button>' +
                     '<button type="button" class="btn ' + (reportFilter === 'all' ? 'blue' : '') + '" onclick="state.adminReportFilter=\\'all\\';loadAdminPanelView()">📋 Alle (' + allReports.length + ')</button>' +
                     ((allReports.length - openReportsCount) > 0 ? '<button type="button" class="btn amber" onclick="adminClearAllMediaReportsClient(true)">🧹 Gelöste entfernen (' + (allReports.length - openReportsCount) + ')</button>' : '') +
-                    (allReports.length > 0 ? '<button type="button" class="btn red" onclick="adminClearAllMediaReportsClient(false)">🗑️ Alle Meldungen löschen</button>' : '') +
+                    (allReports.length > 0 ? '<button type="button" class="btn danger" onclick="adminClearAllMediaReportsClient(false)">🗑️ Alle Meldungen löschen</button>' : '') +
                   '</div>' +
                 '</div>' +
                 '<p style="font-size:12px;color:#94a3b8;margin-bottom:10px">Klicke auf <b>🔧 Jetzt korrigieren</b>, um direkt in die Detailansicht & den Folgen-Korrektur-Dialog zu springen. Sobald du die Korrektur speicherst, wird die Meldung automatisch als gelöst markiert!</p>' +
@@ -6079,7 +6079,7 @@
                       '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
                         '<button type="button" class="btn blue" onclick="openReportCorrectionWorkflowByIdClient(' + Number(rep.id) + ')">🔧 Jetzt korrigieren</button>' +
                         (isOpen ? '<button type="button" class="btn green" onclick="adminResolveMediaReportClient(' + Number(rep.id) + ')">✅ Als gelöst markieren</button>' : '') +
-                        '<button type="button" class="btn red" onclick="adminDeleteMediaReportClient(' + Number(rep.id) + ')" title="Meldung löschen">🗑️</button>' +
+                        '<button type="button" class="btn danger" onclick="adminDeleteMediaReportClient(' + Number(rep.id) + ')" title="Meldung löschen">🗑️</button>' +
                       '</div>' +
                     '</div>';
                   }).join("")
@@ -6227,7 +6227,7 @@
                     '<div style="font-size:12px;font-weight:800;color:#fbbf24">📥 Server-Queue (vom Bot hochgeladen): ' + qStats.pendingCount + ' offen</div>' +
                     '<div style="display:flex;gap:8px">' +
                       '<button class="btn green" onclick="runServerD1QueueStepAdmin(2)">▶️ Nächste verarbeiten</button>' +
-                      '<button class="btn red" onclick="clearServerD1QueueAdmin()">🗑️ Queue leeren</button>' +
+                      '<button class="btn danger" onclick="clearServerD1QueueAdmin()">🗑️ Queue leeren</button>' +
                     '</div>' +
                   '</div>'
                 ) : '') +
@@ -6262,7 +6262,7 @@
                     '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                       '<button class="btn purple" onclick="openDetailsWithAdminTool(\\'' + (state.adminMediaType || 'm') + '\\',' + m.tmdb_id + ',\\'poster\\')" title="Cover/Poster ändern">🖼️ Cover</button>' +
                       '<button class="btn blue" onclick="openDetailsWithAdminTool(\\'' + (state.adminMediaType || 'm') + '\\',' + m.tmdb_id + ',\\'remap\\')" title="Titel neu zuordnen & Original-Link prüfen">🔄 Neu zuordnen</button>' +
-                      '<button class="btn red" onclick="deleteAdminMediaCrud(\\'' + (state.adminMediaType || 'm') + '\\',' + m.tmdb_id + ')">🗑️ Löschen</button>' +
+                      '<button class="btn danger" onclick="deleteAdminMediaCrud(\\'' + (state.adminMediaType || 'm') + '\\',' + m.tmdb_id + ')">🗑️ Löschen</button>' +
                     '</div>' +
                   '</div>').join("") +
                 '</div>' +
