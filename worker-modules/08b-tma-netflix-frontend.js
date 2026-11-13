@@ -1894,10 +1894,12 @@
                     ? '<img class="flix-poster-card" src="' + esc(posterThumb) + '" onclick="openLightbox(\\''+esc(posterOrig)+'\\',\\''+esc(d.title)+'\\')" title="Antippen für großes Original-Poster" alt="' + esc(d.title) + '" />'
                     : '<div class="flix-poster-card" style="display:flex;align-items:center;justify-content:center;font-size:32px">' + (type === 's' ? '📺' : '🎬') + '</div>') +
                   '<div class="flix-meta-col">' +
-                    '<div class="flix-title-row">' +
-                      '<h2 style="font-size:24px;font-weight:900;color:#ffffff;margin:0;line-height:1.18;letter-spacing:-0.01em;text-shadow:0 2px 14px rgba(0,0,0,0.95)">' +
-                        '<span style="cursor:pointer;color:#ffffff" onclick="runSearch(false,\\'' + esc(d.title) + '\\')" title="Antippen, um nach diesem Titel zu suchen">' + esc(d.title) + '</span>' +
-                        (hasValidYear ? ' <span style="color:#94a3b8;font-weight:600;font-size:17px">(' + esc(d.year) + ')</span>' : '') +
+                    '<div class="flix-title-row" style="min-width:0;width:100%">' +
+                      '<h2 style="font-size:24px;font-weight:900;color:#ffffff;margin:0;line-height:1.22;letter-spacing:-0.01em;text-shadow:0 2px 14px rgba(0,0,0,0.95);display:flex;align-items:baseline;gap:8px;min-width:0;width:100%">' +
+                        '<span class="inline-marquee-wrap" data-marquee-always="1" style="cursor:pointer;color:#ffffff" onclick="runSearch(false,\\'' + esc(d.title) + '\\')" title="Antippen, um nach diesem Titel zu suchen: ' + esc(d.title) + '">' +
+                          '<span class="inline-marquee-text" style="font-size:24px;font-weight:900;color:#ffffff">' + esc(d.title) + '</span>' +
+                        '</span>' +
+                        (hasValidYear ? '<span style="color:#94a3b8;font-weight:600;font-size:17px;flex-shrink:0">(' + esc(d.year) + ')</span>' : '') +
                       '</h2>' +
                     '</div>' +
 
@@ -2031,6 +2033,9 @@
             '</div>' +
           '</div>';
           if (tr && autoOpenTrailer) switchEmbedSource(trailerProvider || "youtube", false);
+          if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+            setTimeout(() => window.refreshModalAndEpisodeMarquees(m), 60);
+          }
           if (type === 's') {
             const savedProg = getSeriesProgress(d.id);
             const initialSeason = (forceSeasonNum && Number(forceSeasonNum) > 0)
@@ -2072,11 +2077,99 @@
           if (btn) btn.classList.toggle("active", t === tabName);
           if (panel) panel.style.display = t === tabName ? "block" : "none";
         }
+        if (tabName === "versions" && state.activeDetails) {
+          refreshDetailModalVersionsTabDomClient();
+        }
         if (tabName === "details" && state.activeDetails?.trailers) {
           const container = document.getElementById("trailerEmbedContainer");
           if (container && !container.innerHTML.trim()) {
             switchEmbedSource(trailerProvider || "youtube", false);
           }
+        }
+      }
+
+      // Hilfsfunktionen für Qualitäts-Ranking, Qualitäts-Badge & Episodentitel-Auflösung
+      function getQualityRankScoreClient(qRaw) {
+        const q = String(qRaw || "").toUpperCase();
+        if (q.includes("2160") || q.includes("4K") || q.includes("UHD")) return 400;
+        if (q.includes("1440") || q.includes("2K")) return 300;
+        if (q.includes("1080") || q.includes("FHD")) return 200;
+        if (q.includes("720") || q.includes("HD")) return 100;
+        if (q.includes("576") || q.includes("480") || q.includes("SD")) return 50;
+        return 150;
+      }
+
+      function formatQualityBadgeHtmlClient(qRaw, extraCodec) {
+        const qClean = String(qRaw || "1080p").trim() || "1080p";
+        const qUpper = qClean.toUpperCase();
+        const cls = (qUpper.includes("2160") || qUpper.includes("4K"))
+          ? "ep-quality-badge q-uhd"
+          : (qUpper.includes("480") || qUpper.includes("576") || qUpper.includes("SD"))
+            ? "ep-quality-badge q-sd"
+            : "ep-quality-badge";
+        const codecClean = String(extraCodec || "").trim();
+        const label = codecClean && !/^(rar|archive)$/i.test(codecClean) ? (qClean + " · " + codecClean) : qClean;
+        return '<span class="' + cls + '" title="Video-Qualität: ' + esc(label) + '">📺 ' + esc(label) + '</span>';
+      }
+
+      function resolveClientEpisodeTitle(seriesId, seasonNum, epNum, fileObj) {
+        const sNum = Number(seasonNum || fileObj?.season_number || 1);
+        const eNum = Number(epNum || fileObj?.episode_number || 1);
+        if (fileObj) {
+          const directTitle = String(fileObj.episode_title || fileObj.episodeTitle || fileObj.epName || "").trim();
+          if (directTitle && !/^Folge\\s+\\d+$/i.test(directTitle)) return directTitle;
+        }
+        if (Array.isArray(activeSeasonCacheEpisodes) && activeSeasonCacheEpisodes.length > 0) {
+          const hit = activeSeasonCacheEpisodes.find(e => Number(e.season_number || sNum) === sNum && Number(e.episode_number) === eNum);
+          if (hit && hit.name && !/^Folge\\s+\\d+$/i.test(hit.name)) return String(hit.name).trim();
+        }
+        if (typeof clientSeasonCache !== "undefined" && clientSeasonCache instanceof Map) {
+          const vipEntry = clientSeasonCache.get(seriesId + "_" + sNum + "_vip") || clientSeasonCache.get(seriesId + "_" + sNum + "_std");
+          const eps = vipEntry?.data?.episodes;
+          if (Array.isArray(eps)) {
+            const hit = eps.find(e => Number(e.episode_number) === eNum);
+            if (hit && hit.name && !/^Folge\\s+\\d+$/i.test(hit.name)) return String(hit.name).trim();
+          }
+        }
+        const allFiles = Array.isArray(state.activeDetails?.allStreamFiles) ? state.activeDetails.allStreamFiles : [];
+        const fileWithTitle = allFiles.find(f => Number(f.season_number || 1) === sNum && Number(f.episode_number || 1) === eNum && (f.episode_title || f.episodeTitle));
+        if (fileWithTitle) {
+          return String(fileWithTitle.episode_title || fileWithTitle.episodeTitle).trim();
+        }
+        if (fileObj && fileObj.raw_filename) {
+          const fn = String(fileObj.raw_filename).replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm|rar)$/i, "").replace(/[._]+/g, " ").trim();
+          const m = fn.match(/S\\d{1,2}\\s*E\\d{1,3}\\s*[-–—:]?\\s*(.+?)(?:\\s+(?:1080p|720p|2160p|480p|4K|GERMAN|DL|WEB|BluRay|HDTV|x264|x265|HEVC|AVC)\\b|$)/i);
+          if (m && m[1] && m[1].trim().length >= 2) {
+            return m[1].trim();
+          }
+        }
+        return "Folge " + eNum;
+      }
+
+      let versionsTabSeasonFilter = 0; // 0 = Alle Staffeln
+      let versionsTabPreferredProfile = "auto"; // 'auto' oder spezifisches Profil für Auto-Fill
+
+      function setVersionsTabSeasonFilterClient(seasonNum) {
+        versionsTabSeasonFilter = Number(seasonNum) || 0;
+        refreshDetailModalVersionsTabDomClient();
+      }
+
+      function setVersionsTabPreferredProfileClient(profileKey) {
+        versionsTabPreferredProfile = String(profileKey || "auto");
+        refreshDetailModalVersionsTabDomClient();
+      }
+
+      function refreshDetailModalVersionsTabDomClient() {
+        const panel = document.getElementById("flixTabPanel_versions");
+        const d = state.activeDetails;
+        if (!panel || !d) return;
+        const type = d.typeCode === "s" || Array.isArray(d.seasons) ? "s" : "m";
+        const vipAllowed = isCurrentUserVip();
+        const isAdminUser = Boolean(state.authUser?.isAdmin);
+        const canReportMedia = Boolean(vipAllowed || isAdminUser);
+        panel.innerHTML = buildDetailModalVersionsTabHtml(d, type, vipAllowed, isAdminUser, canReportMedia);
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          setTimeout(() => window.refreshModalAndEpisodeMarquees(panel), 40);
         }
       }
 
@@ -2095,52 +2188,218 @@
           '</div>';
         }
 
-        // Gruppiere alle Dateien nach Schnittfassung / Version (z.B. "Netflix-Fassung", "Originalfassung", "📦 RAR-Archiv")
-        const groupsMap = new Map();
+        // Staffeln ermitteln (bei Serien)
+        const seasonSet = new Set();
         for (const f of allFiles) {
           if (!f) continue;
+          const sn = Number(f.season_number || 1);
+          if (sn > 0) seasonSet.add(sn);
+        }
+        const availableSeasons = Array.from(seasonSet).sort((a, b) => a - b);
+        const activeSeasonFilter = (type === "s" && versionsTabSeasonFilter > 0 && seasonSet.has(versionsTabSeasonFilter))
+          ? versionsTabSeasonFilter
+          : 0;
+
+        const filteredFiles = (type === "s" && activeSeasonFilter > 0)
+          ? allFiles.filter(f => f && Number(f.season_number || 1) === activeSeasonFilter)
+          : allFiles;
+
+        // Gruppiere Dateien nach Schnittfassung / Qualität
+        const groupsMap = new Map();
+        const profileCounts = new Map();
+        for (const f of filteredFiles) {
+          if (!f) continue;
           const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
-          const vLbl = isRar ? "📦 RAR-Archiv" : (String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung");
-          if (!groupsMap.has(vLbl)) groupsMap.set(vLbl, []);
-          groupsMap.get(vLbl).push(f);
+          const baseVer = isRar ? "📦 RAR-Archiv" : (String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung");
+          const qualClean = String(f.quality || "1080p").trim() || "1080p";
+          const groupKey = isRar ? baseVer : (baseVer + " · " + qualClean);
+          if (!groupsMap.has(groupKey)) groupsMap.set(groupKey, []);
+          groupsMap.get(groupKey).push(f);
+          if (!isRar) {
+            profileCounts.set(groupKey, (profileCounts.get(groupKey) || 0) + 1);
+          }
+        }
+
+        // Staffel-Filterleiste oben im Versionen-Tab
+        const seasonFilterBarHtml = (type === "s" && availableSeasons.length > 1) ? (
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
+            '<span style="font-size:11.5px;font-weight:800;color:#94a3b8">📺 Staffel-Filter:</span>' +
+            '<button type="button" class="season-tab-btn ' + (activeSeasonFilter === 0 ? 'active' : '') + '" style="padding:4px 10px;font-size:11.5px" onclick="setVersionsTabSeasonFilterClient(0)">Alle Staffeln (' + allFiles.length + ')</button>' +
+            availableSeasons.map(sn => {
+              const cnt = allFiles.filter(f => f && Number(f.season_number || 1) === sn).length;
+              return '<button type="button" class="season-tab-btn ' + (activeSeasonFilter === sn ? 'active' : '') + '" style="padding:4px 10px;font-size:11.5px" onclick="setVersionsTabSeasonFilterClient(' + sn + ')">Staffel ' + sn + ' · ' + cnt + '</button>';
+            }).join("") +
+          '</div>'
+        ) : '';
+
+        // KOMPLETTE AUTO-FILL STAFFEL-ANSICHT (Standard bei Serien: Füllt fehlende Folgen einer Qualität/Version automatisch mit einer anderen Version auf!)
+        let completeAutoFillHtml = "";
+        if (type === "s") {
+          const streamOnlyFiles = filteredFiles.filter(f => {
+            if (!f) return false;
+            const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
+            return !isRar && !f.is_download_only && !f.isDownloadOnly;
+          });
+          if (streamOnlyFiles.length > 0) {
+            const sortedProfiles = Array.from(profileCounts.entries())
+              .sort((a, b) => {
+                if (b[1] !== a[1]) return b[1] - a[1];
+                return getQualityRankScoreClient(b[0]) - getQualityRankScoreClient(a[0]);
+              })
+              .map(entry => entry[0]);
+            const dominantProfile = (versionsTabPreferredProfile !== "auto" && sortedProfiles.includes(versionsTabPreferredProfile))
+              ? versionsTabPreferredProfile
+              : (sortedProfiles[0] || "Originalfassung · 1080p");
+
+            // Gruppiere alle vorhandenen Episoden nach (Staffel, Folge)
+            const epBuckets = new Map();
+            const seasonsInScope = activeSeasonFilter > 0 ? [activeSeasonFilter] : availableSeasons;
+            for (const sn of seasonsInScope) {
+              const sFiles = streamOnlyFiles.filter(f => Number(f.season_number || 1) === sn);
+              for (const f of sFiles) {
+                const en = Number(f.episode_number || 1);
+                const bKey = sn + "_" + en;
+                if (!epBuckets.has(bKey)) epBuckets.set(bKey, { season: sn, episode: en, files: [] });
+                epBuckets.get(bKey).files.push(f);
+              }
+            }
+
+            const sortedEpKeys = Array.from(epBuckets.values()).sort((a, b) => {
+              if (a.season !== b.season) return a.season - b.season;
+              return a.episode - b.episode;
+            });
+
+            let autoFilledCount = 0;
+            const completeRowsHtml = sortedEpKeys.map(bucket => {
+              const sn = bucket.season;
+              const en = bucket.episode;
+              const epCode = "S" + String(sn).padStart(2, "0") + "E" + String(en).padStart(2, "0");
+              const candidateFiles = bucket.files.slice().sort((a, b) => getQualityRankScoreClient(b.quality) - getQualityRankScoreClient(a.quality));
+              const exactMatch = candidateFiles.find(f => {
+                const bVer = String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung";
+                const qCln = String(f.quality || "1080p").trim() || "1080p";
+                return (bVer + " · " + qCln) === dominantProfile;
+              });
+              const chosenFile = exactMatch || candidateFiles[0];
+              const isFilledFromOther = Boolean(!exactMatch && sortedProfiles.length > 1);
+              if (isFilledFromOther) autoFilledCount++;
+
+              const chosenVerLbl = String(chosenFile.versionLabel || chosenFile.version_label || chosenFile.tags || "Originalfassung").trim() || "Originalfassung";
+              const chosenQual = String(chosenFile.quality || "1080p").trim() || "1080p";
+              const chosenSize = formatFileSizeClient(chosenFile.file_size);
+              const chosenSubs = Array.isArray(chosenFile.subtitles) ? chosenFile.subtitles : [];
+              const epTitleStr = resolveClientEpisodeTitle(d.id, sn, en, chosenFile);
+
+              return '<div class="ep-row ' + (isFilledFromOther ? 'ep-autofilled' : '') + '" style="margin-bottom:5px;padding:8px 10px">' +
+                '<div class="ep-row-top">' +
+                  '<div class="ep-title" tabindex="0" onclick="openEpisodeStory(' + Number(d.id) + ',' + sn + ',' + en + ',\\'' + esc(epTitleStr) + '\\')" title="' + esc(epCode + ' – ' + epTitleStr) + '">' +
+                    '<span class="ep-code-badge">' + esc(epCode) + '</span>' +
+                    '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(epTitleStr) + '</span></div>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;flex-shrink:0">' +
+                    formatQualityBadgeHtmlClient(chosenQual, chosenFile.codec) +
+                    '<span class="stream-meta-pill">' + esc(chosenVerLbl) + (chosenSize ? (' · ' + esc(chosenSize)) : '') + '</span>' +
+                    (isFilledFromOther ? '<span class="ep-autofill-badge" title="Fehlte in ' + esc(dominantProfile) + ' – automatisch aufgefüllt aus ' + esc(chosenVerLbl + ' (' + chosenQual + ')') + '">🔄 Aufgefüllt · ' + esc(chosenQual) + '</span>' : '') +
+                  '</div>' +
+                '</div>' +
+                '<div class="ep-row-bottom">' +
+                  '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0">' +
+                    '<button type="button" class="btn-stream-clean" onclick="requestTelegramStream(\\'' + esc(chosenFile.telegram_file_id) + '\\',\\'' + esc(d.title + ' ' + epCode + ' - ' + epTitleStr) + '\\',\\'' + esc(chosenQual) + '\\',{seriesId:' + Number(d.id) + ',season:' + sn + ',episode:' + en + ',epName:\\'' + esc(epTitleStr) + '\\',fileSize:\\'' + esc(chosenSize) + '\\',tags:\\'' + esc(chosenVerLbl) + '\\'})">▶ Stream · ' + esc(chosenQual) + (chosenSize ? (' · ' + esc(chosenSize)) : '') + (chosenSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                    (chosenSubs.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(chosenFile.telegram_file_id) + '\\',\\'' + esc(d.title + ' ' + epCode) + '\\',{seriesId:' + Number(d.id) + ',season:' + sn + ',episode:' + en + '})">💬 UT (' + chosenSubs.length + ')</button>' : '') +
+                    (isAdminUser && chosenFile.raw_filename ? '<span style="font-size:10.5px;color:#94a3b8;font-family:monospace;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(chosenFile.raw_filename) + '">📄 ' + esc(chosenFile.raw_filename) + '</span>' : '') +
+                  '</div>' +
+                  '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                    (isAdminUser ? '<button type="button" class="ep-ghost-btn admin-remap-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sn + ',episode:' + en + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(chosenFile.telegram_file_id) + '\\',versionLabel:\\'' + esc(chosenVerLbl) + '\\',quality:\\'' + esc(chosenQual) + '\\',rawFilename:\\'' + esc(chosenFile.raw_filename || '') + '\\',messageLink:\\'' + esc(chosenFile.message_link || '') + '\\'})" title="Folge ' + esc(epCode) + ' (' + esc(epTitleStr) + ') neu zuordnen">✏️ ' + esc(epCode) + ' zuordnen</button>' : '') +
+                    (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sn + ',episode:' + en + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(chosenFile.telegram_file_id) + '\\',versionLabel:\\'' + esc(chosenVerLbl) + '\\'})" title="Fehler für ' + esc(epCode) + ' melden">⚠️</button>' : '') +
+                  '</div>' +
+                '</div>' +
+              '</div>';
+            }).join("");
+
+            const profileSwitcherHtml = sortedProfiles.length > 1 ? (
+              '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' +
+                '<span style="font-size:11px;color:#94a3b8;font-weight:700">Bevorzugte Basis-Qualität (fehlende Folgen werden automatisch ergänzt):</span>' +
+                sortedProfiles.map(prof => {
+                  const isAct = prof === dominantProfile;
+                  return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 8px;font-size:11px" onclick="setVersionsTabPreferredProfileClient(\\'' + esc(prof) + '\\')">' + esc(prof) + '</button>';
+                }).join("") +
+              '</div>'
+            ) : '';
+
+            completeAutoFillHtml =
+              '<div style="margin-bottom:14px;padding:12px;border-radius:12px;background:linear-gradient(135deg,rgba(14,165,233,0.12),rgba(15,23,42,0.85));border:1px solid rgba(56,189,248,0.38)">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
+                  '<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">' +
+                    '<span class="flix-version-badge" style="background:linear-gradient(135deg,#0284c7,#4338ca);border-color:#7dd3fc;color:#fff">✨ Komplette Staffel-Ansicht (Auto-Fill Standard)</span>' +
+                    '<span class="stream-meta-pill size">' + sortedEpKeys.length + ' Folgen lückenlos</span>' +
+                    (autoFilledCount > 0 ? '<span class="ep-autofill-badge">🔄 ' + autoFilledCount + ' Folge' + (autoFilledCount === 1 ? '' : 'n') + ' aus Alternativ-Version ergänzt</span>' : '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7">✓ Alle Folgen in ' + esc(dominantProfile) + '</span>') +
+                  '</div>' +
+                '</div>' +
+                '<div style="font-size:11.5px;color:#cbd5e1;margin-bottom:8px">' +
+                  'Zeigt dir immer alle verfügbaren Folgen durchgehend an. Falls einzelne Episoden in <b>' + esc(dominantProfile) + '</b> fehlen, werden sie automatisch mit einer anderen vorhandenen Version aufgefüllt und direkt mit ihrer jeweiligen Qualität gekennzeichnet.' +
+                '</div>' +
+                profileSwitcherHtml +
+                '<div style="display:flex;flex-direction:column;gap:4px;max-height:340px;overflow-y:auto;padding-right:2px">' +
+                  completeRowsHtml +
+                '</div>' +
+              '</div>';
+          }
         }
 
         return '<div class="panel-box" style="margin:6px 0">' +
           '<div class="section-title" style="margin-bottom:8px">' +
-            '<span>🎞️ Verfügbare Schnittfassungen & Versionen (' + groupsMap.size + ' Fassung' + (groupsMap.size === 1 ? '' : 'en') + ' • ' + allFiles.length + ' Datei' + (allFiles.length === 1 ? '' : 'en') + ')</span>' +
+            '<span>🎞️ Verfügbare Schnittfassungen & Versionen (' + groupsMap.size + ' Fassung' + (groupsMap.size === 1 ? '' : 'en') + ' • ' + filteredFiles.length + ' Datei' + (filteredFiles.length === 1 ? '' : 'en') + ')</span>' +
           '</div>' +
-          '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:10px">' +
-            'Hier siehst du alle hinterlegten Schnittfassungen & Kategorien (z.B. <b>Netflix-Fassung</b>, <b>Originalfassung</b> oder <b>📦 RAR-Archiv</b>). ' +
-            (isAdminUser ? 'Über den <b>✏️ Stift-Button</b> kannst du jede Folge/Datei einzeln einer anderen Staffel, Folge, Version oder TMDb-ID zuweisen.' : '') +
+          seasonFilterBarHtml +
+          completeAutoFillHtml +
+          '<div style="font-size:11.5px;color:#94a3b8;margin-bottom:8px;font-weight:700">' +
+            '📂 Einzelne Schnittfassungen & Qualitäts-Gruppen im Detail:' +
           '</div>' +
           Array.from(groupsMap.entries()).map(([vLabel, filesList]) => {
-            return '<div style="margin-bottom:12px;padding:10px;border-radius:10px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1)">' +
+            const sortedGroupFiles = filesList.slice().sort((a, b) => {
+              const sa = Number(a.season_number || 1);
+              const sb = Number(b.season_number || 1);
+              if (sa !== sb) return sa - sb;
+              return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+            });
+            return '<div style="margin-bottom:12px;padding:11px;border-radius:11px;background:rgba(15,23,42,0.65);border:1px solid rgba(148,163,184,0.2)">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
                 '<span class="flix-version-badge">🎞️ ' + esc(vLabel) + '</span>' +
-                '<span style="font-size:11.5px;color:#94a3b8;font-weight:700">' + filesList.length + (type === 's' ? (' Folge' + (filesList.length === 1 ? '' : 'n')) : (' Datei' + (filesList.length === 1 ? '' : 'en'))) + '</span>' +
+                '<span class="stream-meta-pill">' + sortedGroupFiles.length + (type === 's' ? (' Folge' + (sortedGroupFiles.length === 1 ? '' : 'n')) : (' Datei' + (sortedGroupFiles.length === 1 ? '' : 'en'))) + '</span>' +
               '</div>' +
               '<div style="display:flex;flex-direction:column;gap:5px;max-height:280px;overflow-y:auto;padding-right:2px">' +
-                filesList.map(f => {
+                sortedGroupFiles.map(f => {
                   const sNum = Number(f.season_number || 1);
                   const eNum = Number(f.episode_number || 1);
                   const epCode = type === 's' ? ('S' + String(sNum).padStart(2, '0') + 'E' + String(eNum).padStart(2, '0')) : '';
+                  const epTitleStr = type === 's' ? resolveClientEpisodeTitle(d.id, sNum, eNum, f) : (d.title || 'Film');
                   const sizeStr = formatFileSizeClient(f.file_size);
                   const isRar = String(f.codec || "").toUpperCase() === "RAR" || /^RAR/i.test(String(f.part || "")) || /\\.rar$/i.test(String(f.raw_filename || ""));
                   const partStr = String(f.part || "").trim();
                   const subsList = Array.isArray(f.subtitles) ? f.subtitles : [];
-                  const qualStr = [f.quality || '1080p', f.codec || '', partStr ? ('• ' + partStr) : '', sizeStr ? ('• ' + sizeStr) : ''].filter(Boolean).join(' ');
-                  return '<div class="ep-row" style="margin-bottom:0;padding:6px 8px">' +
-                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:150px">' +
-                      (epCode ? '<b style="color:#38bdf8;font-size:12px">' + esc(epCode) + '</b>' : '<b style="color:#38bdf8;font-size:12px">' + (isRar ? '📦 RAR' : '🎬 Film') + '</b>') +
-                      '<span class="stream-meta-pill">' + esc(qualStr) + '</span>' +
-                      (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399">💬 ' + subsList.length + ' UT</span>' : '') +
-                      (isAdminUser && f.raw_filename ? '<span style="font-size:10.5px;color:#94a3b8;font-family:monospace;word-break:break-all">📄 ' + esc(f.raw_filename) + '</span>' : '') +
+                  const cleanVer = String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung";
+                  return '<div class="ep-row" style="margin-bottom:0;padding:8px 10px">' +
+                    '<div class="ep-row-top">' +
+                      '<div class="ep-title" tabindex="0" ' + (type === 's' ? ('onclick="openEpisodeStory(' + Number(d.id) + ',' + sNum + ',' + eNum + ',\\'' + esc(epTitleStr) + '\\')"') : '') + '>' +
+                        '<span class="ep-code-badge">' + (epCode ? esc(epCode) : (isRar ? '📦 RAR' : '🎬 Film')) + '</span>' +
+                        '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(type === 's' ? epTitleStr : (partStr || cleanVer || d.title)) + '</span></div>' +
+                      '</div>' +
+                      '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;flex-shrink:0">' +
+                        formatQualityBadgeHtmlClient(f.quality || '1080p', f.codec) +
+                        (sizeStr ? '<span class="stream-meta-pill">' + esc(sizeStr) + '</span>' : '') +
+                        (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399">💬 ' + subsList.length + ' UT</span>' : '') +
+                      '</div>' +
                     '</div>' +
-                    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                      '<button class="btn ' + (isRar ? 'amber' : 'red') + '" style="padding:3px 8px;font-size:11px" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (epCode ? (' ' + epCode) : '') + (partStr ? (' (' + partStr + ')') : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{seriesId:' + Number(d.id) + ',season:' + sNum + ',episode:' + eNum + ',fileSize:\\'' + esc(sizeStr) + '\\',tags:\\'' + esc(vLabel) + '\\'})">' + (isRar ? '📦 RAR senden' : ('▶️ Stream' + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
-                      (subsList.length > 0 ? '<button type="button" class="btn blue" style="padding:3px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (epCode ? (' ' + epCode) : '')) + '\\',{seriesId:' + (type === 's' ? Number(d.id) : 'null') + ',season:' + sNum + ',episode:' + eNum + '})" title="Nur Untertitel einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
-                      (isAdminUser ? '<button type="button" class="btn ep-icon-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sNum + ',episode:' + eNum + ',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(vLabel) + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(f.raw_filename || '') + '\\',messageLink:\\'' + esc(f.message_link || '') + '\\'})" title="Folge/Datei korrigieren">✏️</button>' : '') +
-                      (canReportMedia ? '<button type="button" class="btn ep-icon-btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sNum + ',episode:' + eNum + ',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(vLabel) + '\\'})" title="Fehler melden">⚠️</button>' : '') +
+                    '<div class="ep-row-bottom">' +
+                      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0">' +
+                        '<button type="button" class="' + (isRar ? 'btn amber' : 'btn-stream-clean') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (epCode ? (' ' + epCode + ' - ' + epTitleStr) : '') + (partStr ? (' (' + partStr + ')') : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{seriesId:' + Number(d.id) + ',season:' + sNum + ',episode:' + eNum + ',epName:\\'' + esc(epTitleStr) + '\\',fileSize:\\'' + esc(sizeStr) + '\\',tags:\\'' + esc(cleanVer) + '\\'})">' + (isRar ? '📦 RAR senden' : ('▶ Stream · ' + esc(f.quality || '1080p') + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
+                        (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (epCode ? (' ' + epCode) : '')) + '\\',{seriesId:' + (type === 's' ? Number(d.id) : 'null') + ',season:' + sNum + ',episode:' + eNum + '})" title="Nur Untertitel einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
+                        (isAdminUser && f.raw_filename ? '<span style="font-size:10.5px;color:#94a3b8;font-family:monospace;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.raw_filename) + '">📄 ' + esc(f.raw_filename) + '</span>' : '') +
+                      '</div>' +
+                      '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                        (isAdminUser ? '<button type="button" class="ep-ghost-btn admin-remap-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(cleanVer) + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(f.raw_filename || '') + '\\',messageLink:\\'' + esc(f.message_link || '') + '\\'})" title="' + esc((epCode || 'Datei') + ' (' + epTitleStr + ') korrigieren / zuordnen') + '">✏️ ' + (epCode ? esc(epCode) + ' ' : '') + 'zuordnen</button>' : '') +
+                        (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(cleanVer) + '\\'})" title="Fehler melden">⚠️</button>' : '') +
+                      '</div>' +
                     '</div>' +
                   '</div>';
                 }).join("") +
@@ -2233,7 +2492,29 @@
         }
       }
 
-      async function toggleModalRemapBox(typeCode, mediaId) {
+      let modalRemapSelectedFileIndex = -1; // -1 = Alle Dateien des Titels, >= 0 = Einzelne Datei/Folge
+
+      function selectModalRemapSourceFileClient(fileIdx, typeCode, mediaId) {
+        const d = state.activeDetails || {};
+        const allFiles = Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
+          ? d.allStreamFiles
+          : (Array.isArray(d.files) ? d.files : []);
+        modalRemapSelectedFileIndex = Number(fileIdx);
+        const box = document.getElementById("modalRemapMediaBox");
+        if (box) {
+          box.style.display = "none";
+          toggleModalRemapBox(typeCode, mediaId, true);
+        }
+        if (fileIdx >= 0 && allFiles[fileIdx]) {
+          const f = allFiles[fileIdx];
+          const sInp = document.getElementById("modalRemapSeasonInp");
+          const eInp = document.getElementById("modalRemapEpisodeInp");
+          if (sInp) sInp.value = String(Number(f.season_number || 1));
+          if (eInp) eInp.value = String(Number(f.episode_number || 1));
+        }
+      }
+
+      async function toggleModalRemapBox(typeCode, mediaId, keepFileSelection = false) {
         const box = document.getElementById("modalRemapMediaBox");
         if (!box) return;
         if (box.style.display === "block") {
@@ -2242,32 +2523,80 @@
         }
         box.style.display = "block";
         const d = state.activeDetails || {};
-        const allFiles = Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
+        const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
           ? d.allStreamFiles
-          : (Array.isArray(d.files) ? d.files : []);
-        const firstFile = allFiles[0] || {};
-        const origFilename = firstFile.raw_filename || d.rawFilename || d.title || "";
-        const origCaption = firstFile.raw_caption || "";
-        const origSeedQuery = origFilename
+          : (Array.isArray(d.files) ? d.files : [])).slice().sort((a, b) => {
+            const sa = Number(a.season_number || 1);
+            const sb = Number(b.season_number || 1);
+            if (sa !== sb) return sa - sb;
+            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+          });
+        if (!keepFileSelection) {
+          modalRemapSelectedFileIndex = (typeCode === "s" && allFiles.length > 1) ? 0 : -1;
+        }
+        const activeFile = (modalRemapSelectedFileIndex >= 0 && allFiles[modalRemapSelectedFileIndex])
+          ? allFiles[modalRemapSelectedFileIndex]
+          : (allFiles[0] || {});
+        const activeS = Number(activeFile.season_number || 1);
+        const activeE = Number(activeFile.episode_number || 1);
+        const activeEpCode = typeCode === "s" ? ("S" + String(activeS).padStart(2, "0") + "E" + String(activeE).padStart(2, "0")) : "🎬 Film";
+        const activeEpTitle = typeCode === "s" ? resolveClientEpisodeTitle(d.id, activeS, activeE, activeFile) : (d.title || "Spielfilm");
+        const origFilename = activeFile.raw_filename || d.rawFilename || d.title || "";
+        const origSeedQuery = d.title || (origFilename
           ? origFilename.replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, "").replace(/[._]+/g, " ")
-          : (d.title || "");
+          : "");
+
+        const activeSourceBannerHtml =
+          '<div class="ep-remap-compare-grid" style="margin-bottom:10px">' +
+            '<div class="ep-remap-card">' +
+              '<div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px">📍 Aktuell ausgewählt (Vorher)</div>' +
+              '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                '<span class="ep-code-badge">' + (modalRemapSelectedFileIndex === -1 ? ('📦 Alle ' + allFiles.length + ' Dateien') : esc(activeEpCode)) + '</span>' +
+                '<div class="inline-marquee-wrap" data-marquee-always="1"><span class="inline-marquee-text" style="font-size:12.5px">' + esc(modalRemapSelectedFileIndex === -1 ? (d.title + ' (Kompletter Titel)') : activeEpTitle) + '</span></div>' +
+                (activeFile.quality ? formatQualityBadgeHtmlClient(activeFile.quality, activeFile.codec) : '') +
+              '</div>' +
+              (origFilename ? '<div style="font-family:monospace;font-size:10.5px;color:#cbd5e1;word-break:break-all">📄 ' + esc(origFilename) + '</div>' : '') +
+            '</div>' +
+            '<div class="ep-remap-compare-arrow">➔</div>' +
+            '<div class="ep-remap-card target">' +
+              '<div style="font-size:10px;font-weight:800;color:#38bdf8;text-transform:uppercase;letter-spacing:0.4px">🎯 Neues Ziel (Nachher)</div>' +
+              '<div id="modalRemapTargetPreviewText" style="font-size:12px;font-weight:800;color:var(--text)">' +
+                (modalRemapSelectedFileIndex === -1
+                  ? 'Kompletten Titel / alle Folgen neu verknüpfen'
+                  : ('Nur ' + esc(activeEpCode) + ' (' + esc(activeEpTitle) + ') neu zuordnen')) +
+              '</div>' +
+              '<div style="font-size:11px;color:var(--muted)">Wähle unten eine Datei/Folge und klicke beim gewünschten TMDb-Treffer auf <b>✓ Jetzt zuordnen</b>.</div>' +
+            '</div>' +
+          '</div>';
 
         const filesMetaHtml = allFiles.length > 0 ? (
-          '<div style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(148,163,184,0.2);font-size:11.5px">' +
-            '<div style="font-weight:800;color:#7dd3fc;margin-bottom:4px">📂 Verknüpfte Original-Dateien & Telegram-Links (' + allFiles.length + '):</div>' +
-            '<div style="display:flex;flex-direction:column;gap:5px;max-height:135px;overflow-y:auto">' +
-              allFiles.map(f => {
+          '<div style="margin-bottom:10px;padding:8px 10px;border-radius:8px;background:rgba(15,23,42,0.65);border:1px solid rgba(148,163,184,0.22);font-size:11.5px">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
+              '<span style="font-weight:800;color:#7dd3fc">📂 1. Welche Folge / Datei soll neu zugeordnet werden? (' + allFiles.length + ' vorhanden)</span>' +
+              (allFiles.length > 1 ? (
+                '<button type="button" class="season-tab-btn ' + (modalRemapSelectedFileIndex === -1 ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectModalRemapSourceFileClient(-1,\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">📦 Alle ' + allFiles.length + ' Dateien gemeinsam</button>'
+              ) : '') +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:5px;max-height:165px;overflow-y:auto;padding-right:2px">' +
+              allFiles.map((f, fIdx) => {
+                const isSelected = modalRemapSelectedFileIndex === fIdx;
                 const fn = f.raw_filename || f.telegram_file_id || "Unbekannte Datei";
-                const cap = f.raw_caption ? (' — ' + f.raw_caption) : '';
                 const mLink = f.message_link || "";
-                const epTag = (f.season_number || f.episode_number)
-                  ? ('<span class="stream-meta-pill">S' + String(f.season_number || 1).padStart(2, '0') + 'E' + String(f.episode_number || 1).padStart(2, '0') + '</span> ')
-                  : '';
-                return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;border-radius:6px;background:rgba(0,0,0,0.35)">' +
-                  '<div style="word-break:break-all;color:#e2e8f0;flex:1">' + epTag + '<code>' + esc(fn) + '</code>' + (cap ? '<span style="color:#94a3b8">' + esc(cap) + '</span>' : '') + '</div>' +
-                  '<div style="display:flex;gap:5px;align-items:center">' +
-                    (mLink ? '<a class="btn blue" style="padding:2px 7px;font-size:10.5px" href="' + esc(mLink) + '" target="_blank" rel="noopener noreferrer">🔗 Original-Post</a>' : '') +
-                    '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="document.getElementById(\\'modalRemapSearchInp\\').value=\\'' + esc(fn.replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, '')) + '\\';searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Als Suchtitel</button>' +
+                const sNum = Number(f.season_number || 1);
+                const eNum = Number(f.episode_number || 1);
+                const epCodeStr = typeCode === "s" ? ("S" + String(sNum).padStart(2, "0") + "E" + String(eNum).padStart(2, "0")) : "🎬 Film";
+                const epNameStr = typeCode === "s" ? resolveClientEpisodeTitle(d.id, sNum, eNum, f) : (d.title || "Film");
+                return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-radius:7px;background:' + (isSelected ? 'rgba(14,165,233,0.18)' : 'rgba(2,6,23,0.45)') + ';border:1px solid ' + (isSelected ? 'rgba(56,189,248,0.65)' : 'rgba(148,163,184,0.14)') + ';cursor:pointer" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">' +
+                  '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0">' +
+                    '<span class="ep-code-badge">' + esc(epCodeStr) + '</span>' +
+                    '<b style="color:var(--text);font-size:11.5px">' + esc(epNameStr) + '</b>' +
+                    formatQualityBadgeHtmlClient(f.quality || "1080p", f.codec) +
+                    '<code style="font-size:10.5px;color:#94a3b8;word-break:break-all">📄 ' + esc(fn) + '</code>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:5px;align-items:center" onclick="event.stopPropagation()">' +
+                    '<button type="button" class="season-tab-btn ' + (isSelected ? 'active' : '') + '" style="padding:2px 8px;font-size:10.5px" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">' + (isSelected ? '✓ Ausgewählt' : 'Auswählen') + '</button>' +
+                    '<button type="button" class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" onclick="openEpisodeCorrectionModal({typeCode:\\'' + esc(typeCode) + '\\',tmdbId:' + Number(mediaId) + ',title:\\'' + esc(d.title || '') + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + esc(epNameStr) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id || '') + '\\',versionLabel:\\'' + esc(f.versionLabel || f.version_label || 'Originalfassung') + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(fn) + '\\',messageLink:\\'' + esc(mLink) + '\\'})">✏️ Detail-Korrektur</button>' +
+                    (mLink ? '<a class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" href="' + esc(mLink) + '" target="_blank" rel="noopener noreferrer">🔗 Post</a>' : '') +
                   '</div>' +
                 '</div>';
               }).join("") +
@@ -2277,9 +2606,10 @@
 
         box.innerHTML =
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">' +
-            '<div style="font-size:13px;font-weight:800;color:#38bdf8">🔄 Falsch zugeordnet? Titel / Serie neu zuordnen</div>' +
+            '<div style="font-size:13px;font-weight:800;color:#38bdf8">🔄 Folge oder Titel neu zuordnen</div>' +
             '<button type="button" class="btn close-slate" style="padding:2px 8px;font-size:11px" onclick="document.getElementById(\\'modalRemapMediaBox\\').style.display=\\'none\\'">✖ Schließen</button>' +
           '</div>' +
+          activeSourceBannerHtml +
           filesMetaHtml +
           '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' +
             '<input id="modalRemapSearchInp" class="tma-input" value="' + esc(origSeedQuery) + '" placeholder="Suchbegriff oder TMDb-ID (z.B. Zur See, Pippi Langstrumpf, tmdb:40964)..." style="flex:1;min-width:190px;padding:6px 9px;font-size:12px" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ');}" />' +
@@ -2288,13 +2618,16 @@
               '<option value="m">🎬 Nur Filme</option>' +
               '<option value="s">📺 Nur Serien / Anime</option>' +
             '</select>' +
-            '<span style="font-size:11px;color:var(--muted)">Staffel/Folge (bei Serie):</span>' +
-            '<input id="modalRemapSeasonInp" class="tma-input" type="number" min="1" max="99" value="1" title="Ziel-Staffel" style="width:48px;padding:5px;font-size:12px;text-align:center" />' +
-            '<input id="modalRemapEpisodeInp" class="tma-input" type="number" min="1" max="999" value="1" title="Ziel-Folge" style="width:54px;padding:5px;font-size:12px;text-align:center" />' +
+            '<span style="font-size:11px;color:var(--muted);font-weight:700">Ziel-Staffel / Folge:</span>' +
+            '<input id="modalRemapSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + activeS + '" title="Ziel-Staffel" style="width:52px;padding:5px;font-size:12px;font-weight:800;text-align:center" />' +
+            '<input id="modalRemapEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + activeE + '" title="Ziel-Folge" style="width:58px;padding:5px;font-size:12px;font-weight:800;text-align:center" />' +
             '<button type="button" class="btn blue" onclick="searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Suchen (8 APIs)</button>' +
           '</div>' +
           '<div id="modalRemapResultsBox" style="display:flex;flex-direction:column;gap:6px"></div>';
 
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          setTimeout(() => window.refreshModalAndEpisodeMarquees(box), 40);
+        }
         searchModalRemapCandidates(typeCode, mediaId);
       }
 
@@ -2312,27 +2645,41 @@
             return;
           }
           const firstInferredEp = cands.find(c => c.inferredEpisode);
-          if (firstInferredEp) {
+          if (firstInferredEp && modalRemapSelectedFileIndex === -1) {
             const sInp = document.getElementById("modalRemapSeasonInp");
             const eInp = document.getElementById("modalRemapEpisodeInp");
             if (sInp && firstInferredEp.inferredSeason) sInp.value = String(firstInferredEp.inferredSeason);
             if (eInp && firstInferredEp.inferredEpisode) eInp.value = String(firstInferredEp.inferredEpisode);
           }
+          const d = state.activeDetails || {};
+          const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
+            ? d.allStreamFiles
+            : (Array.isArray(d.files) ? d.files : [])).slice().sort((a, b) => {
+              const sa = Number(a.season_number || 1);
+              const sb = Number(b.season_number || 1);
+              if (sa !== sb) return sa - sb;
+              return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+            });
+          const selFile = (modalRemapSelectedFileIndex >= 0 && allFiles[modalRemapSelectedFileIndex]) ? allFiles[modalRemapSelectedFileIndex] : null;
+          const btnTargetBadge = selFile
+            ? ('S' + String(selFile.season_number || 1).padStart(2, '0') + 'E' + String(selFile.episode_number || 1).padStart(2, '0') + ' zuordnen')
+            : 'Alle zuordnen';
+
           resBox.innerHTML = cands.map(c => {
             const epHint = c.inferredEpisode
               ? (' • <span style="color:#fde047;font-weight:800">Erkannt: S' + String(c.inferredSeason || 1).padStart(2, '0') + 'E' + String(c.inferredEpisode).padStart(2, '0') + (c.inferredEpisodeTitle ? (' (' + esc(c.inferredEpisodeTitle) + ')') : '') + '</span>')
               : '';
 
-            return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1)">' +
-              '<div style="display:flex;gap:8px;align-items:center">' +
-                (c.poster ? '<img src="' + esc(c.poster) + '" style="width:32px;height:48px;object-fit:cover;border-radius:4px" />' : '') +
-                '<div style="font-size:12px">' +
+            return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:rgba(15,23,42,0.68);border:1px solid rgba(148,163,184,0.2)">' +
+              '<div style="display:flex;gap:8px;align-items:center;min-width:0;flex:1">' +
+                (c.poster ? '<img src="' + esc(c.poster) + '" style="width:32px;height:48px;object-fit:cover;border-radius:4px;flex-shrink:0" />' : '') +
+                '<div style="font-size:12px;min-width:0;flex:1">' +
                   '<b>' + esc(c.title) + '</b> (' + esc(c.year || 'k.A.') + ') ' +
                   '<span class="f-pill neutral" style="font-size:10px;padding:1px 5px">' + (c.typeCode === 's' ? '📺 Serie' : '🎬 Film') + ' • ' + esc(c.source || 'TMDb') + ' #' + c.tmdbId + '</span>' +
                   epHint +
                 '</div>' +
               '</div>' +
-              '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="executeModalRemapMedia(\\'' + esc(oldTypeCode) + '\\',' + Number(oldMediaId) + ',\\'' + esc(c.typeCode) + '\\',' + Number(c.tmdbId) + ',' + Number(c.inferredSeason || 0) + ',' + Number(c.inferredEpisode || 0) + ')">✓ Jetzt zuordnen</button>' +
+              '<button type="button" class="btn green" style="padding:5px 10px;font-size:11px;flex-shrink:0" onclick="executeModalRemapMedia(\\'' + esc(oldTypeCode) + '\\',' + Number(oldMediaId) + ',\\'' + esc(c.typeCode) + '\\',' + Number(c.tmdbId) + ',' + Number(c.inferredSeason || 0) + ',' + Number(c.inferredEpisode || 0) + ')">✓ ' + esc(btnTargetBadge) + '</button>' +
             '</div>';
           }).join("");
         } catch (e) {
@@ -2343,26 +2690,59 @@
       async function executeModalRemapMedia(oldTypeCode, oldTmdbId, newTypeCode, newTmdbId, inferredSeason = 0, inferredEpisode = 0) {
         const sVal = Number(document.getElementById("modalRemapSeasonInp")?.value || inferredSeason || 1);
         const eVal = Number(document.getElementById("modalRemapEpisodeInp")?.value || inferredEpisode || 1);
-        setBusyState(true, "🔄 Ordne Dateien & Streams dem neuen Titel zu...");
-        try {
-          const r = await apiFetchJson(API_BASE + "/admin/remap-saved-media", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              oldTypeCode,
-              oldTmdbId: Number(oldTmdbId),
-              newTypeCode,
-              newTmdbId: Number(newTmdbId),
-              season: sVal,
-              episode: eVal
-            })
+        const d = state.activeDetails || {};
+        const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
+          ? d.allStreamFiles
+          : (Array.isArray(d.files) ? d.files : [])).slice().sort((a, b) => {
+            const sa = Number(a.season_number || 1);
+            const sb = Number(b.season_number || 1);
+            if (sa !== sb) return sa - sb;
+            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
           });
+        const selFile = (modalRemapSelectedFileIndex >= 0 && allFiles[modalRemapSelectedFileIndex]) ? allFiles[modalRemapSelectedFileIndex] : null;
+
+        setBusyState(true, "🔄 Ordne " + (selFile ? ("S" + String(selFile.season_number || 1).padStart(2, "0") + "E" + String(selFile.episode_number || 1).padStart(2, "0")) : "Dateien & Streams") + " dem neuen Titel zu...");
+        try {
+          let r = null;
+          if (selFile && allFiles.length > 1) {
+            r = await apiFetchJson(API_BASE + "/admin/reassign-episode", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                mode: "relink_tmdb",
+                scope: "single_episode",
+                oldTypeCode,
+                oldTmdbId: Number(oldTmdbId),
+                seriesId: Number(oldTmdbId),
+                oldSeason: Number(selFile.season_number || 1),
+                oldEpisode: Number(selFile.episode_number || 1),
+                telegramFileId: String(selFile.telegram_file_id || ""),
+                newTypeCode,
+                newTmdbId: Number(newTmdbId),
+                newSeason: sVal,
+                newEpisode: eVal
+              })
+            });
+          } else {
+            r = await apiFetchJson(API_BASE + "/admin/remap-saved-media", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                oldTypeCode,
+                oldTmdbId: Number(oldTmdbId),
+                newTypeCode,
+                newTmdbId: Number(newTmdbId),
+                season: sVal,
+                episode: eVal
+              })
+            });
+          }
           if (!r || !r.ok) {
             showHudToast("⚠️ " + (r?.error || "Neuzuordnung fehlgeschlagen."));
             return;
           }
           clearClientMediaCaches();
-          showHudToast("✅ Erfolgreich neu zugeordnet zu: " + (r.newTitle || ("#" + newTmdbId)));
+          showHudToast("✅ Erfolgreich neu zugeordnet" + (selFile ? (" (S" + String(sVal).padStart(2, "0") + "E" + String(eVal).padStart(2, "0") + ")") : "") + "!");
           await openDetails(newTypeCode, newTmdbId, false);
           if (state.mode === "admin") {
             loadAdminPanelView();
@@ -3388,10 +3768,20 @@
       // Optimierung #14: Ganze Staffel für VIPs nacheinander an das gewählte Ziel senden
       let activeSeasonCacheEpisodes = [];
       const selectedEpisodeVersionMap = {};
+      const selectedSeasonPreferredProfileMap = {}; // pro seriesId_seasonNum: 'auto' oder spezifisches Profil
 
       function selectEpisodeVersion(seriesId, seasonNum, epNumber, versionIdx) {
         const key = seriesId + "_" + seasonNum + "_" + epNumber;
         selectedEpisodeVersionMap[key] = Number(versionIdx) || 0;
+        loadSeason(seriesId, seasonNum, false, false);
+      }
+
+      function selectSeasonPreferredProfileClient(seriesId, seasonNum, profileKey) {
+        const sKey = seriesId + "_" + seasonNum;
+        selectedSeasonPreferredProfileMap[sKey] = String(profileKey || "auto");
+        Object.keys(selectedEpisodeVersionMap).forEach(k => {
+          if (k.startsWith(sKey + "_")) delete selectedEpisodeVersionMap[k];
+        });
         loadSeason(seriesId, seasonNum, false, false);
       }
 
@@ -3411,10 +3801,7 @@
         let queuedCount = 0;
         for (let i = 0; i < episodesWithStreams.length; i++) {
           const ep = episodesWithStreams[i];
-          const vKey = seriesId + "_" + seasonNum + "_" + ep.episode_number;
-          const selIdx = Number(selectedEpisodeVersionMap[vKey] || 0);
-          const epVersions = Array.isArray(ep.versions) && ep.versions.length > 0 ? ep.versions : ep.files;
-          const bestFile = epVersions[selIdx] || ep.files[0];
+          const bestFile = ep._resolvedActiveFile || (Array.isArray(ep.versions) && ep.versions[0]) || (Array.isArray(ep.files) && ep.files[0]);
           const targetFileId = bestFile?.telegram_file_id || bestFile?.file_id;
           if (!bestFile || !targetFileId) continue;
           const epCode = "S" + String(seasonNum).padStart(2, "0") + "E" + String(ep.episode_number).padStart(2, "0");
@@ -3477,18 +3864,85 @@
         const box = document.getElementById("seasonBox");
         if (!box) return;
         const maxAllowedEpisodes = Number(s.seasonEpisodeCount || 0);
-        const rawEpisodesArray = s.episodes || [];
-        // Die "Max. 1 aktive Gruppe / Keine Addition"-Regel:
-        // Holt sich exakt die Folgen der aktiven Gruppe und ignoriert alles danach per hartem .slice(0, maxAllowedEpisodes)!
+        const rawEpisodesArray = Array.isArray(s.episodes) ? s.episodes.map(ep => ({ ...ep })) : [];
+
+        // Smart Auto-Fill Ergänzung: Falls in allStreamFiles der Serie für diese Staffel Folgen vorliegen, die in ep.files fehlen, automatisch zusammenführen
+        if (vipAllowed && Array.isArray(state.activeDetails?.allStreamFiles)) {
+          const extraSeasonFiles = state.activeDetails.allStreamFiles.filter(f =>
+            f && Number(f.season_number || 1) === Number(seasonNum) &&
+            !f.is_download_only && !f.isDownloadOnly &&
+            String(f.codec || "").toUpperCase() !== "RAR" &&
+            !/\\.rar$/i.test(String(f.raw_filename || ""))
+          );
+          const epByNum = new Map(rawEpisodesArray.map(e => [Number(e.episode_number), e]));
+          for (const ef of extraSeasonFiles) {
+            const en = Number(ef.episode_number || 1);
+            if (maxAllowedEpisodes > 0 && en > maxAllowedEpisodes) continue;
+            let epObj = epByNum.get(en);
+            if (!epObj) {
+              epObj = {
+                episode_number: en,
+                season_number: seasonNum,
+                name: resolveClientEpisodeTitle(seriesId, seasonNum, en, ef),
+                overview: "",
+                vote_average: 0,
+                isSaved: false,
+                files: [],
+                versions: []
+              };
+              rawEpisodesArray.push(epObj);
+              epByNum.set(en, epObj);
+            }
+            if (!Array.isArray(epObj.files)) epObj.files = [];
+            const alreadyIn = epObj.files.some(x => String(x.telegram_file_id) === String(ef.telegram_file_id));
+            if (!alreadyIn) {
+              epObj.files.push(ef);
+            }
+          }
+          rawEpisodesArray.sort((a, b) => Number(a.episode_number) - Number(b.episode_number));
+        }
+
         const finalEpisodesList = maxAllowedEpisodes > 0
           ? rawEpisodesArray.filter(ep => Number(ep.episode_number) <= maxAllowedEpisodes).slice(0, maxAllowedEpisodes)
           : rawEpisodesArray;
         const episodes = finalEpisodesList;
         activeSeasonCacheEpisodes = episodes;
+
         const prog = getSeriesProgress(seriesId);
         const seasonStreamableCount = vipAllowed
           ? episodes.filter(ep => Array.isArray(ep.files) && ep.files.length > 0).length
           : 0;
+
+        // Analysiere alle vorhandenen Qualitäts-/Schnittfassungs-Profile in dieser Staffel für die automatische Auffüll-Logik (Smart Auto-Fill)
+        const seasonProfileCountMap = new Map();
+        if (vipAllowed) {
+          for (const ep of episodes) {
+            const fl = Array.isArray(ep.files) ? ep.files : [];
+            const seenInEp = new Set();
+            for (const f of fl) {
+              if (!f) continue;
+              const vLbl = String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung";
+              const qLbl = String(f.quality || "1080p").trim() || "1080p";
+              const pKey = qLbl + " · " + vLbl;
+              if (!seenInEp.has(pKey)) {
+                seenInEp.add(pKey);
+                seasonProfileCountMap.set(pKey, (seasonProfileCountMap.get(pKey) || 0) + 1);
+              }
+            }
+          }
+        }
+        const sortedSeasonProfiles = Array.from(seasonProfileCountMap.entries())
+          .sort((a, b) => {
+            if (b[1] !== a[1]) return b[1] - a[1];
+            return getQualityRankScoreClient(b[0]) - getQualityRankScoreClient(a[0]);
+          })
+          .map(entry => ({ key: entry[0], count: entry[1] }));
+
+        const sProfKey = seriesId + "_" + seasonNum;
+        const userPrefProfile = selectedSeasonPreferredProfileMap[sProfKey] || "auto";
+        const targetPrimaryProfile = (userPrefProfile !== "auto" && sortedSeasonProfiles.some(p => p.key === userPrefProfile))
+          ? userPrefProfile
+          : (sortedSeasonProfiles[0]?.key || "");
 
         const sCounts = (s.seasonCounts && typeof s.seasonCounts === "object") ? s.seasonCounts : (state.activeDetails?.seasonCounts || {});
         const sBtns = (s.seasons || [1]).map(n => {
@@ -3496,13 +3950,191 @@
           const rawCnt = vipAllowed ? Number(sCounts[n] || sCounts[String(n)] || 0) : 0;
           const vipEpCnt = (n === seasonNum && maxAllowedEpisodes > 0) ? Math.min(rawCnt, maxAllowedEpisodes) : rawCnt;
           const vipBadgeTxt = vipEpCnt > 0 ? (' · ' + vipEpCnt) : '';
-          return '<button class="btn '+(n===seasonNum?'red':'')+'" style="padding:5px 11px;font-size:12px" onclick="loadSeason('+seriesId+','+n+',true)">Staffel '+n+vipBadgeTxt+(isProgSeason ? ' 👁️' : '')+'</button>';
-        }).join(" ");
+          return '<button type="button" class="season-tab-btn ' + (n === seasonNum ? 'active' : '') + '" onclick="loadSeason(' + seriesId + ',' + n + ',true)">Staffel ' + n + vipBadgeTxt + (isProgSeason ? ' 👁️' : '') + '</button>';
+        }).join("");
 
         const progressBannerHtml = prog ? (
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);font-size:11.5px">' +
             '<span>👁️ <b>Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
-            (Number(prog.season) !== Number(seasonNum) ? '<button class="btn green" style="padding:3px 8px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>' : '') +
+            (Number(prog.season) !== Number(seasonNum) ? '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>' : '') +
+          '</div>'
+        ) : '';
+
+        let autoFilledSeasonCount = 0;
+        const episodeCardsHtml = episodes.map(ep => {
+          const epCode = 'S'+String(seasonNum).padStart(2,'0')+'E'+String(ep.episode_number).padStart(2,'0');
+          const epNameClean = (ep.name && !/^Folge\\s+\\d+$/i.test(ep.name))
+            ? ep.name
+            : resolveClientEpisodeTitle(seriesId, seasonNum, ep.episode_number, (ep.files && ep.files[0]) || null);
+          ep.name = epNameClean;
+          const isLastWatched = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(prog.episode) === Number(ep.episode_number));
+          const isNextEpisode = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(ep.episode_number) === Number(prog.episode) + 1);
+          const progBadgeHtml = isLastWatched
+            ? '<span class="ep-progress-badge">👁️ Zuletzt</span>'
+            : isNextEpisode
+              ? '<span class="ep-progress-badge next">▶ Nächste</span>'
+              : '';
+
+          let filesBtns = "";
+          let activeFileForActions = (Array.isArray(ep.files) && ep.files[0]) ? ep.files[0] : null;
+          let isEpAutoFilled = false;
+          let topQualityBadgeHtml = "";
+          let topAutoFillBadgeHtml = "";
+
+          if (vipAllowed) {
+            const rawVersions = Array.isArray(ep.files) && ep.files.length > 0
+              ? ep.files.map(f => ({
+                  ...f,
+                  versionLabel: String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung",
+                  file_id: f.telegram_file_id,
+                  telegram_file_id: f.telegram_file_id,
+                  quality: String(f.quality || "1080p").trim() || "1080p",
+                  codec: f.codec || "x264",
+                  file_size: f.file_size || 0,
+                  tags: f.tags || "",
+                  subtitles: Array.isArray(f.subtitles) ? f.subtitles : [],
+                  _normPart: normalizeClientPartLabel(f.part, f.raw_filename || ""),
+                  _partNum: extractClientPartNumber(normalizeClientPartLabel(f.part, f.raw_filename || ""))
+                }))
+              : (Array.isArray(ep.versions) ? ep.versions.map(v => ({
+                  ...v,
+                  versionLabel: String(v.versionLabel || "Originalfassung").trim() || "Originalfassung",
+                  quality: String(v.quality || "1080p").trim() || "1080p"
+                })) : []);
+
+            rawVersions.sort((a, b) => {
+              if (a._partNum > 0 && b._partNum > 0 && a._partNum !== b._partNum) return a._partNum - b._partNum;
+              return getQualityRankScoreClient(b.quality) - getQualityRankScoreClient(a.quality);
+            });
+
+            if (rawVersions.length > 0) {
+              const vKey = seriesId + "_" + seasonNum + "_" + ep.episode_number;
+              const hasManualEpChoice = Object.prototype.hasOwnProperty.call(selectedEpisodeVersionMap, vKey);
+              let activeIdx = 0;
+
+              if (hasManualEpChoice) {
+                activeIdx = Math.min(Number(selectedEpisodeVersionMap[vKey] || 0), rawVersions.length - 1);
+              } else if (targetPrimaryProfile) {
+                const matchIdx = rawVersions.findIndex(v => (v.quality + " · " + v.versionLabel) === targetPrimaryProfile);
+                if (matchIdx >= 0) {
+                  activeIdx = matchIdx;
+                } else {
+                  activeIdx = 0; // Smart Auto-Fill: Nächstbeste vorhandene Version dieser Folge wählen!
+                  if (sortedSeasonProfiles.length > 1) {
+                    isEpAutoFilled = true;
+                    autoFilledSeasonCount++;
+                  }
+                }
+              }
+
+              const activeVer = rawVersions[activeIdx] || rawVersions[0];
+              activeFileForActions = activeVer;
+              ep._resolvedActiveFile = activeVer;
+
+              const activeFid = activeVer.file_id || activeVer.telegram_file_id;
+              const activeSizeStr = formatFileSizeClient(activeVer.file_size);
+              const activeLabel = cleanUserVisibleStreamTagsClient(activeVer.versionLabel || activeVer.tags || "Originalfassung") || "Originalfassung";
+              const activeSubs = Array.isArray(activeVer.subtitles) ? activeVer.subtitles : [];
+              const isPrereleaseEp = activeLabel.includes("Vorabversion") || /\\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\\b/i.test(activeLabel);
+
+              topQualityBadgeHtml = formatQualityBadgeHtmlClient(activeVer.quality || "1080p", activeVer.codec);
+              if (isEpAutoFilled) {
+                topAutoFillBadgeHtml = '<span class="ep-autofill-badge" title="Fehlte in ' + esc(targetPrimaryProfile) + ' – automatisch aufgefüllt mit ' + esc(activeVer.quality + ' (' + activeLabel + ')') + '">🔄 Ergänzt · ' + esc(activeVer.quality) + '</span>';
+              }
+
+              const hasMultiplePartsInEp = rawVersions.length > 1 && rawVersions.every(v => v._partNum > 0);
+              if (hasMultiplePartsInEp) {
+                filesBtns = rawVersions.map(f => {
+                  const sz = formatFileSizeClient(f.file_size);
+                  const fSubs = Array.isArray(f.subtitles) ? f.subtitles : [];
+                  const partPrefix = f._normPart ? (f._normPart + ' · ') : '';
+                  const btnMeta = [partPrefix + (f.quality || '1080p'), f.codec || '', sz ? ('· ' + sz) : ''].filter(Boolean).join(' ');
+                  return '<button type="button" class="btn-stream-clean" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name + (f._normPart ? ' (' + f._normPart + ')' : ''))+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sz)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>';
+                }).join(" ");
+              } else {
+                const activeBtnMeta = [activeVer.quality || '1080p', activeVer.codec || '', activeSizeStr ? ('· ' + activeSizeStr) : '', activeLabel ? ('· ' + activeLabel) : ''].filter(Boolean).join(' ');
+                const playBtnHtml = '<button type="button" class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(activeVer.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(activeSizeStr)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶ Stream · ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                  (activeSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
+
+                const switcherTabsHtml = rawVersions.length > 1 ? (
+                  '<div class="version-switcher" style="display:inline-flex;gap:3px;align-items:center;background:rgba(15,23,42,0.65);padding:2px 4px;border-radius:7px;border:1px solid rgba(148,163,184,0.22)">' +
+                    rawVersions.map((v, vIdx) => {
+                      const isSel = vIdx === activeIdx;
+                      const pillTxt = (v.quality || "1080p") + " · " + (v.versionLabel || "Originalfassung");
+                      return '<button type="button" class="delivery-pill-btn ' + (isSel ? 'active' : '') + '" style="padding:2px 7px;font-size:10.5px" onclick="selectEpisodeVersion(' + seriesId + ',' + seasonNum + ',' + ep.episode_number + ',' + vIdx + ')">' + esc(pillTxt) + '</button>';
+                    }).join('') +
+                  '</div>'
+                ) : '';
+
+                filesBtns = playBtnHtml + (switcherTabsHtml ? (" " + switcherTabsHtml) : "");
+              }
+            }
+          }
+
+          const isAdminUser = Boolean(state.authUser?.isAdmin);
+          const canReportMedia = Boolean(vipAllowed || isAdminUser);
+          const activeFidStr = String(activeFileForActions?.telegram_file_id || activeFileForActions?.file_id || "");
+          const activeVerLblStr = String(activeFileForActions?.versionLabel || activeFileForActions?.version_label || activeFileForActions?.tags || "Originalfassung");
+          const activeQualStr = String(activeFileForActions?.quality || "1080p");
+          const activeRawFnStr = String(activeFileForActions?.raw_filename || "");
+          const activeMsgLinkStr = String(activeFileForActions?.message_link || "");
+          const hasStreamFile = Boolean(Array.isArray(ep.files) && ep.files.length > 0);
+
+          const adminEditBtnHtml = (isAdminUser && hasStreamFile)
+            ? ('<button type="button" class="ep-ghost-btn admin-remap-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\',quality:\\'' + esc(activeQualStr) + '\\',rawFilename:\\'' + esc(activeRawFnStr) + '\\',messageLink:\\'' + esc(activeMsgLinkStr) + '\\'})" title="Folge ' + esc(epCode) + ' (' + esc(ep.name) + ') neu zuordnen oder Schnittfassung ändern">✏️ ' + esc(epCode) + ' zuordnen</button>')
+            : '';
+
+          const reportBtnHtml = canReportMedia
+            ? ('<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\'})" title="Fehler für ' + epCode + ' melden">⚠️</button>')
+            : '';
+
+          const rowCls = [
+            "ep-row",
+            isLastWatched ? "ep-watched" : (isNextEpisode ? "ep-next-up" : ""),
+            isEpAutoFilled ? "ep-autofilled" : ""
+          ].filter(Boolean).join(" ");
+
+          return '<div class="' + rowCls + '">' +
+            '<div class="ep-row-top">' +
+              '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')" title="' + esc(epCode + ' – ' + ep.name) + ' (Antippen für Beschreibung)">' +
+                '<span class="ep-code-badge">' + epCode + '</span>' +
+                '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(ep.name) + '</span></div>' +
+              '</div>' +
+              '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;flex-shrink:0">' +
+                topQualityBadgeHtml +
+                topAutoFillBadgeHtml +
+                progBadgeHtml +
+              '</div>' +
+            '</div>' +
+            '<div class="ep-row-bottom">' +
+              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0">' +
+                (filesBtns || '<span style="font-size:11px;color:var(--muted)">Keine Stream-Datei verknüpft</span>') +
+              '</div>' +
+              '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                adminEditBtnHtml +
+                reportBtnHtml +
+                '<button type="button" class="ep-ghost-btn '+(ep.isSaved?'saved':'')+'" onclick="toggleEpisodeSave('+seriesId+','+seasonNum+','+ep.episode_number+')" title="'+(ep.isSaved?'Folge aus Merkliste entfernen':'Folge auf Merkliste speichern')+'">'+(ep.isSaved?'✓ Gemerkt':'🔖')+'</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        }).join("");
+
+        const seasonVersionFilterBarHtml = (vipAllowed && sortedSeasonProfiles.length > 1) ? (
+          '<div class="season-version-filter-bar">' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+              '<span style="font-weight:800;color:#38bdf8">🎞️ Staffel-Version (Smart Auto-Fill):</span>' +
+              '<button type="button" class="delivery-pill-btn ' + (userPrefProfile === 'auto' ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectSeasonPreferredProfileClient(' + seriesId + ',' + seasonNum + ',\\'auto\\')">✨ Komplett · Auto (' + esc(sortedSeasonProfiles[0].key) + ')</button>' +
+              sortedSeasonProfiles.map(prof => {
+                const isAct = userPrefProfile === prof.key;
+                const missingCnt = Math.max(0, seasonStreamableCount - prof.count);
+                return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectSeasonPreferredProfileClient(' + seriesId + ',' + seasonNum + ',\\'' + esc(prof.key) + '\\')">' +
+                  esc(prof.key) + ' (' + prof.count + '/' + seasonStreamableCount + (missingCnt > 0 ? (' + ' + missingCnt + ' ergänzt') : '') + ')' +
+                '</button>';
+              }).join("") +
+            '</div>' +
+            (autoFilledSeasonCount > 0
+              ? '<span class="ep-autofill-badge">🔄 ' + autoFilledSeasonCount + ' fehlende Folge' + (autoFilledSeasonCount === 1 ? '' : 'n') + ' automatisch ergänzt</span>'
+              : '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7">✓ Komplett in ' + esc(targetPrimaryProfile) + '</span>') +
           '</div>'
         ) : '';
 
@@ -3512,132 +4144,16 @@
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
               (vipAllowed ? buildModalDeliveryTargetSelectorHtml() : '') +
               ((vipAllowed && seasonStreamableCount > 0) ? (
-                '<button class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' nacheinander an dein gewähltes Ziel senden">' +
-                  '📦 Staffel ' + seasonNum + ' senden (' + seasonStreamableCount + ')' +
+                '<button type="button" class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(56,189,248,0.45);color:#7dd3fc" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' (inkl. automatisch ergänzter Folgen) nacheinander senden">' +
+                  '📦 Staffel ' + seasonNum + ' komplett senden (' + seasonStreamableCount + ')' +
                 '</button>'
               ) : '') +
             '</div>' +
           '</div>' +
+          seasonVersionFilterBarHtml +
           progressBannerHtml +
-          episodes.map(ep => {
-            const epCode = 'S'+String(seasonNum).padStart(2,'0')+'E'+String(ep.episode_number).padStart(2,'0');
-            const isLastWatched = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(prog.episode) === Number(ep.episode_number));
-            const isNextEpisode = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(ep.episode_number) === Number(prog.episode) + 1);
-            const rowCls = isLastWatched ? "ep-row ep-watched" : isNextEpisode ? "ep-row ep-next-up" : "ep-row";
-            const progBadgeHtml = isLastWatched
-              ? '<span class="ep-progress-badge">👁️ Zuletzt</span>'
-              : isNextEpisode
-                ? '<span class="ep-progress-badge next">▶ Nächste</span>'
-                : '';
+          episodeCardsHtml;
 
-            // Episoden-Streams & Versions-Switcher strikt NUR für VIP-Mitglieder!
-            let filesBtns = "";
-            let activeFileForActions = (Array.isArray(ep.files) && ep.files[0]) ? ep.files[0] : null;
-            if (vipAllowed) {
-              const epVersions = Array.isArray(ep.versions) && ep.versions.length > 0
-                ? ep.versions
-                : (Array.isArray(ep.files) ? ep.files.map(f => ({
-                    versionLabel: f.versionLabel || f.version_label || "Originalfassung",
-                    file_id: f.telegram_file_id,
-                    telegram_file_id: f.telegram_file_id,
-                    quality: f.quality || "1080p",
-                    codec: f.codec || "x264",
-                    file_size: f.file_size || 0,
-                    tags: f.tags || "",
-                    subtitles: Array.isArray(f.subtitles) ? f.subtitles : []
-                  })) : []);
-
-              const distinctLabels = Array.from(new Set(epVersions.map(v => v.versionLabel || "Originalfassung")));
-              if (epVersions.length > 1 && distinctLabels.length > 1) {
-                const vKey = seriesId + "_" + seasonNum + "_" + ep.episode_number;
-                const activeIdx = Math.min(Number(selectedEpisodeVersionMap[vKey] || 0), epVersions.length - 1);
-                const activeVer = epVersions[activeIdx] || epVersions[0];
-                activeFileForActions = activeVer;
-                const activeFid = activeVer.file_id || activeVer.telegram_file_id;
-                const activeSizeStr = formatFileSizeClient(activeVer.file_size);
-                const activeLabel = activeVer.versionLabel || "Originalfassung";
-                const activeSubs = Array.isArray(activeVer.subtitles) ? activeVer.subtitles : [];
-                const activeBtnMeta = [activeVer.quality || '1080p', activeVer.codec || '', activeSizeStr ? ('· ' + activeSizeStr) : '', '· ' + activeLabel].filter(Boolean).join(' ');
-
-                const switcherTabsHtml =
-                  '<div class="version-switcher" style="display:inline-flex;gap:3px;align-items:center;background:rgba(255,255,255,0.04);padding:2px 4px;border-radius:6px;border:1px solid rgba(255,255,255,0.1)">' +
-                    epVersions.map((v, vIdx) => {
-                      const isSel = vIdx === activeIdx;
-                      const vLbl = v.versionLabel || "Originalfassung";
-                      return '<button type="button" class="delivery-pill-btn ' + (isSel ? 'active' : '') + '" style="padding:2px 7px;font-size:10.5px" onclick="selectEpisodeVersion(' + seriesId + ',' + seasonNum + ',' + ep.episode_number + ',' + vIdx + ')">' + esc(vLbl) + '</button>';
-                    }).join('') +
-                  '</div>';
-
-                const playBtnHtml = '<button class="btn-stream-clean" onclick="requestTelegramStream(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(activeVer.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(activeSizeStr)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶ ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + UT' : '') + '</button>' +
-                  (activeSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
-
-                filesBtns = switcherTabsHtml + " " + playBtnHtml;
-              } else if (Array.isArray(ep.files)) {
-                const sortedEpFiles = ep.files
-                  .slice()
-                  .map(f => ({
-                    ...f,
-                    _normPart: normalizeClientPartLabel(f.part, f.raw_filename || ""),
-                    _partNum: extractClientPartNumber(normalizeClientPartLabel(f.part, f.raw_filename || ""))
-                  }))
-                  .sort((a, b) => {
-                    if (a._partNum > 0 && b._partNum > 0 && a._partNum !== b._partNum) return a._partNum - b._partNum;
-                    return 0;
-                  });
-                filesBtns = sortedEpFiles.map(f => {
-                  const sizeStr = formatFileSizeClient(f.file_size);
-                  const rawTagsStr = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
-                  const fSubs = Array.isArray(f.subtitles) ? f.subtitles : [];
-                  const tagsStr = rawTagsStr
-                    .split(/\\s*·\\s*/)
-                    .map(t => {
-                      const tl = t.toLowerCase();
-                      if (tl.includes("netflix") || tl.includes("edited") || tl.includes("stream") || tl.includes("original parts")) return "Netflix-Fassung";
-                      if (tl.includes("tv-schnitt")) return "TV-Schnitt";
-                      if (tl.includes("dvd-fassung")) return "DVD-Fassung";
-                      return t.trim();
-                    })
-                    .filter(Boolean)
-                    .filter((v, i, arr) => arr.indexOf(v) === i)
-                    .join(" · ");
-                  const isPrereleaseEp = tagsStr.includes("Vorabversion") || /\\b(?:HDTS|TeleSync|HDCAM|MicDub|LineDub|Screener|DVDScr)\\b/i.test(tagsStr);
-                  const partPrefix = f._normPart ? (f._normPart + ' · ') : '';
-                  const btnMeta = [partPrefix + (f.quality || '1080p'), f.codec || '', sizeStr ? ('· ' + sizeStr) : '', tagsStr ? ('· ' + tagsStr) : ''].filter(Boolean).join(' ');
-                  return '<button class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name + (f._normPart ? ' (' + f._normPart + ')' : ''))+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sizeStr)+'\\',tags:\\''+esc(tagsStr)+'\\'})">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>' +
-                    (fSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + fSubs.length + ')</button>' : '');
-                }).join(" ");
-              }
-            }
-
-            const isAdminUser = Boolean(state.authUser?.isAdmin);
-            const canReportMedia = Boolean(vipAllowed || isAdminUser);
-            const activeFidStr = String(activeFileForActions?.telegram_file_id || activeFileForActions?.file_id || "");
-            const activeVerLblStr = String(activeFileForActions?.versionLabel || activeFileForActions?.version_label || activeFileForActions?.tags || "Originalfassung");
-            const activeQualStr = String(activeFileForActions?.quality || "1080p");
-            const hasStreamFile = Boolean(Array.isArray(ep.files) && ep.files.length > 0);
-
-            const adminEditBtnHtml = (isAdminUser && hasStreamFile)
-              ? ('<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\',quality:\\'' + esc(activeQualStr) + '\\'})" title="Folge korrigieren (Staffel/Folge anpassen, Schnittfassung wechseln oder mit neuer TMDb-ID verknüpfen)">✏️</button>')
-              : '';
-
-            const reportBtnHtml = canReportMedia
-              ? ('<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\'})" title="Fehler für ' + epCode + ' melden">⚠️</button>')
-              : '';
-
-            return '<div class="' + rowCls + '">' +
-              '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')" title="Antippen für Episoden-Beschreibung & Telegraph-Guide">' +
-                '<span class="ep-code-badge">' + epCode + '</span>' +
-                '<span class="ep-name-text">' + esc(ep.name) + '</span>' +
-                progBadgeHtml +
-              '</div>' +
-              '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                filesBtns +
-                adminEditBtnHtml +
-                reportBtnHtml +
-                '<button class="ep-ghost-btn '+(ep.isSaved?'saved':'')+'" onclick="toggleEpisodeSave('+seriesId+','+seasonNum+','+ep.episode_number+')" title="'+(ep.isSaved?'Folge aus Merkliste entfernen':'Folge auf Merkliste speichern')+'">'+(ep.isSaved?'✓':'🔖')+'</button>' +
-              '</div>' +
-            '</div>';
-          }).join("");
         const seriesArchMount = document.getElementById("seriesArchiveDownloadsMount");
         if (seriesArchMount && vipAllowed) {
           const mergedSeriesDownloads = [
@@ -3650,6 +4166,12 @@
               Boolean(state.authUser?.isAdmin)
             );
           }
+        }
+        if (typeof refreshDetailModalVersionsTabDomClient === "function") {
+          refreshDetailModalVersionsTabDomClient();
+        }
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          setTimeout(() => window.refreshModalAndEpisodeMarquees(box), 50);
         }
         if (jumpToFirstEpisode) {
           const nextOrFirstEpEl = box.querySelector(".ep-row.ep-next-up .ep-title, .ep-row.ep-watched .ep-title, .ep-title");
@@ -3682,6 +4204,104 @@
         activeMediaReportState = null;
       }
 
+      function switchEpisodeCorrectionTargetFileClient(fileIndexStr) {
+        if (!activeEpisodeCorrectionState) return;
+        const idx = Number(fileIndexStr);
+        const allAdminFiles = (Array.isArray(state.activeDetails?.allStreamFiles) ? state.activeDetails.allStreamFiles : [])
+          .slice()
+          .sort((a, b) => {
+            const sa = Number(a.season_number || 1);
+            const sb = Number(b.season_number || 1);
+            if (sa !== sb) return sa - sb;
+            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+          });
+        const f = allAdminFiles[idx];
+        if (!f) return;
+        const sNum = Math.max(1, Number(f.season_number || 1));
+        const eNum = Math.max(1, Number(f.episode_number || 1));
+        const epTitle = resolveClientEpisodeTitle(activeEpisodeCorrectionState.tmdbId, sNum, eNum, f);
+        activeEpisodeCorrectionState.season = sNum;
+        activeEpisodeCorrectionState.episode = eNum;
+        activeEpisodeCorrectionState.targetSeason = sNum;
+        activeEpisodeCorrectionState.targetEpisode = eNum;
+        activeEpisodeCorrectionState.episodeTitle = epTitle;
+        activeEpisodeCorrectionState.telegramFileId = String(f.telegram_file_id || "");
+        activeEpisodeCorrectionState.versionLabel = String(f.versionLabel || f.version_label || f.tags || "Originalfassung");
+        activeEpisodeCorrectionState.targetVersionLabel = activeEpisodeCorrectionState.versionLabel;
+        activeEpisodeCorrectionState.quality = String(f.quality || "1080p");
+        activeEpisodeCorrectionState.rawFilename = String(f.raw_filename || "");
+        activeEpisodeCorrectionState.messageLink = String(f.message_link || "");
+        renderEpisodeCorrectionModalDomClient();
+      }
+
+      function updateEpisodeCorrectionLivePreviewClient() {
+        const st = activeEpisodeCorrectionState;
+        if (!st) return;
+        if (st.mode === "move_se") {
+          st.targetSeason = Math.max(1, Number(document.getElementById("epCorrNewSeasonInp")?.value || st.season));
+          st.targetEpisode = Math.max(1, Number(document.getElementById("epCorrNewEpisodeInp")?.value || st.episode));
+        } else if (st.mode === "change_version") {
+          st.targetVersionLabel = String(document.getElementById("epCorrVersionInp")?.value || st.versionLabel || "Originalfassung").trim();
+        } else if (st.mode === "relink_tmdb") {
+          st.selectedNewTypeCode = document.getElementById("epCorrNewTypeSel")?.value === "m" ? "m" : "s";
+          st.selectedNewTmdbId = Number(document.getElementById("epCorrNewTmdbIdInp")?.value || st.selectedNewTmdbId || 0);
+          st.targetSeason = Math.max(1, Number(document.getElementById("epCorrRelinkSeasonInp")?.value || st.season));
+          st.targetEpisode = Math.max(1, Number(document.getElementById("epCorrRelinkEpisodeInp")?.value || st.episode));
+        }
+        const previewEl = document.getElementById("epCorrTargetPreviewCard");
+        if (previewEl) {
+          previewEl.innerHTML = buildEpisodeCorrectionTargetCardInnerHtmlClient(st);
+          if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+            window.refreshModalAndEpisodeMarquees(previewEl);
+          }
+        }
+      }
+
+      function buildEpisodeCorrectionTargetCardInnerHtmlClient(st) {
+        const nextS = Number(st.targetSeason || st.season || 1);
+        const nextE = Number(st.targetEpisode || st.episode || 1);
+        const nextCode = st.typeCode === "s" ? ("S" + String(nextS).padStart(2, "0") + "E" + String(nextE).padStart(2, "0")) : "🎬 Film";
+        const nextVer = String(st.targetVersionLabel || st.versionLabel || "Originalfassung");
+
+        if (st.mode === "move_se") {
+          const resolvedTargetEpTitle = resolveClientEpisodeTitle(st.tmdbId, nextS, nextE, null);
+          const hasChanged = nextS !== st.season || nextE !== st.episode;
+          return '<div style="font-size:10px;font-weight:800;color:#38bdf8;text-transform:uppercase;letter-spacing:0.4px">🎯 Neues Ziel (Nachher)</div>' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+              '<span class="ep-code-badge" style="' + (hasChanged ? 'background:rgba(16,185,129,0.22);border-color:#34d399;color:#6ee7b7' : '') + '">' + esc(nextCode) + '</span>' +
+              '<div class="inline-marquee-wrap" data-marquee-always="1"><span class="inline-marquee-text" style="font-size:12.5px">' + esc(resolvedTargetEpTitle) + '</span></div>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--muted)">Serie: <b>' + esc(st.title) + '</b> • Fassung bleibt: <b>' + esc(st.versionLabel) + '</b></div>' +
+            (hasChanged
+              ? '<div style="font-size:11px;color:#34d399;font-weight:700">✓ Verschiebt S' + String(st.season).padStart(2, '0') + 'E' + String(st.episode).padStart(2, '0') + ' ➔ ' + esc(nextCode) + '</div>'
+              : '<div style="font-size:11px;color:#94a3b8">Wähle unten die gewünschte Ziel-Staffel & Ziel-Folge.</div>');
+        }
+        if (st.mode === "change_version") {
+          const hasChanged = nextVer !== st.versionLabel;
+          return '<div style="font-size:10px;font-weight:800;color:#38bdf8;text-transform:uppercase;letter-spacing:0.4px">🎯 Neues Ziel (Nachher)</div>' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+              '<span class="ep-code-badge">' + esc(nextCode) + '</span>' +
+              '<span class="flix-version-badge">🎞️ ' + esc(nextVer) + '</span>' +
+            '</div>' +
+            '<div style="font-size:11px;color:var(--muted)">Folge: <b>' + esc(st.episodeTitle || nextCode) + '</b> (' + esc(st.quality) + ')</div>' +
+            (hasChanged
+              ? '<div style="font-size:11px;color:#34d399;font-weight:700">✓ Neue Schnittfassung: ' + esc(nextVer) + '</div>'
+              : '<div style="font-size:11px;color:#94a3b8">Wähle unten eine Vorlage oder gib einen eigenen Versionsnamen ein.</div>');
+        }
+        const scopeTxt = st.relinkScope === "entire_series"
+          ? "📦 Ganze Serie / Alle Folgen umziehen"
+          : ("🎯 Nur " + esc(nextCode) + " einzeln zuweisen");
+        const targetCodeBadge = st.selectedNewTypeCode === "s"
+          ? ("S" + String(nextS).padStart(2, "0") + "E" + String(nextE).padStart(2, "0"))
+          : "🎬 Spielfilm";
+        return '<div style="font-size:10px;font-weight:800;color:#38bdf8;text-transform:uppercase;letter-spacing:0.4px">🎯 Neues Ziel (Nachher)</div>' +
+          '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+            '<span class="ep-code-badge" style="background:rgba(16,185,129,0.22);border-color:#34d399;color:#6ee7b7">' + esc(targetCodeBadge) + '</span>' +
+            '<div class="inline-marquee-wrap" data-marquee-always="1"><span class="inline-marquee-text" style="font-size:12.5px">' + esc(st.selectedNewTitle || "Ziel wählen") + ' (#' + Number(st.selectedNewTmdbId || 0) + ')</span></div>' +
+          '</div>' +
+          '<div style="font-size:11px;color:#38bdf8;font-weight:700">' + scopeTxt + '</div>';
+      }
+
       function openEpisodeCorrectionModal(opts) {
         if (!state.authUser?.isAdmin) {
           showHudToast("⛔ Nur Administratoren können Folgen und Dateien umsortieren.");
@@ -3692,13 +4312,11 @@
         const title = String(opts?.title || state.activeDetails?.title || "Titel");
         const season = Math.max(1, Number(opts?.season || 1));
         const episode = Math.max(1, Number(opts?.episode || 1));
-        const episodeTitle = String(opts?.episodeTitle || "");
         const telegramFileId = String(opts?.telegramFileId || "");
         const versionLabel = String(opts?.versionLabel || "Originalfassung");
         const quality = String(opts?.quality || "1080p");
         const reportId = Number(opts?.reportId || 0);
 
-        // Falls in activeDetails.allStreamFiles der Original-Dateiname oder Telegram-Link vorhanden ist, automatisch nachladen
         let rawFilename = String(opts?.rawFilename || "");
         let messageLink = String(opts?.messageLink || "");
         const allAdminFiles = Array.isArray(state.activeDetails?.allStreamFiles) ? state.activeDetails.allStreamFiles : [];
@@ -3711,6 +4329,9 @@
           if (!messageLink && matchedRow.message_link) messageLink = matchedRow.message_link;
         }
 
+        const episodeTitle = String(opts?.episodeTitle || "").trim() ||
+          (typeCode === "s" ? resolveClientEpisodeTitle(tmdbId, season, episode, matchedRow) : title);
+
         const initialMode = typeCode === "m" ? "relink_tmdb" : (opts?.initialMode || "move_se");
         activeEpisodeCorrectionState = {
           typeCode,
@@ -3718,9 +4339,12 @@
           title,
           season,
           episode,
+          targetSeason: season,
+          targetEpisode: episode,
           episodeTitle,
           telegramFileId,
           versionLabel,
+          targetVersionLabel: versionLabel,
           quality,
           rawFilename,
           messageLink,
@@ -3745,9 +4369,38 @@
         const st = activeEpisodeCorrectionState;
         if (!st) return;
         const mount = ensureSubModalMountClient();
-        const epBadge = st.typeCode === "s"
-          ? ('S' + String(st.season).padStart(2, '0') + 'E' + String(st.episode).padStart(2, '0') + (st.episodeTitle ? (' – ' + esc(st.episodeTitle)) : ''))
-          : '🎬 Spielfilm-Datei';
+        const epCodeOnly = st.typeCode === "s"
+          ? ('S' + String(st.season).padStart(2, '0') + 'E' + String(st.episode).padStart(2, '0'))
+          : '🎬 Film';
+
+        const allAdminFiles = (Array.isArray(state.activeDetails?.allStreamFiles) ? state.activeDetails.allStreamFiles : [])
+          .slice()
+          .sort((a, b) => {
+            const sa = Number(a.season_number || 1);
+            const sb = Number(b.season_number || 1);
+            if (sa !== sb) return sa - sb;
+            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+          });
+
+        const directEpisodeSwitcherHtml = (st.typeCode === "s" && allAdminFiles.length > 1) ? (
+          '<div style="margin-bottom:10px;padding:8px 10px;border-radius:9px;background:rgba(15,23,42,0.65);border:1px solid rgba(148,163,184,0.22)">' +
+            '<label style="font-size:11px;font-weight:800;color:#7dd3fc;display:block;margin-bottom:4px">📂 Folge / Datei direkt wechseln (' + allAdminFiles.length + ' Dateien in dieser Serie):</label>' +
+            '<select class="tma-select" style="width:100%;padding:7px 9px;font-size:12px;font-weight:700" onchange="switchEpisodeCorrectionTargetFileClient(this.value)">' +
+              allAdminFiles.map((f, idx) => {
+                const sn = Number(f.season_number || 1);
+                const en = Number(f.episode_number || 1);
+                const code = "S" + String(sn).padStart(2, "0") + "E" + String(en).padStart(2, "0");
+                const epT = resolveClientEpisodeTitle(st.tmdbId, sn, en, f);
+                const isCur = (st.telegramFileId && String(f.telegram_file_id) === String(st.telegramFileId)) ||
+                  (!st.telegramFileId && sn === st.season && en === st.episode);
+                const fnShort = f.raw_filename ? (" • 📄 " + f.raw_filename) : "";
+                return '<option value="' + idx + '" ' + (isCur ? 'selected' : '') + '>' +
+                  esc(code + " – " + epT + " [" + (f.quality || "1080p") + " · " + (f.versionLabel || f.version_label || "Originalfassung") + "]" + fnShort) +
+                '</option>';
+              }).join("") +
+            '</select>' +
+          '</div>'
+        ) : '';
 
         const VERSION_PRESETS = [
           "Netflix-Fassung",
@@ -3761,45 +4414,57 @@
 
         mount.innerHTML =
           '<div class="submodal-backdrop" onclick="if(event.target===this)closeSubModalOverlayClient()">' +
-            '<div class="submodal-box">' +
+            '<div class="submodal-box" style="max-width:580px">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">' +
-                '<div style="font-size:15px;font-weight:900;color:var(--text)">✏️ Folge / Datei korrigieren</div>' +
+                '<div style="font-size:15px;font-weight:900;color:var(--text)">✏️ Folge / Datei gezielt zuordnen</div>' +
                 '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">✖</button>' +
               '</div>' +
 
-              '<div style="padding:9px 11px;border-radius:8px;background:rgba(14,165,233,0.1);border:1px solid rgba(14,165,233,0.35);margin-bottom:10px;font-size:12px">' +
-                '<div style="font-weight:800;color:var(--text)">' + esc(st.title) + ' <span style="color:#0284c7">(' + epBadge + ')</span></div>' +
-                '<div style="color:var(--muted);font-size:11px;margin-top:3px">' +
-                  'Aktuelle Version: <b style="color:#f59e0b">' + esc(st.versionLabel) + '</b> • Qualität: <b>' + esc(st.quality) + '</b>' +
-                  (String(st.telegramFileId || "").startsWith("tg_export_") ? ' • <span style="color:#0284c7">🔗 Quellgruppe (Auto-Copy)</span>' : (st.telegramFileId ? ' • <span style="color:#10b981">⚡ Direkte Telegram File-ID</span>' : '')) +
-                  (st.reportId ? (' • <span style="color:#10b981">🚨 Verknüpft mit Meldung #' + st.reportId + ' (wird beim Speichern automatisch gelöst)</span>') : '') +
+              directEpisodeSwitcherHtml +
+
+              /* Klare Vorher -> Nachher Vergleichsbox */
+              '<div class="ep-remap-compare-grid">' +
+                '<div class="ep-remap-card">' +
+                  '<div style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:0.4px">📍 Aktuell zugeordnet (Vorher)</div>' +
+                  '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                    '<span class="ep-code-badge">' + esc(epCodeOnly) + '</span>' +
+                    '<div class="inline-marquee-wrap" data-marquee-always="1"><span class="inline-marquee-text" style="font-size:12.5px">' + esc(st.episodeTitle || st.title) + '</span></div>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:2px">' +
+                    formatQualityBadgeHtmlClient(st.quality) +
+                    '<span class="stream-meta-pill">' + esc(st.versionLabel) + '</span>' +
+                    (st.reportId ? '<span class="stream-meta-pill" style="border-color:#10b981;color:#34d399">🚨 Meldung #' + st.reportId + '</span>' : '') +
+                  '</div>' +
+                  (st.rawFilename ? '<div style="margin-top:4px;font-family:monospace;font-size:10.5px;color:var(--text);word-break:break-all">📄 ' + esc(st.rawFilename) + '</div>' : '<div style="margin-top:4px;font-size:10.5px;color:var(--muted)">Serie: <b>' + esc(st.title) + '</b></div>') +
+                  (st.messageLink ? '<div style="margin-top:2px"><a href="' + esc(st.messageLink) + '" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;font-size:11px;text-decoration:underline">🔗 Original-Nachricht in Telegram öffnen</a></div>' : '') +
                 '</div>' +
-                (st.rawFilename ? '<div style="margin-top:4px;font-family:monospace;font-size:10.5px;color:var(--text);word-break:break-all">📄 Original-Datei: ' + esc(st.rawFilename) + '</div>' : '') +
-                (st.telegramFileId ? '<div style="margin-top:2px;font-family:monospace;font-size:10px;color:var(--muted);word-break:break-all">🔑 File-Ref: ' + esc(st.telegramFileId) + '</div>' : '') +
-                (st.messageLink ? '<div style="margin-top:4px"><a href="' + esc(st.messageLink) + '" target="_blank" rel="noopener noreferrer" style="color:#0284c7;font-size:11px;text-decoration:underline">🔗 Original-Nachricht in Telegram öffnen</a></div>' : '') +
+                '<div class="ep-remap-compare-arrow">➔</div>' +
+                '<div id="epCorrTargetPreviewCard" class="ep-remap-card target">' +
+                  buildEpisodeCorrectionTargetCardInnerHtmlClient(st) +
+                '</div>' +
               '</div>' +
 
-              /* Modus-Umschalter */
+              /* Modus-Umschalter im Ozean-Blau-Design */
               '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">' +
                 (st.typeCode === "s" ? (
-                  '<button type="button" class="btn ' + (st.mode === 'move_se' ? 'red' : '') + '" onclick="switchEpisodeCorrectionModeClient(\\'move_se\\')">🔢 Staffel & Folge anpassen</button>'
+                  '<button type="button" class="season-tab-btn ' + (st.mode === 'move_se' ? 'active' : '') + '" onclick="switchEpisodeCorrectionModeClient(\\'move_se\\')">🔢 Staffel & Folge anpassen</button>'
                 ) : '') +
-                '<button type="button" class="btn ' + (st.mode === 'change_version' ? 'red' : '') + '" onclick="switchEpisodeCorrectionModeClient(\\'change_version\\')">🎞️ Version / Schnittfassung</button>' +
-                '<button type="button" class="btn ' + (st.mode === 'relink_tmdb' ? 'red' : '') + '" onclick="switchEpisodeCorrectionModeClient(\\'relink_tmdb\\')">🔄 Neu verknüpfen (TMDb)</button>' +
+                '<button type="button" class="season-tab-btn ' + (st.mode === 'change_version' ? 'active' : '') + '" onclick="switchEpisodeCorrectionModeClient(\\'change_version\\')">🎞️ Version / Schnittfassung</button>' +
+                '<button type="button" class="season-tab-btn ' + (st.mode === 'relink_tmdb' ? 'active' : '') + '" onclick="switchEpisodeCorrectionModeClient(\\'relink_tmdb\\')">🔄 Andere TMDb-ID</button>' +
               '</div>' +
 
               /* MODUS 1: Staffel & Folge anpassen */
               (st.mode === "move_se" ? (
                 '<div class="admin-sub-box" style="padding:12px;margin-bottom:12px">' +
-                  '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Wähle die korrekte <b>Staffel</b> und <b>Folge</b> innerhalb von <b>' + esc(st.title) + '</b>:</div>' +
+                  '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Wähle die korrekte <b>Ziel-Staffel</b> und <b>Ziel-Folge</b> für <b>' + esc(epCodeOnly + ' – ' + (st.episodeTitle || st.title)) + '</b>:</div>' +
                   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
                     '<div>' +
                       '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Staffel</label>' +
-                      '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + st.season + '" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
+                      '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Folge</label>' +
-                      '<input id="epCorrNewEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + st.episode + '" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
+                      '<input id="epCorrNewEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
                     '</div>' +
                   '</div>' +
                 '</div>'
@@ -3808,13 +4473,13 @@
               /* MODUS 2: Version / Schnittfassung wechseln */
               (st.mode === "change_version" ? (
                 '<div class="admin-sub-box" style="padding:12px;margin-bottom:12px">' +
-                  '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Ordne diese Datei einer anderen <b>Schnittfassung / Version</b> zu (keine Version geht verloren, beide erscheinen im Versions-Switcher):</div>' +
+                  '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Ordne <b>' + esc(epCodeOnly + ' – ' + (st.episodeTitle || st.title)) + '</b> einer Schnittfassung / Version zu:</div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
                     VERSION_PRESETS.map(vp =>
-                      '<button type="button" class="btn ' + (st.versionLabel === vp ? 'amber' : '') + '" onclick="document.getElementById(\\'epCorrVersionInp\\').value=\\'' + esc(vp) + '\\'">' + esc(vp) + '</button>'
+                      '<button type="button" class="season-tab-btn ' + ((st.targetVersionLabel || st.versionLabel) === vp ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="document.getElementById(\\'epCorrVersionInp\\').value=\\'' + esc(vp) + '\\';updateEpisodeCorrectionLivePreviewClient()">' + esc(vp) + '</button>'
                     ).join("") +
                   '</div>' +
-                  '<input id="epCorrVersionInp" class="tma-input" value="' + esc(st.versionLabel) + '" placeholder="Eigene Versions-Bezeichnung (z.B. Netflix-Fassung)..." style="width:100%;padding:8px 10px;font-size:12.5px" />' +
+                  '<input id="epCorrVersionInp" class="tma-input" value="' + esc(st.targetVersionLabel || st.versionLabel) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" placeholder="Eigene Versions-Bezeichnung (z.B. Netflix-Fassung)..." style="width:100%;padding:8px 10px;font-size:12.5px" />' +
                 '</div>'
               ) : '') +
 
@@ -3823,8 +4488,8 @@
                 '<div class="admin-sub-box" style="padding:12px;margin-bottom:12px">' +
                   '<div style="font-size:12px;color:var(--text);margin-bottom:8px"><b>Umfang der Neu-Verknüpfung:</b></div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-                    '<button type="button" class="btn ' + (st.relinkScope === 'single_episode' ? 'green' : '') + '" onclick="activeEpisodeCorrectionState.relinkScope=\\'single_episode\\';renderEpisodeCorrectionModalDomClient()">🎯 Nur diese einzelne Folge / Datei zuweisen</button>' +
-                    '<button type="button" class="btn ' + (st.relinkScope === 'entire_series' ? 'amber' : '') + '" onclick="activeEpisodeCorrectionState.relinkScope=\\'entire_series\\';renderEpisodeCorrectionModalDomClient()">📦 Ganze Serie / Alle Folgen umziehen</button>' +
+                    '<button type="button" class="season-tab-btn ' + (st.relinkScope === 'single_episode' ? 'active' : '') + '" onclick="activeEpisodeCorrectionState.relinkScope=\\'single_episode\\';renderEpisodeCorrectionModalDomClient()">🎯 Nur ' + esc(epCodeOnly) + ' einzeln zuweisen</button>' +
+                    '<button type="button" class="season-tab-btn ' + (st.relinkScope === 'entire_series' ? 'active' : '') + '" onclick="activeEpisodeCorrectionState.relinkScope=\\'entire_series\\';renderEpisodeCorrectionModalDomClient()">📦 Ganze Serie / Alle Folgen umziehen</button>' +
                   '</div>' +
 
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">' +
@@ -3835,22 +4500,22 @@
                   '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px">' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Typ</label>' +
-                      '<select id="epCorrNewTypeSel" class="tma-select" onchange="activeEpisodeCorrectionState.selectedNewTypeCode=this.value" style="width:100%;padding:7px;font-size:12px">' +
+                      '<select id="epCorrNewTypeSel" class="tma-select" onchange="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px">' +
                         '<option value="s" ' + (st.selectedNewTypeCode === 's' ? 'selected' : '') + '>📺 Serie</option>' +
                         '<option value="m" ' + (st.selectedNewTypeCode === 'm' ? 'selected' : '') + '>🎬 Film</option>' +
                       '</select>' +
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel TMDb-ID</label>' +
-                      '<input id="epCorrNewTmdbIdInp" class="tma-input" type="number" value="' + st.selectedNewTmdbId + '" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
+                      '<input id="epCorrNewTmdbIdInp" class="tma-input" type="number" value="' + st.selectedNewTmdbId + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
                     '</div>' +
                     '<div>' +
-                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Staffel</label>' +
-                      '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + st.season + '" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
+                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Staffel</label>' +
+                      '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
                     '</div>' +
                     '<div>' +
-                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Folge</label>' +
-                      '<input id="epCorrRelinkEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + st.episode + '" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
+                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Folge</label>' +
+                      '<input id="epCorrRelinkEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
                     '</div>' +
                   '</div>' +
 
@@ -3859,11 +4524,15 @@
               ) : '') +
 
               '<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">' +
-                '<button type="button" class="btn" onclick="closeSubModalOverlayClient()">Abbrechen</button>' +
+                '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">Abbrechen</button>' +
                 '<button type="button" class="btn green" onclick="submitEpisodeCorrectionClient()">💾 Korrektur speichern</button>' +
               '</div>' +
             '</div>' +
           '</div>';
+
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          setTimeout(() => window.refreshModalAndEpisodeMarquees(mount), 40);
+        }
       }
 
       async function searchEpisodeCorrectionTmdbClient() {
@@ -3883,15 +4552,18 @@
             const yr = String(item.release_date || item.first_air_date || "").split("-")[0] || "k.A.";
             const tName = item.title || item.name || "Unbekannt";
             const pUrl = resolvePosterUrlClient(item.poster_path, "w92", item.external_poster_url || "");
-            return '<div class="admin-sub-box" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px">' +
+            const isSel = activeEpisodeCorrectionState &&
+              Number(activeEpisodeCorrectionState.selectedNewTmdbId) === Number(item.id) &&
+              activeEpisodeCorrectionState.selectedNewTypeCode === tc;
+            return '<div class="admin-sub-box" data-cand-id="' + Number(item.id) + '" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-color:' + (isSel ? '#38bdf8' : 'rgba(148,163,184,0.2)') + ';background:' + (isSel ? 'rgba(14,165,233,0.16)' : '') + '">' +
               '<div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">' +
                 (pUrl ? '<img src="' + esc(pUrl) + '" style="width:28px;height:42px;object-fit:cover;border-radius:4px;flex-shrink:0" />' : '') +
                 '<div style="min-width:0;flex:1">' +
                   '<div style="font-size:12px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (tc === "s" ? "📺 " : "🎬 ") + esc(tName) + ' (' + esc(yr) + ')</div>' +
-                  '<div style="font-size:10.5px;color:#0284c7">TMDb #' + Number(item.id) + '</div>' +
+                  '<div style="font-size:10.5px;color:#38bdf8">TMDb #' + Number(item.id) + '</div>' +
                 '</div>' +
               '</div>' +
-              '<button type="button" class="btn green" style="padding:4px 8px;font-size:11px" onclick="selectEpisodeCorrectionTmdbCandidateClient(\\'' + tc + '\\',' + Number(item.id) + ',\\'' + esc(tName) + '\\')">Auswählen</button>' +
+              '<button type="button" class="season-tab-btn ' + (isSel ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="selectEpisodeCorrectionTmdbCandidateClient(\\'' + tc + '\\',' + Number(item.id) + ',\\'' + esc(tName) + '\\')">' + (isSel ? '✓ Gewählt' : 'Auswählen') + '</button>' +
             '</div>';
           }).join("");
         } catch (e) {
@@ -3908,7 +4580,21 @@
         const idInp = document.getElementById("epCorrNewTmdbIdInp");
         if (typeSel) typeSel.value = newTypeCode;
         if (idInp) idInp.value = String(newTmdbId);
-        showHudToast("🎯 Ziel gewählt: " + newTitle + " (#" + newTmdbId + ") – jetzt Staffel/Folge prüfen & speichern.");
+        updateEpisodeCorrectionLivePreviewClient();
+        const resBox = document.getElementById("epCorrTmdbResultsBox");
+        if (resBox) {
+          resBox.querySelectorAll(".admin-sub-box[data-cand-id]").forEach(row => {
+            const isMatch = Number(row.getAttribute("data-cand-id")) === Number(newTmdbId);
+            row.style.borderColor = isMatch ? "#38bdf8" : "rgba(148,163,184,0.2)";
+            row.style.background = isMatch ? "rgba(14,165,233,0.16)" : "";
+            const btn = row.querySelector("button");
+            if (btn) {
+              btn.classList.toggle("active", isMatch);
+              btn.textContent = isMatch ? "✓ Gewählt" : "Auswählen";
+            }
+          });
+        }
+        showHudToast("🎯 Ziel gewählt: " + newTitle + " (#" + newTmdbId + ") – Vorschau oben aktualisiert!");
       }
 
       async function submitEpisodeCorrectionClient() {
