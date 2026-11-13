@@ -6712,7 +6712,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -6745,6 +6745,7 @@
         return nodes.filter(el => {
           if (el.disabled) return false;
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
+          if (el.closest && el.closest(".hero-curtain-shell.is-collapsed")) return false;
           const style = window.getComputedStyle(el);
           if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
           const r = el.getBoundingClientRect();
@@ -7148,13 +7149,14 @@
           const actDot = curHero.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || curHero.querySelector(".hero-dot.active");
           const trBtn = document.getElementById("heroBtnTrailer");
           const detBtn = document.getElementById("heroBtnDetails");
+          const wlHeroBtn = document.getElementById("heroBtnWishlist");
           const hideBtn = document.getElementById("heroHideBtn");
 
-          // 1. Fokus auf "▶ Trailer" (links) oder "ⓘ Details" (rechts davon):
+          // 1. Fokus auf "▶ Trailer" (links), "ⓘ Details" (Mitte) oder "🔖 Merkliste" (rechts):
           if (currentSpatialEl.id === "heroBtnTrailer") {
             if (dir === "right") {
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
+              if (wlHeroBtn) { setSpatialFocus(wlHeroBtn, true); return; }
             }
             if (dir === "left") {
               setHeroSlideIndex(state.heroIndex - 1);
@@ -7164,7 +7166,6 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
             }
             if (dir === "up") {
               if (focusSearchOrHeaderUp()) return;
@@ -7174,7 +7175,7 @@
               if (trBtn) { setSpatialFocus(trBtn, true); return; }
             }
             if (dir === "right") {
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
+              if (wlHeroBtn) { setSpatialFocus(wlHeroBtn, true); return; }
               setHeroSlideIndex(state.heroIndex + 1);
               const nextDet = document.getElementById("heroBtnDetails");
               if (nextDet) setSpatialFocus(nextDet, true);
@@ -7182,13 +7183,30 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
             }
             if (dir === "up") {
               if (focusSearchOrHeaderUp()) return;
             }
+          } else if (currentSpatialEl.id === "heroBtnWishlist") {
+            if (dir === "left") {
+              if (detBtn) { setSpatialFocus(detBtn, true); return; }
+              if (trBtn) { setSpatialFocus(trBtn, true); return; }
+            }
+            if (dir === "right") {
+              setHeroSlideIndex(state.heroIndex + 1);
+              const nextWl = document.getElementById("heroBtnWishlist");
+              if (nextWl) setSpatialFocus(nextWl, true);
+              return;
+            }
+            if (dir === "down") {
+              if (actDot) { setSpatialFocus(actDot, true); return; }
+            }
+            if (dir === "up") {
+              if (hideBtn && list.includes(hideBtn)) { setSpatialFocus(hideBtn, true); return; }
+              if (focusSearchOrHeaderUp()) return;
+            }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
-            // 2. Fokus auf der Pill-Dot-Rotationsleiste (< ━━ • • • • >):
+            // 2. Fokus auf der Punktleiste (< • • • • ━━ • >):
             // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Enter fokussiert ebenfalls "▶ Trailer"!
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
@@ -7201,17 +7219,6 @@
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
-          } else if (currentSpatialEl.id === "heroHideBtn") {
-            if (dir === "left") {
-              if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (detBtn) { setSpatialFocus(detBtn, true); return; }
-            }
-            if (dir === "up") {
-              if (detBtn) { setSpatialFocus(detBtn, true); return; }
-              if (trBtn) { setSpatialFocus(trBtn, true); return; }
-              if (focusSearchOrHeaderUp()) return;
-            }
-            if (dir === "right") return;
           }
         }
 
@@ -7221,12 +7228,15 @@
           if (focusSearchOrHeaderUp()) return;
         }
 
-        // Direkte Nachbarschaft in der einheitlichen Suchleiste (.search-bar-outer), damit #searchInput niemals übersprungen wird
+        // Direkte Nachbarschaft in der einheitlichen Suchleiste (.search-bar-outer inkl. #heroHideBtn), damit #searchInput niemals übersprungen wird
+        const topHideBtn = document.getElementById("heroHideBtn");
+        const topHideVisible = Boolean(topHideBtn && list.includes(topHideBtn));
         const inSearchBar = Boolean(
           currentSpatialEl === sScope ||
           currentSpatialEl === sInp ||
           currentSpatialEl === sClear ||
-          currentSpatialEl === sSub
+          currentSpatialEl === sSub ||
+          currentSpatialEl === topHideBtn
         );
         if (inSearchBar) {
           if (dir === "right" && currentSpatialEl === sScope && sInp) {
@@ -7236,10 +7246,20 @@
           if (dir === "right" && currentSpatialEl === sInp) {
             if (sClearVisible) { setSpatialFocus(sClear, true); return; }
             if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
+            if (topHideVisible) { setSpatialFocus(topHideBtn, true); return; }
           }
-          if (dir === "right" && currentSpatialEl === sClear && sSub && list.includes(sSub)) {
-            setSpatialFocus(sSub, true);
+          if (dir === "right" && currentSpatialEl === sClear) {
+            if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
+            if (topHideVisible) { setSpatialFocus(topHideBtn, true); return; }
+          }
+          if (dir === "right" && currentSpatialEl === sSub && topHideVisible) {
+            setSpatialFocus(topHideBtn, true);
             return;
+          }
+          if (dir === "left" && currentSpatialEl === topHideBtn) {
+            if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
+            if (sClearVisible) { setSpatialFocus(sClear, true); return; }
+            if (sInp) { setSpatialFocus(sInp, true); return; }
           }
           if (dir === "left" && currentSpatialEl === sSub) {
             if (sClearVisible) { setSpatialFocus(sClear, true); return; }

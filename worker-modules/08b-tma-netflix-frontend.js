@@ -1339,6 +1339,10 @@
               '</div>'
             )) + '</div>' +
           '</div>';
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          const heroSlot = document.getElementById("heroBannerSlot");
+          if (heroSlot) setTimeout(() => window.refreshModalAndEpisodeMarquees(heroSlot), 40);
+        }
       }
 
       async function loadFranchisesHub(tab) {

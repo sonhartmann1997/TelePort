@@ -29325,16 +29325,39 @@
         position: sticky;
         top: 0;
         z-index: 60;
-        background: rgba(11, 13, 19, 0.88);
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-        padding: calc(8px * var(--scale-menu)) calc(14px * var(--scale-menu));
-        border-bottom: 1px solid rgba(255,255,255,0.07);
+        background: linear-gradient(
+          180deg,
+          rgba(6, 9, 17, 0.92) 0%,
+          rgba(var(--ambi-1), 0.14) 52%,
+          rgba(6, 9, 17, 0.38) 84%,
+          rgba(6, 9, 17, 0) 100%
+        );
+        backdrop-filter: blur(16px) saturate(1.4);
+        -webkit-backdrop-filter: blur(16px) saturate(1.4);
+        padding: calc(8px * var(--scale-menu)) calc(14px * var(--scale-menu)) calc(6px * var(--scale-menu));
+        border-bottom: 1px solid rgba(var(--ambi-2), 0.14);
+        box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
         flex-wrap: nowrap;
+        transition: background 0.55s ease, border-color 0.45s ease;
+      }
+      header #sidebarToggleBtn,
+      header #navBtnWishlist {
+        background: linear-gradient(135deg, rgba(10, 15, 28, 0.68) 0%, rgba(var(--ambi-1), 0.15) 100%);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(var(--ambi-2), 0.28);
+        border-radius: 10px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        transition: background 0.25s ease, border-color 0.25s ease, transform 0.14s ease, box-shadow 0.25s ease;
+      }
+      header #sidebarToggleBtn:hover,
+      header #navBtnWishlist:hover {
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(var(--ambi-2), 0.28) 100%);
+        border-color: rgba(var(--ambi-2), 0.62);
       }
       .brand-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
       .brand-logo {
@@ -29347,25 +29370,28 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
-        padding: 4px 8px;
-        border-radius: 9px;
-        background: rgba(255, 255, 255, 0.04);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        transition: background 0.15s, transform 0.12s, border-color 0.15s, box-shadow 0.15s;
+        padding: 4px 9px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, rgba(10, 15, 28, 0.66) 0%, rgba(var(--ambi-1), 0.14) 100%);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(var(--ambi-2), 0.26);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        transition: background 0.2s, transform 0.12s, border-color 0.2s, box-shadow 0.2s;
         flex-shrink: 0;
       }
       .brand-logo:hover,
       .brand-logo.spatial-focus,
       .brand-logo:focus-visible {
-        background: rgba(255, 255, 255, 0.09);
-        border-color: rgba(255, 255, 255, 0.22);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(var(--ambi-2), 0.26) 100%);
+        border-color: rgba(var(--ambi-2), 0.6);
       }
       .brand-logo:active { transform: scale(0.96); }
       .teleport-logo-svg {
         width: 20px;
         height: 20px;
         flex-shrink: 0;
-        filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.35));
+        filter: drop-shadow(0 0 6px rgba(var(--ambi-2), 0.55));
       }
       .teleport-accent {
         background: linear-gradient(135deg, #38bdf8, #818cf8, #6366f1);
@@ -29379,7 +29405,7 @@
         }
         .brand-logo {
           font-size: 13.5px;
-          padding: 3px 5px;
+          padding: 3px 6px;
           gap: 4px;
         }
         .teleport-logo-svg {
@@ -29628,22 +29654,26 @@
       @keyframes spin { to { transform: rotate(360deg); } }
       .results-busy { transition: opacity 0.18s ease; }
 
-      /* Kompakter Film / Serien Umschalter direkt in der oberen Leiste */
+      /* Kompakter Film / Serien Umschalter direkt in der oberen Leiste (mit Flixnet-Glas & Ambilight-Schimmer) */
       .media-mode-switch-inline {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        background: rgba(255,255,255,0.05);
+        background: linear-gradient(135deg, rgba(10, 15, 28, 0.68) 0%, rgba(var(--ambi-1), 0.14) 100%);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
         padding: 2px;
-        border-radius: 9px;
-        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 10px;
+        border: 1px solid rgba(var(--ambi-2), 0.28);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        transition: background 0.35s ease, border-color 0.35s ease;
       }
       .media-mode-tab {
         padding: calc(4.5px * var(--scale-menu)) calc(10px * var(--scale-menu));
-        border-radius: 7px;
+        border-radius: 8px;
         border: 1px solid transparent;
         background: transparent;
-        color: #a3a3a3;
+        color: #cbd5e1;
         font-size: calc(11.5px * var(--scale-menu));
         font-weight: 800;
         cursor: pointer;
@@ -29674,26 +29704,68 @@
         opacity: 1 !important;
       }
 
-      /* Integrierte, ruhige Suchleiste aus einem Guss (Bereichswähler + Eingabe + Suchlupe) */
+      /* Integrierte Ambilight-Glas-Suchleiste (bleibt ruhig an ihrem Platz; der Slider gleitet butterweich dahinter auf & zu) */
+      body {
+        --ambi-1: 14, 165, 233;
+        --ambi-2: 56, 189, 248;
+        --ambi-3: 30, 64, 175;
+      }
       .search-bar-outer {
         position: relative;
         z-index: 55;
-        padding: 6px 14px 4px;
+        padding: 4px 14px 6px;
+      }
+      .search-bar-hero-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+      }
+      .hero-top-dock-hide-btn {
+        display: none !important;
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+      body:has(#heroCurtainShell) .hero-top-dock-hide-btn {
+        display: inline-flex !important;
       }
       .search-bar {
+        flex: 1;
+        min-width: 0;
         display: flex;
         gap: 0;
         align-items: center;
         flex-wrap: nowrap;
-        background: #1a1a22;
-        border: 1px solid rgba(255,255,255,0.16);
-        border-radius: 10px;
+        background: linear-gradient(
+          135deg,
+          rgba(8, 12, 22, 0.78) 0%,
+          rgba(var(--ambi-1), 0.18) 52%,
+          rgba(8, 12, 22, 0.84) 100%
+        );
+        backdrop-filter: blur(18px) saturate(1.55);
+        -webkit-backdrop-filter: blur(18px) saturate(1.55);
+        border: 1px solid rgba(var(--ambi-2), 0.34);
+        border-radius: 12px;
         padding: 2px 4px;
-        transition: border-color 0.15s, box-shadow 0.15s;
+        box-shadow:
+          0 8px 24px rgba(2, 6, 23, 0.52),
+          0 0 22px rgba(var(--ambi-1), 0.14),
+          inset 0 1px 0 rgba(255, 255, 255, 0.16);
+        transition: background 0.5s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+      }
+      body[data-theme="light"] .search-bar {
+        background: linear-gradient(
+          135deg,
+          rgba(15, 23, 42, 0.82) 0%,
+          rgba(var(--ambi-1), 0.22) 52%,
+          rgba(15, 23, 42, 0.88) 100%
+        );
       }
       .search-bar:focus-within {
-        border-color: rgba(255, 255, 255, 0.34);
-        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+        border-color: rgba(var(--ambi-2), 0.72);
+        box-shadow:
+          0 8px 28px rgba(0, 0, 0, 0.65),
+          0 0 26px rgba(var(--ambi-2), 0.28);
       }
       #searchInput:focus,
       .search-scope-select:focus {
@@ -29719,16 +29791,16 @@
         transform: none !important;
       }
       .search-scope-select {
-        background-color: #22222c;
+        background-color: rgba(15, 23, 42, 0.56);
         border: 0;
-        border-right: 1px solid rgba(255,255,255,0.14);
+        border-right: 1px solid rgba(255,255,255,0.16);
         color: #f8fafc;
-        border-radius: 7px 0 0 7px;
-        padding: 6px 8px;
+        border-radius: 9px 0 0 9px;
+        padding: 6px 9px;
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 700;
         cursor: pointer;
-        max-width: 130px;
+        max-width: 136px;
         flex-shrink: 0;
         outline: none;
         color-scheme: dark;
@@ -29752,13 +29824,22 @@
         padding: calc(7px * var(--scale-menu)) 32px calc(7px * var(--scale-menu)) 10px;
         font-size: calc(13px * var(--scale-text));
         outline: none;
+        text-overflow: ellipsis;
+      }
+      .search-input-wrap input::placeholder {
+        color: rgba(203, 213, 225, 0.74);
+        transition: color 0.3s ease;
+      }
+      .search-input-wrap input.hero-placeholder-active::placeholder {
+        color: rgba(226, 232, 240, 0.82);
+        font-weight: 500;
       }
       .search-submit-btn {
         background: transparent;
         border: 0;
-        color: #cbd5e1;
+        color: #e2e8f0;
         padding: 5px 10px;
-        border-radius: 7px;
+        border-radius: 8px;
         font-size: calc(13px * var(--scale-text));
         cursor: pointer;
         flex-shrink: 0;
@@ -29818,14 +29899,15 @@
       /* Autocomplete-Vorschlagsliste unter der Suche (Filme, Serien, Filmreihen, Personen) */
       .search-autocomplete-box {
         position: absolute;
-        left: 12px;
-        right: 12px;
-        top: calc(100% - 2px);
-        background: rgba(20, 20, 28, 0.98);
-        backdrop-filter: blur(16px);
-        border: 1px solid rgba(14, 165, 233, 0.5);
-        border-radius: 10px;
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.85);
+        left: 14px;
+        right: 14px;
+        top: calc(100% + 4px);
+        background: rgba(14, 18, 28, 0.96);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(var(--ambi-2), 0.55);
+        border-radius: 12px;
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.88);
         max-height: 360px;
         overflow-y: auto;
         scroll-padding-top: 12px;
@@ -29865,59 +29947,178 @@
         opacity: 1;
       }
 
-      /* Flixnet-Inspiriertes Hero-Showcase (Nahtloser Boden-Übergang ohne Strich + Zentrierte Pill-Dot-Leiste + 1-Zeilen Spotlight-Strip) */
-      .hero {
-        position: relative;
-        min-height: 300px;
-        background-size: cover;
-        background-position: center 22%;
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-end;
-        padding: 24px 18px 14px;
-        transition: background-image 0.45s ease-in-out;
-        border-bottom: none;
-        overflow: hidden;
+      /* Flixnet Widescreen Kino-Spotlight: Butterweiche 0,4s Vorhang-Animation & rahmenloser Top/Bottom Kino-Fade */
+      @keyframes heroSlideProgress {
+        0% { width: 0%; }
+        100% { width: 100%; }
       }
-      .hero::after {
-        content: "";
+      .hero-curtain-shell {
+        display: grid;
+        grid-template-rows: 1fr;
+        opacity: 1;
+        margin-top: -54px;
+        margin-bottom: 4px;
+        transition:
+          grid-template-rows 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+          opacity 0.36s cubic-bezier(0.22, 1, 0.36, 1),
+          margin-top 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+          margin-bottom 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+        will-change: grid-template-rows, opacity, margin-top;
+      }
+      .hero-curtain-shell.is-collapsed {
+        grid-template-rows: 0fr;
+        opacity: 0;
+        margin-top: 0px;
+        margin-bottom: 0px;
+        pointer-events: none;
+      }
+      .hero-curtain-inner {
+        overflow: hidden;
+        min-height: 0;
+      }
+      .hero-stage-wrap {
+        --ambi-1: 14, 165, 233;
+        --ambi-2: 56, 189, 248;
+        --ambi-3: 30, 64, 175;
+        position: relative;
+        margin: 0;
+        z-index: 1;
+      }
+      /* Dynamisches Ambilight: Kombiniert unscharfes Backdrop-Halo mit extrahierten RGB-Farbscheinen der Hauptfarben */
+      .hero-ambilight-glow {
         position: absolute;
-        inset: 0 0 -1px 0;
+        inset: 6px 0 6px;
+        background-size: cover;
+        background-position: center 25%;
+        filter: blur(38px) saturate(2.15) brightness(1.18);
+        opacity: 0.52;
+        z-index: 0;
+        pointer-events: none;
+        transition: background-image 0.55s ease, opacity 0.55s ease;
+        transform: translate3d(0, 0, 0);
+      }
+      .hero-ambilight-beams {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
         pointer-events: none;
         background:
-          linear-gradient(90deg, rgba(10, 15, 29, 0.95) 0%, rgba(10, 15, 29, 0.72) 48%, rgba(10, 15, 29, 0.18) 100%),
-          linear-gradient(to top, var(--bg) 0%, rgba(10, 15, 29, 0.35) 55%, rgba(10, 15, 29, 0.65) 100%);
+          radial-gradient(55% 75% at 18% 50%, rgba(var(--ambi-1), 0.56) 0%, rgba(var(--ambi-1), 0) 75%),
+          radial-gradient(55% 75% at 50% 20%, rgba(var(--ambi-2), 0.46) 0%, rgba(var(--ambi-2), 0) 75%),
+          radial-gradient(60% 80% at 82% 58%, rgba(var(--ambi-3), 0.52) 0%, rgba(var(--ambi-3), 0) 78%);
+        filter: blur(28px);
+        opacity: 0.78;
+        transition: background 0.6s ease, opacity 0.6s ease;
+        transform: translate3d(0, 0, 0);
+      }
+      body[data-theme="light"] .hero-ambilight-glow {
+        opacity: 0.32;
+        filter: blur(30px) saturate(1.75) brightness(1.05);
+      }
+      body[data-theme="light"] .hero-ambilight-beams {
+        opacity: 0.45;
+      }
+      .hero {
+        position: relative;
+        z-index: 1;
+        margin: 0;
+        min-height: clamp(340px, 44vw, 476px);
+        border-radius: 0;
+        border: none;
+        background: transparent;
+        box-shadow: none;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 66px 26px 16px;
+        overflow: hidden;
+      }
+      /* Zitterfreier 0,5s Crossfade + sanftes Tiefen-Gleiten (ohne 7s Dauer-Zoom) + volle HD-Brillanz */
+      .hero-backdrop-layer {
+        position: absolute;
+        inset: 0;
+        background-size: cover;
+        background-position: center 18%;
+        z-index: 0;
+        pointer-events: none;
+        opacity: 0;
+        filter: brightness(1.08) contrast(1.05) saturate(1.14);
+        transform: translate3d(14px, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        will-change: transform, opacity;
+      }
+      .hero-backdrop-layer.active-layer {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
+      }
+      /* Nahtloser Flixnet-Kino-Fade: Verschmilzt oben (zur Header/Such-Zone), unten (zum dunklen Seiten-Hintergrund) & seitlich komplett rahmenlos */
+      .hero-scrim-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, var(--bg) 0%, rgba(7, 10, 18, 0.84) 11%, rgba(7, 10, 18, 0.38) 26%, rgba(7, 10, 18, 0) 44%),
+          linear-gradient(0deg, var(--bg) 0%, rgba(7, 10, 18, 0.90) 9%, rgba(7, 10, 18, 0.44) 25%, rgba(7, 10, 18, 0.08) 44%, rgba(7, 10, 18, 0) 60%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0.88) 18%, rgba(5, 8, 16, 0.62) 34%, rgba(5, 8, 16, 0.22) 52%, rgba(5, 8, 16, 0) 72%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3.5%, rgba(5, 8, 16, 0) 96.5%, var(--bg) 100%);
+        transition: background 0.4s ease, opacity 0.4s ease;
+      }
+      /* Automatische Kontrast-Unterstützung bei extrem hellen Szenenbildern (wie Schnee/Eis in Interstellar) */
+      .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
+        background:
+          linear-gradient(180deg, var(--bg) 0%, rgba(5, 8, 16, 0.90) 13%, rgba(5, 8, 16, 0.48) 30%, rgba(5, 8, 16, 0) 48%),
+          linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.94) 11%, rgba(5, 8, 16, 0.54) 28%, rgba(5, 8, 16, 0.14) 46%, rgba(5, 8, 16, 0) 64%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(4, 7, 15, 0.95) 22%, rgba(4, 7, 15, 0.78) 38%, rgba(4, 7, 15, 0.36) 56%, rgba(4, 7, 15, 0.06) 74%, rgba(4, 7, 15, 0) 86%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3.5%, rgba(5, 8, 16, 0) 96.5%, var(--bg) 100%);
       }
       .hero-inner {
         position: relative;
         z-index: 2;
         width: 100%;
+        flex: 1;
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        justify-content: flex-end;
+        min-height: clamp(244px, 34vw, 382px);
+        gap: 12px;
+      }
+      .hero-widescreen-body {
+        display: flex;
+        align-items: flex-end;
+        justify-content: flex-start;
+        margin-top: auto;
+        padding: 6px 0 4px;
       }
       .hero-content {
-        max-width: 620px;
+        position: relative;
+        z-index: 2;
+        min-width: 0;
+        max-width: 600px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 4px 0;
+        transition: opacity 0.24s ease, transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
       }
+      .hero-content.hero-fade-step {
+        opacity: 0.25;
+        transform: translate3d(8px, 0, 0);
+      }
+      /* Flixnet Kicker über dem großen Filmtitel */
       .hero-kicker {
         font-size: calc(10.5px * var(--scale-text));
         font-weight: 800;
-        letter-spacing: 1.6px;
+        letter-spacing: 2.2px;
         text-transform: uppercase;
-        color: #cbd5e1;
-        margin-bottom: 6px;
-        display: flex;
+        color: rgba(241, 245, 249, 0.92);
+        display: inline-flex;
         align-items: center;
-        gap: 8px;
-        text-shadow: 0 1px 6px rgba(0, 0, 0, 0.85);
-      }
-      .hero-kicker-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 999px;
-        background: var(--red);
-        box-shadow: 0 0 8px var(--red);
-        display: inline-block;
+        gap: 6px;
+        margin-bottom: 1px;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.95);
       }
       .hero-badge {
         display: inline-flex;
@@ -29933,52 +30134,85 @@
       .hero-badge.movie { background: linear-gradient(135deg, #0284c7, #1d4ed8); color: #fff; }
       .hero-badge.series { background: linear-gradient(135deg, #4338ca, #6d28d9); color: #fff; }
       .hero-title {
-        font-size: clamp(22px, calc(30px * var(--scale-text)), 38px);
+        min-width: 0;
+        width: 100%;
+        margin-bottom: 2px;
+      }
+      .hero-title-text {
+        font-size: clamp(26px, calc(38px * var(--scale-text)), 50px);
         font-weight: 900;
-        margin-bottom: 8px;
-        line-height: 1.1;
+        line-height: 1.04;
         color: #ffffff;
-        letter-spacing: -0.3px;
-        text-shadow: 0 4px 18px rgba(0, 0, 0, 0.92);
+        letter-spacing: -0.6px;
+        text-transform: uppercase;
+        text-shadow: 0 4px 20px rgba(0, 0, 0, 0.92), 0 1px 4px rgba(0, 0, 0, 0.9);
       }
       .hero-meta-clean {
-        font-size: calc(12.5px * var(--scale-text));
-        color: #f1f5f9;
-        margin-bottom: 10px;
+        font-size: calc(13px * var(--scale-text));
+        color: #f8fafc;
+        margin-bottom: 4px;
         display: flex;
-        gap: 8px;
+        gap: 7px;
         flex-wrap: wrap;
         align-items: center;
         font-weight: 700;
-        text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
       }
       .hero-meta-star {
-        color: #fbbf24;
+        color: #ef4444;
         font-weight: 900;
       }
       .hero-meta-sep {
-        color: rgba(255, 255, 255, 0.45);
+        color: rgba(255, 255, 255, 0.5);
       }
       .hero-meta-year {
         cursor: pointer;
         text-decoration: underline;
-        text-decoration-color: rgba(255, 255, 255, 0.35);
+        text-decoration-color: rgba(255, 255, 255, 0.4);
         text-underline-offset: 3px;
       }
       .hero-meta-year:hover {
         color: #38bdf8;
       }
-      .hero-desc {
-        font-size: calc(12.5px * var(--scale-text));
+      .hero-meta-hd {
+        font-size: calc(10px * var(--scale-text));
+        font-weight: 900;
+        letter-spacing: 0.6px;
         color: #e2e8f0;
+        border: 1px solid rgba(255, 255, 255, 0.38);
+        border-radius: 4px;
+        padding: 0px 5px;
+        line-height: 1.35;
+        background: rgba(15, 23, 42, 0.45);
+      }
+      .hero-meta-genres {
+        display: inline-flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px;
+        color: #cbd5e1;
+      }
+      .hero-meta-genre {
+        cursor: pointer;
+        color: #e2e8f0;
+        transition: color 0.15s ease;
+      }
+      .hero-meta-genre:hover {
+        color: #38bdf8;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      .hero-desc {
+        font-size: calc(13px * var(--scale-text));
+        color: rgba(241, 245, 249, 0.92);
         line-height: 1.5;
         display: -webkit-box;
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
-        margin-bottom: 14px;
-        max-width: 540px;
-        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
+        margin-bottom: 10px;
+        max-width: 520px;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.96), 0 1px 3px rgba(0, 0, 0, 0.88);
       }
       .hero-actions-box {
         display: inline-flex;
@@ -29986,163 +30220,199 @@
         gap: 10px;
         flex-wrap: wrap;
       }
-      /* Flixnet-Style Primär-Button (Weiß mit dunkler Schrift wie "▶ Play") */
       .hero-btn-play {
         background: #ffffff !important;
-        color: #0f172a !important;
+        color: #090d16 !important;
         border: 1px solid #ffffff !important;
         border-radius: 8px !important;
-        padding: 8px 18px !important;
-        font-size: calc(12.5px * var(--scale-text)) !important;
-        font-weight: 900 !important;
+        padding: 9px 20px !important;
+        font-size: calc(13px * var(--scale-text)) !important;
+        font-weight: 800 !important;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
-        gap: 7px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
+        gap: 8px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
         transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
       }
       .hero-btn-play:hover,
       .hero-btn-play.spatial-focus {
         background: #f1f5f9 !important;
         transform: translateY(-1px) scale(1.03);
-        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.55), 0 6px 20px rgba(0, 0, 0, 0.75) !important;
+        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.55), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
       }
-      /* Flixnet-Style Sekundär-Button (Dunkles Glas wie "ⓘ More info") */
-      .hero-btn-info {
-        background: rgba(30, 41, 59, 0.72) !important;
-        backdrop-filter: blur(8px);
+      .hero-btn-info,
+      .hero-btn-wishlist {
+        background: rgba(30, 41, 59, 0.68) !important;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         color: #ffffff !important;
-        border: 1px solid rgba(255, 255, 255, 0.28) !important;
+        border: 1px solid rgba(255, 255, 255, 0.24) !important;
         border-radius: 8px !important;
-        padding: 8px 16px !important;
-        font-size: calc(12.5px * var(--scale-text)) !important;
-        font-weight: 800 !important;
+        padding: 9px 16px !important;
+        font-size: calc(13px * var(--scale-text)) !important;
+        font-weight: 700 !important;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         gap: 7px;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
-        transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+        transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
       }
       .hero-btn-info:hover,
-      .hero-btn-info.spatial-focus {
-        background: rgba(51, 65, 85, 0.9) !important;
-        border-color: #ffffff !important;
+      .hero-btn-info.spatial-focus,
+      .hero-btn-wishlist:hover,
+      .hero-btn-wishlist.spatial-focus {
+        background: rgba(51, 65, 85, 0.85) !important;
+        border-color: rgba(255, 255, 255, 0.55) !important;
         transform: translateY(-1px) scale(1.03);
       }
-      /* Untere Steuerleiste im Hero: Zentrierte Pill-Dot-Navigation (< ━━ • • • • >) + Rechts Slider ausblenden */
+      .hero-btn-wishlist.saved {
+        background: rgba(16, 185, 129, 0.24) !important;
+        border-color: rgba(52, 211, 153, 0.72) !important;
+        color: #ecfdf5 !important;
+      }
+      /* Minimalistische Flixnet-Punktleiste unten mittig: ( ‹ )  • • • • ━━ •  ( › ) */
       .hero-bottom-bar {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
+        justify-content: center;
         width: 100%;
-        padding-top: 4px;
-        flex-wrap: wrap;
-      }
-      .hero-bottom-spacer {
-        flex: 1 1 80px;
+        padding-top: 2px;
       }
       .hero-dots-nav {
-        display: inline-flex;
-        align-items: center;
-        gap: 10px;
-        background: rgba(15, 23, 42, 0.55);
-        backdrop-filter: blur(8px);
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-      }
-      .hero-circle-arrow {
-        width: 26px;
-        height: 26px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        background: rgba(255, 255, 255, 0.08);
-        color: #ffffff;
-        font-size: 12px;
-        font-weight: 900;
-        cursor: pointer;
+        position: relative;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        transition: all 0.15s ease;
+        gap: 12px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: radial-gradient(ellipse at center, rgba(4, 7, 15, 0.62) 0%, rgba(4, 7, 15, 0.28) 75%, rgba(4, 7, 15, 0) 100%);
+      }
+      .hero-circle-arrow {
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        background: rgba(15, 23, 42, 0.52);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        color: #f8fafc;
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1;
+        cursor: pointer;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
       }
       .hero-circle-arrow:hover,
       .hero-circle-arrow.spatial-focus {
-        background: var(--red);
+        background: rgba(255, 255, 255, 0.22);
         border-color: #ffffff;
         transform: scale(1.08);
       }
       .hero-dots-nav:has(.spatial-focus) {
-        border-color: var(--red);
-        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.5), 0 6px 18px rgba(0, 0, 0, 0.75);
-        background: rgba(15, 23, 42, 0.88);
+        background: rgba(7, 11, 20, 0.78);
+        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.45), 0 6px 18px rgba(0, 0, 0, 0.75);
       }
       .hero-dots-track {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 7px;
       }
       .hero-dot {
-        width: 9px;
-        height: 9px;
+        position: relative;
+        width: 6px;
+        height: 6px;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.38);
-        border: none;
         padding: 0;
+        border: none;
+        background: rgba(255, 255, 255, 0.36);
         cursor: pointer;
-        transition: all 0.22s ease;
+        overflow: hidden;
+        flex-shrink: 0;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+        transition: width 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, transform 0.2s ease;
       }
       .hero-dot:hover {
-        background: rgba(255, 255, 255, 0.75);
-      }
-      .hero-dot.active {
-        width: 26px;
-        background: #ffffff;
-        box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
-      }
-      .hero-dot.spatial-focus {
-        background: var(--red) !important;
-        outline: 2px solid #ffffff !important;
-        outline-offset: 2px;
-        box-shadow: 0 0 12px var(--red) !important;
+        background: rgba(255, 255, 255, 0.72);
         transform: scale(1.18);
       }
-      .hero-hide-wrap {
-        flex: 1 1 80px;
-        display: flex;
-        justify-content: flex-end;
+      .hero-dot.active {
+        width: 24px;
+        background: rgba(255, 255, 255, 0.35);
+      }
+      .hero-dot.spatial-focus {
+        outline: 2px solid #38bdf8 !important;
+        outline-offset: 3px;
+        background: #ffffff !important;
+      }
+      .hero-thumb-progress {
+        position: absolute;
+        inset: 0;
+        border-radius: 999px;
+        overflow: hidden;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .hero-dot.active .hero-thumb-progress {
+        opacity: 1;
+      }
+      .hero-thumb-progress-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: 999px;
+        background: #ffffff;
+        box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+      }
+      .hero-dot.active .hero-thumb-progress-fill {
+        animation: heroSlideProgress 7s linear forwards;
+      }
+      .hero:hover .hero-dot.active .hero-thumb-progress-fill,
+      .hero:focus-within .hero-dot.active .hero-thumb-progress-fill {
+        animation-play-state: paused;
       }
       .hero-hide-btn {
-        background: rgba(15, 23, 42, 0.68);
-        backdrop-filter: blur(8px);
-        color: #e2e8f0;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 999px;
-        padding: 4px 11px;
-        font-size: calc(11px * var(--scale-text));
+        background: linear-gradient(135deg, rgba(8, 12, 22, 0.76) 0%, rgba(var(--ambi-1), 0.18) 100%);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        color: rgba(248, 250, 252, 0.94);
+        border: 1px solid rgba(var(--ambi-2), 0.38);
+        border-radius: 12px;
+        padding: 8px 13px;
+        font-size: calc(11.5px * var(--scale-text));
         font-weight: 700;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
         gap: 5px;
-        transition: all 0.15s ease;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        transition: background 0.25s ease, border-color 0.25s ease, transform 0.15s ease, color 0.15s ease;
+      }
+      .hero-hide-btn.is-collapsed-state {
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(var(--ambi-1), 0.28) 100%);
+        border-color: rgba(var(--ambi-2), 0.56);
+        color: #f8fafc;
       }
       .hero-hide-btn:hover,
       .hero-hide-btn.spatial-focus {
-        background: var(--red);
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.92) 0%, rgba(var(--ambi-2), 0.34) 100%);
         color: #ffffff;
-        border-color: #ffffff;
+        border-color: rgba(255, 255, 255, 0.68);
+        transform: translateY(-1px);
       }
-      /* 1-Zeilen Spotlight-Strip wenn der große Slider ausgeblendet ist */
+      /* 1-Zeilen Spotlight-Strip (Legacy-Fallback) */
       .hero-collapsed-strip {
-        margin: 8px 14px 2px;
+        margin: 6px 14px 2px;
         padding: 7px 12px;
         border-radius: 12px;
-        background: linear-gradient(90deg, rgba(14, 165, 233, 0.16) 0%, rgba(15, 23, 42, 0.92) 45%, rgba(15, 23, 42, 0.96) 100%);
-        border: 1px solid rgba(148, 163, 184, 0.18);
+        background: linear-gradient(90deg, rgba(var(--ambi-1), 0.18) 0%, rgba(15, 23, 42, 0.92) 45%, rgba(15, 23, 42, 0.96) 100%);
+        border: 1px solid rgba(var(--ambi-2), 0.28);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -30156,13 +30426,20 @@
         min-width: 0;
         flex: 1 1 200px;
       }
+      .hero-collapsed-thumb {
+        width: 24px;
+        height: 34px;
+        border-radius: 5px;
+        object-fit: cover;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        flex-shrink: 0;
+      }
       .hero-collapsed-title {
         font-size: calc(12.5px * var(--scale-text));
         font-weight: 800;
         color: #ffffff;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        min-width: 0;
+        flex: 1;
         cursor: pointer;
       }
       .hero-collapsed-title:hover {
@@ -30262,9 +30539,22 @@
         text-overflow: ellipsis;
       }
       @media (max-width: 680px) {
-        .hero { min-height: 255px; padding: 18px 14px 12px; }
-        .hero-bottom-spacer { display: none; }
-        .hero-bottom-bar { justify-content: space-between; }
+        .search-bar-outer {
+          padding: 4px 10px 4px;
+        }
+        .search-autocomplete-box {
+          left: 10px;
+          right: 10px;
+        }
+        .search-bar-hero-row { gap: 6px; }
+        .hero-hide-btn { padding: 7px 10px; font-size: 11px; border-radius: 10px; }
+        .hero-curtain-shell { margin-top: -48px; }
+        .hero-stage-wrap { margin: 0; }
+        .hero { min-height: 292px; padding: 56px 14px 12px; border-radius: 0; }
+        .hero-inner { min-height: 220px; gap: 8px; }
+        .hero-title-text { font-size: clamp(22px, 6.5vw, 32px); }
+        .hero-desc { -webkit-line-clamp: 2; font-size: 12px; margin-bottom: 8px; }
+        .hero-btn-play, .hero-btn-info, .hero-btn-wishlist { padding: 7px 13px !important; font-size: 12px !important; }
       }
 
       .section { padding: 8px 14px; }
@@ -32250,25 +32540,28 @@
     </div>
     <div id="customDialogRoot"></div>
 
-    <!-- Integrierte, ruhige Suchleiste (Genres links direkt in der Suchleiste + Eingabe + Suchlupe) -->
-    <div class="search-bar-outer">
-      <div class="search-bar">
-        <select id="searchGenreSelect" class="search-scope-select" onchange="onSearchGenreSelectChange(this.value)" title="Nach Genre filtern">
-          <option value="all">🎞️ Alle Genres</option>
-        </select>
-        <div class="search-input-wrap">
-          <input
-            id="searchInput"
-            placeholder="Film, Serie, Studio, Person oder (Jahr)..."
-            autocomplete="off"
-            onfocus="onSearchInputFocus()"
-            onblur="onSearchInputBlur()"
-            oninput="onSearchInputLive(this.value)"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();closeAutocomplete();this.blur();runSearch(false,this.value,undefined,true);}"
-          />
-          <button type="button" id="searchClearBtn" class="search-clear-btn is-empty" onclick="clearSearchInput()" title="Suchfeld leeren" aria-label="Suchfeld leeren">✕</button>
+    <!-- Integrierte Ambilight-Glas-Suchleiste (im ausgeklappten Slider oben integriert, bleibt beim Einklappen oben stehen) -->
+    <div id="searchBarOuterSlot" class="search-bar-outer">
+      <div class="search-bar-hero-row">
+        <div class="search-bar">
+          <select id="searchGenreSelect" class="search-scope-select" onchange="onSearchGenreSelectChange(this.value)" title="Nach Genre filtern">
+            <option value="all">🎞️ Alle Genres</option>
+          </select>
+          <div class="search-input-wrap">
+            <input
+              id="searchInput"
+              placeholder="Film, Serie, Studio, Person oder (Jahr)..."
+              autocomplete="off"
+              onfocus="onSearchInputFocus()"
+              onblur="onSearchInputBlur()"
+              oninput="onSearchInputLive(this.value)"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();closeAutocomplete();this.blur();runSearch(false,this.value,undefined,true);}"
+            />
+            <button type="button" id="searchClearBtn" class="search-clear-btn is-empty" onclick="clearSearchInput()" title="Suchfeld leeren" aria-label="Suchfeld leeren">✕</button>
+          </div>
+          <button type="button" class="search-submit-btn" onclick="closeAutocomplete();runSearch()" title="Suche starten" aria-label="Suche starten">🔍</button>
         </div>
-        <button type="button" class="search-submit-btn" onclick="closeAutocomplete();runSearch()" title="Suche starten" aria-label="Suche starten">🔍</button>
+        <button type="button" id="heroHideBtn" class="hero-hide-btn hero-top-dock-hide-btn" onclick="toggleHeroSliderHidden()" title="Kino-Spotlight ein- oder ausklappen">▴ Einklappen</button>
       </div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box"></div>
     </div>
@@ -34012,6 +34305,13 @@
             }
           }
         });
+        // Hero-Slider Merkliste-Button (#heroBtnWishlist) live mitsynchronisieren
+        const heroWlBtn = document.getElementById("heroBtnWishlist");
+        if (heroWlBtn && heroWlBtn.getAttribute("data-hero-wl-key") === key) {
+          heroWlBtn.classList.toggle("saved", Boolean(isSaved));
+          heroWlBtn.innerHTML = isSaved ? "✓ Gemerkt" : "🔖 Merkliste";
+          heroWlBtn.setAttribute("title", isSaved ? "Aus deiner Merkliste entfernen" : "Direkt in deiner Merkliste speichern");
+        }
         // Detail-Modal Button mitsynchronisieren, falls Modal für diesen Titel aktuell geöffnet ist
         if (state && state.activeDetails && String(state.activeDetails.id) === String(id) && state.activeDetails.typeCode === typeCode) {
           state.activeDetails.isSaved = Boolean(isSaved);
@@ -34416,9 +34716,10 @@
       };
 
       // =========================================================================
-      // 3. FLIXNET-STYLE HERO-SHOWCASE (6 HIGHLIGHTS + PILL-DOTS + 1-ZEILEN SPOTLIGHT-STRIP)
+      // 3. KINO-SPOTLIGHT HERO-SHOWCASE (POSTER-KARTE + CROSSFADE/ZOOM + MINIATUR-LEISTE)
       // =========================================================================
       let heroRotationTimer = null;
+      let heroPointerHovered = false;
       function rebuildHeroSlides(itemsList) {
         const withBackdrop = (itemsList || []).filter(i => i && (i.backdrop_path || i.poster_path));
         if (withBackdrop.length <= 6) {
@@ -34437,18 +34738,78 @@
         startHeroRotationTimer();
       }
 
+      function setHeroPointerHover(isHovered) {
+        heroPointerHovered = Boolean(isHovered);
+      }
+
+      function formatCollapsedHeroSearchPlaceholderClient(hero) {
+        if (!hero) return "Film, Serie, Studio, Person oder (Jahr)...";
+        const heroType = hero.media_type === "tv" || state.type === "s" ? "s" : "m";
+        const isMovie = heroType === "m";
+        const titleRaw = String(hero.title || hero.name || "").trim();
+        if (!titleRaw) return "Film, Serie, Studio, Person oder (Jahr)...";
+        const voteStr = hero.vote_average ? ("★ " + hero.vote_average.toFixed(1)) : "";
+        const yearStr = String(hero.release_date || hero.first_air_date || "").slice(0, 4);
+        const typeLabel = isMovie ? "Film" : "Serie";
+        const genreItems = typeof resolveHeroGenreItemsClient === "function"
+          ? resolveHeroGenreItemsClient(hero, isMovie).slice(0, 2)
+          : [];
+        const genreStr = genreItems.length ? genreItems.map(g => g.name).join(", ") : "";
+        const metaParts = [voteStr, yearStr, typeLabel, genreStr].filter(Boolean);
+        return "💡 Highlight: " + titleRaw + (metaParts.length ? (" · " + metaParts.join(" · ")) : "") + " — Tippen zum Suchen…";
+      }
+
+      function syncHeroSearchPlaceholderAndToggleBtnClient() {
+        const hideBtn = document.getElementById("heroHideBtn");
+        const isCollapsed = Boolean(state.heroHidden);
+        if (hideBtn) {
+          hideBtn.classList.toggle("is-collapsed-state", isCollapsed);
+          hideBtn.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+          hideBtn.setAttribute(
+            "title",
+            isCollapsed
+              ? "Kino-Spotlight wieder sanft ausklappen"
+              : "Kino-Spotlight sanft nach oben einklappen"
+          );
+          hideBtn.innerHTML = isCollapsed ? "▾ Spotlight" : "▴ Einklappen";
+        }
+        const inp = document.getElementById("searchInput");
+        if (!inp) return;
+        const onCatalogDiscover = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
+        if (isCollapsed && onCatalogDiscover && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
+          const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
+          inp.placeholder = formatCollapsedHeroSearchPlaceholderClient(hero);
+          inp.classList.add("hero-placeholder-active");
+          const bpUrl = resolveHeroSlideBackdropUrlClient(hero);
+          if (bpUrl) applyDynamicHeroAmbilightClient(bpUrl);
+        } else {
+          inp.placeholder = "Film, Serie, Studio, Person oder (Jahr)...";
+          inp.classList.remove("hero-placeholder-active");
+        }
+      }
+
       function startHeroRotationTimer() {
         if (heroRotationTimer) clearInterval(heroRotationTimer);
-        if (state.heroHidden || state.isSearchMode || state.searchFocused || state.heroSlides.length <= 1) return;
+        if (state.isSearchMode || state.heroSlides.length <= 1) return;
+        const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
-          if (state.heroHidden || state.isSearchMode || state.searchFocused || state.heroSlides.length <= 1) return;
-          if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#heroBannerSlot")) {
-            return;
+          if (state.isSearchMode || state.heroSlides.length <= 1) return;
+          if (!state.heroHidden) {
+            if (state.searchFocused || heroPointerHovered) return;
+            if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#heroBannerSlot")) {
+              return;
+            }
+            state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
+            state.heroActionsEngaged = false;
+            updateHeroBannerDomOnly();
+          } else {
+            // Eingeklappter Zustand: Rotiere alle paar Sekunden den ausgegrauten Highlight-Vorschlag inkl. Metadaten im Suchfeld
+            const inp = document.getElementById("searchInput");
+            if (inp && inp.value && inp.value.trim().length > 0) return;
+            state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
+            syncHeroSearchPlaceholderAndToggleBtnClient();
           }
-          state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
-          state.heroActionsEngaged = false;
-          updateHeroBannerDomOnly();
-        }, 7000);
+        }, intervalMs);
       }
 
       function setHeroSlideIndex(idx) {
@@ -34475,7 +34836,19 @@
         state.heroHidden = typeof forceHide === "boolean" ? forceHide : !state.heroHidden;
         state.heroActionsEngaged = false;
         try { localStorage.setItem("tma_hero_hidden", state.heroHidden ? "1" : "0"); } catch (e) {}
-        updateHeroBannerDomOnly();
+        syncHeroExpandedBodyClass();
+        const curtainEl = document.getElementById("heroCurtainShell");
+        if (curtainEl) {
+          // Butterweiche 0,4s Vorhang-Animation direkt am bestehenden DOM-Container (ohne Ruckeln!)
+          curtainEl.classList.toggle("is-collapsed", Boolean(state.heroHidden));
+          if (!state.heroHidden) {
+            updateHeroBannerDomOnly(false);
+          }
+        } else {
+          updateHeroBannerDomOnly(true);
+        }
+        syncHeroSearchPlaceholderAndToggleBtnClient();
+        startHeroRotationTimer();
         if (state.sidebarOpen) {
           renderFilterSidebarContent(false);
           const sbHeroBtn = document.getElementById("sidebarHeroToggleBtn");
@@ -34490,22 +34863,14 @@
           }
         }
         if (state.heroHidden) {
-          if (heroRotationTimer) clearInterval(heroRotationTimer);
-          showHudToast("🎬 Slider zu kompakter Spotlight-Zeile eingeklappt");
-          if (!state.sidebarOpen && state.currentView !== "settings") {
-            const restoreBtn = document.getElementById("heroRestoreBtn");
-            if (restoreBtn && typeof jumpSpatialFocus === "function") {
-              jumpSpatialFocus(restoreBtn, false);
-            }
-          }
+          showHudToast("🎬 Spotlight sanft eingeklappt • Highlights rotieren als Vorschlag im Suchfeld");
         } else {
-          startHeroRotationTimer();
-          showHudToast("🎬 Empfehlungs-Slider ausgeklappt");
-          if (!state.sidebarOpen && state.currentView !== "settings") {
-            const hideBtn = document.getElementById("heroHideBtn");
-            if (hideBtn && typeof jumpSpatialFocus === "function") {
-              jumpSpatialFocus(hideBtn, false);
-            }
+          showHudToast("🎬 Kino-Spotlight ausgeklappt");
+        }
+        if (!state.sidebarOpen && state.currentView !== "settings") {
+          const hideBtn = document.getElementById("heroHideBtn");
+          if (hideBtn && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(hideBtn, false);
           }
         }
       }
@@ -34522,7 +34887,228 @@
         }
       }
 
+      function resolveHeroSlideBackdropUrlClient(item) {
+        if (!item) return "";
+        const rawBp = String(item.backdrop_path || item.poster_path || "").trim();
+        if (!rawBp) return "";
+        if (rawBp.startsWith("http://") || rawBp.startsWith("https://")) return rawBp;
+        return "https://image.tmdb.org/t/p/w1280" + (rawBp.startsWith("/") ? rawBp : ("/" + rawBp));
+      }
+
+      function resolveHeroSlidePosterUrlClient(item, size) {
+        if (!item) return "";
+        const sz = size || "w342";
+        const ext = String(item.external_poster_url || item.poster || "").trim();
+        const rawP = String(item.poster_path || item.backdrop_path || "").trim();
+        if (typeof resolvePosterUrlClient === "function") {
+          return resolvePosterUrlClient(rawP, sz, ext);
+        }
+        if (ext && (ext.startsWith("http://") || ext.startsWith("https://"))) return ext;
+        if (!rawP) return "";
+        if (rawP.startsWith("http://") || rawP.startsWith("https://")) return rawP;
+        return "https://image.tmdb.org/t/p/" + sz + (rawP.startsWith("/") ? rawP : ("/" + rawP));
+      }
+
+      const heroAmbilightColorCache = new Map();
+
+      function boostAmbilightRgbTriplet(r, g, b) {
+        let nr = Math.max(0, Math.min(255, Math.round(r)));
+        let ng = Math.max(0, Math.min(255, Math.round(g)));
+        let nb = Math.max(0, Math.min(255, Math.round(b)));
+        const maxC = Math.max(nr, ng, nb);
+        const minC = Math.min(nr, ng, nb);
+        // Falls der Bildbereich sehr dunkel ist, sanft aufhellen für leuchtendes Ambilight
+        if (maxC < 95) {
+          const lift = maxC > 8 ? (115 / maxC) : 2.2;
+          nr = Math.min(255, Math.round(nr * lift + 18));
+          ng = Math.min(255, Math.round(ng * lift + 22));
+          nb = Math.min(255, Math.round(nb * lift + 30));
+        }
+        // Sättigung leicht anheben, damit das Ambilight lebendig wirkt
+        const avg = (nr + ng + nb) / 3;
+        if (maxC - minC < 45) {
+          nr = Math.min(255, Math.max(0, Math.round(avg + (nr - avg) * 1.65)));
+          ng = Math.min(255, Math.max(0, Math.round(avg + (ng - avg) * 1.65)));
+          nb = Math.min(255, Math.max(0, Math.round(avg + (nb - avg) * 1.65)));
+        }
+        return nr + ", " + ng + ", " + nb;
+      }
+
+      function applyDynamicHeroAmbilightClient(backdropUrl) {
+        if (!backdropUrl) return;
+        const applyPalette = (pal) => {
+          if (!pal) return;
+          if (document.body) {
+            document.body.style.setProperty("--ambi-1", pal.c1);
+            document.body.style.setProperty("--ambi-2", pal.c2);
+            document.body.style.setProperty("--ambi-3", pal.c3);
+          }
+          const target = document.getElementById("heroStageWrapEl") || document.querySelector(".hero-stage-wrap");
+          if (target) {
+            target.style.setProperty("--ambi-1", pal.c1);
+            target.style.setProperty("--ambi-2", pal.c2);
+            target.style.setProperty("--ambi-3", pal.c3);
+            target.classList.toggle("hero-bright-backdrop", Boolean(pal.isBrightLeft));
+          }
+        };
+        if (heroAmbilightColorCache.has(backdropUrl)) {
+          applyPalette(heroAmbilightColorCache.get(backdropUrl));
+          return;
+        }
+        try {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.referrerPolicy = "no-referrer";
+          img.onload = function () {
+            try {
+              const canvas = document.createElement("canvas");
+              const w = 24;
+              const h = 14;
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) return;
+              ctx.drawImage(img, 0, 0, w, h);
+              const data = ctx.getImageData(0, 0, w, h).data;
+              const sampleZone = (xStart, xEnd, yStart, yEnd) => {
+                let rSum = 0, gSum = 0, bSum = 0, weightSum = 0;
+                for (let y = yStart; y < yEnd; y++) {
+                  for (let x = xStart; x < xEnd; x++) {
+                    const idx = (y * w + x) * 4;
+                    const r = data[idx];
+                    const g = data[idx + 1];
+                    const b = data[idx + 2];
+                    const lum = (r + g + b) / 3;
+                    const sat = Math.max(r, g, b) - Math.min(r, g, b);
+                    const weight = 1 + (sat / 85) + (lum > 25 && lum < 235 ? 0.6 : 0.15);
+                    rSum += r * weight;
+                    gSum += g * weight;
+                    bSum += b * weight;
+                    weightSum += weight;
+                  }
+                }
+                if (!weightSum) return "14, 165, 233";
+                return boostAmbilightRgbTriplet(rSum / weightSum, gSum / weightSum, bSum / weightSum);
+              };
+              // Helligkeits-Messung im linken Textbereich (für extrem helle Szenen wie Interstellar-Eis)
+              let leftLumSum = 0, leftLumCount = 0;
+              for (let y = 3; y < 13; y++) {
+                for (let x = 0; x < 11; x++) {
+                  const idx = (y * w + x) * 4;
+                  leftLumSum += (data[idx] * 0.299 + data[idx + 1] * 0.587 + data[idx + 2] * 0.114);
+                  leftLumCount++;
+                }
+              }
+              const avgLeftLum = leftLumCount > 0 ? (leftLumSum / leftLumCount) : 60;
+              const palette = {
+                c1: sampleZone(0, 8, 1, 13),
+                c2: sampleZone(8, 16, 0, 10),
+                c3: sampleZone(16, 24, 1, 13),
+                isBrightLeft: avgLeftLum > 136
+              };
+              heroAmbilightColorCache.set(backdropUrl, palette);
+              applyPalette(palette);
+            } catch (_e) {}
+          };
+          img.src = backdropUrl;
+        } catch (_err) {}
+      }
+
+      function selectHeroGenreFilter(genreId) {
+        const val = String(genreId || "all");
+        const sel = document.getElementById("searchGenreSelect");
+        if (sel) sel.value = val;
+        onSearchGenreSelectChange(val);
+      }
+
+      function resolveHeroGenreItemsClient(hero, isMovie) {
+        if (!hero) return [];
+        const primaryMap = isMovie ? MOVIE_GENRES_CLIENT : SERIES_GENRES_CLIENT;
+        const secondaryMap = isMovie ? SERIES_GENRES_CLIENT : MOVIE_GENRES_CLIENT;
+        const idToName = new Map();
+        const nameToId = new Map();
+        const addEntries = (obj) => {
+          if (!obj || typeof obj !== "object") return;
+          Object.entries(obj).forEach(([gName, gId]) => {
+            idToName.set(String(gId), gName);
+            nameToId.set(String(gName).toLowerCase(), String(gId));
+          });
+        };
+        addEntries(secondaryMap);
+        addEntries(primaryMap);
+        addEntries(state.genres);
+
+        const out = [];
+        const seen = new Set();
+        const rawList = Array.isArray(hero.genre_ids) && hero.genre_ids.length
+          ? hero.genre_ids
+          : (Array.isArray(hero.genres) ? hero.genres : []);
+
+        for (const entry of rawList) {
+          let gId = "";
+          let gName = "";
+          if (entry && typeof entry === "object") {
+            gId = String(entry.id || "");
+            gName = String(entry.name || "");
+            if (!gName && gId && idToName.has(gId)) gName = idToName.get(gId);
+            if (!gId && gName && nameToId.has(gName.toLowerCase())) gId = nameToId.get(gName.toLowerCase());
+          } else if (typeof entry === "number" || (typeof entry === "string" && /^\\d+$/.test(entry.trim()))) {
+            gId = String(entry).trim();
+            gName = idToName.get(gId) || "";
+          } else if (typeof entry === "string" && entry.trim()) {
+            gName = entry.trim();
+            gId = nameToId.get(gName.toLowerCase()) || "";
+          }
+          if (gName && !seen.has(gName.toLowerCase())) {
+            seen.add(gName.toLowerCase());
+            out.push({ id: gId, name: gName });
+            if (out.length >= 3) break;
+          }
+        }
+        return out;
+      }
+
+      function buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr) {
+        const genres = resolveHeroGenreItemsClient(hero, isMovie);
+        const genresHtml = genres.length
+          ? '<span class="hero-meta-sep">·</span><span class="hero-meta-genres">' +
+              genres.map((g, idx) =>
+                (g.id
+                  ? '<span class="hero-meta-genre" onclick="selectHeroGenreFilter(\\'' + esc(g.id) + '\\')" title="Nach Genre ' + esc(g.name) + ' filtern">' + esc(g.name) + '</span>'
+                  : '<span>' + esc(g.name) + '</span>') +
+                (idx < genres.length - 1 ? '<span>, </span>' : '')
+              ).join("") +
+            '</span>'
+          : '';
+        return '<span><span class="hero-meta-star">★</span> ' + voteStr + '</span>' +
+          (yearStr ? '<span class="hero-meta-sep">·</span><span class="hero-meta-year" onclick="runSearch(false,\\'(' + esc(yearStr) + ')\\')" title="Alle Titel aus dem Jahr ' + esc(yearStr) + ' suchen">' + esc(yearStr) + '</span>' : '') +
+          '<span class="hero-meta-sep">·</span><span>' + (isMovie ? 'Film' : 'Serie') + '</span>' +
+          '<span class="hero-meta-sep">·</span><span class="hero-meta-hd" title="Im Katalog in HD verfügbar">HD</span>' +
+          genresHtml;
+      }
+
+      function syncHeroExpandedBodyClass() {
+        if (!document.body) return;
+        const isExp = Boolean(
+          !state.isSearchMode &&
+          !state.heroHidden &&
+          (!state.currentView || state.currentView === "discover") &&
+          Array.isArray(state.heroSlides) &&
+          state.heroSlides.length > 0
+        );
+        document.body.classList.toggle("hero-slider-expanded", isExp);
+        setTimeout(() => {
+          if (document.body) {
+            const curtainEl = document.getElementById("heroCurtainShell");
+            document.body.classList.toggle("hero-slider-expanded", Boolean(curtainEl && !curtainEl.classList.contains("is-collapsed")));
+          }
+          syncHeroSearchPlaceholderAndToggleBtnClient();
+        }, 0);
+      }
+
       function buildHeroBannerInnerHtml() {
+        syncHeroExpandedBodyClass();
+        syncHeroSearchPlaceholderAndToggleBtnClient();
         if (state.isSearchMode || !state.heroSlides.length) return "";
         const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
         if (!hero) return "";
@@ -34530,82 +35116,213 @@
         const isMovie = heroType === "m";
         const yearStr = (hero.release_date || hero.first_air_date || "").slice(0, 4);
         const voteStr = hero.vote_average ? hero.vote_average.toFixed(1) : "–";
-        const heroTitleSafe = esc(hero.title || hero.name || "");
-        const heroPosterSafe = esc(hero.poster_path || "");
-
-        // Wenn der große Slider ausgeblendet ist: Edle 1-Zeilen Spotlight-Leiste mit direktem "🎬 Slider einblenden ▾" Button!
-        if (state.heroHidden) {
-          return '<div class="hero-collapsed-strip">' +
-            '<div class="hero-collapsed-left">' +
-              '<span class="hero-badge ' + (isMovie ? 'movie' : 'series') + '" style="padding:2px 8px;font-size:10px">' + (isMovie ? '🎬 Highlight' : '📺 Highlight') + '</span>' +
-              '<span class="hero-collapsed-title" onclick="openDetails(\\'' + heroType + '\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Details öffnen">' + heroTitleSafe + '</span>' +
-              '<span class="hero-collapsed-meta">★ ' + voteStr + (yearStr ? ' · ' + esc(yearStr) : '') + '</span>' +
-            '</div>' +
-            '<div class="hero-collapsed-actions">' +
-              '<button type="button" class="btn" style="padding:4px 10px;font-size:11px" onclick="playInstantTrailerFromCard(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Trailer abspielen">▶ Trailer</button>' +
-              '<button type="button" class="btn" style="padding:4px 10px;font-size:11px" onclick="openDetails(\\'' + heroType + '\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Details öffnen">ⓘ Details</button>' +
-              '<button type="button" id="heroRestoreBtn" class="hero-hide-btn" onclick="toggleHeroSliderHidden(false)" title="Großen Empfehlungs-Slider wieder ausklappen">🎬 Slider einblenden ▾</button>' +
-            '</div>' +
-          '</div>';
+        const heroTitleRaw = String(hero.title || hero.name || "");
+        const heroTitleSafe = esc(heroTitleRaw);
+        const heroPosterSafe = esc(hero.poster_path || hero.external_poster_url || hero.poster || "");
+        const backdropUrl = resolveHeroSlideBackdropUrlClient(hero);
+        const heroCardKey = heroType + "_" + hero.id;
+        const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
+        const cachedAmbi = backdropUrl && heroAmbilightColorCache.has(backdropUrl)
+          ? heroAmbilightColorCache.get(backdropUrl)
+          : null;
+        if (backdropUrl && !cachedAmbi) {
+          setTimeout(() => applyDynamicHeroAmbilightClient(backdropUrl), 25);
+        } else if (cachedAmbi && document.body) {
+          document.body.style.setProperty("--ambi-1", cachedAmbi.c1);
+          document.body.style.setProperty("--ambi-2", cachedAmbi.c2);
+          document.body.style.setProperty("--ambi-3", cachedAmbi.c3);
         }
+        const ambiStyleVars = cachedAmbi
+          ? ('--ambi-1:' + cachedAmbi.c1 + ';--ambi-2:' + cachedAmbi.c2 + ';--ambi-3:' + cachedAmbi.c3 + ';')
+          : '';
+        const brightClass = cachedAmbi && cachedAmbi.isBrightLeft ? ' hero-bright-backdrop' : '';
+        const collapsedClass = state.heroHidden ? ' is-collapsed' : '';
 
-        const dotsNavHtml = state.heroSlides.length > 1
+        const thumbsNavHtml = state.heroSlides.length > 1
           ? '<div class="hero-dots-nav">' +
-              '<button type="button" class="hero-circle-arrow" onclick="setHeroSlideIndex(' + (state.heroIndex - 1) + ')" title="Vorheriges Highlight (Pfeiltaste Links)">‹</button>' +
+              '<button type="button" id="heroPrevArrowBtn" class="hero-circle-arrow" onclick="setHeroSlideIndex(' + (state.heroIndex - 1) + ')" title="Vorheriges Highlight (Pfeiltaste Links)">‹</button>' +
               '<div class="hero-dots-track">' +
-                state.heroSlides.map((sl, i) =>
-                  '<button type="button" class="hero-dot ' + (i === state.heroIndex ? 'active' : '') + '" data-hero-card="' + i + '" onclick="selectHeroSlideCard(' + i + ')" title="' + (i + 1) + '. ' + esc(sl.title || sl.name || '') + ' (Pfeiltasten Links/Rechts zum Blättern, Enter für Trailer/Details)"></button>'
-                ).join("") +
+                state.heroSlides.map((sl, i) => {
+                  const slTitle = String(sl.title || sl.name || "");
+                  const isAct = i === state.heroIndex;
+                  return '<button type="button" class="hero-dot ' + (isAct ? 'active' : '') + '" data-hero-card="' + i + '" onclick="selectHeroSlideCard(' + i + ')" aria-label="Highlight ' + (i + 1) + ': ' + esc(slTitle) + '" title="' + (i + 1) + '. ' + esc(slTitle) + '">' +
+                    '<div class="hero-thumb-progress"><div class="hero-thumb-progress-fill"></div></div>' +
+                  '</button>';
+                }).join("") +
               '</div>' +
-              '<button type="button" class="hero-circle-arrow" onclick="setHeroSlideIndex(' + (state.heroIndex + 1) + ')" title="Nächstes Highlight (Pfeiltaste Rechts)">›</button>' +
+              '<button type="button" id="heroNextArrowBtn" class="hero-circle-arrow" onclick="setHeroSlideIndex(' + (state.heroIndex + 1) + ')" title="Nächstes Highlight (Pfeiltaste Rechts)">›</button>' +
             '</div>'
-          : '<div></div>';
+          : '';
 
-        return '<div class="hero" ontouchstart="onHeroTouchStart(event)" ontouchend="onHeroTouchEnd(event)" style="background-image:url(https://image.tmdb.org/t/p/w1280' + (hero.backdrop_path || hero.poster_path || '') + ')">' +
-          '<div class="hero-inner">' +
-            '<div class="hero-content">' +
-              '<div class="hero-kicker"><span class="hero-kicker-dot"></span><span>HIGHLIGHT DIESE WOCHE • ' + (isMovie ? 'FILM' : 'SERIE') + ' ' + (state.heroIndex + 1) + '/' + state.heroSlides.length + '</span></div>' +
-              '<div class="hero-title">' + heroTitleSafe + '</div>' +
-              '<div class="hero-meta-clean">' +
-                '<span><span class="hero-meta-star">★</span> ' + voteStr + '</span>' +
-                (yearStr ? '<span class="hero-meta-sep">·</span><span class="hero-meta-year" onclick="runSearch(false,\\'(' + esc(yearStr) + ')\\')" title="Alle Titel aus dem Jahr ' + esc(yearStr) + ' suchen">' + esc(yearStr) + '</span>' : '') +
-                '<span class="hero-meta-sep">·</span><span>' + (isMovie ? 'Film' : 'Serie') + '</span>' +
-              '</div>' +
-              '<div class="hero-desc">' + esc(hero.overview || 'Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.') + '</div>' +
-              '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
-                '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn" onclick="playInstantTrailerFromCard(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
-                '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')">ⓘ Details</button>' +
-              '</div>' +
-            '</div>' +
-            '<div class="hero-bottom-bar">' +
-              '<div class="hero-bottom-spacer"></div>' +
-              dotsNavHtml +
-              '<div class="hero-hide-wrap">' +
-                '<button type="button" id="heroHideBtn" class="hero-hide-btn" onclick="toggleHeroSliderHidden(true)" title="Empfehlungs-Slider zur kompakten Zeile einklappen">🎬 Slider ausblenden ▴</button>' +
+        return '<div id="heroCurtainShell" class="hero-curtain-shell' + collapsedClass + '">' +
+          '<div class="hero-curtain-inner">' +
+            '<div id="heroStageWrapEl" class="hero-stage-wrap' + brightClass + '" style="' + ambiStyleVars + '">' +
+              '<div id="heroAmbilightEl" class="hero-ambilight-glow" style="background-image:' + (backdropUrl ? ('url(' + esc(backdropUrl) + ')') : 'none') + '"></div>' +
+              '<div id="heroAmbilightBeamsEl" class="hero-ambilight-beams"></div>' +
+              '<div class="hero" onmouseenter="setHeroPointerHover(true)" onmouseleave="setHeroPointerHover(false)" ontouchstart="onHeroTouchStart(event)" ontouchend="onHeroTouchEnd(event)">' +
+                '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer" style="background-image:' + (backdropUrl ? ('url(' + esc(backdropUrl) + ')') : 'none') + '"></div>' +
+                '<div id="heroBackdropLayerB" class="hero-backdrop-layer" style="background-image:none"></div>' +
+                '<div class="hero-scrim-layer"></div>' +
+                '<div class="hero-inner">' +
+                  '<div class="hero-widescreen-body">' +
+                    '<div id="heroContentEl" class="hero-content">' +
+                      '<div id="heroKickerEl" class="hero-kicker">HIGHLIGHT DIESE WOCHE</div>' +
+                      '<div class="hero-title"><div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1"><span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + heroTitleSafe + '</span></div></div>' +
+                      '<div id="heroMetaCleanEl" class="hero-meta-clean">' +
+                        buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr) +
+                      '</div>' +
+                      '<div id="heroDescEl" class="hero-desc">' + esc(hero.overview || 'Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.') + '</div>' +
+                      '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
+                        '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn" onclick="playInstantTrailerFromCard(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
+                        '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')">ⓘ Details</button>' +
+                        '<button type="button" id="heroBtnWishlist" class="hero-btn-wishlist hero-action-btn ' + (isHeroSaved ? 'saved' : '') + '" data-hero-wl-key="' + heroCardKey + '" onclick="quickToggleCardWishlist(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\')" title="' + (isHeroSaved ? 'Aus deiner Merkliste entfernen' : 'Direkt in deiner Merkliste speichern') + '">' + (isHeroSaved ? '✓ Gemerkt' : '🔖 Merkliste') + '</button>' +
+                      '</div>' +
+                    '</div>' +
+                  '</div>' +
+                  (thumbsNavHtml ? '<div class="hero-bottom-bar">' + thumbsNavHtml + '</div>' : '') +
+                '</div>' +
               '</div>' +
             '</div>' +
           '</div>' +
         '</div>';
       }
 
-      function updateHeroBannerDomOnly() {
+      function updateHeroBannerDomOnly(forceFullRebuild) {
+        syncHeroExpandedBodyClass();
+        syncHeroSearchPlaceholderAndToggleBtnClient();
         const container = document.getElementById("heroBannerSlot");
         if (!container) return;
-        const prevHeroFocusId = (typeof currentSpatialEl !== "undefined" && currentSpatialEl && container.contains(currentSpatialEl))
+        const prevHeroFocusId = (typeof currentSpatialEl !== "undefined" && currentSpatialEl && (container.contains(currentSpatialEl) || currentSpatialEl.id === "heroHideBtn"))
           ? (currentSpatialEl.id || (currentSpatialEl.classList.contains("hero-dot") ? "dot" : ""))
           : "";
+
+        const curtainEl = document.getElementById("heroCurtainShell");
+        if (curtainEl) {
+          curtainEl.classList.toggle("is-collapsed", Boolean(state.heroHidden));
+        }
+        const existingStage = container.querySelector(".hero");
+        const layerA = document.getElementById("heroBackdropLayerA");
+        const layerB = document.getElementById("heroBackdropLayerB");
+
+        // Butterweicher 0,5s In-Place Crossfade & Tiefen-Gleiten (ohne Zittern) + dynamisches Ambilight-Update
+        if (!forceFullRebuild && !state.isSearchMode && state.heroSlides.length > 0 && existingStage && layerA && layerB) {
+          const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
+          if (hero) {
+            const heroType = hero.media_type === "tv" || state.type === "s" ? "s" : "m";
+            const isMovie = heroType === "m";
+            const yearStr = (hero.release_date || hero.first_air_date || "").slice(0, 4);
+            const voteStr = hero.vote_average ? hero.vote_average.toFixed(1) : "–";
+            const heroTitleRaw = String(hero.title || hero.name || "");
+            const heroTitleSafe = esc(heroTitleRaw);
+            const heroPosterSafe = esc(hero.poster_path || hero.external_poster_url || hero.poster || "");
+            const backdropUrl = resolveHeroSlideBackdropUrlClient(hero);
+            const heroCardKey = heroType + "_" + hero.id;
+            const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
+
+            // 1. Dynamisches Ambilight (Farb-Extraktion + Backdrop-Halo + Helligkeits-Check) + 0,5s Crossfade
+            const ambiEl = document.getElementById("heroAmbilightEl");
+            if (ambiEl) {
+              ambiEl.style.backgroundImage = backdropUrl ? ("url(" + backdropUrl + ")") : "none";
+            }
+            if (backdropUrl) {
+              applyDynamicHeroAmbilightClient(backdropUrl);
+            }
+            const activeLayer = layerA.classList.contains("active-layer") ? layerA : layerB;
+            const nextLayer = activeLayer === layerA ? layerB : layerA;
+            nextLayer.classList.remove("active-layer");
+            nextLayer.style.backgroundImage = backdropUrl ? ("url(" + backdropUrl + ")") : "none";
+            void nextLayer.offsetWidth;
+            nextLayer.classList.add("active-layer");
+            activeLayer.classList.remove("active-layer");
+
+            // 2. Content, Genres, HD-Badge & Merkliste-Button sanft aktualisieren
+            const contentEl = document.getElementById("heroContentEl");
+            if (contentEl) {
+              contentEl.classList.add("hero-fade-step");
+              setTimeout(() => contentEl.classList.remove("hero-fade-step"), 60);
+            }
+
+            const titleWrap = document.getElementById("heroTitleMarqueeWrap");
+            const titleTextEl = document.getElementById("heroTitleTextEl");
+            if (titleWrap && typeof deactivateInlineTextMarquee === "function") {
+              deactivateInlineTextMarquee(titleWrap);
+            }
+            if (titleTextEl) {
+              titleTextEl.textContent = heroTitleRaw;
+            }
+            const metaEl = document.getElementById("heroMetaCleanEl");
+            if (metaEl) {
+              metaEl.innerHTML = buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr);
+            }
+            const descEl = document.getElementById("heroDescEl");
+            if (descEl) {
+              descEl.textContent = hero.overview || "Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.";
+            }
+            const trBtn = document.getElementById("heroBtnTrailer");
+            if (trBtn) {
+              trBtn.setAttribute("onclick", "playInstantTrailerFromCard(event,'" + heroType + "'," + hero.id + ",'" + heroTitleSafe + "','" + heroPosterSafe + "')");
+            }
+            const detBtn = document.getElementById("heroBtnDetails");
+            if (detBtn) {
+              detBtn.setAttribute("onclick", "openDetails('" + heroType + "'," + hero.id + ",false,'" + heroTitleSafe + "','" + heroPosterSafe + "')");
+            }
+            const wlBtn = document.getElementById("heroBtnWishlist");
+            if (wlBtn) {
+              wlBtn.setAttribute("data-hero-wl-key", heroCardKey);
+              wlBtn.setAttribute("onclick", "quickToggleCardWishlist(event,'" + heroType + "'," + hero.id + ",'" + heroTitleSafe + "')");
+              wlBtn.setAttribute("title", isHeroSaved ? "Aus deiner Merkliste entfernen" : "Direkt in deiner Merkliste speichern");
+              wlBtn.classList.toggle("saved", Boolean(isHeroSaved));
+              wlBtn.innerHTML = isHeroSaved ? "✓ Gemerkt" : "🔖 Merkliste";
+            }
+            const prevArr = document.getElementById("heroPrevArrowBtn");
+            if (prevArr) prevArr.setAttribute("onclick", "setHeroSlideIndex(" + (state.heroIndex - 1) + ")");
+            const nextArr = document.getElementById("heroNextArrowBtn");
+            if (nextArr) nextArr.setAttribute("onclick", "setHeroSlideIndex(" + (state.heroIndex + 1) + ")");
+
+            // 3. Minimalistische Punktleiste + 7s-Fortschrittsbalken aktualisieren
+            const allDots = container.querySelectorAll(".hero-dot");
+            allDots.forEach((btn, idx) => {
+              const isAct = idx === state.heroIndex;
+              btn.classList.toggle("active", isAct);
+              const fill = btn.querySelector(".hero-thumb-progress-fill");
+              if (fill) {
+                fill.style.animation = "none";
+                void fill.offsetWidth;
+                fill.style.animation = "";
+              }
+            });
+
+            if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+              setTimeout(() => window.refreshModalAndEpisodeMarquees(container), 40);
+            }
+            if (prevHeroFocusId === "dot") {
+              const c = container.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]');
+              if (c) setSpatialFocus(c, false);
+            }
+            return;
+          }
+        }
+
         container.innerHTML = buildHeroBannerInnerHtml();
+        const curHero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
+        if (curHero) {
+          applyDynamicHeroAmbilightClient(resolveHeroSlideBackdropUrlClient(curHero));
+        }
+        syncHeroSearchPlaceholderAndToggleBtnClient();
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          setTimeout(() => window.refreshModalAndEpisodeMarquees(container), 40);
+        }
         if (prevHeroFocusId === "heroBtnDetails") {
           const b = document.getElementById("heroBtnDetails");
+          if (b) setSpatialFocus(b, false);
+        } else if (prevHeroFocusId === "heroBtnWishlist") {
+          const b = document.getElementById("heroBtnWishlist");
           if (b) setSpatialFocus(b, false);
         } else if (prevHeroFocusId === "heroBtnTrailer") {
           const b = document.getElementById("heroBtnTrailer");
           if (b) setSpatialFocus(b, false);
-        } else if (prevHeroFocusId === "heroHideBtn") {
+        } else if (prevHeroFocusId === "heroHideBtn" || prevHeroFocusId === "heroRestoreBtn") {
           const b = document.getElementById("heroHideBtn");
-          if (b) setSpatialFocus(b, false);
-        } else if (prevHeroFocusId === "heroRestoreBtn") {
-          const b = document.getElementById("heroRestoreBtn");
           if (b) setSpatialFocus(b, false);
         } else if (prevHeroFocusId === "dot") {
           const c = container.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]');
@@ -36333,6 +37050,10 @@
               '</div>'
             )) + '</div>' +
           '</div>';
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          const heroSlot = document.getElementById("heroBannerSlot");
+          if (heroSlot) setTimeout(() => window.refreshModalAndEpisodeMarquees(heroSlot), 40);
+        }
       }
 
       async function loadFranchisesHub(tab) {
@@ -48534,7 +49255,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -48567,6 +49288,7 @@
         return nodes.filter(el => {
           if (el.disabled) return false;
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
+          if (el.closest && el.closest(".hero-curtain-shell.is-collapsed")) return false;
           const style = window.getComputedStyle(el);
           if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
           const r = el.getBoundingClientRect();
@@ -48970,13 +49692,14 @@
           const actDot = curHero.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || curHero.querySelector(".hero-dot.active");
           const trBtn = document.getElementById("heroBtnTrailer");
           const detBtn = document.getElementById("heroBtnDetails");
+          const wlHeroBtn = document.getElementById("heroBtnWishlist");
           const hideBtn = document.getElementById("heroHideBtn");
 
-          // 1. Fokus auf "▶ Trailer" (links) oder "ⓘ Details" (rechts davon):
+          // 1. Fokus auf "▶ Trailer" (links), "ⓘ Details" (Mitte) oder "🔖 Merkliste" (rechts):
           if (currentSpatialEl.id === "heroBtnTrailer") {
             if (dir === "right") {
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
+              if (wlHeroBtn) { setSpatialFocus(wlHeroBtn, true); return; }
             }
             if (dir === "left") {
               setHeroSlideIndex(state.heroIndex - 1);
@@ -48986,7 +49709,6 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
             }
             if (dir === "up") {
               if (focusSearchOrHeaderUp()) return;
@@ -48996,7 +49718,7 @@
               if (trBtn) { setSpatialFocus(trBtn, true); return; }
             }
             if (dir === "right") {
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
+              if (wlHeroBtn) { setSpatialFocus(wlHeroBtn, true); return; }
               setHeroSlideIndex(state.heroIndex + 1);
               const nextDet = document.getElementById("heroBtnDetails");
               if (nextDet) setSpatialFocus(nextDet, true);
@@ -49004,13 +49726,30 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (hideBtn) { setSpatialFocus(hideBtn, true); return; }
             }
             if (dir === "up") {
               if (focusSearchOrHeaderUp()) return;
             }
+          } else if (currentSpatialEl.id === "heroBtnWishlist") {
+            if (dir === "left") {
+              if (detBtn) { setSpatialFocus(detBtn, true); return; }
+              if (trBtn) { setSpatialFocus(trBtn, true); return; }
+            }
+            if (dir === "right") {
+              setHeroSlideIndex(state.heroIndex + 1);
+              const nextWl = document.getElementById("heroBtnWishlist");
+              if (nextWl) setSpatialFocus(nextWl, true);
+              return;
+            }
+            if (dir === "down") {
+              if (actDot) { setSpatialFocus(actDot, true); return; }
+            }
+            if (dir === "up") {
+              if (hideBtn && list.includes(hideBtn)) { setSpatialFocus(hideBtn, true); return; }
+              if (focusSearchOrHeaderUp()) return;
+            }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
-            // 2. Fokus auf der Pill-Dot-Rotationsleiste (< ━━ • • • • >):
+            // 2. Fokus auf der Punktleiste (< • • • • ━━ • >):
             // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Enter fokussiert ebenfalls "▶ Trailer"!
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
@@ -49023,17 +49762,6 @@
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
-          } else if (currentSpatialEl.id === "heroHideBtn") {
-            if (dir === "left") {
-              if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (detBtn) { setSpatialFocus(detBtn, true); return; }
-            }
-            if (dir === "up") {
-              if (detBtn) { setSpatialFocus(detBtn, true); return; }
-              if (trBtn) { setSpatialFocus(trBtn, true); return; }
-              if (focusSearchOrHeaderUp()) return;
-            }
-            if (dir === "right") return;
           }
         }
 
@@ -49043,12 +49771,15 @@
           if (focusSearchOrHeaderUp()) return;
         }
 
-        // Direkte Nachbarschaft in der einheitlichen Suchleiste (.search-bar-outer), damit #searchInput niemals übersprungen wird
+        // Direkte Nachbarschaft in der einheitlichen Suchleiste (.search-bar-outer inkl. #heroHideBtn), damit #searchInput niemals übersprungen wird
+        const topHideBtn = document.getElementById("heroHideBtn");
+        const topHideVisible = Boolean(topHideBtn && list.includes(topHideBtn));
         const inSearchBar = Boolean(
           currentSpatialEl === sScope ||
           currentSpatialEl === sInp ||
           currentSpatialEl === sClear ||
-          currentSpatialEl === sSub
+          currentSpatialEl === sSub ||
+          currentSpatialEl === topHideBtn
         );
         if (inSearchBar) {
           if (dir === "right" && currentSpatialEl === sScope && sInp) {
@@ -49058,10 +49789,20 @@
           if (dir === "right" && currentSpatialEl === sInp) {
             if (sClearVisible) { setSpatialFocus(sClear, true); return; }
             if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
+            if (topHideVisible) { setSpatialFocus(topHideBtn, true); return; }
           }
-          if (dir === "right" && currentSpatialEl === sClear && sSub && list.includes(sSub)) {
-            setSpatialFocus(sSub, true);
+          if (dir === "right" && currentSpatialEl === sClear) {
+            if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
+            if (topHideVisible) { setSpatialFocus(topHideBtn, true); return; }
+          }
+          if (dir === "right" && currentSpatialEl === sSub && topHideVisible) {
+            setSpatialFocus(topHideBtn, true);
             return;
+          }
+          if (dir === "left" && currentSpatialEl === topHideBtn) {
+            if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
+            if (sClearVisible) { setSpatialFocus(sClear, true); return; }
+            if (sInp) { setSpatialFocus(sInp, true); return; }
           }
           if (dir === "left" && currentSpatialEl === sSub) {
             if (sClearVisible) { setSpatialFocus(sClear, true); return; }
