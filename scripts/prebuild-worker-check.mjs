@@ -220,6 +220,18 @@ async function verifyAndAssembleWorker() {
     fs.rmSync(publicWorkerPath, { force: true });
   }
 
+  // Ensure bun.lock remains compatible with Cloudflare Workers CI (bun@1.2.15 requires lockfileVersion: 1)
+  const bunLockPath = path.join(rootDir, 'bun.lock');
+  if (fs.existsSync(bunLockPath)) {
+    const rawLock = fs.readFileSync(bunLockPath, 'utf8');
+    if (rawLock.includes('"lockfileVersion": 2')) {
+      const normalizedLock = rawLock
+        .replace('"lockfileVersion": 2,', '"lockfileVersion": 1,')
+        .replace(/^\s*"configVersion":\s*\d+,\r?\n/m, '');
+      fs.writeFileSync(bunLockPath, normalizedLock, 'utf8');
+    }
+  }
+
   // 1. Pre-assembly static analysis on individual files in worker-modules/
   const staticReport = runPreAssemblyModuleStaticAnalysis();
   if (staticReport.warnings.length > 0) {
