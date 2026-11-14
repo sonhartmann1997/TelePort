@@ -68,9 +68,15 @@ export function useSwipeable(
   useEffect(() => {
     const unsubscribe = smoothRubberY.on('change', (latest) => {
       const doc = iframeRef.current?.contentDocument;
-      const stageWrap = doc?.getElementById('heroStageWrapEl');
+      if (!doc) return;
+      const rounded = Math.round(latest);
+      const stageWrap = doc.getElementById('heroStageWrapEl');
       if (stageWrap) {
-        stageWrap.style.setProperty('--hero-rubber-y', `${Math.round(latest)}px`);
+        stageWrap.style.setProperty('--hero-rubber-y', `${rounded < 0 ? rounded : 0}px`);
+      }
+      const catalogSec = doc.querySelector('#heroBannerSlot + .section') as HTMLElement | null;
+      if (catalogSec) {
+        catalogSec.style.setProperty('--catalog-rubber-y', `${rounded > 0 ? rounded : 0}px`);
       }
     });
     return () => unsubscribe();
@@ -137,10 +143,17 @@ export function useSwipeable(
         lastY = ev.clientY;
         lastTime = now;
 
-        if (dy < -8 && Math.abs(dy) > Math.abs(dx) * 1.15) {
-          // Logarithmic rubber-band resistance curve before triggering the transition
+        const isCollapsed = Boolean(doc.body?.classList.contains('hero-scrolled-past'));
+        if (!isCollapsed && dy < -8 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          // Logarithmic rubber-band resistance curve before triggering Slider -> Covers transition
           const absDy = Math.abs(dy);
-          const dampedRubber = -Math.min(34, Math.pow(absDy, 0.76) * 1.35);
+          const dampedRubber = -Math.min(38, Math.pow(absDy, 0.78) * 1.42);
+          rawDragY.set(dampedRubber);
+          optionsRef.current.onSwipingVertical?.(dy, velocityY);
+        } else if (isCollapsed && dy > 8 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          // Logarithmic rubber-band resistance curve before triggering Covers -> Slider transition
+          const absDy = Math.abs(dy);
+          const dampedRubber = Math.min(38, Math.pow(absDy, 0.78) * 1.42);
           rawDragY.set(dampedRubber);
           optionsRef.current.onSwipingVertical?.(dy, velocityY);
         }
@@ -160,11 +173,11 @@ export function useSwipeable(
         // Smoothly spring the rubber-band offset back to 0
         animate(rawDragY, 0, { type: 'spring', stiffness: 420, damping: 32 });
 
-        const threshold = optionsRef.current.minDistance ?? 64;
-        const minVel = optionsRef.current.minVelocity ?? 0.45;
+        const threshold = optionsRef.current.minDistance ?? 88;
+        const minVel = optionsRef.current.minVelocity ?? 0.55;
         const passesVerticalGate =
           Math.abs(dy) > Math.abs(dx) * 1.15 &&
-          (Math.abs(dy) >= threshold || (Math.abs(dy) >= 28 && Math.abs(effectiveVy) >= minVel));
+          (Math.abs(dy) >= threshold || (Math.abs(dy) >= 48 && Math.abs(effectiveVy) >= minVel));
 
         if (passesVerticalGate) {
           if (dy < 0) {
@@ -531,18 +544,20 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   }, []);
 
   useSwipeable(iframeRef, srcDocHtml, {
-    minDistance: 66,
-    minVelocity: 0.45,
+    minDistance: 88,
+    minVelocity: 0.55,
     trackMouse: true,
     onSwipingVertical: (deltaY) => {
       const doc = iframeRef.current?.contentDocument;
-      if (!doc || deltaY >= -8) return;
-      doc.body?.classList.add('page-scrolled');
-      const stageWrap = doc.getElementById('heroStageWrapEl');
-      if (stageWrap) {
-        const heroH = Math.max(280, stageWrap.offsetHeight || 580);
-        const dragFade = Math.max(0, Math.min(0.68, Math.abs(deltaY) / (heroH * 0.55)));
-        stageWrap.style.setProperty('--hero-scroll-fade', dragFade.toFixed(3));
+      if (!doc) return;
+      if (deltaY <= -8 && !doc.body?.classList.contains('hero-scrolled-past')) {
+        doc.body?.classList.add('page-scrolled');
+        const stageWrap = doc.getElementById('heroStageWrapEl');
+        if (stageWrap) {
+          const heroH = Math.max(280, stageWrap.offsetHeight || 580);
+          const dragFade = Math.max(0, Math.min(0.68, Math.abs(deltaY) / (heroH * 0.55)));
+          stageWrap.style.setProperty('--hero-scroll-fade', dragFade.toFixed(3));
+        }
       }
     },
     onSwipeReset: () => {
@@ -556,6 +571,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         if (stageWrap) {
           stageWrap.style.setProperty('--hero-scroll-fade', '0');
           stageWrap.style.setProperty('--hero-rubber-y', '0px');
+        }
+        const catalogSec = doc.querySelector('#heroBannerSlot + .section') as HTMLElement | null;
+        if (catalogSec) {
+          catalogSec.style.setProperty('--catalog-rubber-y', '0px');
         }
       }
     },

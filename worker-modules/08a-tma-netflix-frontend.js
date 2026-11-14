@@ -1547,7 +1547,7 @@
       }
 
       /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover */
-      .spatial-focus:not(#searchInput):not(.search-scope-select),
+      .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box),
       .brand-logo:focus-visible,
       .btn:focus-visible,
       .card:focus-visible,
@@ -2426,10 +2426,15 @@
         margin-bottom: 0px;
         pointer-events: none;
       }
-      /* Katalog & Filme unterhalb des 100%-Vollbild-Sliders: Gleiten als Vorhang auf scrollY = 0 (null Nachruckeln auf Mobilgeräten) */
+      /* Katalog & Filme unterhalb des 100%-Vollbild-Sliders: Gleiten als Vorhang auf scrollY = 0 + Gummiband-Widerstand an der Oberkante */
       #heroBannerSlot + .section {
-        transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+        --catalog-rubber-y: 0px;
+        transform: translate3d(0, var(--catalog-rubber-y, 0px), 0);
+        transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
         will-change: opacity, transform;
+      }
+      #heroBannerSlot + .section.is-rubber-dragging {
+        transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.05s linear;
       }
       body.hero-slider-expanded #heroBannerSlot + .section {
         min-height: calc(100vh - 54px);
@@ -2517,6 +2522,9 @@
         justify-content: space-between;
         padding: 68px 28px 14px;
         overflow: hidden;
+        touch-action: pan-x;
+      }
+      .hero:has(.expandable-desc-box.is-expanded) {
         touch-action: pan-x pan-y;
       }
       /* Scharfes Slider-Bild: Reiner GPU-Opacity-Crossfade ab top: 0 ohne -webkit-mask-image Flackern unter der Top-Leiste */
@@ -2717,7 +2725,7 @@
         max-width: 540px;
         text-shadow: 0 2px 10px rgba(0, 0, 0, 0.96), 0 1px 3px rgba(0, 0, 0, 0.88);
       }
-      /* Aufklappbare Kompakt-Scrollbox für Titelbeschreibungen (Hero-Slider & Detail-Modal auf TV, Handy & PC) */
+      /* Aufklappbare Kompakt-Scrollbox für Titelbeschreibungen: Offenes Design ohne Dauer-Rand, mit edler Shadowbox & Rand nur bei Hover/Select */
       .expandable-desc-box {
         position: relative;
         border-radius: 9px;
@@ -2726,17 +2734,24 @@
         margin-left: -6px;
         cursor: default;
         transition: background 0.2s ease, border-color 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
-        outline: none;
+        outline: none !important;
       }
       .expandable-desc-box.is-long-desc,
       .expandable-desc-box.is-expanded {
         cursor: pointer;
       }
-      .expandable-desc-box.is-long-desc:hover,
-      .expandable-desc-box.is-expanded:hover,
-      .expandable-desc-box.spatial-focus {
+      @media (hover: hover) and (pointer: fine) {
+        .expandable-desc-box.is-long-desc:hover,
+        .expandable-desc-box.is-expanded:hover {
+          background: rgba(15, 23, 42, 0.56);
+          border-color: rgba(56, 189, 248, 0.52);
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+        }
+      }
+      .expandable-desc-box.is-long-desc.spatial-focus,
+      .expandable-desc-box.is-expanded.spatial-focus {
         background: rgba(15, 23, 42, 0.56);
-        border-color: rgba(56, 189, 248, 0.52);
+        border-color: rgba(56, 189, 248, 0.56);
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
       }
       .expandable-desc-scroll {
@@ -2750,7 +2765,7 @@
         background: rgba(8, 13, 24, 0.86);
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
-        border-color: rgba(56, 189, 248, 0.62);
+        border-color: transparent;
         padding: 8px 10px 6px;
         margin-left: 0;
         box-shadow: 0 10px 28px rgba(0, 0, 0, 0.72);
@@ -7807,6 +7822,18 @@
         }
       }
 
+      function clearHeroDescTransientFocusClient() {
+        const descEl = document.getElementById("heroDescEl");
+        if (!descEl) return;
+        descEl.classList.remove("spatial-focus");
+        if (document.activeElement === descEl && typeof descEl.blur === "function") {
+          try { descEl.blur(); } catch (_e) {}
+        }
+        if (typeof currentSpatialEl !== "undefined" && currentSpatialEl === descEl) {
+          currentSpatialEl = null;
+        }
+      }
+
       function setHeroRubberBandOffsetClient(px) {
         const stageWrap = document.getElementById("heroStageWrapEl");
         if (stageWrap) {
@@ -7814,10 +7841,19 @@
         }
       }
 
+      function setCatalogRubberBandOffsetClient(px, isDragging) {
+        const catSec = document.querySelector("#heroBannerSlot + .section");
+        if (catSec) {
+          catSec.classList.toggle("is-rubber-dragging", Boolean(isDragging && px !== 0));
+          catSec.style.setProperty("--catalog-rubber-y", Math.round(px) + "px");
+        }
+      }
+
       function resetHeroResistancePreviewClient() {
         heroWheelDownAccum = 0;
         heroWheelUpAccum = 0;
         setHeroRubberBandOffsetClient(0);
+        setCatalogRubberBandOffsetClient(0, false);
         const hintBtn = document.getElementById("heroScrollDownHintBtn");
         if (hintBtn) {
           hintBtn.style.transform = "";
@@ -7846,6 +7882,8 @@
           heroTouchSettleTimer = null;
         }
         setHeroRubberBandOffsetClient(0);
+        setCatalogRubberBandOffsetClient(0, false);
+        clearHeroDescTransientFocusClient();
         const hintBtn = document.getElementById("heroScrollDownHintBtn");
         if (hintBtn) hintBtn.style.transform = "";
 
@@ -7925,16 +7963,16 @@
         if (Math.abs(dy) < 1) return;
 
         const y = window.scrollY || window.pageYOffset || 0;
-        const DOWN_THRESHOLD = 185;
-        const UP_THRESHOLD = 95;
+        const DOWN_THRESHOLD = 210;
+        const UP_THRESHOLD = 210;
 
-        // 1. Zone 0 (Vollbild-Slider offen): Nach unten scrollen überwindet Widerstand und lässt den Vorhang nach oben weggleiten (Cover bei scrollY = 0)
+        // 1. Zone 0 (Vollbild-Slider offen): Nach unten scrollen erfordert spürbaren Gummiband-Widerstand (DOWN_THRESHOLD = 210)
         if (!heroCurtainScrolledToCatalog) {
           if (dy > 0) {
             ev.preventDefault();
             heroWheelUpAccum = 0;
-            const velocityBoost = Math.abs(dy) > 55 ? 1.15 : 0.88;
-            const step = Math.min(82, Math.max(12, Math.abs(dy) * velocityBoost));
+            const velocityBoost = Math.abs(dy) > 55 ? 1.12 : 0.85;
+            const step = Math.min(78, Math.max(12, Math.abs(dy) * velocityBoost));
             heroWheelDownAccum += step;
 
             if (heroWheelDecayTimer) clearTimeout(heroWheelDecayTimer);
@@ -7944,27 +7982,27 @@
             }
 
             const ratio = Math.min(1, heroWheelDownAccum / DOWN_THRESHOLD);
-            const rubberOffset = -Math.round(Math.pow(ratio, 0.85) * 26);
+            const rubberOffset = -Math.round(Math.pow(ratio, 0.85) * 34);
             setHeroRubberBandOffsetClient(rubberOffset);
             const stageWrap = document.getElementById("heroStageWrapEl");
             if (stageWrap) {
-              stageWrap.style.setProperty("--hero-scroll-fade", (ratio * 0.28).toFixed(3));
+              stageWrap.style.setProperty("--hero-scroll-fade", (ratio * 0.32).toFixed(3));
             }
             const hintBtn = document.getElementById("heroScrollDownHintBtn");
             if (hintBtn) {
-              hintBtn.style.transform = "translate3d(0, " + Math.round(ratio * 8) + "px, 0) scale(" + (1 + ratio * 0.12).toFixed(2) + ")";
+              hintBtn.style.transform = "translate3d(0, " + Math.round(ratio * 10) + "px, 0) scale(" + (1 + ratio * 0.14).toFixed(2) + ")";
             }
             heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 240);
           }
           return;
         }
 
-        // 2. Zone 1 (Katalog-Cover bei scrollY = 0): Beim Hochscrollen an der oberen Katalogkante öffnet sich der Vollbild-Slider automatisch wieder
-        if (heroCurtainScrolledToCatalog && y <= 8 && dy < 0) {
+        // 2. Zone 1 (Katalog-Cover bei scrollY = 0): Am oberen Rand erfordert Weiter-Hochscrollen ebenfalls spürbaren Gummiband-Widerstand (UP_THRESHOLD = 210)
+        if (heroCurtainScrolledToCatalog && y <= 6 && dy < 0) {
           ev.preventDefault();
           heroWheelDownAccum = 0;
-          const velocityBoost = Math.abs(dy) > 45 ? 1.25 : 1.0;
-          const step = Math.min(95, Math.max(18, Math.abs(dy) * velocityBoost));
+          const velocityBoost = Math.abs(dy) > 55 ? 1.12 : 0.85;
+          const step = Math.min(78, Math.max(12, Math.abs(dy) * velocityBoost));
           heroWheelUpAccum += step;
 
           if (heroWheelDecayTimer) clearTimeout(heroWheelDecayTimer);
@@ -7972,18 +8010,26 @@
             animateHeroCatalogSnapScrollClient(0);
             return;
           }
+
+          const ratio = Math.min(1, heroWheelUpAccum / UP_THRESHOLD);
+          const catalogRubber = Math.round(Math.pow(ratio, 0.85) * 32);
+          setCatalogRubberBandOffsetClient(catalogRubber, true);
           heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 240);
           return;
         }
       }
 
+      let heroCatalogDraggingDown = false;
+
       window.addEventListener("wheel", onHeroCatalogWheelClient, { passive: false });
       window.addEventListener("touchstart", (ev) => {
         if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
           heroPageTouchActive = false;
+          heroCatalogDraggingDown = false;
           return;
         }
         heroPageTouchActive = true;
+        heroCatalogDraggingDown = false;
         heroTouchStartScrollY = window.scrollY || window.pageYOffset || 0;
         if (ev.touches && ev.touches[0]) {
           heroTouchStartX = ev.touches[0].clientX;
@@ -7992,46 +8038,52 @@
         }
       }, { passive: true });
 
-      // Aktiver TouchMove-Wächter am oberen Katalogrand (scrollY <= 8):
-      // Verhindert Browser-Pull-to-Refresh ("Seite aktualisieren"), wenn man vom Slider runter und direkt wieder hoch wischt,
-      // und öffnet den Vollbild-Slider sofort wieder, ohne dass man vorher nach unten scrollen muss!
+      // Aktiver TouchMove-Wächter am oberen Katalogrand (scrollY <= 6):
+      // Blockiert Browser-Pull-to-Refresh ("Seite aktualisieren") sofort und baut einen echten elastischen Gummiband-Widerstand (--catalog-rubber-y) auf!
       window.addEventListener("touchmove", (ev) => {
         if (!heroPageTouchActive || !ev.touches || !ev.touches[0]) return;
         if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
           return;
         }
-        if (!heroCurtainScrolledToCatalog || !isHeroScrollCouplingActiveClient()) return;
+        if (!heroCurtainScrolledToCatalog || !isHeroScrollCouplingActiveClient() || Date.now() < heroSnapAnimatingUntil) return;
         const curY = window.scrollY || window.pageYOffset || 0;
         const dx = ev.touches[0].clientX - (heroTouchStartX || ev.touches[0].clientX);
         const dy = ev.touches[0].clientY - (heroTouchStartY || ev.touches[0].clientY);
 
-        if (curY <= 8 && dy > 6 && dy > Math.abs(dx) * 1.08) {
+        if ((curY <= 6 || heroCatalogDraggingDown) && dy > 4 && dy > Math.abs(dx) * 1.05) {
           if (ev.cancelable) {
             ev.preventDefault();
           }
-          if (Date.now() >= heroSnapAnimatingUntil && dy >= 24) {
-            heroPageTouchActive = false;
-            heroTouchStartX = 0;
-            heroTouchStartY = 0;
-            animateHeroCatalogSnapScrollClient(0);
-          }
+          heroCatalogDraggingDown = true;
+          // Logarithmische Gummiband-Kurve: spürbarer Widerstand beim Ziehen nach unten an der Katalog-Oberkante
+          const rubberPx = Math.round(Math.min(38, Math.pow(Math.max(0, dy - 4), 0.76) * 1.28));
+          setCatalogRubberBandOffsetClient(rubberPx, true);
+        } else if (heroCatalogDraggingDown && dy <= 0) {
+          heroCatalogDraggingDown = false;
+          setCatalogRubberBandOffsetClient(0, false);
         }
       }, { passive: false });
 
       window.addEventListener("touchend", (ev) => {
+        const wasDraggingCatalogDown = heroCatalogDraggingDown;
         heroPageTouchActive = false;
+        heroCatalogDraggingDown = false;
+        setCatalogRubberBandOffsetClient(0, false);
+
         if (!isHeroScrollCouplingActiveClient() || Date.now() < heroSnapAnimatingUntil) return;
         const curY = window.scrollY || window.pageYOffset || 0;
 
-        // Automatisches Ausklappen beim Hochscrollen / Nach-unten-Wischen am oberen Katalogrand (curY <= 12)
-        if (heroCurtainScrolledToCatalog && curY <= 12) {
+        // Katalog -> Vollbild-Slider: Erst wenn der Gummiband-Widerstand überwunden wurde (dy >= 88px ODER kräftiger Flick dy >= 48px mit vy >= 0.55)
+        if (heroCurtainScrolledToCatalog && (curY <= 8 || wasDraggingCatalogDown)) {
           const dyTouch = (ev.changedTouches && ev.changedTouches[0] && heroTouchStartY)
             ? (ev.changedTouches[0].clientY - heroTouchStartY)
             : 0;
           const dxTouch = (ev.changedTouches && ev.changedTouches[0] && heroTouchStartX)
             ? (ev.changedTouches[0].clientX - heroTouchStartX)
             : 0;
-          if (dyTouch > 18 && dyTouch > Math.abs(dxTouch) * 1.1) {
+          const dtTouch = Math.max(16, performance.now() - (heroTouchStartTime || performance.now()));
+          const vyTouch = dyTouch / dtTouch;
+          if ((dyTouch >= 88 || (dyTouch >= 48 && vyTouch >= 0.55)) && dyTouch > Math.abs(dxTouch) * 1.12) {
             animateHeroCatalogSnapScrollClient(0);
           }
         }
@@ -8039,6 +8091,8 @@
 
       window.addEventListener("touchcancel", () => {
         heroPageTouchActive = false;
+        heroCatalogDraggingDown = false;
+        setCatalogRubberBandOffsetClient(0, false);
       }, { passive: true });
 
       function syncHeroScrollFadeAndTopBarStateClient() {
@@ -8059,17 +8113,6 @@
         }
 
         if (heroCurtainScrolledToCatalog) {
-          // Wenn der Nutzer im Katalog nach oben scrollt und an der ersten Cover-Reihe (y <= 6) ankommt -> Vollbild-Slider automatisch öffnen!
-          if (
-            isHeroScrollCouplingActiveClient() &&
-            Date.now() >= heroSnapAnimatingUntil &&
-            heroLastCatalogScrollY > 6 &&
-            y <= 6
-          ) {
-            heroLastCatalogScrollY = 0;
-            animateHeroCatalogSnapScrollClient(0);
-            return;
-          }
           heroLastCatalogScrollY = y;
           heroCurrentZone = 1;
           document.body.classList.add("page-scrolled");
@@ -8127,6 +8170,7 @@
       function setHeroSlideIndex(idx) {
         if (!state.heroSlides.length) return;
         triggerTmaHapticClient("selection");
+        clearHeroDescTransientFocusClient();
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = false;
         updateHeroBannerDomOnly();
@@ -8136,6 +8180,7 @@
       function selectHeroSlideCard(idx) {
         if (!state.heroSlides.length) return;
         triggerTmaHapticClient("selection");
+        clearHeroDescTransientFocusClient();
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = true;
         updateHeroBannerDomOnly();
@@ -8255,22 +8300,29 @@
         if (!heroTouchStartX || !heroTouchStartY || !ev.touches || !ev.touches[0]) return;
         const dx = ev.touches[0].clientX - heroTouchStartX;
         const dy = ev.touches[0].clientY - heroTouchStartY;
-        if (Math.abs(dy) > Math.abs(dx) * 1.05 && !state.heroHidden && !state.isSearchMode) {
-          // Fester 2-Zonen-Modus auf dem Vollbild-Slider: Verhindert jedes unkontrollierte Zwischenscrollen des Browsers
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+          clearHeroDescTransientFocusClient();
+        }
+        if (Math.abs(dy) >= Math.abs(dx) * 0.95 && !state.heroHidden && !state.isSearchMode) {
           if (ev.cancelable) {
             ev.preventDefault();
           }
           if (dy < -6) {
             heroTouchDraggingUp = true;
-            if (document.body) document.body.classList.add("page-scrolled");
             const stageWrap = document.getElementById("heroStageWrapEl");
             if (stageWrap) {
               const heroH = Math.max(280, stageWrap.offsetHeight || window.innerHeight || 580);
               const absDy = Math.abs(dy);
-              const rubberPx = -Math.round(Math.min(32, Math.pow(absDy, 0.78) * 1.3));
+              // Spürbarer logarithmischer Gummiband-Widerstand am unteren Slider-Rand
+              const rubberPx = -Math.round(Math.min(38, Math.pow(absDy, 0.76) * 1.25));
               setHeroRubberBandOffsetClient(rubberPx);
-              const dragFade = Math.max(0, Math.min(0.62, absDy / (heroH * 0.58)));
+              const dragFade = Math.max(0, Math.min(0.42, absDy / (heroH * 0.65)));
               stageWrap.style.setProperty("--hero-scroll-fade", dragFade.toFixed(3));
+            }
+            const hintBtn = document.getElementById("heroScrollDownHintBtn");
+            if (hintBtn) {
+              const ratio = Math.min(1, Math.abs(dy) / 90);
+              hintBtn.style.transform = "translate3d(0, " + Math.round(ratio * 10) + "px, 0) scale(" + (1 + ratio * 0.14).toFixed(2) + ")";
             }
           }
         }
@@ -8286,16 +8338,19 @@
         heroTouchStartY = 0;
         heroTouchDraggingUp = false;
         setHeroRubberBandOffsetClient(0);
-        // Fester 2-Zonen-Wechsel: Ab 44px Zugweg ODER bewusstem Flick (vy < -0.35 bei mind. 22px) direkt in Zone 1 (Katalog-Cover)
-        if ((dy < -44 || (dy < -22 && vy < -0.35)) && Math.abs(dy) > Math.abs(dx) * 1.08) {
+        const hintBtn = document.getElementById("heroScrollDownHintBtn");
+        if (hintBtn) hintBtn.style.transform = "";
+        // Spürbarer Gummiband-Widerstand: Erst ab 90px Zugweg ODER kräftigem Flick (mind. 50px + vy <= -0.55) in den Katalog wechseln
+        if ((dy <= -90 || (dy <= -50 && vy <= -0.55)) && Math.abs(dy) > Math.abs(dx) * 1.12) {
           triggerHeroSwipeUpCollapseClient();
           return;
         }
         if (wasDraggingUp) {
-          animateHeroCatalogSnapScrollClient(0, { durationMs: 220 });
+          animateHeroCatalogSnapScrollClient(0);
           return;
         }
         if (Math.abs(dx) > 40 && Math.abs(dx) >= Math.abs(dy)) {
+          clearHeroDescTransientFocusClient();
           setHeroSlideIndex(state.heroIndex + (dx < 0 ? 1 : -1));
         }
       }
@@ -8705,8 +8760,11 @@
               descEl.textContent = rawOverview;
             }
             if (descEl) {
-              descEl.classList.remove("is-expanded", "is-long-desc");
+              descEl.classList.remove("is-expanded", "is-long-desc", "spatial-focus");
               descEl.setAttribute("aria-expanded", "false");
+              if (document.activeElement === descEl && typeof descEl.blur === "function") {
+                try { descEl.blur(); } catch (_e) {}
+              }
               const hintEl = descEl.querySelector(".desc-expand-hint");
               if (hintEl) hintEl.textContent = "▾ Mehr lesen";
               requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(descEl));
