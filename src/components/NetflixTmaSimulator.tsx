@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { animate, useMotionValue, useSpring } from 'motion/react';
 import {
   RotateCcw,
   Monitor,
@@ -25,12 +26,14 @@ type ViewportPreset = 'full' | 'tv' | 'mobile';
 type AuthPersona = 'admin_vip' | 'standard_user' | 'external_guest';
 
 export interface UseSwipeableOptions {
-  onSwipedUp?: (deltaY: number) => void;
-  onSwipedDown?: (deltaY: number) => void;
+  onSwipedUp?: (deltaY: number, velocityY: number) => void;
+  onSwipedDown?: (deltaY: number, velocityY: number) => void;
   onSwipedLeft?: (deltaX: number) => void;
   onSwipedRight?: (deltaX: number) => void;
-  onSwipingVertical?: (deltaY: number) => void;
+  onSwipingVertical?: (deltaY: number, velocityY: number) => void;
+  onSwipeReset?: () => void;
   minDistance?: number;
+  minVelocity?: number;
   trackMouse?: boolean;
 }
 
@@ -43,6 +46,25 @@ export function useSwipeable(
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
+
+  // Framer Motion physics model for smooth rubber-band resistance at the Hero Slider boundary
+  const rawDragY = useMotionValue(0);
+  const smoothRubberY = useSpring(rawDragY, {
+    stiffness: 380,
+    damping: 34,
+    mass: 0.65,
+  });
+
+  useEffect(() => {
+    const unsubscribe = smoothRubberY.on('change', (latest) => {
+      const doc = iframeRef.current?.contentDocument;
+      const stageWrap = doc?.getElementById('heroStageWrapEl');
+      if (stageWrap) {
+        stageWrap.style.setProperty('--hero-rubber-y', `${Math.round(latest)}px`);
+      }
+    });
+    return () => unsubscribe();
+  }, [iframeRef, smoothRubberY]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -60,6 +82,10 @@ export function useSwipeable(
 
       let startX = 0;
       let startY = 0;
+      let startTime = 0;
+      let lastY = 0;
+      let lastTime = 0;
+      let velocityY = 0;
       let isTracking = false;
       let startedInHero = false;
 
@@ -70,21 +96,38 @@ export function useSwipeable(
       };
 
       const onPointerDown = (ev: PointerEvent) => {
+        // Touch events are handled natively by onHeroTouchStart/Move/End inside the worker document
+        // so that mouse & pointer drags in the simulator get Framer Motion spring rubber-band physics without double firing
+        if (ev.pointerType === 'touch') return;
         if (ev.pointerType === 'mouse' && !(optionsRef.current.trackMouse ?? true)) return;
         if (ev.pointerType === 'mouse' && ev.button !== 0) return;
         if (!isTargetInsideHero(ev.target)) return;
         startX = ev.clientX;
         startY = ev.clientY;
+        lastY = ev.clientY;
+        startTime = performance.now();
+        lastTime = startTime;
+        velocityY = 0;
         isTracking = true;
         startedInHero = true;
       };
 
       const onPointerMove = (ev: PointerEvent) => {
         if (!isTracking || !startedInHero) return;
+        const now = performance.now();
+        const dt = Math.max(8, now - lastTime);
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        if (dy < -10 && Math.abs(dy) > Math.abs(dx) * 1.15) {
-          optionsRef.current.onSwipingVertical?.(dy);
+        velocityY = (ev.clientY - lastY) / dt; // px/ms
+        lastY = ev.clientY;
+        lastTime = now;
+
+        if (dy < -8 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          // Logarithmic rubber-band resistance curve before triggering the transition
+          const absDy = Math.abs(dy);
+          const dampedRubber = -Math.min(34, Math.pow(absDy, 0.76) * 1.35);
+          rawDragY.set(dampedRubber);
+          optionsRef.current.onSwipingVertical?.(dy, velocityY);
         }
       };
 
@@ -92,28 +135,45 @@ export function useSwipeable(
         if (!isTracking || !startedInHero) return;
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
+        const totalDt = Math.max(16, performance.now() - startTime);
+        const avgVy = dy / totalDt;
+        const effectiveVy = Math.abs(velocityY) > Math.abs(avgVy) ? velocityY : avgVy;
+
         isTracking = false;
         startedInHero = false;
-        const threshold = optionsRef.current.minDistance ?? 42;
 
-        if (Math.abs(dy) >= threshold && Math.abs(dy) > Math.abs(dx) * 1.15) {
+        // Smoothly spring the rubber-band offset back to 0
+        animate(rawDragY, 0, { type: 'spring', stiffness: 420, damping: 32 });
+
+        const threshold = optionsRef.current.minDistance ?? 64;
+        const minVel = optionsRef.current.minVelocity ?? 0.45;
+        const passesVerticalGate =
+          Math.abs(dy) > Math.abs(dx) * 1.15 &&
+          (Math.abs(dy) >= threshold || (Math.abs(dy) >= 28 && Math.abs(effectiveVy) >= minVel));
+
+        if (passesVerticalGate) {
           if (dy < 0) {
-            optionsRef.current.onSwipedUp?.(dy);
+            optionsRef.current.onSwipedUp?.(dy, effectiveVy);
           } else {
-            optionsRef.current.onSwipedDown?.(dy);
+            optionsRef.current.onSwipedDown?.(dy, effectiveVy);
           }
-        } else if (Math.abs(dx) >= threshold && Math.abs(dx) > Math.abs(dy)) {
+        } else if (Math.abs(dx) >= 44 && Math.abs(dx) > Math.abs(dy)) {
+          optionsRef.current.onSwipeReset?.();
           if (dx < 0) {
             optionsRef.current.onSwipedLeft?.(dx);
           } else {
             optionsRef.current.onSwipedRight?.(dx);
           }
+        } else {
+          optionsRef.current.onSwipeReset?.();
         }
       };
 
       const onPointerCancel = () => {
         isTracking = false;
         startedInHero = false;
+        animate(rawDragY, 0, { type: 'spring', stiffness: 420, damping: 32 });
+        optionsRef.current.onSwipeReset?.();
       };
 
       doc.addEventListener('pointerdown', onPointerDown, { passive: true });
@@ -405,17 +465,32 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   }, []);
 
   useSwipeable(iframeRef, srcDocHtml, {
-    minDistance: 58,
+    minDistance: 66,
+    minVelocity: 0.45,
     trackMouse: true,
     onSwipingVertical: (deltaY) => {
       const doc = iframeRef.current?.contentDocument;
-      if (!doc || deltaY >= -10) return;
+      if (!doc || deltaY >= -8) return;
       doc.body?.classList.add('page-scrolled');
       const stageWrap = doc.getElementById('heroStageWrapEl');
       if (stageWrap) {
         const heroH = Math.max(280, stageWrap.offsetHeight || 580);
-        const dragFade = Math.max(0, Math.min(0.85, Math.abs(deltaY) / (heroH * 0.45)));
+        const dragFade = Math.max(0, Math.min(0.68, Math.abs(deltaY) / (heroH * 0.55)));
         stageWrap.style.setProperty('--hero-scroll-fade', dragFade.toFixed(3));
+      }
+    },
+    onSwipeReset: () => {
+      const doc = iframeRef.current?.contentDocument;
+      const win = iframeRef.current?.contentWindow;
+      if (!doc || !win) return;
+      const scrollY = win.scrollY || win.pageYOffset || 0;
+      if (scrollY <= 10) {
+        doc.body?.classList.remove('page-scrolled');
+        const stageWrap = doc.getElementById('heroStageWrapEl');
+        if (stageWrap) {
+          stageWrap.style.setProperty('--hero-scroll-fade', '0');
+          stageWrap.style.setProperty('--hero-rubber-y', '0px');
+        }
       }
     },
     onSwipedUp: () => dispatchHeroSwipeToIframe('up'),

@@ -30178,6 +30178,7 @@
         --ambi-2: 56, 189, 248;
         --ambi-3: 30, 64, 175;
         --hero-scroll-fade: 0;
+        --hero-rubber-y: 0px;
         position: relative;
         margin: 0;
         z-index: 1;
@@ -30294,7 +30295,9 @@
         min-height: clamp(320px, 66dvh, 640px);
         gap: 12px;
         opacity: calc(1 - var(--hero-scroll-fade, 0) * 1.15);
-        transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * -20px), 0);
+        transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * -20px + var(--hero-rubber-y, 0px)), 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
         will-change: opacity, transform;
       }
       /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten oben + Bild-Ausfüllung hinter der Top-Leiste */
@@ -30497,11 +30500,17 @@
         background: rgba(56, 189, 248, 0.68);
         border-radius: 999px;
       }
+      .desc-actions-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 4px;
+      }
       .desc-expand-hint {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        margin-top: 3px;
         font-size: calc(11px * var(--scale-text));
         font-weight: 800;
         color: #7dd3fc;
@@ -30511,6 +30520,33 @@
       }
       .expandable-desc-box:not(.is-long-desc):not(.is-expanded) .desc-expand-hint {
         display: none;
+      }
+      .desc-translate-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        background: rgba(15, 23, 42, 0.72);
+        color: #bae6fd;
+        font-size: calc(10.5px * var(--scale-text));
+        font-weight: 800;
+        letter-spacing: 0.2px;
+        cursor: pointer;
+        transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.15s ease;
+        user-select: none;
+      }
+      .desc-translate-btn:hover,
+      .desc-translate-btn.spatial-focus {
+        background: rgba(14, 165, 233, 0.28);
+        border-color: #38bdf8;
+        color: #ffffff;
+        transform: translateY(-1px);
+      }
+      .desc-translate-btn.is-translated {
+        border-color: rgba(52, 211, 153, 0.55);
+        color: #a7f3d0;
       }
       .hero-actions-box {
         display: inline-flex;
@@ -35141,12 +35177,161 @@
       // =========================================================================
       let heroRotationTimer = null;
       let heroPointerHovered = false;
+      const overviewTranslationCacheClient = new Map();
+      const heroDetailsOverviewBackfillSet = new Set();
+
+      function isGenericPlaceholderOverviewClient(text) {
+        const t = String(text || "").trim();
+        if (!t) return true;
+        return t.indexOf("Tippe auf Details für Trailer") !== -1 || t === "Keine deutsche Beschreibung hinterlegt.";
+      }
+
+      function isLikelyEnglishOverviewClient(text) {
+        const raw = String(text || "").trim();
+        if (!raw || raw.length < 24 || isGenericPlaceholderOverviewClient(raw)) return false;
+        const lower = " " + raw.toLowerCase().replace(/[^a-zäöüß\\s]/g, " ") + " ";
+        const enMatches = lower.match(/\\b(the|and|with|from|when|after|into|their|while|who|his|her|they|that|this|for|about|between|against|through|during|before|under|around|world|family|life|young|story|years|discover|discovers|finds|must|new|two|one|three|first|last)\\b/g);
+        const deMatches = lower.match(/\\b(und|der|die|das|ein|eine|einer|einem|einen|mit|auf|für|von|sich|nicht|auch|als|nach|wird|werden|wurde|über|durch|gegen|zwischen|während|oder|aber|wenn|wie|noch|nur|schon|mehr|seiner|seinem|ihrer|ihrem|ihren|dieser|diese|dieses)\\b/g);
+        const enCount = enMatches ? enMatches.length : 0;
+        const deCount = deMatches ? deMatches.length : 0;
+        return enCount >= 2 && enCount > deCount * 1.5;
+      }
+
+      function buildContextualHeroFallbackOverviewClient(hero, isMovie) {
+        if (!hero) return "Exklusives Highlight im Katalog – entdecke Trailer, Streams, Besetzung und alle Filmreihen-Details.";
+        const titleRaw = String(hero.title || hero.name || "Dieses Highlight").trim();
+        const yearStr = String(hero.release_date || hero.first_air_date || "").slice(0, 4);
+        const voteNum = Number(hero.vote_average || 0);
+        const voteStr = voteNum > 0 ? voteNum.toFixed(1) : "";
+        const genres = typeof resolveHeroGenreItemsClient === "function"
+          ? resolveHeroGenreItemsClient(hero, isMovie).map(g => g.name).filter(Boolean)
+          : [];
+        const genreText = genres.length > 0 ? genres.slice(0, 3).join(", ") : (isMovie ? "Kino-Highlight" : "Serien-Highlight");
+        const typeWord = isMovie ? "Spielfilm" : "Serie";
+        return "„" + titleRaw + "“" + (yearStr ? (" (" + yearStr + ")") : "") +
+          " zählt zu den ausgewählten " + typeWord + "-Empfehlungen im Bereich " + genreText +
+          (voteStr ? (" und überzeugt mit einer TMDb-Wertung von ★ " + voteStr) : "") +
+          ". Starte direkt den Trailer oder öffne die Detailansicht für Streams, Episoden und Besetzung.";
+      }
+
+      function resolveHeroOverviewTextClient(hero, isMovie) {
+        if (!hero) return "";
+        if (hero._showTranslatedOverviewDe && hero._translatedOverviewDe) {
+          return String(hero._translatedOverviewDe).trim();
+        }
+        const raw = String(hero.overview || "").trim();
+        if (raw && !isGenericPlaceholderOverviewClient(raw)) {
+          return raw;
+        }
+        return buildContextualHeroFallbackOverviewClient(hero, isMovie);
+      }
+
+      async function ensureHeroSlidesOverviewsClient() {
+        if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return;
+        const slidesSnapshot = state.heroSlides.slice();
+        for (let i = 0; i < slidesSnapshot.length; i++) {
+          const sl = slidesSnapshot[i];
+          if (!sl || !sl.id) continue;
+          const rawOv = String(sl.overview || "").trim();
+          if (rawOv && !isGenericPlaceholderOverviewClient(rawOv)) continue;
+          const slType = sl.media_type === "tv" || state.type === "s" ? "s" : "m";
+          const key = slType + "_" + sl.id;
+          if (heroDetailsOverviewBackfillSet.has(key)) continue;
+          heroDetailsOverviewBackfillSet.add(key);
+          try {
+            const det = await api("/api/tma/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
+            const fetchedOv = String(det?.overview || "").trim();
+            if (fetchedOv && !isGenericPlaceholderOverviewClient(fetchedOv)) {
+              sl.overview = fetchedOv;
+              const curHero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
+              if (curHero && Number(curHero.id) === Number(sl.id)) {
+                updateHeroBannerDomOnly(false);
+              }
+            }
+          } catch (_e) {}
+        }
+      }
+
+      async function translateOverviewTextClient(ev, itemKey, boxId, textElId, btnId) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const textEl = document.getElementById(textElId);
+        const btnEl = document.getElementById(btnId);
+        const boxEl = document.getElementById(boxId);
+        if (!textEl || !btnEl) return;
+
+        // Ziel-Objekt (Hero-Slide oder Detail-Modal) ermitteln
+        let targetObj = null;
+        if (itemKey === "activeDetails" && state.activeDetails) {
+          targetObj = state.activeDetails;
+        } else if (Array.isArray(state.heroSlides)) {
+          targetObj = state.heroSlides.find(s => ((s.media_type === "tv" || state.type === "s" ? "s" : "m") + "_" + s.id) === itemKey) || state.heroSlides[state.heroIndex];
+        }
+        const origText = String(targetObj?._originalOverviewEn || targetObj?.overview || textEl.getAttribute("data-orig-overview") || textEl.textContent || "").trim();
+        if (!origText) return;
+        if (targetObj && !targetObj._originalOverviewEn) {
+          targetObj._originalOverviewEn = origText;
+        }
+        textEl.setAttribute("data-orig-overview", origText);
+
+        // Toggle zurück auf Englisch, falls bereits übersetzt
+        if (btnEl.classList.contains("is-translated")) {
+          btnEl.classList.remove("is-translated");
+          btnEl.innerHTML = "🌐 Auf Deutsch übersetzen";
+          textEl.textContent = origText;
+          if (targetObj) targetObj._showTranslatedOverviewDe = false;
+          if (boxEl) boxEl.classList.toggle("is-long-desc", origText.length > 120);
+          return;
+        }
+
+        // Aus Cache laden, falls schon übersetzt
+        const cachedDe = (targetObj && targetObj._translatedOverviewDe) || overviewTranslationCacheClient.get(origText);
+        if (cachedDe) {
+          if (targetObj) {
+            targetObj._translatedOverviewDe = cachedDe;
+            targetObj._showTranslatedOverviewDe = true;
+          }
+          textEl.textContent = cachedDe;
+          btnEl.classList.add("is-translated");
+          btnEl.innerHTML = "🇬🇧 Original anzeigen";
+          if (boxEl) boxEl.classList.toggle("is-long-desc", cachedDe.length > 120);
+          return;
+        }
+
+        const prevLabel = btnEl.innerHTML;
+        btnEl.disabled = true;
+        btnEl.innerHTML = "⏳ Übersetze…";
+        try {
+          const res = await api("/api/tma/translate?text=" + encodeURIComponent(origText) + "&sl=en&tl=de");
+          const translated = String(res?.translatedText || "").trim();
+          if (translated) {
+            overviewTranslationCacheClient.set(origText, translated);
+            if (targetObj) {
+              targetObj._translatedOverviewDe = translated;
+              targetObj._showTranslatedOverviewDe = true;
+            }
+            textEl.textContent = translated;
+            btnEl.classList.add("is-translated");
+            btnEl.innerHTML = "🇬🇧 Original anzeigen";
+            if (boxEl) boxEl.classList.toggle("is-long-desc", translated.length > 120);
+          } else {
+            btnEl.innerHTML = prevLabel;
+          }
+        } catch (_err) {
+          btnEl.innerHTML = prevLabel;
+        } finally {
+          btnEl.disabled = false;
+        }
+      }
+
       function rebuildHeroSlides(itemsList) {
         const withBackdrop = (itemsList || []).filter(i => i && (i.backdrop_path || i.poster_path));
-        if (withBackdrop.length <= 6) {
-          state.heroSlides = withBackdrop.slice(0, 6);
+        const withOverview = withBackdrop.filter(i => i.overview && !isGenericPlaceholderOverviewClient(i.overview));
+        const withoutOverview = withBackdrop.filter(i => !i.overview || isGenericPlaceholderOverviewClient(i.overview));
+        const prioritizedPool = withOverview.concat(withoutOverview);
+        if (prioritizedPool.length <= 6) {
+          state.heroSlides = prioritizedPool.slice(0, 6);
         } else {
-          const pool = withBackdrop.slice(0, 14);
+          const pool = prioritizedPool.slice(0, 14);
           const picked = [];
           while (picked.length < 6 && pool.length > 0) {
             const idx = Math.floor(Math.random() * pool.length);
@@ -35157,6 +35342,9 @@
         state.heroIndex = 0;
         state.heroActionsEngaged = false;
         startHeroRotationTimer();
+        setTimeout(() => {
+          ensureHeroSlidesOverviewsClient();
+        }, 40);
       }
 
       function setHeroPointerHover(isHovered) {
@@ -35237,6 +35425,13 @@
       let heroWheelDecayTimer = null;
       let heroSnapAnimatingUntil = 0;
       let heroTouchSettleTimer = null;
+      let heroSpringRafId = 0;
+      let heroMomentumDrainActive = false;
+      let heroMomentumDrainDir = 0;
+      let heroLastWheelEventAt = 0;
+      let heroPageTouchActive = false;
+      let heroTouchStartTime = 0;
+      let heroTouchStartScrollY = 0;
 
       function getHeroCatalogSnapScrollYClient() {
         const stageWrap = document.getElementById("heroStageWrapEl");
@@ -35275,9 +35470,17 @@
         }
       }
 
+      function setHeroRubberBandOffsetClient(px) {
+        const stageWrap = document.getElementById("heroStageWrapEl");
+        if (stageWrap) {
+          stageWrap.style.setProperty("--hero-rubber-y", Math.round(px) + "px");
+        }
+      }
+
       function resetHeroResistancePreviewClient() {
         heroWheelDownAccum = 0;
         heroWheelUpAccum = 0;
+        setHeroRubberBandOffsetClient(0);
         const hintBtn = document.getElementById("heroScrollDownHintBtn");
         if (hintBtn) {
           hintBtn.style.transform = "";
@@ -35285,23 +35488,70 @@
         syncHeroScrollFadeAndTopBarStateClient();
       }
 
-      function animateHeroCatalogSnapScrollClient(targetY) {
+      function cancelHeroSpringScrollClient() {
+        if (heroSpringRafId) {
+          cancelAnimationFrame(heroSpringRafId);
+          heroSpringRafId = 0;
+        }
+      }
+
+      // Frame-genauer 60/120fps Spring-Scroller (ersetzt ruckelndes natives scrollTo-smooth auf Mobilgeräten & absorbiert Rest-Schwung)
+      function animateHeroCatalogSnapScrollClient(targetY, opts) {
+        cancelHeroSpringScrollClient();
         heroWheelDownAccum = 0;
         heroWheelUpAccum = 0;
         if (heroWheelDecayTimer) {
           clearTimeout(heroWheelDecayTimer);
           heroWheelDecayTimer = null;
         }
-        heroSnapAnimatingUntil = Date.now() + 540;
+        if (heroTouchSettleTimer) {
+          clearTimeout(heroTouchSettleTimer);
+          heroTouchSettleTimer = null;
+        }
+        setHeroRubberBandOffsetClient(0);
         const hintBtn = document.getElementById("heroScrollDownHintBtn");
         if (hintBtn) hintBtn.style.transform = "";
-        if (targetY > 0 && document.body) {
+
+        const destY = Math.max(0, Math.round(targetY));
+        const startY = window.scrollY || window.pageYOffset || 0;
+        const dist = destY - startY;
+        const durationMs = (opts && opts.durationMs) || Math.min(440, Math.max(290, Math.round(Math.abs(dist) * 0.52)));
+
+        if (destY > 0 && document.body) {
           document.body.classList.add("page-scrolled");
         }
-        window.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
-        setTimeout(syncHeroScrollFadeAndTopBarStateClient, 120);
-        setTimeout(syncHeroScrollFadeAndTopBarStateClient, 340);
-        setTimeout(syncHeroScrollFadeAndTopBarStateClient, 540);
+
+        // Aktiviert den Momentum-Absorber ("Inertia Drain"), damit schnelles Weiter-Scrollen nach dem Übergang gestoppt wird
+        heroMomentumDrainActive = true;
+        heroMomentumDrainDir = destY > startY ? 1 : -1;
+        heroLastWheelEventAt = Date.now();
+        heroSnapAnimatingUntil = Date.now() + durationMs + 60;
+
+        if (Math.abs(dist) < 2) {
+          window.scrollTo(0, destY);
+          heroSnapAnimatingUntil = Date.now() + 80;
+          syncHeroScrollFadeAndTopBarStateClient();
+          return;
+        }
+
+        const startTime = performance.now();
+        const stepFrame = (nowPerf) => {
+          const elapsed = Math.max(0, nowPerf - startTime);
+          const progress = Math.min(1, elapsed / durationMs);
+          // Quintic Out / Critically-Damped Spring Kurve für butterweiche 60/120fps Landung ohne Nachwippen
+          const eased = 1 - Math.pow(1 - progress, 4);
+          const nextY = Math.round(startY + dist * eased);
+          window.scrollTo(0, nextY);
+          syncHeroScrollFadeAndTopBarStateClient();
+          if (progress < 1) {
+            heroSpringRafId = requestAnimationFrame(stepFrame);
+          } else {
+            heroSpringRafId = 0;
+            window.scrollTo(0, destY);
+            syncHeroScrollFadeAndTopBarStateClient();
+          }
+        };
+        heroSpringRafId = requestAnimationFrame(stepFrame);
       }
 
       function onHeroCatalogWheelClient(ev) {
@@ -35318,23 +35568,44 @@
           }
         }
         const now = Date.now();
+        const dy = Number(ev.deltaY) || 0;
+        const gapMs = now - heroLastWheelEventAt;
+        heroLastWheelEventAt = now;
+
+        const snapY = getHeroCatalogSnapScrollYClient();
+
+        // Momentum-Drain ("Inertia Drain"): Absorbiert auslaufende Trackpad-/Mausrad-Schwung-Events nach dem Übergang,
+        // damit die Seite bei schnellem Scrollen vom Slider nach unten NICHT einfach weiter durch den Katalog scrollt!
         if (now < heroSnapAnimatingUntil) {
           ev.preventDefault();
           return;
         }
-        const dy = Number(ev.deltaY) || 0;
+        if (heroMomentumDrainActive) {
+          const sameDirection = (heroMomentumDrainDir > 0 && dy > 0) || (heroMomentumDrainDir < 0 && dy < 0);
+          if (sameDirection && gapMs < 145) {
+            ev.preventDefault();
+            const targetLockY = heroMomentumDrainDir > 0 ? snapY : 0;
+            if (Math.abs((window.scrollY || window.pageYOffset || 0) - targetLockY) > 2) {
+              window.scrollTo(0, targetLockY);
+            }
+            return;
+          }
+          heroMomentumDrainActive = false;
+          heroMomentumDrainDir = 0;
+        }
+
         if (Math.abs(dy) < 1) return;
 
         const y = window.scrollY || window.pageYOffset || 0;
-        const snapY = getHeroCatalogSnapScrollYClient();
-        const DOWN_THRESHOLD = 155;
-        const UP_THRESHOLD = 165;
+        const DOWN_THRESHOLD = 185;
+        const UP_THRESHOLD = 195;
 
-        // 1. Im oberen Vollbild-Slider (oder im Übergangsbereich): Nach unten scrollen braucht spürbaren Widerstand ("Kraft")
+        // 1. Im oberen Vollbild-Slider (oder im Übergangsbereich): Nach unten scrollen braucht spürbaren Widerstand ("Kraft" + Rubber-Band)
         if (y < snapY * 0.55 && dy > 0) {
           ev.preventDefault();
           heroWheelUpAccum = 0;
-          const step = Math.min(85, Math.max(14, Math.abs(dy)));
+          const velocityBoost = Math.abs(dy) > 55 ? 1.15 : 0.88;
+          const step = Math.min(82, Math.max(12, Math.abs(dy) * velocityBoost));
           heroWheelDownAccum += step;
 
           if (heroWheelDecayTimer) clearTimeout(heroWheelDecayTimer);
@@ -35343,17 +35614,19 @@
             return;
           }
 
-          // Elastische Vorschau während man gegen den Widerstand anscrollt
+          // Elastische Rubber-Band-Vorschau während man gegen den Widerstand anscrollt
           const ratio = Math.min(1, heroWheelDownAccum / DOWN_THRESHOLD);
+          const rubberOffset = -Math.round(Math.pow(ratio, 0.85) * 26);
+          setHeroRubberBandOffsetClient(rubberOffset);
           const stageWrap = document.getElementById("heroStageWrapEl");
           if (stageWrap) {
-            stageWrap.style.setProperty("--hero-scroll-fade", (ratio * 0.32).toFixed(3));
+            stageWrap.style.setProperty("--hero-scroll-fade", (ratio * 0.28).toFixed(3));
           }
           const hintBtn = document.getElementById("heroScrollDownHintBtn");
           if (hintBtn) {
-            hintBtn.style.transform = "translate3d(0, " + Math.round(ratio * 7) + "px, 0) scale(" + (1 + ratio * 0.1).toFixed(2) + ")";
+            hintBtn.style.transform = "translate3d(0, " + Math.round(ratio * 8) + "px, 0) scale(" + (1 + ratio * 0.12).toFixed(2) + ")";
           }
-          heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 260);
+          heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 240);
           return;
         }
 
@@ -35365,13 +35638,14 @@
         }
 
         // 2. An der Katalog-Oberkante (Filme/Serien): Nach oben scrollen stoppt erst mit Widerstand vor dem Vollbild-Slider
-        if (y >= snapY * 0.55 && y <= snapY + 26 && dy < 0) {
+        if (y >= snapY * 0.55 && y <= snapY + 34 && dy < 0) {
           ev.preventDefault();
           if (y !== snapY) {
             window.scrollTo(0, snapY);
           }
           heroWheelDownAccum = 0;
-          const step = Math.min(85, Math.max(14, Math.abs(dy)));
+          const velocityBoost = Math.abs(dy) > 55 ? 1.15 : 0.88;
+          const step = Math.min(82, Math.max(12, Math.abs(dy) * velocityBoost));
           heroWheelUpAccum += step;
 
           if (heroWheelDecayTimer) clearTimeout(heroWheelDecayTimer);
@@ -35380,18 +35654,46 @@
             return;
           }
 
-          // Elastische Vorschau beim Nach-Oben-Drücken gegen den Slider-Widerstand
+          // Elastische Rubber-Band-Vorschau beim Nach-Oben-Drücken gegen den Slider-Widerstand
           const ratio = Math.min(1, heroWheelUpAccum / UP_THRESHOLD);
+          setHeroRubberBandOffsetClient(Math.round(Math.pow(ratio, 0.85) * 22));
           const stageWrap = document.getElementById("heroStageWrapEl");
           if (stageWrap) {
             stageWrap.style.setProperty("--hero-scroll-fade", (1 - ratio * 0.34).toFixed(3));
           }
-          heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 260);
+          heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 240);
           return;
         }
       }
 
       window.addEventListener("wheel", onHeroCatalogWheelClient, { passive: false });
+      window.addEventListener("touchstart", () => {
+        heroPageTouchActive = true;
+        if (heroTouchSettleTimer) {
+          clearTimeout(heroTouchSettleTimer);
+          heroTouchSettleTimer = null;
+        }
+      }, { passive: true });
+      window.addEventListener("touchend", () => {
+        heroPageTouchActive = false;
+        if (isHeroScrollCouplingActiveClient() && !heroSpringRafId && Date.now() >= heroSnapAnimatingUntil) {
+          const curY = window.scrollY || window.pageYOffset || 0;
+          const curSnapY = getHeroCatalogSnapScrollYClient();
+          if (curY > 6 && curY < curSnapY - 8) {
+            if (heroTouchSettleTimer) clearTimeout(heroTouchSettleTimer);
+            heroTouchSettleTimer = setTimeout(() => {
+              if (heroPageTouchActive || heroSpringRafId || Date.now() < heroSnapAnimatingUntil) return;
+              const yNow = window.scrollY || window.pageYOffset || 0;
+              const snapNow = getHeroCatalogSnapScrollYClient();
+              if (yNow > 6 && yNow < snapNow - 8) {
+                const wasInCatalog = document.body.classList.contains("hero-scrolled-past");
+                const shouldSnapToCatalog = wasInCatalog ? (yNow > snapNow * 0.68) : (yNow >= snapNow * 0.25);
+                animateHeroCatalogSnapScrollClient(shouldSnapToCatalog ? snapNow : 0);
+              }
+            }, 90);
+          }
+        }
+      }, { passive: true });
 
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
@@ -35399,7 +35701,10 @@
         document.body.classList.toggle("page-scrolled", y > 10);
         const stageWrap = document.getElementById("heroStageWrapEl");
         if (!stageWrap || state.heroHidden || state.isSearchMode) {
-          if (stageWrap) stageWrap.style.setProperty("--hero-scroll-fade", "0");
+          if (stageWrap) {
+            stageWrap.style.setProperty("--hero-scroll-fade", "0");
+            stageWrap.style.setProperty("--hero-rubber-y", "0px");
+          }
           if (document.body.classList.contains("hero-scrolled-past")) {
             document.body.classList.remove("hero-scrolled-past");
             syncHeroSearchPlaceholderAndToggleBtnClient();
@@ -35414,26 +35719,6 @@
         if (scrolledPastNow !== wasScrolledPast) {
           document.body.classList.toggle("hero-scrolled-past", scrolledPastNow);
           syncHeroSearchPlaceholderAndToggleBtnClient();
-        }
-        // Sanfte Einrast-Korrektur nach Touch-/Scrollbar-Scrollen im Zwischenbereich zwischen Slider (0) und Katalog (snapY)
-        if (isHeroScrollCouplingActiveClient() && Date.now() >= heroSnapAnimatingUntil && !heroTouchDraggingUp) {
-          const snapY = getHeroCatalogSnapScrollYClient();
-          if (y > 6 && y < snapY - 8) {
-            if (heroTouchSettleTimer) clearTimeout(heroTouchSettleTimer);
-            heroTouchSettleTimer = setTimeout(() => {
-              if (!isHeroScrollCouplingActiveClient() || Date.now() < heroSnapAnimatingUntil || heroTouchDraggingUp) return;
-              const curY = window.scrollY || window.pageYOffset || 0;
-              const curSnapY = getHeroCatalogSnapScrollYClient();
-              if (curY > 6 && curY < curSnapY - 8) {
-                const wasInCatalog = document.body.classList.contains("hero-scrolled-past");
-                // Widerstand in beide Richtungen: Vom Slider aus braucht man >22% Weg nach unten; vom Katalog aus >28% Weg nach oben
-                const shouldSnapToCatalog = wasInCatalog
-                  ? (curY > curSnapY * 0.72)
-                  : (curY >= curSnapY * 0.22);
-                animateHeroCatalogSnapScrollClient(shouldSnapToCatalog ? curSnapY : 0);
-              }
-            }, 150);
-          }
         }
       }
 
@@ -35562,7 +35847,7 @@
           if (state.heroHidden && !state.isSearchMode) {
             toggleHeroSliderHidden(false);
           } else if ((window.scrollY || window.pageYOffset || 0) > 10) {
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            animateHeroCatalogSnapScrollClient(0);
           }
         } else if (direction === "left") {
           setHeroSlideIndex(state.heroIndex + 1);
@@ -35586,8 +35871,11 @@
           return;
         }
         if (ev.touches && ev.touches[0]) {
+          cancelHeroSpringScrollClient();
           heroTouchStartX = ev.touches[0].clientX;
           heroTouchStartY = ev.touches[0].clientY;
+          heroTouchStartTime = performance.now();
+          heroTouchStartScrollY = window.scrollY || window.pageYOffset || 0;
           heroTouchDraggingUp = false;
         }
       }
@@ -35595,13 +35883,21 @@
         if (!heroTouchStartX || !heroTouchStartY || !ev.touches || !ev.touches[0]) return;
         const dx = ev.touches[0].clientX - heroTouchStartX;
         const dy = ev.touches[0].clientY - heroTouchStartY;
-        if (dy < -12 && Math.abs(dy) > Math.abs(dx) * 1.15 && !state.heroHidden && !state.isSearchMode) {
+        if (dy < -8 && Math.abs(dy) > Math.abs(dx) * 1.12 && !state.heroHidden && !state.isSearchMode) {
+          // Verhindert natives Browser-Momentum während der Geste auf dem Vollbild-Slider, damit nichts ruckelt oder überschießt!
+          if (ev.cancelable && heroTouchStartScrollY < 24) {
+            ev.preventDefault();
+          }
           heroTouchDraggingUp = true;
           if (document.body) document.body.classList.add("page-scrolled");
           const stageWrap = document.getElementById("heroStageWrapEl");
           if (stageWrap) {
             const heroH = Math.max(280, stageWrap.offsetHeight || window.innerHeight || 580);
-            const dragFade = Math.max(0, Math.min(0.85, Math.abs(dy) / (heroH * 0.45)));
+            const absDy = Math.abs(dy);
+            // Gedämpfte Rubber-Band-Kurve für die ersten 64px, danach geschmeidiger Übergang
+            const rubberPx = -Math.round(Math.min(34, Math.pow(absDy, 0.78) * 1.35));
+            setHeroRubberBandOffsetClient(rubberPx);
+            const dragFade = Math.max(0, Math.min(0.68, absDy / (heroH * 0.55)));
             const scrollY = window.scrollY || window.pageYOffset || 0;
             const baseFade = Math.max(0, Math.min(1, scrollY / (heroH * 0.72)));
             stageWrap.style.setProperty("--hero-scroll-fade", Math.max(baseFade, dragFade).toFixed(3));
@@ -35612,17 +35908,20 @@
         if (!heroTouchStartX || !ev.changedTouches || !ev.changedTouches[0]) return;
         const dx = ev.changedTouches[0].clientX - heroTouchStartX;
         const dy = heroTouchStartY ? (ev.changedTouches[0].clientY - heroTouchStartY) : 0;
+        const dt = Math.max(16, performance.now() - (heroTouchStartTime || performance.now()));
+        const vy = dy / dt; // px pro ms (negativ = Wischen nach oben)
         const wasDraggingUp = heroTouchDraggingUp;
         heroTouchStartX = 0;
         heroTouchStartY = 0;
         heroTouchDraggingUp = false;
-        // Spürbarer Widerstand (mind. 58px vertikaler Zug), bevor der Slider nach unten in die Filme gleitet
-        if (dy < -58 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+        setHeroRubberBandOffsetClient(0);
+        // Spürbarer Widerstand (mind. 56px Zugweg ODER schneller bewusster Flick mit vy < -0.42 bei mind. 28px Weg)
+        if ((dy < -56 || (dy < -28 && vy < -0.42)) && Math.abs(dy) > Math.abs(dx) * 1.12) {
           triggerHeroSwipeUpCollapseClient();
           return;
         }
         if (wasDraggingUp) {
-          animateHeroCatalogSnapScrollClient(0);
+          animateHeroCatalogSnapScrollClient(0, { durationMs: 260 });
           return;
         }
         if (Math.abs(dx) > 40 && Math.abs(dx) >= Math.abs(dy)) {
@@ -35917,10 +36216,19 @@
                       '<div id="heroMetaCleanEl" class="hero-meta-clean">' +
                         buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr) +
                       '</div>' +
-                      '<div id="heroDescEl" class="hero-desc expandable-desc-box' + ((hero.overview && hero.overview.length > 120) ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'heroDescEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'heroDescEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
-                        '<div id="heroDescTextEl" class="expandable-desc-scroll">' + esc(hero.overview || 'Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.') + '</div>' +
-                        '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                      '</div>' +
+                      (function() {
+                        const heroOvText = resolveHeroOverviewTextClient(hero, isMovie);
+                        const rawOrigOv = String(hero._originalOverviewEn || hero.overview || "").trim();
+                        const showTransBtn = isLikelyEnglishOverviewClient(rawOrigOv);
+                        const isCurrentlyTranslated = Boolean(hero._showTranslatedOverviewDe && hero._translatedOverviewDe);
+                        return '<div id="heroDescEl" class="hero-desc expandable-desc-box' + (heroOvText.length > 120 ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'heroDescEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'heroDescEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
+                          '<div id="heroDescTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrigOv) + '">' + esc(heroOvText) + '</div>' +
+                          '<div class="desc-actions-row">' +
+                            '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+                            '<button type="button" id="heroDescTranslateBtn" class="desc-translate-btn' + (isCurrentlyTranslated ? ' is-translated' : '') + '" style="display:' + (showTransBtn ? 'inline-flex' : 'none') + '" onclick="translateOverviewTextClient(event,\\'' + heroCardKey + '\\',\\'heroDescEl\\',\\'heroDescTextEl\\',\\'heroDescTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isCurrentlyTranslated ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') + '</button>' +
+                          '</div>' +
+                        '</div>';
+                      })() +
                       '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
                         '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn" onclick="playInstantTrailerFromCard(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
                         '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')">ⓘ Details</button>' +
@@ -36015,9 +36323,13 @@
             }
             const descEl = document.getElementById("heroDescEl");
             const descTextEl = document.getElementById("heroDescTextEl");
-            const rawOverview = hero.overview || "Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.";
+            const rawOverview = resolveHeroOverviewTextClient(hero, isMovie);
+            const rawOrigOv = String(hero._originalOverviewEn || hero.overview || "").trim();
+            const showTransBtn = isLikelyEnglishOverviewClient(rawOrigOv);
+            const isCurrentlyTranslated = Boolean(hero._showTranslatedOverviewDe && hero._translatedOverviewDe);
             if (descTextEl) {
               descTextEl.textContent = rawOverview;
+              descTextEl.setAttribute("data-orig-overview", rawOrigOv);
               descTextEl.scrollTop = 0;
             } else if (descEl) {
               descEl.textContent = rawOverview;
@@ -36025,9 +36337,16 @@
             if (descEl) {
               descEl.classList.remove("is-expanded");
               descEl.setAttribute("aria-expanded", "false");
-              descEl.classList.toggle("is-long-desc", Boolean(hero.overview && hero.overview.length > 120));
+              descEl.classList.toggle("is-long-desc", Boolean(rawOverview && rawOverview.length > 120));
               const hintEl = descEl.querySelector(".desc-expand-hint");
               if (hintEl) hintEl.textContent = "▾ Mehr lesen";
+            }
+            const transBtn = document.getElementById("heroDescTranslateBtn");
+            if (transBtn) {
+              transBtn.style.display = showTransBtn ? "inline-flex" : "none";
+              transBtn.classList.toggle("is-translated", isCurrentlyTranslated);
+              transBtn.innerHTML = isCurrentlyTranslated ? "🇬🇧 Original anzeigen" : "🌐 Auf Deutsch übersetzen";
+              transBtn.setAttribute("onclick", "translateOverviewTextClient(event,'" + heroCardKey + "','heroDescEl','heroDescTextEl','heroDescTranslateBtn')");
             }
             const trBtn = document.getElementById("heroBtnTrailer");
             if (trBtn) {
@@ -38543,10 +38862,19 @@
 
                     (heroInlineGenresHtml ? '<div class="modal-genre-inline">' + heroInlineGenresHtml + '</div>' : '') +
 
-                    '<div id="modalHeaderOverviewEl" class="expandable-desc-box' + ((d.overview && d.overview.length > 120) ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
-                      '<div class="expandable-desc-scroll">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</div>' +
-                      '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                    '</div>' +
+                    (function() {
+                      const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
+                      const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
+                      const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
+                      const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
+                      return '<div id="modalHeaderOverviewEl" class="expandable-desc-box' + (ovText.length > 120 ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
+                        '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
+                        '<div class="desc-actions-row">' +
+                          '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+                          (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? ' is-translated' : '') + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') + '</button>' : '') +
+                        '</div>' +
+                      '</div>';
+                    })() +
                   '</div>' +
                 '</div>' +
               '</div>' +
@@ -38635,9 +38963,14 @@
                     '</div>'
                   ) : '') +
 
-                  '<div class="panel-box" style="margin:6px 0 10px">' +
-                    '<div class="detail-meta-label" style="margin-bottom:6px">📖 Handlung & Beschreibung</div>' +
-                    '<p style="font-size:13px;line-height:1.6;color:var(--text);margin:0">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</p>' +
+                  '<div id="modalDetailsOverviewPanel" class="panel-box" style="margin:6px 0 10px">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
+                      '<div class="detail-meta-label" style="margin-bottom:0">📖 Handlung & Beschreibung</div>' +
+                      ((typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(d._originalOverviewEn || d.overview || ""))
+                        ? '<button type="button" id="modalDetailsTranslateBtn" class="desc-translate-btn" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalDetailsOverviewPanel\\',\\'modalDetailsOverviewTextEl\\',\\'modalDetailsTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">🌐 Auf Deutsch übersetzen</button>'
+                        : '') +
+                    '</div>' +
+                    '<p id="modalDetailsOverviewTextEl" data-orig-overview="' + esc(d._originalOverviewEn || d.overview || '') + '" style="font-size:13px;line-height:1.6;color:var(--text);margin:0">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</p>' +
                   '</div>' +
 
                   ((clickableGenresHtml || clickableProvidersHtml) ? (
@@ -53711,6 +54044,25 @@
           : visibleItems;
         items = await attachVipQualitiesToMediaList(env, items, typeCode, hasVipStreamAccess);
 
+        // Für die ersten 10 Highlight-Kandidaten auf Seite 1 fehlende Beschreibungen (overview) direkt nachladen (TMDb DE/EN, TVMaze, OMDb)
+        if (page === 1 && Array.isArray(items) && items.length > 0) {
+          const missingOvItems = items.slice(0, 10).filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
+          if (missingOvItems.length > 0) {
+            await Promise.race([
+              Promise.all(missingOvItems.map(async (it) => {
+                try {
+                  const isSer = it.media_type === "tv" || typeCode === "s";
+                  const det = isSer ? await fetchSeriesDetails(env, it.id) : await fetchMovieDetails(env, it.id);
+                  if (det && det.overview && String(det.overview).trim() && det.overview !== "Keine Beschreibung verfügbar.") {
+                    it.overview = String(det.overview).trim();
+                  }
+                } catch (_e) {}
+              })),
+              new Promise(resolve => setTimeout(resolve, 1100))
+            ]);
+          }
+        }
+
         const rawTotalPages = mode === "random" ? 1 : Math.max(1, Number(lookahead.total_pages || 1));
         const hasMoreAfterFilter = mode !== "random" && Boolean(lookahead.hasMore) && items.length > 0 && page < rawTotalPages;
         const totalPages = hasMoreAfterFilter ? rawTotalPages : page;
@@ -53745,6 +54097,57 @@
           settings,
           items
         }), { status: 200, headers: corsHeaders });
+      }
+
+      if (path === "/api/tma/translate" && (request.method === "POST" || request.method === "GET")) {
+        let textToTranslate = "";
+        let targetLang = "de";
+        if (request.method === "POST") {
+          const bodyObj = await request.json().catch(() => ({}));
+          textToTranslate = String(bodyObj.text || "").trim();
+          targetLang = String(bodyObj.targetLang || "de").trim() || "de";
+        } else {
+          textToTranslate = String(url.searchParams.get("text") || "").trim();
+          targetLang = String(url.searchParams.get("tl") || "de").trim() || "de";
+        }
+        if (!textToTranslate) {
+          return new Response(JSON.stringify({ ok: false, error: "Kein Text übergeben." }), { status: 400, headers: corsHeaders });
+        }
+        const clippedText = textToTranslate.slice(0, 2200);
+        const cacheKey = `tr_${targetLang}_${clippedText.slice(0, 120)}_${clippedText.length}`;
+        if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(cacheKey)) {
+          return new Response(JSON.stringify({ ok: true, translatedText: memoryFallback.get(cacheKey), cached: true }), { status: 200, headers: corsHeaders });
+        }
+        let translatedText = "";
+        try {
+          const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clippedText)}`;
+          const gRes = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+          if (gRes.ok) {
+            const gData = await gRes.json();
+            if (Array.isArray(gData) && Array.isArray(gData[0])) {
+              translatedText = gData[0].map(part => (Array.isArray(part) && part[0] ? String(part[0]) : "")).join("").trim();
+            }
+          }
+        } catch (_err) {}
+        if (!translatedText) {
+          try {
+            const mUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clippedText.slice(0, 490))}&langpair=en|${encodeURIComponent(targetLang)}`;
+            const mRes = await fetch(mUrl);
+            if (mRes.ok) {
+              const mData = await mRes.json();
+              if (mData?.responseData?.translatedText) {
+                translatedText = String(mData.responseData.translatedText).trim();
+              }
+            }
+          } catch (_err2) {}
+        }
+        if (translatedText) {
+          if (typeof memoryFallback !== "undefined" && memoryFallback) {
+            memoryFallback.set(cacheKey, translatedText);
+          }
+          return new Response(JSON.stringify({ ok: true, translatedText }), { status: 200, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({ ok: false, error: "Übersetzungsdienst vorübergehend nicht erreichbar." }), { status: 502, headers: corsHeaders });
       }
 
       if (path === "/api/tma/collections" && request.method === "GET") {

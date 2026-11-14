@@ -1911,10 +1911,19 @@
 
                     (heroInlineGenresHtml ? '<div class="modal-genre-inline">' + heroInlineGenresHtml + '</div>' : '') +
 
-                    '<div id="modalHeaderOverviewEl" class="expandable-desc-box' + ((d.overview && d.overview.length > 120) ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
-                      '<div class="expandable-desc-scroll">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</div>' +
-                      '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                    '</div>' +
+                    (function() {
+                      const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
+                      const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
+                      const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
+                      const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
+                      return '<div id="modalHeaderOverviewEl" class="expandable-desc-box' + (ovText.length > 120 ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
+                        '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
+                        '<div class="desc-actions-row">' +
+                          '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+                          (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? ' is-translated' : '') + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') + '</button>' : '') +
+                        '</div>' +
+                      '</div>';
+                    })() +
                   '</div>' +
                 '</div>' +
               '</div>' +
@@ -2003,9 +2012,14 @@
                     '</div>'
                   ) : '') +
 
-                  '<div class="panel-box" style="margin:6px 0 10px">' +
-                    '<div class="detail-meta-label" style="margin-bottom:6px">📖 Handlung & Beschreibung</div>' +
-                    '<p style="font-size:13px;line-height:1.6;color:var(--text);margin:0">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</p>' +
+                  '<div id="modalDetailsOverviewPanel" class="panel-box" style="margin:6px 0 10px">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
+                      '<div class="detail-meta-label" style="margin-bottom:0">📖 Handlung & Beschreibung</div>' +
+                      ((typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(d._originalOverviewEn || d.overview || ""))
+                        ? '<button type="button" id="modalDetailsTranslateBtn" class="desc-translate-btn" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalDetailsOverviewPanel\\',\\'modalDetailsOverviewTextEl\\',\\'modalDetailsTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">🌐 Auf Deutsch übersetzen</button>'
+                        : '') +
+                    '</div>' +
+                    '<p id="modalDetailsOverviewTextEl" data-orig-overview="' + esc(d._originalOverviewEn || d.overview || '') + '" style="font-size:13px;line-height:1.6;color:var(--text);margin:0">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</p>' +
                   '</div>' +
 
                   ((clickableGenresHtml || clickableProvidersHtml) ? (

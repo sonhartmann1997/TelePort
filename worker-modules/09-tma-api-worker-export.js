@@ -2287,6 +2287,25 @@
           : visibleItems;
         items = await attachVipQualitiesToMediaList(env, items, typeCode, hasVipStreamAccess);
 
+        // Für die ersten 10 Highlight-Kandidaten auf Seite 1 fehlende Beschreibungen (overview) direkt nachladen (TMDb DE/EN, TVMaze, OMDb)
+        if (page === 1 && Array.isArray(items) && items.length > 0) {
+          const missingOvItems = items.slice(0, 10).filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
+          if (missingOvItems.length > 0) {
+            await Promise.race([
+              Promise.all(missingOvItems.map(async (it) => {
+                try {
+                  const isSer = it.media_type === "tv" || typeCode === "s";
+                  const det = isSer ? await fetchSeriesDetails(env, it.id) : await fetchMovieDetails(env, it.id);
+                  if (det && det.overview && String(det.overview).trim() && det.overview !== "Keine Beschreibung verfügbar.") {
+                    it.overview = String(det.overview).trim();
+                  }
+                } catch (_e) {}
+              })),
+              new Promise(resolve => setTimeout(resolve, 1100))
+            ]);
+          }
+        }
+
         const rawTotalPages = mode === "random" ? 1 : Math.max(1, Number(lookahead.total_pages || 1));
         const hasMoreAfterFilter = mode !== "random" && Boolean(lookahead.hasMore) && items.length > 0 && page < rawTotalPages;
         const totalPages = hasMoreAfterFilter ? rawTotalPages : page;
@@ -2321,6 +2340,57 @@
           settings,
           items
         }), { status: 200, headers: corsHeaders });
+      }
+
+      if (path === "/api/tma/translate" && (request.method === "POST" || request.method === "GET")) {
+        let textToTranslate = "";
+        let targetLang = "de";
+        if (request.method === "POST") {
+          const bodyObj = await request.json().catch(() => ({}));
+          textToTranslate = String(bodyObj.text || "").trim();
+          targetLang = String(bodyObj.targetLang || "de").trim() || "de";
+        } else {
+          textToTranslate = String(url.searchParams.get("text") || "").trim();
+          targetLang = String(url.searchParams.get("tl") || "de").trim() || "de";
+        }
+        if (!textToTranslate) {
+          return new Response(JSON.stringify({ ok: false, error: "Kein Text übergeben." }), { status: 400, headers: corsHeaders });
+        }
+        const clippedText = textToTranslate.slice(0, 2200);
+        const cacheKey = `tr_${targetLang}_${clippedText.slice(0, 120)}_${clippedText.length}`;
+        if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(cacheKey)) {
+          return new Response(JSON.stringify({ ok: true, translatedText: memoryFallback.get(cacheKey), cached: true }), { status: 200, headers: corsHeaders });
+        }
+        let translatedText = "";
+        try {
+          const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clippedText)}`;
+          const gRes = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+          if (gRes.ok) {
+            const gData = await gRes.json();
+            if (Array.isArray(gData) && Array.isArray(gData[0])) {
+              translatedText = gData[0].map(part => (Array.isArray(part) && part[0] ? String(part[0]) : "")).join("").trim();
+            }
+          }
+        } catch (_err) {}
+        if (!translatedText) {
+          try {
+            const mUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clippedText.slice(0, 490))}&langpair=en|${encodeURIComponent(targetLang)}`;
+            const mRes = await fetch(mUrl);
+            if (mRes.ok) {
+              const mData = await mRes.json();
+              if (mData?.responseData?.translatedText) {
+                translatedText = String(mData.responseData.translatedText).trim();
+              }
+            }
+          } catch (_err2) {}
+        }
+        if (translatedText) {
+          if (typeof memoryFallback !== "undefined" && memoryFallback) {
+            memoryFallback.set(cacheKey, translatedText);
+          }
+          return new Response(JSON.stringify({ ok: true, translatedText }), { status: 200, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({ ok: false, error: "Übersetzungsdienst vorübergehend nicht erreichbar." }), { status: 502, headers: corsHeaders });
       }
 
       if (path === "/api/tma/collections" && request.method === "GET") {
