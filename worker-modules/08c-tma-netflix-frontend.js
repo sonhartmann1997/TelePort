@@ -6712,7 +6712,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -7120,7 +7120,7 @@
         }
 
         // Referenzen auf die Suchleiste & Kopfzeile
-        const sScope = document.getElementById("searchGenreSelect") || document.getElementById("searchScopeSelect");
+        const sScope = document.getElementById("searchGenreTriggerBtn") || document.getElementById("searchGenreSelect") || document.getElementById("searchScopeSelect");
         const sInp = document.getElementById("searchInput");
         const sClear = document.getElementById("searchClearBtn") || document.querySelector(".search-clear-btn");
         const sSub = document.querySelector(".search-submit-btn");
@@ -7207,7 +7207,7 @@
             }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
             // 2. Fokus auf der Punktleiste (< • • • • ━━ • >):
-            // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Enter fokussiert ebenfalls "▶ Trailer"!
+            // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Runter öffnet/fokussiert den "∨" Scroll-Pfeil bzw. den Katalog!
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
@@ -7218,6 +7218,22 @@
               if (trBtn) { setSpatialFocus(trBtn, true); return; }
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
               if (focusSearchOrHeaderUp()) return;
+            }
+            if (dir === "down") {
+              if (document.body) document.body.classList.add("page-scrolled");
+              const hintBtn = document.getElementById("heroScrollDownHintBtn");
+              if (hintBtn) { setSpatialFocus(hintBtn, true); return; }
+            }
+          } else if (currentSpatialEl.id === "heroScrollDownHintBtn" || currentSpatialEl.classList.contains("hero-scroll-down-hint")) {
+            if (dir === "up") {
+              if (actDot) { setSpatialFocus(actDot, true); return; }
+              if (trBtn) { setSpatialFocus(trBtn, true); return; }
+            }
+            if (dir === "down") {
+              if (document.body) document.body.classList.add("page-scrolled");
+              if (typeof scrollToCatalogBelowHeroClient === "function") {
+                scrollToCatalogBelowHeroClient();
+              }
             }
           }
         }
@@ -7232,8 +7248,10 @@
         // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen)
         const topHideBtn = document.getElementById("heroHideBtn");
         const topHideVisible = Boolean(topHideBtn && list.includes(topHideBtn));
+        const mobCollapseBtn = document.getElementById("mobileSearchCollapseBtn");
         const inHeader = Boolean(
           (currentSpatialEl.closest && (currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))) ||
+          currentSpatialEl === mobCollapseBtn ||
           currentSpatialEl === sScope ||
           currentSpatialEl === sInp ||
           currentSpatialEl === sClear ||
@@ -7247,6 +7265,7 @@
               document.getElementById("headerBrandLogo"),
               document.getElementById("tabBtnMovies"),
               document.getElementById("tabBtnSeries"),
+              mobCollapseBtn,
               sScope,
               sInp,
               sClearVisible ? sClear : null,
@@ -7270,6 +7289,11 @@
             return;
           }
           if (dir === "down") {
+            const firstGenreChip = document.querySelector("#searchGenreDropdownOverlay.open .genre-overlay-chip.active, #searchGenreDropdownOverlay.open .genre-overlay-chip");
+            if (firstGenreChip && list.includes(firstGenreChip)) {
+              setSpatialFocus(firstGenreChip, true);
+              return;
+            }
             const firstAc = document.querySelector("#searchAutocompleteBox.open .ac-item");
             if (firstAc && list.includes(firstAc)) {
               setSpatialFocus(firstAc, true);
@@ -7625,8 +7649,18 @@
             ev.preventDefault();
             return;
           }
+          if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) {
+            if (typeof closeSearchGenreDropdownOverlay === "function") closeSearchGenreDropdownOverlay();
+            ev.preventDefault();
+            return;
+          }
           if (document.getElementById("searchAutocompleteBox")?.classList.contains("open")) {
             closeAutocomplete();
+            ev.preventDefault();
+            return;
+          }
+          if (document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") && !String(document.getElementById("searchInput")?.value || "").trim()) {
+            if (typeof collapseMobileSearchBarClient === "function") collapseMobileSearchBarClient(true);
             ev.preventDefault();
             return;
           }

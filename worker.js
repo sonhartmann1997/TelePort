@@ -29793,7 +29793,8 @@
           0 0 24px rgba(var(--ambi-2), 0.28);
       }
       #searchInput:focus,
-      .search-scope-select:focus {
+      .search-scope-select:focus,
+      .search-genre-trigger-btn:focus {
         outline: none !important;
         box-shadow: none !important;
         transform: none !important;
@@ -29808,37 +29809,191 @@
         border-color: var(--accent-primary) !important;
         box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35), 0 4px 16px rgba(0, 0, 0, 0.55) !important;
       }
-      .search-scope-select.spatial-focus {
+      .search-scope-select.spatial-focus,
+      .search-genre-trigger-btn.spatial-focus,
+      .mobile-search-collapse-btn.spatial-focus {
         outline: 2px solid var(--accent-primary) !important;
         outline-offset: -1px !important;
-        background-color: rgba(14, 165, 233, 0.22) !important;
+        background-color: rgba(14, 165, 233, 0.24) !important;
         box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35) !important;
         transform: none !important;
       }
-      .search-scope-select {
+      .mobile-search-collapse-btn {
+        display: none;
+        height: calc(var(--top-bar-h, 38px) - 6px);
+        width: 30px;
+        min-width: 30px;
+        box-sizing: border-box;
+        border: 0;
+        border-right: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 7px 0 0 7px;
+        background: rgba(15, 23, 42, 0.65);
+        color: #f8fafc;
+        font-size: 14px;
+        font-weight: 800;
+        cursor: pointer;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        padding: 0;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .mobile-search-collapse-btn:hover {
+        background: rgba(56, 189, 248, 0.25);
+        color: #ffffff;
+      }
+      /* Maßgeschneiderter Genre-Trigger-Button in der Suchleiste (ersetzt das abgeschnittene native Select) */
+      .search-genre-trigger-btn {
         height: calc(var(--top-bar-h, 38px) - 6px);
         box-sizing: border-box;
-        background-color: rgba(15, 23, 42, 0.56);
+        background-color: rgba(15, 23, 42, 0.58);
         border: 0;
-        border-right: 1px solid rgba(255,255,255,0.16);
+        border-right: 1px solid rgba(255, 255, 255, 0.16);
         color: #f8fafc;
         border-radius: 7px 0 0 7px;
-        padding: 0 8px;
+        padding: 0 9px;
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 700;
         cursor: pointer;
-        max-width: 132px;
+        max-width: 148px;
         flex-shrink: 0;
-        outline: none;
-        color-scheme: dark;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        white-space: nowrap;
+        overflow: hidden;
+        transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
       }
-      .search-scope-select option {
-        background-color: #181820;
-        color: #f8fafc;
+      .search-genre-trigger-btn:hover,
+      .search-genre-trigger-btn.is-open {
+        background-color: rgba(30, 41, 59, 0.88);
+        color: #ffffff;
+      }
+      .search-genre-trigger-btn.has-active-genre {
+        background: linear-gradient(135deg, rgba(2, 132, 199, 0.34), rgba(30, 58, 138, 0.52));
+        color: #e0f2fe;
+        border-right-color: rgba(56, 189, 248, 0.45);
+        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.42);
+      }
+      .search-genre-trigger-icon {
+        font-size: 13px;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .search-genre-trigger-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .search-genre-caret {
+        font-size: 10px;
+        opacity: 0.78;
+        flex-shrink: 0;
+        transition: transform 0.18s ease;
+      }
+      .search-genre-trigger-btn.is-open .search-genre-caret {
+        transform: rotate(180deg);
+      }
+      /* Schwebendes Ambilight-Glas-Dropdown-Overlay mit Genre-Chips */
+      .search-genre-dropdown-overlay {
+        position: absolute;
+        left: 14px;
+        right: 14px;
+        top: calc(100% + 6px);
+        max-width: 680px;
+        margin: 0 auto;
+        background: linear-gradient(165deg, rgba(10, 15, 28, 0.96) 0%, rgba(15, 23, 42, 0.94) 100%);
+        backdrop-filter: blur(22px) saturate(1.5);
+        -webkit-backdrop-filter: blur(22px) saturate(1.5);
+        border: 1px solid rgba(var(--ambi-2), 0.52);
+        border-radius: 14px;
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.88), 0 0 28px rgba(var(--ambi-1), 0.18);
+        padding: 10px 12px 12px;
+        z-index: 85;
+        display: none;
+        animation: fadeIn 0.16s ease;
+      }
+      .search-genre-dropdown-overlay.open {
+        display: block;
+      }
+      .genre-overlay-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+      }
+      .genre-overlay-title {
+        font-size: calc(11.5px * var(--scale-text));
+        font-weight: 800;
+        color: #e2e8f0;
+        letter-spacing: 0.3px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .genre-overlay-close-btn {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: #cbd5e1;
+        border-radius: 8px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 800;
+        cursor: pointer;
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+      .genre-overlay-close-btn:hover,
+      .genre-overlay-close-btn.spatial-focus {
+        background: var(--red);
+        color: #ffffff;
+        border-color: #ffffff;
+      }
+      .genre-overlay-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(126px, 1fr));
+        gap: 6px;
+        max-height: 290px;
+        overflow-y: auto;
+        padding: 2px;
+      }
+      .genre-overlay-chip {
+        background: rgba(30, 41, 59, 0.68);
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        color: #f1f5f9;
+        border-radius: 9px;
+        padding: 7px 10px;
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 700;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+      }
+      .genre-overlay-chip:hover,
+      .genre-overlay-chip.spatial-focus {
+        background: rgba(14, 165, 233, 0.22);
+        border-color: #38bdf8;
+        color: #ffffff;
+        transform: translateY(-1px);
+      }
+      .genre-overlay-chip.active {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        border-color: #7dd3fc;
+        color: #ffffff;
+        box-shadow: 0 4px 12px rgba(2, 132, 199, 0.42);
       }
       .search-input-wrap {
         flex: 1;
-        min-width: 70px;
+        min-width: 64px;
         height: 100%;
         position: relative;
         display: flex;
@@ -29975,17 +30130,21 @@
         opacity: 1;
       }
 
-      /* 100% Vollbild Flixnet Kino-Spotlight (inkl. Top-Leiste) + Hochkant-Filmcover + sanfter Kino-Scroll-Fade */
+      /* 100% Vollbild Flixnet Kino-Spotlight: Unbeschnittene Cover/Backdrops am oberen Rand + weicher Top-Fade + Bild-Ausfüllung hinter der Top-Leiste */
       @keyframes heroSlideProgress {
         0% { width: 0%; }
         100% { width: 100%; }
+      }
+      @keyframes heroScrollChevronBounce {
+        0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.78; }
+        50% { transform: translate3d(0, 5px, 0); opacity: 1; }
       }
       .hero-curtain-shell {
         display: grid;
         grid-template-rows: 1fr;
         opacity: 1;
         margin-top: -54px;
-        margin-bottom: -14px;
+        margin-bottom: 0px;
         transition:
           grid-template-rows 0.42s cubic-bezier(0.22, 1, 0.36, 1),
           opacity 0.36s cubic-bezier(0.22, 1, 0.36, 1),
@@ -29998,6 +30157,16 @@
         opacity: 0;
         margin-top: 0px;
         margin-bottom: 0px;
+        pointer-events: none;
+      }
+      /* Katalog & Filme unterhalb des 100%-Vollbild-Sliders erst beim Herunterscrollen sanft einblenden */
+      #heroBannerSlot + .section {
+        transition: opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1), transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+        will-change: opacity, transform;
+      }
+      body.hero-slider-expanded:not(.page-scrolled):not(.hero-scrolled-past) #heroBannerSlot + .section {
+        opacity: 0;
+        transform: translate3d(0, 22px, 0);
         pointer-events: none;
       }
       .hero-curtain-inner {
@@ -30013,18 +30182,19 @@
         margin: 0;
         z-index: 1;
       }
-      /* Dynamisches Ambilight: Kombiniert unscharfes Backdrop-Halo mit extrahierten RGB-Farbscheinen der Hauptfarben */
+      /* Atmosphärische Bild-Ausfüllung bis ganz nach oben (top: 0) direkt hinter der Top-Leiste */
       .hero-ambilight-glow {
         position: absolute;
-        inset: 0;
+        inset: -14px 0 0 0;
+        background-image: var(--hero-bg-landscape, none);
         background-size: cover;
-        background-position: center 22%;
-        filter: blur(38px) saturate(2.15) brightness(1.18);
-        opacity: calc(0.52 * (1 - var(--hero-scroll-fade, 0) * 0.85));
+        background-position: center top;
+        filter: blur(30px) saturate(2.15) brightness(1.14);
+        opacity: calc(0.82 * (1 - var(--hero-scroll-fade, 0) * 0.85));
         z-index: 0;
         pointer-events: none;
         transition: background-image 0.55s ease;
-        transform: translate3d(0, 0, 0);
+        transform: translate3d(0, 0, 0) scale(1.06);
       }
       .hero-ambilight-beams {
         position: absolute;
@@ -30032,16 +30202,16 @@
         z-index: 0;
         pointer-events: none;
         background:
+          radial-gradient(65% 55% at 50% 6%, rgba(var(--ambi-2), 0.58) 0%, rgba(var(--ambi-2), 0) 75%),
           radial-gradient(55% 75% at 18% 50%, rgba(var(--ambi-1), 0.56) 0%, rgba(var(--ambi-1), 0) 75%),
-          radial-gradient(55% 75% at 50% 20%, rgba(var(--ambi-2), 0.46) 0%, rgba(var(--ambi-2), 0) 75%),
           radial-gradient(60% 80% at 82% 58%, rgba(var(--ambi-3), 0.52) 0%, rgba(var(--ambi-3), 0) 78%);
-        filter: blur(28px);
-        opacity: calc(0.78 * (1 - var(--hero-scroll-fade, 0) * 0.85));
+        filter: blur(26px);
+        opacity: calc(0.82 * (1 - var(--hero-scroll-fade, 0) * 0.85));
         transition: background 0.6s ease;
         transform: translate3d(0, 0, 0);
       }
       body[data-theme="light"] .hero-ambilight-glow {
-        opacity: calc(0.32 * (1 - var(--hero-scroll-fade, 0) * 0.85));
+        opacity: calc(0.42 * (1 - var(--hero-scroll-fade, 0) * 0.85));
         filter: blur(30px) saturate(1.75) brightness(1.05);
       }
       body[data-theme="light"] .hero-ambilight-beams {
@@ -30051,7 +30221,10 @@
         position: relative;
         z-index: 1;
         margin: 0;
-        min-height: clamp(500px, 92dvh, 860px);
+        min-height: 100vh;
+        min-height: 100dvh;
+        height: 100dvh;
+        box-sizing: border-box;
         border-radius: 0;
         border: none;
         background: transparent;
@@ -30059,20 +30232,26 @@
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        padding: 68px 28px 22px;
+        padding: 68px 28px 14px;
         overflow: hidden;
+        touch-action: pan-y;
       }
-      /* Zitterfreier 0,5s Crossfade + sanftes Tiefen-Gleiten + Dual-Artwork (16:9 Widescreen im Querformat, 2:3 Filmcover im Hochformat) */
+      /* Scharfes Slider-Bild: Startet leicht unterhalb der Top-Leisten-Oberkante mit center top (0% Beschnitt oben!) + sanftem Alpha-Fade nach oben in die Bild-Ausfüllung */
       .hero-backdrop-layer {
         position: absolute;
-        inset: 0;
+        top: 32px;
+        left: 0;
+        right: 0;
+        bottom: 0;
         background-image: var(--hero-bg-landscape, none);
         background-size: cover;
-        background-position: center 16%;
+        background-position: center top;
         z-index: 0;
         pointer-events: none;
         opacity: 0;
         filter: brightness(1.08) contrast(1.05) saturate(1.14);
+        -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.46) 24px, rgba(0, 0, 0, 0.88) 54px, #000000 86px);
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.46) 24px, rgba(0, 0, 0, 0.88) 54px, #000000 86px);
         transform: translate3d(14px, 0, 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
@@ -30083,25 +30262,25 @@
         opacity: calc(1 - var(--hero-scroll-fade, 0) * 0.88);
         transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * 26px), 0);
       }
-      /* Durchscheinender oberer Kino-Fade (1-Zeilen-Leiste schwebt direkt im oberen Bildbereich!) + nahtloser unterer Katalog-Fade */
+      /* Sanfter Kino-Fade (oben dezent durchscheinend auf die Ambilight-Bildausfüllung, unten nahtlos in den Katalog) */
       .hero-scrim-layer {
         position: absolute;
         inset: 0;
         z-index: 1;
         pointer-events: none;
         background:
-          linear-gradient(180deg, rgba(4, 7, 15, 0.72) 0%, rgba(4, 7, 15, 0.34) 11%, rgba(4, 7, 15, 0.08) 22%, rgba(4, 7, 15, 0) 34%),
+          linear-gradient(180deg, rgba(4, 7, 15, 0.46) 0%, rgba(4, 7, 15, 0.20) 10%, rgba(4, 7, 15, 0) 24%),
           linear-gradient(0deg, var(--bg) 0%, rgba(6, 9, 17, 0.92) 9%, rgba(6, 9, 17, 0.44) 24%, rgba(6, 9, 17, 0.08) 42%, rgba(6, 9, 17, 0) 58%),
-          linear-gradient(90deg, rgba(4, 7, 15, 0.88) 0%, rgba(4, 7, 15, 0.66) 22%, rgba(4, 7, 15, 0.32) 44%, rgba(4, 7, 15, 0.06) 64%, rgba(4, 7, 15, 0) 78%),
+          linear-gradient(90deg, rgba(4, 7, 15, 0.84) 0%, rgba(4, 7, 15, 0.62) 22%, rgba(4, 7, 15, 0.28) 44%, rgba(4, 7, 15, 0.05) 64%, rgba(4, 7, 15, 0) 78%),
           linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
         transition: background 0.4s ease, opacity 0.4s ease;
       }
       /* Automatische Kontrast-Unterstützung bei extrem hellen Szenenbildern (wie Schnee/Eis in Interstellar) */
       .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
         background:
-          linear-gradient(180deg, rgba(4, 7, 15, 0.82) 0%, rgba(4, 7, 15, 0.48) 13%, rgba(4, 7, 15, 0.16) 26%, rgba(4, 7, 15, 0) 40%),
+          linear-gradient(180deg, rgba(4, 7, 15, 0.62) 0%, rgba(4, 7, 15, 0.32) 12%, rgba(4, 7, 15, 0) 28%),
           linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.95) 11%, rgba(5, 8, 16, 0.52) 27%, rgba(5, 8, 16, 0.12) 45%, rgba(5, 8, 16, 0) 62%),
-          linear-gradient(90deg, rgba(4, 7, 15, 0.94) 0%, rgba(4, 7, 15, 0.80) 26%, rgba(4, 7, 15, 0.44) 48%, rgba(4, 7, 15, 0.10) 68%, rgba(4, 7, 15, 0) 84%),
+          linear-gradient(90deg, rgba(4, 7, 15, 0.92) 0%, rgba(4, 7, 15, 0.76) 26%, rgba(4, 7, 15, 0.42) 48%, rgba(4, 7, 15, 0.10) 68%, rgba(4, 7, 15, 0) 84%),
           linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
       }
       .hero-inner {
@@ -30112,24 +30291,31 @@
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        min-height: clamp(320px, 68dvh, 660px);
+        min-height: clamp(320px, 66dvh, 640px);
         gap: 12px;
         opacity: calc(1 - var(--hero-scroll-fade, 0) * 1.15);
         transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * -20px), 0);
         will-change: opacity, transform;
       }
-      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) mit vertikalem Kino-Verlauf */
+      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten oben + Bild-Ausfüllung hinter der Top-Leiste */
       @media (orientation: portrait), (max-width: 640px) {
+        .hero-ambilight-glow {
+          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape, none)) !important;
+          background-position: center top !important;
+        }
         .hero-backdrop-layer {
+          top: 26px !important;
           background-image: var(--hero-bg-portrait, var(--hero-bg-landscape, none)) !important;
           background-position: center top !important;
           background-size: cover !important;
+          -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.48) 22px, rgba(0, 0, 0, 0.90) 48px, #000000 76px) !important;
+          mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.48) 22px, rgba(0, 0, 0, 0.90) 48px, #000000 76px) !important;
         }
         .hero-scrim-layer,
         .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
           background:
-            linear-gradient(180deg, rgba(4, 7, 15, 0.78) 0%, rgba(4, 7, 15, 0.36) 11%, rgba(4, 7, 15, 0.04) 24%, rgba(4, 7, 15, 0) 42%),
-            linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.96) 14%, rgba(5, 8, 16, 0.76) 30%, rgba(5, 8, 16, 0.28) 46%, rgba(5, 8, 16, 0) 64%) !important;
+            linear-gradient(180deg, rgba(4, 7, 15, 0.50) 0%, rgba(4, 7, 15, 0.20) 10%, rgba(4, 7, 15, 0) 24%),
+            linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.96) 14%, rgba(5, 8, 16, 0.74) 30%, rgba(5, 8, 16, 0.24) 46%, rgba(5, 8, 16, 0) 64%) !important;
         }
       }
       .hero-widescreen-body {
@@ -30319,13 +30505,44 @@
         border-color: rgba(52, 211, 153, 0.72) !important;
         color: #ecfdf5 !important;
       }
-      /* Minimalistische Flixnet-Punktleiste unten mittig: ( ‹ )  • • • • ━━ •  ( › ) */
+      /* Minimalistische Flixnet-Punktleiste unten mittig + animierter "∨" Scroll-Hinweis-Pfeil */
       .hero-bottom-bar {
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
+        gap: 4px;
         width: 100%;
         padding-top: 2px;
+      }
+      .hero-scroll-down-hint {
+        appearance: none;
+        -webkit-appearance: none;
+        border: none;
+        background: transparent;
+        color: rgba(248, 250, 252, 0.86);
+        cursor: pointer;
+        padding: 4px 16px 2px;
+        border-radius: 999px;
+        display: inline-flex;
+         flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        opacity: calc(1 - min(1, var(--hero-scroll-fade, 0) * 3.5));
+        transition: color 0.18s ease, transform 0.18s ease, background 0.18s ease, opacity 0.2s ease;
+        filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.9));
+      }
+      .hero-scroll-down-hint:hover,
+      .hero-scroll-down-hint.spatial-focus {
+        color: #38bdf8;
+        background: rgba(15, 23, 42, 0.48);
+        transform: translateY(2px) scale(1.08);
+      }
+      .hero-scroll-down-chevron {
+        width: 24px;
+        height: 13px;
+        display: block;
+        animation: heroScrollChevronBounce 2s ease-in-out infinite;
       }
       .hero-dots-nav {
         position: relative;
@@ -30609,29 +30826,80 @@
           min-width: var(--top-bar-h) !important;
           padding: 0 !important;
           font-size: 14px !important;
+          transition: width 0.24s cubic-bezier(0.22, 1, 0.36, 1), min-width 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease, transform 0.2s ease;
         }
         header #headerBrandLogo {
           width: var(--top-bar-h);
           min-width: var(--top-bar-h);
           padding: 0;
+          transition: width 0.24s cubic-bezier(0.22, 1, 0.36, 1), min-width 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
+        }
+        header #mediaModeBanner {
+          transition: max-width 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease, padding 0.2s ease;
         }
         .media-mode-tab {
           padding: 0 7px;
           font-size: 13px;
         }
-        .search-scope-select {
-          max-width: 36px;
-          padding: 0 5px;
+        /* Kompaktes Such-Pill im mobilen Ruhezustand: Nur Genre-Emoji ohne abgeschnittenen Text */
+        header:not(.mobile-search-expanded) .search-genre-trigger-label,
+        header:not(.mobile-search-expanded) .search-genre-caret {
+          display: none !important;
+        }
+        header:not(.mobile-search-expanded) .search-genre-trigger-btn {
+          width: 30px;
+          min-width: 30px;
+          max-width: 30px;
+          padding: 0;
+        }
+        header:not(.mobile-search-expanded) .search-input-wrap input {
+          padding: 0 24px 0 7px;
           font-size: 12px;
         }
-        .search-autocomplete-box {
+        /* 100% Vollbreiten-Expansion der mobilen Suchleiste bei Klick/Fokus */
+        header.mobile-search-expanded {
+          gap: 0 !important;
+        }
+        header.mobile-search-expanded #sidebarToggleBtn,
+        header.mobile-search-expanded #headerBrandLogo,
+        header.mobile-search-expanded #mediaModeBanner,
+        header.mobile-search-expanded #navBtnWishlist,
+        header.mobile-search-expanded #heroHideBtn {
+          width: 0 !important;
+          min-width: 0 !important;
+          max-width: 0 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          border-width: 0 !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
+          overflow: hidden !important;
+        }
+        header.mobile-search-expanded .search-bar {
+          flex: 1 1 100% !important;
+          width: 100% !important;
+          border-color: rgba(var(--ambi-2), 0.78);
+        }
+        header.mobile-search-expanded .mobile-search-collapse-btn {
+          display: inline-flex !important;
+        }
+        header.mobile-search-expanded .search-genre-trigger-btn {
+          border-radius: 0;
+          max-width: 118px;
+          padding: 0 7px;
+        }
+        .search-autocomplete-box,
+        .search-genre-dropdown-overlay {
           left: 8px;
           right: 8px;
         }
-        .hero-curtain-shell { margin-top: -48px; margin-bottom: -10px; }
+        .genre-overlay-grid {
+          grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+        }
+        .hero-curtain-shell { margin-top: -48px; margin-bottom: 0px; }
         .hero-stage-wrap { margin: 0; }
-        .hero { min-height: clamp(460px, 88dvh, 760px); padding: 58px 14px 18px; border-radius: 0; }
-        .hero-inner { min-height: clamp(320px, 66dvh, 560px); gap: 8px; }
+        .hero { min-height: 100vh; min-height: 100dvh; height: 100dvh; padding: 58px 14px 10px; border-radius: 0; }
+        .hero-inner { min-height: clamp(320px, 64dvh, 540px); gap: 8px; }
         .hero-title-text { font-size: clamp(24px, 7vw, 34px); }
         .hero-desc { -webkit-line-clamp: 2; font-size: 12.5px; margin-bottom: 8px; }
         .hero-btn-play, .hero-btn-info, .hero-btn-wishlist { padding: 8px 13px !important; font-size: 12px !important; }
@@ -32587,8 +32855,14 @@
           <span class="top-btn-icon">📺</span><span class="top-btn-label"> Serien</span>
         </button>
       </div>
-      <div class="search-bar">
-        <select id="searchGenreSelect" class="search-scope-select" onchange="onSearchGenreSelectChange(this.value)" title="Nach Genre filtern">
+      <div class="search-bar" onclick="if(window.innerWidth<=760 && !document.getElementById('topUnifiedBar')?.classList.contains('mobile-search-expanded')){expandMobileSearchBarClient();}">
+        <button type="button" id="mobileSearchCollapseBtn" class="mobile-search-collapse-btn" onclick="collapseMobileSearchBarClient(event)" title="Suche einklappen" aria-label="Suche einklappen">←</button>
+        <button type="button" id="searchGenreTriggerBtn" class="search-genre-trigger-btn" onclick="toggleSearchGenreDropdownOverlay(event)" title="Nach Genre filtern" aria-haspopup="listbox" aria-expanded="false">
+          <span id="searchGenreTriggerIcon" class="search-genre-trigger-icon">🎞️</span>
+          <span id="searchGenreTriggerLabel" class="search-genre-trigger-label">Alle Genres</span>
+          <span class="search-genre-caret">▾</span>
+        </button>
+        <select id="searchGenreSelect" class="search-scope-select" style="display:none !important" aria-hidden="true" onchange="onSearchGenreSelectChange(this.value)" title="Nach Genre filtern">
           <option value="all">🎞️ Alle Genres</option>
         </select>
         <div class="search-input-wrap">
@@ -32599,14 +32873,15 @@
             onfocus="onSearchInputFocus()"
             onblur="onSearchInputBlur()"
             oninput="onSearchInputLive(this.value)"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();closeAutocomplete();this.blur();runSearch(false,this.value,undefined,true);}"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();closeSearchGenreDropdownOverlay();closeAutocomplete();this.blur();runSearch(false,this.value,undefined,true);}"
           />
           <button type="button" id="searchClearBtn" class="search-clear-btn is-empty" onclick="clearSearchInput()" title="Suchfeld leeren" aria-label="Suchfeld leeren">✕</button>
         </div>
-        <button type="button" class="search-submit-btn" onclick="closeAutocomplete();runSearch()" title="Suche starten" aria-label="Suche starten">🔍</button>
+        <button type="button" class="search-submit-btn" onclick="closeSearchGenreDropdownOverlay();closeAutocomplete();runSearch()" title="Suche starten" aria-label="Suche starten">🔍</button>
       </div>
       <button class="btn" id="navBtnWishlist" onclick="loadWishlist('root')" title="Synchronisierte Merkliste & Playlisten"><span class="top-btn-icon">💾</span><span class="top-btn-label"> Merkliste</span></button>
       <button type="button" id="heroHideBtn" class="hero-hide-btn hero-top-dock-hide-btn" onclick="toggleHeroSliderHidden()" title="Kino-Spotlight ein- oder ausklappen"><span class="top-btn-icon">▴</span><span class="top-btn-label"> Einklappen</span></button>
+      <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen"></div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box"></div>
     </header>
 
@@ -34105,6 +34380,8 @@
       let sidebarFilterDebounceTimer = null;
       let liveSearchDebounceTimer = null;
       let heroTouchStartX = 0;
+      let heroTouchStartY = 0;
+      let heroTouchDraggingUp = false;
       let modalTouchStartX = 0;
       let lastModalTriggerKey = "";
       let lastModalTriggerEl = null;
@@ -34819,12 +35096,15 @@
         heroPointerHovered = Boolean(isHovered);
       }
 
-      function formatCollapsedHeroSearchPlaceholderClient(hero) {
-        if (!hero) return "Film, Serie, Studio, Person oder (Jahr)...";
+      function formatCollapsedHeroSearchPlaceholderClient(hero, isCompactMobilePill) {
+        if (!hero) return isCompactMobilePill ? "Suchen…" : "Film, Serie, Studio, Person oder (Jahr)...";
         const heroType = hero.media_type === "tv" || state.type === "s" ? "s" : "m";
         const isMovie = heroType === "m";
         const titleRaw = String(hero.title || hero.name || "").trim();
-        if (!titleRaw) return "Film, Serie, Studio, Person oder (Jahr)...";
+        if (!titleRaw) return isCompactMobilePill ? "Suchen…" : "Film, Serie, Studio, Person oder (Jahr)...";
+        if (isCompactMobilePill) {
+          return "💡 " + titleRaw;
+        }
         const voteStr = hero.vote_average ? ("★ " + hero.vote_average.toFixed(1)) : "";
         const yearStr = String(hero.release_date || hero.first_air_date || "").slice(0, 4);
         const typeLabel = isMovie ? "Film" : "Serie";
@@ -34834,6 +35114,13 @@
         const genreStr = genreItems.length ? genreItems.map(g => g.name).join(", ") : "";
         const metaParts = [voteStr, yearStr, typeLabel, genreStr].filter(Boolean);
         return "💡 Highlight: " + titleRaw + (metaParts.length ? (" · " + metaParts.join(" · ")) : "") + " — Tippen zum Suchen…";
+      }
+
+      function isMobileCompactSearchPillActiveClient() {
+        const w = window.innerWidth || document.documentElement.clientWidth || 1024;
+        if (w > 760) return false;
+        const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
+        return !(hdr && hdr.classList.contains("mobile-search-expanded"));
       }
 
       function syncHeroSearchPlaceholderAndToggleBtnClient() {
@@ -34856,23 +35143,32 @@
         }
         const inp = document.getElementById("searchInput");
         if (!inp) return;
+        const compactPill = isMobileCompactSearchPillActiveClient();
         const onCatalogDiscover = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
         if (showCompactSpotlightHint && onCatalogDiscover && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
-          inp.placeholder = formatCollapsedHeroSearchPlaceholderClient(hero);
+          inp.placeholder = formatCollapsedHeroSearchPlaceholderClient(hero, compactPill);
           inp.classList.add("hero-placeholder-active");
           const bpUrl = resolveHeroSlideBackdropUrlClient(hero);
           if (bpUrl) applyDynamicHeroAmbilightClient(bpUrl);
         } else {
-          inp.placeholder = "Film, Serie, Studio, Person oder (Jahr)...";
+          inp.placeholder = compactPill ? "Suchen…" : "Film, Serie, Studio, Person oder (Jahr)...";
           inp.classList.remove("hero-placeholder-active");
         }
       }
 
+      window.addEventListener("resize", () => {
+        if ((window.innerWidth || 1024) > 760) {
+          const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
+          if (hdr) hdr.classList.remove("mobile-search-expanded");
+        }
+        syncHeroSearchPlaceholderAndToggleBtnClient();
+      }, { passive: true });
+
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
         const y = window.scrollY || window.pageYOffset || 0;
-        document.body.classList.toggle("page-scrolled", y > 14);
+        document.body.classList.toggle("page-scrolled", y > 10);
         const stageWrap = document.getElementById("heroStageWrapEl");
         if (!stageWrap || state.heroHidden || state.isSearchMode) {
           if (stageWrap) stageWrap.style.setProperty("--hero-scroll-fade", "0");
@@ -34882,7 +35178,7 @@
           }
           return;
         }
-        const heroH = Math.max(280, stageWrap.offsetHeight || 520);
+        const heroH = Math.max(280, stageWrap.offsetHeight || window.innerHeight || 580);
         const fade = Math.max(0, Math.min(1, y / (heroH * 0.72)));
         stageWrap.style.setProperty("--hero-scroll-fade", fade.toFixed(3));
         const scrolledPastNow = fade >= 0.65;
@@ -34890,6 +35186,23 @@
         if (scrolledPastNow !== wasScrolledPast) {
           document.body.classList.toggle("hero-scrolled-past", scrolledPastNow);
           syncHeroSearchPlaceholderAndToggleBtnClient();
+        }
+      }
+
+      function scrollToCatalogBelowHeroClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (document.body) document.body.classList.add("page-scrolled");
+        const stageWrap = document.getElementById("heroStageWrapEl");
+        const topBarH = (document.getElementById("topUnifiedBar")?.offsetHeight) || 50;
+        const heroH = stageWrap ? stageWrap.offsetHeight : (window.innerHeight || 640);
+        const targetScrollY = Math.max(120, heroH - topBarH);
+        const maxScroll = Math.max(0, (document.documentElement.scrollHeight || document.body.scrollHeight || 0) - (window.innerHeight || 0));
+        if (maxScroll >= 80) {
+          window.scrollTo({ top: Math.min(targetScrollY, maxScroll), behavior: "smooth" });
+          setTimeout(syncHeroScrollFadeAndTopBarStateClient, 120);
+          setTimeout(syncHeroScrollFadeAndTopBarStateClient, 360);
+        } else {
+          toggleHeroSliderHidden(true);
         }
       }
 
@@ -34993,14 +35306,75 @@
         }
       }
 
+      function triggerHeroSwipeUpCollapseClient() {
+        if (state.isSearchMode || state.heroHidden) return;
+        if (document.body) document.body.classList.add("page-scrolled");
+        scrollToCatalogBelowHeroClient();
+      }
+
+      window.__tmaHandleHeroSwipe = function(direction) {
+        if (direction === "up") {
+          triggerHeroSwipeUpCollapseClient();
+        } else if (direction === "down") {
+          if (state.heroHidden && !state.isSearchMode) {
+            toggleHeroSliderHidden(false);
+          } else if ((window.scrollY || window.pageYOffset || 0) > 10) {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        } else if (direction === "left") {
+          setHeroSlideIndex(state.heroIndex + 1);
+        } else if (direction === "right") {
+          setHeroSlideIndex(state.heroIndex - 1);
+        }
+      };
+
+      window.addEventListener("message", (ev) => {
+        const d = ev && ev.data;
+        if (d && d.type === "TMA_HERO_SWIPE_GESTURE" && d.direction) {
+          window.__tmaHandleHeroSwipe(d.direction);
+        }
+      });
+
       function onHeroTouchStart(ev) {
-        if (ev.touches && ev.touches[0]) heroTouchStartX = ev.touches[0].clientX;
+        if (ev.touches && ev.touches[0]) {
+          heroTouchStartX = ev.touches[0].clientX;
+          heroTouchStartY = ev.touches[0].clientY;
+          heroTouchDraggingUp = false;
+        }
+      }
+      function onHeroTouchMove(ev) {
+        if (!heroTouchStartX || !heroTouchStartY || !ev.touches || !ev.touches[0]) return;
+        const dx = ev.touches[0].clientX - heroTouchStartX;
+        const dy = ev.touches[0].clientY - heroTouchStartY;
+        if (dy < -10 && Math.abs(dy) > Math.abs(dx) * 1.15 && !state.heroHidden && !state.isSearchMode) {
+          heroTouchDraggingUp = true;
+          if (document.body) document.body.classList.add("page-scrolled");
+          const stageWrap = document.getElementById("heroStageWrapEl");
+          if (stageWrap) {
+            const heroH = Math.max(280, stageWrap.offsetHeight || window.innerHeight || 580);
+            const dragFade = Math.max(0, Math.min(0.85, Math.abs(dy) / (heroH * 0.45)));
+            const scrollY = window.scrollY || window.pageYOffset || 0;
+            const baseFade = Math.max(0, Math.min(1, scrollY / (heroH * 0.72)));
+            stageWrap.style.setProperty("--hero-scroll-fade", Math.max(baseFade, dragFade).toFixed(3));
+          }
+        }
       }
       function onHeroTouchEnd(ev) {
         if (!heroTouchStartX || !ev.changedTouches || !ev.changedTouches[0]) return;
         const dx = ev.changedTouches[0].clientX - heroTouchStartX;
+        const dy = heroTouchStartY ? (ev.changedTouches[0].clientY - heroTouchStartY) : 0;
+        const wasDraggingUp = heroTouchDraggingUp;
         heroTouchStartX = 0;
-        if (Math.abs(dx) > 40) {
+        heroTouchStartY = 0;
+        heroTouchDraggingUp = false;
+        if (dy < -42 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          triggerHeroSwipeUpCollapseClient();
+          return;
+        }
+        if (wasDraggingUp) {
+          syncHeroScrollFadeAndTopBarStateClient();
+        }
+        if (Math.abs(dx) > 40 && Math.abs(dx) >= Math.abs(dy)) {
           setHeroSlideIndex(state.heroIndex + (dx < 0 ? 1 : -1));
         }
       }
@@ -35278,9 +35652,9 @@
         return '<div id="heroCurtainShell" class="hero-curtain-shell' + collapsedClass + '">' +
           '<div class="hero-curtain-inner">' +
             '<div id="heroStageWrapEl" class="hero-stage-wrap' + brightClass + '" style="' + ambiStyleVars + '">' +
-              '<div id="heroAmbilightEl" class="hero-ambilight-glow" style="background-image:' + (backdropUrl ? ('url(' + esc(backdropUrl) + ')') : 'none') + '"></div>' +
+              '<div id="heroAmbilightEl" class="hero-ambilight-glow" style="' + layerAStyle + '"></div>' +
               '<div id="heroAmbilightBeamsEl" class="hero-ambilight-beams"></div>' +
-              '<div class="hero" onmouseenter="setHeroPointerHover(true)" onmouseleave="setHeroPointerHover(false)" ontouchstart="onHeroTouchStart(event)" ontouchend="onHeroTouchEnd(event)">' +
+              '<div class="hero" onmouseenter="setHeroPointerHover(true)" onmouseleave="setHeroPointerHover(false)" ontouchstart="onHeroTouchStart(event)" ontouchmove="onHeroTouchMove(event)" ontouchend="onHeroTouchEnd(event)">' +
                 '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer" style="' + layerAStyle + '"></div>' +
                 '<div id="heroBackdropLayerB" class="hero-backdrop-layer" style="--hero-bg-landscape:none;--hero-bg-portrait:none"></div>' +
                 '<div class="hero-scrim-layer"></div>' +
@@ -35300,7 +35674,14 @@
                       '</div>' +
                     '</div>' +
                   '</div>' +
-                  (thumbsNavHtml ? '<div class="hero-bottom-bar">' + thumbsNavHtml + '</div>' : '') +
+                  '<div class="hero-bottom-bar">' +
+                    thumbsNavHtml +
+                    '<button type="button" id="heroScrollDownHintBtn" class="hero-scroll-down-hint" onclick="scrollToCatalogBelowHeroClient(event)" title="Nach unten zu den Filmen & Serien scrollen" aria-label="Nach unten zu den Filmen & Serien scrollen">' +
+                      '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+                        '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
+                      '</svg>' +
+                    '</button>' +
+                  '</div>' +
                 '</div>' +
               '</div>' +
             '</div>' +
@@ -35341,10 +35722,11 @@
             const heroCardKey = heroType + "_" + hero.id;
             const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
 
-            // 1. Dynamisches Ambilight (Farb-Extraktion + Backdrop-Halo + Helligkeits-Check) + 0,5s Crossfade
+            // 1. Dynamisches Ambilight (Farb-Extraktion + Backdrop/Poster-Halo hinter der Top-Leiste + Helligkeits-Check) + 0,5s Crossfade
             const ambiEl = document.getElementById("heroAmbilightEl");
             if (ambiEl) {
-              ambiEl.style.backgroundImage = backdropUrl ? ("url(" + backdropUrl + ")") : "none";
+              ambiEl.style.setProperty("--hero-bg-landscape", backdropUrl ? ("url(" + backdropUrl + ")") : "none");
+              ambiEl.style.setProperty("--hero-bg-portrait", posterUrl ? ("url(" + posterUrl + ")") : "none");
             }
             if (backdropUrl) {
               applyDynamicHeroAmbilightClient(backdropUrl);
@@ -35458,24 +35840,160 @@
       // =========================================================================
       function syncSearchGenreSelectDom() {
         const sel = document.getElementById("searchGenreSelect");
-        if (!sel) return;
+        const trigBtn = document.getElementById("searchGenreTriggerBtn");
+        const trigIcon = document.getElementById("searchGenreTriggerIcon");
+        const trigLabel = document.getElementById("searchGenreTriggerLabel");
+        const overlayEl = document.getElementById("searchGenreDropdownOverlay");
         const isMovie = state.type !== "s";
         const gMap = (state.genres && Object.keys(state.genres).length > 0)
           ? state.genres
           : (isMovie ? MOVIE_GENRES_CLIENT : SERIES_GENRES_CLIENT);
         const curGenreId = String(state.genreId || "all");
+        let activeName = "Alle Genres";
+        let activeEmoji = "🎞️";
         let optsHtml = '<option value="all"' + (curGenreId === "all" ? ' selected' : '') + '>🎞️ Alle Genres</option>';
         Object.entries(gMap || {}).forEach(([gName, gId]) => {
           const idStr = String(gId);
-          optsHtml += '<option value="' + esc(idStr) + '"' + (curGenreId === idStr ? ' selected' : '') + '>' + genreEmoji(gName) + ' ' + esc(gName) + '</option>';
+          const em = genreEmoji(gName);
+          if (curGenreId === idStr) {
+            activeName = gName;
+            activeEmoji = em;
+          }
+          optsHtml += '<option value="' + esc(idStr) + '"' + (curGenreId === idStr ? ' selected' : '') + '>' + em + ' ' + esc(gName) + '</option>';
         });
-        sel.innerHTML = optsHtml;
-        sel.value = curGenreId;
+        if (sel) {
+          sel.innerHTML = optsHtml;
+          sel.value = curGenreId;
+        }
+        if (trigIcon) trigIcon.textContent = activeEmoji;
+        if (trigLabel) trigLabel.textContent = activeName;
+        if (trigBtn) {
+          const hasActive = curGenreId !== "all";
+          trigBtn.classList.toggle("has-active-genre", hasActive);
+          trigBtn.title = hasActive ? ("Aktives Genre: " + activeName + " (Tippen zum Ändern)") : "Nach Genre filtern";
+        }
+        if (overlayEl && overlayEl.classList.contains("open")) {
+          renderSearchGenreDropdownOverlayContent();
+        }
       }
+
+      function renderSearchGenreDropdownOverlayContent() {
+        const overlayEl = document.getElementById("searchGenreDropdownOverlay");
+        if (!overlayEl) return;
+        const isMovie = state.type !== "s";
+        const gMap = (state.genres && Object.keys(state.genres).length > 0)
+          ? state.genres
+          : (isMovie ? MOVIE_GENRES_CLIENT : SERIES_GENRES_CLIENT);
+        const curGenreId = String(state.genreId || "all");
+        let chipsHtml = '<button type="button" class="genre-overlay-chip ' + (curGenreId === "all" ? "active" : "") + '" onclick="selectGenreFromSearchOverlay(\\'all\\')">' +
+          '<span>🎞️</span><span>Alle Genres</span>' +
+        '</button>';
+        Object.entries(gMap || {}).forEach(([gName, gId]) => {
+          const idStr = String(gId);
+          const em = genreEmoji(gName);
+          chipsHtml += '<button type="button" class="genre-overlay-chip ' + (curGenreId === idStr ? "active" : "") + '" onclick="selectGenreFromSearchOverlay(\\'' + esc(idStr) + '\\')">' +
+            '<span>' + em + '</span><span>' + esc(gName) + '</span>' +
+          '</button>';
+        });
+        overlayEl.innerHTML =
+          '<div class="genre-overlay-header">' +
+            '<span class="genre-overlay-title">🎞️ Genre wählen (' + (isMovie ? 'Filme' : 'Serien') + ')</span>' +
+            '<button type="button" class="genre-overlay-close-btn" onclick="closeSearchGenreDropdownOverlay()">✕ Schließen</button>' +
+          '</div>' +
+          '<div class="genre-overlay-grid">' + chipsHtml + '</div>';
+      }
+
+      function toggleSearchGenreDropdownOverlay(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const overlayEl = document.getElementById("searchGenreDropdownOverlay");
+        const trigBtn = document.getElementById("searchGenreTriggerBtn");
+        if (!overlayEl) return;
+        const willOpen = !overlayEl.classList.contains("open");
+        if (willOpen) {
+          closeAutocomplete();
+          if ((window.innerWidth || 1024) <= 760) {
+            expandMobileSearchBarClient(false);
+          }
+          renderSearchGenreDropdownOverlayContent();
+          overlayEl.classList.add("open");
+          if (trigBtn) {
+            trigBtn.classList.add("is-open");
+            trigBtn.setAttribute("aria-expanded", "true");
+          }
+        } else {
+          closeSearchGenreDropdownOverlay();
+        }
+      }
+
+      function closeSearchGenreDropdownOverlay() {
+        const overlayEl = document.getElementById("searchGenreDropdownOverlay");
+        const trigBtn = document.getElementById("searchGenreTriggerBtn");
+        if (overlayEl) {
+          overlayEl.classList.remove("open");
+        }
+        if (trigBtn) {
+          trigBtn.classList.remove("is-open");
+          trigBtn.setAttribute("aria-expanded", "false");
+        }
+      }
+
+      function selectGenreFromSearchOverlay(genreVal) {
+        closeSearchGenreDropdownOverlay();
+        onSearchGenreSelectChange(genreVal);
+        const inp = document.getElementById("searchInput");
+        if (!inp || !inp.value.trim()) {
+          collapseMobileSearchBarClient();
+        }
+      }
+
+      function expandMobileSearchBarClient(focusInput = true) {
+        const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
+        if (hdr && (window.innerWidth || 1024) <= 760) {
+          hdr.classList.add("mobile-search-expanded");
+          syncHeroSearchPlaceholderAndToggleBtnClient();
+        }
+        if (focusInput) {
+          const inp = document.getElementById("searchInput");
+          if (inp && document.activeElement !== inp) {
+            try { inp.focus(); } catch (e) {}
+          }
+        }
+      }
+
+      function collapseMobileSearchBarClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        closeSearchGenreDropdownOverlay();
+        closeAutocomplete();
+        const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
+        if (hdr) {
+          hdr.classList.remove("mobile-search-expanded");
+        }
+        const inp = document.getElementById("searchInput");
+        if (inp && document.activeElement === inp) {
+          try { inp.blur(); } catch (e) {}
+        }
+        syncHeroSearchPlaceholderAndToggleBtnClient();
+      }
+
+      document.addEventListener("click", (ev) => {
+        const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
+        if (!hdr) return;
+        const t = ev.target;
+        if (t && typeof t.closest === "function" && !t.closest("#topUnifiedBar")) {
+          closeSearchGenreDropdownOverlay();
+          const inp = document.getElementById("searchInput");
+          const hasText = Boolean(inp && inp.value && inp.value.trim().length > 0);
+          if (!hasText) {
+            hdr.classList.remove("mobile-search-expanded");
+            syncHeroSearchPlaceholderAndToggleBtnClient();
+          }
+        }
+      });
 
       async function onSearchGenreSelectChange(genreVal) {
         const val = String(genreVal || "all");
         state.genreId = val;
+        syncSearchGenreSelectDom();
         const isMovie = state.type !== "s";
         const gMap = (state.genres && Object.keys(state.genres).length > 0)
           ? state.genres
@@ -35521,6 +36039,8 @@
 
       function pushHistory(fn) { state.history.push(fn); }
       function goBack() {
+        if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) { closeSearchGenreDropdownOverlay(); return; }
+        if (document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded")) { collapseMobileSearchBarClient(); return; }
         if (document.getElementById("customDialogRoot")?.innerHTML) { closeCustomDialog(null); return; }
         if (state.sidebarOpen) { closeFilterSidebar(); return; }
         if (document.getElementById("lightboxRoot").innerHTML) { closeLightbox(); return; }
@@ -35544,6 +36064,8 @@
         const inp = document.getElementById("searchInput");
         if (inp) inp.value = "";
         updateSearchClearBtnVisibility();
+        closeSearchGenreDropdownOverlay();
+        collapseMobileSearchBarClient();
         closeLightbox();
         document.getElementById("modalRoot").innerHTML = "";
         loadDiscover(state.type || "m", "all", "trend", "default");
@@ -35576,6 +36098,8 @@
         const inp = document.getElementById("searchInput");
         if (inp) inp.value = "";
         updateSearchClearBtnVisibility();
+        closeSearchGenreDropdownOverlay();
+        collapseMobileSearchBarClient();
         closeLightbox();
         document.getElementById("modalRoot").innerHTML = "";
         setBusyState(true, "🔄 Setze alle Filter zurück & starte Mini-App neu...");
@@ -35646,6 +36170,8 @@
       }
 
       function onSearchInputFocus() {
+        closeSearchGenreDropdownOverlay();
+        expandMobileSearchBarClient(false);
         updateSearchClearBtnVisibility();
         state.searchFocused = true;
       }
@@ -35655,8 +36181,14 @@
           const inp = document.getElementById("searchInput");
           const val = (inp ? inp.value : "").trim();
           updateSearchClearBtnVisibility();
+          const genreOverlayOpen = Boolean(document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open"));
           if (!val && !state.isSearchMode) {
             state.searchFocused = false;
+            if (!genreOverlayOpen && document.activeElement !== inp) {
+              const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
+              if (hdr) hdr.classList.remove("mobile-search-expanded");
+              syncHeroSearchPlaceholderAndToggleBtnClient();
+            }
           }
           closeAutocomplete();
         }, 220);
@@ -49378,7 +49910,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -49786,7 +50318,7 @@
         }
 
         // Referenzen auf die Suchleiste & Kopfzeile
-        const sScope = document.getElementById("searchGenreSelect") || document.getElementById("searchScopeSelect");
+        const sScope = document.getElementById("searchGenreTriggerBtn") || document.getElementById("searchGenreSelect") || document.getElementById("searchScopeSelect");
         const sInp = document.getElementById("searchInput");
         const sClear = document.getElementById("searchClearBtn") || document.querySelector(".search-clear-btn");
         const sSub = document.querySelector(".search-submit-btn");
@@ -49873,7 +50405,7 @@
             }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
             // 2. Fokus auf der Punktleiste (< • • • • ━━ • >):
-            // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Enter fokussiert ebenfalls "▶ Trailer"!
+            // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Runter öffnet/fokussiert den "∨" Scroll-Pfeil bzw. den Katalog!
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
@@ -49884,6 +50416,22 @@
               if (trBtn) { setSpatialFocus(trBtn, true); return; }
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
               if (focusSearchOrHeaderUp()) return;
+            }
+            if (dir === "down") {
+              if (document.body) document.body.classList.add("page-scrolled");
+              const hintBtn = document.getElementById("heroScrollDownHintBtn");
+              if (hintBtn) { setSpatialFocus(hintBtn, true); return; }
+            }
+          } else if (currentSpatialEl.id === "heroScrollDownHintBtn" || currentSpatialEl.classList.contains("hero-scroll-down-hint")) {
+            if (dir === "up") {
+              if (actDot) { setSpatialFocus(actDot, true); return; }
+              if (trBtn) { setSpatialFocus(trBtn, true); return; }
+            }
+            if (dir === "down") {
+              if (document.body) document.body.classList.add("page-scrolled");
+              if (typeof scrollToCatalogBelowHeroClient === "function") {
+                scrollToCatalogBelowHeroClient();
+              }
             }
           }
         }
@@ -49898,8 +50446,10 @@
         // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen)
         const topHideBtn = document.getElementById("heroHideBtn");
         const topHideVisible = Boolean(topHideBtn && list.includes(topHideBtn));
+        const mobCollapseBtn = document.getElementById("mobileSearchCollapseBtn");
         const inHeader = Boolean(
           (currentSpatialEl.closest && (currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))) ||
+          currentSpatialEl === mobCollapseBtn ||
           currentSpatialEl === sScope ||
           currentSpatialEl === sInp ||
           currentSpatialEl === sClear ||
@@ -49913,6 +50463,7 @@
               document.getElementById("headerBrandLogo"),
               document.getElementById("tabBtnMovies"),
               document.getElementById("tabBtnSeries"),
+              mobCollapseBtn,
               sScope,
               sInp,
               sClearVisible ? sClear : null,
@@ -49936,6 +50487,11 @@
             return;
           }
           if (dir === "down") {
+            const firstGenreChip = document.querySelector("#searchGenreDropdownOverlay.open .genre-overlay-chip.active, #searchGenreDropdownOverlay.open .genre-overlay-chip");
+            if (firstGenreChip && list.includes(firstGenreChip)) {
+              setSpatialFocus(firstGenreChip, true);
+              return;
+            }
             const firstAc = document.querySelector("#searchAutocompleteBox.open .ac-item");
             if (firstAc && list.includes(firstAc)) {
               setSpatialFocus(firstAc, true);
@@ -50291,8 +50847,18 @@
             ev.preventDefault();
             return;
           }
+          if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) {
+            if (typeof closeSearchGenreDropdownOverlay === "function") closeSearchGenreDropdownOverlay();
+            ev.preventDefault();
+            return;
+          }
           if (document.getElementById("searchAutocompleteBox")?.classList.contains("open")) {
             closeAutocomplete();
+            ev.preventDefault();
+            return;
+          }
+          if (document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") && !String(document.getElementById("searchInput")?.value || "").trim()) {
+            if (typeof collapseMobileSearchBarClient === "function") collapseMobileSearchBarClient(true);
             ev.preventDefault();
             return;
           }

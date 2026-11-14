@@ -24,6 +24,121 @@ interface NetflixTmaSimulatorProps {
 type ViewportPreset = 'full' | 'tv' | 'mobile';
 type AuthPersona = 'admin_vip' | 'standard_user' | 'external_guest';
 
+export interface UseSwipeableOptions {
+  onSwipedUp?: (deltaY: number) => void;
+  onSwipedDown?: (deltaY: number) => void;
+  onSwipedLeft?: (deltaX: number) => void;
+  onSwipedRight?: (deltaX: number) => void;
+  onSwipingVertical?: (deltaY: number) => void;
+  minDistance?: number;
+  trackMouse?: boolean;
+}
+
+export function useSwipeable(
+  iframeRef: React.RefObject<HTMLIFrameElement | null>,
+  srcDocDependency: string,
+  options: UseSwipeableOptions
+) {
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    let cleanupDocListeners: (() => void) | null = null;
+
+    const attachToIframeDoc = () => {
+      if (cleanupDocListeners) {
+        cleanupDocListeners();
+        cleanupDocListeners = null;
+      }
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!doc) return;
+
+      let startX = 0;
+      let startY = 0;
+      let isTracking = false;
+      let startedInHero = false;
+
+      const isTargetInsideHero = (target: EventTarget | null): boolean => {
+        if (!target || !(target instanceof Element)) return false;
+        if (target.closest('button, a, input, select, textarea')) return false;
+        return Boolean(target.closest('.hero, #heroStageWrapEl, #heroBannerSlot'));
+      };
+
+      const onPointerDown = (ev: PointerEvent) => {
+        if (ev.pointerType === 'mouse' && !(optionsRef.current.trackMouse ?? true)) return;
+        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        if (!isTargetInsideHero(ev.target)) return;
+        startX = ev.clientX;
+        startY = ev.clientY;
+        isTracking = true;
+        startedInHero = true;
+      };
+
+      const onPointerMove = (ev: PointerEvent) => {
+        if (!isTracking || !startedInHero) return;
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        if (dy < -10 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          optionsRef.current.onSwipingVertical?.(dy);
+        }
+      };
+
+      const onPointerUp = (ev: PointerEvent) => {
+        if (!isTracking || !startedInHero) return;
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        isTracking = false;
+        startedInHero = false;
+        const threshold = optionsRef.current.minDistance ?? 42;
+
+        if (Math.abs(dy) >= threshold && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          if (dy < 0) {
+            optionsRef.current.onSwipedUp?.(dy);
+          } else {
+            optionsRef.current.onSwipedDown?.(dy);
+          }
+        } else if (Math.abs(dx) >= threshold && Math.abs(dx) > Math.abs(dy)) {
+          if (dx < 0) {
+            optionsRef.current.onSwipedLeft?.(dx);
+          } else {
+            optionsRef.current.onSwipedRight?.(dx);
+          }
+        }
+      };
+
+      const onPointerCancel = () => {
+        isTracking = false;
+        startedInHero = false;
+      };
+
+      doc.addEventListener('pointerdown', onPointerDown, { passive: true });
+      doc.addEventListener('pointermove', onPointerMove, { passive: true });
+      doc.addEventListener('pointerup', onPointerUp, { passive: true });
+      doc.addEventListener('pointercancel', onPointerCancel, { passive: true });
+
+      cleanupDocListeners = () => {
+        doc.removeEventListener('pointerdown', onPointerDown);
+        doc.removeEventListener('pointermove', onPointerMove);
+        doc.removeEventListener('pointerup', onPointerUp);
+        doc.removeEventListener('pointercancel', onPointerCancel);
+      };
+    };
+
+    iframe.addEventListener('load', attachToIframeDoc);
+    attachToIframeDoc();
+
+    return () => {
+      iframe.removeEventListener('load', attachToIframeDoc);
+      if (cleanupDocListeners) cleanupDocListeners();
+    };
+  }, [iframeRef, srcDocDependency]);
+}
+
 export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   workerCode,
   envVars,
@@ -278,6 +393,36 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   useEffect(() => {
     loadMiniApp(false);
   }, [loadMiniApp]);
+
+  const dispatchHeroSwipeToIframe = useCallback((direction: 'up' | 'down' | 'left' | 'right') => {
+    const win = iframeRef.current?.contentWindow as (Window & { __tmaHandleHeroSwipe?: (dir: string) => void }) | null;
+    if (!win) return;
+    if (typeof win.__tmaHandleHeroSwipe === 'function') {
+      win.__tmaHandleHeroSwipe(direction);
+    } else {
+      win.postMessage({ type: 'TMA_HERO_SWIPE_GESTURE', direction }, '*');
+    }
+  }, []);
+
+  useSwipeable(iframeRef, srcDocHtml, {
+    minDistance: 42,
+    trackMouse: true,
+    onSwipingVertical: (deltaY) => {
+      const doc = iframeRef.current?.contentDocument;
+      if (!doc || deltaY >= -10) return;
+      doc.body?.classList.add('page-scrolled');
+      const stageWrap = doc.getElementById('heroStageWrapEl');
+      if (stageWrap) {
+        const heroH = Math.max(280, stageWrap.offsetHeight || 580);
+        const dragFade = Math.max(0, Math.min(0.85, Math.abs(deltaY) / (heroH * 0.45)));
+        stageWrap.style.setProperty('--hero-scroll-fade', dragFade.toFixed(3));
+      }
+    },
+    onSwipedUp: () => dispatchHeroSwipeToIframe('up'),
+    onSwipedDown: () => dispatchHeroSwipeToIframe('down'),
+    onSwipedLeft: () => dispatchHeroSwipeToIframe('left'),
+    onSwipedRight: () => dispatchHeroSwipeToIframe('right'),
+  });
 
   // Listen for fetch requests coming from inside the simulated STREAMFLIX iframe
   useEffect(() => {
