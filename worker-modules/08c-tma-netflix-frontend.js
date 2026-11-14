@@ -7228,98 +7228,18 @@
           if (focusSearchOrHeaderUp()) return;
         }
 
-        // Direkte Nachbarschaft in der einheitlichen Suchleiste (.search-bar-outer inkl. #heroHideBtn), damit #searchInput niemals übersprungen wird
+        // Einzeilige Top-Leiste (<header id="topUnifiedBar" class="search-bar-outer">):
+        // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen)
         const topHideBtn = document.getElementById("heroHideBtn");
         const topHideVisible = Boolean(topHideBtn && list.includes(topHideBtn));
-        const inSearchBar = Boolean(
+        const inHeader = Boolean(
+          (currentSpatialEl.closest && (currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))) ||
           currentSpatialEl === sScope ||
           currentSpatialEl === sInp ||
           currentSpatialEl === sClear ||
           currentSpatialEl === sSub ||
           currentSpatialEl === topHideBtn
         );
-        if (inSearchBar) {
-          if (dir === "right" && currentSpatialEl === sScope && sInp) {
-            setSpatialFocus(sInp, true);
-            return;
-          }
-          if (dir === "right" && currentSpatialEl === sInp) {
-            if (sClearVisible) { setSpatialFocus(sClear, true); return; }
-            if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
-            if (topHideVisible) { setSpatialFocus(topHideBtn, true); return; }
-          }
-          if (dir === "right" && currentSpatialEl === sClear) {
-            if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
-            if (topHideVisible) { setSpatialFocus(topHideBtn, true); return; }
-          }
-          if (dir === "right" && currentSpatialEl === sSub && topHideVisible) {
-            setSpatialFocus(topHideBtn, true);
-            return;
-          }
-          if (dir === "left" && currentSpatialEl === topHideBtn) {
-            if (sSub && list.includes(sSub)) { setSpatialFocus(sSub, true); return; }
-            if (sClearVisible) { setSpatialFocus(sClear, true); return; }
-            if (sInp) { setSpatialFocus(sInp, true); return; }
-          }
-          if (dir === "left" && currentSpatialEl === sSub) {
-            if (sClearVisible) { setSpatialFocus(sClear, true); return; }
-            if (sInp) { setSpatialFocus(sInp, true); return; }
-          }
-          if (dir === "left" && currentSpatialEl === sClear && sInp) {
-            setSpatialFocus(sInp, true);
-            return;
-          }
-          if (dir === "left" && currentSpatialEl === sInp && sScope && list.includes(sScope)) {
-            setSpatialFocus(sScope, true);
-            return;
-          }
-          if (dir === "up") {
-            const menuBtn = document.getElementById("sidebarToggleBtn");
-            const wlBtn = document.getElementById("navBtnWishlist");
-            const activeTab = document.querySelector(".media-mode-tab.active-movie, .media-mode-tab.active-series, .media-mode-tab");
-            if (currentSpatialEl === sScope && menuBtn && list.includes(menuBtn)) {
-              setSpatialFocus(menuBtn, true);
-              return;
-            }
-            if ((currentSpatialEl === sSub || currentSpatialEl === sClear) && wlBtn && list.includes(wlBtn)) {
-              setSpatialFocus(wlBtn, true);
-              return;
-            }
-            if (activeTab && list.includes(activeTab)) {
-              setSpatialFocus(activeTab, true);
-              return;
-            }
-            if (menuBtn && list.includes(menuBtn)) {
-              setSpatialFocus(menuBtn, true);
-              return;
-            }
-          }
-          if (dir === "down") {
-            const firstAc = document.querySelector("#searchAutocompleteBox.open .ac-item");
-            if (firstAc && list.includes(firstAc)) {
-              setSpatialFocus(firstAc, true);
-              return;
-            }
-            const heroTr = document.getElementById("heroBtnTrailer");
-            const heroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
-            if (heroTr && list.includes(heroTr)) {
-              setSpatialFocus(heroTr, true);
-              return;
-            }
-            if (heroDot && list.includes(heroDot)) {
-              setSpatialFocus(heroDot, true);
-              return;
-            }
-            const restoreBtn = document.getElementById("heroRestoreBtn");
-            if (restoreBtn && list.includes(restoreBtn)) {
-              setSpatialFocus(restoreBtn, true);
-              return;
-            }
-          }
-        }
-
-        // Deterministische Links/Rechts-Reihenfolge & Runter-Sprung in der obersten Kopfzeile (<header>) inkl. TelePort-Logo (#headerBrandLogo)
-        const inHeader = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("header"));
         if (inHeader) {
           if (dir === "left" || dir === "right") {
             const headerOrder = [
@@ -7327,7 +7247,12 @@
               document.getElementById("headerBrandLogo"),
               document.getElementById("tabBtnMovies"),
               document.getElementById("tabBtnSeries"),
-              document.getElementById("navBtnWishlist")
+              sScope,
+              sInp,
+              sClearVisible ? sClear : null,
+              sSub,
+              document.getElementById("navBtnWishlist"),
+              topHideVisible ? topHideBtn : null
             ].filter(el => el && list.includes(el));
             const hIdx = headerOrder.indexOf(currentSpatialEl);
             if (hIdx !== -1) {
@@ -7338,14 +7263,35 @@
               return;
             }
           }
+          if (dir === "up") {
+            if ((window.scrollY || window.pageYOffset || 0) > 10) {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }
+            return;
+          }
           if (dir === "down") {
-            if (currentSpatialEl.id === "sidebarToggleBtn" && sScope && list.includes(sScope)) {
-              setSpatialFocus(sScope, true);
+            const firstAc = document.querySelector("#searchAutocompleteBox.open .ac-item");
+            if (firstAc && list.includes(firstAc)) {
+              setSpatialFocus(firstAc, true);
               return;
             }
-            if (sInp && list.includes(sInp)) {
-              setSpatialFocus(sInp, true);
-              return;
+            const isScrolledPastHero = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
+            if (!isScrolledPastHero) {
+              const heroTr = document.getElementById("heroBtnTrailer");
+              const heroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
+              if (heroTr && list.includes(heroTr)) {
+                setSpatialFocus(heroTr, true);
+                return;
+              }
+              if (heroDot && list.includes(heroDot)) {
+                setSpatialFocus(heroDot, true);
+                return;
+              }
+              const restoreBtn = document.getElementById("heroRestoreBtn");
+              if (restoreBtn && list.includes(restoreBtn)) {
+                setSpatialFocus(restoreBtn, true);
+                return;
+              }
             }
           }
         }
@@ -7556,6 +7502,76 @@
         }, HOLD_NAV_DURATION_MS);
       }
 
+      let topBarUpHoldTimer = null;
+      let topBarUpHoldShowTimer = null;
+      let topBarUpHoldActive = false;
+      let topBarUpHoldTriggered = false;
+      const TOP_BAR_HOLD_DURATION_MS = 400;
+      const TOP_BAR_HOLD_SHOW_DELAY_MS = 120;
+
+      function cancelTopBarUpHold() {
+        if (topBarUpHoldTimer) {
+          clearTimeout(topBarUpHoldTimer);
+          topBarUpHoldTimer = null;
+        }
+        if (topBarUpHoldShowTimer) {
+          clearTimeout(topBarUpHoldShowTimer);
+          topBarUpHoldShowTimer = null;
+        }
+        if (topBarUpHoldActive) {
+          topBarUpHoldActive = false;
+          const ind = document.getElementById("modalHoldNavIndicator");
+          const bar = document.getElementById("modalHoldNavBar");
+          if (ind && !modalHoldActiveKey) {
+            ind.style.display = "none";
+            ind.classList.remove("left", "right");
+          }
+          if (bar && !modalHoldActiveKey) {
+            bar.style.transition = "none";
+            bar.style.width = "0%";
+          }
+        }
+        topBarUpHoldTriggered = false;
+      }
+
+      function startTopBarUpHold() {
+        cancelTopBarUpHold();
+        topBarUpHoldActive = true;
+        topBarUpHoldTriggered = false;
+        topBarUpHoldShowTimer = setTimeout(() => {
+          topBarUpHoldShowTimer = null;
+          if (!topBarUpHoldActive || topBarUpHoldTriggered) return;
+          const ind = document.getElementById("modalHoldNavIndicator");
+          const txt = document.getElementById("modalHoldNavText");
+          const bar = document.getElementById("modalHoldNavBar");
+          if (ind && txt && bar) {
+            ind.classList.remove("left", "right");
+            txt.textContent = "⬆️ Halten: Direkt nach oben zur Suche & Navigation…";
+            bar.style.transition = "none";
+            bar.style.width = "0%";
+            ind.style.display = "flex";
+            void bar.offsetWidth;
+            bar.style.transition = "width " + Math.max(100, TOP_BAR_HOLD_DURATION_MS - TOP_BAR_HOLD_SHOW_DELAY_MS) + "ms linear";
+            bar.style.width = "100%";
+          }
+        }, TOP_BAR_HOLD_SHOW_DELAY_MS);
+
+        topBarUpHoldTimer = setTimeout(() => {
+          topBarUpHoldTimer = null;
+          topBarUpHoldTriggered = true;
+          cancelTopBarUpHold();
+          closeAutocomplete();
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          const targetTopEl = document.getElementById("searchInput") || document.getElementById("sidebarToggleBtn");
+          if (targetTopEl) {
+            setSpatialFocus(targetTopEl, false, "up");
+          }
+          if (typeof showHudToast === "function") {
+            showHudToast("⬆️ Direkt oben in der Such- & Navigationsleiste");
+          }
+        }, TOP_BAR_HOLD_DURATION_MS);
+      }
+
       window.addEventListener("keyup", (ev) => {
         if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
           const wasHoldingThisKey = modalHoldActiveKey === ev.key;
@@ -7564,6 +7580,8 @@
           if (wasHoldingThisKey && !didTriggerHold) {
             moveSpatialFocus(ev.key === "ArrowRight" ? "right" : "left");
           }
+        } else if (ev.key === "ArrowUp") {
+          cancelTopBarUpHold();
         } else if (ev.key === "Enter") {
           const targetCard = cardEnterHoldTarget;
           const didTriggerLong = cardEnterHoldTriggered;
@@ -7577,6 +7595,7 @@
       });
       window.addEventListener("blur", () => {
         cancelModalArrowHold();
+        cancelTopBarUpHold();
         cancelCardEnterHold();
       });
 
@@ -7589,6 +7608,7 @@
 
         if (ev.key === "Escape" || (ev.key === "Backspace" && !isTypingInInput)) {
           cancelModalArrowHold();
+          cancelTopBarUpHold();
           if (currentSpatialEl && (currentSpatialEl.id === "heroBtnDetails" || currentSpatialEl.id === "heroBtnTrailer")) {
             state.heroActionsEngaged = false;
             const box = document.getElementById("heroActionsBox");
@@ -7632,6 +7652,7 @@
 
         // Nahtlose Pfeiltasten-Navigation auch aus dem Suchfeld heraus (inkl. ruhigem 450ms Gedrückthalten im Detail-Modal ohne Fokus-Herumspringen)
         if (ev.key === "ArrowRight") {
+          cancelTopBarUpHold();
           const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
           if (modalOpen && ev.shiftKey && !isTypingInInput) {
             cancelModalArrowHold();
@@ -7662,6 +7683,7 @@
           return;
         }
         if (ev.key === "ArrowLeft") {
+          cancelTopBarUpHold();
           const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
           if (modalOpen && ev.shiftKey && !isTypingInInput) {
             cancelModalArrowHold();
@@ -7693,6 +7715,7 @@
         }
         if (ev.key === "ArrowDown") {
           cancelModalArrowHold();
+          cancelTopBarUpHold();
           ev.preventDefault();
           if (isSearchInpFocused || activeTag === "SELECT") activeEl.blur();
           moveSpatialFocus("down");
@@ -7702,6 +7725,28 @@
           cancelModalArrowHold();
           ev.preventDefault();
           if (isSearchInpFocused || activeTag === "SELECT") activeEl.blur();
+          const hasOverlayOpen = Boolean(
+            document.getElementById("modalRoot")?.innerHTML.trim() ||
+            document.getElementById("lightboxRoot")?.innerHTML.trim() ||
+            document.getElementById("customDialogRoot")?.innerHTML.trim() ||
+            state.sidebarOpen
+          );
+          if (!hasOverlayOpen) {
+            if (ev.repeat && topBarUpHoldActive) {
+              return;
+            }
+            const alreadyInHeaderAtTop = Boolean(
+              currentSpatialEl &&
+              currentSpatialEl.closest &&
+              currentSpatialEl.closest("header") &&
+              (window.scrollY || window.pageYOffset || 0) <= 10
+            );
+            moveSpatialFocus("up");
+            if (!ev.repeat && !alreadyInHeaderAtTop) {
+              startTopBarUpHold();
+            }
+            return;
+          }
           moveSpatialFocus("up");
           return;
         }

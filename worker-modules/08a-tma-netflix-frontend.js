@@ -1580,60 +1580,99 @@
       }
 
       header {
+        --top-bar-h: 38px;
         position: sticky;
         top: 0;
         z-index: 60;
         background: linear-gradient(
           180deg,
           rgba(6, 9, 17, 0.92) 0%,
-          rgba(var(--ambi-1), 0.14) 52%,
-          rgba(6, 9, 17, 0.38) 84%,
-          rgba(6, 9, 17, 0) 100%
+          rgba(var(--ambi-1), 0.16) 55%,
+          rgba(6, 9, 17, 0.86) 100%
         );
-        backdrop-filter: blur(16px) saturate(1.4);
-        -webkit-backdrop-filter: blur(16px) saturate(1.4);
-        padding: calc(8px * var(--scale-menu)) calc(14px * var(--scale-menu)) calc(6px * var(--scale-menu));
-        border-bottom: 1px solid rgba(var(--ambi-2), 0.14);
-        box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+        backdrop-filter: blur(18px) saturate(1.45);
+        -webkit-backdrop-filter: blur(18px) saturate(1.45);
+        padding: 8px 16px;
+        border-bottom: 1px solid rgba(var(--ambi-2), 0.18);
+        box-shadow: 0 8px 24px rgba(2, 6, 23, 0.45);
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
         flex-wrap: nowrap;
-        transition: background 0.55s ease, border-color 0.45s ease;
+        transition: background 0.38s ease, border-color 0.35s ease, box-shadow 0.35s ease, backdrop-filter 0.35s ease;
+      }
+      /* Ganz oben über dem geöffneten Hero-Slider: Kein hässlicher Balken! Alle 38px-Glas-Elemente schweben frei im oberen Kino-Fade */
+      body:not(.page-scrolled):has(#heroCurtainShell:not(.is-collapsed)) header {
+        background: transparent !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        border-bottom-color: transparent !important;
+        box-shadow: none !important;
+      }
+      header .top-btn-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      header .top-btn-label,
+      header .brand-text-wrap {
+        display: inline;
+        white-space: nowrap;
       }
       header #sidebarToggleBtn,
       header #navBtnWishlist {
-        background: linear-gradient(135deg, rgba(10, 15, 28, 0.68) 0%, rgba(var(--ambi-1), 0.15) 100%);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        border: 1px solid rgba(var(--ambi-2), 0.28);
+        height: var(--top-bar-h) !important;
+        min-height: var(--top-bar-h) !important;
+        max-height: var(--top-bar-h) !important;
+        padding: 0 11px !important;
+        margin: 0 !important;
+        box-sizing: border-box !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 5px !important;
+        flex-shrink: 0;
+        white-space: nowrap;
+        font-size: calc(12px * var(--scale-menu)) !important;
+        font-weight: 700 !important;
+        background: linear-gradient(135deg, rgba(8, 12, 22, 0.72) 0%, rgba(var(--ambi-1), 0.16) 100%);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(var(--ambi-2), 0.32);
         border-radius: 10px;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
         transition: background 0.25s ease, border-color 0.25s ease, transform 0.14s ease, box-shadow 0.25s ease;
       }
       header #sidebarToggleBtn:hover,
       header #navBtnWishlist:hover {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(var(--ambi-2), 0.28) 100%);
-        border-color: rgba(var(--ambi-2), 0.62);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.88) 0%, rgba(var(--ambi-2), 0.28) 100%);
+        border-color: rgba(var(--ambi-2), 0.65);
       }
-      .brand-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      .brand-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
       .brand-logo {
+        height: var(--top-bar-h, 38px);
+        min-height: var(--top-bar-h, 38px);
+        max-height: var(--top-bar-h, 38px);
+        box-sizing: border-box;
         color: #f8fafc;
         font-weight: 800;
-        font-size: calc(15.5px * var(--scale-menu));
+        font-size: calc(15px * var(--scale-menu));
         letter-spacing: -0.2px;
         cursor: pointer;
         user-select: none;
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 6px;
-        padding: 4px 9px;
+        padding: 0 10px;
         border-radius: 10px;
-        background: linear-gradient(135deg, rgba(10, 15, 28, 0.66) 0%, rgba(var(--ambi-1), 0.14) 100%);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        border: 1px solid rgba(var(--ambi-2), 0.26);
+        background: linear-gradient(135deg, rgba(8, 12, 22, 0.70) 0%, rgba(var(--ambi-1), 0.15) 100%);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(var(--ambi-2), 0.30);
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12);
         transition: background 0.2s, transform 0.12s, border-color 0.2s, box-shadow 0.2s;
         flex-shrink: 0;
@@ -1641,13 +1680,13 @@
       .brand-logo:hover,
       .brand-logo.spatial-focus,
       .brand-logo:focus-visible {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(var(--ambi-2), 0.26) 100%);
-        border-color: rgba(var(--ambi-2), 0.6);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.88) 0%, rgba(var(--ambi-2), 0.28) 100%);
+        border-color: rgba(var(--ambi-2), 0.62);
       }
       .brand-logo:active { transform: scale(0.96); }
       .teleport-logo-svg {
-        width: 20px;
-        height: 20px;
+        width: 19px;
+        height: 19px;
         flex-shrink: 0;
         filter: drop-shadow(0 0 6px rgba(var(--ambi-2), 0.55));
       }
@@ -1655,21 +1694,6 @@
         background: linear-gradient(135deg, #38bdf8, #818cf8, #6366f1);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-      }
-      @media (max-width: 440px) {
-        header {
-          padding: 6px 8px;
-          gap: 5px;
-        }
-        .brand-logo {
-          font-size: 13.5px;
-          padding: 3px 6px;
-          gap: 4px;
-        }
-        .teleport-logo-svg {
-          width: 17px;
-          height: 17px;
-        }
       }
       .sync-badge {
         font-size: calc(10.5px * var(--scale-text));
@@ -1912,23 +1936,30 @@
       @keyframes spin { to { transform: rotate(360deg); } }
       .results-busy { transition: opacity 0.18s ease; }
 
-      /* Kompakter Film / Serien Umschalter direkt in der oberen Leiste (mit Flixnet-Glas & Ambilight-Schimmer) */
+      /* Kompakter Film / Serien Umschalter direkt in der einzeiligen Top-Leiste (exakt 38px/36px hoch) */
       .media-mode-switch-inline {
+        height: var(--top-bar-h, 38px);
+        min-height: var(--top-bar-h, 38px);
+        max-height: var(--top-bar-h, 38px);
+        box-sizing: border-box;
         display: inline-flex;
         align-items: center;
-        gap: 4px;
-        background: linear-gradient(135deg, rgba(10, 15, 28, 0.68) 0%, rgba(var(--ambi-1), 0.14) 100%);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        padding: 2px;
+        gap: 3px;
+        flex-shrink: 0;
+        background: linear-gradient(135deg, rgba(8, 12, 22, 0.72) 0%, rgba(var(--ambi-1), 0.15) 100%);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        padding: 3px;
         border-radius: 10px;
-        border: 1px solid rgba(var(--ambi-2), 0.28);
+        border: 1px solid rgba(var(--ambi-2), 0.30);
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
         transition: background 0.35s ease, border-color 0.35s ease;
       }
       .media-mode-tab {
-        padding: calc(4.5px * var(--scale-menu)) calc(10px * var(--scale-menu));
-        border-radius: 8px;
+        height: calc(var(--top-bar-h, 38px) - 8px);
+        padding: 0 10px;
+        box-sizing: border-box;
+        border-radius: 7px;
         border: 1px solid transparent;
         background: transparent;
         color: #cbd5e1;
@@ -1939,6 +1970,7 @@
         align-items: center;
         justify-content: center;
         gap: 4px;
+        white-space: nowrap;
         transition: all 0.15s ease;
       }
       .media-mode-tab:not(:disabled):hover {
@@ -1962,22 +1994,11 @@
         opacity: 1 !important;
       }
 
-      /* Integrierte Ambilight-Glas-Suchleiste (bleibt ruhig an ihrem Platz; der Slider gleitet butterweich dahinter auf & zu) */
+      /* Einzeilige Ambilight-Glas-Top-Leiste: Suche, Menü, Filme/Serien, Merkliste & Slider-Toggle auf einer Ebene */
       body {
         --ambi-1: 14, 165, 233;
         --ambi-2: 56, 189, 248;
         --ambi-3: 30, 64, 175;
-      }
-      .search-bar-outer {
-        position: relative;
-        z-index: 55;
-        padding: 4px 14px 6px;
-      }
-      .search-bar-hero-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        width: 100%;
       }
       .hero-top-dock-hide-btn {
         display: none !important;
@@ -1988,27 +2009,31 @@
         display: inline-flex !important;
       }
       .search-bar {
-        flex: 1;
-        min-width: 0;
+        flex: 1 1 180px;
+        min-width: 96px;
+        height: var(--top-bar-h, 38px);
+        min-height: var(--top-bar-h, 38px);
+        max-height: var(--top-bar-h, 38px);
+        box-sizing: border-box;
         display: flex;
         gap: 0;
         align-items: center;
         flex-wrap: nowrap;
         background: linear-gradient(
           135deg,
-          rgba(8, 12, 22, 0.78) 0%,
+          rgba(7, 11, 20, 0.72) 0%,
           rgba(var(--ambi-1), 0.18) 52%,
-          rgba(8, 12, 22, 0.84) 100%
+          rgba(7, 11, 20, 0.78) 100%
         );
-        backdrop-filter: blur(18px) saturate(1.55);
-        -webkit-backdrop-filter: blur(18px) saturate(1.55);
+        backdrop-filter: blur(18px) saturate(1.6);
+        -webkit-backdrop-filter: blur(18px) saturate(1.6);
         border: 1px solid rgba(var(--ambi-2), 0.34);
-        border-radius: 12px;
-        padding: 2px 4px;
+        border-radius: 10px;
+        padding: 0 3px;
         box-shadow:
-          0 8px 24px rgba(2, 6, 23, 0.52),
-          0 0 22px rgba(var(--ambi-1), 0.14),
-          inset 0 1px 0 rgba(255, 255, 255, 0.16);
+          0 4px 16px rgba(2, 6, 23, 0.44),
+          0 0 18px rgba(var(--ambi-1), 0.12),
+          inset 0 1px 0 rgba(255, 255, 255, 0.14);
         transition: background 0.5s ease, border-color 0.35s ease, box-shadow 0.35s ease;
       }
       body[data-theme="light"] .search-bar {
@@ -2020,10 +2045,10 @@
         );
       }
       .search-bar:focus-within {
-        border-color: rgba(var(--ambi-2), 0.72);
+        border-color: rgba(var(--ambi-2), 0.76);
         box-shadow:
-          0 8px 28px rgba(0, 0, 0, 0.65),
-          0 0 26px rgba(var(--ambi-2), 0.28);
+          0 8px 26px rgba(0, 0, 0, 0.62),
+          0 0 24px rgba(var(--ambi-2), 0.28);
       }
       #searchInput:focus,
       .search-scope-select:focus {
@@ -2049,16 +2074,18 @@
         transform: none !important;
       }
       .search-scope-select {
+        height: calc(var(--top-bar-h, 38px) - 6px);
+        box-sizing: border-box;
         background-color: rgba(15, 23, 42, 0.56);
         border: 0;
         border-right: 1px solid rgba(255,255,255,0.16);
         color: #f8fafc;
-        border-radius: 9px 0 0 9px;
-        padding: 6px 9px;
+        border-radius: 7px 0 0 7px;
+        padding: 0 8px;
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 700;
         cursor: pointer;
-        max-width: 136px;
+        max-width: 132px;
         flex-shrink: 0;
         outline: none;
         color-scheme: dark;
@@ -2069,38 +2096,46 @@
       }
       .search-input-wrap {
         flex: 1;
-        min-width: 110px;
+        min-width: 70px;
+        height: 100%;
         position: relative;
         display: flex;
         align-items: center;
       }
       .search-input-wrap input {
         width: 100%;
+        height: 100%;
         background: transparent;
         border: 0;
         color: #fff;
-        padding: calc(7px * var(--scale-menu)) 32px calc(7px * var(--scale-menu)) 10px;
-        font-size: calc(13px * var(--scale-text));
+        padding: 0 28px 0 9px;
+        font-size: calc(12.5px * var(--scale-text));
         outline: none;
         text-overflow: ellipsis;
       }
       .search-input-wrap input::placeholder {
-        color: rgba(203, 213, 225, 0.74);
+        color: rgba(203, 213, 225, 0.76);
         transition: color 0.3s ease;
       }
       .search-input-wrap input.hero-placeholder-active::placeholder {
-        color: rgba(226, 232, 240, 0.82);
+        color: rgba(226, 232, 240, 0.88);
         font-weight: 500;
       }
       .search-submit-btn {
+        height: calc(var(--top-bar-h, 38px) - 6px);
+        width: calc(var(--top-bar-h, 38px) - 6px);
+        box-sizing: border-box;
         background: transparent;
         border: 0;
         color: #e2e8f0;
-        padding: 5px 10px;
-        border-radius: 8px;
-        font-size: calc(13px * var(--scale-text));
+        padding: 0;
+        border-radius: 7px;
+        font-size: calc(12.5px * var(--scale-text));
         cursor: pointer;
         flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         transition: background 0.14s, color 0.14s;
       }
       .search-submit-btn:hover,
@@ -2111,18 +2146,18 @@
       /* Suchfeld-Löschen-X: ausgeblendet wenn leer, kontrastreich sichtbar sobald Text eingegeben wurde! */
       .search-clear-btn {
         position: absolute;
-        right: 4px;
+        right: 3px;
         top: 50%;
         transform: translateY(-50%);
         z-index: 30;
-        width: 22px;
-        height: 22px;
+        width: 21px;
+        height: 21px;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.14);
         border: 1px solid rgba(255, 255, 255, 0.25);
         color: #f8fafc;
         cursor: pointer;
-        font-size: 11px;
+        font-size: 10.5px;
         font-weight: 900;
         display: inline-flex;
         align-items: center;
@@ -2146,15 +2181,8 @@
         visibility: visible !important;
         transform: translateY(-50%) scale(1.08);
       }
-      @media (max-width: 640px) {
-        .search-scope-select {
-          max-width: 102px;
-          font-size: 11px;
-          padding: 6px 5px;
-        }
-      }
 
-      /* Autocomplete-Vorschlagsliste unter der Suche (Filme, Serien, Filmreihen, Personen) */
+      /* Autocomplete-Vorschlagsliste unter der einzeiligen Top-Leiste */
       .search-autocomplete-box {
         position: absolute;
         left: 14px;
@@ -2205,7 +2233,7 @@
         opacity: 1;
       }
 
-      /* Flixnet Widescreen Kino-Spotlight: Butterweiche 0,4s Vorhang-Animation & rahmenloser Top/Bottom Kino-Fade */
+      /* 100% Vollbild Flixnet Kino-Spotlight (inkl. Top-Leiste) + Hochkant-Filmcover + sanfter Kino-Scroll-Fade */
       @keyframes heroSlideProgress {
         0% { width: 0%; }
         100% { width: 100%; }
@@ -2215,7 +2243,7 @@
         grid-template-rows: 1fr;
         opacity: 1;
         margin-top: -54px;
-        margin-bottom: 4px;
+        margin-bottom: -14px;
         transition:
           grid-template-rows 0.42s cubic-bezier(0.22, 1, 0.36, 1),
           opacity 0.36s cubic-bezier(0.22, 1, 0.36, 1),
@@ -2238,6 +2266,7 @@
         --ambi-1: 14, 165, 233;
         --ambi-2: 56, 189, 248;
         --ambi-3: 30, 64, 175;
+        --hero-scroll-fade: 0;
         position: relative;
         margin: 0;
         z-index: 1;
@@ -2245,14 +2274,14 @@
       /* Dynamisches Ambilight: Kombiniert unscharfes Backdrop-Halo mit extrahierten RGB-Farbscheinen der Hauptfarben */
       .hero-ambilight-glow {
         position: absolute;
-        inset: 6px 0 6px;
+        inset: 0;
         background-size: cover;
-        background-position: center 25%;
+        background-position: center 22%;
         filter: blur(38px) saturate(2.15) brightness(1.18);
-        opacity: 0.52;
+        opacity: calc(0.52 * (1 - var(--hero-scroll-fade, 0) * 0.85));
         z-index: 0;
         pointer-events: none;
-        transition: background-image 0.55s ease, opacity 0.55s ease;
+        transition: background-image 0.55s ease;
         transform: translate3d(0, 0, 0);
       }
       .hero-ambilight-beams {
@@ -2265,22 +2294,22 @@
           radial-gradient(55% 75% at 50% 20%, rgba(var(--ambi-2), 0.46) 0%, rgba(var(--ambi-2), 0) 75%),
           radial-gradient(60% 80% at 82% 58%, rgba(var(--ambi-3), 0.52) 0%, rgba(var(--ambi-3), 0) 78%);
         filter: blur(28px);
-        opacity: 0.78;
-        transition: background 0.6s ease, opacity 0.6s ease;
+        opacity: calc(0.78 * (1 - var(--hero-scroll-fade, 0) * 0.85));
+        transition: background 0.6s ease;
         transform: translate3d(0, 0, 0);
       }
       body[data-theme="light"] .hero-ambilight-glow {
-        opacity: 0.32;
+        opacity: calc(0.32 * (1 - var(--hero-scroll-fade, 0) * 0.85));
         filter: blur(30px) saturate(1.75) brightness(1.05);
       }
       body[data-theme="light"] .hero-ambilight-beams {
-        opacity: 0.45;
+        opacity: calc(0.45 * (1 - var(--hero-scroll-fade, 0) * 0.85));
       }
       .hero {
         position: relative;
         z-index: 1;
         margin: 0;
-        min-height: clamp(340px, 44vw, 476px);
+        min-height: clamp(500px, 92dvh, 860px);
         border-radius: 0;
         border: none;
         background: transparent;
@@ -2288,15 +2317,16 @@
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        padding: 66px 26px 16px;
+        padding: 68px 28px 22px;
         overflow: hidden;
       }
-      /* Zitterfreier 0,5s Crossfade + sanftes Tiefen-Gleiten (ohne 7s Dauer-Zoom) + volle HD-Brillanz */
+      /* Zitterfreier 0,5s Crossfade + sanftes Tiefen-Gleiten + Dual-Artwork (16:9 Widescreen im Querformat, 2:3 Filmcover im Hochformat) */
       .hero-backdrop-layer {
         position: absolute;
         inset: 0;
+        background-image: var(--hero-bg-landscape, none);
         background-size: cover;
-        background-position: center 18%;
+        background-position: center 16%;
         z-index: 0;
         pointer-events: none;
         opacity: 0;
@@ -2308,29 +2338,29 @@
         will-change: transform, opacity;
       }
       .hero-backdrop-layer.active-layer {
-        opacity: 1;
-        transform: translate3d(0, 0, 0);
+        opacity: calc(1 - var(--hero-scroll-fade, 0) * 0.88);
+        transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * 26px), 0);
       }
-      /* Nahtloser Flixnet-Kino-Fade: Verschmilzt oben (zur Header/Such-Zone), unten (zum dunklen Seiten-Hintergrund) & seitlich komplett rahmenlos */
+      /* Durchscheinender oberer Kino-Fade (1-Zeilen-Leiste schwebt direkt im oberen Bildbereich!) + nahtloser unterer Katalog-Fade */
       .hero-scrim-layer {
         position: absolute;
         inset: 0;
         z-index: 1;
         pointer-events: none;
         background:
-          linear-gradient(180deg, var(--bg) 0%, rgba(7, 10, 18, 0.84) 11%, rgba(7, 10, 18, 0.38) 26%, rgba(7, 10, 18, 0) 44%),
-          linear-gradient(0deg, var(--bg) 0%, rgba(7, 10, 18, 0.90) 9%, rgba(7, 10, 18, 0.44) 25%, rgba(7, 10, 18, 0.08) 44%, rgba(7, 10, 18, 0) 60%),
-          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0.88) 18%, rgba(5, 8, 16, 0.62) 34%, rgba(5, 8, 16, 0.22) 52%, rgba(5, 8, 16, 0) 72%),
-          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3.5%, rgba(5, 8, 16, 0) 96.5%, var(--bg) 100%);
+          linear-gradient(180deg, rgba(4, 7, 15, 0.72) 0%, rgba(4, 7, 15, 0.34) 11%, rgba(4, 7, 15, 0.08) 22%, rgba(4, 7, 15, 0) 34%),
+          linear-gradient(0deg, var(--bg) 0%, rgba(6, 9, 17, 0.92) 9%, rgba(6, 9, 17, 0.44) 24%, rgba(6, 9, 17, 0.08) 42%, rgba(6, 9, 17, 0) 58%),
+          linear-gradient(90deg, rgba(4, 7, 15, 0.88) 0%, rgba(4, 7, 15, 0.66) 22%, rgba(4, 7, 15, 0.32) 44%, rgba(4, 7, 15, 0.06) 64%, rgba(4, 7, 15, 0) 78%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
         transition: background 0.4s ease, opacity 0.4s ease;
       }
       /* Automatische Kontrast-Unterstützung bei extrem hellen Szenenbildern (wie Schnee/Eis in Interstellar) */
       .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
         background:
-          linear-gradient(180deg, var(--bg) 0%, rgba(5, 8, 16, 0.90) 13%, rgba(5, 8, 16, 0.48) 30%, rgba(5, 8, 16, 0) 48%),
-          linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.94) 11%, rgba(5, 8, 16, 0.54) 28%, rgba(5, 8, 16, 0.14) 46%, rgba(5, 8, 16, 0) 64%),
-          linear-gradient(90deg, var(--bg) 0%, rgba(4, 7, 15, 0.95) 22%, rgba(4, 7, 15, 0.78) 38%, rgba(4, 7, 15, 0.36) 56%, rgba(4, 7, 15, 0.06) 74%, rgba(4, 7, 15, 0) 86%),
-          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3.5%, rgba(5, 8, 16, 0) 96.5%, var(--bg) 100%);
+          linear-gradient(180deg, rgba(4, 7, 15, 0.82) 0%, rgba(4, 7, 15, 0.48) 13%, rgba(4, 7, 15, 0.16) 26%, rgba(4, 7, 15, 0) 40%),
+          linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.95) 11%, rgba(5, 8, 16, 0.52) 27%, rgba(5, 8, 16, 0.12) 45%, rgba(5, 8, 16, 0) 62%),
+          linear-gradient(90deg, rgba(4, 7, 15, 0.94) 0%, rgba(4, 7, 15, 0.80) 26%, rgba(4, 7, 15, 0.44) 48%, rgba(4, 7, 15, 0.10) 68%, rgba(4, 7, 15, 0) 84%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
       }
       .hero-inner {
         position: relative;
@@ -2340,8 +2370,25 @@
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        min-height: clamp(244px, 34vw, 382px);
+        min-height: clamp(320px, 68dvh, 660px);
         gap: 12px;
+        opacity: calc(1 - var(--hero-scroll-fade, 0) * 1.15);
+        transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * -20px), 0);
+        will-change: opacity, transform;
+      }
+      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) mit vertikalem Kino-Verlauf */
+      @media (orientation: portrait), (max-width: 640px) {
+        .hero-backdrop-layer {
+          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape, none)) !important;
+          background-position: center top !important;
+          background-size: cover !important;
+        }
+        .hero-scrim-layer,
+        .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
+          background:
+            linear-gradient(180deg, rgba(4, 7, 15, 0.78) 0%, rgba(4, 7, 15, 0.36) 11%, rgba(4, 7, 15, 0.04) 24%, rgba(4, 7, 15, 0) 42%),
+            linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.96) 14%, rgba(5, 8, 16, 0.76) 30%, rgba(5, 8, 16, 0.28) 46%, rgba(5, 8, 16, 0) 64%) !important;
+        }
       }
       .hero-widescreen-body {
         display: flex;
@@ -2636,25 +2683,31 @@
         animation-play-state: paused;
       }
       .hero-hide-btn {
-        background: linear-gradient(135deg, rgba(8, 12, 22, 0.76) 0%, rgba(var(--ambi-1), 0.18) 100%);
+        height: var(--top-bar-h, 38px) !important;
+        min-height: var(--top-bar-h, 38px) !important;
+        max-height: var(--top-bar-h, 38px) !important;
+        box-sizing: border-box !important;
+        background: linear-gradient(135deg, rgba(8, 12, 22, 0.74) 0%, rgba(var(--ambi-1), 0.18) 100%);
         backdrop-filter: blur(16px);
         -webkit-backdrop-filter: blur(16px);
-        color: rgba(248, 250, 252, 0.94);
-        border: 1px solid rgba(var(--ambi-2), 0.38);
-        border-radius: 12px;
-        padding: 8px 13px;
-        font-size: calc(11.5px * var(--scale-text));
+        color: rgba(248, 250, 252, 0.95);
+        border: 1px solid rgba(var(--ambi-2), 0.36);
+        border-radius: 10px;
+        padding: 0 11px;
+        font-size: calc(11.5px * var(--scale-menu));
         font-weight: 700;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 5px;
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        flex-shrink: 0;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.12);
         transition: background 0.25s ease, border-color 0.25s ease, transform 0.15s ease, color 0.15s ease;
       }
       .hero-hide-btn.is-collapsed-state {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.85) 0%, rgba(var(--ambi-1), 0.28) 100%);
-        border-color: rgba(var(--ambi-2), 0.56);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.86) 0%, rgba(var(--ambi-1), 0.28) 100%);
+        border-color: rgba(var(--ambi-2), 0.58);
         color: #f8fafc;
       }
       .hero-hide-btn:hover,
@@ -2796,26 +2849,58 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      @media (max-width: 680px) {
-        .search-bar-outer {
-          padding: 4px 10px 4px;
+      @media (max-width: 760px) {
+        header {
+          --top-bar-h: 36px;
+          padding: 6px 8px;
+          gap: 5px;
+        }
+        /* Mobilansicht: Nur klare Symbole ohne Text (☰, 🎬|📺, 💾, ▴) + exakt gleiche Höhe (36px) */
+        header .top-btn-label,
+        header .brand-text-wrap {
+          display: none !important;
+        }
+        header #sidebarToggleBtn,
+        header #navBtnWishlist,
+        header .hero-hide-btn {
+          width: var(--top-bar-h) !important;
+          min-width: var(--top-bar-h) !important;
+          padding: 0 !important;
+          font-size: 14px !important;
+        }
+        header #headerBrandLogo {
+          width: var(--top-bar-h);
+          min-width: var(--top-bar-h);
+          padding: 0;
+        }
+        .media-mode-tab {
+          padding: 0 7px;
+          font-size: 13px;
+        }
+        .search-scope-select {
+          max-width: 36px;
+          padding: 0 5px;
+          font-size: 12px;
         }
         .search-autocomplete-box {
-          left: 10px;
-          right: 10px;
+          left: 8px;
+          right: 8px;
         }
-        .search-bar-hero-row { gap: 6px; }
-        .hero-hide-btn { padding: 7px 10px; font-size: 11px; border-radius: 10px; }
-        .hero-curtain-shell { margin-top: -48px; }
+        .hero-curtain-shell { margin-top: -48px; margin-bottom: -10px; }
         .hero-stage-wrap { margin: 0; }
-        .hero { min-height: 292px; padding: 56px 14px 12px; border-radius: 0; }
-        .hero-inner { min-height: 220px; gap: 8px; }
-        .hero-title-text { font-size: clamp(22px, 6.5vw, 32px); }
-        .hero-desc { -webkit-line-clamp: 2; font-size: 12px; margin-bottom: 8px; }
-        .hero-btn-play, .hero-btn-info, .hero-btn-wishlist { padding: 7px 13px !important; font-size: 12px !important; }
+        .hero { min-height: clamp(460px, 88dvh, 760px); padding: 58px 14px 18px; border-radius: 0; }
+        .hero-inner { min-height: clamp(320px, 66dvh, 560px); gap: 8px; }
+        .hero-title-text { font-size: clamp(24px, 7vw, 34px); }
+        .hero-desc { -webkit-line-clamp: 2; font-size: 12.5px; margin-bottom: 8px; }
+        .hero-btn-play, .hero-btn-info, .hero-btn-wishlist { padding: 8px 13px !important; font-size: 12px !important; }
+      }
+      @media (max-width: 480px) {
+        header #headerBrandLogo {
+          display: none !important;
+        }
       }
 
-      .section { padding: 8px 14px; }
+      .section { position: relative; z-index: 5; padding: 8px 14px; }
       .section-title { font-size: calc(13.5px * var(--scale-text)); font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: #e5e5e5; }
       .mode-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; align-items: center; }
 
@@ -4735,34 +4820,52 @@
         <div class="neon-splash-bar-track"><div class="neon-splash-bar-fill"></div></div>
       </div>
     </div>
-    <header>
-      <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-        <button class="btn" id="sidebarToggleBtn" onclick="toggleFilterSidebar()" title="Menü, Filter, Zufall, Account, Design & Ansichtsgröße öffnen">☰ Menü</button>
-        <span id="headerBrandLogo" class="brand-logo" tabindex="0" role="button" aria-label="TelePort – Zur Hauptseite" onclick="goHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goHome();}" title="TelePort – Zur Hauptseite">
-          <svg class="teleport-logo-svg" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="tpGradHeader" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stop-color="#38bdf8"/>
-                <stop offset="50%" stop-color="#0284c7"/>
-                <stop offset="100%" stop-color="#6366f1"/>
-              </linearGradient>
-            </defs>
-            <circle cx="14" cy="14" r="11.5" stroke="url(#tpGradHeader)" stroke-width="2.5" stroke-dasharray="18 5"/>
-            <circle cx="14" cy="14" r="7.5" stroke="#38bdf8" stroke-width="1.4" stroke-opacity="0.75"/>
-            <path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#tpGradHeader)"/>
-          </svg>
-          <span>Tele<span class="teleport-accent">Port</span></span>
-        </span>
-      </div>
+    <header id="topUnifiedBar" class="search-bar-outer">
+      <button class="btn" id="sidebarToggleBtn" onclick="toggleFilterSidebar()" title="Menü, Filter, Zufall, Account, Design & Ansichtsgröße öffnen"><span class="top-btn-icon">☰</span><span class="top-btn-label"> Menü</span></button>
+      <span id="headerBrandLogo" class="brand-logo" tabindex="0" role="button" aria-label="TelePort – Zur Hauptseite" onclick="goHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goHome();}" title="TelePort – Zur Hauptseite">
+        <svg class="teleport-logo-svg" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="tpGradHeader" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#38bdf8"/>
+              <stop offset="50%" stop-color="#0284c7"/>
+              <stop offset="100%" stop-color="#6366f1"/>
+            </linearGradient>
+          </defs>
+          <circle cx="14" cy="14" r="11.5" stroke="url(#tpGradHeader)" stroke-width="2.5" stroke-dasharray="18 5"/>
+          <circle cx="14" cy="14" r="7.5" stroke="#38bdf8" stroke-width="1.4" stroke-opacity="0.75"/>
+          <path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#tpGradHeader)"/>
+        </svg>
+        <span class="brand-text-wrap">Tele<span class="teleport-accent">Port</span></span>
+      </span>
       <div class="media-mode-switch-inline" id="mediaModeBanner">
         <button id="tabBtnMovies" class="media-mode-tab active-movie" onclick="switchType('m')" title="Zu Filme wechseln">
-          <span>🎬 Filme</span>
+          <span class="top-btn-icon">🎬</span><span class="top-btn-label"> Filme</span>
         </button>
         <button id="tabBtnSeries" class="media-mode-tab" onclick="switchType('s')" title="Zu Serien wechseln">
-          <span>📺 Serien</span>
+          <span class="top-btn-icon">📺</span><span class="top-btn-label"> Serien</span>
         </button>
       </div>
-      <button class="btn" id="navBtnWishlist" onclick="loadWishlist('root')" title="Synchronisierte Merkliste & Playlisten">💾 Merkliste</button>
+      <div class="search-bar">
+        <select id="searchGenreSelect" class="search-scope-select" onchange="onSearchGenreSelectChange(this.value)" title="Nach Genre filtern">
+          <option value="all">🎞️ Alle Genres</option>
+        </select>
+        <div class="search-input-wrap">
+          <input
+            id="searchInput"
+            placeholder="Film, Serie, Studio, Person oder (Jahr)..."
+            autocomplete="off"
+            onfocus="onSearchInputFocus()"
+            onblur="onSearchInputBlur()"
+            oninput="onSearchInputLive(this.value)"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();closeAutocomplete();this.blur();runSearch(false,this.value,undefined,true);}"
+          />
+          <button type="button" id="searchClearBtn" class="search-clear-btn is-empty" onclick="clearSearchInput()" title="Suchfeld leeren" aria-label="Suchfeld leeren">✕</button>
+        </div>
+        <button type="button" class="search-submit-btn" onclick="closeAutocomplete();runSearch()" title="Suche starten" aria-label="Suche starten">🔍</button>
+      </div>
+      <button class="btn" id="navBtnWishlist" onclick="loadWishlist('root')" title="Synchronisierte Merkliste & Playlisten"><span class="top-btn-icon">💾</span><span class="top-btn-label"> Merkliste</span></button>
+      <button type="button" id="heroHideBtn" class="hero-hide-btn hero-top-dock-hide-btn" onclick="toggleHeroSliderHidden()" title="Kino-Spotlight ein- oder ausklappen"><span class="top-btn-icon">▴</span><span class="top-btn-label"> Einklappen</span></button>
+      <div id="searchAutocompleteBox" class="search-autocomplete-box"></div>
     </header>
 
     <!-- Linke Off-Canvas Sidebar für Filter, Design (Dark/Light/Cyberpunk), Farbenblind-Modus, Instant-Trailer Provider & Größen-Einstellung -->
@@ -4797,32 +4900,6 @@
       <div class="modal-hold-nav-track"><div id="modalHoldNavBar" class="modal-hold-nav-bar"></div></div>
     </div>
     <div id="customDialogRoot"></div>
-
-    <!-- Integrierte Ambilight-Glas-Suchleiste (im ausgeklappten Slider oben integriert, bleibt beim Einklappen oben stehen) -->
-    <div id="searchBarOuterSlot" class="search-bar-outer">
-      <div class="search-bar-hero-row">
-        <div class="search-bar">
-          <select id="searchGenreSelect" class="search-scope-select" onchange="onSearchGenreSelectChange(this.value)" title="Nach Genre filtern">
-            <option value="all">🎞️ Alle Genres</option>
-          </select>
-          <div class="search-input-wrap">
-            <input
-              id="searchInput"
-              placeholder="Film, Serie, Studio, Person oder (Jahr)..."
-              autocomplete="off"
-              onfocus="onSearchInputFocus()"
-              onblur="onSearchInputBlur()"
-              oninput="onSearchInputLive(this.value)"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();closeAutocomplete();this.blur();runSearch(false,this.value,undefined,true);}"
-            />
-            <button type="button" id="searchClearBtn" class="search-clear-btn is-empty" onclick="clearSearchInput()" title="Suchfeld leeren" aria-label="Suchfeld leeren">✕</button>
-          </div>
-          <button type="button" class="search-submit-btn" onclick="closeAutocomplete();runSearch()" title="Suche starten" aria-label="Suche starten">🔍</button>
-        </div>
-        <button type="button" id="heroHideBtn" class="hero-hide-btn hero-top-dock-hide-btn" onclick="toggleHeroSliderHidden()" title="Kino-Spotlight ein- oder ausklappen">▴ Einklappen</button>
-      </div>
-      <div id="searchAutocompleteBox" class="search-autocomplete-box"></div>
-    </div>
 
     <div id="appRoot"><div class="section">⏳ Lade synchronisierte Inhalte...</div></div>
     <div id="modalRoot"></div>
@@ -7020,21 +7097,25 @@
       function syncHeroSearchPlaceholderAndToggleBtnClient() {
         const hideBtn = document.getElementById("heroHideBtn");
         const isCollapsed = Boolean(state.heroHidden);
+        const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
+        const showCompactSpotlightHint = isCollapsed || isScrolledPast;
         if (hideBtn) {
-          hideBtn.classList.toggle("is-collapsed-state", isCollapsed);
-          hideBtn.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+          hideBtn.classList.toggle("is-collapsed-state", showCompactSpotlightHint);
+          hideBtn.setAttribute("aria-expanded", showCompactSpotlightHint ? "false" : "true");
           hideBtn.setAttribute(
             "title",
-            isCollapsed
-              ? "Kino-Spotlight wieder sanft ausklappen"
+            showCompactSpotlightHint
+              ? "Kino-Spotlight oben anzeigen"
               : "Kino-Spotlight sanft nach oben einklappen"
           );
-          hideBtn.innerHTML = isCollapsed ? "▾ Spotlight" : "▴ Einklappen";
+          hideBtn.innerHTML = showCompactSpotlightHint
+            ? '<span class="top-btn-icon">▾</span><span class="top-btn-label"> Spotlight</span>'
+            : '<span class="top-btn-icon">▴</span><span class="top-btn-label"> Einklappen</span>';
         }
         const inp = document.getElementById("searchInput");
         if (!inp) return;
         const onCatalogDiscover = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
-        if (isCollapsed && onCatalogDiscover && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
+        if (showCompactSpotlightHint && onCatalogDiscover && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
           inp.placeholder = formatCollapsedHeroSearchPlaceholderClient(hero);
           inp.classList.add("hero-placeholder-active");
@@ -7046,13 +7127,40 @@
         }
       }
 
+      function syncHeroScrollFadeAndTopBarStateClient() {
+        if (!document.body) return;
+        const y = window.scrollY || window.pageYOffset || 0;
+        document.body.classList.toggle("page-scrolled", y > 14);
+        const stageWrap = document.getElementById("heroStageWrapEl");
+        if (!stageWrap || state.heroHidden || state.isSearchMode) {
+          if (stageWrap) stageWrap.style.setProperty("--hero-scroll-fade", "0");
+          if (document.body.classList.contains("hero-scrolled-past")) {
+            document.body.classList.remove("hero-scrolled-past");
+            syncHeroSearchPlaceholderAndToggleBtnClient();
+          }
+          return;
+        }
+        const heroH = Math.max(280, stageWrap.offsetHeight || 520);
+        const fade = Math.max(0, Math.min(1, y / (heroH * 0.72)));
+        stageWrap.style.setProperty("--hero-scroll-fade", fade.toFixed(3));
+        const scrolledPastNow = fade >= 0.65;
+        const wasScrolledPast = document.body.classList.contains("hero-scrolled-past");
+        if (scrolledPastNow !== wasScrolledPast) {
+          document.body.classList.toggle("hero-scrolled-past", scrolledPastNow);
+          syncHeroSearchPlaceholderAndToggleBtnClient();
+        }
+      }
+
+      window.addEventListener("scroll", syncHeroScrollFadeAndTopBarStateClient, { passive: true });
+
       function startHeroRotationTimer() {
         if (heroRotationTimer) clearInterval(heroRotationTimer);
         if (state.isSearchMode || state.heroSlides.length <= 1) return;
         const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
           if (state.isSearchMode || state.heroSlides.length <= 1) return;
-          if (!state.heroHidden) {
+          const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
+          if (!state.heroHidden && !isScrolledPast) {
             if (state.searchFocused || heroPointerHovered) return;
             if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#heroBannerSlot")) {
               return;
@@ -7061,7 +7169,7 @@
             state.heroActionsEngaged = false;
             updateHeroBannerDomOnly();
           } else {
-            // Eingeklappter Zustand: Rotiere alle paar Sekunden den ausgegrauten Highlight-Vorschlag inkl. Metadaten im Suchfeld
+            // Eingeklappter oder vorbeigescrollter Zustand: Rotiere alle paar Sekunden den ausgegrauten Highlight-Vorschlag im Suchfeld
             const inp = document.getElementById("searchInput");
             if (inp && inp.value && inp.value.trim().length > 0) return;
             state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
@@ -7091,9 +7199,18 @@
       }
 
       function toggleHeroSliderHidden(forceHide) {
+        const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
+        if (typeof forceHide !== "boolean" && !state.heroHidden && isScrolledPast) {
+          // Wenn der Nutzer unten im Katalog auf "▾ Spotlight" tippt, gleitet die Seite sanft hoch zum offenen Vollbild-Spotlight
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          return;
+        }
         state.heroHidden = typeof forceHide === "boolean" ? forceHide : !state.heroHidden;
         state.heroActionsEngaged = false;
         try { localStorage.setItem("tma_hero_hidden", state.heroHidden ? "1" : "0"); } catch (e) {}
+        if (!state.heroHidden && (window.scrollY || window.pageYOffset || 0) > 40) {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
         syncHeroExpandedBodyClass();
         const curtainEl = document.getElementById("heroCurtainShell");
         if (curtainEl) {
@@ -7105,6 +7222,7 @@
         } else {
           updateHeroBannerDomOnly(true);
         }
+        syncHeroScrollFadeAndTopBarStateClient();
         syncHeroSearchPlaceholderAndToggleBtnClient();
         startHeroRotationTimer();
         if (state.sidebarOpen) {
@@ -7378,6 +7496,7 @@
         const heroTitleSafe = esc(heroTitleRaw);
         const heroPosterSafe = esc(hero.poster_path || hero.external_poster_url || hero.poster || "");
         const backdropUrl = resolveHeroSlideBackdropUrlClient(hero);
+        const posterUrl = resolveHeroSlidePosterUrlClient(hero, "w780") || backdropUrl;
         const heroCardKey = heroType + "_" + hero.id;
         const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
         const cachedAmbi = backdropUrl && heroAmbilightColorCache.has(backdropUrl)
@@ -7395,6 +7514,8 @@
           : '';
         const brightClass = cachedAmbi && cachedAmbi.isBrightLeft ? ' hero-bright-backdrop' : '';
         const collapsedClass = state.heroHidden ? ' is-collapsed' : '';
+        const layerAStyle = (backdropUrl ? ('--hero-bg-landscape:url(' + esc(backdropUrl) + ');') : '--hero-bg-landscape:none;') +
+          (posterUrl ? ('--hero-bg-portrait:url(' + esc(posterUrl) + ');') : '--hero-bg-portrait:none;');
 
         const thumbsNavHtml = state.heroSlides.length > 1
           ? '<div class="hero-dots-nav">' +
@@ -7418,8 +7539,8 @@
               '<div id="heroAmbilightEl" class="hero-ambilight-glow" style="background-image:' + (backdropUrl ? ('url(' + esc(backdropUrl) + ')') : 'none') + '"></div>' +
               '<div id="heroAmbilightBeamsEl" class="hero-ambilight-beams"></div>' +
               '<div class="hero" onmouseenter="setHeroPointerHover(true)" onmouseleave="setHeroPointerHover(false)" ontouchstart="onHeroTouchStart(event)" ontouchend="onHeroTouchEnd(event)">' +
-                '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer" style="background-image:' + (backdropUrl ? ('url(' + esc(backdropUrl) + ')') : 'none') + '"></div>' +
-                '<div id="heroBackdropLayerB" class="hero-backdrop-layer" style="background-image:none"></div>' +
+                '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer" style="' + layerAStyle + '"></div>' +
+                '<div id="heroBackdropLayerB" class="hero-backdrop-layer" style="--hero-bg-landscape:none;--hero-bg-portrait:none"></div>' +
                 '<div class="hero-scrim-layer"></div>' +
                 '<div class="hero-inner">' +
                   '<div class="hero-widescreen-body">' +
@@ -7462,7 +7583,7 @@
         const layerA = document.getElementById("heroBackdropLayerA");
         const layerB = document.getElementById("heroBackdropLayerB");
 
-        // Butterweicher 0,5s In-Place Crossfade & Tiefen-Gleiten (ohne Zittern) + dynamisches Ambilight-Update
+        // Butterweicher 0,5s In-Place Crossfade & Tiefen-Gleiten (ohne Zittern) + dynamisches Ambilight-Update + Hochkant-Cover
         if (!forceFullRebuild && !state.isSearchMode && state.heroSlides.length > 0 && existingStage && layerA && layerB) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
           if (hero) {
@@ -7474,6 +7595,7 @@
             const heroTitleSafe = esc(heroTitleRaw);
             const heroPosterSafe = esc(hero.poster_path || hero.external_poster_url || hero.poster || "");
             const backdropUrl = resolveHeroSlideBackdropUrlClient(hero);
+            const posterUrl = resolveHeroSlidePosterUrlClient(hero, "w780") || backdropUrl;
             const heroCardKey = heroType + "_" + hero.id;
             const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
 
@@ -7488,7 +7610,8 @@
             const activeLayer = layerA.classList.contains("active-layer") ? layerA : layerB;
             const nextLayer = activeLayer === layerA ? layerB : layerA;
             nextLayer.classList.remove("active-layer");
-            nextLayer.style.backgroundImage = backdropUrl ? ("url(" + backdropUrl + ")") : "none";
+            nextLayer.style.setProperty("--hero-bg-landscape", backdropUrl ? ("url(" + backdropUrl + ")") : "none");
+            nextLayer.style.setProperty("--hero-bg-portrait", posterUrl ? ("url(" + posterUrl + ")") : "none");
             void nextLayer.offsetWidth;
             nextLayer.classList.add("active-layer");
             activeLayer.classList.remove("active-layer");
