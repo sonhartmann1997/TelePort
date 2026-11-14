@@ -1498,6 +1498,7 @@
         font-size: calc(16px * var(--scale-all));
         scroll-padding-top: var(--sticky-header-offset, 74px);
         scroll-padding-bottom: 28px;
+        overscroll-behavior-y: none;
       }
       body {
         background: var(--bg);
@@ -1505,6 +1506,7 @@
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         padding-bottom: 28px;
         overflow-x: hidden;
+        overscroll-behavior-y: none;
         font-size: calc(14px * var(--scale-text));
         transition: background-color 0.2s ease, color 0.2s ease;
         scroll-padding-top: var(--sticky-header-offset, 74px);
@@ -2515,7 +2517,7 @@
         justify-content: space-between;
         padding: 68px 28px 14px;
         overflow: hidden;
-        touch-action: pan-x;
+        touch-action: pan-x pan-y;
       }
       /* Scharfes Slider-Bild: Reiner GPU-Opacity-Crossfade ab top: 0 ohne -webkit-mask-image Flackern unter der Top-Leiste */
       .hero-backdrop-layer {
@@ -2758,6 +2760,8 @@
         -webkit-line-clamp: unset !important;
         max-height: 132px;
         overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y !important;
         padding-right: 6px;
         overscroll-behavior: contain;
         scrollbar-width: thin;
@@ -7975,6 +7979,10 @@
 
       window.addEventListener("wheel", onHeroCatalogWheelClient, { passive: false });
       window.addEventListener("touchstart", (ev) => {
+        if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
+          heroPageTouchActive = false;
+          return;
+        }
         heroPageTouchActive = true;
         heroTouchStartScrollY = window.scrollY || window.pageYOffset || 0;
         if (ev.touches && ev.touches[0]) {
@@ -7983,6 +7991,32 @@
           heroTouchStartTime = performance.now();
         }
       }, { passive: true });
+
+      // Aktiver TouchMove-Wächter am oberen Katalogrand (scrollY <= 8):
+      // Verhindert Browser-Pull-to-Refresh ("Seite aktualisieren"), wenn man vom Slider runter und direkt wieder hoch wischt,
+      // und öffnet den Vollbild-Slider sofort wieder, ohne dass man vorher nach unten scrollen muss!
+      window.addEventListener("touchmove", (ev) => {
+        if (!heroPageTouchActive || !ev.touches || !ev.touches[0]) return;
+        if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
+          return;
+        }
+        if (!heroCurtainScrolledToCatalog || !isHeroScrollCouplingActiveClient()) return;
+        const curY = window.scrollY || window.pageYOffset || 0;
+        const dx = ev.touches[0].clientX - (heroTouchStartX || ev.touches[0].clientX);
+        const dy = ev.touches[0].clientY - (heroTouchStartY || ev.touches[0].clientY);
+
+        if (curY <= 8 && dy > 6 && dy > Math.abs(dx) * 1.08) {
+          if (ev.cancelable) {
+            ev.preventDefault();
+          }
+          if (Date.now() >= heroSnapAnimatingUntil && dy >= 24) {
+            heroPageTouchActive = false;
+            heroTouchStartX = 0;
+            heroTouchStartY = 0;
+            animateHeroCatalogSnapScrollClient(0);
+          }
+        }
+      }, { passive: false });
 
       window.addEventListener("touchend", (ev) => {
         heroPageTouchActive = false;
@@ -7997,7 +8031,7 @@
           const dxTouch = (ev.changedTouches && ev.changedTouches[0] && heroTouchStartX)
             ? (ev.changedTouches[0].clientX - heroTouchStartX)
             : 0;
-          if (dyTouch > 24 && dyTouch > Math.abs(dxTouch) * 1.15) {
+          if (dyTouch > 18 && dyTouch > Math.abs(dxTouch) * 1.1) {
             animateHeroCatalogSnapScrollClient(0);
           }
         }
@@ -8215,6 +8249,9 @@
         }
       }
       function onHeroTouchMove(ev) {
+        if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
+          return;
+        }
         if (!heroTouchStartX || !heroTouchStartY || !ev.touches || !ev.touches[0]) return;
         const dx = ev.touches[0].clientX - heroTouchStartX;
         const dy = ev.touches[0].clientY - heroTouchStartY;

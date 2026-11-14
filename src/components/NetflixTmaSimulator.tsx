@@ -102,7 +102,12 @@ export function useSwipeable(
       const isTargetInsideHero = (target: EventTarget | null): boolean => {
         if (!target || !(target instanceof Element)) return false;
         if (target.closest('button, a, input, select, textarea, .expandable-desc-box')) return false;
-        return Boolean(target.closest('.hero, #heroStageWrapEl, #heroBannerSlot'));
+        if (target.closest('.hero, #heroStageWrapEl, #heroBannerSlot')) return true;
+        const win = iframe.contentWindow;
+        const isAtCatalogTop =
+          Boolean(doc.body?.classList.contains('hero-scrolled-past')) &&
+          (win?.scrollY || win?.pageYOffset || 0) <= 8;
+        return isAtCatalogTop && Boolean(target.closest('.section, main, #app'));
       };
 
       const onPointerDown = (ev: PointerEvent) => {
