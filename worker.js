@@ -30439,13 +30439,78 @@
         font-size: calc(13px * var(--scale-text));
         color: rgba(241, 245, 249, 0.92);
         line-height: 1.5;
+        margin-bottom: 10px;
+        max-width: 540px;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.96), 0 1px 3px rgba(0, 0, 0, 0.88);
+      }
+      /* Aufklappbare Kompakt-Scrollbox für Titelbeschreibungen (Hero-Slider & Detail-Modal auf TV, Handy & PC) */
+      .expandable-desc-box {
+        position: relative;
+        border-radius: 9px;
+        border: 1px solid transparent;
+        padding: 3px 6px;
+        margin-left: -6px;
+        cursor: pointer;
+        transition: background 0.2s ease, border-color 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
+        outline: none;
+      }
+      .expandable-desc-box:hover,
+      .expandable-desc-box.spatial-focus {
+        background: rgba(15, 23, 42, 0.56);
+        border-color: rgba(56, 189, 248, 0.52);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+      }
+      .expandable-desc-scroll {
         display: -webkit-box;
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
-        margin-bottom: 10px;
-        max-width: 520px;
-        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.96), 0 1px 3px rgba(0, 0, 0, 0.88);
+        word-break: break-word;
+      }
+      .expandable-desc-box.is-expanded {
+        background: rgba(8, 13, 24, 0.86);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border-color: rgba(56, 189, 248, 0.62);
+        padding: 8px 10px 6px;
+        margin-left: 0;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.72);
+      }
+      .expandable-desc-box.is-expanded .expandable-desc-scroll {
+        display: block !important;
+        -webkit-line-clamp: unset !important;
+        max-height: 132px;
+        overflow-y: auto;
+        padding-right: 6px;
+        overscroll-behavior: contain;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(56, 189, 248, 0.65) rgba(15, 23, 42, 0.45);
+      }
+      .expandable-desc-box.is-expanded .expandable-desc-scroll::-webkit-scrollbar {
+        width: 5px;
+      }
+      .expandable-desc-box.is-expanded .expandable-desc-scroll::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.45);
+        border-radius: 999px;
+      }
+      .expandable-desc-box.is-expanded .expandable-desc-scroll::-webkit-scrollbar-thumb {
+        background: rgba(56, 189, 248, 0.68);
+        border-radius: 999px;
+      }
+      .desc-expand-hint {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 3px;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 800;
+        color: #7dd3fc;
+        letter-spacing: 0.2px;
+        user-select: none;
+        opacity: 0.92;
+      }
+      .expandable-desc-box:not(.is-long-desc):not(.is-expanded) .desc-expand-hint {
+        display: none;
       }
       .hero-actions-box {
         display: inline-flex;
@@ -30901,7 +30966,9 @@
         .hero { min-height: 100vh; min-height: 100dvh; height: 100dvh; padding: 58px 14px 10px; border-radius: 0; }
         .hero-inner { min-height: clamp(320px, 64dvh, 540px); gap: 8px; }
         .hero-title-text { font-size: clamp(24px, 7vw, 34px); }
-        .hero-desc { -webkit-line-clamp: 2; font-size: 12.5px; margin-bottom: 8px; }
+        .hero-desc { font-size: 12.5px; margin-bottom: 8px; }
+        .hero-desc:not(.is-expanded) .expandable-desc-scroll { -webkit-line-clamp: 2; }
+        .hero-desc.is-expanded .expandable-desc-scroll { max-height: 112px; }
         .hero-btn-play, .hero-btn-info, .hero-btn-wishlist { padding: 8px 13px !important; font-size: 12px !important; }
       }
       @media (max-width: 480px) {
@@ -35165,6 +35232,167 @@
         syncHeroSearchPlaceholderAndToggleBtnClient();
       }, { passive: true });
 
+      let heroWheelDownAccum = 0;
+      let heroWheelUpAccum = 0;
+      let heroWheelDecayTimer = null;
+      let heroSnapAnimatingUntil = 0;
+      let heroTouchSettleTimer = null;
+
+      function getHeroCatalogSnapScrollYClient() {
+        const stageWrap = document.getElementById("heroStageWrapEl");
+        const topBarH = (document.getElementById("topUnifiedBar")?.offsetHeight) || 50;
+        const heroH = stageWrap ? stageWrap.offsetHeight : (window.innerHeight || 640);
+        return Math.max(200, heroH - topBarH);
+      }
+
+      function isHeroScrollCouplingActiveClient() {
+        if (!document.body || state.heroHidden || state.isSearchMode) return false;
+        if (state.currentView && state.currentView !== "discover") return false;
+        if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return false;
+        if (state.sidebarOpen) return false;
+        if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("customDialogRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) return false;
+        if (document.getElementById("searchAutocompleteBox")?.classList.contains("open")) return false;
+        return true;
+      }
+
+      function toggleExpandableDescriptionClient(ev, boxId) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const box = document.getElementById(boxId);
+        if (!box) return;
+        const willExpand = !box.classList.contains("is-expanded");
+        box.classList.toggle("is-expanded", willExpand);
+        box.setAttribute("aria-expanded", willExpand ? "true" : "false");
+        const hintEl = box.querySelector(".desc-expand-hint");
+        if (hintEl) {
+          hintEl.textContent = willExpand ? "▴ Einklappen" : "▾ Mehr lesen";
+        }
+        const scrollEl = box.querySelector(".expandable-desc-scroll");
+        if (scrollEl && !willExpand) {
+          scrollEl.scrollTop = 0;
+        }
+      }
+
+      function resetHeroResistancePreviewClient() {
+        heroWheelDownAccum = 0;
+        heroWheelUpAccum = 0;
+        const hintBtn = document.getElementById("heroScrollDownHintBtn");
+        if (hintBtn) {
+          hintBtn.style.transform = "";
+        }
+        syncHeroScrollFadeAndTopBarStateClient();
+      }
+
+      function animateHeroCatalogSnapScrollClient(targetY) {
+        heroWheelDownAccum = 0;
+        heroWheelUpAccum = 0;
+        if (heroWheelDecayTimer) {
+          clearTimeout(heroWheelDecayTimer);
+          heroWheelDecayTimer = null;
+        }
+        heroSnapAnimatingUntil = Date.now() + 540;
+        const hintBtn = document.getElementById("heroScrollDownHintBtn");
+        if (hintBtn) hintBtn.style.transform = "";
+        if (targetY > 0 && document.body) {
+          document.body.classList.add("page-scrolled");
+        }
+        window.scrollTo({ top: Math.max(0, targetY), behavior: "smooth" });
+        setTimeout(syncHeroScrollFadeAndTopBarStateClient, 120);
+        setTimeout(syncHeroScrollFadeAndTopBarStateClient, 340);
+        setTimeout(syncHeroScrollFadeAndTopBarStateClient, 540);
+      }
+
+      function onHeroCatalogWheelClient(ev) {
+        if (!isHeroScrollCouplingActiveClient()) return;
+        // Wenn der Mauszeiger in einer aufgeklappten Beschreibungs-Scrollbox scrollt, normales Text-Scrollen erlauben
+        const targetEl = ev.target;
+        if (targetEl && typeof targetEl.closest === "function") {
+          const expDesc = targetEl.closest(".expandable-desc-box.is-expanded");
+          if (expDesc) {
+            const sc = expDesc.querySelector(".expandable-desc-scroll");
+            if (sc && sc.scrollHeight > sc.clientHeight + 2) {
+              return;
+            }
+          }
+        }
+        const now = Date.now();
+        if (now < heroSnapAnimatingUntil) {
+          ev.preventDefault();
+          return;
+        }
+        const dy = Number(ev.deltaY) || 0;
+        if (Math.abs(dy) < 1) return;
+
+        const y = window.scrollY || window.pageYOffset || 0;
+        const snapY = getHeroCatalogSnapScrollYClient();
+        const DOWN_THRESHOLD = 155;
+        const UP_THRESHOLD = 165;
+
+        // 1. Im oberen Vollbild-Slider (oder im Übergangsbereich): Nach unten scrollen braucht spürbaren Widerstand ("Kraft")
+        if (y < snapY * 0.55 && dy > 0) {
+          ev.preventDefault();
+          heroWheelUpAccum = 0;
+          const step = Math.min(85, Math.max(14, Math.abs(dy)));
+          heroWheelDownAccum += step;
+
+          if (heroWheelDecayTimer) clearTimeout(heroWheelDecayTimer);
+          if (heroWheelDownAccum >= DOWN_THRESHOLD) {
+            animateHeroCatalogSnapScrollClient(snapY);
+            return;
+          }
+
+          // Elastische Vorschau während man gegen den Widerstand anscrollt
+          const ratio = Math.min(1, heroWheelDownAccum / DOWN_THRESHOLD);
+          const stageWrap = document.getElementById("heroStageWrapEl");
+          if (stageWrap) {
+            stageWrap.style.setProperty("--hero-scroll-fade", (ratio * 0.32).toFixed(3));
+          }
+          const hintBtn = document.getElementById("heroScrollDownHintBtn");
+          if (hintBtn) {
+            hintBtn.style.transform = "translate3d(0, " + Math.round(ratio * 7) + "px, 0) scale(" + (1 + ratio * 0.1).toFixed(2) + ")";
+          }
+          heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 260);
+          return;
+        }
+
+        // Falls der Nutzer im oberen Übergangsbereich wieder leicht nach oben dreht -> sofort zurück auf 0 rasten
+        if (y > 0 && y < snapY * 0.55 && dy < 0) {
+          ev.preventDefault();
+          animateHeroCatalogSnapScrollClient(0);
+          return;
+        }
+
+        // 2. An der Katalog-Oberkante (Filme/Serien): Nach oben scrollen stoppt erst mit Widerstand vor dem Vollbild-Slider
+        if (y >= snapY * 0.55 && y <= snapY + 26 && dy < 0) {
+          ev.preventDefault();
+          if (y !== snapY) {
+            window.scrollTo(0, snapY);
+          }
+          heroWheelDownAccum = 0;
+          const step = Math.min(85, Math.max(14, Math.abs(dy)));
+          heroWheelUpAccum += step;
+
+          if (heroWheelDecayTimer) clearTimeout(heroWheelDecayTimer);
+          if (heroWheelUpAccum >= UP_THRESHOLD) {
+            animateHeroCatalogSnapScrollClient(0);
+            return;
+          }
+
+          // Elastische Vorschau beim Nach-Oben-Drücken gegen den Slider-Widerstand
+          const ratio = Math.min(1, heroWheelUpAccum / UP_THRESHOLD);
+          const stageWrap = document.getElementById("heroStageWrapEl");
+          if (stageWrap) {
+            stageWrap.style.setProperty("--hero-scroll-fade", (1 - ratio * 0.34).toFixed(3));
+          }
+          heroWheelDecayTimer = setTimeout(resetHeroResistancePreviewClient, 260);
+          return;
+        }
+      }
+
+      window.addEventListener("wheel", onHeroCatalogWheelClient, { passive: false });
+
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
         const y = window.scrollY || window.pageYOffset || 0;
@@ -35187,20 +35415,34 @@
           document.body.classList.toggle("hero-scrolled-past", scrolledPastNow);
           syncHeroSearchPlaceholderAndToggleBtnClient();
         }
+        // Sanfte Einrast-Korrektur nach Touch-/Scrollbar-Scrollen im Zwischenbereich zwischen Slider (0) und Katalog (snapY)
+        if (isHeroScrollCouplingActiveClient() && Date.now() >= heroSnapAnimatingUntil && !heroTouchDraggingUp) {
+          const snapY = getHeroCatalogSnapScrollYClient();
+          if (y > 6 && y < snapY - 8) {
+            if (heroTouchSettleTimer) clearTimeout(heroTouchSettleTimer);
+            heroTouchSettleTimer = setTimeout(() => {
+              if (!isHeroScrollCouplingActiveClient() || Date.now() < heroSnapAnimatingUntil || heroTouchDraggingUp) return;
+              const curY = window.scrollY || window.pageYOffset || 0;
+              const curSnapY = getHeroCatalogSnapScrollYClient();
+              if (curY > 6 && curY < curSnapY - 8) {
+                const wasInCatalog = document.body.classList.contains("hero-scrolled-past");
+                // Widerstand in beide Richtungen: Vom Slider aus braucht man >22% Weg nach unten; vom Katalog aus >28% Weg nach oben
+                const shouldSnapToCatalog = wasInCatalog
+                  ? (curY > curSnapY * 0.72)
+                  : (curY >= curSnapY * 0.22);
+                animateHeroCatalogSnapScrollClient(shouldSnapToCatalog ? curSnapY : 0);
+              }
+            }, 150);
+          }
+        }
       }
 
       function scrollToCatalogBelowHeroClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
-        if (document.body) document.body.classList.add("page-scrolled");
-        const stageWrap = document.getElementById("heroStageWrapEl");
-        const topBarH = (document.getElementById("topUnifiedBar")?.offsetHeight) || 50;
-        const heroH = stageWrap ? stageWrap.offsetHeight : (window.innerHeight || 640);
-        const targetScrollY = Math.max(120, heroH - topBarH);
+        const snapY = getHeroCatalogSnapScrollYClient();
         const maxScroll = Math.max(0, (document.documentElement.scrollHeight || document.body.scrollHeight || 0) - (window.innerHeight || 0));
         if (maxScroll >= 80) {
-          window.scrollTo({ top: Math.min(targetScrollY, maxScroll), behavior: "smooth" });
-          setTimeout(syncHeroScrollFadeAndTopBarStateClient, 120);
-          setTimeout(syncHeroScrollFadeAndTopBarStateClient, 360);
+          animateHeroCatalogSnapScrollClient(Math.min(snapY, maxScroll));
         } else {
           toggleHeroSliderHidden(true);
         }
@@ -35217,6 +35459,7 @@
           const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
           if (!state.heroHidden && !isScrolledPast) {
             if (state.searchFocused || heroPointerHovered) return;
+            if (document.getElementById("heroDescEl")?.classList.contains("is-expanded")) return;
             if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#heroBannerSlot")) {
               return;
             }
@@ -35336,6 +35579,12 @@
       });
 
       function onHeroTouchStart(ev) {
+        if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
+          heroTouchStartX = 0;
+          heroTouchStartY = 0;
+          heroTouchDraggingUp = false;
+          return;
+        }
         if (ev.touches && ev.touches[0]) {
           heroTouchStartX = ev.touches[0].clientX;
           heroTouchStartY = ev.touches[0].clientY;
@@ -35346,7 +35595,7 @@
         if (!heroTouchStartX || !heroTouchStartY || !ev.touches || !ev.touches[0]) return;
         const dx = ev.touches[0].clientX - heroTouchStartX;
         const dy = ev.touches[0].clientY - heroTouchStartY;
-        if (dy < -10 && Math.abs(dy) > Math.abs(dx) * 1.15 && !state.heroHidden && !state.isSearchMode) {
+        if (dy < -12 && Math.abs(dy) > Math.abs(dx) * 1.15 && !state.heroHidden && !state.isSearchMode) {
           heroTouchDraggingUp = true;
           if (document.body) document.body.classList.add("page-scrolled");
           const stageWrap = document.getElementById("heroStageWrapEl");
@@ -35367,12 +35616,14 @@
         heroTouchStartX = 0;
         heroTouchStartY = 0;
         heroTouchDraggingUp = false;
-        if (dy < -42 && Math.abs(dy) > Math.abs(dx) * 1.15) {
+        // Spürbarer Widerstand (mind. 58px vertikaler Zug), bevor der Slider nach unten in die Filme gleitet
+        if (dy < -58 && Math.abs(dy) > Math.abs(dx) * 1.15) {
           triggerHeroSwipeUpCollapseClient();
           return;
         }
         if (wasDraggingUp) {
-          syncHeroScrollFadeAndTopBarStateClient();
+          animateHeroCatalogSnapScrollClient(0);
+          return;
         }
         if (Math.abs(dx) > 40 && Math.abs(dx) >= Math.abs(dy)) {
           setHeroSlideIndex(state.heroIndex + (dx < 0 ? 1 : -1));
@@ -35666,7 +35917,10 @@
                       '<div id="heroMetaCleanEl" class="hero-meta-clean">' +
                         buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr) +
                       '</div>' +
-                      '<div id="heroDescEl" class="hero-desc">' + esc(hero.overview || 'Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.') + '</div>' +
+                      '<div id="heroDescEl" class="hero-desc expandable-desc-box' + ((hero.overview && hero.overview.length > 120) ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'heroDescEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'heroDescEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
+                        '<div id="heroDescTextEl" class="expandable-desc-scroll">' + esc(hero.overview || 'Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.') + '</div>' +
+                        '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+                      '</div>' +
                       '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
                         '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn" onclick="playInstantTrailerFromCard(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
                         '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')">ⓘ Details</button>' +
@@ -35760,8 +36014,20 @@
               metaEl.innerHTML = buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr);
             }
             const descEl = document.getElementById("heroDescEl");
+            const descTextEl = document.getElementById("heroDescTextEl");
+            const rawOverview = hero.overview || "Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.";
+            if (descTextEl) {
+              descTextEl.textContent = rawOverview;
+              descTextEl.scrollTop = 0;
+            } else if (descEl) {
+              descEl.textContent = rawOverview;
+            }
             if (descEl) {
-              descEl.textContent = hero.overview || "Tippe auf Details für Trailer, Besetzung, Filmreihen & Streams.";
+              descEl.classList.remove("is-expanded");
+              descEl.setAttribute("aria-expanded", "false");
+              descEl.classList.toggle("is-long-desc", Boolean(hero.overview && hero.overview.length > 120));
+              const hintEl = descEl.querySelector(".desc-expand-hint");
+              if (hintEl) hintEl.textContent = "▾ Mehr lesen";
             }
             const trBtn = document.getElementById("heroBtnTrailer");
             if (trBtn) {
@@ -38277,9 +38543,10 @@
 
                     (heroInlineGenresHtml ? '<div class="modal-genre-inline">' + heroInlineGenresHtml + '</div>' : '') +
 
-                    '<p style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden" title="Vollständige Beschreibung im Reiter Details">' +
-                      esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') +
-                    '</p>' +
+                    '<div id="modalHeaderOverviewEl" class="expandable-desc-box' + ((d.overview && d.overview.length > 120) ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
+                      '<div class="expandable-desc-scroll">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</div>' +
+                      '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+                    '</div>' +
                   '</div>' +
                 '</div>' +
               '</div>' +
@@ -49910,7 +50177,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -50342,16 +50609,47 @@
           return false;
         };
 
+        // Falls eine aufgeklappte Beschreibungs-Scrollbox (.expandable-desc-box.is-expanded) fokussiert ist:
+        // Hoch/Runter scrollt zuerst weich durch den Beschreibungstext!
+        if (currentSpatialEl.classList && currentSpatialEl.classList.contains("expandable-desc-box") && currentSpatialEl.classList.contains("is-expanded")) {
+          const sc = currentSpatialEl.querySelector(".expandable-desc-scroll");
+          if (sc && (dir === "down" || dir === "up")) {
+            const maxSc = Math.max(0, sc.scrollHeight - sc.clientHeight);
+            if (dir === "down" && sc.scrollTop < maxSc - 4) {
+              sc.scrollBy({ top: 44, behavior: "smooth" });
+              return;
+            }
+            if (dir === "up" && sc.scrollTop > 4) {
+              sc.scrollBy({ top: -44, behavior: "smooth" });
+              return;
+            }
+          }
+        }
+
         const curHero = currentSpatialEl.closest ? currentSpatialEl.closest(".hero") : null;
         if (curHero) {
           const actDot = curHero.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || curHero.querySelector(".hero-dot.active");
           const trBtn = document.getElementById("heroBtnTrailer");
           const detBtn = document.getElementById("heroBtnDetails");
           const wlHeroBtn = document.getElementById("heroBtnWishlist");
+          const descHeroEl = document.getElementById("heroDescEl");
           const hideBtn = document.getElementById("heroHideBtn");
 
-          // 1. Fokus auf "▶ Trailer" (links), "ⓘ Details" (Mitte) oder "🔖 Merkliste" (rechts):
-          if (currentSpatialEl.id === "heroBtnTrailer") {
+          if (currentSpatialEl.id === "heroDescEl") {
+            if (dir === "down") {
+              if (trBtn) { setSpatialFocus(trBtn, true); return; }
+              if (detBtn) { setSpatialFocus(detBtn, true); return; }
+            }
+            if (dir === "up") {
+              if (focusSearchOrHeaderUp()) return;
+            }
+            if (dir === "left" || dir === "right") {
+              setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
+              const nextDesc = document.getElementById("heroDescEl");
+              if (nextDesc) setSpatialFocus(nextDesc, true);
+              return;
+            }
+          } else if (currentSpatialEl.id === "heroBtnTrailer") {
             if (dir === "right") {
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
               if (wlHeroBtn) { setSpatialFocus(wlHeroBtn, true); return; }
@@ -50366,6 +50664,7 @@
               if (actDot) { setSpatialFocus(actDot, true); return; }
             }
             if (dir === "up") {
+              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnDetails") {
@@ -50383,6 +50682,7 @@
               if (actDot) { setSpatialFocus(actDot, true); return; }
             }
             if (dir === "up") {
+              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnWishlist") {
@@ -50400,6 +50700,7 @@
               if (actDot) { setSpatialFocus(actDot, true); return; }
             }
             if (dir === "up") {
+              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (hideBtn && list.includes(hideBtn)) { setSpatialFocus(hideBtn, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
@@ -50844,6 +51145,12 @@
             const parentCard = currentSpatialEl.closest(".card");
             clearCardSubnavState(null);
             if (parentCard) setSpatialFocus(parentCard, false);
+            ev.preventDefault();
+            return;
+          }
+          const openDescBox = document.querySelector(".expandable-desc-box.is-expanded");
+          if (openDescBox && openDescBox.id && typeof toggleExpandableDescriptionClient === "function") {
+            toggleExpandableDescriptionClient(ev, openDescBox.id);
             ev.preventDefault();
             return;
           }

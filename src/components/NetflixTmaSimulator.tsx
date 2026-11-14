@@ -65,7 +65,7 @@ export function useSwipeable(
 
       const isTargetInsideHero = (target: EventTarget | null): boolean => {
         if (!target || !(target instanceof Element)) return false;
-        if (target.closest('button, a, input, select, textarea')) return false;
+        if (target.closest('button, a, input, select, textarea, .expandable-desc-box')) return false;
         return Boolean(target.closest('.hero, #heroStageWrapEl, #heroBannerSlot'));
       };
 
@@ -405,7 +405,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   }, []);
 
   useSwipeable(iframeRef, srcDocHtml, {
-    minDistance: 42,
+    minDistance: 58,
     trackMouse: true,
     onSwipingVertical: (deltaY) => {
       const doc = iframeRef.current?.contentDocument;

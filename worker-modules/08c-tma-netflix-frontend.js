@@ -6712,7 +6712,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -7144,16 +7144,47 @@
           return false;
         };
 
+        // Falls eine aufgeklappte Beschreibungs-Scrollbox (.expandable-desc-box.is-expanded) fokussiert ist:
+        // Hoch/Runter scrollt zuerst weich durch den Beschreibungstext!
+        if (currentSpatialEl.classList && currentSpatialEl.classList.contains("expandable-desc-box") && currentSpatialEl.classList.contains("is-expanded")) {
+          const sc = currentSpatialEl.querySelector(".expandable-desc-scroll");
+          if (sc && (dir === "down" || dir === "up")) {
+            const maxSc = Math.max(0, sc.scrollHeight - sc.clientHeight);
+            if (dir === "down" && sc.scrollTop < maxSc - 4) {
+              sc.scrollBy({ top: 44, behavior: "smooth" });
+              return;
+            }
+            if (dir === "up" && sc.scrollTop > 4) {
+              sc.scrollBy({ top: -44, behavior: "smooth" });
+              return;
+            }
+          }
+        }
+
         const curHero = currentSpatialEl.closest ? currentSpatialEl.closest(".hero") : null;
         if (curHero) {
           const actDot = curHero.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || curHero.querySelector(".hero-dot.active");
           const trBtn = document.getElementById("heroBtnTrailer");
           const detBtn = document.getElementById("heroBtnDetails");
           const wlHeroBtn = document.getElementById("heroBtnWishlist");
+          const descHeroEl = document.getElementById("heroDescEl");
           const hideBtn = document.getElementById("heroHideBtn");
 
-          // 1. Fokus auf "▶ Trailer" (links), "ⓘ Details" (Mitte) oder "🔖 Merkliste" (rechts):
-          if (currentSpatialEl.id === "heroBtnTrailer") {
+          if (currentSpatialEl.id === "heroDescEl") {
+            if (dir === "down") {
+              if (trBtn) { setSpatialFocus(trBtn, true); return; }
+              if (detBtn) { setSpatialFocus(detBtn, true); return; }
+            }
+            if (dir === "up") {
+              if (focusSearchOrHeaderUp()) return;
+            }
+            if (dir === "left" || dir === "right") {
+              setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
+              const nextDesc = document.getElementById("heroDescEl");
+              if (nextDesc) setSpatialFocus(nextDesc, true);
+              return;
+            }
+          } else if (currentSpatialEl.id === "heroBtnTrailer") {
             if (dir === "right") {
               if (detBtn) { setSpatialFocus(detBtn, true); return; }
               if (wlHeroBtn) { setSpatialFocus(wlHeroBtn, true); return; }
@@ -7168,6 +7199,7 @@
               if (actDot) { setSpatialFocus(actDot, true); return; }
             }
             if (dir === "up") {
+              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnDetails") {
@@ -7185,6 +7217,7 @@
               if (actDot) { setSpatialFocus(actDot, true); return; }
             }
             if (dir === "up") {
+              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnWishlist") {
@@ -7202,6 +7235,7 @@
               if (actDot) { setSpatialFocus(actDot, true); return; }
             }
             if (dir === "up") {
+              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (hideBtn && list.includes(hideBtn)) { setSpatialFocus(hideBtn, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
@@ -7646,6 +7680,12 @@
             const parentCard = currentSpatialEl.closest(".card");
             clearCardSubnavState(null);
             if (parentCard) setSpatialFocus(parentCard, false);
+            ev.preventDefault();
+            return;
+          }
+          const openDescBox = document.querySelector(".expandable-desc-box.is-expanded");
+          if (openDescBox && openDescBox.id && typeof toggleExpandableDescriptionClient === "function") {
+            toggleExpandableDescriptionClient(ev, openDescBox.id);
             ev.preventDefault();
             return;
           }
