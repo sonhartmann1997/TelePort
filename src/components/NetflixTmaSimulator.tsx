@@ -37,6 +37,16 @@ export interface UseSwipeableOptions {
   trackMouse?: boolean;
 }
 
+export function triggerHapticFeedback(pattern: number | number[] = 10): void {
+  try {
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate(pattern);
+    }
+  } catch {
+    // Ignore vibration errors on unsupported desktop browsers
+  }
+}
+
 export function useSwipeable(
   iframeRef: React.RefObject<HTMLIFrameElement | null>,
   srcDocDependency: string,
@@ -176,16 +186,40 @@ export function useSwipeable(
         optionsRef.current.onSwipeReset?.();
       };
 
+      const onDelegatedTactileClick = (ev: MouseEvent) => {
+        const target = ev.target;
+        if (!target || !(target instanceof Element)) return;
+        // Search pill expansion / collapse or genre dropdown trigger
+        if (
+          target.closest(
+            '#searchInput, .search-bar, .mobile-search-collapse-btn, #searchGenreTriggerBtn'
+          )
+        ) {
+          triggerHapticFeedback(12);
+          return;
+        }
+        // Genre chips, quick filter pills, media tabs, or modal tabs
+        if (
+          target.closest(
+            '.hero-meta-genre, .genre-overlay-chip, .genre-chip, .pill, .media-mode-tab, .flix-tab-btn, #heroHideBtn, .hero-dot, .hero-circle-arrow, .desc-translate-btn, .expandable-desc-box.is-long-desc'
+          )
+        ) {
+          triggerHapticFeedback(10);
+        }
+      };
+
       doc.addEventListener('pointerdown', onPointerDown, { passive: true });
       doc.addEventListener('pointermove', onPointerMove, { passive: true });
       doc.addEventListener('pointerup', onPointerUp, { passive: true });
       doc.addEventListener('pointercancel', onPointerCancel, { passive: true });
+      doc.addEventListener('click', onDelegatedTactileClick, { passive: true });
 
       cleanupDocListeners = () => {
         doc.removeEventListener('pointerdown', onPointerDown);
         doc.removeEventListener('pointermove', onPointerMove);
         doc.removeEventListener('pointerup', onPointerUp);
         doc.removeEventListener('pointercancel', onPointerCancel);
+        doc.removeEventListener('click', onDelegatedTactileClick);
       };
     };
 
@@ -255,6 +289,29 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     }
   } catch (e) {}
 
+  const fireIframeHaptic = function(pattern) {
+    try {
+      if (navigator && typeof navigator.vibrate === "function") {
+        navigator.vibrate(pattern);
+      }
+      window.parent.postMessage({ type: "TMA_HAPTIC_VIBRATE", pattern: pattern }, "*");
+    } catch (e) {}
+  };
+
+  const hapticFeedbackBridge = {
+    impactOccurred: function(style) {
+      const ms = style === "heavy" || style === "rigid" ? 20 : style === "medium" ? 14 : 9;
+      fireIframeHaptic(ms);
+    },
+    notificationOccurred: function(type) {
+      const pat = type === "error" ? [16, 40, 24] : type === "warning" ? [14, 30, 14] : [10, 25, 16];
+      fireIframeHaptic(pat);
+    },
+    selectionChanged: function() {
+      fireIframeHaptic(8);
+    }
+  };
+
   // Provide simulated Telegram.WebApp object before app scripts run
   if (PERSONA_USER) {
     const webAppObj = {
@@ -271,11 +328,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
       close: function() {},
       openTelegramLink: function(url) { window.open(url, "_blank"); },
       openLink: function(url) { window.open(url, "_blank"); },
-      HapticFeedback: {
-        impactOccurred: function() {},
-        notificationOccurred: function() {},
-        selectionChanged: function() {}
-      },
+      HapticFeedback: hapticFeedbackBridge,
       MainButton: {
         text: "",
         isVisible: false,
@@ -294,7 +347,15 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     };
     window.Telegram = { WebApp: webAppObj };
   } else {
-    window.Telegram = { WebApp: { initData: "", initDataUnsafe: {}, ready: function() {}, expand: function() {} } };
+    window.Telegram = {
+      WebApp: {
+        initData: "",
+        initDataUnsafe: {},
+        ready: function() {},
+        expand: function() {},
+        HapticFeedback: hapticFeedbackBridge
+      }
+    };
   }
 
   const pendingRequests = new Map();
@@ -493,17 +554,34 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         }
       }
     },
-    onSwipedUp: () => dispatchHeroSwipeToIframe('up'),
-    onSwipedDown: () => dispatchHeroSwipeToIframe('down'),
-    onSwipedLeft: () => dispatchHeroSwipeToIframe('left'),
-    onSwipedRight: () => dispatchHeroSwipeToIframe('right'),
+    onSwipedUp: () => {
+      triggerHapticFeedback(14);
+      dispatchHeroSwipeToIframe('up');
+    },
+    onSwipedDown: () => {
+      triggerHapticFeedback(14);
+      dispatchHeroSwipeToIframe('down');
+    },
+    onSwipedLeft: () => {
+      triggerHapticFeedback(10);
+      dispatchHeroSwipeToIframe('left');
+    },
+    onSwipedRight: () => {
+      triggerHapticFeedback(10);
+      dispatchHeroSwipeToIframe('right');
+    },
   });
 
   // Listen for fetch requests coming from inside the simulated STREAMFLIX iframe
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
       const data = event.data;
-      if (!data || data.type !== 'TMA_SANDBOX_FETCH_REQUEST') return;
+      if (!data) return;
+      if (data.type === 'TMA_HAPTIC_VIBRATE') {
+        triggerHapticFeedback(data.pattern ?? 10);
+        return;
+      }
+      if (data.type !== 'TMA_SANDBOX_FETCH_REQUEST') return;
 
       const { reqId, url, method, headers, body } = data;
       const envMap = buildEnvMap();
@@ -570,7 +648,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
           {/* Auth Persona Switcher */}
           <div className="flex items-center bg-white/[0.04] p-0.5 rounded-lg border border-white/[0.07]">
             <button
-              onClick={() => setAuthPersona('admin_vip')}
+              onClick={() => {
+                triggerHapticFeedback(10);
+                setAuthPersona('admin_vip');
+              }}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 authPersona === 'admin_vip'
                   ? 'bg-white text-slate-950 font-semibold'
@@ -582,7 +663,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
               <span>Admin &amp; VIP</span>
             </button>
             <button
-              onClick={() => setAuthPersona('standard_user')}
+              onClick={() => {
+                triggerHapticFeedback(10);
+                setAuthPersona('standard_user');
+              }}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 authPersona === 'standard_user'
                   ? 'bg-white text-slate-950 font-semibold'
@@ -594,7 +678,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
               <span>Telegram User</span>
             </button>
             <button
-              onClick={() => setAuthPersona('external_guest')}
+              onClick={() => {
+                triggerHapticFeedback(10);
+                setAuthPersona('external_guest');
+              }}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 authPersona === 'external_guest'
                   ? 'bg-white text-slate-950 font-semibold'
@@ -610,7 +697,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
           {/* Viewport Size Switcher */}
           <div className="flex items-center bg-white/[0.04] p-0.5 rounded-lg border border-white/[0.07]">
             <button
-              onClick={() => setViewportPreset('full')}
+              onClick={() => {
+                triggerHapticFeedback(10);
+                setViewportPreset('full');
+              }}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 viewportPreset === 'full'
                   ? 'bg-white/[0.14] text-white'
@@ -621,7 +711,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
               <span>Desktop</span>
             </button>
             <button
-              onClick={() => setViewportPreset('tv')}
+              onClick={() => {
+                triggerHapticFeedback(10);
+                setViewportPreset('tv');
+              }}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 viewportPreset === 'tv'
                   ? 'bg-white/[0.14] text-white'
@@ -632,7 +725,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
               <span>Smart TV</span>
             </button>
             <button
-              onClick={() => setViewportPreset('mobile')}
+              onClick={() => {
+                triggerHapticFeedback(10);
+                setViewportPreset('mobile');
+              }}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer ${
                 viewportPreset === 'mobile'
                   ? 'bg-white/[0.14] text-white'

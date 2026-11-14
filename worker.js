@@ -35269,8 +35269,28 @@
         }
       }
 
+      function triggerTmaHapticClient(style) {
+        try {
+          const s = style || "light";
+          if (tg && tg.HapticFeedback) {
+            if (s === "selection" && typeof tg.HapticFeedback.selectionChanged === "function") {
+              tg.HapticFeedback.selectionChanged();
+              return;
+            }
+            if (typeof tg.HapticFeedback.impactOccurred === "function") {
+              tg.HapticFeedback.impactOccurred(s === "heavy" ? "heavy" : s === "medium" ? "medium" : "light");
+              return;
+            }
+          }
+          if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+            navigator.vibrate(s === "heavy" ? 20 : s === "medium" ? 14 : 9);
+          }
+        } catch (_e) {}
+      }
+
       async function translateOverviewTextClient(ev, itemKey, boxId, textElId, btnId) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        triggerTmaHapticClient("light");
         const textEl = document.getElementById(textElId);
         const btnEl = document.getElementById(btnId);
         const boxEl = document.getElementById(boxId);
@@ -35450,6 +35470,7 @@
       let heroPageTouchActive = false;
       let heroTouchStartTime = 0;
       let heroTouchStartScrollY = 0;
+      let heroLastCatalogScrollY = 0;
       let heroCurrentZone = 0; // 0 = Vollbild-Slider (Vorhang offen), 1 = Katalog-Cover (Vorhang weggeglitten, Cover starten bei scrollY=0)
       let heroCurtainScrolledToCatalog = false;
 
@@ -35510,6 +35531,7 @@
           }
           box.classList.add("is-long-desc");
         }
+        triggerTmaHapticClient("light");
         const willExpand = !box.classList.contains("is-expanded");
         box.classList.toggle("is-expanded", willExpand);
         box.setAttribute("aria-expanded", willExpand ? "true" : "false");
@@ -35566,8 +35588,14 @@
         if (hintBtn) hintBtn.style.transform = "";
 
         const goingToCatalog = Number(targetY) > 10;
+        const zoneChanged = heroCurtainScrolledToCatalog !== goingToCatalog;
         heroCurtainScrolledToCatalog = goingToCatalog;
         heroCurrentZone = goingToCatalog ? 1 : 0;
+        heroLastCatalogScrollY = 0;
+
+        if (zoneChanged) {
+          triggerTmaHapticClient("medium");
+        }
 
         heroMomentumDrainActive = true;
         heroMomentumDrainDir = goingToCatalog ? 1 : -1;
@@ -35636,7 +35664,7 @@
 
         const y = window.scrollY || window.pageYOffset || 0;
         const DOWN_THRESHOLD = 185;
-        const UP_THRESHOLD = 195;
+        const UP_THRESHOLD = 95;
 
         // 1. Zone 0 (Vollbild-Slider offen): Nach unten scrollen überwindet Widerstand und lässt den Vorhang nach oben weggleiten (Cover bei scrollY = 0)
         if (!heroCurtainScrolledToCatalog) {
@@ -35669,12 +35697,12 @@
           return;
         }
 
-        // 2. Zone 1 (Katalog-Cover bei scrollY = 0): Nur ganz oben an der ersten Cover-Reihe (y <= 4) holt Weiter-Hochscrollen den Vollbild-Slider zurück
-        if (heroCurtainScrolledToCatalog && y <= 4 && dy < 0) {
+        // 2. Zone 1 (Katalog-Cover bei scrollY = 0): Beim Hochscrollen an der oberen Katalogkante öffnet sich der Vollbild-Slider automatisch wieder
+        if (heroCurtainScrolledToCatalog && y <= 8 && dy < 0) {
           ev.preventDefault();
           heroWheelDownAccum = 0;
-          const velocityBoost = Math.abs(dy) > 55 ? 1.15 : 0.88;
-          const step = Math.min(82, Math.max(12, Math.abs(dy) * velocityBoost));
+          const velocityBoost = Math.abs(dy) > 45 ? 1.25 : 1.0;
+          const step = Math.min(95, Math.max(18, Math.abs(dy) * velocityBoost));
           heroWheelUpAccum += step;
 
           if (heroWheelDecayTimer) clearTimeout(heroWheelDecayTimer);
@@ -35703,16 +35731,15 @@
         if (!isHeroScrollCouplingActiveClient() || Date.now() < heroSnapAnimatingUntil) return;
         const curY = window.scrollY || window.pageYOffset || 0;
 
-        // Wenn der Nutzer im Katalog bereits ganz oben (scrollY <= 8) begonnen hat und bewusst nach unten zieht -> Vollbild-Slider-Vorhang öffnen!
-        // Normales schnelles Hochscrollen aus dem Katalog (heroTouchStartScrollY > 8) stoppt dagegen 100% nativ bei scrollY = 0 ohne jedes Nachruckeln.
-        if (heroCurtainScrolledToCatalog && heroTouchStartScrollY <= 8 && curY <= 4) {
+        // Automatisches Ausklappen beim Hochscrollen / Nach-unten-Wischen am oberen Katalogrand (curY <= 12)
+        if (heroCurtainScrolledToCatalog && curY <= 12) {
           const dyTouch = (ev.changedTouches && ev.changedTouches[0] && heroTouchStartY)
             ? (ev.changedTouches[0].clientY - heroTouchStartY)
             : 0;
           const dxTouch = (ev.changedTouches && ev.changedTouches[0] && heroTouchStartX)
             ? (ev.changedTouches[0].clientX - heroTouchStartX)
             : 0;
-          if (dyTouch > 58 && dyTouch > Math.abs(dxTouch) * 1.25) {
+          if (dyTouch > 24 && dyTouch > Math.abs(dxTouch) * 1.15) {
             animateHeroCatalogSnapScrollClient(0);
           }
         }
@@ -35740,6 +35767,18 @@
         }
 
         if (heroCurtainScrolledToCatalog) {
+          // Wenn der Nutzer im Katalog nach oben scrollt und an der ersten Cover-Reihe (y <= 6) ankommt -> Vollbild-Slider automatisch öffnen!
+          if (
+            isHeroScrollCouplingActiveClient() &&
+            Date.now() >= heroSnapAnimatingUntil &&
+            heroLastCatalogScrollY > 6 &&
+            y <= 6
+          ) {
+            heroLastCatalogScrollY = 0;
+            animateHeroCatalogSnapScrollClient(0);
+            return;
+          }
+          heroLastCatalogScrollY = y;
           heroCurrentZone = 1;
           document.body.classList.add("page-scrolled");
           if (!document.body.classList.contains("hero-scrolled-past")) {
@@ -35750,6 +35789,7 @@
           return;
         }
 
+        heroLastCatalogScrollY = 0;
         heroCurrentZone = 0;
         document.body.classList.toggle("page-scrolled", y > 10);
         if (document.body.classList.contains("hero-scrolled-past")) {
@@ -35794,6 +35834,7 @@
 
       function setHeroSlideIndex(idx) {
         if (!state.heroSlides.length) return;
+        triggerTmaHapticClient("selection");
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = false;
         updateHeroBannerDomOnly();
@@ -35802,6 +35843,7 @@
 
       function selectHeroSlideCard(idx) {
         if (!state.heroSlides.length) return;
+        triggerTmaHapticClient("selection");
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = true;
         updateHeroBannerDomOnly();
@@ -36091,6 +36133,7 @@
       }
 
       function selectHeroGenreFilter(genreId) {
+        triggerTmaHapticClient("selection");
         const val = String(genreId || "all");
         const sel = document.getElementById("searchGenreSelect");
         if (sel) sel.value = val;
@@ -36522,6 +36565,7 @@
 
       function toggleSearchGenreDropdownOverlay(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        triggerTmaHapticClient("light");
         const overlayEl = document.getElementById("searchGenreDropdownOverlay");
         const trigBtn = document.getElementById("searchGenreTriggerBtn");
         if (!overlayEl) return;
@@ -36555,6 +36599,7 @@
       }
 
       function selectGenreFromSearchOverlay(genreVal) {
+        triggerTmaHapticClient("selection");
         closeSearchGenreDropdownOverlay();
         onSearchGenreSelectChange(genreVal);
         const inp = document.getElementById("searchInput");
@@ -36566,6 +36611,9 @@
       function expandMobileSearchBarClient(focusInput = true) {
         const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
         if (hdr && (window.innerWidth || 1024) <= 760) {
+          if (!hdr.classList.contains("mobile-search-expanded")) {
+            triggerTmaHapticClient("light");
+          }
           hdr.classList.add("mobile-search-expanded");
           syncHeroSearchPlaceholderAndToggleBtnClient();
         }
@@ -36579,6 +36627,7 @@
 
       function collapseMobileSearchBarClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        triggerTmaHapticClient("selection");
         closeSearchGenreDropdownOverlay();
         closeAutocomplete();
         const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
