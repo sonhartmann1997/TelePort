@@ -1586,21 +1586,24 @@
         z-index: 60;
         background: linear-gradient(
           180deg,
-          rgba(6, 9, 17, 0.92) 0%,
-          rgba(var(--ambi-1), 0.16) 55%,
-          rgba(6, 9, 17, 0.86) 100%
+          rgba(6, 9, 17, 0.95) 0%,
+          rgba(var(--ambi-1), 0.18) 55%,
+          rgba(6, 9, 17, 0.90) 100%
         );
-        backdrop-filter: blur(18px) saturate(1.45);
-        -webkit-backdrop-filter: blur(18px) saturate(1.45);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
         padding: 8px 16px;
-        border-bottom: 1px solid rgba(var(--ambi-2), 0.18);
+        border-bottom: 1px solid rgba(var(--ambi-2), 0.20);
         box-shadow: 0 8px 24px rgba(2, 6, 23, 0.45);
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
         flex-wrap: nowrap;
-        transition: background 0.38s ease, border-color 0.35s ease, box-shadow 0.35s ease, backdrop-filter 0.35s ease;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transition: background 0.28s ease, border-color 0.28s ease, box-shadow 0.28s ease;
       }
       /* Ganz oben über dem geöffneten Hero-Slider: Kein hässlicher Balken! Alle 38px-Glas-Elemente schweben frei im oberen Kino-Fade */
       body:not(.page-scrolled):has(#heroCurtainShell:not(.is-collapsed)) header {
@@ -1638,17 +1641,18 @@
         white-space: nowrap;
         font-size: calc(12px * var(--scale-menu)) !important;
         font-weight: 700 !important;
-        background: linear-gradient(135deg, rgba(8, 12, 22, 0.72) 0%, rgba(var(--ambi-1), 0.16) 100%);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(var(--ambi-2), 0.32);
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(var(--ambi-1), 0.20) 100%);
+        border: 1px solid rgba(var(--ambi-2), 0.34);
         border-radius: 10px;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-        transition: background 0.25s ease, border-color 0.25s ease, transform 0.14s ease, box-shadow 0.25s ease;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transition: border-color 0.25s ease, transform 0.14s ease, box-shadow 0.25s ease;
       }
       header #sidebarToggleBtn:hover,
       header #navBtnWishlist:hover {
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.88) 0%, rgba(var(--ambi-2), 0.28) 100%);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(var(--ambi-2), 0.28) 100%);
         border-color: rgba(var(--ambi-2), 0.65);
       }
       .brand-wrap { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
@@ -1669,12 +1673,13 @@
         gap: 6px;
         padding: 0 10px;
         border-radius: 10px;
-        background: linear-gradient(135deg, rgba(8, 12, 22, 0.70) 0%, rgba(var(--ambi-1), 0.15) 100%);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(var(--ambi-2), 0.30);
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(var(--ambi-1), 0.18) 100%);
+        border: 1px solid rgba(var(--ambi-2), 0.32);
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-        transition: background 0.2s, transform 0.12s, border-color 0.2s, box-shadow 0.2s;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transition: transform 0.12s, border-color 0.2s, box-shadow 0.2s;
         flex-shrink: 0;
       }
       .brand-logo:hover,
@@ -1946,14 +1951,15 @@
         align-items: center;
         gap: 3px;
         flex-shrink: 0;
-        background: linear-gradient(135deg, rgba(8, 12, 22, 0.72) 0%, rgba(var(--ambi-1), 0.15) 100%);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(var(--ambi-1), 0.18) 100%);
         padding: 3px;
         border-radius: 10px;
-        border: 1px solid rgba(var(--ambi-2), 0.30);
+        border: 1px solid rgba(var(--ambi-2), 0.32);
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-        transition: background 0.35s ease, border-color 0.35s ease;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transition: border-color 0.28s ease;
       }
       .media-mode-tab {
         height: calc(var(--top-bar-h, 38px) - 8px);
@@ -2021,20 +2027,21 @@
         flex-wrap: nowrap;
         background: linear-gradient(
           135deg,
-          rgba(7, 11, 20, 0.72) 0%,
-          rgba(var(--ambi-1), 0.18) 52%,
-          rgba(7, 11, 20, 0.78) 100%
+          rgba(7, 11, 20, 0.86) 0%,
+          rgba(var(--ambi-1), 0.20) 52%,
+          rgba(7, 11, 20, 0.90) 100%
         );
-        backdrop-filter: blur(18px) saturate(1.6);
-        -webkit-backdrop-filter: blur(18px) saturate(1.6);
-        border: 1px solid rgba(var(--ambi-2), 0.34);
+        border: 1px solid rgba(var(--ambi-2), 0.36);
         border-radius: 10px;
         padding: 0 3px;
         box-shadow:
           0 4px 16px rgba(2, 6, 23, 0.44),
           0 0 18px rgba(var(--ambi-1), 0.12),
           inset 0 1px 0 rgba(255, 255, 255, 0.14);
-        transition: background 0.5s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transition: border-color 0.28s ease, box-shadow 0.28s ease;
       }
       body[data-theme="light"] .search-bar {
         background: linear-gradient(
@@ -2417,14 +2424,20 @@
         margin-bottom: 0px;
         pointer-events: none;
       }
-      /* Katalog & Filme unterhalb des 100%-Vollbild-Sliders erst beim Herunterscrollen sanft einblenden */
+      /* Katalog & Filme unterhalb des 100%-Vollbild-Sliders erst beim Herunterscrollen sanft einblenden + garantierte Bühnenhöhe auch bei nur 1–2 Cover-Zeilen */
       #heroBannerSlot + .section {
-        transition: opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1), transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
         will-change: opacity, transform;
+      }
+      body.hero-slider-expanded #heroBannerSlot + .section {
+        min-height: calc(100vh - 54px);
+        min-height: calc(100svh - 54px);
+        box-sizing: border-box;
+        padding-bottom: 36px;
       }
       body.hero-slider-expanded:not(.page-scrolled):not(.hero-scrolled-past) #heroBannerSlot + .section {
         opacity: 0;
-        transform: translate3d(0, 22px, 0);
+        transform: translate3d(0, 18px, 0);
         pointer-events: none;
       }
       .hero-curtain-inner {
@@ -2440,20 +2453,14 @@
         position: relative;
         margin: 0;
         z-index: 1;
+        background: var(--bg);
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
       }
-      /* Atmosphärische Bild-Ausfüllung bis ganz nach oben (top: 0) direkt hinter der Top-Leiste */
+      /* Flackerfreie atmosphärische Farblicht-Ausfüllung ohne teures Live-Blur-Rastern auf Mobilgeräten */
       .hero-ambilight-glow {
-        position: absolute;
-        inset: -14px 0 0 0;
-        background-image: var(--hero-bg-landscape, none);
-        background-size: cover;
-        background-position: center top;
-        filter: blur(30px) saturate(2.15) brightness(1.14);
-        opacity: calc(0.82 * (1 - var(--hero-scroll-fade, 0) * 0.85));
-        z-index: 0;
-        pointer-events: none;
-        transition: background-image 0.55s ease;
-        transform: translate3d(0, 0, 0) scale(1.06);
+        display: none;
       }
       .hero-ambilight-beams {
         position: absolute;
@@ -2461,28 +2468,37 @@
         z-index: 0;
         pointer-events: none;
         background:
-          radial-gradient(65% 55% at 50% 6%, rgba(var(--ambi-2), 0.58) 0%, rgba(var(--ambi-2), 0) 75%),
-          radial-gradient(55% 75% at 18% 50%, rgba(var(--ambi-1), 0.56) 0%, rgba(var(--ambi-1), 0) 75%),
-          radial-gradient(60% 80% at 82% 58%, rgba(var(--ambi-3), 0.52) 0%, rgba(var(--ambi-3), 0) 78%);
-        filter: blur(26px);
-        opacity: calc(0.82 * (1 - var(--hero-scroll-fade, 0) * 0.85));
-        transition: background 0.6s ease;
+          radial-gradient(80% 50% at 50% 0%, rgba(var(--ambi-2), 0.42) 0%, rgba(var(--ambi-2), 0) 75%),
+          radial-gradient(65% 70% at 15% 45%, rgba(var(--ambi-1), 0.36) 0%, rgba(var(--ambi-1), 0) 75%),
+          radial-gradient(65% 75% at 85% 55%, rgba(var(--ambi-3), 0.34) 0%, rgba(var(--ambi-3), 0) 78%);
+        opacity: 0.9;
         transform: translate3d(0, 0, 0);
-      }
-      body[data-theme="light"] .hero-ambilight-glow {
-        opacity: calc(0.42 * (1 - var(--hero-scroll-fade, 0) * 0.85));
-        filter: blur(30px) saturate(1.75) brightness(1.05);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
       }
       body[data-theme="light"] .hero-ambilight-beams {
-        opacity: calc(0.45 * (1 - var(--hero-scroll-fade, 0) * 0.85));
+        opacity: 0.45;
+      }
+      /* Hardwarebeschleunigtes Scroll-Abdunklungs-Overlay (reines GPU-Opacity statt Live-Blur-Neuberechnung beim Scrollen) */
+      .hero-scroll-dim-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        pointer-events: none;
+        background: var(--bg);
+        opacity: var(--hero-scroll-fade, 0);
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        will-change: opacity;
       }
       .hero {
         position: relative;
         z-index: 1;
         margin: 0;
         min-height: 100vh;
-        min-height: 100dvh;
-        height: 100dvh;
+        min-height: 100svh;
+        height: 100svh;
         box-sizing: border-box;
         border-radius: 0;
         border: none;
@@ -2493,51 +2509,47 @@
         justify-content: space-between;
         padding: 68px 28px 14px;
         overflow: hidden;
-        touch-action: pan-y;
+        touch-action: pan-x;
       }
-      /* Scharfes Slider-Bild: Startet leicht unterhalb der Top-Leisten-Oberkante mit center top (0% Beschnitt oben!) + sanftem Alpha-Fade nach oben in die Bild-Ausfüllung */
+      /* Scharfes Slider-Bild: Reiner GPU-Opacity-Crossfade ab top: 0 ohne -webkit-mask-image Flackern unter der Top-Leiste */
       .hero-backdrop-layer {
         position: absolute;
-        top: 32px;
-        left: 0;
-        right: 0;
-        bottom: 0;
+        inset: 0;
         background-image: var(--hero-bg-landscape, none);
         background-size: cover;
         background-position: center top;
         z-index: 0;
         pointer-events: none;
         opacity: 0;
-        filter: brightness(1.08) contrast(1.05) saturate(1.14);
-        -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.46) 24px, rgba(0, 0, 0, 0.88) 54px, #000000 86px);
-        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.46) 24px, rgba(0, 0, 0, 0.88) 54px, #000000 86px);
-        transform: translate3d(14px, 0, 0);
+        transform: translate3d(0, 0, 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
-        transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-        will-change: transform, opacity;
+        transition: opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+        will-change: opacity;
       }
       .hero-backdrop-layer.active-layer {
-        opacity: calc(1 - var(--hero-scroll-fade, 0) * 0.88);
-        transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * 26px), 0);
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
       }
-      /* Sanfter Kino-Fade (oben dezent durchscheinend auf die Ambilight-Bildausfüllung, unten nahtlos in den Katalog) */
+      /* Sanfter Kino-Fade (oben mit Ambilight-Schimmer hinter der Top-Leiste, unten nahtlos in den Katalog) */
       .hero-scrim-layer {
         position: absolute;
         inset: 0;
         z-index: 1;
         pointer-events: none;
         background:
-          linear-gradient(180deg, rgba(4, 7, 15, 0.46) 0%, rgba(4, 7, 15, 0.20) 10%, rgba(4, 7, 15, 0) 24%),
+          linear-gradient(180deg, rgba(5, 8, 16, 0.76) 0%, rgba(var(--ambi-1), 0.22) 34px, rgba(5, 8, 16, 0.24) 72px, rgba(5, 8, 16, 0) 135px),
           linear-gradient(0deg, var(--bg) 0%, rgba(6, 9, 17, 0.92) 9%, rgba(6, 9, 17, 0.44) 24%, rgba(6, 9, 17, 0.08) 42%, rgba(6, 9, 17, 0) 58%),
           linear-gradient(90deg, rgba(4, 7, 15, 0.84) 0%, rgba(4, 7, 15, 0.62) 22%, rgba(4, 7, 15, 0.28) 44%, rgba(4, 7, 15, 0.05) 64%, rgba(4, 7, 15, 0) 78%),
           linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
-        transition: background 0.4s ease, opacity 0.4s ease;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
       }
       /* Automatische Kontrast-Unterstützung bei extrem hellen Szenenbildern (wie Schnee/Eis in Interstellar) */
       .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
         background:
-          linear-gradient(180deg, rgba(4, 7, 15, 0.62) 0%, rgba(4, 7, 15, 0.32) 12%, rgba(4, 7, 15, 0) 28%),
+          linear-gradient(180deg, rgba(5, 8, 16, 0.82) 0%, rgba(var(--ambi-1), 0.26) 36px, rgba(5, 8, 16, 0.34) 78px, rgba(5, 8, 16, 0) 145px),
           linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.95) 11%, rgba(5, 8, 16, 0.52) 27%, rgba(5, 8, 16, 0.12) 45%, rgba(5, 8, 16, 0) 62%),
           linear-gradient(90deg, rgba(4, 7, 15, 0.92) 0%, rgba(4, 7, 15, 0.76) 26%, rgba(4, 7, 15, 0.42) 48%, rgba(4, 7, 15, 0.10) 68%, rgba(4, 7, 15, 0) 84%),
           linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
@@ -2550,32 +2562,25 @@
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        min-height: clamp(320px, 66dvh, 640px);
+        min-height: clamp(320px, 66svh, 640px);
         gap: 12px;
-        opacity: calc(1 - var(--hero-scroll-fade, 0) * 1.15);
-        transform: translate3d(0, calc(var(--hero-scroll-fade, 0) * -20px + var(--hero-rubber-y, 0px)), 0);
+        transform: translate3d(0, var(--hero-rubber-y, 0px), 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
-        will-change: opacity, transform;
+        will-change: transform;
       }
-      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten oben + Bild-Ausfüllung hinter der Top-Leiste */
+      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten oben + sanfter Top-Verlauf ohne Masken-Flackern */
       @media (orientation: portrait), (max-width: 640px) {
-        .hero-ambilight-glow {
-          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape, none)) !important;
-          background-position: center top !important;
-        }
         .hero-backdrop-layer {
-          top: 26px !important;
+          inset: 0 !important;
           background-image: var(--hero-bg-portrait, var(--hero-bg-landscape, none)) !important;
           background-position: center top !important;
           background-size: cover !important;
-          -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.48) 22px, rgba(0, 0, 0, 0.90) 48px, #000000 76px) !important;
-          mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0.48) 22px, rgba(0, 0, 0, 0.90) 48px, #000000 76px) !important;
         }
         .hero-scrim-layer,
         .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
           background:
-            linear-gradient(180deg, rgba(4, 7, 15, 0.50) 0%, rgba(4, 7, 15, 0.20) 10%, rgba(4, 7, 15, 0) 24%),
+            linear-gradient(180deg, rgba(4, 7, 15, 0.74) 0%, rgba(var(--ambi-1), 0.22) 32px, rgba(4, 7, 15, 0.22) 66px, rgba(4, 7, 15, 0) 120px),
             linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.96) 14%, rgba(5, 8, 16, 0.74) 30%, rgba(5, 8, 16, 0.24) 46%, rgba(5, 8, 16, 0) 64%) !important;
         }
       }
@@ -3005,9 +3010,7 @@
         min-height: var(--top-bar-h, 38px) !important;
         max-height: var(--top-bar-h, 38px) !important;
         box-sizing: border-box !important;
-        background: linear-gradient(135deg, rgba(8, 12, 22, 0.74) 0%, rgba(var(--ambi-1), 0.18) 100%);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(var(--ambi-1), 0.20) 100%);
         color: rgba(248, 250, 252, 0.95);
         border: 1px solid rgba(var(--ambi-2), 0.36);
         border-radius: 10px;
@@ -3021,7 +3024,10 @@
         gap: 5px;
         flex-shrink: 0;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.44), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-        transition: background 0.25s ease, border-color 0.25s ease, transform 0.15s ease, color 0.15s ease;
+        transform: translate3d(0, 0, 0);
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transition: border-color 0.25s ease, transform 0.15s ease, color 0.15s ease;
       }
       .hero-hide-btn.is-collapsed-state {
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.86) 0%, rgba(var(--ambi-1), 0.28) 100%);
@@ -7690,12 +7696,18 @@
       let heroPageTouchActive = false;
       let heroTouchStartTime = 0;
       let heroTouchStartScrollY = 0;
+      let heroCurrentZone = 0; // 0 = Vollbild-Slider (y=0), 1 = Katalog-Cover (y>=snapY)
 
       function getHeroCatalogSnapScrollYClient() {
         const stageWrap = document.getElementById("heroStageWrapEl");
-        const topBarH = (document.getElementById("topUnifiedBar")?.offsetHeight) || 50;
+        const topBarH = (document.getElementById("topUnifiedBar")?.offsetHeight) || 54;
         const heroH = stageWrap ? stageWrap.offsetHeight : (window.innerHeight || 640);
-        return Math.max(200, heroH - topBarH);
+        const rawSnap = Math.max(200, heroH - topBarH);
+        const maxScroll = Math.max(0, (document.documentElement.scrollHeight || document.body.scrollHeight || 0) - (window.innerHeight || 0));
+        if (maxScroll > 60 && maxScroll < rawSnap) {
+          return maxScroll;
+        }
+        return rawSnap;
       }
 
       function isHeroScrollCouplingActiveClient() {
@@ -7753,7 +7765,7 @@
         }
       }
 
-      // Frame-genauer 60/120fps Spring-Scroller (ersetzt ruckelndes natives scrollTo-smooth auf Mobilgeräten & absorbiert Rest-Schwung)
+      // Frame-genauer 60/120fps 2-Zonen-Spring-Scroller ohne Zwischenstopp
       function animateHeroCatalogSnapScrollClient(targetY, opts) {
         cancelHeroSpringScrollClient();
         heroWheelDownAccum = 0;
@@ -7771,9 +7783,10 @@
         if (hintBtn) hintBtn.style.transform = "";
 
         const destY = Math.max(0, Math.round(targetY));
+        heroCurrentZone = destY > 20 ? 1 : 0;
         const startY = window.scrollY || window.pageYOffset || 0;
         const dist = destY - startY;
-        const durationMs = (opts && opts.durationMs) || Math.min(440, Math.max(290, Math.round(Math.abs(dist) * 0.52)));
+        const durationMs = (opts && opts.durationMs) || Math.min(390, Math.max(250, Math.round(Math.abs(dist) * 0.46)));
 
         if (destY > 0 && document.body) {
           document.body.classList.add("page-scrolled");
@@ -7783,11 +7796,11 @@
         heroMomentumDrainActive = true;
         heroMomentumDrainDir = destY > startY ? 1 : -1;
         heroLastWheelEventAt = Date.now();
-        heroSnapAnimatingUntil = Date.now() + durationMs + 60;
+        heroSnapAnimatingUntil = Date.now() + durationMs + 55;
 
         if (Math.abs(dist) < 2) {
           window.scrollTo(0, destY);
-          heroSnapAnimatingUntil = Date.now() + 80;
+          heroSnapAnimatingUntil = Date.now() + 70;
           syncHeroScrollFadeAndTopBarStateClient();
           return;
         }
@@ -7796,7 +7809,6 @@
         const stepFrame = (nowPerf) => {
           const elapsed = Math.max(0, nowPerf - startTime);
           const progress = Math.min(1, elapsed / durationMs);
-          // Quintic Out / Critically-Damped Spring Kurve für butterweiche 60/120fps Landung ohne Nachwippen
           const eased = 1 - Math.pow(1 - progress, 4);
           const nextY = Math.round(startY + dist * eased);
           window.scrollTo(0, nextY);
@@ -7812,9 +7824,32 @@
         heroSpringRafId = requestAnimationFrame(stepFrame);
       }
 
+      // Fester 2-Zonen-Wächter: Verhindert jedes Hängenbleiben zwischen Vollbild-Slider (0) und Filmcovern (snapY)
+      function enforceHeroTwoZoneSnapOnIdleClient() {
+        if (heroPageTouchActive || heroSpringRafId || Date.now() < heroSnapAnimatingUntil) return;
+        if (!isHeroScrollCouplingActiveClient()) return;
+        const yNow = window.scrollY || window.pageYOffset || 0;
+        const snapNow = getHeroCatalogSnapScrollYClient();
+        if (yNow > 3 && yNow < snapNow - 3) {
+          // Wenn man aus dem Slider (Zone 0) kam, reicht >18% Weg nach unten für Zone 1; kam man aus dem Katalog (Zone 1), braucht es <78% für den Rücksprung in Zone 0
+          const shouldGoToCatalog = heroCurrentZone === 0
+            ? (yNow >= snapNow * 0.18)
+            : (yNow > snapNow * 0.78);
+          animateHeroCatalogSnapScrollClient(shouldGoToCatalog ? snapNow : 0, { durationMs: 260 });
+        } else if (yNow <= 3) {
+          heroCurrentZone = 0;
+        } else if (yNow >= snapNow - 3) {
+          heroCurrentZone = 1;
+        }
+      }
+
+      function scheduleHeroTwoZoneIdleCheckClient(delayMs) {
+        if (heroTouchSettleTimer) clearTimeout(heroTouchSettleTimer);
+        heroTouchSettleTimer = setTimeout(enforceHeroTwoZoneSnapOnIdleClient, delayMs || 95);
+      }
+
       function onHeroCatalogWheelClient(ev) {
         if (!isHeroScrollCouplingActiveClient()) return;
-        // Wenn der Mauszeiger in einer aufgeklappten Beschreibungs-Scrollbox scrollt, normales Text-Scrollen erlauben
         const targetEl = ev.target;
         if (targetEl && typeof targetEl.closest === "function") {
           const expDesc = targetEl.closest(".expandable-desc-box.is-expanded");
@@ -7832,8 +7867,6 @@
 
         const snapY = getHeroCatalogSnapScrollYClient();
 
-        // Momentum-Drain ("Inertia Drain"): Absorbiert auslaufende Trackpad-/Mausrad-Schwung-Events nach dem Übergang,
-        // damit die Seite bei schnellem Scrollen vom Slider nach unten NICHT einfach weiter durch den Katalog scrollt!
         if (now < heroSnapAnimatingUntil) {
           ev.preventDefault();
           return;
@@ -7858,7 +7891,7 @@
         const DOWN_THRESHOLD = 185;
         const UP_THRESHOLD = 195;
 
-        // 1. Im oberen Vollbild-Slider (oder im Übergangsbereich): Nach unten scrollen braucht spürbaren Widerstand ("Kraft" + Rubber-Band)
+        // 1. Zone 0 (Vollbild-Slider): Nach unten scrollen braucht spürbaren Widerstand -> wechselt direkt in Zone 1 (snapY)
         if (y < snapY * 0.55 && dy > 0) {
           ev.preventDefault();
           heroWheelUpAccum = 0;
@@ -7872,7 +7905,6 @@
             return;
           }
 
-          // Elastische Rubber-Band-Vorschau während man gegen den Widerstand anscrollt
           const ratio = Math.min(1, heroWheelDownAccum / DOWN_THRESHOLD);
           const rubberOffset = -Math.round(Math.pow(ratio, 0.85) * 26);
           setHeroRubberBandOffsetClient(rubberOffset);
@@ -7888,14 +7920,13 @@
           return;
         }
 
-        // Falls der Nutzer im oberen Übergangsbereich wieder leicht nach oben dreht -> sofort zurück auf 0 rasten
         if (y > 0 && y < snapY * 0.55 && dy < 0) {
           ev.preventDefault();
           animateHeroCatalogSnapScrollClient(0);
           return;
         }
 
-        // 2. An der Katalog-Oberkante (Filme/Serien): Nach oben scrollen stoppt erst mit Widerstand vor dem Vollbild-Slider
+        // 2. Zone 1 (An der Katalog-Oberkante): Nach oben scrollen stoppt erst mit Widerstand vor dem Vollbild-Slider
         if (y >= snapY * 0.55 && y <= snapY + 34 && dy < 0) {
           ev.preventDefault();
           if (y !== snapY) {
@@ -7912,7 +7943,6 @@
             return;
           }
 
-          // Elastische Rubber-Band-Vorschau beim Nach-Oben-Drücken gegen den Slider-Widerstand
           const ratio = Math.min(1, heroWheelUpAccum / UP_THRESHOLD);
           setHeroRubberBandOffsetClient(Math.round(Math.pow(ratio, 0.85) * 22));
           const stageWrap = document.getElementById("heroStageWrapEl");
@@ -7925,40 +7955,58 @@
       }
 
       window.addEventListener("wheel", onHeroCatalogWheelClient, { passive: false });
-      window.addEventListener("touchstart", () => {
+      window.addEventListener("touchstart", (ev) => {
         heroPageTouchActive = true;
+        heroTouchStartScrollY = window.scrollY || window.pageYOffset || 0;
+        if (ev.touches && ev.touches[0]) {
+          heroTouchStartX = ev.touches[0].clientX;
+          heroTouchStartY = ev.touches[0].clientY;
+          heroTouchStartTime = performance.now();
+        }
         if (heroTouchSettleTimer) {
           clearTimeout(heroTouchSettleTimer);
           heroTouchSettleTimer = null;
         }
       }, { passive: true });
-      window.addEventListener("touchend", () => {
+
+      window.addEventListener("touchend", (ev) => {
         heroPageTouchActive = false;
-        if (isHeroScrollCouplingActiveClient() && !heroSpringRafId && Date.now() >= heroSnapAnimatingUntil) {
-          const curY = window.scrollY || window.pageYOffset || 0;
-          const curSnapY = getHeroCatalogSnapScrollYClient();
-          if (curY > 6 && curY < curSnapY - 8) {
-            if (heroTouchSettleTimer) clearTimeout(heroTouchSettleTimer);
-            heroTouchSettleTimer = setTimeout(() => {
-              if (heroPageTouchActive || heroSpringRafId || Date.now() < heroSnapAnimatingUntil) return;
-              const yNow = window.scrollY || window.pageYOffset || 0;
-              const snapNow = getHeroCatalogSnapScrollYClient();
-              if (yNow > 6 && yNow < snapNow - 8) {
-                const wasInCatalog = document.body.classList.contains("hero-scrolled-past");
-                const shouldSnapToCatalog = wasInCatalog ? (yNow > snapNow * 0.68) : (yNow >= snapNow * 0.25);
-                animateHeroCatalogSnapScrollClient(shouldSnapToCatalog ? snapNow : 0);
-              }
-            }, 90);
+        if (!isHeroScrollCouplingActiveClient() || heroSpringRafId || Date.now() < heroSnapAnimatingUntil) return;
+        const curY = window.scrollY || window.pageYOffset || 0;
+        const curSnapY = getHeroCatalogSnapScrollYClient();
+
+        // Wenn der Nutzer an der Katalog-Oberkante (Zone 1) begonnen hat und aktiv in den Slider-Bereich (< snapY - 18) gezogen hat -> direkt in Zone 0 (Vollbild-Slider)!
+        if (heroTouchStartScrollY <= curSnapY + 32 && curY > 3 && curY < curSnapY - 18) {
+          const dyTouch = (ev.changedTouches && ev.changedTouches[0] && heroTouchStartY)
+            ? (ev.changedTouches[0].clientY - heroTouchStartY)
+            : 0;
+          if (dyTouch > 32 || curY < curSnapY * 0.82) {
+            animateHeroCatalogSnapScrollClient(0, { durationMs: 280 });
+            return;
           }
+        }
+        if (curY > 3 && curY < curSnapY - 3) {
+          scheduleHeroTwoZoneIdleCheckClient(75);
+        }
+      }, { passive: true });
+
+      window.addEventListener("touchcancel", () => {
+        heroPageTouchActive = false;
+        scheduleHeroTwoZoneIdleCheckClient(75);
+      }, { passive: true });
+
+      window.addEventListener("scrollend", () => {
+        if (!heroPageTouchActive) {
+          enforceHeroTwoZoneSnapOnIdleClient();
         }
       }, { passive: true });
 
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
-        const y = window.scrollY || window.pageYOffset || 0;
-        document.body.classList.toggle("page-scrolled", y > 10);
+        let y = window.scrollY || window.pageYOffset || 0;
         const stageWrap = document.getElementById("heroStageWrapEl");
         if (!stageWrap || state.heroHidden || state.isSearchMode) {
+          document.body.classList.toggle("page-scrolled", y > 10);
           if (stageWrap) {
             stageWrap.style.setProperty("--hero-scroll-fade", "0");
             stageWrap.style.setProperty("--hero-rubber-y", "0px");
@@ -7969,6 +8017,24 @@
           }
           return;
         }
+
+        const snapY = getHeroCatalogSnapScrollYClient();
+
+        // Katalog-Oberkanten-Stopper: Wenn der Nutzer tief aus dem Katalog (Start > snapY + 36) mit Schwung nach oben scrollt,
+        // stoppt die Bewegung sauber an der ersten Cover-Reihe (snapY) und rutscht NIEMALS halb in den Slider hinein!
+        if (
+          isHeroScrollCouplingActiveClient() &&
+          !heroSpringRafId &&
+          Date.now() >= heroSnapAnimatingUntil &&
+          heroCurrentZone === 1 &&
+          heroTouchStartScrollY > snapY + 36 &&
+          y < snapY
+        ) {
+          window.scrollTo(0, snapY);
+          y = snapY;
+        }
+
+        document.body.classList.toggle("page-scrolled", y > 10);
         const heroH = Math.max(280, stageWrap.offsetHeight || window.innerHeight || 580);
         const fade = Math.max(0, Math.min(1, y / (heroH * 0.72)));
         stageWrap.style.setProperty("--hero-scroll-fade", fade.toFixed(3));
@@ -7978,13 +8044,22 @@
           document.body.classList.toggle("hero-scrolled-past", scrolledPastNow);
           syncHeroSearchPlaceholderAndToggleBtnClient();
         }
+
+        if (y <= 3) {
+          heroCurrentZone = 0;
+        } else if (y >= snapY - 3) {
+          heroCurrentZone = 1;
+        } else if (!heroPageTouchActive && !heroSpringRafId && Date.now() >= heroSnapAnimatingUntil) {
+          // Kontinuierlicher Scroll-Idle-Wächter: Jedes Auslaufen im Zwischenbereich (3 < y < snapY - 3) wird sofort in Zone 0 oder Zone 1 gezogen
+          scheduleHeroTwoZoneIdleCheckClient(95);
+        }
       }
 
       function scrollToCatalogBelowHeroClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const snapY = getHeroCatalogSnapScrollYClient();
         const maxScroll = Math.max(0, (document.documentElement.scrollHeight || document.body.scrollHeight || 0) - (window.innerHeight || 0));
-        if (maxScroll >= 80) {
+        if (maxScroll >= 60) {
           animateHeroCatalogSnapScrollClient(Math.min(snapY, maxScroll));
         } else {
           toggleHeroSliderHidden(true);
@@ -8042,20 +8117,18 @@
       function toggleHeroSliderHidden(forceHide) {
         const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
         if (typeof forceHide !== "boolean" && !state.heroHidden && isScrolledPast) {
-          // Wenn der Nutzer unten im Katalog auf "▾ Spotlight" tippt, gleitet die Seite sanft hoch zum offenen Vollbild-Spotlight
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          animateHeroCatalogSnapScrollClient(0);
           return;
         }
         state.heroHidden = typeof forceHide === "boolean" ? forceHide : !state.heroHidden;
         state.heroActionsEngaged = false;
         try { localStorage.setItem("tma_hero_hidden", state.heroHidden ? "1" : "0"); } catch (e) {}
         if (!state.heroHidden && (window.scrollY || window.pageYOffset || 0) > 40) {
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          animateHeroCatalogSnapScrollClient(0);
         }
         syncHeroExpandedBodyClass();
         const curtainEl = document.getElementById("heroCurtainShell");
         if (curtainEl) {
-          // Butterweiche 0,4s Vorhang-Animation direkt am bestehenden DOM-Container (ohne Ruckeln!)
           curtainEl.classList.toggle("is-collapsed", Boolean(state.heroHidden));
           if (!state.heroHidden) {
             updateHeroBannerDomOnly(false);
@@ -8141,24 +8214,23 @@
         if (!heroTouchStartX || !heroTouchStartY || !ev.touches || !ev.touches[0]) return;
         const dx = ev.touches[0].clientX - heroTouchStartX;
         const dy = ev.touches[0].clientY - heroTouchStartY;
-        if (dy < -8 && Math.abs(dy) > Math.abs(dx) * 1.12 && !state.heroHidden && !state.isSearchMode) {
-          // Verhindert natives Browser-Momentum während der Geste auf dem Vollbild-Slider, damit nichts ruckelt oder überschießt!
-          if (ev.cancelable && heroTouchStartScrollY < 24) {
+        if (Math.abs(dy) > Math.abs(dx) * 1.05 && !state.heroHidden && !state.isSearchMode) {
+          // Fester 2-Zonen-Modus auf dem Vollbild-Slider: Verhindert jedes unkontrollierte Zwischenscrollen des Browsers
+          if (ev.cancelable) {
             ev.preventDefault();
           }
-          heroTouchDraggingUp = true;
-          if (document.body) document.body.classList.add("page-scrolled");
-          const stageWrap = document.getElementById("heroStageWrapEl");
-          if (stageWrap) {
-            const heroH = Math.max(280, stageWrap.offsetHeight || window.innerHeight || 580);
-            const absDy = Math.abs(dy);
-            // Gedämpfte Rubber-Band-Kurve für die ersten 64px, danach geschmeidiger Übergang
-            const rubberPx = -Math.round(Math.min(34, Math.pow(absDy, 0.78) * 1.35));
-            setHeroRubberBandOffsetClient(rubberPx);
-            const dragFade = Math.max(0, Math.min(0.68, absDy / (heroH * 0.55)));
-            const scrollY = window.scrollY || window.pageYOffset || 0;
-            const baseFade = Math.max(0, Math.min(1, scrollY / (heroH * 0.72)));
-            stageWrap.style.setProperty("--hero-scroll-fade", Math.max(baseFade, dragFade).toFixed(3));
+          if (dy < -6) {
+            heroTouchDraggingUp = true;
+            if (document.body) document.body.classList.add("page-scrolled");
+            const stageWrap = document.getElementById("heroStageWrapEl");
+            if (stageWrap) {
+              const heroH = Math.max(280, stageWrap.offsetHeight || window.innerHeight || 580);
+              const absDy = Math.abs(dy);
+              const rubberPx = -Math.round(Math.min(32, Math.pow(absDy, 0.78) * 1.3));
+              setHeroRubberBandOffsetClient(rubberPx);
+              const dragFade = Math.max(0, Math.min(0.62, absDy / (heroH * 0.58)));
+              stageWrap.style.setProperty("--hero-scroll-fade", dragFade.toFixed(3));
+            }
           }
         }
       }
@@ -8167,19 +8239,19 @@
         const dx = ev.changedTouches[0].clientX - heroTouchStartX;
         const dy = heroTouchStartY ? (ev.changedTouches[0].clientY - heroTouchStartY) : 0;
         const dt = Math.max(16, performance.now() - (heroTouchStartTime || performance.now()));
-        const vy = dy / dt; // px pro ms (negativ = Wischen nach oben)
+        const vy = dy / dt;
         const wasDraggingUp = heroTouchDraggingUp;
         heroTouchStartX = 0;
         heroTouchStartY = 0;
         heroTouchDraggingUp = false;
         setHeroRubberBandOffsetClient(0);
-        // Spürbarer Widerstand (mind. 56px Zugweg ODER schneller bewusster Flick mit vy < -0.42 bei mind. 28px Weg)
-        if ((dy < -56 || (dy < -28 && vy < -0.42)) && Math.abs(dy) > Math.abs(dx) * 1.12) {
+        // Fester 2-Zonen-Wechsel: Ab 44px Zugweg ODER bewusstem Flick (vy < -0.35 bei mind. 22px) direkt in Zone 1 (Katalog-Cover)
+        if ((dy < -44 || (dy < -22 && vy < -0.35)) && Math.abs(dy) > Math.abs(dx) * 1.08) {
           triggerHeroSwipeUpCollapseClient();
           return;
         }
         if (wasDraggingUp) {
-          animateHeroCatalogSnapScrollClient(0, { durationMs: 260 });
+          animateHeroCatalogSnapScrollClient(0, { durationMs: 220 });
           return;
         }
         if (Math.abs(dx) > 40 && Math.abs(dx) >= Math.abs(dy)) {
@@ -8396,14 +8468,9 @@
           Array.isArray(state.heroSlides) &&
           state.heroSlides.length > 0
         );
-        document.body.classList.toggle("hero-slider-expanded", isExp);
-        setTimeout(() => {
-          if (document.body) {
-            const curtainEl = document.getElementById("heroCurtainShell");
-            document.body.classList.toggle("hero-slider-expanded", Boolean(curtainEl && !curtainEl.classList.contains("is-collapsed")));
-          }
-          syncHeroSearchPlaceholderAndToggleBtnClient();
-        }, 0);
+        if (document.body.classList.contains("hero-slider-expanded") !== isExp) {
+          document.body.classList.toggle("hero-slider-expanded", isExp);
+        }
       }
 
       function buildHeroBannerInnerHtml() {
@@ -8466,6 +8533,7 @@
                 '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer" style="' + layerAStyle + '"></div>' +
                 '<div id="heroBackdropLayerB" class="hero-backdrop-layer" style="--hero-bg-landscape:none;--hero-bg-portrait:none"></div>' +
                 '<div class="hero-scrim-layer"></div>' +
+                '<div id="heroScrollDimOverlay" class="hero-scroll-dim-overlay"></div>' +
                 '<div class="hero-inner">' +
                   '<div class="hero-widescreen-body">' +
                     '<div id="heroContentEl" class="hero-content">' +
