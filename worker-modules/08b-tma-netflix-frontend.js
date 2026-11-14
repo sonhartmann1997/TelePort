@@ -1916,7 +1916,7 @@
                       const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
                       const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
                       const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
-                      return '<div id="modalHeaderOverviewEl" class="expandable-desc-box' + (ovText.length > 120 ? ' is-long-desc' : '') + '" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}" title="Klicken oder Enter für vollständige Beschreibung">' +
+                      return '<div id="modalHeaderOverviewEl" class="expandable-desc-box" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
                         '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
                         '<div class="desc-actions-row">' +
                           '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
@@ -2052,6 +2052,9 @@
             '</div>' +
           '</div>';
           if (tr && autoOpenTrailer) switchEmbedSource(trailerProvider || "youtube", false);
+          if (typeof syncExpandableDescriptionsOverflowClient === "function") {
+            requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(m));
+          }
           if (typeof window.refreshModalAndEpisodeMarquees === "function") {
             setTimeout(() => window.refreshModalAndEpisodeMarquees(m), 60);
           }
