@@ -30168,6 +30168,21 @@
         margin-bottom: 0px;
         pointer-events: none;
       }
+      /* Bounce-Lock Fixierung: Bricht bei zu schnellem Wischen jede Zwischen-Dehnung ab und rastet verzögerungsfrei ein */
+      .hero-curtain-shell.is-bounce-locked {
+        transition:
+          grid-template-rows 0.12s cubic-bezier(0.16, 1, 0.3, 1),
+          opacity 0.1s cubic-bezier(0.16, 1, 0.3, 1),
+          margin-top 0.12s cubic-bezier(0.16, 1, 0.3, 1),
+          margin-bottom 0.12s cubic-bezier(0.16, 1, 0.3, 1) !important;
+      }
+      .hero-curtain-shell.is-bounce-locked .hero-stage-wrap {
+        --hero-rubber-y: 0px !important;
+        --hero-scroll-fade: 0 !important;
+      }
+      .hero-curtain-shell.is-bounce-locked .hero-inner {
+        transform: translate3d(0, 0, 0) !important;
+      }
       /* Katalog & Filme unterhalb des 100%-Vollbild-Sliders: Gleiten als Vorhang auf scrollY = 0 + Gummiband-Widerstand an der Oberkante */
       #heroBannerSlot + .section {
         --catalog-rubber-y: 0px;
@@ -30177,6 +30192,11 @@
       }
       #heroBannerSlot + .section.is-rubber-dragging {
         transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.05s linear;
+      }
+      #heroBannerSlot + .section.is-bounce-locked {
+        --catalog-rubber-y: 0px !important;
+        transform: translate3d(0, 0, 0) !important;
+        transition: opacity 0.12s cubic-bezier(0.16, 1, 0.3, 1), transform 0.1s cubic-bezier(0.16, 1, 0.3, 1) !important;
       }
       body.hero-slider-expanded #heroBannerSlot + .section {
         min-height: calc(100vh - 54px);
@@ -35610,8 +35630,16 @@
         }
       }
 
+      let heroBounceLockUntil = 0;
+      let heroBounceLockTimer = null;
+      const HERO_BOUNCE_LOCK_VELOCITY = 1.15; // px/ms
+      const HERO_BOUNCE_LOCK_MIN_DIST = 34; // px
+      const HERO_BOUNCE_LOCK_COOLDOWN_MS = 400; // ms
+
       // Vorhang-Bühnen-Übergang: Slider gleitet als Vorhang weg, Filmcover starten physisch bei scrollY = 0 (kein Nachruckeln!)
-      function animateHeroCatalogSnapScrollClient(targetY) {
+      // Unterstützt zusätzlich Bounce-Lock ({ bounceLock: true }): bricht bei zu schnellem Wischen die Animation sofort ab und fixiert den Endzustand für 400ms.
+      function animateHeroCatalogSnapScrollClient(targetY, opts) {
+        const isBounceLock = Boolean(opts && opts.bounceLock);
         cancelHeroSpringScrollClient();
         heroWheelDownAccum = 0;
         heroWheelUpAccum = 0;
@@ -35626,6 +35654,11 @@
         setHeroRubberBandOffsetClient(0);
         setCatalogRubberBandOffsetClient(0, false);
         clearHeroDescTransientFocusClient();
+        const stageWrap = document.getElementById("heroStageWrapEl");
+        if (stageWrap) {
+          stageWrap.style.setProperty("--hero-scroll-fade", "0");
+          stageWrap.style.setProperty("--hero-rubber-y", "0px");
+        }
         const hintBtn = document.getElementById("heroScrollDownHintBtn");
         if (hintBtn) hintBtn.style.transform = "";
 
@@ -35636,15 +35669,32 @@
         heroLastCatalogScrollY = 0;
 
         if (zoneChanged) {
-          triggerTmaHapticClient("medium");
+          triggerTmaHapticClient(isBounceLock ? "heavy" : "medium");
         }
 
+        const nowMs = Date.now();
         heroMomentumDrainActive = true;
         heroMomentumDrainDir = goingToCatalog ? 1 : -1;
-        heroLastWheelEventAt = Date.now();
-        heroSnapAnimatingUntil = Date.now() + 420;
+        heroLastWheelEventAt = nowMs;
+        heroSnapAnimatingUntil = nowMs + (isBounceLock ? HERO_BOUNCE_LOCK_COOLDOWN_MS : 420);
 
         const curtainEl = document.getElementById("heroCurtainShell");
+        const catSecEl = document.querySelector("#heroBannerSlot + .section");
+        if (isBounceLock) {
+          heroBounceLockUntil = performance.now() + HERO_BOUNCE_LOCK_COOLDOWN_MS;
+          if (heroBounceLockTimer) {
+            clearTimeout(heroBounceLockTimer);
+            heroBounceLockTimer = null;
+          }
+          if (curtainEl) curtainEl.classList.add("is-bounce-locked");
+          if (catSecEl) catSecEl.classList.add("is-bounce-locked");
+          heroBounceLockTimer = setTimeout(() => {
+            if (curtainEl) curtainEl.classList.remove("is-bounce-locked");
+            if (catSecEl) catSecEl.classList.remove("is-bounce-locked");
+            heroBounceLockTimer = null;
+          }, HERO_BOUNCE_LOCK_COOLDOWN_MS);
+        }
+
         if (goingToCatalog) {
           if (document.body) {
             document.body.classList.add("hero-scrolled-past", "page-scrolled");
@@ -35762,9 +35812,17 @@
       }
 
       let heroCatalogDraggingDown = false;
+      let heroTouchLastY = 0;
+      let heroTouchLastTime = 0;
+      let heroTouchInstantVy = 0;
 
       window.addEventListener("wheel", onHeroCatalogWheelClient, { passive: false });
       window.addEventListener("touchstart", (ev) => {
+        if (performance.now() < heroBounceLockUntil) {
+          heroPageTouchActive = false;
+          heroCatalogDraggingDown = false;
+          return;
+        }
         if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
           heroPageTouchActive = false;
           heroCatalogDraggingDown = false;
@@ -35776,25 +35834,51 @@
         if (ev.touches && ev.touches[0]) {
           heroTouchStartX = ev.touches[0].clientX;
           heroTouchStartY = ev.touches[0].clientY;
+          heroTouchLastY = ev.touches[0].clientY;
           heroTouchStartTime = performance.now();
+          heroTouchLastTime = heroTouchStartTime;
+          heroTouchInstantVy = 0;
         }
       }, { passive: true });
 
       // Aktiver TouchMove-Wächter am oberen Katalogrand (scrollY <= 6):
-      // Blockiert Browser-Pull-to-Refresh ("Seite aktualisieren") sofort und baut einen echten elastischen Gummiband-Widerstand (--catalog-rubber-y) auf!
+      // Blockiert Browser-Pull-to-Refresh ("Seite aktualisieren") sofort, baut Gummiband-Widerstand auf und löst bei zu schnellem Wischen direkt den Bounce-Lock aus!
       window.addEventListener("touchmove", (ev) => {
         if (!heroPageTouchActive || !ev.touches || !ev.touches[0]) return;
+        const nowPerf = performance.now();
+        if (nowPerf < heroBounceLockUntil) {
+          heroPageTouchActive = false;
+          heroCatalogDraggingDown = false;
+          setCatalogRubberBandOffsetClient(0, false);
+          return;
+        }
         if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
           return;
         }
         if (!heroCurtainScrolledToCatalog || !isHeroScrollCouplingActiveClient() || Date.now() < heroSnapAnimatingUntil) return;
         const curY = window.scrollY || window.pageYOffset || 0;
+        const curTouchY = ev.touches[0].clientY;
         const dx = ev.touches[0].clientX - (heroTouchStartX || ev.touches[0].clientX);
-        const dy = ev.touches[0].clientY - (heroTouchStartY || ev.touches[0].clientY);
+        const dy = curTouchY - (heroTouchStartY || curTouchY);
+        const stepDt = Math.max(8, nowPerf - (heroTouchLastTime || nowPerf));
+        const totalDt = Math.max(12, nowPerf - (heroTouchStartTime || nowPerf));
+        const instVy = (curTouchY - (heroTouchLastY || curTouchY)) / stepDt;
+        const avgVy = dy / totalDt;
+        heroTouchInstantVy = Math.abs(instVy) > Math.abs(avgVy) ? instVy : avgVy;
+        heroTouchLastY = curTouchY;
+        heroTouchLastTime = nowPerf;
 
         if ((curY <= 6 || heroCatalogDraggingDown) && dy > 4 && dy > Math.abs(dx) * 1.05) {
           if (ev.cancelable) {
             ev.preventDefault();
+          }
+          // Mid-Gesture Bounce-Lock (Vollständig geöffnet): Bei zu schnellem Wischen nach unten sofort Animation abbrechen & Slider fixieren!
+          if (dy >= HERO_BOUNCE_LOCK_MIN_DIST && heroTouchInstantVy >= HERO_BOUNCE_LOCK_VELOCITY && dy > Math.abs(dx) * 1.15) {
+            heroPageTouchActive = false;
+            heroCatalogDraggingDown = false;
+            setCatalogRubberBandOffsetClient(0, false);
+            animateHeroCatalogSnapScrollClient(0, { bounceLock: true });
+            return;
           }
           heroCatalogDraggingDown = true;
           // Logarithmische Gummiband-Kurve: spürbarer Widerstand beim Ziehen nach unten an der Katalog-Oberkante
@@ -35812,6 +35896,7 @@
         heroCatalogDraggingDown = false;
         setCatalogRubberBandOffsetClient(0, false);
 
+        if (performance.now() < heroBounceLockUntil) return;
         if (!isHeroScrollCouplingActiveClient() || Date.now() < heroSnapAnimatingUntil) return;
         const curY = window.scrollY || window.pageYOffset || 0;
 
@@ -35824,7 +35909,12 @@
             ? (ev.changedTouches[0].clientX - heroTouchStartX)
             : 0;
           const dtTouch = Math.max(16, performance.now() - (heroTouchStartTime || performance.now()));
-          const vyTouch = dyTouch / dtTouch;
+          const avgVyTouch = dyTouch / dtTouch;
+          const vyTouch = Math.abs(heroTouchInstantVy) > Math.abs(avgVyTouch) ? heroTouchInstantVy : avgVyTouch;
+          if (dyTouch >= HERO_BOUNCE_LOCK_MIN_DIST && vyTouch >= HERO_BOUNCE_LOCK_VELOCITY && dyTouch > Math.abs(dxTouch) * 1.15) {
+            animateHeroCatalogSnapScrollClient(0, { bounceLock: true });
+            return;
+          }
           if ((dyTouch >= 88 || (dyTouch >= 48 && vyTouch >= 0.55)) && dyTouch > Math.abs(dxTouch) * 1.12) {
             animateHeroCatalogSnapScrollClient(0);
           }
@@ -35876,9 +35966,9 @@
         stageWrap.style.setProperty("--hero-scroll-fade", "0");
       }
 
-      function scrollToCatalogBelowHeroClient(ev) {
+      function scrollToCatalogBelowHeroClient(ev, opts) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
-        animateHeroCatalogSnapScrollClient(getHeroCatalogSnapScrollYClient());
+        animateHeroCatalogSnapScrollClient(getHeroCatalogSnapScrollYClient(), opts);
       }
 
       window.addEventListener("scroll", syncHeroScrollFadeAndTopBarStateClient, { passive: true });
@@ -35991,19 +36081,20 @@
         }
       }
 
-      function triggerHeroSwipeUpCollapseClient() {
+      function triggerHeroSwipeUpCollapseClient(opts) {
         if (state.isSearchMode || state.heroHidden) return;
-        scrollToCatalogBelowHeroClient();
+        scrollToCatalogBelowHeroClient(null, opts);
       }
 
-      window.__tmaHandleHeroSwipe = function(direction) {
+      window.__tmaHandleHeroSwipe = function(direction, opts) {
+        if (performance.now() < heroBounceLockUntil && !(opts && opts.bounceLock)) return;
         if (direction === "up") {
-          triggerHeroSwipeUpCollapseClient();
+          triggerHeroSwipeUpCollapseClient(opts);
         } else if (direction === "down") {
           if (state.heroHidden && !state.isSearchMode) {
             toggleHeroSliderHidden(false);
           } else if (heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 10) {
-            animateHeroCatalogSnapScrollClient(0);
+            animateHeroCatalogSnapScrollClient(0, opts);
           }
         } else if (direction === "left") {
           setHeroSlideIndex(state.heroIndex + 1);
@@ -36015,11 +36106,17 @@
       window.addEventListener("message", (ev) => {
         const d = ev && ev.data;
         if (d && d.type === "TMA_HERO_SWIPE_GESTURE" && d.direction) {
-          window.__tmaHandleHeroSwipe(d.direction);
+          window.__tmaHandleHeroSwipe(d.direction, { bounceLock: Boolean(d.bounceLock) });
         }
       });
 
       function onHeroTouchStart(ev) {
+        if (performance.now() < heroBounceLockUntil) {
+          heroTouchStartX = 0;
+          heroTouchStartY = 0;
+          heroTouchDraggingUp = false;
+          return;
+        }
         if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
           heroTouchStartX = 0;
           heroTouchStartY = 0;
@@ -36030,7 +36127,10 @@
           cancelHeroSpringScrollClient();
           heroTouchStartX = ev.touches[0].clientX;
           heroTouchStartY = ev.touches[0].clientY;
+          heroTouchLastY = ev.touches[0].clientY;
           heroTouchStartTime = performance.now();
+          heroTouchLastTime = heroTouchStartTime;
+          heroTouchInstantVy = 0;
           heroTouchStartScrollY = window.scrollY || window.pageYOffset || 0;
           heroTouchDraggingUp = false;
         }
@@ -36039,15 +36139,43 @@
         if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".expandable-desc-box.is-expanded")) {
           return;
         }
+        const nowPerf = performance.now();
+        if (nowPerf < heroBounceLockUntil) {
+          heroTouchStartX = 0;
+          heroTouchStartY = 0;
+          heroTouchDraggingUp = false;
+          setHeroRubberBandOffsetClient(0);
+          return;
+        }
         if (!heroTouchStartX || !heroTouchStartY || !ev.touches || !ev.touches[0]) return;
+        const curTouchY = ev.touches[0].clientY;
         const dx = ev.touches[0].clientX - heroTouchStartX;
-        const dy = ev.touches[0].clientY - heroTouchStartY;
+        const dy = curTouchY - heroTouchStartY;
+        const stepDt = Math.max(8, nowPerf - (heroTouchLastTime || nowPerf));
+        const totalDt = Math.max(12, nowPerf - (heroTouchStartTime || nowPerf));
+        const instVy = (curTouchY - (heroTouchLastY || curTouchY)) / stepDt;
+        const avgVy = dy / totalDt;
+        heroTouchInstantVy = Math.abs(instVy) > Math.abs(avgVy) ? instVy : avgVy;
+        heroTouchLastY = curTouchY;
+        heroTouchLastTime = nowPerf;
+
         if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
           clearHeroDescTransientFocusClient();
         }
         if (Math.abs(dy) >= Math.abs(dx) * 0.95 && !state.heroHidden && !state.isSearchMode) {
           if (ev.cancelable) {
             ev.preventDefault();
+          }
+          // Mid-Gesture Bounce-Lock (Vollständig geschlossen): Bei zu schnellem Wischen nach oben sofort Gummiband abbrechen & Slider schließen!
+          if (dy <= -HERO_BOUNCE_LOCK_MIN_DIST && heroTouchInstantVy <= -HERO_BOUNCE_LOCK_VELOCITY && Math.abs(dy) > Math.abs(dx) * 1.15) {
+            heroTouchStartX = 0;
+            heroTouchStartY = 0;
+            heroTouchDraggingUp = false;
+            setHeroRubberBandOffsetClient(0);
+            const hintBtn = document.getElementById("heroScrollDownHintBtn");
+            if (hintBtn) hintBtn.style.transform = "";
+            triggerHeroSwipeUpCollapseClient({ bounceLock: true });
+            return;
           }
           if (dy < -6) {
             heroTouchDraggingUp = true;
@@ -36070,11 +36198,18 @@
         }
       }
       function onHeroTouchEnd(ev) {
+        if (performance.now() < heroBounceLockUntil) {
+          heroTouchStartX = 0;
+          heroTouchStartY = 0;
+          heroTouchDraggingUp = false;
+          return;
+        }
         if (!heroTouchStartX || !ev.changedTouches || !ev.changedTouches[0]) return;
         const dx = ev.changedTouches[0].clientX - heroTouchStartX;
         const dy = heroTouchStartY ? (ev.changedTouches[0].clientY - heroTouchStartY) : 0;
         const dt = Math.max(16, performance.now() - (heroTouchStartTime || performance.now()));
-        const vy = dy / dt;
+        const avgVy = dy / dt;
+        const vy = Math.abs(heroTouchInstantVy) > Math.abs(avgVy) ? heroTouchInstantVy : avgVy;
         const wasDraggingUp = heroTouchDraggingUp;
         heroTouchStartX = 0;
         heroTouchStartY = 0;
@@ -36082,6 +36217,10 @@
         setHeroRubberBandOffsetClient(0);
         const hintBtn = document.getElementById("heroScrollDownHintBtn");
         if (hintBtn) hintBtn.style.transform = "";
+        if (dy <= -HERO_BOUNCE_LOCK_MIN_DIST && vy <= -HERO_BOUNCE_LOCK_VELOCITY && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          triggerHeroSwipeUpCollapseClient({ bounceLock: true });
+          return;
+        }
         // Spürbarer Gummiband-Widerstand: Erst ab 90px Zugweg ODER kräftigem Flick (mind. 50px + vy <= -0.55) in den Katalog wechseln
         if ((dy <= -90 || (dy <= -50 && vy <= -0.55)) && Math.abs(dy) > Math.abs(dx) * 1.12) {
           triggerHeroSwipeUpCollapseClient();

@@ -31,9 +31,13 @@ export interface UseSwipeableOptions {
   onSwipedLeft?: (deltaX: number) => void;
   onSwipedRight?: (deltaX: number) => void;
   onSwipingVertical?: (deltaY: number, velocityY: number) => void;
+  onBounceLockSnap?: (direction: 'up' | 'down', velocityY: number) => void;
   onSwipeReset?: () => void;
   minDistance?: number;
   minVelocity?: number;
+  bounceLockVelocity?: number;
+  bounceLockMinDistance?: number;
+  bounceLockCooldownMs?: number;
   trackMouse?: boolean;
 }
 
@@ -104,6 +108,23 @@ export function useSwipeable(
       let velocityY = 0;
       let isTracking = false;
       let startedInHero = false;
+      let bounceLockUntil = 0;
+
+      const cancelAndZeroRubberBand = () => {
+        rawDragY.stop();
+        rawDragY.jump(0);
+        smoothRubberY.jump(0);
+        const stageWrap = doc.getElementById('heroStageWrapEl');
+        if (stageWrap) {
+          stageWrap.style.setProperty('--hero-rubber-y', '0px');
+          stageWrap.style.setProperty('--hero-scroll-fade', '0');
+        }
+        const catalogSec = doc.querySelector('#heroBannerSlot + .section') as HTMLElement | null;
+        if (catalogSec) {
+          catalogSec.style.setProperty('--catalog-rubber-y', '0px');
+          catalogSec.classList.remove('is-rubber-dragging');
+        }
+      };
 
       const isTargetInsideHero = (target: EventTarget | null): boolean => {
         if (!target || !(target instanceof Element)) return false;
@@ -122,6 +143,7 @@ export function useSwipeable(
         if (ev.pointerType === 'touch') return;
         if (ev.pointerType === 'mouse' && !(optionsRef.current.trackMouse ?? true)) return;
         if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        if (performance.now() < bounceLockUntil) return;
         if (!isTargetInsideHero(ev.target)) return;
         startX = ev.clientX;
         startY = ev.clientY;
@@ -136,14 +158,55 @@ export function useSwipeable(
       const onPointerMove = (ev: PointerEvent) => {
         if (!isTracking || !startedInHero) return;
         const now = performance.now();
+        if (now < bounceLockUntil) {
+          isTracking = false;
+          startedInHero = false;
+          cancelAndZeroRubberBand();
+          return;
+        }
         const dt = Math.max(8, now - lastTime);
+        const totalDt = Math.max(12, now - startTime);
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        velocityY = (ev.clientY - lastY) / dt; // px/ms
+        const instVy = (ev.clientY - lastY) / dt; // px/ms
+        const avgVy = dy / totalDt; // px/ms
+        velocityY = Math.abs(instVy) > Math.abs(avgVy) ? instVy : avgVy;
         lastY = ev.clientY;
         lastTime = now;
 
         const isCollapsed = Boolean(doc.body?.classList.contains('hero-scrolled-past'));
+        const bounceVelThreshold = optionsRef.current.bounceLockVelocity ?? 1.15;
+        const bounceMinDist = optionsRef.current.bounceLockMinDistance ?? 34;
+        const bounceCooldownMs = optionsRef.current.bounceLockCooldownMs ?? 400;
+
+        // Mid-gesture Bounce-Lock: If user swipes too fast, immediately abort rubber-band animation and lock into full state
+        if (Math.abs(dy) >= bounceMinDist && Math.abs(dy) > Math.abs(dx) * 1.15) {
+          if (!isCollapsed && dy < 0 && velocityY <= -bounceVelThreshold) {
+            isTracking = false;
+            startedInHero = false;
+            bounceLockUntil = now + bounceCooldownMs;
+            cancelAndZeroRubberBand();
+            if (optionsRef.current.onBounceLockSnap) {
+              optionsRef.current.onBounceLockSnap('up', velocityY);
+            } else {
+              optionsRef.current.onSwipedUp?.(dy, velocityY);
+            }
+            return;
+          }
+          if (isCollapsed && dy > 0 && velocityY >= bounceVelThreshold) {
+            isTracking = false;
+            startedInHero = false;
+            bounceLockUntil = now + bounceCooldownMs;
+            cancelAndZeroRubberBand();
+            if (optionsRef.current.onBounceLockSnap) {
+              optionsRef.current.onBounceLockSnap('down', velocityY);
+            } else {
+              optionsRef.current.onSwipedDown?.(dy, velocityY);
+            }
+            return;
+          }
+        }
+
         if (!isCollapsed && dy < -8 && Math.abs(dy) > Math.abs(dx) * 1.15) {
           // Logarithmic rubber-band resistance curve before triggering Slider -> Covers transition
           const absDy = Math.abs(dy);
@@ -161,14 +224,38 @@ export function useSwipeable(
 
       const onPointerUp = (ev: PointerEvent) => {
         if (!isTracking || !startedInHero) return;
+        const now = performance.now();
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        const totalDt = Math.max(16, performance.now() - startTime);
+        const totalDt = Math.max(16, now - startTime);
         const avgVy = dy / totalDt;
         const effectiveVy = Math.abs(velocityY) > Math.abs(avgVy) ? velocityY : avgVy;
 
         isTracking = false;
         startedInHero = false;
+
+        const bounceVelThreshold = optionsRef.current.bounceLockVelocity ?? 1.15;
+        const bounceMinDist = optionsRef.current.bounceLockMinDistance ?? 34;
+        const bounceCooldownMs = optionsRef.current.bounceLockCooldownMs ?? 400;
+
+        // Release-time Bounce-Lock fallback for ultra-short high-velocity flicks
+        if (
+          Math.abs(dy) >= bounceMinDist &&
+          Math.abs(dy) > Math.abs(dx) * 1.15 &&
+          Math.abs(effectiveVy) >= bounceVelThreshold
+        ) {
+          bounceLockUntil = now + bounceCooldownMs;
+          cancelAndZeroRubberBand();
+          const dir = dy < 0 ? 'up' : 'down';
+          if (optionsRef.current.onBounceLockSnap) {
+            optionsRef.current.onBounceLockSnap(dir, effectiveVy);
+          } else if (dir === 'up') {
+            optionsRef.current.onSwipedUp?.(dy, effectiveVy);
+          } else {
+            optionsRef.current.onSwipedDown?.(dy, effectiveVy);
+          }
+          return;
+        }
 
         // Smoothly spring the rubber-band offset back to 0
         animate(rawDragY, 0, { type: 'spring', stiffness: 420, damping: 32 });
@@ -200,7 +287,7 @@ export function useSwipeable(
       const onPointerCancel = () => {
         isTracking = false;
         startedInHero = false;
-        animate(rawDragY, 0, { type: 'spring', stiffness: 420, damping: 32 });
+        cancelAndZeroRubberBand();
         optionsRef.current.onSwipeReset?.();
       };
 
@@ -533,19 +620,30 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     loadMiniApp(false);
   }, [loadMiniApp]);
 
-  const dispatchHeroSwipeToIframe = useCallback((direction: 'up' | 'down' | 'left' | 'right') => {
-    const win = iframeRef.current?.contentWindow as (Window & { __tmaHandleHeroSwipe?: (dir: string) => void }) | null;
-    if (!win) return;
-    if (typeof win.__tmaHandleHeroSwipe === 'function') {
-      win.__tmaHandleHeroSwipe(direction);
-    } else {
-      win.postMessage({ type: 'TMA_HERO_SWIPE_GESTURE', direction }, '*');
-    }
-  }, []);
+  const dispatchHeroSwipeToIframe = useCallback(
+    (direction: 'up' | 'down' | 'left' | 'right', opts?: { bounceLock?: boolean }) => {
+      const win = iframeRef.current?.contentWindow as
+        | (Window & { __tmaHandleHeroSwipe?: (dir: string, options?: { bounceLock?: boolean }) => void })
+        | null;
+      if (!win) return;
+      if (typeof win.__tmaHandleHeroSwipe === 'function') {
+        win.__tmaHandleHeroSwipe(direction, opts);
+      } else {
+        win.postMessage(
+          { type: 'TMA_HERO_SWIPE_GESTURE', direction, bounceLock: Boolean(opts?.bounceLock) },
+          '*'
+        );
+      }
+    },
+    []
+  );
 
   useSwipeable(iframeRef, srcDocHtml, {
     minDistance: 88,
     minVelocity: 0.55,
+    bounceLockVelocity: 1.15,
+    bounceLockMinDistance: 34,
+    bounceLockCooldownMs: 400,
     trackMouse: true,
     onSwipingVertical: (deltaY) => {
       const doc = iframeRef.current?.contentDocument;
@@ -559,6 +657,10 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
           stageWrap.style.setProperty('--hero-scroll-fade', dragFade.toFixed(3));
         }
       }
+    },
+    onBounceLockSnap: (direction) => {
+      triggerHapticFeedback(18);
+      dispatchHeroSwipeToIframe(direction, { bounceLock: true });
     },
     onSwipeReset: () => {
       const doc = iframeRef.current?.contentDocument;
