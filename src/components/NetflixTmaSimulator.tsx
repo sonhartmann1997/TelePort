@@ -303,10 +303,10 @@ export function useSwipeable(
           triggerHapticFeedback(12);
           return;
         }
-        // Genre chips, quick filter pills, media tabs, or modal tabs
+        // Genre chips, quick filter pills, media tabs, modal tabs, or smart page jump controls
         if (
           target.closest(
-            '.hero-meta-genre, .genre-overlay-chip, .genre-chip, .pill, .media-mode-tab, .flix-tab-btn, #heroHideBtn, .hero-dot, .hero-circle-arrow, .desc-translate-btn, .expandable-desc-box.is-long-desc'
+            '.hero-meta-genre, .genre-overlay-chip, .genre-chip, .pill, .media-mode-tab, .flix-tab-btn, #heroHideBtn, .hero-dot, .hero-circle-arrow, .desc-translate-btn, .expandable-desc-box.is-long-desc, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn'
           )
         ) {
           triggerHapticFeedback(10);

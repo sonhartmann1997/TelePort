@@ -6806,7 +6806,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -6823,18 +6823,21 @@
 
       function getVisibleFocusables() {
         const dialogEl = document.getElementById("customDialogRoot");
+        const pageJumpEl = document.getElementById("pageJumpModalRoot");
         const modalEl = document.getElementById("modalRoot");
         const lbEl = document.getElementById("lightboxRoot");
         const sidebarEl = document.getElementById("filterSidebarDrawer");
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
-          : (lbEl && lbEl.innerHTML.trim())
-            ? lbEl
-            : (modalEl && modalEl.innerHTML.trim())
-              ? modalEl
-              : (state.sidebarOpen && sidebarEl)
-                ? sidebarEl
-                : document.body;
+          : (pageJumpEl && pageJumpEl.innerHTML.trim())
+            ? pageJumpEl
+            : (lbEl && lbEl.innerHTML.trim())
+              ? lbEl
+              : (modalEl && modalEl.innerHTML.trim())
+                ? modalEl
+                : (state.sidebarOpen && sidebarEl)
+                  ? sidebarEl
+                  : document.body;
         const nodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
         return nodes.filter(el => {
           if (el.disabled) return false;
@@ -6851,12 +6854,16 @@
       function getSpatialLayoutBox(el) {
         const r = el.getBoundingClientRect();
         const isStickyOrFixed = Boolean(
-          el && el.closest && (
-            el.closest("header") ||
-            el.closest(".modal-backdrop") ||
-            el.closest(".sidebar-drawer") ||
-            el.closest("#customDialogRoot") ||
-            el.closest(".lightbox-backdrop")
+          el && (
+            el.id === "smartPageIndicatorBtn" ||
+            (el.closest && (
+              el.closest("header") ||
+              el.closest(".modal-backdrop") ||
+              el.closest(".page-jump-modal-backdrop") ||
+              el.closest(".sidebar-drawer") ||
+              el.closest("#customDialogRoot") ||
+              el.closest(".lightbox-backdrop")
+            ))
           )
         );
         const scrollOffset = isStickyOrFixed ? 0 : (window.scrollY || window.pageYOffset || 0);
@@ -7768,6 +7775,11 @@
         if (ev.key === "Escape" || (ev.key === "Backspace" && !isTypingInInput)) {
           cancelModalArrowHold();
           cancelTopBarUpHold();
+          if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) {
+            if (typeof closePageJumpModalClient === "function") closePageJumpModalClient();
+            ev.preventDefault();
+            return;
+          }
           if (currentSpatialEl && (currentSpatialEl.id === "heroBtnDetails" || currentSpatialEl.id === "heroBtnTrailer")) {
             state.heroActionsEngaged = false;
             const box = document.getElementById("heroActionsBox");
@@ -7828,6 +7840,11 @@
         // Nahtlose Pfeiltasten-Navigation auch aus dem Suchfeld heraus (inkl. ruhigem 450ms Gedrückthalten im Detail-Modal ohne Fokus-Herumspringen)
         if (ev.key === "ArrowRight") {
           cancelTopBarUpHold();
+          if (currentSpatialEl && currentSpatialEl.id === "pageJumpRangeSlider" && typeof adjustPageJumpModalValueClient === "function") {
+            ev.preventDefault();
+            adjustPageJumpModalValueClient(ev.shiftKey ? 5 : 1);
+            return;
+          }
           const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
           if (modalOpen && ev.shiftKey && !isTypingInInput) {
             cancelModalArrowHold();
@@ -7859,6 +7876,11 @@
         }
         if (ev.key === "ArrowLeft") {
           cancelTopBarUpHold();
+          if (currentSpatialEl && currentSpatialEl.id === "pageJumpRangeSlider" && typeof adjustPageJumpModalValueClient === "function") {
+            ev.preventDefault();
+            adjustPageJumpModalValueClient(ev.shiftKey ? -5 : -1);
+            return;
+          }
           const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
           if (modalOpen && ev.shiftKey && !isTypingInInput) {
             cancelModalArrowHold();
@@ -7902,6 +7924,7 @@
           if (isSearchInpFocused || activeTag === "SELECT") activeEl.blur();
           const hasOverlayOpen = Boolean(
             document.getElementById("modalRoot")?.innerHTML.trim() ||
+            document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
             document.getElementById("lightboxRoot")?.innerHTML.trim() ||
             document.getElementById("customDialogRoot")?.innerHTML.trim() ||
             state.sidebarOpen
@@ -7930,6 +7953,11 @@
         if (ev.key === "Enter" && !isTypingInInput && currentSpatialEl) {
           cancelModalArrowHold();
           ev.preventDefault();
+          if (currentSpatialEl.id === "pageJumpNumberInput") {
+            currentSpatialEl.focus();
+            if (typeof currentSpatialEl.select === "function") currentSpatialEl.select();
+            return;
+          }
           if (currentSpatialEl.classList && currentSpatialEl.classList.contains("card")) {
             if (!ev.repeat && cardEnterHoldTarget !== currentSpatialEl) {
               cancelCardEnterHold();

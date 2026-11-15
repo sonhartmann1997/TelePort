@@ -3542,7 +3542,8 @@
         width: 100%;
         aspect-ratio: 2/3;
         overflow: hidden;
-        background: #0f172a;
+        background: linear-gradient(110deg, #0f172a 25%, #19253d 48%, #0f172a 72%);
+        background-size: 200% 100%;
         flex-shrink: 0;
         touch-action: pan-y;
       }
@@ -3558,6 +3559,13 @@
         -webkit-user-drag: none;
         -webkit-touch-callout: none;
         user-select: none;
+        transition: opacity 0.24s ease;
+      }
+      .card-poster-wrap img.lazy-cover-img.is-loading {
+        opacity: 0.18;
+      }
+      .card-poster-wrap img.lazy-cover-img.is-loaded {
+        opacity: 1;
       }
       .card-top-left-stack {
         position: absolute;
@@ -4218,14 +4226,135 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        gap: 5px;
         padding: 5px 12px;
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(var(--ambi-2), 0.34);
         color: var(--text);
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 700;
         font-variant-numeric: tabular-nums;
+        cursor: pointer;
+        transition: all 0.16s ease;
+      }
+      .page-counter-pill:hover,
+      .page-counter-pill.spatial-focus {
+        background: rgba(14, 165, 233, 0.22);
+        border-color: #38bdf8;
+        color: #ffffff;
+        transform: translateY(-1px);
+      }
+      /* Smarter Floating-Seitenindikator unten rechts (öffnen per Touch, Maus oder TV-Remote) */
+      #smartPageIndicatorBtn {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 74;
+        display: none;
+        align-items: center;
+        gap: 7px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.94) 0%, rgba(var(--ambi-1), 0.24) 100%);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(var(--ambi-2), 0.52);
+        color: #f8fafc;
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        cursor: pointer;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.68), 0 0 18px rgba(var(--ambi-1), 0.16);
+        opacity: 0.82;
+        transform: translate3d(0, 0, 0);
+        transition: opacity 0.22s ease, transform 0.18s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      #smartPageIndicatorBtn.is-scrolling-active,
+      #smartPageIndicatorBtn:hover,
+      #smartPageIndicatorBtn.spatial-focus {
+        opacity: 1;
+        border-color: #38bdf8;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.82), 0 0 0 2px rgba(56, 189, 248, 0.45);
+        transform: translate3d(0, -2px, 0);
+      }
+      /* TV- & Touch-Seiten-Schnellwahl-Popup */
+      .page-jump-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 220;
+        background: rgba(2, 6, 23, 0.82);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        animation: fadeIn 0.15s ease;
+      }
+      .page-jump-modal-box {
+        width: min(94vw, 460px);
+        background: linear-gradient(165deg, rgba(11, 17, 30, 0.98) 0%, rgba(15, 23, 42, 0.96) 100%);
+        border: 1px solid rgba(var(--ambi-2), 0.55);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.9);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        color: #f8fafc;
+        font-variant-numeric: tabular-nums;
+      }
+      .page-step-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+      }
+      .page-step-btn {
+        height: 40px;
+        border-radius: 10px;
+        border: 1px solid rgba(148, 163, 184, 0.26);
+        background: rgba(30, 41, 59, 0.78);
+        color: #f1f5f9;
+        font-size: calc(12.5px * var(--scale-text));
+        font-weight: 800;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.14s ease;
+      }
+      .page-step-btn:hover,
+      .page-step-btn.spatial-focus {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        border-color: #7dd3fc;
+        color: #ffffff;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 14px rgba(2, 132, 199, 0.45);
+      }
+      .page-jump-slider {
+        width: 100%;
+        height: 8px;
+        accent-color: #0ea5e9;
+        cursor: pointer;
+      }
+      .page-jump-number-inp {
+        width: 92px;
+        height: 38px;
+        border-radius: 9px;
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        background: rgba(6, 9, 17, 0.9);
+        color: #ffffff;
+        font-size: 15px;
+        font-weight: 900;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+        outline: none;
+      }
+      .page-jump-number-inp:focus,
+      .page-jump-number-inp.spatial-focus {
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35);
       }
       .page-jump-bar {
         grid-column: 1 / -1;
@@ -7439,6 +7568,7 @@
         totalResults: 0,
         hasMorePages: false,
         loadingMore: false,
+        visibleCatalogPage: 1,
         items: [],
         genres: {},
         settings: {},
@@ -7693,6 +7823,468 @@
           ensureHeroSlidesOverviewsClient();
         }, 40);
       }
+
+      // =========================================================================
+      // 3b. GESTAFFELTE BILD-LADEPIPELINE (SLIDER 1 -> SLIDER 2..N + SEITE 1 COVER -> INTERSECTIONOBSERVER)
+      //     INKLUSIVE SCHNELL-SCROLL-SCHUTZ, AUTO-PAGINATION & SMART-SEITENINDIKATOR
+      // =========================================================================
+      const LAZY_POSTER_PLACEHOLDER_SVG =
+        "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3C/svg%3E";
+      const LAZY_POSTER_FALLBACK_SVG =
+        "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2364748b%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E";
+
+      let heroWaterfallSeq = 0;
+      let catalogCoversUnlocked = false;
+      let lazyCoverObserver = null;
+      let infiniteScrollSentinelObserver = null;
+      let catalogPageTrackObserver = null;
+      let smartPageIndicatorIdleTimer = null;
+      const pendingIntersectedCoversSet = new Set();
+      const preloadedHeroSlideUrlsSet = new Set();
+
+      function hydrateLazyCoverImageClient(img) {
+        if (!img || !(img instanceof Element)) return;
+        if (img._dwellTimer) {
+          clearTimeout(img._dwellTimer);
+          img._dwellTimer = null;
+        }
+        pendingIntersectedCoversSet.delete(img);
+        const targetSrc = img.getAttribute("data-lazy-src");
+        if (!targetSrc) {
+          img.classList.remove("is-loading");
+          img.classList.add("is-loaded");
+          return;
+        }
+        img.removeAttribute("data-lazy-src");
+        if (lazyCoverObserver) {
+          try { lazyCoverObserver.unobserve(img); } catch (_e) {}
+        }
+        const finalizeLoaded = () => {
+          img.classList.remove("is-loading");
+          img.classList.add("is-loaded");
+        };
+        img.addEventListener("load", finalizeLoaded, { once: true });
+        img.addEventListener("error", finalizeLoaded, { once: true });
+        img.src = targetSrc;
+      }
+
+      function ensureLazyCoverIntersectionObserverClient() {
+        if (lazyCoverObserver || typeof IntersectionObserver === "undefined") return lazyCoverObserver;
+        lazyCoverObserver = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              const img = entry.target;
+              if (!img) continue;
+              if (entry.isIntersecting) {
+                img._isIntersectingViewportZone = true;
+                if (!catalogCoversUnlocked) {
+                  pendingIntersectedCoversSet.add(img);
+                  continue;
+                }
+                if (img._dwellTimer) clearTimeout(img._dwellTimer);
+                // 65ms Schnell-Scroll-Schutz: Lädt nur Cover, an denen der Nutzer nicht im extremen Eiltempo vorbeirauscht
+                img._dwellTimer = setTimeout(() => {
+                  img._dwellTimer = null;
+                  if (img._isIntersectingViewportZone && catalogCoversUnlocked) {
+                    hydrateLazyCoverImageClient(img);
+                  }
+                }, 65);
+              } else {
+                img._isIntersectingViewportZone = false;
+                pendingIntersectedCoversSet.delete(img);
+                if (img._dwellTimer) {
+                  clearTimeout(img._dwellTimer);
+                  img._dwellTimer = null;
+                }
+              }
+            }
+          },
+          {
+            root: null,
+            rootMargin: "100% 0px 100% 0px", // Ca. 1 Bildschirmhöhe im Voraus oben & unten
+            threshold: 0.01
+          }
+        );
+        return lazyCoverObserver;
+      }
+
+      function preloadCatalogPageCoversClient(pageNum) {
+        const targetPageStr = String(pageNum || state.startPage || 1);
+        const imgs = Array.from(
+          document.querySelectorAll(
+            '#resultsGridContainer img.lazy-cover-img[data-lazy-src][data-page-num="' + targetPageStr + '"]'
+          )
+        );
+        const listToLoad = imgs.length > 0
+          ? imgs
+          : Array.from(document.querySelectorAll("#resultsGridContainer img.lazy-cover-img[data-lazy-src]")).slice(0, 20);
+        if (!listToLoad.length) return;
+        let idx = 0;
+        const loadBatch = () => {
+          if (!catalogCoversUnlocked) return;
+          const slice = listToLoad.slice(idx, idx + 4);
+          idx += 4;
+          for (const img of slice) {
+            hydrateLazyCoverImageClient(img);
+          }
+          if (idx < listToLoad.length) {
+            setTimeout(loadBatch, 24);
+          }
+        };
+        loadBatch();
+      }
+
+      function unlockCatalogCoversLoadingClient(preloadFirstPage = true) {
+        const wasLocked = !catalogCoversUnlocked;
+        catalogCoversUnlocked = true;
+        if (pendingIntersectedCoversSet.size > 0) {
+          const queued = Array.from(pendingIntersectedCoversSet);
+          pendingIntersectedCoversSet.clear();
+          queued.forEach((img) => hydrateLazyCoverImageClient(img));
+        }
+        if (wasLocked && preloadFirstPage) {
+          preloadCatalogPageCoversClient(state.startPage || 1);
+        }
+      }
+
+      function preloadSingleImageUrlClient(url, highPriority = false) {
+        return new Promise((resolve) => {
+          if (!url || preloadedHeroSlideUrlsSet.has(url)) {
+            resolve(true);
+            return;
+          }
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            preloadedHeroSlideUrlsSet.add(url);
+            resolve(true);
+          };
+          const timer = setTimeout(finish, highPriority ? 360 : 900);
+          try {
+            const img = new Image();
+            if (highPriority && "fetchPriority" in img) {
+              try { img.fetchPriority = "high"; } catch (_e) {}
+            }
+            img.onload = () => { clearTimeout(timer); finish(); };
+            img.onerror = () => { clearTimeout(timer); finish(); };
+            img.src = url;
+          } catch (_err) {
+            clearTimeout(timer);
+            finish();
+          }
+        });
+      }
+
+      async function preloadHeroSlideAssetsPairClient(slideObj, highPriority = false) {
+        if (!slideObj) return;
+        const bpUrl = typeof resolveHeroSlideBackdropUrlClient === "function" ? resolveHeroSlideBackdropUrlClient(slideObj) : "";
+        const posterUrl = typeof resolveHeroSlidePosterUrlClient === "function" ? resolveHeroSlidePosterUrlClient(slideObj, "w780") : "";
+        const isPortraitViewport = (window.innerWidth || 1024) <= 640 || (window.innerHeight > window.innerWidth);
+        const primaryUrl = isPortraitViewport ? (posterUrl || bpUrl) : (bpUrl || posterUrl);
+        if (primaryUrl) {
+          await preloadSingleImageUrlClient(primaryUrl, highPriority);
+        }
+      }
+
+      function observeLazyCoversInContainerClient(rootEl) {
+        const scope = rootEl || document;
+        if (!scope || typeof scope.querySelectorAll !== "function") return;
+        const obs = ensureLazyCoverIntersectionObserverClient();
+        const imgs = Array.from(scope.querySelectorAll("img.lazy-cover-img[data-lazy-src]"));
+        if (!obs) {
+          imgs.forEach((img) => hydrateLazyCoverImageClient(img));
+          return;
+        }
+        imgs.forEach((img) => obs.observe(img));
+      }
+
+      function ensureInfiniteScrollSentinelObserverClient() {
+        if (typeof IntersectionObserver === "undefined") return;
+        if (infiniteScrollSentinelObserver) {
+          infiniteScrollSentinelObserver.disconnect();
+        }
+        const sentinelEl = document.getElementById("infiniteScrollSentinel");
+        if (!sentinelEl) return;
+        infiniteScrollSentinelObserver = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (entry.isIntersecting && state.hasMorePages && !state.loadingMore) {
+                const sliderBlocking = Boolean(
+                  !state.isSearchMode &&
+                  !state.heroHidden &&
+                  !heroCurtainScrolledToCatalog &&
+                  Array.isArray(state.heroSlides) &&
+                  state.heroSlides.length > 0
+                );
+                if (!sliderBlocking && typeof loadMoreResults === "function") {
+                  loadMoreResults(true);
+                }
+              }
+            }
+          },
+          {
+            root: null,
+            rootMargin: "0px 0px 850px 0px",
+            threshold: 0.01
+          }
+        );
+        infiniteScrollSentinelObserver.observe(sentinelEl);
+      }
+
+      function ensureCatalogPageTrackObserverClient(rootEl) {
+        if (typeof IntersectionObserver === "undefined") return;
+        if (!catalogPageTrackObserver) {
+          catalogPageTrackObserver = new IntersectionObserver(
+            (entries) => {
+              let bestPage = null;
+              let bestTop = Infinity;
+              for (const entry of entries) {
+                if (entry.isIntersecting) {
+                  const pAttr = Number(entry.target.getAttribute("data-page-num") || 0);
+                  if (pAttr > 0 && entry.boundingClientRect.top < bestTop) {
+                    bestTop = entry.boundingClientRect.top;
+                    bestPage = pAttr;
+                  }
+                }
+              }
+              if (bestPage && bestPage !== state.visibleCatalogPage) {
+                state.visibleCatalogPage = bestPage;
+                syncSmartPageIndicatorDomClient(true);
+              }
+            },
+            {
+              root: null,
+              rootMargin: "-15% 0px -55% 0px",
+              threshold: 0.05
+            }
+          );
+        }
+        const scope = rootEl || document.getElementById("resultsGridContainer");
+        if (!scope || typeof scope.querySelectorAll !== "function") return;
+        const cards = scope.querySelectorAll(".card[data-page-num]");
+        cards.forEach((c) => catalogPageTrackObserver.observe(c));
+      }
+
+      function syncSmartPageIndicatorDomClient(pulseActive = false) {
+        const totPages = Math.max(1, Number(state.totalPages) || 1);
+        const curLoadedMaxPage = Math.max(1, Number(state.page) || 1);
+        const startP = Math.max(1, Math.min(curLoadedMaxPage, Number(state.startPage) || 1));
+        const visPage = Math.max(startP, Math.min(curLoadedMaxPage, Number(state.visibleCatalogPage) || curLoadedMaxPage));
+
+        const topPill = document.getElementById("sectionPageCounterPill");
+        if (topPill) {
+          topPill.innerHTML = "📄 Seite " + visPage + " / " + totPages + " ▾";
+        }
+
+        const sentinelInfo = document.getElementById("infiniteScrollStatusLabel");
+        if (sentinelInfo) {
+          if (state.hasMorePages && curLoadedMaxPage < totPages) {
+            sentinelInfo.innerHTML = "📄 Seiten " + startP + (curLoadedMaxPage > startP ? ("–" + curLoadedMaxPage) : "") + " von " + totPages + " geladen • Nächste Seite lädt beim Scrollen automatisch";
+          } else if (totPages > 1) {
+            sentinelInfo.innerHTML = "✅ Alle " + totPages + " Seiten geladen";
+          }
+        }
+
+        let floatBtn = document.getElementById("smartPageIndicatorBtn");
+        if (!floatBtn && document.body) {
+          floatBtn = document.createElement("button");
+          floatBtn.type = "button";
+          floatBtn.id = "smartPageIndicatorBtn";
+          floatBtn.setAttribute("onclick", "openPageJumpModalClient()");
+          floatBtn.setAttribute("title", "Aktuelle Seite – Klicken oder Enter für direkte Seitenwahl (TV & Touch)");
+          document.body.appendChild(floatBtn);
+        }
+        if (!floatBtn) return;
+
+        const isCatalogVisible = Boolean(
+          (state.currentView === "discover" || state.isSearchMode) &&
+          !state.currentCollectionId &&
+          !state.currentUniverseId &&
+          !state.currentPersonId &&
+          totPages > 1 &&
+          state.items.length > 0 &&
+          (state.isSearchMode || state.heroHidden || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
+        );
+
+        if (!isCatalogVisible) {
+          floatBtn.style.display = "none";
+          return;
+        }
+        floatBtn.style.display = "inline-flex";
+        floatBtn.innerHTML = '<span>📄 Seite ' + visPage + ' / ' + totPages + '</span><span style="font-size:10px;opacity:0.8">▾</span>';
+
+        if (pulseActive) {
+          floatBtn.classList.add("is-scrolling-active");
+          if (smartPageIndicatorIdleTimer) clearTimeout(smartPageIndicatorIdleTimer);
+          smartPageIndicatorIdleTimer = setTimeout(() => {
+            floatBtn.classList.remove("is-scrolling-active");
+          }, 1400);
+        }
+      }
+
+      let pendingModalJumpPage = 1;
+
+      function updatePageJumpModalDomValueClient(nextVal) {
+        const totPages = Math.max(1, Number(state.totalPages) || 1);
+        pendingModalJumpPage = Math.max(1, Math.min(totPages, Math.round(Number(nextVal) || 1)));
+        const titleNumEl = document.getElementById("pageJumpLiveTargetLabel");
+        if (titleNumEl) titleNumEl.textContent = "Seite " + pendingModalJumpPage + " von " + totPages;
+        const sliderEl = document.getElementById("pageJumpRangeSlider");
+        if (sliderEl && Number(sliderEl.value) !== pendingModalJumpPage) {
+          sliderEl.value = String(pendingModalJumpPage);
+        }
+        const numInp = document.getElementById("pageJumpNumberInput");
+        if (numInp && document.activeElement !== numInp) {
+          numInp.value = String(pendingModalJumpPage);
+        }
+        const confirmBtn = document.getElementById("pageJumpConfirmBtn");
+        if (confirmBtn) {
+          confirmBtn.innerHTML = "🚀 Zu Seite " + pendingModalJumpPage + " springen";
+        }
+      }
+
+      function adjustPageJumpModalValueClient(deltaOrTarget, isAbsolute = false) {
+        triggerTmaHapticClient("selection");
+        const nextVal = isAbsolute ? Number(deltaOrTarget) : (pendingModalJumpPage + Number(deltaOrTarget));
+        updatePageJumpModalDomValueClient(nextVal);
+      }
+
+      function closePageJumpModalClient() {
+        const dialogRoot = document.getElementById("customDialogRoot");
+        if (dialogRoot) dialogRoot.innerHTML = "";
+        const returnBtn = document.getElementById("smartPageIndicatorBtn") || document.getElementById("sectionPageCounterPill");
+        if (returnBtn && typeof jumpSpatialFocus === "function") {
+          jumpSpatialFocus(returnBtn, false);
+        }
+      }
+
+      async function confirmPageJumpModalClient(targetOverride = null) {
+        const targetP = targetOverride !== null ? Number(targetOverride) : pendingModalJumpPage;
+        const dialogRoot = document.getElementById("customDialogRoot");
+        if (dialogRoot) dialogRoot.innerHTML = "";
+        triggerTmaHapticClient("medium");
+        // Falls die Seite bereits im aktuellen Endlos-Grid geladen ist, direkt weich zur ersten Karte dieser Seite scrollen!
+        const firstCardOnPage = document.querySelector('#resultsGridContainer .card[data-page-num="' + targetP + '"]');
+        if (firstCardOnPage) {
+          if (!heroCurtainScrolledToCatalog && !state.heroHidden && !state.isSearchMode) {
+            animateHeroCatalogSnapScrollClient(getHeroCatalogSnapScrollYClient());
+          }
+          state.visibleCatalogPage = targetP;
+          syncSmartPageIndicatorDomClient(true);
+          if (typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(firstCardOnPage, true);
+          } else {
+            firstCardOnPage.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+          return;
+        }
+        if (typeof jumpToPage === "function") {
+          await jumpToPage(targetP);
+        }
+      }
+
+      function openPageJumpModalClient() {
+        const totPages = Math.max(1, Number(state.totalPages) || 1);
+        if (totPages <= 1) return;
+        triggerTmaHapticClient("light");
+        const curPage = Math.max(1, Math.min(totPages, Number(state.visibleCatalogPage || state.page) || 1));
+        pendingModalJumpPage = curPage;
+        const dialogRoot = document.getElementById("customDialogRoot");
+        if (!dialogRoot) return;
+        dialogRoot.innerHTML =
+          '<div class="page-jump-modal-backdrop" onclick="if(event.target===this)closePageJumpModalClient()">' +
+            '<div class="page-jump-modal-box" role="dialog" aria-modal="true" aria-label="Seiten-Schnellwahl">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid rgba(148,163,184,0.18);padding-bottom:10px">' +
+                '<div style="font-size:14px;font-weight:900;color:#f8fafc">🎯 Seiten-Schnellwahl (Touch & TV)</div>' +
+                '<button type="button" class="btn" style="padding:4px 10px" onclick="closePageJumpModalClient()">✕</button>' +
+              '</div>' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:rgba(15,23,42,0.75);padding:10px 12px;border-radius:12px;border:1px solid rgba(56,189,248,0.28)">' +
+                '<div>' +
+                  '<div style="font-size:11px;color:#94a3b8;font-weight:700">GEWÄHLTE ZIELSEITE</div>' +
+                  '<div id="pageJumpLiveTargetLabel" style="font-size:18px;font-weight:900;color:#38bdf8;margin-top:2px">Seite ' + curPage + ' von ' + totPages + '</div>' +
+                '</div>' +
+                '<div style="display:flex;align-items:center;gap:6px">' +
+                  '<span style="font-size:11.5px;color:#cbd5e1;font-weight:700">Direkt:</span>' +
+                  '<input id="pageJumpNumberInput" type="number" min="1" max="' + totPages + '" value="' + curPage + '" class="page-jump-number-inp" oninput="updatePageJumpModalDomValueClient(this.value)" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();confirmPageJumpModalClient(this.value);}" />' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex;flex-direction:column;gap:6px">' +
+                '<input id="pageJumpRangeSlider" type="range" min="1" max="' + totPages + '" value="' + curPage + '" class="page-jump-slider" oninput="updatePageJumpModalDomValueClient(this.value)" />' +
+                '<div style="display:flex;justify-content:space-between;font-size:11px;color:#94a3b8;font-weight:700">' +
+                  '<span>Seite 1</span>' +
+                  '<span>Mitte (' + Math.max(1, Math.round(totPages / 2)) + ')</span>' +
+                  '<span>Seite ' + totPages + '</span>' +
+                '</div>' +
+              '</div>' +
+              '<div class="page-step-grid">' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(1, true)">⏮ 1</button>' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(-10, false)">-10</button>' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(-5, false)">-5</button>' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(-1, false)">-1</button>' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(1, false)">+1</button>' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(5, false)">+5</button>' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(10, false)">+10</button>' +
+                '<button type="button" class="page-step-btn" onclick="adjustPageJumpModalValueClient(' + totPages + ', true)">' + totPages + ' ⏭</button>' +
+              '</div>' +
+              '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">' +
+                '<button type="button" id="pageJumpConfirmBtn" class="btn blue" style="flex:1;padding:10px 14px;font-size:13px;font-weight:900;justify-content:center" onclick="confirmPageJumpModalClient()">🚀 Zu Seite ' + curPage + ' springen</button>' +
+                (curPage > 1 ? '<button type="button" class="btn" style="padding:10px 12px;font-size:12px" onclick="confirmPageJumpModalClient(1)">⬆ Seite 1</button>' : '') +
+              '</div>' +
+            '</div>' +
+          '</div>';
+        const confirmBtn = document.getElementById("pageJumpConfirmBtn");
+        if (confirmBtn && typeof jumpSpatialFocus === "function") {
+          setTimeout(() => jumpSpatialFocus(confirmBtn, false), 30);
+        }
+      }
+
+      async function preloadHeroSlidesAndUnlockCoversClient() {
+        const mySeq = ++heroWaterfallSeq;
+        const gridEl = document.getElementById("resultsGridContainer");
+        observeLazyCoversInContainerClient(gridEl || document);
+        ensureInfiniteScrollSentinelObserverClient();
+        ensureCatalogPageTrackObserverClient(gridEl);
+        syncSmartPageIndicatorDomClient(false);
+
+        const sliderIsActiveFront = Boolean(
+          !state.isSearchMode &&
+          !state.heroHidden &&
+          (!state.currentView || state.currentView === "discover") &&
+          Array.isArray(state.heroSlides) &&
+          state.heroSlides.length > 0 &&
+          !heroCurtainScrolledToCatalog
+        );
+
+        if (!sliderIsActiveFront) {
+          unlockCatalogCoversLoadingClient(true);
+          return;
+        }
+
+        // Stufe 1: Zuerst exklusiv Slide 1 laden (Katalog-Cover warten kurz, sofern der Nutzer nicht bereits runterscrollt)
+        catalogCoversUnlocked = false;
+        const slidesSnapshot = state.heroSlides.slice();
+        await preloadHeroSlideAssetsPairClient(slidesSnapshot[0], true);
+        if (mySeq !== heroWaterfallSeq) return;
+
+        // Stufe 2: Ab Slide 2 parallel die komplette 1. Seite der Katalog-Cover vorladen + IntersectionObserver freischalten,
+        // während Slide 2 -> Slide 3 -> ... nacheinander im Hintergrund geladen werden!
+        unlockCatalogCoversLoadingClient(true);
+        for (let i = 1; i < slidesSnapshot.length; i++) {
+          if (mySeq !== heroWaterfallSeq) return;
+          await preloadHeroSlideAssetsPairClient(slidesSnapshot[i], false);
+        }
+      }
+
+      window.addEventListener("scroll", () => {
+        const y = window.scrollY || window.pageYOffset || 0;
+        if (y > 8 || heroCurtainScrolledToCatalog) {
+          if (!catalogCoversUnlocked) {
+            unlockCatalogCoversLoadingClient(true);
+          }
+          syncSmartPageIndicatorDomClient(true);
+        }
+      }, { passive: true });
 
       function setHeroPointerHover(isHovered) {
         heroPointerHovered = Boolean(isHovered);
@@ -7976,6 +8568,16 @@
           if ((window.scrollY || window.pageYOffset || 0) !== 0) {
             window.scrollTo(0, 0);
           }
+          unlockCatalogCoversLoadingClient(true);
+          syncSmartPageIndicatorDomClient(true);
+          // Sobald der Nutzer vom Slider nach unten zu den Covern scrollt, direkt die nächste Seite im Hintergrund vorladen!
+          if (state.hasMorePages && !state.loadingMore && Number(state.page || 1) === Number(state.startPage || 1) && typeof loadMoreResults === "function") {
+            setTimeout(() => {
+              if (heroCurtainScrolledToCatalog && state.hasMorePages && !state.loadingMore) {
+                loadMoreResults(true);
+              }
+            }, 120);
+          }
         } else {
           if (document.body) {
             document.body.classList.remove("hero-scrolled-past", "page-scrolled");
@@ -7986,6 +8588,7 @@
           if ((window.scrollY || window.pageYOffset || 0) !== 0) {
             window.scrollTo(0, 0);
           }
+          syncSmartPageIndicatorDomClient(false);
           requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient());
         }
         syncHeroScrollFadeAndTopBarStateClient();

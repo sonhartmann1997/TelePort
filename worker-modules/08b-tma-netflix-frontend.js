@@ -585,6 +585,7 @@
         const pageNum = Math.max(1, Number(targetPage) || 1);
         state.startPage = pageNum;
         state.page = pageNum;
+        state.visibleCatalogPage = pageNum;
         state.hasMorePages = false;
         state.loadingMore = false;
         state.isSearchMode = false;
@@ -593,6 +594,9 @@
         state.currentCollectionId = null;
         state.currentUniverseId = null;
         state.currentPersonId = null;
+        if (pageNum > 1) {
+          heroCurtainScrolledToCatalog = true;
+        }
         document.body.classList.remove("search-active-dim");
         updateMediaModeIndicatorDom();
         syncSearchGenreSelectDom();
@@ -605,7 +609,7 @@
         try {
           const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
           const res = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam);
-          state.items = res.items || [];
+          state.items = (res.items || []).map(it => ({ ...it, _pageNum: pageNum }));
           state.totalPages = Math.max(1, Number(res.totalPages) || 1);
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
           state.hasMorePages = Boolean(res.hasMore ?? (pageNum < state.totalPages));
@@ -629,6 +633,7 @@
           if (pageNum === 1) rebuildHeroSlides(state.items);
           if (state.items.length === 0 && res.rawCount > 0 && !bypass) {
             root.innerHTML = '<div class="section">' + buildFloatingFilterBarHtml() + '<div class="panel-box"><div class="section-title">⚠️ Alle ' + res.rawCount + ' Treffer wurden durch deine aktiven Filter ausgeblendet</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn red" onclick="loadDiscover(\\''+type+'\\',\\''+genreId+'\\',\\''+mode+'\\',\\''+sort+'\\',true,false)">🔓 Filter hier temporär deaktivieren</button><button class="btn" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')">🗑️ Alle Filter zurücksetzen</button></div></div></div>';
+            syncSmartPageIndicatorDomClient();
             return;
           }
           renderDiscover();
@@ -669,6 +674,7 @@
         state.searchFocused = false;
         state.startPage = pageNum;
         state.page = pageNum;
+        state.visibleCatalogPage = pageNum;
         state.hasMorePages = false;
         state.loadingMore = false;
         state.currentView = "discover";
@@ -708,9 +714,10 @@
           if ((res.items || []).length === 0 && res.filteredOutCount > 0 && !bypass) {
             root.innerHTML = '<div class="section"><div id="floatingFilterMount">' + buildFloatingFilterBarHtml() + '</div><div class="panel-box"><div class="section-title">⚠️ Keine Treffer wegen aktiver Filter (' + res.filteredOutCount + ' ausgeblendet)</div><button class="btn red" onclick="runSearch(true)">🔓 Filter temporär deaktivieren (Alle ' + res.filteredOutCount + ' zeigen)</button></div></div>';
             if (jumpToResults && typeof focusFirstResultCard === "function") focusFirstResultCard(false);
+            syncSmartPageIndicatorDomClient();
             return;
           }
-          state.items = res.items || [];
+          state.items = (res.items || []).map(it => ({ ...it, _pageNum: pageNum }));
           state.totalPages = Math.max(1, Number(res.totalPages) || 1);
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
           state.hasMorePages = Boolean(res.hasMore ?? (pageNum < state.totalPages));
@@ -727,36 +734,83 @@
         }
       }
 
-      // Direkt-Seitenwahl (#17) für Discover & Suche (ohne Seiten-Springen!)
+      // Direkt-Seitenwahl (#17) für Discover & Suche (inkl. Übergang zum Katalog & Vorladen der gewählten Seite)
       async function jumpToPage(targetPage) {
         const p = Math.max(1, Math.min(Number(state.totalPages) || 1, Number(targetPage) || 1));
         if (state.loadingMore) return;
+        closePageJumpModalClient();
         if (state.isSearchMode && state.searchQuery) {
-          await runSearch(false, state.searchQuery, state.searchScope, false, p);
+          await runSearch(false, state.searchQuery, state.searchScope, true, p);
         } else {
-          await loadDiscover(state.type, state.genreId, state.mode, state.sort, false, false, p);
+          await loadDiscover(state.type, state.genreId, state.mode, state.sort, false, true, p);
         }
+        if (isHeroSnapEligibleClient() && !heroCurtainScrolledToCatalog) {
+          heroCurtainScrolledToCatalog = true;
+          updateHeroCurtainCollapseStateClient();
+        }
+        unlockCatalogCoversLoadingClient(false);
+        preloadCatalogPageCoversClient(p);
+        syncSmartPageIndicatorDomClient(true);
       }
 
-      // Endlos-Scrollen / „Mehr laden“-Pagination für Entdecken- & Such-Grid (#2 & #21)
-      async function loadMoreResults() {
+      // Einzelne Katalog-Karte als HTML mit IntersectionObserver-Lazy-Cover & Seiten-Attribut rendern
+      function buildCatalogCardHtmlClient(it, idx, opts = {}) {
+        const showTop10Ranks = Boolean(opts.showTop10Ranks);
+        const isMixedMediaView = Boolean(opts.isMixedMediaView);
+        const defaultPageNum = Math.max(1, Number(opts.pageNum || it._pageNum || state.page || 1));
+        const itemPageNum = Math.max(1, Number(it._pageNum) || defaultPageNum);
+        const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : state.type;
+        const cardKey = tc + "_" + it.id;
+        const isCardSaved = savedKeysSet.has(cardKey);
+        const rankHtml = (showTop10Ranks && idx < 10) ? ('<span class="card-rank-badge">#' + (idx + 1) + '</span>') : "";
+        const vipQualityHtml = (vipAllowed && it.vipQuality)
+          ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(it.vipQuality) + '"></span>')
+          : "";
+        const itemTitleSafe = esc(it.title || it.name || "");
+        const resolvedCardPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "");
+        const itemPosterSafe = esc(it.poster_path || it.external_poster_url || it.poster || "");
+        const yrStr = esc((it.release_date || it.first_air_date || "").slice(0, 4) || "–");
+        const ratStr = it.vote_average ? Number(it.vote_average).toFixed(1) : "–";
+        const subRightTxt = isMixedMediaView ? ((tc === "s" ? "📺 " : "🎬 ") + yrStr) : yrStr;
+        const effectivePosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : LAZY_POSTER_FALLBACK_SVG;
+
+        return '<div class="card' + (isCardSaved ? " card-saved" : "") + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" data-page-num="' + itemPageNum + '" onclick="openDetails(\\'' + tc + '\\',' + it.id + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
+          '<div class="card-poster-wrap">' +
+            '<div class="card-top-left-stack">' +
+              rankHtml +
+              vipQualityHtml +
+            '</div>' +
+            '<button type="button" class="card-quick-save ' + (isCardSaved ? "saved" : "") + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="' + (isCardSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)") + '">' + (isCardSaved ? "✓" : "🔖") + '</button>' +
+            '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + it.id + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Details öffnen">ℹ️ Details</button>' +
+            '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
+            '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
+          '</div>' +
+          '<div class="card-body">' +
+            '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
+            '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
+          '</div>' +
+        '</div>';
+      }
+
+      // Endlos-Scrollen / „Mehr laden“-Pagination für Entdecken- & Such-Grid (nahtloses Anhängen ohne DOM-Reset!)
+      async function loadMoreResults(isAutoScroll = false) {
         if (state.loadingMore || !state.hasMorePages) return;
         const nextPage = (Number(state.page) || 1) + 1;
         state.loadingMore = true;
-        const loadBtn = document.getElementById("loadMoreGridBtn");
-        if (loadBtn) {
-          loadBtn.disabled = true;
-          loadBtn.textContent = "⏳ Lade Seite " + nextPage + "...";
+        const statusLbl = document.getElementById("infiniteScrollStatusLabel");
+        if (statusLbl) {
+          statusLbl.innerHTML = "⏳ Lade Seite " + nextPage + " von " + Math.max(nextPage, Number(state.totalPages) || 1) + " automatisch nach…";
         }
-        // Sanfte Skeleton-Platzhalter (#21) direkt im Grid anhängen statt Ausgrauen!
         const gridEl = document.getElementById("resultsGridContainer");
-        if (gridEl) {
+        if (gridEl && !isAutoScroll) {
           const loadWrap = gridEl.querySelector(".load-more-wrap");
           if (loadWrap) {
             loadWrap.insertAdjacentHTML("beforebegin", buildSkeletonCardsHtml(6));
           }
         }
-        setBusyState(true, "⏳ Lade Seite " + nextPage + " nach...");
+        if (!isAutoScroll) {
+          setBusyState(true, "⏳ Lade Seite " + nextPage + " nach...");
+        }
         try {
           let res = null;
           if (state.isSearchMode && state.searchQuery) {
@@ -791,8 +845,9 @@
             if (existingKeys.has(k)) return false;
             existingKeys.add(k);
             return true;
-          });
-          const firstNewItem = freshItems[0] || null;
+          }).map(it => ({ ...it, _pageNum: nextPage }));
+
+          const prevCount = state.items.length;
           state.page = nextPage;
           if (res && res.totalPages) {
             state.totalPages = Math.max(nextPage, Number(res.totalPages) || 1);
@@ -804,13 +859,54 @@
             state.totalResults = Math.max(state.items.length, Number(state.totalResults) || state.items.length);
           }
           state.hasMorePages = Boolean(res && res.hasMore && freshItems.length > 0);
-          renderDiscover(state.isSearchMode ? ("🔍 Suchergebnisse: " + state.searchQuery) : undefined);
-          if (firstNewItem) {
-            const firstNewTc = firstNewItem.media_type === "tv" ? "s" : firstNewItem.media_type === "movie" ? "m" : state.type;
-            const firstNewCard = document.querySelector('.card[data-card-key="' + firstNewTc + '_' + firstNewItem.id + '"]');
-            if (firstNewCard && typeof jumpSpatialFocus === "function") {
-              jumpSpatialFocus(firstNewCard, false);
+
+          const liveGridEl = document.getElementById("resultsGridContainer");
+          if (liveGridEl) {
+            liveGridEl.querySelectorAll('[data-skeleton="1"]').forEach(el => el.remove());
+            const showTop10Ranks = !state.isSearchMode && state.currentView === "discover" && state.mode === "trend" && !state.currentCompanyId;
+            const isMixedMediaView = Boolean(state.isSearchMode || state.currentView === "collection_items" || state.currentView === "universe_items" || state.currentView === "person_items");
+            const appendedHtml = freshItems.map((it, i) => buildCatalogCardHtmlClient(it, prevCount + i, {
+              showTop10Ranks,
+              isMixedMediaView,
+              pageNum: nextPage
+            })).join("");
+
+            const sentinelWrap = document.getElementById("infiniteScrollSentinel") || liveGridEl.querySelector(".load-more-wrap");
+            if (sentinelWrap && appendedHtml) {
+              sentinelWrap.insertAdjacentHTML("beforebegin", appendedHtml);
+            } else if (appendedHtml) {
+              liveGridEl.insertAdjacentHTML("beforeend", appendedHtml);
             }
+
+            // Treffer-Zähler im Sektions-Header aktualisieren
+            const hitsCountEl = document.getElementById("sectionHitsCountLabel");
+            if (hitsCountEl) {
+              const totPages = Math.max(state.page, Number(state.totalPages) || 1);
+              const totalResNum = Math.max(state.items.length, Number(state.totalResults) || state.items.length);
+              hitsCountEl.textContent = (totPages > 1 || totalResNum > state.items.length)
+                ? (state.items.length + " geladen • " + totalResNum.toLocaleString("de-DE") + " Treffer")
+                : (state.items.length + " Treffer");
+            }
+
+            // Sentinel-Status aktualisieren
+            const nextStatusLbl = document.getElementById("infiniteScrollStatusLabel");
+            if (nextStatusLbl) {
+              if (state.hasMorePages) {
+                nextStatusLbl.innerHTML = '📜 Scrolle weiter nach unten für Seite ' + (state.page + 1) + ' von ' + state.totalPages;
+              } else {
+                nextStatusLbl.innerHTML = '✓ Alle verfügbaren Treffer bis Seite ' + state.page + ' geladen';
+              }
+            }
+
+            observeLazyCoversInContainerClient(liveGridEl);
+            ensureCatalogPageTrackObserverClient(liveGridEl);
+            ensureInfiniteScrollSentinelObserverClient();
+            if (catalogCoversUnlocked) {
+              preloadCatalogPageCoversClient(nextPage);
+            }
+            syncSmartPageIndicatorDomClient(false);
+          } else {
+            renderDiscover(state.isSearchMode ? ("🔍 Suchergebnisse: " + state.searchQuery) : undefined);
           }
         } catch (e) {
           if (gridEl) {
@@ -819,7 +915,9 @@
           showHudToast("⚠️ Weitere Ergebnisse konnten nicht geladen werden.");
         } finally {
           state.loadingMore = false;
-          setBusyState(false);
+          if (!isAutoScroll) {
+            setBusyState(false);
+          }
         }
       }
 
@@ -1240,48 +1338,25 @@
         const curPage = Math.max(1, Number(state.page) || 1);
         const startPage = Math.max(1, Math.min(curPage, Number(state.startPage) || 1));
         const totPages = Math.max(curPage, Number(state.totalPages) || 1);
+        const visiblePage = Math.max(1, Math.min(totPages, Number(state.visibleCatalogPage || curPage) || 1));
         const totalResNum = Math.max(state.items.length, Number(state.totalResults) || state.items.length);
-        const pageRangeLabel = startPage < curPage
-          ? ("Seiten " + startPage + "–" + curPage + " von " + totPages)
-          : ("Seite " + curPage + " von " + totPages);
         const hitsLabel = (!isColView && !isUniView && !isPerView && (totPages > 1 || totalResNum > state.items.length))
           ? (state.items.length + " geladen • " + totalResNum.toLocaleString("de-DE") + " Treffer")
           : (state.items.length + " Treffer");
         const hasNextPage = Boolean(state.hasMorePages && curPage < totPages && state.items.length > 0);
         const canPaginateView = Boolean((state.currentView === "discover" || state.isSearchMode) && !isColView && !isUniView && !isPerView && (hasNextPage || totPages > 1) && state.items.length > 0);
 
-        // Direkt-Seitenwahl (#17) berechnen – auf der letzten Seite wird „Mehr laden“ ausgeblendet, bei 1 Seite komplett ausgeblendet
+        // Schlanker Auto-Load-Sentinel am Ende des Grids (ohne doppelte Seiten-Zahlenleiste unten!)
         let paginationBarHtml = "";
         if (canPaginateView) {
-          const pageButtons = [];
-          const maxQuickPages = Math.min(totPages, 7);
-          let startP = Math.max(1, curPage - 3);
-          let endP = Math.min(totPages, startP + maxQuickPages - 1);
-          if (endP - startP + 1 < maxQuickPages) {
-            startP = Math.max(1, endP - maxQuickPages + 1);
-          }
-          if (startP > 1) {
-            pageButtons.push('<button type="button" class="page-jump-btn ' + (1 >= startPage && 1 <= curPage ? 'active' : '') + '" onclick="jumpToPage(1)">1</button>');
-            if (startP > 2) pageButtons.push('<span style="color:var(--text-muted);font-size:11px;padding:0 2px">…</span>');
-          }
-          for (let p = startP; p <= endP; p++) {
-            pageButtons.push('<button type="button" class="page-jump-btn ' + (p >= startPage && p <= curPage ? 'active' : '') + '" onclick="jumpToPage(' + p + ')">' + p + '</button>');
-          }
-          if (endP < totPages) {
-            if (endP < totPages - 1) pageButtons.push('<span style="color:var(--text-muted);font-size:11px;padding:0 2px">…</span>');
-            pageButtons.push('<button type="button" class="page-jump-btn" onclick="jumpToPage(' + totPages + ')">' + totPages + '</button>');
-          }
-          paginationBarHtml = '<div class="load-more-wrap">' +
-            (hasNextPage ? (
-              '<button type="button" id="loadMoreGridBtn" class="btn red" style="padding:9px 20px;font-size:13px" onclick="loadMoreResults()">➕ Mehr laden (Seite ' + (curPage + 1) + ' von ' + totPages + ')</button>'
-            ) : '') +
+          paginationBarHtml = '<div id="infiniteScrollSentinel" class="load-more-wrap" style="padding:14px 12px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap">' +
+            '<span id="infiniteScrollStatusLabel" style="font-size:12px;color:var(--text-muted);font-weight:700">' +
+              (hasNextPage
+                ? ('📜 Scrolle weiter nach unten für Seite ' + (curPage + 1) + ' von ' + totPages)
+                : ('✓ Seite ' + curPage + ' von ' + totPages + ' geladen')) +
+            '</span>' +
             (totPages > 1 ? (
-              '<div class="pagination-bar">' +
-                '<span class="page-counter-pill">📄 ' + pageRangeLabel + '</span>' +
-                (curPage > 1 ? '<button type="button" class="page-jump-btn" onclick="jumpToPage(' + (curPage - 1) + ')" title="Vorherige Seite">◀</button>' : '') +
-                pageButtons.join("") +
-                (curPage < totPages ? '<button type="button" class="page-jump-btn" onclick="jumpToPage(' + (curPage + 1) + ')" title="Nächste Seite">▶</button>' : '') +
-              '</div>'
+              '<button type="button" class="page-counter-pill" onclick="openPageJumpModalClient()" title="Gezielten Seitensprung öffnen (Touch & TV)">🎯 Seite wählen (' + visiblePage + ' / ' + totPages + ') ▾</button>'
             ) : '') +
           '</div>';
         }
@@ -1293,42 +1368,16 @@
             searchDetectedEntitiesHtml +
             franchiseActionBannerHtml +
             '<div class="section-title" style="margin-top:6px">' +
-              '<span>' + headerTitle + ' (' + hitsLabel + ')</span>' +
-              ((!isColView && !isUniView && !isPerView && totPages > 1) ? '<span class="page-counter-pill">📄 ' + pageRangeLabel + '</span>' : '') +
+              '<span>' + headerTitle + ' (<span id="sectionHitsCountLabel">' + hitsLabel + '</span>)</span>' +
+              ((!isColView && !isUniView && !isPerView && totPages > 1)
+                ? '<button type="button" id="sectionPageCounterPill" class="page-counter-pill" onclick="openPageJumpModalClient()" title="Klicken oder Enter für direkte Seitenwahl (TV & Touch)">📄 Seite ' + visiblePage + ' / ' + totPages + ' ▾</button>'
+                : '') +
             '</div>' +
-            '<div id="resultsGridContainer" class="carousel">' + (state.items.length > 0 ? state.items.map((it, idx) => {
-              const tc = it.media_type === 'tv' ? 's' : it.media_type === 'movie' ? 'm' : state.type;
-              const badgeTxt = tc === 's' ? '📺 Serie' : '🎬 Film';
-              const cardKey = tc + "_" + it.id;
-              const isCardSaved = savedKeysSet.has(cardKey);
-              const rankHtml = (showTop10Ranks && idx < 10) ? ('<span class="card-rank-badge">#' + (idx + 1) + '</span>') : '';
-              // Dezenter grüner VIP-Punkt auf dem Cover (Details im Modal)
-              const vipQualityHtml = (vipAllowed && it.vipQuality)
-                ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(it.vipQuality) + '"></span>')
-                : '';
-              const itemTitleSafe = esc(it.title || it.name || '');
-              const resolvedCardPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '');
-              const itemPosterSafe = esc(it.poster_path || it.external_poster_url || it.poster || '');
-              const yrStr = esc((it.release_date || it.first_air_date || '').slice(0, 4) || '–');
-              const ratStr = it.vote_average ? it.vote_average.toFixed(1) : '–';
-              const subRightTxt = isMixedMediaView ? ((tc === 's' ? '📺 ' : '🎬 ') + yrStr) : yrStr;
-              return '<div class="card' + (isCardSaved ? ' card-saved' : '') + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')">' +
-                '<div class="card-poster-wrap">' +
-                  '<div class="card-top-left-stack">' +
-                    rankHtml +
-                    vipQualityHtml +
-                  '</div>' +
-                  '<button type="button" class="card-quick-save ' + (isCardSaved ? 'saved' : '') + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="' + (isCardSaved ? 'In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)' : 'In Merkliste speichern (Tipp oder Karte gedrückt halten)') + '">' + (isCardSaved ? '✓' : '🔖') + '</button>' +
-                  '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\''+tc+'\\','+it.id+',false,\\''+itemTitleSafe+'\\',\\''+itemPosterSafe+'\\')" title="Details öffnen">ℹ️ Details</button>' +
-                  '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
-                  '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : 'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2364748b%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E') + '" onerror="this.onerror=null;this.src=\\\'data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2364748b%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E\\\';" loading="lazy" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
-                '</div>' +
-                '<div class="card-body">' +
-                  '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
-                  '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
-                '</div>' +
-              '</div>';
-            }).join("") + paginationBarHtml : (
+            '<div id="resultsGridContainer" class="carousel">' + (state.items.length > 0 ? state.items.map((it, idx) => buildCatalogCardHtmlClient(it, idx, {
+              showTop10Ranks,
+              isMixedMediaView,
+              pageNum: it._pageNum || startPage
+            })).join("") + paginationBarHtml : (
               '<div class="panel-box" style="grid-column:1 / -1;margin-top:6px">' +
                 '<div class="section-title">⚠️ Keine Treffer mit dieser Filter-Kombination auf Seite ' + curPage + '</div>' +
                 '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Passe in der linken Sidebar (☰ Filter) einzelne Filter an oder setze alle Filter zurück:</div>' +
@@ -1339,6 +1388,10 @@
               '</div>'
             )) + '</div>' +
           '</div>';
+
+        // Gestaffelte Bild-Ladepipeline (Slider #1 -> Slider #2..N + 1 Seite Cover -> IntersectionObserver + Infinite Scroll) starten
+        preloadHeroSlidesAndUnlockCoversClient();
+
         if (typeof window.refreshModalAndEpisodeMarquees === "function") {
           const heroSlot = document.getElementById("heroBannerSlot");
           if (heroSlot) setTimeout(() => window.refreshModalAndEpisodeMarquees(heroSlot), 40);
@@ -1498,13 +1551,15 @@
                 const simPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '') || fbSvg;
                 return '<div class="card" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false)">' +
                   '<div class="card-poster-wrap">' +
-                    '<img src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" loading="lazy" draggable="false" oncontextmenu="return false;" onerror="this.onerror=null;this.src=\\'' + fbSvg + '\\'" />' +
+                    '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
                   '</div>' +
                   '<div class="card-body"><div class="card-title"><span class="card-title-text">' + esc(itemTitle) + '</span></div><div class="card-sub"><span>⭐ ' + (it.vote_average ? Number(it.vote_average).toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
                 '</div>';
               }).join("") +
             '</div>' +
           '</div>';
+          unlockCatalogCoversLoadingClient(false);
+          observeLazyCoversInContainerClient(box);
           const firstSimCard = box.querySelector(".card");
           if (firstSimCard && typeof jumpSpatialFocus === "function") {
             jumpSpatialFocus(firstSimCard, true);
@@ -5059,6 +5114,7 @@
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
             const subLeftTxt = plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film');
+            const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
             return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
               '<div class="card-poster-wrap">' +
                 '<div class="card-top-left-stack">' +
@@ -5067,7 +5123,7 @@
                 '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
                 '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Details öffnen">ℹ️ Details</button>' +
                 '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer abspielen">▶ Trailer</button>' +
-                '<img src="' + (resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM')) + '" onerror="this.onerror=null;this.src=buildPosterFallbackSvg(\\'' + itemTitleSafe + '\\',\\'' + (isSer ? 'SERIE' : 'FILM') + '\\');" loading="lazy" draggable="false" alt="' + itemTitleSafe + '" />' +
+                '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + wlPosterSrc + '" draggable="false" alt="' + itemTitleSafe + '" />' +
               '</div>' +
               '<div class="card-body">' +
                 '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
@@ -5075,6 +5131,8 @@
               '</div>' +
             '</div>';
           }).join("") + '</div>';
+          unlockCatalogCoversLoadingClient(false);
+          observeLazyCoversInContainerClient(mount);
           return;
         }
 
@@ -5112,7 +5170,7 @@
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:180px;cursor:pointer" tabindex="0" onclick="openDetails(\\''+(isSer?'s':'m')+'\\','+targetId+',false)">' +
                 (thumbUrl
-                  ? '<img src="' + esc(thumbUrl) + '" style="width:32px;height:46px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
+                  ? '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(thumbUrl) + '" style="width:32px;height:46px;object-fit:cover;border-radius:4px;flex-shrink:0" alt="" />'
                   : '<div style="width:32px;height:46px;background:var(--card);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">' + (isSer ? '📺' : '🎬') + '</div>') +
                 '<div>' +
                   '<div style="font-size:12.5px;font-weight:800;color:var(--text)"><span style="color:var(--text-muted);font-size:11px;margin-right:6px">' + badge + '</span>' + esc(it.title) + (it.year && it.year !== 'K. A.' ? ' <span style="color:var(--text-muted);font-size:11px">(' + esc(it.year) + ')</span>' : '') + plTag + '</div>' +
@@ -5127,6 +5185,8 @@
             epDrawerHtml +
           '</div>';
         }).join("");
+        unlockCatalogCoversLoadingClient(false);
+        observeLazyCoversInContainerClient(mount);
       }
 
       function toggleWishlistFoldersManager() {
