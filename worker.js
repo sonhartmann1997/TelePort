@@ -29298,8 +29298,17 @@
         gap: 8px;
       }
 
-      /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover */
-      .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box),
+      /* Gemeinsame 1:1 Kino-Typografie & Button-Variablen für Hero-Slider & Detailansicht */
+      :root {
+        --cinema-title-size: clamp(24px, calc(36px * var(--scale-text)), 96px);
+        --cinema-meta-size: calc(13.5px * var(--scale-text));
+        --cinema-desc-size: calc(13.5px * var(--scale-text));
+        --cinema-btn-font: calc(13.5px * var(--scale-text));
+        --cinema-btn-pad: calc(9.5px * var(--scale-menu)) calc(18px * var(--scale-menu));
+      }
+
+      /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen) */
+      .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable),
       .brand-logo:focus-visible,
       .btn:focus-visible,
       .card:focus-visible,
@@ -29315,6 +29324,87 @@
         box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.38), 0 8px 24px rgba(0, 0, 0, 0.85) !important;
         transform: translateY(-2px) scale(1.02);
         z-index: 25;
+      }
+
+      /* Edler Cyan-Glow & animierte Unterstreichung für klickbare Textlinks (Jahr, Genres, Studios, Regie, Land, FSK) */
+      .detail-meta-link,
+      .detail-meta-studio,
+      .hero-meta-year,
+      .hero-meta-genre,
+      .modal-genre-link,
+      .modal-meta-item.clickable {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        text-decoration: none !important;
+        outline: none !important;
+        box-shadow: none !important;
+        transition: color 0.18s ease, text-shadow 0.18s ease, transform 0.18s ease;
+      }
+      .detail-meta-link::after,
+      .detail-meta-studio::after,
+      .hero-meta-year::after,
+      .hero-meta-genre::after,
+      .modal-genre-link::after,
+      .modal-meta-item.clickable::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -2px;
+        height: 2px;
+        border-radius: 2px;
+        background: linear-gradient(90deg, #38bdf8, #818cf8);
+        box-shadow: 0 0 8px rgba(56, 189, 248, 0.75);
+        transform: scaleX(0);
+        transform-origin: left center;
+        transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+        pointer-events: none;
+      }
+      .detail-meta-link:hover,
+      .detail-meta-link.spatial-focus,
+      .detail-meta-link:focus-visible,
+      .detail-meta-studio:hover,
+      .detail-meta-studio.spatial-focus,
+      .detail-meta-studio:focus-visible,
+      .hero-meta-year:hover,
+      .hero-meta-year.spatial-focus,
+      .hero-meta-year:focus-visible,
+      .hero-meta-genre:hover,
+      .hero-meta-genre.spatial-focus,
+      .hero-meta-genre:focus-visible,
+      .modal-genre-link:hover,
+      .modal-genre-link.spatial-focus,
+      .modal-genre-link:focus-visible,
+      .modal-meta-item.clickable:hover,
+      .modal-meta-item.clickable.spatial-focus,
+      .modal-meta-item.clickable:focus-visible {
+        color: #38bdf8 !important;
+        text-shadow: 0 0 12px rgba(56, 189, 248, 0.62);
+        outline: none !important;
+        box-shadow: none !important;
+        transform: translateY(-1px);
+      }
+      .detail-meta-link:hover::after,
+      .detail-meta-link.spatial-focus::after,
+      .detail-meta-link:focus-visible::after,
+      .detail-meta-studio:hover::after,
+      .detail-meta-studio.spatial-focus::after,
+      .detail-meta-studio:focus-visible::after,
+      .hero-meta-year:hover::after,
+      .hero-meta-year.spatial-focus::after,
+      .hero-meta-year:focus-visible::after,
+      .hero-meta-genre:hover::after,
+      .hero-meta-genre.spatial-focus::after,
+      .hero-meta-genre:focus-visible::after,
+      .modal-genre-link:hover::after,
+      .modal-genre-link.spatial-focus::after,
+      .modal-genre-link:focus-visible::after,
+      .modal-meta-item.clickable:hover::after,
+      .modal-meta-item.clickable.spatial-focus::after,
+      .modal-meta-item.clickable:focus-visible::after {
+        transform: scaleX(1);
       }
 
       /* Tastatur-/Controller-Modus aktiv: Mauszeiger ausblenden & konkurrierende Hover-Effekte unterdrücken */
@@ -29371,15 +29461,41 @@
         display: inline;
         white-space: nowrap;
       }
+      body.modal-open-pause-hero header#topUnifiedBar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 125;
+      }
+      header #topBarBackBtn,
+      header #topBarAdjNavGroup {
+        display: none !important;
+      }
+      body.modal-open-pause-hero header #sidebarToggleBtn,
+      body.modal-open-pause-hero header #heroHideBtn {
+        display: none !important;
+      }
+      body.modal-open-pause-hero header #topBarBackBtn {
+        display: inline-flex !important;
+      }
+      body.modal-open-pause-hero header #topBarAdjNavGroup {
+        display: inline-flex !important;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+      }
       header #sidebarToggleBtn,
-      header #navBtnWishlist {
+      header #topBarBackBtn,
+      header #navBtnWishlist,
+      header .top-adj-nav-btn {
         height: var(--top-bar-h) !important;
         min-height: var(--top-bar-h) !important;
         max-height: var(--top-bar-h) !important;
         padding: 0 11px !important;
         margin: 0 !important;
         box-sizing: border-box !important;
-        display: inline-flex !important;
+        display: inline-flex;
         align-items: center !important;
         justify-content: center !important;
         gap: 5px !important;
@@ -29387,17 +29503,29 @@
         white-space: nowrap;
         font-size: calc(12px * var(--scale-menu)) !important;
         font-weight: 700 !important;
+        color: #f8fafc;
         background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(var(--ambi-1), 0.20) 100%);
         border: 1px solid rgba(var(--ambi-2), 0.34);
         border-radius: 10px;
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42);
+        cursor: pointer;
         transform: translate3d(0, 0, 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
-        transition: border-color 0.25s ease, transform 0.14s ease, box-shadow 0.25s ease;
+        transition: border-color 0.25s ease, transform 0.14s ease, box-shadow 0.25s ease, background 0.25s ease;
+      }
+      header .top-adj-nav-btn {
+        padding: 0 10px !important;
+        min-width: var(--top-bar-h);
+      }
+      header .top-adj-nav-btn:disabled {
+        opacity: 0.35;
+        pointer-events: none;
       }
       header #sidebarToggleBtn:hover,
-      header #navBtnWishlist:hover {
+      header #topBarBackBtn:hover,
+      header #navBtnWishlist:hover,
+      header .top-adj-nav-btn:hover {
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(var(--ambi-2), 0.28) 100%);
         border-color: rgba(var(--ambi-2), 0.65);
       }
@@ -29495,16 +29623,17 @@
       .btn.close-slate:hover { background: #334155; border-color: #94a3b8; color: #f8fafc; }
       .btn.active { background: #f8fafc; color: #0f172a; border-color: #f8fafc; font-weight: 800; }
 
-      /* Linke Off-Canvas Sidebar für Filter, Größe, Themes & Farbenblind-Modus */
+      /* Linke 2-Spalten Ambilight-Glas Sidebar (Links: Einzeilige Übersicht | Rechts: Dynamisches Optionen-Panel) */
       .sidebar-backdrop {
         position: fixed;
         inset: 0;
         z-index: 140;
-        background: rgba(0, 0, 0, 0.72);
-        backdrop-filter: blur(5px);
+        background: radial-gradient(circle at 18% 30%, rgba(var(--ambi-1), 0.16) 0%, rgba(2, 6, 18, 0.72) 70%);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
         opacity: 0;
         pointer-events: none;
-        transition: opacity 0.22s ease;
+        transition: opacity 0.24s ease;
       }
       .sidebar-backdrop.open {
         opacity: 1;
@@ -29515,13 +29644,20 @@
         top: 0;
         left: 0;
         bottom: 0;
-        width: min(350px, 90vw);
+        width: min(calc(370px * var(--scale-menu)), 94vw);
         z-index: 145;
-        background: var(--surface);
-        border-right: 1px solid rgba(14, 165, 233, 0.24);
-        box-shadow: 16px 0 48px rgba(0, 0, 0, 0.85);
+        background: linear-gradient(
+          155deg,
+          rgba(8, 13, 26, 0.78) 0%,
+          rgba(12, 19, 36, 0.72) 52%,
+          rgba(var(--ambi-1), 0.16) 100%
+        );
+        backdrop-filter: blur(28px) saturate(175%);
+        -webkit-backdrop-filter: blur(28px) saturate(175%);
+        border-right: 1px solid rgba(var(--ambi-2), 0.36);
+        box-shadow: 20px 0 60px rgba(0, 0, 0, 0.82), inset -1px 0 22px rgba(var(--ambi-2), 0.10);
         transform: translateX(-104%);
-        transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), width 0.24s cubic-bezier(0.22, 1, 0.36, 1);
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -29529,30 +29665,168 @@
       .sidebar-drawer.open {
         transform: translateX(0);
       }
+      .sidebar-drawer.has-subpanel {
+        width: min(calc(800px * var(--scale-menu)), 96vw);
+      }
       .sidebar-header {
-        padding: 10px 12px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+        padding: 10px 14px;
+        border-bottom: 1px solid rgba(var(--ambi-2), 0.22);
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 6px;
-        background: rgba(16, 26, 48, 0.65);
+        gap: 8px;
+        background: linear-gradient(90deg, rgba(8, 13, 25, 0.78) 0%, rgba(var(--ambi-1), 0.20) 100%);
+        flex-shrink: 0;
+      }
+      .sidebar-columns-wrap {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: row;
+        align-items: stretch;
+        overflow: hidden;
+        position: relative;
       }
       .sidebar-body {
-        flex: 1;
+        width: min(calc(370px * var(--scale-menu)), 94vw);
+        flex: 0 0 auto;
         overflow-y: auto;
-        padding: 10px 12px 24px;
+        overflow-x: hidden;
+        padding: 12px 13px 28px;
         scroll-padding-top: 16px;
         scroll-padding-bottom: 24px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 10px;
+      }
+      .sidebar-drawer.has-subpanel .sidebar-body {
+        border-right: 1px solid rgba(var(--ambi-2), 0.22);
+      }
+      .sidebar-right-subpanel {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 12px 14px 28px;
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+        background: linear-gradient(180deg, rgba(6, 10, 22, 0.46) 0%, rgba(var(--ambi-1), 0.10) 100%);
+        animation: sidebarSubFadeIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .sidebar-drawer.has-subpanel .sidebar-right-subpanel {
+        display: flex;
+      }
+      @keyframes sidebarSubFadeIn {
+        from { opacity: 0; transform: translateX(10px); }
+        to { opacity: 1; transform: translateX(0); }
+      }
+      @media (max-width: 720px) {
+        .sidebar-drawer.has-subpanel .sidebar-body {
+          display: none;
+        }
+        .sidebar-drawer.has-subpanel {
+          width: min(calc(430px * var(--scale-menu)), 96vw);
+        }
       }
       .sidebar-section {
-        background: var(--card);
-        border: 1px solid rgba(148, 163, 184, 0.16);
-        border-radius: 10px;
-        padding: 9px 11px;
+        background: rgba(15, 23, 42, 0.44);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        border-radius: 12px;
+        padding: 10px 11px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      }
+      .sidebar-nav-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(calc(126px * var(--scale-menu)), 1fr));
+        gap: 6px;
+      }
+      .sidebar-section .btn {
+        height: auto;
+        min-height: calc(34px * var(--scale-menu));
+        white-space: normal;
+        word-break: break-word;
+        text-align: left;
+        justify-content: flex-start;
+        line-height: 1.25;
+        padding: calc(6.5px * var(--scale-menu)) calc(10px * var(--scale-menu));
+      }
+      .sidebar-menu-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .sidebar-menu-row {
+        width: 100%;
+        min-height: calc(38px * var(--scale-menu));
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        border-radius: 9px;
+        color: #f1f5f9;
+        padding: calc(7px * var(--scale-menu)) calc(11px * var(--scale-menu));
+        font-size: calc(12px * var(--scale-menu));
+        font-weight: 700;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        text-align: left;
+        transition: background 0.16s ease, border-color 0.16s ease, transform 0.14s ease, box-shadow 0.16s ease;
+      }
+      .sidebar-menu-row:hover,
+      .sidebar-menu-row.spatial-focus {
+        background: rgba(14, 165, 233, 0.18);
+        border-color: rgba(56, 189, 248, 0.58);
+        color: #ffffff;
+      }
+      .sidebar-menu-row.active {
+        background: linear-gradient(90deg, rgba(2, 132, 199, 0.34) 0%, rgba(79, 70, 229, 0.28) 100%);
+        border-color: #38bdf8;
+        color: #ffffff;
+        box-shadow: 0 4px 16px rgba(2, 132, 199, 0.28);
+      }
+      .sidebar-menu-row.has-inc {
+        border-color: var(--inc-border);
+        background: var(--inc-bg);
+      }
+      .sidebar-menu-row-left {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .sidebar-menu-row-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+        font-size: calc(11px * var(--scale-text));
+        color: #7dd3fc;
+        font-weight: 800;
+      }
+      .sidebar-subpanel-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        flex-wrap: wrap;
+      }
+      .sidebar-subpanel-title {
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 900;
+        color: #f8fafc;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
       }
       .sidebar-sub-divider {
         margin-top: 8px;
@@ -29581,25 +29855,26 @@
       }
       .sidebar-account-btn .sidebar-account-cta {
         color: var(--muted);
-        font-size: 11px;
+        font-size: calc(10.5px * var(--scale-text));
         font-weight: 700;
       }
       .sidebar-section-title {
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 800;
         color: #e2e8f0;
-        margin-bottom: 6px;
+        margin-bottom: 7px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 6px;
+        flex-wrap: wrap;
       }
       .sidebar-collapse-btn {
         width: 100%;
         background: transparent;
         border: 0;
         color: #e2e8f0;
-        padding: 3px 2px;
+        padding: 4px 2px;
         font-size: calc(12px * var(--scale-menu));
         font-weight: 800;
         cursor: pointer;
@@ -29627,21 +29902,24 @@
         align-items: center;
         justify-content: space-between;
         gap: 6px;
-        padding: 4px 0;
-        border-top: 1px solid rgba(148, 163, 184, 0.12);
+        padding: 6px 0;
+        border-top: 1px solid rgba(148, 163, 184, 0.14);
+        flex-wrap: wrap;
       }
       .scale-label {
-        font-size: calc(11px * var(--scale-text));
-        color: #cbd5e1;
+        font-size: calc(11.5px * var(--scale-text));
+        color: #e2e8f0;
+        font-weight: 700;
       }
       .scale-opts {
         display: inline-flex;
-        gap: 3px;
+        gap: 4px;
         flex-wrap: wrap;
       }
       .scale-opts .btn {
-        padding: 3px 6px;
-        font-size: calc(10.5px * var(--scale-menu));
+        padding: calc(4px * var(--scale-menu)) calc(8px * var(--scale-menu));
+        font-size: calc(11px * var(--scale-menu));
+        min-height: 0;
       }
 
       /* Schwebender Ladehinweis (position: fixed -> 0px Layout-Shift, kein Seiten-Springen!) */
@@ -30401,7 +30679,7 @@
         margin-bottom: 2px;
       }
       .hero-title-text {
-        font-size: clamp(26px, calc(38px * var(--scale-text)), 50px);
+        font-size: var(--cinema-title-size);
         font-weight: 900;
         line-height: 1.04;
         color: #ffffff;
@@ -30410,7 +30688,7 @@
         text-shadow: 0 4px 20px rgba(0, 0, 0, 0.92), 0 1px 4px rgba(0, 0, 0, 0.9);
       }
       .hero-meta-clean {
-        font-size: calc(13px * var(--scale-text));
+        font-size: var(--cinema-meta-size);
         color: #f8fafc;
         margin-bottom: 4px;
         display: flex;
@@ -30429,12 +30707,7 @@
       }
       .hero-meta-year {
         cursor: pointer;
-        text-decoration: underline;
-        text-decoration-color: rgba(255, 255, 255, 0.4);
-        text-underline-offset: 3px;
-      }
-      .hero-meta-year:hover {
-        color: #38bdf8;
+        color: #f8fafc;
       }
       .hero-meta-hd {
         font-size: calc(10px * var(--scale-text));
@@ -30457,19 +30730,13 @@
       .hero-meta-genre {
         cursor: pointer;
         color: #e2e8f0;
-        transition: color 0.15s ease;
-      }
-      .hero-meta-genre:hover {
-        color: #38bdf8;
-        text-decoration: underline;
-        text-underline-offset: 3px;
       }
       .hero-desc {
-        font-size: calc(13px * var(--scale-text));
+        font-size: var(--cinema-desc-size);
         color: rgba(241, 245, 249, 0.92);
-        line-height: 1.5;
+        line-height: 1.55;
         margin-bottom: 10px;
-        max-width: 540px;
+        max-width: min(68ch, 100%);
         text-shadow: 0 2px 10px rgba(0, 0, 0, 0.96), 0 1px 3px rgba(0, 0, 0, 0.88);
       }
       /* Aufklappbare Kompakt-Scrollbox für Titelbeschreibungen: Offenes Design ohne Dauer-Rand, mit edler Shadowbox & Rand nur bei Hover/Select */
@@ -30599,8 +30866,8 @@
         color: #090d16 !important;
         border: 1px solid #ffffff !important;
         border-radius: 8px !important;
-        padding: 9px 20px !important;
-        font-size: calc(13px * var(--scale-text)) !important;
+        padding: var(--cinema-btn-pad) !important;
+        font-size: var(--cinema-btn-font) !important;
         font-weight: 800 !important;
         cursor: pointer;
         display: inline-flex;
@@ -30623,8 +30890,8 @@
         color: #ffffff !important;
         border: 1px solid rgba(255, 255, 255, 0.24) !important;
         border-radius: 8px !important;
-        padding: 9px 16px !important;
-        font-size: calc(13px * var(--scale-text)) !important;
+        padding: var(--cinema-btn-pad) !important;
+        font-size: var(--cinema-btn-font) !important;
         font-weight: 700 !important;
         cursor: pointer;
         display: inline-flex;
@@ -31145,10 +31412,10 @@
         color: #fff;
       }
 
-      /* Direkt-Auswahl-Grid in der Sidebar (Farbkennung für Aktiviert vs. Gesperrt) */
+      /* Direkt-Auswahl-Grid in der Sidebar (Farbkennung für Aktiviert vs. Gesperrt, 100% Zoom-fest) */
       .direct-filter-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(165px * var(--scale-menu))), 1fr));
         gap: 6px;
         margin-top: 6px;
       }
@@ -31156,27 +31423,28 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 4px;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.11);
-        border-radius: 8px;
-        padding: 5px 7px;
+        gap: 6px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 9px;
+        padding: calc(5.5px * var(--scale-menu)) calc(8px * var(--scale-menu));
         transition: all 0.14s ease;
       }
       .direct-filter-card.state-inc { background: var(--inc-bg); border-color: var(--inc-border); }
       .direct-filter-card.state-exc { background: var(--exc-bg); border-color: var(--exc-border); }
       .df-label {
         flex: 1;
+        min-width: 0;
         font-size: calc(12px * var(--scale-text));
         font-weight: 700;
         color: #f1f5f9;
-        padding: 3px 4px;
+        padding: 2px 3px;
+        line-height: 1.3;
         cursor: default;
         user-select: none;
         pointer-events: none;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        white-space: normal;
+        word-break: break-word;
       }
       .direct-filter-card.state-inc .df-label { color: var(--inc-text); }
       .direct-filter-card.state-exc .df-label { color: var(--exc-text); text-decoration: line-through; }
@@ -32265,7 +32533,7 @@
       .scale-label { font-size: calc(11.5px * var(--scale-text)); font-weight: 700; color: #e2e8f0; }
       .scale-opts { display: flex; gap: 4px; flex-wrap: wrap; }
 
-      /* Premium Fullscreen App Detail-View im Flixnet- & Kino-Slider-Design */
+      /* Premium Fullscreen App Detail-View im Flixnet- & Kino-Slider-Design (1:1 Größe mit Slider + Unified Topbar) */
       body.modal-open-pause-hero .hero-dot.active .hero-thumb-progress-fill {
         animation-play-state: paused !important;
       }
@@ -32276,8 +32544,8 @@
         background: var(--bg);
         overflow-y: auto;
         overflow-x: hidden;
-        padding: 0;
-        scroll-padding-top: 64px;
+        padding: var(--sticky-header-height, 54px) 0 0 0;
+        scroll-padding-top: calc(var(--sticky-header-height, 54px) + 18px);
         scroll-padding-bottom: 32px;
         animation: fadeIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
       }
@@ -32286,8 +32554,8 @@
         border-radius: 0;
         max-width: 100%;
         width: 100%;
-        min-height: 100vh;
-        min-height: 100dvh;
+        min-height: calc(100vh - var(--sticky-header-height, 54px));
+        min-height: calc(100dvh - var(--sticky-header-height, 54px));
         margin: 0;
         overflow: visible;
         border: 0;
@@ -32295,82 +32563,97 @@
         display: flex;
         flex-direction: column;
       }
-      .detail-top-sticky-bar {
-        position: sticky;
-        top: 0;
-        z-index: 30;
+      /* Kompakte Sub-Topbar-Leiste direkt unter der Unified-Topbar für Film/Serie, Universum, Reihe, Anbieter & ausgegraute aktive Filter */
+      .detail-sub-topbar-strip {
+        position: relative;
+        z-index: 15;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
-        padding: 14px clamp(16px, 4.5vw, 56px);
-        background: linear-gradient(180deg, rgba(6, 9, 20, 0.88) 0%, rgba(6, 9, 20, 0.45) 68%, transparent 100%);
-        backdrop-filter: blur(8px);
-        -webkit-backdrop-filter: blur(8px);
-        pointer-events: none;
+        flex-wrap: wrap;
+        padding: 8px clamp(16px, 4.5vw, 56px);
+        background: linear-gradient(90deg, rgba(8, 13, 25, 0.88) 0%, rgba(var(--ambi-1), 0.16) 55%, rgba(8, 13, 25, 0.86) 100%);
+        border-bottom: 1px solid rgba(var(--ambi-2), 0.22);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
       }
-      .detail-top-sticky-bar > * {
-        pointer-events: auto;
+      .detail-sub-topbar-left,
+      .detail-sub-topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        flex-wrap: wrap;
       }
-      .detail-back-btn {
+      .detail-active-filter-chip.muted {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        background: rgba(15, 23, 42, 0.68);
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        color: #f8fafc;
-        font-size: calc(13px * var(--scale-text));
-        font-weight: 700;
-        padding: 8px 16px;
-        border-radius: 8px;
-        cursor: pointer;
-        backdrop-filter: blur(12px);
-        transition: background 0.16s ease, border-color 0.16s ease, transform 0.14s ease;
+        gap: 4px;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 600;
+        color: rgba(148, 163, 184, 0.78);
+        background: rgba(15, 23, 42, 0.52);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        padding: 2px 8px;
+        border-radius: 999px;
+        filter: grayscale(0.45);
+        user-select: none;
       }
-      .detail-back-btn:hover, .detail-back-btn.spatial-focus {
-        background: rgba(30, 41, 59, 0.92);
-        border-color: rgba(255, 255, 255, 0.42);
-        color: #ffffff;
-        transform: translateX(-2px);
-      }
-      .detail-adj-nav {
+      .return-last-detail-chip {
         display: inline-flex;
         align-items: center;
         gap: 6px;
-      }
-      .detail-adj-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 36px;
-        height: 36px;
-        border-radius: 8px;
-        background: rgba(15, 23, 42, 0.68);
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        color: #e2e8f0;
-        font-size: 13px;
+        background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(99, 102, 241, 0.22));
+        border: 1px solid rgba(56, 189, 248, 0.58);
+        color: #f0f9ff;
+        padding: calc(4px * var(--scale-menu)) calc(11px * var(--scale-menu));
+        border-radius: 999px;
+        font-size: calc(11.5px * var(--scale-text));
         font-weight: 800;
         cursor: pointer;
-        backdrop-filter: blur(12px);
-        transition: all 0.15s ease;
+        box-shadow: 0 4px 14px rgba(2, 132, 199, 0.25);
+        transition: all 0.16s ease;
       }
-      .detail-adj-btn:hover, .detail-adj-btn.spatial-focus {
-        background: rgba(56, 189, 248, 0.22);
+      .return-last-detail-chip:hover,
+      .return-last-detail-chip.spatial-focus {
+        background: linear-gradient(135deg, rgba(14, 165, 233, 0.36), rgba(99, 102, 241, 0.36));
         border-color: #38bdf8;
         color: #ffffff;
+        transform: translateY(-1px);
       }
-      /* Fullbleed Detail Hero Stage mit identischem Kino-Backdrop & Ambilight wie beim Haupt-Slider */
+      /* Fullbleed Detail Hero Stage mit identischem Kino-Backdrop, Ambilight & 1:1 Größen wie beim Haupt-Slider */
       .detail-hero-stage {
         position: relative;
         width: 100%;
-        min-height: clamp(500px, 76vh, 840px);
-        margin-top: -64px;
-        padding: 88px clamp(16px, 4.5vw, 56px) 38px;
+        min-height: clamp(460px, 68vh, 780px);
+        margin-top: 0;
+        padding: clamp(28px, 4.5vh, 52px) clamp(16px, 4.5vw, 56px) 34px;
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
         overflow: hidden;
         isolation: isolate;
+        transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .detail-stage-transitioning .detail-hero-stage,
+      .detail-stage-transitioning .detail-content-body {
+        opacity: 0.28;
+        transform: translateX(var(--adj-slide-dir, 14px));
+        transition: opacity 0.16s ease, transform 0.16s ease;
+      }
+      .detail-morph-enter .detail-hero-content {
+        animation: detailHeroMorphIn 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .detail-morph-enter .detail-content-body {
+        animation: detailBodyRevealIn 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      @keyframes detailHeroMorphIn {
+        from { opacity: 0.45; transform: translateY(8px) scale(0.99); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @keyframes detailBodyRevealIn {
+        from { opacity: 0; transform: translateY(18px); }
+        to { opacity: 1; transform: translateY(0); }
       }
       .detail-backdrop-layer {
         position: absolute;
@@ -32408,7 +32691,7 @@
         pointer-events: none;
         background:
           linear-gradient(90deg, rgba(6, 9, 20, 0.94) 0%, rgba(6, 9, 20, 0.80) 38%, rgba(6, 9, 20, 0.34) 72%, rgba(6, 9, 20, 0.14) 100%),
-          linear-gradient(180deg, rgba(6, 9, 20, 0.52) 0%, rgba(6, 9, 20, 0.12) 32%, rgba(6, 9, 20, 0.72) 76%, var(--bg) 100%);
+          linear-gradient(180deg, rgba(6, 9, 20, 0.46) 0%, rgba(6, 9, 20, 0.12) 32%, rgba(6, 9, 20, 0.72) 76%, var(--bg) 100%);
       }
       .detail-hero-stage.hero-bright-backdrop .detail-scrim-layer {
         background:
@@ -32418,20 +32701,11 @@
       .detail-hero-content {
         position: relative;
         z-index: 3;
-        max-width: 860px;
+        max-width: min(920px, 100%);
         width: 100%;
         display: flex;
         flex-direction: column;
-        gap: 12px;
-      }
-      .detail-kicker-row {
-        display: flex;
-        align-items: center;
         gap: 10px;
-        flex-wrap: wrap;
-        font-size: calc(12px * var(--scale-text));
-        font-weight: 700;
-        color: #cbd5e1;
       }
       .detail-kicker-link {
         display: inline-flex;
@@ -32439,83 +32713,74 @@
         gap: 5px;
         color: #e2e8f0;
         background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        padding: 4px 10px;
-        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        padding: 3px 10px;
+        border-radius: 7px;
         cursor: pointer;
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 700;
         transition: all 0.15s ease;
       }
       .detail-kicker-link:hover, .detail-kicker-link.spatial-focus {
-        background: rgba(56, 189, 248, 0.2);
+        background: rgba(56, 189, 248, 0.22);
         border-color: #38bdf8;
         color: #ffffff;
       }
       .detail-monumental-title {
         margin: 0;
-        font-size: clamp(28px, 4.6vw, 56px);
+        font-size: var(--cinema-title-size);
         font-weight: 900;
-        line-height: 1.06;
-        letter-spacing: -0.02em;
+        line-height: 1.04;
+        letter-spacing: -0.6px;
         text-transform: uppercase;
-        color: #f8fafc;
-        text-shadow: 0 6px 28px rgba(0, 0, 0, 0.92);
+        color: #ffffff;
+        text-shadow: 0 4px 20px rgba(0, 0, 0, 0.92), 0 1px 4px rgba(0, 0, 0, 0.9);
         cursor: pointer;
         word-break: break-word;
       }
       .detail-monumental-title:hover {
-        color: #ffffff;
+        color: #38bdf8;
       }
       .detail-unboxed-meta {
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: 6px;
-        font-size: calc(13.5px * var(--scale-text));
-        font-weight: 600;
-        color: #cbd5e1;
+        gap: 7px;
+        font-size: var(--cinema-meta-size);
+        font-weight: 700;
+        color: #f8fafc;
         line-height: 1.45;
+        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
       }
       .detail-meta-rating {
         color: #facc15;
-        font-weight: 800;
+        font-weight: 900;
         display: inline-flex;
         align-items: center;
         gap: 4px;
       }
       .detail-meta-dot {
-        color: rgba(148, 163, 184, 0.65);
+        color: rgba(255, 255, 255, 0.5);
         margin: 0 2px;
         user-select: none;
       }
       .detail-meta-link {
         color: #e2e8f0;
         cursor: pointer;
-        transition: color 0.14s ease, text-decoration 0.14s ease;
-      }
-      .detail-meta-link:hover, .detail-meta-link.spatial-focus {
-        color: #38bdf8;
-        text-decoration: underline;
       }
       .detail-meta-studio {
-        color: #cbd5e1;
+        color: #e2e8f0;
         font-weight: 700;
         cursor: pointer;
-        transition: color 0.14s ease;
       }
-      .detail-meta-studio:hover, .detail-meta-studio.spatial-focus {
-        color: #ffffff;
-        text-decoration: underline;
-      }
-      /* Flixnet Hero Action Bar: Weißer Play-Button + Versions-Auswahl + Sekundär-Buttons */
+      /* Flixnet Hero Action Bar: 1:1 mit Slider-Buttons */
       .detail-action-bar {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 12px;
         flex-wrap: wrap;
-        margin-top: 4px;
+        margin-top: 2px;
       }
       .detail-action-primary-group {
         display: flex;
@@ -32527,22 +32792,22 @@
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 9px;
+        gap: 8px;
         background: #ffffff;
         color: #090d16;
         border: 1px solid #ffffff;
         border-radius: 8px;
-        padding: 11px 22px;
-        font-size: calc(14px * var(--scale-text));
+        padding: var(--cinema-btn-pad);
+        font-size: var(--cinema-btn-font);
         font-weight: 800;
         cursor: pointer;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
         transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
       }
       .detail-btn-play-white:hover, .detail-btn-play-white.spatial-focus {
         background: #f1f5f9;
-        transform: translateY(-1px) scale(1.02);
-        box-shadow: 0 12px 28px rgba(255, 255, 255, 0.22);
+        transform: translateY(-1px) scale(1.03);
+        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.55), 0 8px 22px rgba(0, 0, 0, 0.78);
       }
       .detail-version-select-wrap {
         position: relative;
@@ -32556,12 +32821,13 @@
         color: #f8fafc;
         border: 1px solid rgba(255, 255, 255, 0.24);
         border-radius: 8px;
-        padding: 10px 34px 10px 14px;
-        font-size: calc(13px * var(--scale-text));
+        padding: var(--cinema-btn-pad);
+        padding-right: 34px;
+        font-size: var(--cinema-btn-font);
         font-weight: 700;
         cursor: pointer;
         backdrop-filter: blur(12px);
-        max-width: min(360px, 84vw);
+        max-width: min(380px, 84vw);
         text-overflow: ellipsis;
         white-space: nowrap;
         overflow: hidden;
@@ -32584,44 +32850,48 @@
         align-items: center;
         justify-content: center;
         gap: 7px;
-        background: rgba(15, 23, 42, 0.68);
-        color: #f8fafc;
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(30, 41, 59, 0.68);
+        color: #ffffff;
+        border: 1px solid rgba(255, 255, 255, 0.24);
         border-radius: 8px;
-        padding: 10px 16px;
-        font-size: calc(13px * var(--scale-text));
+        padding: var(--cinema-btn-pad);
+        font-size: var(--cinema-btn-font);
         font-weight: 700;
         cursor: pointer;
         backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
         text-decoration: none;
         transition: all 0.15s ease;
       }
       .detail-btn-glass:hover, .detail-btn-glass.spatial-focus {
-        background: rgba(30, 41, 59, 0.92);
-        border-color: rgba(255, 255, 255, 0.45);
+        background: rgba(51, 65, 85, 0.85);
+        border-color: rgba(255, 255, 255, 0.55);
         color: #ffffff;
+        transform: translateY(-1px) scale(1.03);
       }
       .detail-btn-glass.saved {
-        background: rgba(16, 185, 129, 0.22);
-        border-color: rgba(16, 185, 129, 0.65);
-        color: #a7f3d0;
+        background: rgba(16, 185, 129, 0.24);
+        border-color: rgba(52, 211, 153, 0.72);
+        color: #ecfdf5;
       }
       .detail-overview-wrap {
-        max-width: 68ch;
-        margin-top: 4px;
+        max-width: min(68ch, 100%);
+        margin-top: 2px;
       }
-      /* Untere Sektionen im Fullscreen-App-View (Episoden/Teile, Cast mit Fotos, Ähnliche Titel mit Covern) */
+      /* Untere Sektionen im Fullscreen-App-View (Episoden/Teile, Cast mit Fotos, Filmreihe & Ähnliche Titel mit Covern) */
       .detail-content-body {
         width: 100%;
-        padding: 8px clamp(16px, 4.5vw, 56px) 56px;
+        padding: 12px clamp(16px, 4.5vw, 56px) 64px;
         display: flex;
         flex-direction: column;
-        gap: 32px;
+        gap: calc(28px * var(--scale-all));
+        transition: opacity 0.22s ease, transform 0.22s ease;
       }
       .detail-section-block {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: calc(13px * var(--scale-all));
       }
       .detail-section-header {
         display: flex;
@@ -32635,7 +32905,7 @@
         align-items: center;
         gap: 10px;
         margin: 0;
-        font-size: clamp(18px, 2vw, 22px);
+        font-size: calc(19px * var(--scale-text));
         font-weight: 900;
         color: #f8fafc;
         letter-spacing: -0.01em;
@@ -32644,46 +32914,46 @@
         content: "";
         display: inline-block;
         width: 4px;
-        height: 22px;
+        height: calc(20px * var(--scale-text));
         border-radius: 2px;
-        background: #e50914;
-        box-shadow: 0 0 12px rgba(229, 9, 20, 0.65);
+        background: linear-gradient(180deg, #38bdf8, #6366f1);
+        box-shadow: 0 0 12px rgba(56, 189, 248, 0.65);
       }
-      /* Horizontaler Cast-Foto-Track (wie in Flixnet Screenshot 1) */
+      /* Horizontaler Cast-Foto-Track (mit dynamischer Zoom-Skalierung via --scale-cover & --scale-text) */
       .detail-carousel-wrap {
         position: relative;
         width: 100%;
       }
       .detail-cast-track {
         display: flex;
-        gap: 14px;
+        gap: calc(14px * var(--scale-cover));
         overflow-x: auto;
         overflow-y: hidden;
-        padding: 4px 2px 12px;
+        padding: 6px 4px 14px;
         scroll-behavior: smooth;
         scrollbar-width: none;
       }
       .detail-cast-track::-webkit-scrollbar { display: none; }
       .detail-cast-card {
         flex: 0 0 auto;
-        width: 112px;
+        width: calc(114px * var(--scale-cover));
         display: flex;
         flex-direction: column;
-        gap: 7px;
+        gap: 6px;
         cursor: pointer;
-        border-radius: 10px;
+        border-radius: 11px;
         transition: transform 0.16s ease;
       }
       .detail-cast-card:hover, .detail-cast-card.spatial-focus {
         transform: translateY(-4px);
       }
       .detail-cast-photo-wrap {
-        width: 112px;
-        height: 146px;
-        border-radius: 10px;
+        width: calc(114px * var(--scale-cover));
+        height: calc(150px * var(--scale-cover));
+        border-radius: 11px;
         overflow: hidden;
         background: #0f172a;
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.14);
         box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
       }
       .detail-cast-card:hover .detail-cast-photo-wrap,
@@ -32702,26 +32972,30 @@
         font-weight: 800;
         color: #f8fafc;
         line-height: 1.25;
-        white-space: nowrap;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
         overflow: hidden;
-        text-overflow: ellipsis;
+        word-break: break-word;
       }
       .detail-cast-role {
         font-size: calc(11px * var(--scale-text));
         color: #94a3b8;
-        line-height: 1.2;
-        white-space: nowrap;
+        line-height: 1.22;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
         overflow: hidden;
-        text-overflow: ellipsis;
-        margin-top: -3px;
+        word-break: break-word;
+        margin-top: -2px;
       }
-      /* Horizontale "Das könnte dir auch gefallen" Cover-Reihe (wie in Flixnet Screenshot 2) */
+      /* Horizontale Filmreihen- & "Das könnte dir auch gefallen" Cover-Reihe (mit --scale-cover Zoom) */
       .detail-similar-track {
         display: flex;
-        gap: 14px;
+        gap: calc(14px * var(--scale-cover));
         overflow-x: auto;
         overflow-y: hidden;
-        padding: 4px 2px 14px;
+        padding: 6px 4px 16px;
         scroll-behavior: smooth;
         scrollbar-width: none;
       }
@@ -32729,20 +33003,38 @@
       .detail-sim-card {
         position: relative;
         flex: 0 0 auto;
-        width: clamp(148px, 16vw, 196px);
+        width: calc(clamp(146px, 15vw, 190px) * var(--scale-cover));
         aspect-ratio: 2 / 3;
         border-radius: 12px;
         overflow: hidden;
         background: #0f172a;
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.14);
         box-shadow: 0 12px 28px rgba(0, 0, 0, 0.65);
         cursor: pointer;
         transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
       }
+      .detail-sim-card.is-current-part {
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.45), 0 12px 28px rgba(0, 0, 0, 0.75);
+      }
       .detail-sim-card:hover, .detail-sim-card.spatial-focus {
         transform: translateY(-5px) scale(1.02);
-        border-color: rgba(255, 255, 255, 0.45);
+        border-color: rgba(56, 189, 248, 0.72);
         box-shadow: 0 18px 36px rgba(0, 0, 0, 0.85);
+      }
+      .detail-sim-current-badge {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 4;
+        background: linear-gradient(135deg, #0284c7, #4338ca);
+        color: #ffffff;
+        font-size: calc(10px * var(--scale-text));
+        font-weight: 900;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(125, 211, 252, 0.6);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
       }
       .detail-sim-poster {
         width: 100%;
@@ -32754,7 +33046,7 @@
         position: absolute;
         inset: auto 0 0 0;
         padding: 36px 12px 11px;
-        background: linear-gradient(180deg, transparent 0%, rgba(4, 7, 16, 0.84) 55%, rgba(4, 7, 16, 0.98) 100%);
+        background: linear-gradient(180deg, transparent 0%, rgba(4, 7, 16, 0.86) 50%, rgba(4, 7, 16, 0.98) 100%);
         display: flex;
         flex-direction: column;
         gap: 3px;
@@ -32763,10 +33055,11 @@
         font-size: calc(13px * var(--scale-text));
         font-weight: 800;
         color: #ffffff;
-        line-height: 1.22;
-        white-space: nowrap;
+        line-height: 1.24;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
         overflow: hidden;
-        text-overflow: ellipsis;
       }
       .detail-sim-sub {
         font-size: calc(11px * var(--scale-text));
@@ -32781,13 +33074,13 @@
         top: 50%;
         transform: translateY(-50%);
         z-index: 6;
-        width: 38px;
-        height: 56px;
+        width: calc(38px * var(--scale-menu));
+        height: calc(56px * var(--scale-menu));
         border-radius: 8px;
         background: rgba(9, 13, 22, 0.82);
         border: 1px solid rgba(255, 255, 255, 0.18);
         color: #ffffff;
-        font-size: 20px;
+        font-size: calc(20px * var(--scale-text));
         font-weight: 800;
         display: flex;
         align-items: center;
@@ -32802,22 +33095,69 @@
       }
       .detail-carousel-arrow.prev { left: 6px; }
       .detail-carousel-arrow.next { right: 6px; }
+      /* Live-Zoom-Badge (oben rechts bei L2/R2 oder +/-) & Controller-HUD (PlayStation / Xbox) */
+      #liveZoomBadgeEl {
+        position: fixed;
+        top: calc(var(--sticky-header-height, 54px) + 12px);
+        right: 18px;
+        z-index: 1650;
+        background: linear-gradient(135deg, rgba(8, 13, 25, 0.92), rgba(2, 132, 199, 0.35));
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(56, 189, 248, 0.65);
+        color: #f8fafc;
+        padding: 6px 14px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 900;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.75);
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(-8px) scale(0.96);
+        transition: opacity 0.18s ease, transform 0.18s ease;
+      }
+      #liveZoomBadgeEl.visible {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+      #controllerHudBar {
+        position: fixed;
+        bottom: 12px;
+        right: 14px;
+        z-index: 155;
+        display: none;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        background: linear-gradient(135deg, rgba(8, 13, 26, 0.86), rgba(15, 23, 42, 0.78));
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border: 1px solid rgba(56, 189, 248, 0.32);
+        border-radius: 999px;
+        padding: 5px 13px;
+        font-size: 11.5px;
+        font-weight: 700;
+        color: #cbd5e1;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.68);
+        pointer-events: none;
+      }
+      #controllerHudBar.visible {
+        display: inline-flex;
+      }
+      #controllerHudBar b {
+        color: #38bdf8;
+        font-weight: 900;
+      }
       @media (max-width: 640px) {
         .detail-hero-stage {
-          min-height: 500px;
-          padding: 78px 16px 26px;
-        }
-        .detail-monumental-title {
-          font-size: clamp(24px, 7.5vw, 36px);
-        }
-        .detail-cast-card, .detail-cast-photo-wrap {
-          width: 98px;
-        }
-        .detail-cast-photo-wrap {
-          height: 128px;
+          min-height: 440px;
+          padding: 28px 16px 24px;
         }
         .detail-carousel-arrow {
           display: none;
+        }
+        #controllerHudBar {
+          display: none !important;
         }
       }
       .ep-icon-btn {
@@ -32960,19 +33300,23 @@
         flex-direction: column;
         align-items: stretch;
         justify-content: center;
-        padding: 10px 12px;
-        background: rgba(15, 23, 42, 0.58);
-        border-radius: 10px;
-        margin-bottom: 7px;
-        gap: 8px;
-        border: 1px solid rgba(148, 163, 184, 0.15);
-        transition: background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+        padding: calc(10px * var(--scale-menu)) calc(13px * var(--scale-menu));
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.64) 0%, rgba(var(--ambi-1), 0.08) 100%);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-radius: 11px;
+        margin-bottom: calc(8px * var(--scale-all));
+        gap: calc(8px * var(--scale-all));
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+        transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.14s ease;
       }
       .ep-row:hover,
       .ep-row:focus-within {
-        background: rgba(30, 41, 59, 0.78);
-        border-color: rgba(56, 189, 248, 0.42);
-        box-shadow: 0 4px 14px rgba(2, 6, 23, 0.35);
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.82) 0%, rgba(var(--ambi-2), 0.16) 100%);
+        border-color: rgba(56, 189, 248, 0.52);
+        box-shadow: 0 8px 22px rgba(2, 6, 23, 0.48);
+        transform: translateY(-1px);
       }
       body[data-theme="light"] .ep-row {
         background: #ffffff;
@@ -32983,8 +33327,8 @@
         background: #f8fafc;
         border-color: #38bdf8;
       }
-      .ep-row.ep-watched { border-color: rgba(16, 185, 129, 0.45); background: rgba(16, 185, 129, 0.07); }
-      .ep-row.ep-next-up { border-color: rgba(14, 165, 233, 0.58); background: rgba(14, 165, 233, 0.09); }
+      .ep-row.ep-watched { border-color: rgba(16, 185, 129, 0.52); background: linear-gradient(135deg, rgba(16, 185, 129, 0.11), rgba(15, 23, 42, 0.68)); }
+      .ep-row.ep-next-up { border-color: rgba(56, 189, 248, 0.65); background: linear-gradient(135deg, rgba(14, 165, 233, 0.15), rgba(15, 23, 42, 0.72)); }
       .ep-row.ep-autofilled { border-left: 3px solid #38bdf8; }
       .ep-row-top {
         display: flex;
@@ -32993,6 +33337,7 @@
         gap: 8px;
         width: 100%;
         min-width: 0;
+        flex-wrap: wrap;
       }
       .ep-row-bottom {
         display: flex;
@@ -33002,14 +33347,14 @@
         flex-wrap: wrap;
         width: 100%;
         padding-top: 6px;
-        border-top: 1px solid rgba(148, 163, 184, 0.1);
+        border-top: 1px solid rgba(148, 163, 184, 0.12);
       }
       body[data-theme="light"] .ep-row-bottom {
         border-top-color: #e2e8f0;
       }
       .ep-title {
-        font-size: calc(13px * var(--scale-text));
-        font-weight: 600;
+        font-size: calc(13.5px * var(--scale-text));
+        font-weight: 700;
         color: #f1f5f9;
         cursor: pointer;
         flex: 1;
@@ -33024,7 +33369,7 @@
       }
       .ep-title.spatial-focus,
       .ep-title:hover {
-        color: #ffffff;
+        color: #38bdf8;
       }
       .ep-title:hover .ep-name-text,
       .ep-title.spatial-focus .ep-name-text {
@@ -33528,6 +33873,7 @@
     </div>
     <header id="topUnifiedBar" class="search-bar-outer">
       <button class="btn" id="sidebarToggleBtn" onclick="toggleFilterSidebar()" title="Menü, Filter, Zufall, Account, Design & Ansichtsgröße öffnen"><span class="top-btn-icon">☰</span><span class="top-btn-label"> Menü</span></button>
+      <button type="button" class="btn" id="topBarBackBtn" onclick="closeDetailModal()" title="Zurück zur vorherigen Ansicht (Esc / B / ○)"><span class="top-btn-icon">←</span><span class="top-btn-label" id="topBarBackBtnLabel"> Zurück</span></button>
       <span id="headerBrandLogo" class="brand-logo" tabindex="0" role="button" aria-label="TelePort – Zur Hauptseite" onclick="goHome()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();goHome();}" title="TelePort – Zur Hauptseite">
         <svg class="teleport-logo-svg" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
           <defs>
@@ -33577,11 +33923,15 @@
       </div>
       <button class="btn" id="navBtnWishlist" onclick="loadWishlist('root')" title="Synchronisierte Merkliste & Playlisten"><span class="top-btn-icon">💾</span><span class="top-btn-label"> Merkliste</span></button>
       <button type="button" id="heroHideBtn" class="hero-hide-btn hero-top-dock-hide-btn" onclick="toggleHeroSliderHidden()" title="Kino-Spotlight ein- oder ausklappen"><span class="top-btn-icon">▴</span><span class="top-btn-label"> Einklappen</span></button>
+      <div id="topBarAdjNavGroup" class="detail-adj-nav">
+        <button type="button" id="modalAdjPrevBtn" class="top-adj-nav-btn" onclick="navigateDetailModalAdjacent(-1)" title="Vorheriger Titel (L1 / LB)">◀</button>
+        <button type="button" id="modalAdjNextBtn" class="top-adj-nav-btn" onclick="navigateDetailModalAdjacent(1)" title="Nächster Titel (R1 / RB)">▶</button>
+      </div>
       <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen"></div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box"></div>
     </header>
 
-    <!-- Linke Off-Canvas Sidebar für Filter, Design (Dark/Light/Cyberpunk), Farbenblind-Modus, Instant-Trailer Provider & Größen-Einstellung -->
+    <!-- Linke 2-Spalten Ambilight-Glas Sidebar (Links: Einzeilige Kategorien | Rechts: Dynamisches Optionen-Panel) -->
     <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="closeFilterSidebar()"></div>
     <aside id="filterSidebarDrawer" class="sidebar-drawer" aria-label="Filter & Einstellungen Sidebar">
       <div class="sidebar-header">
@@ -33598,7 +33948,10 @@
           <button class="btn close-slate" onclick="closeFilterSidebar()" title="Sidebar schließen">✖</button>
         </div>
       </div>
-      <div id="sidebarDrawerBody" class="sidebar-body"></div>
+      <div class="sidebar-columns-wrap">
+        <div id="sidebarDrawerBody" class="sidebar-body"></div>
+        <div id="sidebarRightSubPanel" class="sidebar-right-subpanel" aria-live="polite"></div>
+      </div>
     </aside>
 
     <div id="busyOverlayBar">
@@ -33607,6 +33960,8 @@
     </div>
 
     <div id="hudToast"></div>
+    <div id="liveZoomBadgeEl" aria-live="polite">🔍 Zoom: 100%</div>
+    <div id="controllerHudBar" aria-hidden="true"></div>
     <div id="antiSpamHudMount" style="position:fixed;bottom:14px;right:14px;left:14px;max-width:480px;margin-left:auto;z-index:1550;pointer-events:none;display:none"></div>
     <div id="modalHoldNavIndicator" class="modal-hold-nav-indicator">
       <span id="modalHoldNavText">⏩ Halten zum Weiterblättern...</span>
@@ -34134,16 +34489,32 @@
         });
       }
 
+      let liveZoomBadgeTimer = null;
+      function showLiveZoomBadgeClient(labelText) {
+        const el = document.getElementById("liveZoomBadgeEl");
+        if (!el) return;
+        el.textContent = labelText || ("🔍 Zoom: " + Number(uiScale.all || 100) + "%");
+        el.classList.add("visible");
+        if (liveZoomBadgeTimer) clearTimeout(liveZoomBadgeTimer);
+        liveZoomBadgeTimer = setTimeout(() => {
+          el.classList.remove("visible");
+        }, 1500);
+      }
+
       function applyUiScaleToDom() {
         const root = document.documentElement;
-        const sAll = Math.min(1.6, Math.max(0.65, Number(uiScale.all || 100) / 100));
-        const sText = Math.min(1.6, Math.max(0.7, Number(uiScale.text || 100) / 100));
-        const sCover = Math.min(1.8, Math.max(0.65, Number(uiScale.cover || 100) / 100));
-        const sMenu = Math.min(1.5, Math.max(0.7, Number(uiScale.menu || 100) / 100));
-        root.style.setProperty("--scale-all", sAll.toFixed(3));
-        root.style.setProperty("--scale-text", (sText * sAll).toFixed(3));
-        root.style.setProperty("--scale-cover", (sCover * sAll).toFixed(3));
-        root.style.setProperty("--scale-menu", (sMenu * sAll).toFixed(3));
+        const w = window.innerWidth || 1024;
+        // Auf 1080p-Laptop/PC (>= 900px) entspricht 100% Standardgröße direkt dem gewünschten 145%-Kino-Feeling!
+        const desktopCinemaBoost = w >= 900 ? 1.42 : (w >= 700 ? 1.15 : 1.0);
+        const sAll = Math.min(1.65, Math.max(0.65, Number(uiScale.all || 100) / 100));
+        const sText = Math.min(1.65, Math.max(0.7, Number(uiScale.text || 100) / 100));
+        const sCover = Math.min(1.85, Math.max(0.65, Number(uiScale.cover || 100) / 100));
+        const sMenu = Math.min(1.55, Math.max(0.7, Number(uiScale.menu || 100) / 100));
+        root.style.setProperty("--desktop-cinema-boost", desktopCinemaBoost.toFixed(3));
+        root.style.setProperty("--scale-all", (sAll * desktopCinemaBoost).toFixed(3));
+        root.style.setProperty("--scale-text", (sText * sAll * desktopCinemaBoost).toFixed(3));
+        root.style.setProperty("--scale-cover", (sCover * sAll * desktopCinemaBoost).toFixed(3));
+        root.style.setProperty("--scale-menu", (sMenu * sAll * Math.min(1.22, desktopCinemaBoost)).toFixed(3));
       }
       applyUiScaleToDom();
 
@@ -34166,6 +34537,7 @@
         document.body.setAttribute("data-device", devType);
         const b = document.getElementById("deviceBadge");
         if (b) b.textContent = devLabel;
+        applyUiScaleToDom();
       }
       detectClientDeviceAndAdapt();
       window.addEventListener("resize", detectClientDeviceAndAdapt);
@@ -34175,8 +34547,9 @@
         uiScale[key] = clamped;
         try { localStorage.setItem("tma_ui_scale", JSON.stringify(uiScale)); } catch (e) {}
         applyUiScaleToDom();
-        if (state && state.sidebarOpen) renderFilterSidebarContent();
-        showHudToast("🔠 " + (key === "all" ? "Gesamtgröße" : key === "text" ? "Textgröße" : key === "cover" ? "Covergröße" : "Menügröße") + ": " + clamped + "%");
+        if (state && state.sidebarOpen) renderFilterSidebarContent(false);
+        const labelPrefix = key === "all" ? "🔍 Zoom" : key === "text" ? "🔤 Textgröße" : key === "cover" ? "🖼️ Covergröße" : "🎛️ Menügröße";
+        showLiveZoomBadgeClient(labelPrefix + ": " + clamped + "%");
         if (persistRemote) {
           fetch(API_BASE + "/settings", {
             method: "POST",
@@ -34195,8 +34568,8 @@
         uiScale = { ...DEFAULT_UI_SCALE };
         try { localStorage.setItem("tma_ui_scale", JSON.stringify(uiScale)); } catch (e) {}
         applyUiScaleToDom();
-        if (state && state.sidebarOpen) renderFilterSidebarContent();
-        showHudToast("🔠 Seitengröße auf 100% zurückgesetzt");
+        if (state && state.sidebarOpen) renderFilterSidebarContent(false);
+        showLiveZoomBadgeClient("🔍 Zoom: 100% (Standard)");
         fetch(API_BASE + "/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -34205,31 +34578,44 @@
       }
 
       function focusFirstSidebarFilterOption() {
+        const subPanel = document.getElementById("sidebarRightSubPanel");
+        if (subPanel && state.sidebarTab) {
+          const firstSubBtn = subPanel.querySelector(".direct-filter-grid .df-btn.inc, .direct-filter-grid .df-btn, .scale-opts .btn, #sidebarThemeBtn_dark, .btn");
+          if (firstSubBtn && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(firstSubBtn, true);
+            return;
+          }
+        }
         const body = document.getElementById("sidebarDrawerBody");
         if (!body) return;
-        const firstBtn = body.querySelector(".direct-filter-grid .df-btn.inc, .direct-filter-grid .df-btn");
-        if (firstBtn && typeof jumpSpatialFocus === "function") {
-          jumpSpatialFocus(firstBtn, true);
-          return;
-        }
-        const firstCatTab = body.querySelector(".ff-tab-btn");
+        const firstCatTab = body.querySelector(".sidebar-menu-row");
         if (firstCatTab && typeof jumpSpatialFocus === "function") {
           jumpSpatialFocus(firstCatTab, false);
+        }
+      }
+
+      function closeSidebarSubPanelToMain() {
+        const prevTab = state.sidebarTab;
+        state.sidebarTab = null;
+        state.sidebarDesignOpen = false;
+        state.sidebarScaleOpen = false;
+        renderFilterSidebarContent(false);
+        if (prevTab) {
+          const rowBtn = document.getElementById("sidebarCatTab_" + prevTab) || document.getElementById("sidebarSecBtn_" + prevTab);
+          if (rowBtn && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(rowBtn, true);
+          }
         }
       }
 
       function toggleFilterSidebar(initialTab) {
         if (initialTab) {
           state.sidebarTab = initialTab;
-          state.sidebarDesignOpen = false;
-          state.sidebarScaleOpen = false;
           state.sidebarOpen = true;
         } else {
           state.sidebarOpen = !state.sidebarOpen;
           if (state.sidebarOpen) {
             state.sidebarTab = null;
-            state.sidebarDesignOpen = false;
-            state.sidebarScaleOpen = false;
           }
         }
         const drawer = document.getElementById("filterSidebarDrawer");
@@ -34239,15 +34625,14 @@
         if (state.sidebarOpen) {
           renderFilterSidebarContent(Boolean(state.sidebarTab));
           if (!state.sidebarTab) {
-            const firstCatTab = document.getElementById("sidebarCatTab_genres") || document.querySelector("#sidebarDrawerBody .ff-tab-btn");
+            const firstCatTab = document.getElementById("sidebarCatTab_genres") || document.querySelector("#sidebarDrawerBody .sidebar-menu-row");
             if (firstCatTab && typeof jumpSpatialFocus === "function") {
               jumpSpatialFocus(firstCatTab, false);
             }
           }
         } else {
           state.sidebarTab = null;
-          state.sidebarDesignOpen = false;
-          state.sidebarScaleOpen = false;
+          if (drawer) drawer.classList.remove("has-subpanel");
           if (typeof focusFirstResultCard === "function") {
             focusFirstResultCard(false);
           }
@@ -34261,49 +34646,26 @@
         state.sidebarScaleOpen = false;
         const drawer = document.getElementById("filterSidebarDrawer");
         const backdrop = document.getElementById("sidebarBackdrop");
-        if (drawer) drawer.classList.remove("open");
+        if (drawer) {
+          drawer.classList.remove("open", "has-subpanel");
+        }
         if (backdrop) backdrop.classList.remove("open");
         if (typeof focusFirstResultCard === "function") {
           focusFirstResultCard(false);
         }
       }
 
-      function switchSidebarCategoryTab(tabName) {
-        if (state.sidebarTab === tabName) {
-          state.sidebarTab = null;
-          renderFilterSidebarContent(false);
-          const tabBtn = document.getElementById("sidebarCatTab_" + tabName);
-          if (tabBtn && typeof jumpSpatialFocus === "function") {
-            jumpSpatialFocus(tabBtn, false);
-          }
-        } else {
-          state.sidebarTab = tabName;
-          renderFilterSidebarContent(true);
+      function switchSidebarCategoryTab(tabName, jumpIntoRightPanel = true) {
+        if (state.sidebarTab === tabName && !jumpIntoRightPanel) {
+          closeSidebarSubPanelToMain();
+          return;
         }
+        state.sidebarTab = tabName;
+        renderFilterSidebarContent(Boolean(jumpIntoRightPanel));
       }
 
       function toggleSidebarExtraSection(secName) {
-        if (secName === "design") {
-          state.sidebarDesignOpen = !state.sidebarDesignOpen;
-          renderFilterSidebarContent(false);
-          if (state.sidebarDesignOpen) {
-            const firstBtn = document.querySelector("#sidebarDesignBody .btn");
-            if (firstBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(firstBtn, true);
-          } else {
-            const hdrBtn = document.getElementById("sidebarSecBtn_design");
-            if (hdrBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(hdrBtn, false);
-          }
-        } else if (secName === "scale") {
-          state.sidebarScaleOpen = !state.sidebarScaleOpen;
-          renderFilterSidebarContent(false);
-          if (state.sidebarScaleOpen) {
-            const firstBtn = document.querySelector("#sidebarScaleBody .btn");
-            if (firstBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(firstBtn, true);
-          } else {
-            const hdrBtn = document.getElementById("sidebarSecBtn_scale");
-            if (hdrBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(hdrBtn, false);
-          }
-        }
+        switchSidebarCategoryTab(secName, true);
       }
 
       function toggleTmaFullscreenClient() {
@@ -34353,6 +34715,8 @@
 
       function renderFilterSidebarContent(jumpToOptions = false) {
         const body = document.getElementById("sidebarDrawerBody");
+        const subPanel = document.getElementById("sidebarRightSubPanel");
+        const drawer = document.getElementById("filterSidebarDrawer");
         if (!body) return;
         const s = state.settings || {};
         const curTab = state.sidebarTab || null;
@@ -34375,63 +34739,6 @@
           '</div>';
         };
 
-        let catGridHtml = "";
-        if (curTab === "genres") {
-          const allGenreNames = Array.from(new Set([
-            ...Object.keys(state.genres || {}),
-            "Action", "Abenteuer", "Animation", "Komödie", "Krimi", "Dokumentarfilm", "Drama", "Familie", "Fantasy", "Historie", "Horror", "Musik", "Mystery", "Liebesfilm", "Sci-Fi", "Thriller", "Kriegsfilm", "Western",
-            ...(s.includedGenres || []),
-            ...(s.excludedGenres || [])
-          ]));
-          catGridHtml = '<div class="direct-filter-grid">' +
-            allGenreNames.map(gName => {
-              const isInc = (s.includedGenres || []).includes(gName);
-              const isExc = (s.excludedGenres || []).includes(gName);
-              return renderDirectFilterOptionCard("genre", gName, genreEmoji(gName) + " " + esc(gName), isInc, isExc);
-            }).join("") +
-          '</div>';
-        } else if (curTab === "platforms") {
-          catGridHtml = '<div class="direct-filter-grid">' +
-            PLATFORM_OPTIONS_CLIENT.map(pl => {
-              const isInc = (s.includedPlatforms || []).includes(pl.id);
-              const isExc = (s.excludedPlatforms || []).includes(pl.id);
-              return renderDirectFilterOptionCard("platform", pl.id, esc((pl.icon || "📺") + " " + pl.label), isInc, isExc);
-            }).join("") +
-          '</div>';
-        } else if (curTab === "eras") {
-          catGridHtml = '<div class="direct-filter-grid">' +
-            ERA_OPTIONS_CLIENT.map(er => {
-              const isInc = (s.includedEras || []).includes(er.id);
-              const isExc = (s.excludedEras || []).includes(er.id);
-              return renderDirectFilterOptionCard("era", er.id, "📅 " + esc(er.label), isInc, isExc);
-            }).join("") +
-          '</div>';
-        } else if (curTab === "studios") {
-          catGridHtml = '<div class="direct-filter-grid">' +
-            STUDIO_OPTIONS_CLIENT.map(st => {
-              const isInc = (s.includedStudios || []).includes(st.id);
-              const isExc = (s.excludedStudios || []).includes(st.id);
-              return renderDirectFilterOptionCard("studio", st.id, esc((st.icon || "🏢") + " " + st.label), isInc, isExc);
-            }).join("") +
-          '</div>';
-        } else if (curTab === "fsk") {
-          catGridHtml = '<div class="direct-filter-grid">' +
-            FSK_OPTIONS_CLIENT.map(f => {
-              const isInc = (s.includedFsk || []).includes(f);
-              const isExc = (s.excludedFsk || []).includes(f);
-              return renderDirectFilterOptionCard("fsk", f, "🔞 " + esc(f), isInc, isExc);
-            }).join("") +
-            renderDirectFilterOptionCard("unreleased", "unreleased", "🗓️ Unveröffentlicht", Boolean(s.showUnreleased), false) +
-          '</div>';
-        }
-
-        const prevFocusDfId = (!jumpToOptions && typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.getAttribute)
-          ? currentSpatialEl.getAttribute("data-df-id")
-          : null;
-        const prevFocusElId = (!jumpToOptions && typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.id)
-          ? currentSpatialEl.id
-          : null;
-
         const themeBadge = appTheme === "light" ? "☀️ Light" : appTheme === "cyberpunk" ? "⚡ Cyber" : "🌙 Dark";
         const scaleBadge = Number(uiScale.all || 100) + "%";
         const isAuth = Boolean(state && state.isAuthenticated && state.authUser);
@@ -34440,15 +34747,23 @@
           ? ("🟢 " + (u.customUsername || (u.tgUsername ? "@" + u.tgUsername : ("ID " + u.telegramId))) + (u.isVip ? " 🌟VIP" : "") + (u.isAdmin ? " 👑" : ""))
           : "👤 Gast • Login";
 
+        const prevFocusDfId = (!jumpToOptions && typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.getAttribute)
+          ? currentSpatialEl.getAttribute("data-df-id")
+          : null;
+        const prevFocusElId = (!jumpToOptions && typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.id)
+          ? currentSpatialEl.id
+          : null;
+
+        // Linke Hauptspalte: Alle Katalog-Filter + Darstellung & Skalierung jeweils einzeilig untereinander
         body.innerHTML =
           /* 0. Schnellzugriff & Konto */
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
               '<span>⚡ Navigation & Konto</span>' +
             '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">' +
+            '<div class="sidebar-nav-grid">' +
               '<button id="syncBadge" class="btn sidebar-account-btn ' + (isAuth ? 'is-auth' : 'is-guest') + '" style="grid-column:1 / -1;justify-content:space-between" onclick="closeFilterSidebar();openAccountModal()">' +
-                '<span>' + esc(accLabel) + '</span><span class="sidebar-account-cta">🔐 Konto öffnen ▸</span>' +
+                '<span>' + esc(accLabel) + '</span><span class="sidebar-account-cta">🔐 Konto ▸</span>' +
               '</button>' +
               '<button id="sidebarRandomBtn" class="btn" onclick="closeFilterSidebar();triggerRandom()" title="Zufälligen Titel mit aktiven Filtern ziehen">' +
                 (state.type === 's' ? '🎲 Zufalls-Serie' : '🎲 Zufalls-Film') +
@@ -34480,90 +34795,181 @@
             '</div>' +
           '</div>' +
 
-          /* 1. Filter-Kategorien (kompakt, beim Öffnen eingeklappt) */
+          /* 1. Katalog-Filter jeweils einzeilig (Rechts öffnen sich die Optionen nach Auswahl) */
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
               '<span>🎛️ Katalog-Filter</span>' +
-              '<span style="font-size:10px;color:var(--muted)">✓ Einschluss • ✕ Ausschluss</span>' +
+              '<span style="font-size:10px;color:var(--muted)">Rechts ▸ Optionen</span>' +
             '</div>' +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap;' + (catGridHtml || isCurrentUserVip() ? 'margin-bottom:8px' : '') + '">' +
-              '<button id="sidebarCatTab_genres" class="ff-tab-btn ' + (curTab === 'genres' ? 'open' : '') + (gCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'genres\\')">🎞️ Genres' + (gCount ? ' (' + gCount + ')' : '') + '</button>' +
-              '<button id="sidebarCatTab_platforms" class="ff-tab-btn ' + (curTab === 'platforms' ? 'open' : '') + (pCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'platforms\\')">📺 Streaming' + (pCount ? ' (' + pCount + ')' : '') + '</button>' +
-              '<button id="sidebarCatTab_eras" class="ff-tab-btn ' + (curTab === 'eras' ? 'open' : '') + (eCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'eras\\')">📅 Epochen' + (eCount ? ' (' + eCount + ')' : '') + '</button>' +
-              '<button id="sidebarCatTab_studios" class="ff-tab-btn ' + (curTab === 'studios' ? 'open' : '') + (stCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'studios\\')">🏢 Studios' + (stCount ? ' (' + stCount + ')' : '') + '</button>' +
-              '<button id="sidebarCatTab_fsk" class="ff-tab-btn ' + (curTab === 'fsk' ? 'open' : '') + (fCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'fsk\\')">🔞 FSK' + (fCount ? ' (' + fCount + ')' : '') + '</button>' +
+            '<div class="sidebar-menu-stack">' +
+              '<button type="button" id="sidebarCatTab_genres" data-sb-cat="genres" class="sidebar-menu-row ' + (curTab === 'genres' ? 'active' : '') + (gCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'genres\\',true)">' +
+                '<span class="sidebar-menu-row-left">🎞️ Genres</span>' +
+                '<span class="sidebar-menu-row-right">' + (gCount ? (gCount + ' aktiv ') : '') + '▸</span>' +
+              '</button>' +
+              '<button type="button" id="sidebarCatTab_platforms" data-sb-cat="platforms" class="sidebar-menu-row ' + (curTab === 'platforms' ? 'active' : '') + (pCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'platforms\\',true)">' +
+                '<span class="sidebar-menu-row-left">📺 Streaming-Anbieter</span>' +
+                '<span class="sidebar-menu-row-right">' + (pCount ? (pCount + ' aktiv ') : '') + '▸</span>' +
+              '</button>' +
+              '<button type="button" id="sidebarCatTab_eras" data-sb-cat="eras" class="sidebar-menu-row ' + (curTab === 'eras' ? 'active' : '') + (eCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'eras\\',true)">' +
+                '<span class="sidebar-menu-row-left">📅 Epochen & Jahrzehnte</span>' +
+                '<span class="sidebar-menu-row-right">' + (eCount ? (eCount + ' aktiv ') : '') + '▸</span>' +
+              '</button>' +
+              '<button type="button" id="sidebarCatTab_studios" data-sb-cat="studios" class="sidebar-menu-row ' + (curTab === 'studios' ? 'active' : '') + (stCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'studios\\',true)">' +
+                '<span class="sidebar-menu-row-left">🏢 Studios & Produktionsfirmen</span>' +
+                '<span class="sidebar-menu-row-right">' + (stCount ? (stCount + ' aktiv ') : '') + '▸</span>' +
+              '</button>' +
+              '<button type="button" id="sidebarCatTab_fsk" data-sb-cat="fsk" class="sidebar-menu-row ' + (curTab === 'fsk' ? 'active' : '') + (fCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'fsk\\',true)">' +
+                '<span class="sidebar-menu-row-left">🔞 Altersfreigabe (FSK)</span>' +
+                '<span class="sidebar-menu-row-right">' + (fCount ? (fCount + ' aktiv ') : '') + '▸</span>' +
+              '</button>' +
+              (isCurrentUserVip() ? (
+                '<button type="button" id="sidebarVipStreamsOnlyBtn" class="sidebar-menu-row ' + (s.onlyVipStreams ? 'active has-inc' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
+                  '<span class="sidebar-menu-row-left">🌟 Nur mit verfügbarem Stream</span>' +
+                  '<span class="sidebar-menu-row-right">' + (s.onlyVipStreams ? 'AKTIV ✓' : 'ALLE') + '</span>' +
+                '</button>'
+              ) : '') +
             '</div>' +
-            /* Optimierung #13: Exklusiver VIP-Filter "Nur Titel mit verfügbarem Stream anzeigen" */
-            (isCurrentUserVip() ? (
-              '<button id="sidebarVipStreamsOnlyBtn" class="btn ' + (s.onlyVipStreams ? 'blue' : '') + '" style="width:100%;justify-content:space-between;' + (catGridHtml ? 'margin-bottom:8px' : '') + '" onclick="setDirectFilter(\\'vip_streams\\',\\'\\',\\'toggle\\')">' +
-                '<span>🌟 Nur mit verfügbarem Stream</span>' +
-                '<b>' + (s.onlyVipStreams ? 'AKTIV' : 'ALLE') + '</b>' +
-              '</button>'
-            ) : '') +
-            catGridHtml +
           '</div>' +
 
-          /* 2. Design & Ansicht (eingeklappt beim Öffnen) */
+          /* 2. Darstellung & Skalierung ebenfalls einzeilig in der linken Übersicht */
           '<div class="sidebar-section">' +
-            '<button type="button" id="sidebarSecBtn_design" class="sidebar-collapse-btn" onclick="toggleSidebarExtraSection(\\'design\\')">' +
-              '<span>🎨 Darstellung & Komfort</span>' +
-              '<span class="sidebar-collapse-meta">' + themeBadge + ' ' + (state.sidebarDesignOpen ? '▾' : '▸') + '</span>' +
-            '</button>' +
-            (state.sidebarDesignOpen ? (
-              '<div id="sidebarDesignBody" class="sidebar-sub-divider">' +
-                '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px">' +
-                  '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'blue' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
-                  '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'blue' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
-                  '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'blue' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
-                '</div>' +
-                '<button id="sidebarColorblindBtn" class="btn ' + (colorblindMode ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleColorblindMode()">' +
-                  '<span>👁️ Farbenblind-Modus</span>' +
-                  '<b>' + (colorblindMode ? 'EIN' : 'AUS') + '</b>' +
-                '</button>' +
-                '<button id="sidebarMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleMouseHoverNav()">' +
-                  '<span>🖱️ Maus-Hover Fokus</span>' +
-                  '<b>' + (mouseHoverNavEnabled ? 'EIN' : 'AUS') + '</b>' +
-                '</button>' +
-                '<button id="sidebarModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between;margin-bottom:5px" onclick="toggleModalHoldNav()">' +
-                  '<span>⏩ Pfeil halten (450ms) = Nächster</span>' +
-                  '<b>' + (modalHoldNavEnabled ? 'EIN' : 'AUS') + '</b>' +
-                '</button>' +
-                '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
-                  '<span>🎬 Spotlight-Banner</span>' +
-                  '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
-                '</button>' +
-              '</div>'
-            ) : '') +
-          '</div>' +
-
-          /* 3. Ansichtsgröße (eingeklappt beim Öffnen) */
-          '<div class="sidebar-section">' +
-            '<button type="button" id="sidebarSecBtn_scale" class="sidebar-collapse-btn" onclick="toggleSidebarExtraSection(\\'scale\\')">' +
-              '<span>🔠 Skalierung & Textgröße</span>' +
-              '<span class="sidebar-collapse-meta">' + scaleBadge + ' ' + (state.sidebarScaleOpen ? '▾' : '▸') + '</span>' +
-            '</button>' +
-            (state.sidebarScaleOpen ? (
-              '<div id="sidebarScaleBody" class="sidebar-sub-divider">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">' +
-                  '<span style="font-size:10.5px;color:var(--muted)">Tastatur: <b>+</b> / <b>-</b></span>' +
-                  '<button id="sidebarScaleResetBtn" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="resetUiScale()">↺ 100%</button>' +
-                '</div>' +
-                buildScaleRow("📐 Gesamt", "all", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"130%",v:130}]) +
-                buildScaleRow("🔤 Text", "text", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"130%",v:130}]) +
-                buildScaleRow("🖼️ Cover", "cover", [{l:"80%",v:80},{l:"100%",v:100},{l:"125%",v:125},{l:"150%",v:150}]) +
-                buildScaleRow("🎛️ Menü", "menu", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"125%",v:125}]) +
-              '</div>'
-            ) : '') +
+            '<div class="sidebar-section-title">' +
+              '<span>✨ Ansicht & Komfort</span>' +
+            '</div>' +
+            '<div class="sidebar-menu-stack">' +
+              '<button type="button" id="sidebarSecBtn_design" data-sb-cat="design" class="sidebar-menu-row ' + (curTab === 'design' ? 'active' : '') + '" onclick="switchSidebarCategoryTab(\\'design\\',true)">' +
+                '<span class="sidebar-menu-row-left">🎨 Darstellung & Komfort</span>' +
+                '<span class="sidebar-menu-row-right">' + themeBadge + ' ▸</span>' +
+              '</button>' +
+              '<button type="button" id="sidebarSecBtn_scale" data-sb-cat="scale" class="sidebar-menu-row ' + (curTab === 'scale' ? 'active' : '') + '" onclick="switchSidebarCategoryTab(\\'scale\\',true)">' +
+                '<span class="sidebar-menu-row-left">🔠 Skalierung & Textgröße</span>' +
+                '<span class="sidebar-menu-row-right">' + scaleBadge + ' ▸</span>' +
+              '</button>' +
+            '</div>' +
           '</div>';
 
+        // Rechtes Optionen-Panel (#sidebarRightSubPanel) aufbauen, sobald eine Kategorie aktiv ist
+        if (drawer) {
+          drawer.classList.toggle("has-subpanel", Boolean(curTab));
+        }
+        if (subPanel) {
+          if (!curTab) {
+            subPanel.innerHTML = "";
+          } else {
+            let subTitle = "";
+            let subContentHtml = "";
+            if (curTab === "genres") {
+              subTitle = "🎞️ Genres wählen";
+              const allGenreNames = Array.from(new Set([
+                ...Object.keys(state.genres || {}),
+                "Action", "Abenteuer", "Animation", "Komödie", "Krimi", "Dokumentarfilm", "Drama", "Familie", "Fantasy", "Historie", "Horror", "Musik", "Mystery", "Liebesfilm", "Sci-Fi", "Thriller", "Kriegsfilm", "Western",
+                ...(s.includedGenres || []),
+                ...(s.excludedGenres || [])
+              ]));
+              subContentHtml = '<div class="direct-filter-grid">' +
+                allGenreNames.map(gName => {
+                  const isInc = (s.includedGenres || []).includes(gName);
+                  const isExc = (s.excludedGenres || []).includes(gName);
+                  return renderDirectFilterOptionCard("genre", gName, genreEmoji(gName) + " " + esc(gName), isInc, isExc);
+                }).join("") +
+              '</div>';
+            } else if (curTab === "platforms") {
+              subTitle = "📺 Streaming-Anbieter";
+              subContentHtml = '<div class="direct-filter-grid">' +
+                PLATFORM_OPTIONS_CLIENT.map(pl => {
+                  const isInc = (s.includedPlatforms || []).includes(pl.id);
+                  const isExc = (s.excludedPlatforms || []).includes(pl.id);
+                  return renderDirectFilterOptionCard("platform", pl.id, esc((pl.icon || "📺") + " " + pl.label), isInc, isExc);
+                }).join("") +
+              '</div>';
+            } else if (curTab === "eras") {
+              subTitle = "📅 Epochen & Jahrzehnte";
+              subContentHtml = '<div class="direct-filter-grid">' +
+                ERA_OPTIONS_CLIENT.map(er => {
+                  const isInc = (s.includedEras || []).includes(er.id);
+                  const isExc = (s.excludedEras || []).includes(er.id);
+                  return renderDirectFilterOptionCard("era", er.id, "📅 " + esc(er.label), isInc, isExc);
+                }).join("") +
+              '</div>';
+            } else if (curTab === "studios") {
+              subTitle = "🏢 Studios & Produktion";
+              subContentHtml = '<div class="direct-filter-grid">' +
+                STUDIO_OPTIONS_CLIENT.map(st => {
+                  const isInc = (s.includedStudios || []).includes(st.id);
+                  const isExc = (s.excludedStudios || []).includes(st.id);
+                  return renderDirectFilterOptionCard("studio", st.id, esc((st.icon || "🏢") + " " + st.label), isInc, isExc);
+                }).join("") +
+              '</div>';
+            } else if (curTab === "fsk") {
+              subTitle = "🔞 Altersfreigabe (FSK)";
+              subContentHtml = '<div class="direct-filter-grid">' +
+                FSK_OPTIONS_CLIENT.map(f => {
+                  const isInc = (s.includedFsk || []).includes(f);
+                  const isExc = (s.excludedFsk || []).includes(f);
+                  return renderDirectFilterOptionCard("fsk", f, "🔞 " + esc(f), isInc, isExc);
+                }).join("") +
+                renderDirectFilterOptionCard("unreleased", "unreleased", "🗓️ Unveröffentlicht", Boolean(s.showUnreleased), false) +
+              '</div>';
+            } else if (curTab === "design") {
+              subTitle = "🎨 Darstellung & Komfort";
+              subContentHtml =
+                '<div id="sidebarDesignBody" style="display:flex;flex-direction:column;gap:7px">' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(95px,1fr));gap:6px">' +
+                    '<button id="sidebarThemeBtn_dark" class="btn ' + (appTheme === 'dark' ? 'blue' : '') + '" onclick="setAppTheme(\\'dark\\')">🌙 Dark</button>' +
+                    '<button id="sidebarThemeBtn_light" class="btn ' + (appTheme === 'light' ? 'blue' : '') + '" onclick="setAppTheme(\\'light\\')">☀️ Light</button>' +
+                    '<button id="sidebarThemeBtn_cyberpunk" class="btn ' + (appTheme === 'cyberpunk' ? 'blue' : '') + '" onclick="setAppTheme(\\'cyberpunk\\')">⚡ Cyber</button>' +
+                  '</div>' +
+                  '<button id="sidebarColorblindBtn" class="btn ' + (colorblindMode ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleColorblindMode()">' +
+                    '<span>👁️ Farbenblind-Modus</span>' +
+                    '<b>' + (colorblindMode ? 'EIN' : 'AUS') + '</b>' +
+                  '</button>' +
+                  '<button id="sidebarMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleMouseHoverNav()">' +
+                    '<span>🖱️ Maus-Hover Fokus</span>' +
+                    '<b>' + (mouseHoverNavEnabled ? 'EIN' : 'AUS') + '</b>' +
+                  '</button>' +
+                  '<button id="sidebarModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleModalHoldNav()">' +
+                    '<span>⏩ Pfeil halten (450ms) = Nächster</span>' +
+                    '<b>' + (modalHoldNavEnabled ? 'EIN' : 'AUS') + '</b>' +
+                  '</button>' +
+                  '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
+                    '<span>🎬 Spotlight-Banner</span>' +
+                    '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
+                  '</button>' +
+                '</div>';
+            } else if (curTab === "scale") {
+              subTitle = "🔠 Skalierung & Textgröße";
+              subContentHtml =
+                '<div id="sidebarScaleBody" style="display:flex;flex-direction:column;gap:6px">' +
+                  '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:4px">' +
+                    '<span style="font-size:calc(10.5px * var(--scale-text));color:var(--muted)">Tastatur: <b>+</b> / <b>-</b> · Controller: <b>L2</b> / <b>R2</b> (<b>R3</b> = 100%)</span>' +
+                    '<button id="sidebarScaleResetBtn" class="btn blue" style="padding:4px 10px" onclick="resetUiScale()">↺ 100% Standard</button>' +
+                  '</div>' +
+                  buildScaleRow("📐 Gesamt", "all", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"130%",v:130}]) +
+                  buildScaleRow("🔤 Text", "text", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"130%",v:130}]) +
+                  buildScaleRow("🖼️ Cover", "cover", [{l:"80%",v:80},{l:"100%",v:100},{l:"125%",v:125},{l:"150%",v:150}]) +
+                  buildScaleRow("🎛️ Menü", "menu", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"125%",v:125}]) +
+                '</div>';
+            }
+
+            subPanel.innerHTML =
+              '<div class="sidebar-subpanel-top">' +
+                '<div class="sidebar-subpanel-title">' + subTitle + '</div>' +
+                '<button type="button" id="sidebarSubBackBtn" class="btn" onclick="closeSidebarSubPanelToMain()" title="Zurück in die linke Menü-Übersicht (Pfeil links)">← Übersicht</button>' +
+              '</div>' +
+              '<div style="font-size:calc(10.5px * var(--scale-text));color:var(--muted);margin-bottom:2px">◀ Pfeil nach links führt direkt zurück in die Menü-Übersicht</div>' +
+              subContentHtml;
+          }
+        }
+
+        const searchRoot = drawer || body;
         if (jumpToOptions) {
           focusFirstSidebarFilterOption();
         } else if (prevFocusDfId && typeof CSS !== "undefined" && CSS.escape) {
-          const restoredEl = body.querySelector('[data-df-id="' + CSS.escape(prevFocusDfId) + '"]');
+          const restoredEl = searchRoot.querySelector('[data-df-id="' + CSS.escape(prevFocusDfId) + '"]');
           if (restoredEl) setSpatialFocus(restoredEl, false);
         } else if (prevFocusElId) {
           const restoredById = document.getElementById(prevFocusElId);
-          if (restoredById && body.contains(restoredById)) setSpatialFocus(restoredById, false);
+          if (restoredById && searchRoot.contains(restoredById)) setSpatialFocus(restoredById, false);
         }
       }
 
@@ -35386,11 +35792,11 @@
             }
           }
         });
-        // Hero-Slider Merkliste-Button (#heroBtnWishlist) live mitsynchronisieren
+        // Hero-Slider Speichern-Button (#heroBtnWishlist) live mitsynchronisieren
         const heroWlBtn = document.getElementById("heroBtnWishlist");
         if (heroWlBtn && heroWlBtn.getAttribute("data-hero-wl-key") === key) {
           heroWlBtn.classList.toggle("saved", Boolean(isSaved));
-          heroWlBtn.innerHTML = isSaved ? "✓ Gemerkt" : "🔖 Merkliste";
+          heroWlBtn.innerHTML = isSaved ? "✓ Gespeichert" : "＋ Speichern";
           heroWlBtn.setAttribute("title", isSaved ? "Aus deiner Merkliste entfernen" : "Direkt in deiner Merkliste speichern");
         }
         // Detail-Modal Button mitsynchronisieren, falls Modal für diesen Titel aktuell geöffnet ist
@@ -35398,8 +35804,8 @@
           state.activeDetails.isSaved = Boolean(isSaved);
           const modalBtn = document.getElementById("modalWishlistBtn");
           if (modalBtn) {
-            modalBtn.className = "btn " + (isSaved ? "green" : "");
-            modalBtn.textContent = isSaved ? "✅ Gespeichert" : "💾 Merkliste";
+            modalBtn.className = "detail-btn-glass " + (isSaved ? "saved" : "");
+            modalBtn.textContent = isSaved ? "✓ Gespeichert" : "＋ Speichern";
           }
         }
         for (const [cKey, cVal] of clientDetailsCache.entries()) {
@@ -37616,7 +38022,7 @@
                       '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
                         '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn" onclick="playInstantTrailerFromCard(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
                         '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')">ⓘ Details</button>' +
-                        '<button type="button" id="heroBtnWishlist" class="hero-btn-wishlist hero-action-btn ' + (isHeroSaved ? 'saved' : '') + '" data-hero-wl-key="' + heroCardKey + '" onclick="quickToggleCardWishlist(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\')" title="' + (isHeroSaved ? 'Aus deiner Merkliste entfernen' : 'Direkt in deiner Merkliste speichern') + '">' + (isHeroSaved ? '✓ Gemerkt' : '🔖 Merkliste') + '</button>' +
+                        '<button type="button" id="heroBtnWishlist" class="hero-btn-wishlist hero-action-btn ' + (isHeroSaved ? 'saved' : '') + '" data-hero-wl-key="' + heroCardKey + '" onclick="quickToggleCardWishlist(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\')" title="' + (isHeroSaved ? 'Aus deiner Merkliste entfernen' : 'Direkt in deiner Merkliste speichern') + '">' + (isHeroSaved ? '✓ Gespeichert' : '＋ Speichern') + '</button>' +
                       '</div>' +
                     '</div>' +
                   '</div>' +
@@ -37749,7 +38155,7 @@
               wlBtn.setAttribute("onclick", "quickToggleCardWishlist(event,'" + heroType + "'," + hero.id + ",'" + heroTitleSafe + "')");
               wlBtn.setAttribute("title", isHeroSaved ? "Aus deiner Merkliste entfernen" : "Direkt in deiner Merkliste speichern");
               wlBtn.classList.toggle("saved", Boolean(isHeroSaved));
-              wlBtn.innerHTML = isHeroSaved ? "✓ Gemerkt" : "🔖 Merkliste";
+              wlBtn.innerHTML = isHeroSaved ? "✓ Gespeichert" : "＋ Speichern";
             }
             const prevArr = document.getElementById("heroPrevArrowBtn");
             if (prevArr) prevArr.setAttribute("onclick", "setHeroSlideIndex(" + (state.heroIndex - 1) + ")");
@@ -38367,6 +38773,9 @@
       }
 
       function switchType(t) {
+        if (document.getElementById("modalRoot")?.innerHTML) {
+          closeDetailModal();
+        }
         if (state.type === t && !state.isSearchMode && state.currentView === "discover" && !state.currentCompanyId && state.genreId === "all") return;
         pushHistory(() => loadDiscover(state.type, state.genreId, state.mode, state.sort));
         state.type = t;
@@ -39011,7 +39420,9 @@
           inp.blur();
         }
         closeAutocomplete();
-        document.getElementById("modalRoot").innerHTML = "";
+        if (document.getElementById("modalRoot")?.innerHTML) {
+          closeDetailModal();
+        }
         const pageNum = Math.max(1, Number(targetPage) || 1);
         const isNewSearchQuery = state.searchQuery !== q || !state.isSearchMode;
         state.isSearchMode = true;
@@ -39293,6 +39704,19 @@
         const rawExcPlatforms = Array.isArray(s.excludedPlatforms) ? s.excludedPlatforms : [];
         const excPlatforms = Array.from(new Set(rawExcPlatforms.map(normalizePlatformIdClient).filter(Boolean)));
         const pills = [];
+
+        if (state.lastClosedDetailItem && state.lastClosedDetailItem.id) {
+          const lastIt = state.lastClosedDetailItem;
+          const shortTitle = String(lastIt.title || "Titel").length > 32
+            ? (String(lastIt.title).slice(0, 31) + "…")
+            : String(lastIt.title || "Titel");
+          pills.push(
+            '<button type="button" class="return-last-detail-chip" onclick="reopenLastClosedDetailItemClient()" title="Direkt zurück zu ' + esc(lastIt.title || "Titel") + ' springen">' +
+              '<span>↩ Zurück zu: <b>' + esc(shortTitle) + '</b></span>' +
+              '<span class="chip-dismiss" onclick="dismissLastClosedDetailItemClient(event)" title="Chip ausblenden">✕</span>' +
+            '</button>'
+          );
+        }
 
         if (state.currentCompanyId) {
           pills.push('<span class="f-pill inc" tabindex="0" onclick="clearStudioView()" title="Aktiver Studio-Filter – Antippen zum Entfernen">🏢 ' + esc(state.currentCompanyName || "Studio") + ' ✕</span>');
@@ -39944,11 +40368,77 @@
         }
       }
 
+      async function autoLoadCollectionInDetailClient(colId, currentMovieId) {
+        const wrap = document.getElementById("detailCollectionSectionWrap");
+        const track = document.getElementById("detailCollectionTrackEl");
+        if (!track || !colId) return;
+        try {
+          const r = await apiFetchJson(
+            API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) +
+            "&id=" + encodeURIComponent(colId) +
+            "&sort=year_asc"
+          );
+          if (!state.activeDetails || !state.activeDetails.collection || String(state.activeDetails.collection.id) !== String(colId)) return;
+          const items = Array.isArray(r?.items) ? r.items : [];
+          if (items.length <= 1) {
+            if (wrap) wrap.style.display = "none";
+            return;
+          }
+          if (wrap) wrap.style.display = "flex";
+          track.innerHTML = items.map(it => {
+            const tc = it.media_type === "tv" ? "s" : "m";
+            const itemTitle = String(it.title || it.name || "Titel").trim();
+            const isCurPart = String(it.id) === String(currentMovieId);
+            const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
+            const colPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+            const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
+            const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
+            const subParts = [yearStr, voteStr].filter(Boolean).join(" · ");
+            return '<div class="detail-sim-card' + (isCurPart ? ' is-current-part' : '') + '" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+              (isCurPart ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
+              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(colPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
+              '<div class="detail-sim-overlay">' +
+                '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
+                '<div class="detail-sim-sub">' + esc(subParts) + '</div>' +
+              '</div>' +
+            '</div>';
+          }).join("");
+          unlockCatalogCoversLoadingClient(false);
+          observeLazyCoversInContainerClient(track);
+        } catch (_err) {
+          if (wrap) wrap.style.display = "none";
+        }
+      }
+
       async function loadSimilarInTma(type, id) {
         return autoLoadSimilarInDetailClient(type, id);
       }
 
-      // Wischgesten (Swipe Touch + Maus) und Pfeil-Wechsel (◀ / ▶) zum nächsten/vorherigen Titel basierend auf der Herkunftsliste (#10)
+      function saveLastClosedDetailItemClient() {
+        const d = state.activeDetails;
+        if (!d || !d.id) return;
+        state.lastClosedDetailItem = {
+          typeCode: d.typeCode || state.type || "m",
+          id: d.id,
+          title: d.title || d.name || "Titel",
+          poster_path: d.poster_path || d.external_poster_url || ""
+        };
+      }
+
+      function reopenLastClosedDetailItemClient() {
+        const last = state.lastClosedDetailItem;
+        if (!last || !last.id) return;
+        openDetails(last.typeCode || "m", last.id, false, last.title || "", last.poster_path || "");
+      }
+
+      function dismissLastClosedDetailItemClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        state.lastClosedDetailItem = null;
+        const fm = document.getElementById("floatingFilterMount");
+        if (fm) fm.innerHTML = buildFloatingFilterBarHtml();
+      }
+
+      // Wischgesten (Swipe Touch + Maus + Trackpad) und Pfeil-Wechsel (◀ / ▶) zum nächsten/vorherigen Titel basierend auf der Herkunftsliste (#10)
       function getActiveDetailNavigationPoolClient() {
         if (state.currentView === "wishlist" && Array.isArray(state.cachedWishlistItems) && state.cachedWishlistItems.length > 1) {
           return state.cachedWishlistItems;
@@ -39980,11 +40470,47 @@
         };
       }
 
+      let isDetailAdjacentTransitionBusy = false;
       function navigateDetailModalAdjacent(step) {
+        if (isDetailAdjacentTransitionBusy) return;
         const adj = getAdjacentDetailItem(step);
         if (!adj) return;
         triggerTmaHapticClient("selection");
+        const stageEl = document.getElementById("detailHeroStageEl");
+        const bodyEl = document.querySelector("#modalRoot .detail-content-body");
+        if (stageEl) {
+          isDetailAdjacentTransitionBusy = true;
+          const slideDir = step > 0 ? "-18px" : "18px";
+          stageEl.style.setProperty("--adj-slide-dir", slideDir);
+          stageEl.classList.add("detail-stage-transitioning");
+          if (bodyEl) {
+            bodyEl.style.setProperty("--adj-slide-dir", slideDir);
+            bodyEl.classList.add("detail-stage-transitioning");
+          }
+          setTimeout(() => {
+            isDetailAdjacentTransitionBusy = false;
+            openDetails(adj.typeCode, adj.id, false, adj.title, adj.poster_path);
+          }, 145);
+          return;
+        }
         openDetails(adj.typeCode, adj.id, false, adj.title, adj.poster_path);
+      }
+
+      let lastModalHorizontalWheelAt = 0;
+      function onModalWheelHorizontalClient(ev) {
+        if (!ev) return;
+        if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".detail-cast-track, .detail-similar-track, .season-toolbar-row")) {
+          return;
+        }
+        const dx = Number(ev.deltaX || 0);
+        const dy = Number(ev.deltaY || 0);
+        if (Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy) * 1.35) {
+          const now = Date.now();
+          if (now - lastModalHorizontalWheelAt < 450) return;
+          lastModalHorizontalWheelAt = now;
+          ev.preventDefault();
+          navigateDetailModalAdjacent(dx > 0 ? 1 : -1);
+        }
       }
 
       let modalTouchStartY = 0;
@@ -40045,13 +40571,13 @@
       }
 
       function getDetailBackButtonLabelClient(typeCode) {
-        if (state.isSearchMode) return "← Zurück zu den Suchergebnissen";
-        if (state.currentView === "wishlist") return "← Zurück zur Merkliste";
-        if (state.currentCollectionId) return "← Zurück zur Filmreihe";
-        if (state.currentUniverseId) return "← Zurück zum Universum";
-        if (state.currentPersonId) return "← Zurück zu " + (state.currentPersonName || "Person");
-        if (state.currentCompanyId) return "← Zurück zu " + (state.currentCompanyName || "Studio");
-        return typeCode === "s" ? "← Serien durchsuchen" : "← Filme durchsuchen";
+        if (state.isSearchMode) return "← Zurück";
+        if (state.currentView === "wishlist") return "← Merkliste";
+        if (state.currentCollectionId) return "← Filmreihe";
+        if (state.currentUniverseId) return "← Universum";
+        if (state.currentPersonId) return "← " + (state.currentPersonName || "Person");
+        if (state.currentCompanyId) return "← " + (state.currentCompanyName || "Studio");
+        return "← Zurück";
       }
 
       function getPlayableMovieFilesForHeroClient(d) {
@@ -40184,6 +40710,7 @@
       }
 
       function prepareDiscoverContextFromModal() {
+        saveLastClosedDetailItemClient();
         closeDetailModal();
         closeAutocomplete();
         if (state.activeDetails && (state.activeDetails.typeCode === "m" || state.activeDetails.typeCode === "s")) {
@@ -40216,11 +40743,13 @@
       function searchByYearFromModal(yearVal) {
         const y = String(yearVal || "").trim();
         if (!y) return;
+        saveLastClosedDetailItemClient();
         closeDetailModal();
         runSearch(false, "(" + y + ")", "all");
       }
 
       function filterOrSearchStudioFromModal(studioName, companyId = "") {
+        saveLastClosedDetailItemClient();
         if (companyId) {
           closeDetailModal();
           openStudioView(companyId, studioName);
@@ -40242,6 +40771,7 @@
       }
 
       function filterOrSearchProviderFromModal(provName) {
+        saveLastClosedDetailItemClient();
         const norm = String(provName || "").toLowerCase();
         const matched = PLATFORM_OPTIONS_CLIENT.find(pl =>
           norm.includes(pl.label.toLowerCase()) ||
@@ -40255,6 +40785,52 @@
           closeDetailModal();
           runSearch(false, provName, "all");
         }
+      }
+
+      function buildMutedActiveFiltersForDetailHtml() {
+        const s = state.settings || {};
+        const chips = [];
+        if (state.isSearchMode && state.searchQuery) {
+          chips.push('<span class="detail-active-filter-chip muted" title="Aktive Suche">🔍 „' + esc(state.searchQuery) + '“</span>');
+        }
+        if (state.currentCompanyId && state.currentCompanyName) {
+          chips.push('<span class="detail-active-filter-chip muted" title="Aktives Studio">🏢 ' + esc(state.currentCompanyName) + '</span>');
+        }
+        if (state.currentPersonId && state.currentPersonName) {
+          chips.push('<span class="detail-active-filter-chip muted" title="Aktive Person">🌟 ' + esc(state.currentPersonName) + '</span>');
+        }
+        if (state.genreId && state.genreId !== "all") {
+          const genreMap = (Object.keys(state.genres || {}).length > 0)
+            ? state.genres
+            : (state.type === "s" ? SERIES_GENRES_CLIENT : MOVIE_GENRES_CLIENT);
+          const gEntry = Object.entries(genreMap).find(([, id]) => String(id) === String(state.genreId));
+          if (gEntry) {
+            chips.push('<span class="detail-active-filter-chip muted">' + genreEmoji(gEntry[0]) + ' ' + esc(gEntry[0]) + '</span>');
+          }
+        }
+        (s.includedGenres || []).slice(0, 3).forEach(g => {
+          chips.push('<span class="detail-active-filter-chip muted">' + genreEmoji(g) + ' ' + esc(g) + '</span>');
+        });
+        const rawIncPlatforms = Array.isArray(s.includedPlatforms) ? s.includedPlatforms : [];
+        const incPlatforms = Array.from(new Set(rawIncPlatforms.map(normalizePlatformIdClient).filter(Boolean)));
+        incPlatforms.slice(0, 2).forEach(pid => {
+          chips.push('<span class="detail-active-filter-chip muted">' + esc(getPlatformDisplayLabelClient(pid)) + '</span>');
+        });
+        (s.includedEras || []).slice(0, 2).forEach(eid => {
+          const er = ERA_OPTIONS_CLIENT.find(e => e.id === eid);
+          chips.push('<span class="detail-active-filter-chip muted">📅 ' + esc(er ? er.label : eid) + '</span>');
+        });
+        (s.includedStudios || []).slice(0, 2).forEach(sid => {
+          const st = STUDIO_OPTIONS_CLIENT.find(x => x.id === sid);
+          chips.push('<span class="detail-active-filter-chip muted">' + esc(st ? (st.icon + " " + st.label) : sid) + '</span>');
+        });
+        (s.includedFsk || []).slice(0, 1).forEach(f => {
+          chips.push('<span class="detail-active-filter-chip muted">🔞 ' + esc(f) + '</span>');
+        });
+        if (s.onlyVipStreams && isCurrentUserVip()) {
+          chips.push('<span class="detail-active-filter-chip muted">🌟 Nur Streams</span>');
+        }
+        return chips.slice(0, 6).join("");
       }
 
       function switchEmbedSource(sourceKey, saveAsDefault = true) {
@@ -40406,6 +40982,12 @@
           if (document.body) {
             document.body.classList.add("modal-open-pause-hero");
           }
+          // Suchbegriff oben in der Suchleiste sichtbar halten, falls man aus einer Suche oder Personen-Ansicht kommt
+          const topSearchInp = document.getElementById("searchInput");
+          if (topSearchInp && state.searchQuery && !topSearchInp.value) {
+            topSearchInp.value = state.searchQuery;
+            updateSearchClearBtnVisibility();
+          }
 
           const m = document.getElementById("modalRoot");
           const tr = d.trailers || null;
@@ -40444,16 +41026,34 @@
           const nextAdj = getAdjacentDetailItem(1);
           const backBtnLabel = getDetailBackButtonLabelClient(type);
 
-          // 1. Kicker-Zeile über dem monumentalen Titel: Typ, Universum, Filmreihe & Streaming-Anbieter (dezent & direkt anklickbar)
+          // Einheitliche Topbar (#topUnifiedBar) aktualisieren: Links "← Zurück", Rechts "◀ / ▶"
+          const topBackBtn = document.getElementById("topBarBackBtn");
+          const topBackLbl = document.getElementById("topBarBackBtnLabel");
+          if (topBackLbl) topBackLbl.textContent = backBtnLabel.replace(/^←\\s*/, "");
+          if (topBackBtn) topBackBtn.title = backBtnLabel + " (Esc / B / ○)";
+          const topPrevBtn = document.getElementById("modalAdjPrevBtn");
+          const topNextBtn = document.getElementById("modalAdjNextBtn");
+          if (topPrevBtn) {
+            topPrevBtn.disabled = !prevAdj;
+            topPrevBtn.style.opacity = prevAdj ? "1" : "0.35";
+            topPrevBtn.title = prevAdj ? ("Vorheriger Titel: " + prevAdj.title + " (L1 / LB)") : "Kein vorheriger Titel";
+          }
+          if (topNextBtn) {
+            topNextBtn.disabled = !nextAdj;
+            topNextBtn.style.opacity = nextAdj ? "1" : "0.35";
+            topNextBtn.title = nextAdj ? ("Nächster Titel: " + nextAdj.title + " (R1 / RB)") : "Kein nächster Titel";
+          }
+
+          // 1. Sub-Topbar-Zeile unter der Hauptleiste: Typ, Universum, Filmreihe, Anbieter links + ausgegraute aktive Filter rechts
           const kickerItems = [
             '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "📺 SERIE" : "🎬 FILM") + '</span>',
             d.universe ? (
-              '<button type="button" class="detail-kicker-link" onclick="closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
+              '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
                 '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
               '</button>'
             ) : "",
             d.collection ? (
-              '<button type="button" class="detail-kicker-link" onclick="closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')" title="Filmreihe öffnen: ' + esc(d.collection.name) + '">' +
+              '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')" title="Filmreihe öffnen: ' + esc(d.collection.name) + '">' +
                 '<span>🍿</span><span>' + esc(d.collection.name) + '</span>' +
               '</button>'
             ) : "",
@@ -40461,6 +41061,7 @@
               '<button type="button" class="detail-kicker-link" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
             )
           ].filter(Boolean).join("");
+          const mutedActiveFiltersHtml = buildMutedActiveFiltersForDetailHtml();
 
           // 2. Einzeilige, luftige Metadaten-Zeile unter dem Titel (Rating · Jahr · Laufzeit · FSK · Genres · Studios · Regie)
           const cleanStatusLabel = (type === "s" && d.statusText && d.statusText !== "Unbekannt")
@@ -40472,7 +41073,7 @@
             (d.runtime && d.runtime !== "Keine Angabe") ? ('<span>' + esc(d.runtime) + '</span>') : "",
             (type === "s" && d.numberOfSeasons) ? ('<span>' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? " Staffel" : " Staffeln") + " (" + Number(d.numberOfEpisodes || 0) + " Flg.)</span>") : "",
             hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
-            (d.country && d.country !== "k.A." && d.country !== "Keine Angabe") ? ('<span class="detail-meta-link" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">' + esc(d.country) + '</span>') : "",
+            (d.country && d.country !== "k.A." && d.country !== "Keine Angabe") ? ('<span class="detail-meta-link" tabindex="0" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">' + esc(d.country) + '</span>') : "",
             cleanStatusLabel ? ('<span>' + esc(cleanStatusLabel) + '</span>') : "",
             ...genresListClean.map(gName =>
               '<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>'
@@ -40481,7 +41082,7 @@
               '<span class="detail-meta-studio" tabindex="0" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || "") + '\\')" title="Studio öffnen: ' + esc(sObj.name) + '">🏢 ' + esc(sObj.name) + '</span>'
             ),
             ...directorsArr.slice(0, 2).map(p =>
-              '<span class="detail-meta-link" tabindex="0" onclick="' + (p.id ? ('closeDetailModal();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')') : ('closeDetailModal();runSearch(false,\\'' + esc(p.name) + '\\',\\'person\\')')) + '" title="Regie: ' + esc(p.name) + '">🎬 ' + esc(p.name) + '</span>'
+              '<span class="detail-meta-link" tabindex="0" onclick="' + (p.id ? ('saveLastClosedDetailItemClient();closeDetailModal();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')') : ('saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(p.name) + '\\',\\'person\\')')) + '" title="Regie: ' + esc(p.name) + '">🎬 ' + esc(p.name) + '</span>'
             )
           ].filter(Boolean);
           const unboxedMetaHtml = unboxedMetaParts.join('<span class="detail-meta-dot">·</span>');
@@ -40538,10 +41139,10 @@
           const primaryPlayBtnLabel = hasVipStreams
             ? (type === "s"
                 ? (savedProg && savedProg.season && savedProg.episode
-                    ? ("▶ Abspielen (S" + String(savedProg.season).padStart(2, "0") + "E" + String(savedProg.episode).padStart(2, "0") + ")")
+                    ? ("▶ Weiter: S" + Number(savedProg.season) + " · E" + Number(savedProg.episode))
                     : "▶ Abspielen")
                 : "▶ Abspielen")
-            : "▶ Trailer";
+            : "🎬 Trailer";
 
           const primaryVersionBadgeText = String(d.primaryVersionLabel || (Array.isArray(d.availableVersions) && d.availableVersions[0]) || "").trim();
           const canReportMedia = Boolean(vipAllowed || state.authUser?.isAdmin);
@@ -40571,8 +41172,8 @@
                     const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
                     const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w185", "") : fbAvatar;
                     const clickHandler = c.id
-                      ? ('closeDetailModal();openPersonView(' + Number(c.id) + ',\\'' + esc(cName) + '\\')')
-                      : ('closeDetailModal();runSearch(false,\\'' + esc(cName) + '\\',\\'person\\')');
+                      ? ('saveLastClosedDetailItemClient();closeDetailModal();openPersonView(' + Number(c.id) + ',\\'' + esc(cName) + '\\')')
+                      : ('saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(cName) + '\\',\\'person\\')');
                     return '<div class="detail-cast-card" tabindex="0" onclick="' + clickHandler + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + clickHandler + ';}" title="Alle Filme & Serien mit ' + esc(cName) + ' anzeigen">' +
                       '<div class="detail-cast-photo-wrap">' +
                         '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
@@ -40591,17 +41192,28 @@
             "--hero-bg-landscape:url('" + esc(backdropW1280 || portraitBg) + "');" +
             "--hero-bg-portrait:url('" + esc(portraitBg || backdropW1280) + "');";
 
-          m.innerHTML = '<div class="modal-backdrop">' +
-            '<div class="modal">' +
-              /* 1. STICKY TOP-BAR MIT EINZIGEM ZURÜCK-BUTTON (KEIN X-BUTTON) & VOR/ZURÜCK-NAVIGATION */
-              '<div class="detail-top-sticky-bar">' +
-                '<button type="button" id="detailBackBtn" class="detail-back-btn" onclick="closeDetailModal()" title="Zurück zur vorherigen Ansicht (Esc)">' +
-                  esc(backBtnLabel) +
-                '</button>' +
-                '<div class="detail-adj-nav">' +
-                  (prevAdj ? '<button type="button" id="modalAdjPrevBtn" class="detail-adj-btn" onclick="navigateDetailModalAdjacent(-1)" title="Vorheriger Titel: ' + esc(prevAdj.title) + '">◀</button>' : '') +
-                  (nextAdj ? '<button type="button" id="modalAdjNextBtn" class="detail-adj-btn" onclick="navigateDetailModalAdjacent(1)" title="Nächster Titel: ' + esc(nextAdj.title) + '">▶</button>' : '') +
+          const collectionSectionHtml = (type === "m" && d.collection && d.collection.id) ? (
+            '<section id="detailCollectionSectionWrap" class="detail-section-block" style="display:none">' +
+              '<div class="detail-section-header">' +
+                '<h3 class="detail-section-heading">🍿 Alle Teile der Filmreihe: ' + esc(d.collection.name || "Filmreihe") + '</h3>' +
+                '<button type="button" class="btn-tool-quiet" onclick="saveLastClosedDetailItemClient();closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')">Komplette Reihe öffnen ➔</button>' +
+              '</div>' +
+              '<div class="detail-carousel-wrap">' +
+                '<button type="button" class="detail-carousel-arrow prev" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',-1)" title="Nach links scrollen">‹</button>' +
+                '<div id="detailCollectionTrackEl" class="detail-similar-track">' +
+                  '<div style="font-size:12.5px;color:#94a3b8;padding:12px 4px">⏳ Lade alle Teile der Filmreihe...</div>' +
                 '</div>' +
+                '<button type="button" class="detail-carousel-arrow next" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',1)" title="Nach rechts scrollen">›</button>' +
+              '</div>' +
+            '</section>'
+          ) : "";
+
+          m.innerHTML = '<div class="modal-backdrop" onwheel="onModalWheelHorizontalClient(event)">' +
+            '<div class="modal detail-morph-enter">' +
+              /* 1. KOMPAKTE SUB-TOPBAR DIREKT UNTER DER FESTEN HAUPTLEISTE (#topUnifiedBar) */
+              '<div class="detail-sub-topbar-strip">' +
+                '<div class="detail-sub-topbar-left">' + kickerItems + '</div>' +
+                (mutedActiveFiltersHtml ? ('<div class="detail-sub-topbar-right" title="Aktive Suche & Filter im Hintergrund">' + mutedActiveFiltersHtml + '</div>') : '') +
               '</div>' +
 
               /* 2. FULLSCREEN KINO-HERO-STAGE MIT SLIDER-BACKDROP, AMBILIGHT & SWIPE-FUNKTION */
@@ -40611,9 +41223,7 @@
                 '<div class="detail-scrim-layer"></div>' +
 
                 '<div class="detail-hero-content">' +
-                  '<div class="detail-kicker-row">' + kickerItems + '</div>' +
-
-                  '<h1 class="detail-monumental-title" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.title) + '\\')" title="Nach „' + esc(d.title) + '“ suchen">' +
+                  '<h1 class="detail-monumental-title" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.title) + '\\')" title="Nach „' + esc(d.title) + '“ suchen">' +
                     esc(d.title) +
                   '</h1>' +
 
@@ -40628,10 +41238,10 @@
                       versionSelectHtml +
                       (hasVipStreams ? buildModalDeliveryTargetSelectorHtml() : '') +
                       (hasVipStreams ? (
-                        '<button type="button" class="detail-btn-glass" onclick="playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')" title="Trailer im Vollbild abspielen">🎬 Trailer</button>'
+                        '<button type="button" id="detailTrailerBtn" class="detail-btn-glass" onclick="playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')" title="Trailer im Vollbild abspielen">🎬 Trailer</button>'
                       ) : '') +
                       '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
-                        (d.isSaved ? "✓ Merkliste" : "＋ Merkliste") +
+                        (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +
                       '</button>' +
                       ((d.providerButtons && d.providerButtons.length > 0) ? (
                         d.providerButtons.map(pb =>
@@ -40655,7 +41265,7 @@
                     const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
                     const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
                     return '<div class="detail-overview-wrap">' +
-                      '<div id="modalHeaderOverviewEl" class="expandable-desc-box" tabindex="0" role="button" aria-expanded="false" style="font-size:calc(14px * var(--scale-text));line-height:1.62;color:#e2e8f0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
+                      '<div id="modalHeaderOverviewEl" class="expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
                         '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
                         '<div class="desc-actions-row">' +
                           '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
@@ -40680,7 +41290,7 @@
                 '</div>' +
               '</section>' +
 
-              /* 5. UNTERER CONTENT-BEREICH: STAFFELN/EPISODEN BZW. MEHRTEILER, CAST MIT FOTOS & ÄHNLICHE TITEL MIT COVERN */
+              /* 5. UNTERER CONTENT-BEREICH: STAFFELN/EPISODEN BZW. MEHRTEILER, CAST MIT FOTOS, FILMREIHE & ÄHNLICHE TITEL */
               '<div class="detail-content-body">' +
                 (type === "s" ? (
                   '<section id="detailStreamsSection" class="detail-section-block">' +
@@ -40703,6 +41313,8 @@
 
                 castSectionHtml +
 
+                collectionSectionHtml +
+
                 '<section id="detailSimilarSectionWrap" class="detail-section-block" style="display:flex">' +
                   '<div class="detail-section-header">' +
                     '<h3 class="detail-section-heading">Das könnte dir auch gefallen</h3>' +
@@ -40724,6 +41336,9 @@
           }
           unlockCatalogCoversLoadingClient(false);
           observeLazyCoversInContainerClient(m);
+          if (type === "m" && d.collection && d.collection.id) {
+            autoLoadCollectionInDetailClient(d.collection.id, d.id || id);
+          }
           autoLoadSimilarInDetailClient(type, d.id || id);
 
           if (typeof syncExpandableDescriptionsOverflowClient === "function") {
@@ -40735,7 +41350,8 @@
           if (type === "s") {
             loadSeason(d.id, initialSeason, false);
           }
-          const firstModalBtn = m.querySelector("#detailPrimaryPlayBtn, #modalWishlistBtn, #detailBackBtn");
+          // Standard-Fokus beim Öffnen der Detailansicht direkt auf den Trailer-Button legen
+          const firstModalBtn = m.querySelector("#detailTrailerBtn, #detailPrimaryPlayBtn, #modalWishlistBtn") || document.getElementById("topBarBackBtn");
           if (firstModalBtn && typeof jumpSpatialFocus === "function") {
             jumpSpatialFocus(firstModalBtn, false);
           }
@@ -42648,12 +43264,15 @@
             : resolveClientEpisodeTitle(seriesId, seasonNum, ep.episode_number, (ep.files && ep.files[0]) || null);
           ep.name = epNameClean;
           const isLastWatched = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(prog.episode) === Number(ep.episode_number));
+          const isAlreadyWatched = Boolean(prog && (Number(seasonNum) < Number(prog.season) || (Number(seasonNum) === Number(prog.season) && Number(ep.episode_number) <= Number(prog.episode))));
           const isNextEpisode = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(ep.episode_number) === Number(prog.episode) + 1);
           const progBadgeHtml = isLastWatched
-            ? '<span class="ep-progress-badge">👁️ Zuletzt</span>'
+            ? '<span class="ep-progress-badge">✓ Zuletzt gesehen</span>'
             : isNextEpisode
-              ? '<span class="ep-progress-badge next">▶ Nächste</span>'
-              : '';
+              ? '<span class="ep-progress-badge next">▶ Nächste Folge</span>'
+              : isAlreadyWatched
+                ? '<span class="ep-progress-badge">✓ Gesehen</span>'
+                : '';
 
           let filesBtns = "";
           let activeFileForActions = (Array.isArray(ep.files) && ep.files[0]) ? ep.files[0] : null;
@@ -43601,10 +44220,10 @@
           if (state.activeDetails) state.activeDetails.isSaved = isSaved;
           if (btn) {
             btn.disabled = false;
-            btn.className = "btn " + (isSaved ? "green" : "");
-            btn.textContent = isSaved ? "✅ Gespeichert" : "💾 Merkliste";
+            btn.className = "detail-btn-glass " + (isSaved ? "saved" : "");
+            btn.textContent = isSaved ? "✓ Gespeichert" : "＋ Speichern";
           }
-          showHudToast(isSaved ? "💾 Zur Merkliste hinzugefügt" : "🗑️ Aus Merkliste entfernt");
+          showHudToast(isSaved ? "✓ Gespeichert" : "🗑️ Aus Merkliste entfernt");
         } catch (e) {
           if (btn) btn.disabled = false;
         }
@@ -43926,6 +44545,9 @@
       }
 
       async function loadWishlist(folderFilter) {
+        if (document.getElementById("modalRoot")?.innerHTML) {
+          closeDetailModal();
+        }
         if (folderFilter !== undefined) state.wlFolder = folderFilter;
         state.currentView = "wishlist";
         const root = document.getElementById("appRoot");
@@ -52319,10 +52941,14 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .detail-carousel-arrow, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .detail-carousel-arrow, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
+      let userScrolledRecently = false;
+
+      window.addEventListener("wheel", () => { userScrolledRecently = true; }, { passive: true });
+      window.addEventListener("touchmove", () => { userScrolledRecently = true; }, { passive: true });
 
       function clearCardSubnavState(exceptCard = null) {
         document.querySelectorAll(".card.card-subnav-active").forEach(c => {
@@ -52338,20 +52964,27 @@
         const dialogEl = document.getElementById("customDialogRoot");
         const pageJumpEl = document.getElementById("pageJumpModalRoot");
         const modalEl = document.getElementById("modalRoot");
+        const topUnifiedHeader = document.getElementById("topUnifiedBar");
         const lbEl = document.getElementById("lightboxRoot");
         const sidebarEl = document.getElementById("filterSidebarDrawer");
+        const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
           : (pageJumpEl && pageJumpEl.innerHTML.trim())
             ? pageJumpEl
             : (lbEl && lbEl.innerHTML.trim())
               ? lbEl
-              : (modalEl && modalEl.innerHTML.trim())
-                ? modalEl
-                : (state.sidebarOpen && sidebarEl)
-                  ? sidebarEl
+              : (state.sidebarOpen && sidebarEl)
+                ? sidebarEl
+                : isModalActive
+                  ? modalEl
                   : document.body;
-        const nodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
+        const rawNodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
+        if (isModalActive && !state.sidebarOpen && topUnifiedHeader) {
+          const headerNodes = Array.from(topUnifiedHeader.querySelectorAll(FOCUSABLE_SELECTOR));
+          rawNodes.unshift(...headerNodes);
+        }
+        const nodes = Array.from(new Set(rawNodes));
         return nodes.filter(el => {
           if (el.disabled) return false;
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
@@ -52469,13 +53102,27 @@
 
             if (modalBackdrop) {
               const r = el.getBoundingClientRect();
-              const modalStickyTop = modalBackdrop.querySelector(".modal-hero-top");
-              const stickyOffset = modalStickyTop ? Math.max(28, modalStickyTop.getBoundingClientRect().bottom + 12) : 28;
+              const headerEl = document.getElementById("topUnifiedBar");
+              const stickyOffset = headerEl ? Math.max(58, headerEl.getBoundingClientRect().bottom + 14) : 58;
               const botPad = window.innerHeight - 28;
               if (r.top < stickyOffset) {
                 modalBackdrop.scrollTop += (r.top - stickyOffset);
               } else if (r.bottom > botPad) {
                 modalBackdrop.scrollTop += (r.bottom - botPad);
+              }
+              return;
+            }
+
+            const sidebarSubBody = el.closest ? el.closest(".sidebar-sub-body") : null;
+            if (sidebarSubBody) {
+              const sbRect = sidebarSubBody.getBoundingClientRect();
+              const r = el.getBoundingClientRect();
+              const topBoundary = sbRect.top + 14;
+              const botBoundary = sbRect.bottom - 14;
+              if (r.top < topBoundary) {
+                sidebarSubBody.scrollTop += (r.top - topBoundary);
+              } else if (r.bottom > botBoundary) {
+                sidebarSubBody.scrollTop += (r.bottom - botBoundary);
               }
               return;
             }
@@ -52729,9 +53376,82 @@
         }
 
         if (!currentSpatialEl || !list.includes(currentSpatialEl)) {
+          userScrolledRecently = false;
           const activeHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active") || document.getElementById("heroBtnTrailer");
           setSpatialFocus(activeHeroDot || list[0], true, dir);
           return;
+        }
+
+        // Viewport-Aware Focus Recovery: Wenn man per Mausrad, Touch oder rechtem Stick gescrollt hat und der alte Fokus nicht mehr im sichtbaren Bereich liegt,
+        // springt die Pfeiltasten-Navigation direkt zum ersten im aktuellen Sichtfeld liegenden Element (statt zurück zum alten Fokus zu reißen)!
+        if (userScrolledRecently && !state.sidebarOpen) {
+          userScrolledRecently = false;
+          const curR = currentSpatialEl.getBoundingClientRect();
+          const isOffscreen = curR.bottom < 64 || curR.top > window.innerHeight - 24;
+          if (isOffscreen) {
+            const visibleInViewport = list.filter(cand => {
+              if (cand.closest && cand.closest("header")) return false;
+              const r = cand.getBoundingClientRect();
+              return r.top >= 58 && r.bottom <= window.innerHeight - 16;
+            });
+            if (visibleInViewport.length > 0) {
+              setSpatialFocus(visibleInViewport[0], false, dir);
+              return;
+            }
+          }
+        }
+
+        // Smarte 2-Spalten-Navigation im Ambilight-Glas-Menü (#filterSidebarDrawer):
+        // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen inkl. der untersten 2 Elemente!
+        //   Klick nach Rechts (ArrowRight) öffnet sofort die Optionen rechts im Sub-Panel (#sidebarRightSubPanel).
+        // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Klick nach Links (ArrowLeft) vom linken Rand führt sofort zurück in die Menü-Übersicht!
+        if (state.sidebarOpen) {
+          const inLeftMenuCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarDrawerBody"));
+          const inRightSubCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel"));
+          if (inLeftMenuCol) {
+            const leftRows = Array.from(document.querySelectorAll("#sidebarDrawerBody .sidebar-menu-row")).filter(el => list.includes(el));
+            const rowIdx = leftRows.indexOf(currentSpatialEl);
+            if (rowIdx !== -1) {
+              if (dir === "down") {
+                if (rowIdx + 1 < leftRows.length) {
+                  setSpatialFocus(leftRows[rowIdx + 1], true, "down");
+                }
+                return;
+              }
+              if (dir === "up") {
+                if (rowIdx > 0) {
+                  setSpatialFocus(leftRows[rowIdx - 1], true, "up");
+                } else {
+                  const sbHeaderBtn = document.querySelector("#filterSidebarDrawer .sidebar-header .sidebar-collapse-btn, #filterSidebarDrawer .sidebar-header .brand-logo");
+                  if (sbHeaderBtn && list.includes(sbHeaderBtn)) setSpatialFocus(sbHeaderBtn, true, "up");
+                }
+                return;
+              }
+              if (dir === "right") {
+                const catAttr = currentSpatialEl.getAttribute("data-sb-cat");
+                if (catAttr) {
+                  switchSidebarCategoryTab(catAttr, true);
+                  return;
+                }
+              }
+            }
+          } else if (inRightSubCol && dir === "left") {
+            const curSubBox = getSpatialLayoutBox(currentSpatialEl);
+            const rightPanelItems = Array.from(document.querySelectorAll("#sidebarRightSubPanel " + FOCUSABLE_SELECTOR)).filter(el => list.includes(el));
+            const hasLeftNeighborInSubPanel = rightPanelItems.some(cand => {
+              if (cand === currentSpatialEl) return false;
+              const r = getSpatialLayoutBox(cand);
+              const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+              const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+              return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
+            });
+            if (!hasLeftNeighborInSubPanel) {
+              if (typeof closeSidebarSubPanelToMain === "function") {
+                closeSidebarSubPanelToMain();
+                return;
+              }
+            }
+          }
         }
 
         // Referenzen auf die Suchleiste & Kopfzeile
@@ -52900,12 +53620,18 @@
         }
 
         // Einzeilige Top-Leiste (<header id="topUnifiedBar" class="search-bar-outer">):
-        // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen)
+        // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü / ← Zurück -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen / ◀ ▶)
         const topHideBtn = document.getElementById("heroHideBtn");
         const topHideVisible = Boolean(topHideBtn && list.includes(topHideBtn));
+        const topBackBtn = document.getElementById("topBarBackBtn");
+        const topPrevAdjBtn = document.getElementById("modalAdjPrevBtn");
+        const topNextAdjBtn = document.getElementById("modalAdjNextBtn");
         const mobCollapseBtn = document.getElementById("mobileSearchCollapseBtn");
         const inHeader = Boolean(
           (currentSpatialEl.closest && (currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))) ||
+          currentSpatialEl === topBackBtn ||
+          currentSpatialEl === topPrevAdjBtn ||
+          currentSpatialEl === topNextAdjBtn ||
           currentSpatialEl === mobCollapseBtn ||
           currentSpatialEl === sScope ||
           currentSpatialEl === sInp ||
@@ -52917,6 +53643,7 @@
           if (dir === "left" || dir === "right") {
             const headerOrder = [
               document.getElementById("sidebarToggleBtn"),
+              topBackBtn,
               document.getElementById("headerBrandLogo"),
               document.getElementById("tabBtnMovies"),
               document.getElementById("tabBtnSeries"),
@@ -52926,7 +53653,9 @@
               sClearVisible ? sClear : null,
               sSub,
               document.getElementById("navBtnWishlist"),
-              topHideVisible ? topHideBtn : null
+              topHideVisible ? topHideBtn : null,
+              topPrevAdjBtn,
+              topNextAdjBtn
             ].filter(el => el && list.includes(el));
             const hIdx = headerOrder.indexOf(currentSpatialEl);
             if (hIdx !== -1) {
@@ -52938,7 +53667,10 @@
             }
           }
           if (dir === "up") {
-            if ((window.scrollY || window.pageYOffset || 0) > 10) {
+            const modalBackdropEl = document.querySelector("#modalRoot .modal-backdrop");
+            if (modalBackdropEl && modalBackdropEl.scrollTop > 10) {
+              modalBackdropEl.scrollTo({ top: 0, behavior: "smooth" });
+            } else if ((window.scrollY || window.pageYOffset || 0) > 10) {
               window.scrollTo({ top: 0, behavior: "smooth" });
             }
             return;
@@ -53285,9 +54017,15 @@
         const isSearchInpFocused = activeEl && activeEl.id === "searchInput";
         const isTypingInInput = activeTag === "INPUT" || activeTag === "TEXTAREA";
 
-        if (ev.key === "Escape" || (ev.key === "Backspace" && !isTypingInInput)) {
+        const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || (ev.key === "Backspace" && !isTypingInInput);
+        if (isBackKey) {
           cancelModalArrowHold();
           cancelTopBarUpHold();
+          if (state.sidebarOpen && state.sidebarSubPanelOpen && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
+            if (typeof closeSidebarSubPanelToMain === "function") closeSidebarSubPanelToMain();
+            ev.preventDefault();
+            return;
+          }
           if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) {
             if (typeof closePageJumpModalClient === "function") closePageJumpModalClient();
             ev.preventDefault();
@@ -53330,12 +54068,10 @@
             ev.preventDefault();
             return;
           }
-          if (ev.key === "Escape") {
-            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
-            goBack();
-            ev.preventDefault();
-            return;
-          }
+          if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+          goBack();
+          ev.preventDefault();
+          return;
         }
 
         // Größenanpassung per + und - auf der Tastatur (sofern man nicht in einem Textfeld tippt)
@@ -53529,25 +54265,115 @@
         }
       });
 
-      // Gamepad / Controller Polling (Xbox, PlayStation, Android TV Gamepad)
+      // Gamepad / Controller Polling (Auto-Erkennung PlayStation DualSense/DualShock vs. Xbox / Android TV Gamepad)
+      // Inkl. L2/R2 Live-Zoom, R3 100%-Zoom-Reset, Rechtem Stick 60fps Freies Scrollen, X/□ Speichern, Y/△ Suche & dynamischer HUD-Leiste!
       let lastGamepadStepAt = 0;
+      let lastGamepadZoomAt = 0;
+      let lastGamepadActivityAt = 0;
+      let activeControllerBrand = "";
+
+      function isPlayStationControllerClient(gpId) {
+        const s = String(gpId || "").toLowerCase();
+        return s.includes("dualsense") || s.includes("dualshock") || s.includes("playstation") || s.includes("sony") || s.includes("054c") || s.includes("wireless controller");
+      }
+
+      function syncControllerHudBarClient(gp) {
+        const hud = document.getElementById("controllerHudBar");
+        if (!hud) return;
+        const isPs = isPlayStationControllerClient(gp?.id || "");
+        const brandKey = isPs ? "ps" : "xbox";
+        if (activeControllerBrand !== brandKey || !hud.innerHTML) {
+          activeControllerBrand = brandKey;
+          if (isPs) {
+            hud.innerHTML =
+              '<span class="hud-item"><kbd>✕</kbd> Auswahl</span>' +
+              '<span class="hud-item"><kbd>○</kbd> Zurück</span>' +
+              '<span class="hud-item"><kbd>□</kbd> Speichern</span>' +
+              '<span class="hud-item"><kbd>△</kbd> Suche</span>' +
+              '<span class="hud-item"><kbd>L1</kbd><kbd>R1</kbd> ◀/▶</span>' +
+              '<span class="hud-item"><kbd>L2</kbd><kbd>R2</kbd> Zoom</span>' +
+              '<span class="hud-item"><kbd>R3</kbd> 100%</span>';
+          } else {
+            hud.innerHTML =
+              '<span class="hud-item"><kbd>A</kbd> Auswahl</span>' +
+              '<span class="hud-item"><kbd>B</kbd> Zurück</span>' +
+              '<span class="hud-item"><kbd>X</kbd> Speichern</span>' +
+              '<span class="hud-item"><kbd>Y</kbd> Suche</span>' +
+              '<span class="hud-item"><kbd>LB</kbd><kbd>RB</kbd> ◀/▶</span>' +
+              '<span class="hud-item"><kbd>LT</kbd><kbd>RT</kbd> Zoom</span>' +
+              '<span class="hud-item"><kbd>R3</kbd> 100%</span>';
+          }
+        }
+        hud.classList.add("visible");
+      }
+
       function pollGamepadNavigation() {
         try {
           const pads = navigator.getGamepads ? navigator.getGamepads() : [];
           const gp = pads && (pads[0] || pads[1] || pads[2] || pads[3]);
           if (gp) {
             const now = Date.now();
-            if (now - lastGamepadStepAt > 190) {
-              const axX = gp.axes?.[0] || 0;
-              const axY = gp.axes?.[1] || 0;
+            const axX = gp.axes?.[0] || 0;
+            const axY = gp.axes?.[1] || 0;
+            const rightStickX = gp.axes?.[2] || 0;
+            const rightStickY = gp.axes?.[3] || 0;
+
+            // Rechter Analog-Stick (axes[2], axes[3]): Butterweiches 60fps Scrollen ohne Fokus-Sprung!
+            if (Math.abs(rightStickY) > 0.18 || Math.abs(rightStickX) > 0.22) {
+              lastGamepadActivityAt = now;
+              syncControllerHudBarClient(gp);
+              userScrolledRecently = true;
+              const dy = Math.abs(rightStickY) > 0.18 ? (rightStickY * 18) : 0;
+              const dx = Math.abs(rightStickX) > 0.22 ? (rightStickX * 16) : 0;
+              const subBody = state.sidebarOpen && state.sidebarSubPanelOpen ? document.querySelector("#sidebarRightSubPanel .sidebar-sub-body") : null;
+              const sbBody = state.sidebarOpen ? document.getElementById("sidebarDrawerBody") : null;
+              const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+              if (subBody && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
+                subBody.scrollTop += dy;
+              } else if (sbBody) {
+                sbBody.scrollTop += dy;
+              } else if (modalBackdrop) {
+                if (Math.abs(dx) > Math.abs(dy) * 1.2) {
+                  const horizTrack = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".detail-cast-track, .detail-similar-track") : document.querySelector("#modalRoot .detail-cast-track, #modalRoot .detail-similar-track");
+                  if (horizTrack) horizTrack.scrollLeft += dx;
+                } else {
+                  modalBackdrop.scrollTop += dy;
+                }
+              } else {
+                window.scrollBy(0, dy);
+              }
+            }
+
+            // L2 / LT (buttons[6]) & R2 / RT (buttons[7]): Live-Zoom (Skalierung -5% / +5%)
+            const btnL2 = Boolean(gp.buttons?.[6]?.pressed || (gp.buttons?.[6]?.value || 0) > 0.45);
+            const btnR2 = Boolean(gp.buttons?.[7]?.pressed || (gp.buttons?.[7]?.value || 0) > 0.45);
+            if ((btnL2 || btnR2) && now - lastGamepadZoomAt > 175) {
+              lastGamepadZoomAt = now;
+              lastGamepadActivityAt = now;
+              engageKeyboardNavMode();
+              syncControllerHudBarClient(gp);
+              if (btnR2) adjustOverallScaleStep(5);
+              else if (btnL2) adjustOverallScaleStep(-5);
+            }
+
+            if (now - lastGamepadStepAt > 185) {
               const up = gp.buttons?.[12]?.pressed || axY < -0.55;
               const down = gp.buttons?.[13]?.pressed || axY > 0.55;
               const left = gp.buttons?.[14]?.pressed || axX < -0.55;
               const right = gp.buttons?.[15]?.pressed || axX > 0.55;
               const btnA = gp.buttons?.[0]?.pressed;
               const btnB = gp.buttons?.[1]?.pressed;
+              const btnX = gp.buttons?.[2]?.pressed;
+              const btnY = gp.buttons?.[3]?.pressed;
               const btnLB = gp.buttons?.[4]?.pressed;
               const btnRB = gp.buttons?.[5]?.pressed;
+              const btnR3 = gp.buttons?.[11]?.pressed;
+
+              if (up || down || left || right || btnA || btnB || btnX || btnY || btnLB || btnRB || btnR3) {
+                lastGamepadActivityAt = now;
+                engageKeyboardNavMode();
+                syncControllerHudBarClient(gp);
+              }
 
               if (up) { moveSpatialFocus("up"); lastGamepadStepAt = now; }
               else if (down) { moveSpatialFocus("down"); lastGamepadStepAt = now; }
@@ -53558,7 +54384,9 @@
                 lastGamepadStepAt = now + 120;
               }
               else if (btnB) {
-                if (currentSpatialEl && isCardSubElement(currentSpatialEl)) {
+                if (state.sidebarOpen && state.sidebarSubPanelOpen && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
+                  if (typeof closeSidebarSubPanelToMain === "function") closeSidebarSubPanelToMain();
+                } else if (currentSpatialEl && isCardSubElement(currentSpatialEl)) {
                   const parentCard = currentSpatialEl.closest(".card");
                   clearCardSubnavState(null);
                   if (parentCard) setSpatialFocus(parentCard, false);
@@ -53567,18 +54395,57 @@
                 }
                 lastGamepadStepAt = now + 150;
               }
+              else if (btnX) {
+                const modalWlBtn = document.getElementById("modalWishlistBtn");
+                if (modalWlBtn && document.getElementById("modalRoot")?.innerHTML.trim()) {
+                  modalWlBtn.click();
+                } else {
+                  const focusedCard = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card[data-card-key]") : null;
+                  if (focusedCard) {
+                    const saveBtn = focusedCard.querySelector(".card-quick-save");
+                    if (saveBtn) saveBtn.click();
+                  } else {
+                    const heroWl = document.getElementById("heroBtnWishlist");
+                    if (heroWl) heroWl.click();
+                  }
+                }
+                lastGamepadStepAt = now + 180;
+              }
+              else if (btnY) {
+                if (state.sidebarOpen) closeFilterSidebar();
+                const sInp = document.getElementById("searchInput");
+                if (sInp) {
+                  setSpatialFocus(sInp, true, "up");
+                  onSearchInputFocus();
+                  sInp.focus();
+                }
+                lastGamepadStepAt = now + 180;
+              }
+              else if (btnR3) {
+                resetUiScale();
+                lastGamepadStepAt = now + 220;
+              }
               else if (btnLB) {
-                const modalPrev = document.getElementById("modalAdjPrevBtn");
-                if (modalPrev) modalPrev.click();
-                else setHeroSlideIndex(state.heroIndex - 1);
-                lastGamepadStepAt = now + 150;
+                if (document.getElementById("modalRoot")?.innerHTML.trim()) {
+                  navigateDetailModalAdjacent(-1);
+                } else {
+                  setHeroSlideIndex(state.heroIndex - 1);
+                }
+                lastGamepadStepAt = now + 160;
               }
               else if (btnRB) {
-                const modalNext = document.getElementById("modalAdjNextBtn");
-                if (modalNext) modalNext.click();
-                else setHeroSlideIndex(state.heroIndex + 1);
-                lastGamepadStepAt = now + 150;
+                if (document.getElementById("modalRoot")?.innerHTML.trim()) {
+                  navigateDetailModalAdjacent(1);
+                } else {
+                  setHeroSlideIndex(state.heroIndex + 1);
+                }
+                lastGamepadStepAt = now + 160;
               }
+            }
+
+            if (lastGamepadActivityAt && now - lastGamepadActivityAt > 8500) {
+              const hud = document.getElementById("controllerHudBar");
+              if (hud) hud.classList.remove("visible");
             }
           }
         } catch (e) {}

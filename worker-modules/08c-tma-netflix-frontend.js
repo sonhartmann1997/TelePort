@@ -6806,10 +6806,14 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .detail-carousel-arrow, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .detail-carousel-arrow, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
+      let userScrolledRecently = false;
+
+      window.addEventListener("wheel", () => { userScrolledRecently = true; }, { passive: true });
+      window.addEventListener("touchmove", () => { userScrolledRecently = true; }, { passive: true });
 
       function clearCardSubnavState(exceptCard = null) {
         document.querySelectorAll(".card.card-subnav-active").forEach(c => {
@@ -6825,20 +6829,27 @@
         const dialogEl = document.getElementById("customDialogRoot");
         const pageJumpEl = document.getElementById("pageJumpModalRoot");
         const modalEl = document.getElementById("modalRoot");
+        const topUnifiedHeader = document.getElementById("topUnifiedBar");
         const lbEl = document.getElementById("lightboxRoot");
         const sidebarEl = document.getElementById("filterSidebarDrawer");
+        const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
           : (pageJumpEl && pageJumpEl.innerHTML.trim())
             ? pageJumpEl
             : (lbEl && lbEl.innerHTML.trim())
               ? lbEl
-              : (modalEl && modalEl.innerHTML.trim())
-                ? modalEl
-                : (state.sidebarOpen && sidebarEl)
-                  ? sidebarEl
+              : (state.sidebarOpen && sidebarEl)
+                ? sidebarEl
+                : isModalActive
+                  ? modalEl
                   : document.body;
-        const nodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
+        const rawNodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
+        if (isModalActive && !state.sidebarOpen && topUnifiedHeader) {
+          const headerNodes = Array.from(topUnifiedHeader.querySelectorAll(FOCUSABLE_SELECTOR));
+          rawNodes.unshift(...headerNodes);
+        }
+        const nodes = Array.from(new Set(rawNodes));
         return nodes.filter(el => {
           if (el.disabled) return false;
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
@@ -6956,13 +6967,27 @@
 
             if (modalBackdrop) {
               const r = el.getBoundingClientRect();
-              const modalStickyTop = modalBackdrop.querySelector(".modal-hero-top");
-              const stickyOffset = modalStickyTop ? Math.max(28, modalStickyTop.getBoundingClientRect().bottom + 12) : 28;
+              const headerEl = document.getElementById("topUnifiedBar");
+              const stickyOffset = headerEl ? Math.max(58, headerEl.getBoundingClientRect().bottom + 14) : 58;
               const botPad = window.innerHeight - 28;
               if (r.top < stickyOffset) {
                 modalBackdrop.scrollTop += (r.top - stickyOffset);
               } else if (r.bottom > botPad) {
                 modalBackdrop.scrollTop += (r.bottom - botPad);
+              }
+              return;
+            }
+
+            const sidebarSubBody = el.closest ? el.closest(".sidebar-sub-body") : null;
+            if (sidebarSubBody) {
+              const sbRect = sidebarSubBody.getBoundingClientRect();
+              const r = el.getBoundingClientRect();
+              const topBoundary = sbRect.top + 14;
+              const botBoundary = sbRect.bottom - 14;
+              if (r.top < topBoundary) {
+                sidebarSubBody.scrollTop += (r.top - topBoundary);
+              } else if (r.bottom > botBoundary) {
+                sidebarSubBody.scrollTop += (r.bottom - botBoundary);
               }
               return;
             }
@@ -7216,9 +7241,82 @@
         }
 
         if (!currentSpatialEl || !list.includes(currentSpatialEl)) {
+          userScrolledRecently = false;
           const activeHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active") || document.getElementById("heroBtnTrailer");
           setSpatialFocus(activeHeroDot || list[0], true, dir);
           return;
+        }
+
+        // Viewport-Aware Focus Recovery: Wenn man per Mausrad, Touch oder rechtem Stick gescrollt hat und der alte Fokus nicht mehr im sichtbaren Bereich liegt,
+        // springt die Pfeiltasten-Navigation direkt zum ersten im aktuellen Sichtfeld liegenden Element (statt zurück zum alten Fokus zu reißen)!
+        if (userScrolledRecently && !state.sidebarOpen) {
+          userScrolledRecently = false;
+          const curR = currentSpatialEl.getBoundingClientRect();
+          const isOffscreen = curR.bottom < 64 || curR.top > window.innerHeight - 24;
+          if (isOffscreen) {
+            const visibleInViewport = list.filter(cand => {
+              if (cand.closest && cand.closest("header")) return false;
+              const r = cand.getBoundingClientRect();
+              return r.top >= 58 && r.bottom <= window.innerHeight - 16;
+            });
+            if (visibleInViewport.length > 0) {
+              setSpatialFocus(visibleInViewport[0], false, dir);
+              return;
+            }
+          }
+        }
+
+        // Smarte 2-Spalten-Navigation im Ambilight-Glas-Menü (#filterSidebarDrawer):
+        // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen inkl. der untersten 2 Elemente!
+        //   Klick nach Rechts (ArrowRight) öffnet sofort die Optionen rechts im Sub-Panel (#sidebarRightSubPanel).
+        // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Klick nach Links (ArrowLeft) vom linken Rand führt sofort zurück in die Menü-Übersicht!
+        if (state.sidebarOpen) {
+          const inLeftMenuCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarDrawerBody"));
+          const inRightSubCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel"));
+          if (inLeftMenuCol) {
+            const leftRows = Array.from(document.querySelectorAll("#sidebarDrawerBody .sidebar-menu-row")).filter(el => list.includes(el));
+            const rowIdx = leftRows.indexOf(currentSpatialEl);
+            if (rowIdx !== -1) {
+              if (dir === "down") {
+                if (rowIdx + 1 < leftRows.length) {
+                  setSpatialFocus(leftRows[rowIdx + 1], true, "down");
+                }
+                return;
+              }
+              if (dir === "up") {
+                if (rowIdx > 0) {
+                  setSpatialFocus(leftRows[rowIdx - 1], true, "up");
+                } else {
+                  const sbHeaderBtn = document.querySelector("#filterSidebarDrawer .sidebar-header .sidebar-collapse-btn, #filterSidebarDrawer .sidebar-header .brand-logo");
+                  if (sbHeaderBtn && list.includes(sbHeaderBtn)) setSpatialFocus(sbHeaderBtn, true, "up");
+                }
+                return;
+              }
+              if (dir === "right") {
+                const catAttr = currentSpatialEl.getAttribute("data-sb-cat");
+                if (catAttr) {
+                  switchSidebarCategoryTab(catAttr, true);
+                  return;
+                }
+              }
+            }
+          } else if (inRightSubCol && dir === "left") {
+            const curSubBox = getSpatialLayoutBox(currentSpatialEl);
+            const rightPanelItems = Array.from(document.querySelectorAll("#sidebarRightSubPanel " + FOCUSABLE_SELECTOR)).filter(el => list.includes(el));
+            const hasLeftNeighborInSubPanel = rightPanelItems.some(cand => {
+              if (cand === currentSpatialEl) return false;
+              const r = getSpatialLayoutBox(cand);
+              const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+              const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+              return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
+            });
+            if (!hasLeftNeighborInSubPanel) {
+              if (typeof closeSidebarSubPanelToMain === "function") {
+                closeSidebarSubPanelToMain();
+                return;
+              }
+            }
+          }
         }
 
         // Referenzen auf die Suchleiste & Kopfzeile
@@ -7387,12 +7485,18 @@
         }
 
         // Einzeilige Top-Leiste (<header id="topUnifiedBar" class="search-bar-outer">):
-        // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen)
+        // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü / ← Zurück -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen / ◀ ▶)
         const topHideBtn = document.getElementById("heroHideBtn");
         const topHideVisible = Boolean(topHideBtn && list.includes(topHideBtn));
+        const topBackBtn = document.getElementById("topBarBackBtn");
+        const topPrevAdjBtn = document.getElementById("modalAdjPrevBtn");
+        const topNextAdjBtn = document.getElementById("modalAdjNextBtn");
         const mobCollapseBtn = document.getElementById("mobileSearchCollapseBtn");
         const inHeader = Boolean(
           (currentSpatialEl.closest && (currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))) ||
+          currentSpatialEl === topBackBtn ||
+          currentSpatialEl === topPrevAdjBtn ||
+          currentSpatialEl === topNextAdjBtn ||
           currentSpatialEl === mobCollapseBtn ||
           currentSpatialEl === sScope ||
           currentSpatialEl === sInp ||
@@ -7404,6 +7508,7 @@
           if (dir === "left" || dir === "right") {
             const headerOrder = [
               document.getElementById("sidebarToggleBtn"),
+              topBackBtn,
               document.getElementById("headerBrandLogo"),
               document.getElementById("tabBtnMovies"),
               document.getElementById("tabBtnSeries"),
@@ -7413,7 +7518,9 @@
               sClearVisible ? sClear : null,
               sSub,
               document.getElementById("navBtnWishlist"),
-              topHideVisible ? topHideBtn : null
+              topHideVisible ? topHideBtn : null,
+              topPrevAdjBtn,
+              topNextAdjBtn
             ].filter(el => el && list.includes(el));
             const hIdx = headerOrder.indexOf(currentSpatialEl);
             if (hIdx !== -1) {
@@ -7425,7 +7532,10 @@
             }
           }
           if (dir === "up") {
-            if ((window.scrollY || window.pageYOffset || 0) > 10) {
+            const modalBackdropEl = document.querySelector("#modalRoot .modal-backdrop");
+            if (modalBackdropEl && modalBackdropEl.scrollTop > 10) {
+              modalBackdropEl.scrollTo({ top: 0, behavior: "smooth" });
+            } else if ((window.scrollY || window.pageYOffset || 0) > 10) {
               window.scrollTo({ top: 0, behavior: "smooth" });
             }
             return;
@@ -7772,9 +7882,15 @@
         const isSearchInpFocused = activeEl && activeEl.id === "searchInput";
         const isTypingInInput = activeTag === "INPUT" || activeTag === "TEXTAREA";
 
-        if (ev.key === "Escape" || (ev.key === "Backspace" && !isTypingInInput)) {
+        const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || (ev.key === "Backspace" && !isTypingInInput);
+        if (isBackKey) {
           cancelModalArrowHold();
           cancelTopBarUpHold();
+          if (state.sidebarOpen && state.sidebarSubPanelOpen && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
+            if (typeof closeSidebarSubPanelToMain === "function") closeSidebarSubPanelToMain();
+            ev.preventDefault();
+            return;
+          }
           if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) {
             if (typeof closePageJumpModalClient === "function") closePageJumpModalClient();
             ev.preventDefault();
@@ -7817,12 +7933,10 @@
             ev.preventDefault();
             return;
           }
-          if (ev.key === "Escape") {
-            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
-            goBack();
-            ev.preventDefault();
-            return;
-          }
+          if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+          goBack();
+          ev.preventDefault();
+          return;
         }
 
         // Größenanpassung per + und - auf der Tastatur (sofern man nicht in einem Textfeld tippt)
@@ -8016,25 +8130,115 @@
         }
       });
 
-      // Gamepad / Controller Polling (Xbox, PlayStation, Android TV Gamepad)
+      // Gamepad / Controller Polling (Auto-Erkennung PlayStation DualSense/DualShock vs. Xbox / Android TV Gamepad)
+      // Inkl. L2/R2 Live-Zoom, R3 100%-Zoom-Reset, Rechtem Stick 60fps Freies Scrollen, X/□ Speichern, Y/△ Suche & dynamischer HUD-Leiste!
       let lastGamepadStepAt = 0;
+      let lastGamepadZoomAt = 0;
+      let lastGamepadActivityAt = 0;
+      let activeControllerBrand = "";
+
+      function isPlayStationControllerClient(gpId) {
+        const s = String(gpId || "").toLowerCase();
+        return s.includes("dualsense") || s.includes("dualshock") || s.includes("playstation") || s.includes("sony") || s.includes("054c") || s.includes("wireless controller");
+      }
+
+      function syncControllerHudBarClient(gp) {
+        const hud = document.getElementById("controllerHudBar");
+        if (!hud) return;
+        const isPs = isPlayStationControllerClient(gp?.id || "");
+        const brandKey = isPs ? "ps" : "xbox";
+        if (activeControllerBrand !== brandKey || !hud.innerHTML) {
+          activeControllerBrand = brandKey;
+          if (isPs) {
+            hud.innerHTML =
+              '<span class="hud-item"><kbd>✕</kbd> Auswahl</span>' +
+              '<span class="hud-item"><kbd>○</kbd> Zurück</span>' +
+              '<span class="hud-item"><kbd>□</kbd> Speichern</span>' +
+              '<span class="hud-item"><kbd>△</kbd> Suche</span>' +
+              '<span class="hud-item"><kbd>L1</kbd><kbd>R1</kbd> ◀/▶</span>' +
+              '<span class="hud-item"><kbd>L2</kbd><kbd>R2</kbd> Zoom</span>' +
+              '<span class="hud-item"><kbd>R3</kbd> 100%</span>';
+          } else {
+            hud.innerHTML =
+              '<span class="hud-item"><kbd>A</kbd> Auswahl</span>' +
+              '<span class="hud-item"><kbd>B</kbd> Zurück</span>' +
+              '<span class="hud-item"><kbd>X</kbd> Speichern</span>' +
+              '<span class="hud-item"><kbd>Y</kbd> Suche</span>' +
+              '<span class="hud-item"><kbd>LB</kbd><kbd>RB</kbd> ◀/▶</span>' +
+              '<span class="hud-item"><kbd>LT</kbd><kbd>RT</kbd> Zoom</span>' +
+              '<span class="hud-item"><kbd>R3</kbd> 100%</span>';
+          }
+        }
+        hud.classList.add("visible");
+      }
+
       function pollGamepadNavigation() {
         try {
           const pads = navigator.getGamepads ? navigator.getGamepads() : [];
           const gp = pads && (pads[0] || pads[1] || pads[2] || pads[3]);
           if (gp) {
             const now = Date.now();
-            if (now - lastGamepadStepAt > 190) {
-              const axX = gp.axes?.[0] || 0;
-              const axY = gp.axes?.[1] || 0;
+            const axX = gp.axes?.[0] || 0;
+            const axY = gp.axes?.[1] || 0;
+            const rightStickX = gp.axes?.[2] || 0;
+            const rightStickY = gp.axes?.[3] || 0;
+
+            // Rechter Analog-Stick (axes[2], axes[3]): Butterweiches 60fps Scrollen ohne Fokus-Sprung!
+            if (Math.abs(rightStickY) > 0.18 || Math.abs(rightStickX) > 0.22) {
+              lastGamepadActivityAt = now;
+              syncControllerHudBarClient(gp);
+              userScrolledRecently = true;
+              const dy = Math.abs(rightStickY) > 0.18 ? (rightStickY * 18) : 0;
+              const dx = Math.abs(rightStickX) > 0.22 ? (rightStickX * 16) : 0;
+              const subBody = state.sidebarOpen && state.sidebarSubPanelOpen ? document.querySelector("#sidebarRightSubPanel .sidebar-sub-body") : null;
+              const sbBody = state.sidebarOpen ? document.getElementById("sidebarDrawerBody") : null;
+              const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+              if (subBody && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
+                subBody.scrollTop += dy;
+              } else if (sbBody) {
+                sbBody.scrollTop += dy;
+              } else if (modalBackdrop) {
+                if (Math.abs(dx) > Math.abs(dy) * 1.2) {
+                  const horizTrack = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".detail-cast-track, .detail-similar-track") : document.querySelector("#modalRoot .detail-cast-track, #modalRoot .detail-similar-track");
+                  if (horizTrack) horizTrack.scrollLeft += dx;
+                } else {
+                  modalBackdrop.scrollTop += dy;
+                }
+              } else {
+                window.scrollBy(0, dy);
+              }
+            }
+
+            // L2 / LT (buttons[6]) & R2 / RT (buttons[7]): Live-Zoom (Skalierung -5% / +5%)
+            const btnL2 = Boolean(gp.buttons?.[6]?.pressed || (gp.buttons?.[6]?.value || 0) > 0.45);
+            const btnR2 = Boolean(gp.buttons?.[7]?.pressed || (gp.buttons?.[7]?.value || 0) > 0.45);
+            if ((btnL2 || btnR2) && now - lastGamepadZoomAt > 175) {
+              lastGamepadZoomAt = now;
+              lastGamepadActivityAt = now;
+              engageKeyboardNavMode();
+              syncControllerHudBarClient(gp);
+              if (btnR2) adjustOverallScaleStep(5);
+              else if (btnL2) adjustOverallScaleStep(-5);
+            }
+
+            if (now - lastGamepadStepAt > 185) {
               const up = gp.buttons?.[12]?.pressed || axY < -0.55;
               const down = gp.buttons?.[13]?.pressed || axY > 0.55;
               const left = gp.buttons?.[14]?.pressed || axX < -0.55;
               const right = gp.buttons?.[15]?.pressed || axX > 0.55;
               const btnA = gp.buttons?.[0]?.pressed;
               const btnB = gp.buttons?.[1]?.pressed;
+              const btnX = gp.buttons?.[2]?.pressed;
+              const btnY = gp.buttons?.[3]?.pressed;
               const btnLB = gp.buttons?.[4]?.pressed;
               const btnRB = gp.buttons?.[5]?.pressed;
+              const btnR3 = gp.buttons?.[11]?.pressed;
+
+              if (up || down || left || right || btnA || btnB || btnX || btnY || btnLB || btnRB || btnR3) {
+                lastGamepadActivityAt = now;
+                engageKeyboardNavMode();
+                syncControllerHudBarClient(gp);
+              }
 
               if (up) { moveSpatialFocus("up"); lastGamepadStepAt = now; }
               else if (down) { moveSpatialFocus("down"); lastGamepadStepAt = now; }
@@ -8045,7 +8249,9 @@
                 lastGamepadStepAt = now + 120;
               }
               else if (btnB) {
-                if (currentSpatialEl && isCardSubElement(currentSpatialEl)) {
+                if (state.sidebarOpen && state.sidebarSubPanelOpen && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
+                  if (typeof closeSidebarSubPanelToMain === "function") closeSidebarSubPanelToMain();
+                } else if (currentSpatialEl && isCardSubElement(currentSpatialEl)) {
                   const parentCard = currentSpatialEl.closest(".card");
                   clearCardSubnavState(null);
                   if (parentCard) setSpatialFocus(parentCard, false);
@@ -8054,18 +8260,57 @@
                 }
                 lastGamepadStepAt = now + 150;
               }
+              else if (btnX) {
+                const modalWlBtn = document.getElementById("modalWishlistBtn");
+                if (modalWlBtn && document.getElementById("modalRoot")?.innerHTML.trim()) {
+                  modalWlBtn.click();
+                } else {
+                  const focusedCard = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card[data-card-key]") : null;
+                  if (focusedCard) {
+                    const saveBtn = focusedCard.querySelector(".card-quick-save");
+                    if (saveBtn) saveBtn.click();
+                  } else {
+                    const heroWl = document.getElementById("heroBtnWishlist");
+                    if (heroWl) heroWl.click();
+                  }
+                }
+                lastGamepadStepAt = now + 180;
+              }
+              else if (btnY) {
+                if (state.sidebarOpen) closeFilterSidebar();
+                const sInp = document.getElementById("searchInput");
+                if (sInp) {
+                  setSpatialFocus(sInp, true, "up");
+                  onSearchInputFocus();
+                  sInp.focus();
+                }
+                lastGamepadStepAt = now + 180;
+              }
+              else if (btnR3) {
+                resetUiScale();
+                lastGamepadStepAt = now + 220;
+              }
               else if (btnLB) {
-                const modalPrev = document.getElementById("modalAdjPrevBtn");
-                if (modalPrev) modalPrev.click();
-                else setHeroSlideIndex(state.heroIndex - 1);
-                lastGamepadStepAt = now + 150;
+                if (document.getElementById("modalRoot")?.innerHTML.trim()) {
+                  navigateDetailModalAdjacent(-1);
+                } else {
+                  setHeroSlideIndex(state.heroIndex - 1);
+                }
+                lastGamepadStepAt = now + 160;
               }
               else if (btnRB) {
-                const modalNext = document.getElementById("modalAdjNextBtn");
-                if (modalNext) modalNext.click();
-                else setHeroSlideIndex(state.heroIndex + 1);
-                lastGamepadStepAt = now + 150;
+                if (document.getElementById("modalRoot")?.innerHTML.trim()) {
+                  navigateDetailModalAdjacent(1);
+                } else {
+                  setHeroSlideIndex(state.heroIndex + 1);
+                }
+                lastGamepadStepAt = now + 160;
               }
+            }
+
+            if (lastGamepadActivityAt && now - lastGamepadActivityAt > 8500) {
+              const hud = document.getElementById("controllerHudBar");
+              if (hud) hud.classList.remove("visible");
             }
           }
         } catch (e) {}

@@ -23,6 +23,9 @@
       }
 
       function switchType(t) {
+        if (document.getElementById("modalRoot")?.innerHTML) {
+          closeDetailModal();
+        }
         if (state.type === t && !state.isSearchMode && state.currentView === "discover" && !state.currentCompanyId && state.genreId === "all") return;
         pushHistory(() => loadDiscover(state.type, state.genreId, state.mode, state.sort));
         state.type = t;
@@ -667,7 +670,9 @@
           inp.blur();
         }
         closeAutocomplete();
-        document.getElementById("modalRoot").innerHTML = "";
+        if (document.getElementById("modalRoot")?.innerHTML) {
+          closeDetailModal();
+        }
         const pageNum = Math.max(1, Number(targetPage) || 1);
         const isNewSearchQuery = state.searchQuery !== q || !state.isSearchMode;
         state.isSearchMode = true;
@@ -949,6 +954,19 @@
         const rawExcPlatforms = Array.isArray(s.excludedPlatforms) ? s.excludedPlatforms : [];
         const excPlatforms = Array.from(new Set(rawExcPlatforms.map(normalizePlatformIdClient).filter(Boolean)));
         const pills = [];
+
+        if (state.lastClosedDetailItem && state.lastClosedDetailItem.id) {
+          const lastIt = state.lastClosedDetailItem;
+          const shortTitle = String(lastIt.title || "Titel").length > 32
+            ? (String(lastIt.title).slice(0, 31) + "…")
+            : String(lastIt.title || "Titel");
+          pills.push(
+            '<button type="button" class="return-last-detail-chip" onclick="reopenLastClosedDetailItemClient()" title="Direkt zurück zu ' + esc(lastIt.title || "Titel") + ' springen">' +
+              '<span>↩ Zurück zu: <b>' + esc(shortTitle) + '</b></span>' +
+              '<span class="chip-dismiss" onclick="dismissLastClosedDetailItemClient(event)" title="Chip ausblenden">✕</span>' +
+            '</button>'
+          );
+        }
 
         if (state.currentCompanyId) {
           pills.push('<span class="f-pill inc" tabindex="0" onclick="clearStudioView()" title="Aktiver Studio-Filter – Antippen zum Entfernen">🏢 ' + esc(state.currentCompanyName || "Studio") + ' ✕</span>');
@@ -1600,11 +1618,77 @@
         }
       }
 
+      async function autoLoadCollectionInDetailClient(colId, currentMovieId) {
+        const wrap = document.getElementById("detailCollectionSectionWrap");
+        const track = document.getElementById("detailCollectionTrackEl");
+        if (!track || !colId) return;
+        try {
+          const r = await apiFetchJson(
+            API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) +
+            "&id=" + encodeURIComponent(colId) +
+            "&sort=year_asc"
+          );
+          if (!state.activeDetails || !state.activeDetails.collection || String(state.activeDetails.collection.id) !== String(colId)) return;
+          const items = Array.isArray(r?.items) ? r.items : [];
+          if (items.length <= 1) {
+            if (wrap) wrap.style.display = "none";
+            return;
+          }
+          if (wrap) wrap.style.display = "flex";
+          track.innerHTML = items.map(it => {
+            const tc = it.media_type === "tv" ? "s" : "m";
+            const itemTitle = String(it.title || it.name || "Titel").trim();
+            const isCurPart = String(it.id) === String(currentMovieId);
+            const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
+            const colPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+            const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
+            const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
+            const subParts = [yearStr, voteStr].filter(Boolean).join(" · ");
+            return '<div class="detail-sim-card' + (isCurPart ? ' is-current-part' : '') + '" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+              (isCurPart ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
+              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(colPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
+              '<div class="detail-sim-overlay">' +
+                '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
+                '<div class="detail-sim-sub">' + esc(subParts) + '</div>' +
+              '</div>' +
+            '</div>';
+          }).join("");
+          unlockCatalogCoversLoadingClient(false);
+          observeLazyCoversInContainerClient(track);
+        } catch (_err) {
+          if (wrap) wrap.style.display = "none";
+        }
+      }
+
       async function loadSimilarInTma(type, id) {
         return autoLoadSimilarInDetailClient(type, id);
       }
 
-      // Wischgesten (Swipe Touch + Maus) und Pfeil-Wechsel (◀ / ▶) zum nächsten/vorherigen Titel basierend auf der Herkunftsliste (#10)
+      function saveLastClosedDetailItemClient() {
+        const d = state.activeDetails;
+        if (!d || !d.id) return;
+        state.lastClosedDetailItem = {
+          typeCode: d.typeCode || state.type || "m",
+          id: d.id,
+          title: d.title || d.name || "Titel",
+          poster_path: d.poster_path || d.external_poster_url || ""
+        };
+      }
+
+      function reopenLastClosedDetailItemClient() {
+        const last = state.lastClosedDetailItem;
+        if (!last || !last.id) return;
+        openDetails(last.typeCode || "m", last.id, false, last.title || "", last.poster_path || "");
+      }
+
+      function dismissLastClosedDetailItemClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        state.lastClosedDetailItem = null;
+        const fm = document.getElementById("floatingFilterMount");
+        if (fm) fm.innerHTML = buildFloatingFilterBarHtml();
+      }
+
+      // Wischgesten (Swipe Touch + Maus + Trackpad) und Pfeil-Wechsel (◀ / ▶) zum nächsten/vorherigen Titel basierend auf der Herkunftsliste (#10)
       function getActiveDetailNavigationPoolClient() {
         if (state.currentView === "wishlist" && Array.isArray(state.cachedWishlistItems) && state.cachedWishlistItems.length > 1) {
           return state.cachedWishlistItems;
@@ -1636,11 +1720,47 @@
         };
       }
 
+      let isDetailAdjacentTransitionBusy = false;
       function navigateDetailModalAdjacent(step) {
+        if (isDetailAdjacentTransitionBusy) return;
         const adj = getAdjacentDetailItem(step);
         if (!adj) return;
         triggerTmaHapticClient("selection");
+        const stageEl = document.getElementById("detailHeroStageEl");
+        const bodyEl = document.querySelector("#modalRoot .detail-content-body");
+        if (stageEl) {
+          isDetailAdjacentTransitionBusy = true;
+          const slideDir = step > 0 ? "-18px" : "18px";
+          stageEl.style.setProperty("--adj-slide-dir", slideDir);
+          stageEl.classList.add("detail-stage-transitioning");
+          if (bodyEl) {
+            bodyEl.style.setProperty("--adj-slide-dir", slideDir);
+            bodyEl.classList.add("detail-stage-transitioning");
+          }
+          setTimeout(() => {
+            isDetailAdjacentTransitionBusy = false;
+            openDetails(adj.typeCode, adj.id, false, adj.title, adj.poster_path);
+          }, 145);
+          return;
+        }
         openDetails(adj.typeCode, adj.id, false, adj.title, adj.poster_path);
+      }
+
+      let lastModalHorizontalWheelAt = 0;
+      function onModalWheelHorizontalClient(ev) {
+        if (!ev) return;
+        if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".detail-cast-track, .detail-similar-track, .season-toolbar-row")) {
+          return;
+        }
+        const dx = Number(ev.deltaX || 0);
+        const dy = Number(ev.deltaY || 0);
+        if (Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy) * 1.35) {
+          const now = Date.now();
+          if (now - lastModalHorizontalWheelAt < 450) return;
+          lastModalHorizontalWheelAt = now;
+          ev.preventDefault();
+          navigateDetailModalAdjacent(dx > 0 ? 1 : -1);
+        }
       }
 
       let modalTouchStartY = 0;
@@ -1701,13 +1821,13 @@
       }
 
       function getDetailBackButtonLabelClient(typeCode) {
-        if (state.isSearchMode) return "← Zurück zu den Suchergebnissen";
-        if (state.currentView === "wishlist") return "← Zurück zur Merkliste";
-        if (state.currentCollectionId) return "← Zurück zur Filmreihe";
-        if (state.currentUniverseId) return "← Zurück zum Universum";
-        if (state.currentPersonId) return "← Zurück zu " + (state.currentPersonName || "Person");
-        if (state.currentCompanyId) return "← Zurück zu " + (state.currentCompanyName || "Studio");
-        return typeCode === "s" ? "← Serien durchsuchen" : "← Filme durchsuchen";
+        if (state.isSearchMode) return "← Zurück";
+        if (state.currentView === "wishlist") return "← Merkliste";
+        if (state.currentCollectionId) return "← Filmreihe";
+        if (state.currentUniverseId) return "← Universum";
+        if (state.currentPersonId) return "← " + (state.currentPersonName || "Person");
+        if (state.currentCompanyId) return "← " + (state.currentCompanyName || "Studio");
+        return "← Zurück";
       }
 
       function getPlayableMovieFilesForHeroClient(d) {
@@ -1840,6 +1960,7 @@
       }
 
       function prepareDiscoverContextFromModal() {
+        saveLastClosedDetailItemClient();
         closeDetailModal();
         closeAutocomplete();
         if (state.activeDetails && (state.activeDetails.typeCode === "m" || state.activeDetails.typeCode === "s")) {
@@ -1872,11 +1993,13 @@
       function searchByYearFromModal(yearVal) {
         const y = String(yearVal || "").trim();
         if (!y) return;
+        saveLastClosedDetailItemClient();
         closeDetailModal();
         runSearch(false, "(" + y + ")", "all");
       }
 
       function filterOrSearchStudioFromModal(studioName, companyId = "") {
+        saveLastClosedDetailItemClient();
         if (companyId) {
           closeDetailModal();
           openStudioView(companyId, studioName);
@@ -1898,6 +2021,7 @@
       }
 
       function filterOrSearchProviderFromModal(provName) {
+        saveLastClosedDetailItemClient();
         const norm = String(provName || "").toLowerCase();
         const matched = PLATFORM_OPTIONS_CLIENT.find(pl =>
           norm.includes(pl.label.toLowerCase()) ||
@@ -1911,6 +2035,52 @@
           closeDetailModal();
           runSearch(false, provName, "all");
         }
+      }
+
+      function buildMutedActiveFiltersForDetailHtml() {
+        const s = state.settings || {};
+        const chips = [];
+        if (state.isSearchMode && state.searchQuery) {
+          chips.push('<span class="detail-active-filter-chip muted" title="Aktive Suche">🔍 „' + esc(state.searchQuery) + '“</span>');
+        }
+        if (state.currentCompanyId && state.currentCompanyName) {
+          chips.push('<span class="detail-active-filter-chip muted" title="Aktives Studio">🏢 ' + esc(state.currentCompanyName) + '</span>');
+        }
+        if (state.currentPersonId && state.currentPersonName) {
+          chips.push('<span class="detail-active-filter-chip muted" title="Aktive Person">🌟 ' + esc(state.currentPersonName) + '</span>');
+        }
+        if (state.genreId && state.genreId !== "all") {
+          const genreMap = (Object.keys(state.genres || {}).length > 0)
+            ? state.genres
+            : (state.type === "s" ? SERIES_GENRES_CLIENT : MOVIE_GENRES_CLIENT);
+          const gEntry = Object.entries(genreMap).find(([, id]) => String(id) === String(state.genreId));
+          if (gEntry) {
+            chips.push('<span class="detail-active-filter-chip muted">' + genreEmoji(gEntry[0]) + ' ' + esc(gEntry[0]) + '</span>');
+          }
+        }
+        (s.includedGenres || []).slice(0, 3).forEach(g => {
+          chips.push('<span class="detail-active-filter-chip muted">' + genreEmoji(g) + ' ' + esc(g) + '</span>');
+        });
+        const rawIncPlatforms = Array.isArray(s.includedPlatforms) ? s.includedPlatforms : [];
+        const incPlatforms = Array.from(new Set(rawIncPlatforms.map(normalizePlatformIdClient).filter(Boolean)));
+        incPlatforms.slice(0, 2).forEach(pid => {
+          chips.push('<span class="detail-active-filter-chip muted">' + esc(getPlatformDisplayLabelClient(pid)) + '</span>');
+        });
+        (s.includedEras || []).slice(0, 2).forEach(eid => {
+          const er = ERA_OPTIONS_CLIENT.find(e => e.id === eid);
+          chips.push('<span class="detail-active-filter-chip muted">📅 ' + esc(er ? er.label : eid) + '</span>');
+        });
+        (s.includedStudios || []).slice(0, 2).forEach(sid => {
+          const st = STUDIO_OPTIONS_CLIENT.find(x => x.id === sid);
+          chips.push('<span class="detail-active-filter-chip muted">' + esc(st ? (st.icon + " " + st.label) : sid) + '</span>');
+        });
+        (s.includedFsk || []).slice(0, 1).forEach(f => {
+          chips.push('<span class="detail-active-filter-chip muted">🔞 ' + esc(f) + '</span>');
+        });
+        if (s.onlyVipStreams && isCurrentUserVip()) {
+          chips.push('<span class="detail-active-filter-chip muted">🌟 Nur Streams</span>');
+        }
+        return chips.slice(0, 6).join("");
       }
 
       function switchEmbedSource(sourceKey, saveAsDefault = true) {
@@ -2062,6 +2232,12 @@
           if (document.body) {
             document.body.classList.add("modal-open-pause-hero");
           }
+          // Suchbegriff oben in der Suchleiste sichtbar halten, falls man aus einer Suche oder Personen-Ansicht kommt
+          const topSearchInp = document.getElementById("searchInput");
+          if (topSearchInp && state.searchQuery && !topSearchInp.value) {
+            topSearchInp.value = state.searchQuery;
+            updateSearchClearBtnVisibility();
+          }
 
           const m = document.getElementById("modalRoot");
           const tr = d.trailers || null;
@@ -2100,16 +2276,34 @@
           const nextAdj = getAdjacentDetailItem(1);
           const backBtnLabel = getDetailBackButtonLabelClient(type);
 
-          // 1. Kicker-Zeile über dem monumentalen Titel: Typ, Universum, Filmreihe & Streaming-Anbieter (dezent & direkt anklickbar)
+          // Einheitliche Topbar (#topUnifiedBar) aktualisieren: Links "← Zurück", Rechts "◀ / ▶"
+          const topBackBtn = document.getElementById("topBarBackBtn");
+          const topBackLbl = document.getElementById("topBarBackBtnLabel");
+          if (topBackLbl) topBackLbl.textContent = backBtnLabel.replace(/^←\\s*/, "");
+          if (topBackBtn) topBackBtn.title = backBtnLabel + " (Esc / B / ○)";
+          const topPrevBtn = document.getElementById("modalAdjPrevBtn");
+          const topNextBtn = document.getElementById("modalAdjNextBtn");
+          if (topPrevBtn) {
+            topPrevBtn.disabled = !prevAdj;
+            topPrevBtn.style.opacity = prevAdj ? "1" : "0.35";
+            topPrevBtn.title = prevAdj ? ("Vorheriger Titel: " + prevAdj.title + " (L1 / LB)") : "Kein vorheriger Titel";
+          }
+          if (topNextBtn) {
+            topNextBtn.disabled = !nextAdj;
+            topNextBtn.style.opacity = nextAdj ? "1" : "0.35";
+            topNextBtn.title = nextAdj ? ("Nächster Titel: " + nextAdj.title + " (R1 / RB)") : "Kein nächster Titel";
+          }
+
+          // 1. Sub-Topbar-Zeile unter der Hauptleiste: Typ, Universum, Filmreihe, Anbieter links + ausgegraute aktive Filter rechts
           const kickerItems = [
             '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "📺 SERIE" : "🎬 FILM") + '</span>',
             d.universe ? (
-              '<button type="button" class="detail-kicker-link" onclick="closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
+              '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
                 '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
               '</button>'
             ) : "",
             d.collection ? (
-              '<button type="button" class="detail-kicker-link" onclick="closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')" title="Filmreihe öffnen: ' + esc(d.collection.name) + '">' +
+              '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')" title="Filmreihe öffnen: ' + esc(d.collection.name) + '">' +
                 '<span>🍿</span><span>' + esc(d.collection.name) + '</span>' +
               '</button>'
             ) : "",
@@ -2117,6 +2311,7 @@
               '<button type="button" class="detail-kicker-link" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
             )
           ].filter(Boolean).join("");
+          const mutedActiveFiltersHtml = buildMutedActiveFiltersForDetailHtml();
 
           // 2. Einzeilige, luftige Metadaten-Zeile unter dem Titel (Rating · Jahr · Laufzeit · FSK · Genres · Studios · Regie)
           const cleanStatusLabel = (type === "s" && d.statusText && d.statusText !== "Unbekannt")
@@ -2128,7 +2323,7 @@
             (d.runtime && d.runtime !== "Keine Angabe") ? ('<span>' + esc(d.runtime) + '</span>') : "",
             (type === "s" && d.numberOfSeasons) ? ('<span>' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? " Staffel" : " Staffeln") + " (" + Number(d.numberOfEpisodes || 0) + " Flg.)</span>") : "",
             hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
-            (d.country && d.country !== "k.A." && d.country !== "Keine Angabe") ? ('<span class="detail-meta-link" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">' + esc(d.country) + '</span>') : "",
+            (d.country && d.country !== "k.A." && d.country !== "Keine Angabe") ? ('<span class="detail-meta-link" tabindex="0" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">' + esc(d.country) + '</span>') : "",
             cleanStatusLabel ? ('<span>' + esc(cleanStatusLabel) + '</span>') : "",
             ...genresListClean.map(gName =>
               '<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>'
@@ -2137,7 +2332,7 @@
               '<span class="detail-meta-studio" tabindex="0" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || "") + '\\')" title="Studio öffnen: ' + esc(sObj.name) + '">🏢 ' + esc(sObj.name) + '</span>'
             ),
             ...directorsArr.slice(0, 2).map(p =>
-              '<span class="detail-meta-link" tabindex="0" onclick="' + (p.id ? ('closeDetailModal();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')') : ('closeDetailModal();runSearch(false,\\'' + esc(p.name) + '\\',\\'person\\')')) + '" title="Regie: ' + esc(p.name) + '">🎬 ' + esc(p.name) + '</span>'
+              '<span class="detail-meta-link" tabindex="0" onclick="' + (p.id ? ('saveLastClosedDetailItemClient();closeDetailModal();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')') : ('saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(p.name) + '\\',\\'person\\')')) + '" title="Regie: ' + esc(p.name) + '">🎬 ' + esc(p.name) + '</span>'
             )
           ].filter(Boolean);
           const unboxedMetaHtml = unboxedMetaParts.join('<span class="detail-meta-dot">·</span>');
@@ -2194,10 +2389,10 @@
           const primaryPlayBtnLabel = hasVipStreams
             ? (type === "s"
                 ? (savedProg && savedProg.season && savedProg.episode
-                    ? ("▶ Abspielen (S" + String(savedProg.season).padStart(2, "0") + "E" + String(savedProg.episode).padStart(2, "0") + ")")
+                    ? ("▶ Weiter: S" + Number(savedProg.season) + " · E" + Number(savedProg.episode))
                     : "▶ Abspielen")
                 : "▶ Abspielen")
-            : "▶ Trailer";
+            : "🎬 Trailer";
 
           const primaryVersionBadgeText = String(d.primaryVersionLabel || (Array.isArray(d.availableVersions) && d.availableVersions[0]) || "").trim();
           const canReportMedia = Boolean(vipAllowed || state.authUser?.isAdmin);
@@ -2227,8 +2422,8 @@
                     const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
                     const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w185", "") : fbAvatar;
                     const clickHandler = c.id
-                      ? ('closeDetailModal();openPersonView(' + Number(c.id) + ',\\'' + esc(cName) + '\\')')
-                      : ('closeDetailModal();runSearch(false,\\'' + esc(cName) + '\\',\\'person\\')');
+                      ? ('saveLastClosedDetailItemClient();closeDetailModal();openPersonView(' + Number(c.id) + ',\\'' + esc(cName) + '\\')')
+                      : ('saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(cName) + '\\',\\'person\\')');
                     return '<div class="detail-cast-card" tabindex="0" onclick="' + clickHandler + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + clickHandler + ';}" title="Alle Filme & Serien mit ' + esc(cName) + ' anzeigen">' +
                       '<div class="detail-cast-photo-wrap">' +
                         '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
@@ -2247,17 +2442,28 @@
             "--hero-bg-landscape:url('" + esc(backdropW1280 || portraitBg) + "');" +
             "--hero-bg-portrait:url('" + esc(portraitBg || backdropW1280) + "');";
 
-          m.innerHTML = '<div class="modal-backdrop">' +
-            '<div class="modal">' +
-              /* 1. STICKY TOP-BAR MIT EINZIGEM ZURÜCK-BUTTON (KEIN X-BUTTON) & VOR/ZURÜCK-NAVIGATION */
-              '<div class="detail-top-sticky-bar">' +
-                '<button type="button" id="detailBackBtn" class="detail-back-btn" onclick="closeDetailModal()" title="Zurück zur vorherigen Ansicht (Esc)">' +
-                  esc(backBtnLabel) +
-                '</button>' +
-                '<div class="detail-adj-nav">' +
-                  (prevAdj ? '<button type="button" id="modalAdjPrevBtn" class="detail-adj-btn" onclick="navigateDetailModalAdjacent(-1)" title="Vorheriger Titel: ' + esc(prevAdj.title) + '">◀</button>' : '') +
-                  (nextAdj ? '<button type="button" id="modalAdjNextBtn" class="detail-adj-btn" onclick="navigateDetailModalAdjacent(1)" title="Nächster Titel: ' + esc(nextAdj.title) + '">▶</button>' : '') +
+          const collectionSectionHtml = (type === "m" && d.collection && d.collection.id) ? (
+            '<section id="detailCollectionSectionWrap" class="detail-section-block" style="display:none">' +
+              '<div class="detail-section-header">' +
+                '<h3 class="detail-section-heading">🍿 Alle Teile der Filmreihe: ' + esc(d.collection.name || "Filmreihe") + '</h3>' +
+                '<button type="button" class="btn-tool-quiet" onclick="saveLastClosedDetailItemClient();closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')">Komplette Reihe öffnen ➔</button>' +
+              '</div>' +
+              '<div class="detail-carousel-wrap">' +
+                '<button type="button" class="detail-carousel-arrow prev" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',-1)" title="Nach links scrollen">‹</button>' +
+                '<div id="detailCollectionTrackEl" class="detail-similar-track">' +
+                  '<div style="font-size:12.5px;color:#94a3b8;padding:12px 4px">⏳ Lade alle Teile der Filmreihe...</div>' +
                 '</div>' +
+                '<button type="button" class="detail-carousel-arrow next" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',1)" title="Nach rechts scrollen">›</button>' +
+              '</div>' +
+            '</section>'
+          ) : "";
+
+          m.innerHTML = '<div class="modal-backdrop" onwheel="onModalWheelHorizontalClient(event)">' +
+            '<div class="modal detail-morph-enter">' +
+              /* 1. KOMPAKTE SUB-TOPBAR DIREKT UNTER DER FESTEN HAUPTLEISTE (#topUnifiedBar) */
+              '<div class="detail-sub-topbar-strip">' +
+                '<div class="detail-sub-topbar-left">' + kickerItems + '</div>' +
+                (mutedActiveFiltersHtml ? ('<div class="detail-sub-topbar-right" title="Aktive Suche & Filter im Hintergrund">' + mutedActiveFiltersHtml + '</div>') : '') +
               '</div>' +
 
               /* 2. FULLSCREEN KINO-HERO-STAGE MIT SLIDER-BACKDROP, AMBILIGHT & SWIPE-FUNKTION */
@@ -2267,9 +2473,7 @@
                 '<div class="detail-scrim-layer"></div>' +
 
                 '<div class="detail-hero-content">' +
-                  '<div class="detail-kicker-row">' + kickerItems + '</div>' +
-
-                  '<h1 class="detail-monumental-title" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.title) + '\\')" title="Nach „' + esc(d.title) + '“ suchen">' +
+                  '<h1 class="detail-monumental-title" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.title) + '\\')" title="Nach „' + esc(d.title) + '“ suchen">' +
                     esc(d.title) +
                   '</h1>' +
 
@@ -2284,10 +2488,10 @@
                       versionSelectHtml +
                       (hasVipStreams ? buildModalDeliveryTargetSelectorHtml() : '') +
                       (hasVipStreams ? (
-                        '<button type="button" class="detail-btn-glass" onclick="playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')" title="Trailer im Vollbild abspielen">🎬 Trailer</button>'
+                        '<button type="button" id="detailTrailerBtn" class="detail-btn-glass" onclick="playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')" title="Trailer im Vollbild abspielen">🎬 Trailer</button>'
                       ) : '') +
                       '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
-                        (d.isSaved ? "✓ Merkliste" : "＋ Merkliste") +
+                        (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +
                       '</button>' +
                       ((d.providerButtons && d.providerButtons.length > 0) ? (
                         d.providerButtons.map(pb =>
@@ -2311,7 +2515,7 @@
                     const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
                     const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
                     return '<div class="detail-overview-wrap">' +
-                      '<div id="modalHeaderOverviewEl" class="expandable-desc-box" tabindex="0" role="button" aria-expanded="false" style="font-size:calc(14px * var(--scale-text));line-height:1.62;color:#e2e8f0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
+                      '<div id="modalHeaderOverviewEl" class="expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
                         '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
                         '<div class="desc-actions-row">' +
                           '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
@@ -2336,7 +2540,7 @@
                 '</div>' +
               '</section>' +
 
-              /* 5. UNTERER CONTENT-BEREICH: STAFFELN/EPISODEN BZW. MEHRTEILER, CAST MIT FOTOS & ÄHNLICHE TITEL MIT COVERN */
+              /* 5. UNTERER CONTENT-BEREICH: STAFFELN/EPISODEN BZW. MEHRTEILER, CAST MIT FOTOS, FILMREIHE & ÄHNLICHE TITEL */
               '<div class="detail-content-body">' +
                 (type === "s" ? (
                   '<section id="detailStreamsSection" class="detail-section-block">' +
@@ -2359,6 +2563,8 @@
 
                 castSectionHtml +
 
+                collectionSectionHtml +
+
                 '<section id="detailSimilarSectionWrap" class="detail-section-block" style="display:flex">' +
                   '<div class="detail-section-header">' +
                     '<h3 class="detail-section-heading">Das könnte dir auch gefallen</h3>' +
@@ -2380,6 +2586,9 @@
           }
           unlockCatalogCoversLoadingClient(false);
           observeLazyCoversInContainerClient(m);
+          if (type === "m" && d.collection && d.collection.id) {
+            autoLoadCollectionInDetailClient(d.collection.id, d.id || id);
+          }
           autoLoadSimilarInDetailClient(type, d.id || id);
 
           if (typeof syncExpandableDescriptionsOverflowClient === "function") {
@@ -2391,7 +2600,8 @@
           if (type === "s") {
             loadSeason(d.id, initialSeason, false);
           }
-          const firstModalBtn = m.querySelector("#detailPrimaryPlayBtn, #modalWishlistBtn, #detailBackBtn");
+          // Standard-Fokus beim Öffnen der Detailansicht direkt auf den Trailer-Button legen
+          const firstModalBtn = m.querySelector("#detailTrailerBtn, #detailPrimaryPlayBtn, #modalWishlistBtn") || document.getElementById("topBarBackBtn");
           if (firstModalBtn && typeof jumpSpatialFocus === "function") {
             jumpSpatialFocus(firstModalBtn, false);
           }
@@ -4304,12 +4514,15 @@
             : resolveClientEpisodeTitle(seriesId, seasonNum, ep.episode_number, (ep.files && ep.files[0]) || null);
           ep.name = epNameClean;
           const isLastWatched = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(prog.episode) === Number(ep.episode_number));
+          const isAlreadyWatched = Boolean(prog && (Number(seasonNum) < Number(prog.season) || (Number(seasonNum) === Number(prog.season) && Number(ep.episode_number) <= Number(prog.episode))));
           const isNextEpisode = Boolean(prog && Number(prog.season) === Number(seasonNum) && Number(ep.episode_number) === Number(prog.episode) + 1);
           const progBadgeHtml = isLastWatched
-            ? '<span class="ep-progress-badge">👁️ Zuletzt</span>'
+            ? '<span class="ep-progress-badge">✓ Zuletzt gesehen</span>'
             : isNextEpisode
-              ? '<span class="ep-progress-badge next">▶ Nächste</span>'
-              : '';
+              ? '<span class="ep-progress-badge next">▶ Nächste Folge</span>'
+              : isAlreadyWatched
+                ? '<span class="ep-progress-badge">✓ Gesehen</span>'
+                : '';
 
           let filesBtns = "";
           let activeFileForActions = (Array.isArray(ep.files) && ep.files[0]) ? ep.files[0] : null;
@@ -5257,10 +5470,10 @@
           if (state.activeDetails) state.activeDetails.isSaved = isSaved;
           if (btn) {
             btn.disabled = false;
-            btn.className = "btn " + (isSaved ? "green" : "");
-            btn.textContent = isSaved ? "✅ Gespeichert" : "💾 Merkliste";
+            btn.className = "detail-btn-glass " + (isSaved ? "saved" : "");
+            btn.textContent = isSaved ? "✓ Gespeichert" : "＋ Speichern";
           }
-          showHudToast(isSaved ? "💾 Zur Merkliste hinzugefügt" : "🗑️ Aus Merkliste entfernt");
+          showHudToast(isSaved ? "✓ Gespeichert" : "🗑️ Aus Merkliste entfernt");
         } catch (e) {
           if (btn) btn.disabled = false;
         }
@@ -5582,6 +5795,9 @@
       }
 
       async function loadWishlist(folderFilter) {
+        if (document.getElementById("modalRoot")?.innerHTML) {
+          closeDetailModal();
+        }
         if (folderFilter !== undefined) state.wlFolder = folderFilter;
         state.currentView = "wishlist";
         const root = document.getElementById("appRoot");
