@@ -757,6 +757,7 @@
       function buildCatalogCardHtmlClient(it, idx, opts = {}) {
         const showTop10Ranks = Boolean(opts.showTop10Ranks);
         const isMixedMediaView = Boolean(opts.isMixedMediaView);
+        const vipAllowed = opts.vipAllowed !== undefined ? Boolean(opts.vipAllowed) : isCurrentUserVip();
         const defaultPageNum = Math.max(1, Number(opts.pageNum || it._pageNum || state.page || 1));
         const itemPageNum = Math.max(1, Number(it._pageNum) || defaultPageNum);
         const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : state.type;
