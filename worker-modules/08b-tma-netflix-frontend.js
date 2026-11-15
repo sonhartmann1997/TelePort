@@ -1531,86 +1531,316 @@
         }
       }
 
-      async function loadSimilarInTma(type, id) {
-        setBusyState(true, "✨ Suche ähnliche Titel...");
+      function buildActorAvatarFallbackSvgClient(actorName) {
+        const clean = String(actorName || "Cast").trim();
+        const parts = clean.split(/\\s+/).filter(Boolean);
+        const initials = parts.length >= 2
+          ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+          : clean.slice(0, 2).toUpperCase();
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="185" height="240" viewBox="0 0 185 240">' +
+          '<defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#1e293b"/><stop offset="100%" stop-color="#0f172a"/></linearGradient></defs>' +
+          '<rect width="185" height="240" fill="url(#ag)"/>' +
+          '<circle cx="92.5" cy="86" r="34" fill="#334155"/>' +
+          '<path d="M35 212 C35 162 150 162 150 212" fill="#334155"/>' +
+          '<text x="92.5" y="96" fill="#f8fafc" font-family="sans-serif" font-size="22" font-weight="800" text-anchor="middle">' + esc(initials) + '</text>' +
+        '</svg>';
+        return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+      }
+
+      function scrollDetailHorizontalTrackClient(trackId, dir) {
+        const el = document.getElementById(trackId);
+        if (!el) return;
+        const step = Math.max(260, Math.round(el.clientWidth * 0.78));
+        el.scrollBy({ left: dir * step, behavior: "smooth" });
+      }
+
+      async function autoLoadSimilarInDetailClient(type, id) {
+        const wrap = document.getElementById("detailSimilarSectionWrap");
+        const track = document.getElementById("detailSimilarTrackEl");
+        if (!track) return;
+        const onlyVipFlag = state.settings?.onlyVipStreams ? "1" : "0";
         try {
-          const r = await apiFetchJson(API_BASE + "/similar?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&id=" + id);
-          const box = document.getElementById("similarModalBox");
-          const items = r.items || [];
-          if (!box) return;
+          const r = await apiFetchJson(
+            API_BASE + "/similar?chatId=" + encodeURIComponent(chatId) +
+            "&type=" + encodeURIComponent(type) +
+            "&id=" + encodeURIComponent(id) +
+            "&onlyVip=" + onlyVipFlag
+          );
+          if (!state.activeDetails || String(state.activeDetails.id) !== String(id)) return;
+          let items = Array.isArray(r?.items) ? r.items : [];
+          if (state.settings?.onlyVipStreams) {
+            items = items.filter(it => it && Boolean(it.vipQuality || it.hasVipStream));
+          }
           if (items.length === 0) {
-            box.innerHTML = '<div style="font-size:12px;color:#94a3b8;margin-top:8px">Keine ähnlichen Titel mit den aktuellen Filtern gefunden.</div>';
+            if (wrap) wrap.style.display = "none";
             return;
           }
-          box.innerHTML = '<div class="modal-sub-box" style="margin-top:10px;padding:12px;background:var(--card);border-radius:10px;border:1px solid rgba(255,255,255,0.08)">' +
-            '<div style="font-size:12.5px;font-weight:800;color:var(--text);margin-bottom:8px">✨ Ähnliche Empfehlungen (' + items.length + '):</div>' +
-            '<div class="carousel" style="grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:8px">' +
-              items.slice(0, 8).map(it => {
-                const tc = it.media_type === 'tv' ? 's' : type;
-                const itemTitle = it.title || it.name || 'Titel';
-                const fbSvg = buildPosterFallbackSvg(itemTitle, tc === 's');
-                const simPoster = resolvePosterUrlClient(it.poster_path, 'w342', it.external_poster_url || it.poster || '') || fbSvg;
-                return '<div class="card" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\''+tc+'\\','+it.id+',false)">' +
-                  '<div class="card-poster-wrap">' +
-                    '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
-                  '</div>' +
-                  '<div class="card-body"><div class="card-title"><span class="card-title-text">' + esc(itemTitle) + '</span></div><div class="card-sub"><span>⭐ ' + (it.vote_average ? Number(it.vote_average).toFixed(1) : '–') + '</span><span>' + esc((it.release_date || it.first_air_date || '').slice(0,4)) + '</span></div></div>' +
-                '</div>';
-              }).join("") +
-            '</div>' +
-          '</div>';
+          if (wrap) wrap.style.display = "flex";
+          track.innerHTML = items.slice(0, 16).map(it => {
+            const tc = it.media_type === "tv" ? "s" : (it.media_type === "movie" ? "m" : type);
+            const itemTitle = String(it.title || it.name || "Titel").trim();
+            const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
+            const simPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+            const voteStr = it.vote_average ? Number(it.vote_average).toFixed(1) : "";
+            const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
+            const typeWord = tc === "s" ? "Serie" : "Film";
+            const subParts = [voteStr, yearStr, typeWord].filter(Boolean).join(" · ");
+            return '<div class="detail-sim-card" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
+              '<div class="detail-sim-overlay">' +
+                '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
+                '<div class="detail-sim-sub">' + esc(subParts) + '</div>' +
+              '</div>' +
+            '</div>';
+          }).join("");
           unlockCatalogCoversLoadingClient(false);
-          observeLazyCoversInContainerClient(box);
-          const firstSimCard = box.querySelector(".card");
-          if (firstSimCard && typeof jumpSpatialFocus === "function") {
-            jumpSpatialFocus(firstSimCard, true);
-          }
-        } finally {
-          setBusyState(false);
+          observeLazyCoversInContainerClient(track);
+        } catch (_err) {
+          if (wrap) wrap.style.display = "none";
         }
       }
 
-      // Wischgesten (Swipe) und Pfeil-Wechsel (◀ / ▶) zum nächsten/vorherigen Film im geöffneten Detail-Modal (#10)
+      async function loadSimilarInTma(type, id) {
+        return autoLoadSimilarInDetailClient(type, id);
+      }
+
+      // Wischgesten (Swipe Touch + Maus) und Pfeil-Wechsel (◀ / ▶) zum nächsten/vorherigen Titel basierend auf der Herkunftsliste (#10)
+      function getActiveDetailNavigationPoolClient() {
+        if (state.currentView === "wishlist" && Array.isArray(state.cachedWishlistItems) && state.cachedWishlistItems.length > 1) {
+          return state.cachedWishlistItems;
+        }
+        if (Array.isArray(state.items) && state.items.length > 1) {
+          return state.items;
+        }
+        return [];
+      }
+
       function getAdjacentDetailItem(step) {
-        if (!state.activeDetails || !Array.isArray(state.items) || state.items.length <= 1) return null;
+        const pool = getActiveDetailNavigationPoolClient();
+        if (!state.activeDetails || pool.length <= 1) return null;
         const curId = String(state.activeDetails.id);
-        const idx = state.items.findIndex(x => x && String(x.id) === curId);
+        const idx = pool.findIndex(x => x && String(x.id || x.tmdb_id) === curId);
         if (idx === -1) return null;
-        const nextIdx = (idx + step + state.items.length) % state.items.length;
-        const cand = state.items[nextIdx];
-        if (!cand || !cand.id) return null;
-        const tc = cand.media_type === "tv" ? "s" : cand.media_type === "movie" ? "m" : state.type;
+        const nextIdx = (idx + step + pool.length) % pool.length;
+        const cand = pool[nextIdx];
+        const candId = cand && (cand.id || cand.tmdb_id);
+        if (!cand || !candId) return null;
+        const tc = cand.media_type === "tv" || cand.type === "s" ? "s" : cand.media_type === "movie" || cand.type === "m" ? "m" : state.type;
         return {
           typeCode: tc,
-          id: cand.id,
+          id: candId,
           title: cand.title || cand.name || "",
-          poster_path: cand.poster_path || "",
+          poster_path: cand.poster_path || cand.poster || "",
           index: nextIdx,
-          total: state.items.length
+          total: pool.length
         };
       }
 
       function navigateDetailModalAdjacent(step) {
         const adj = getAdjacentDetailItem(step);
         if (!adj) return;
+        triggerTmaHapticClient("selection");
         openDetails(adj.typeCode, adj.id, false, adj.title, adj.poster_path);
       }
 
+      let modalTouchStartY = 0;
+      let modalPointerStartX = 0;
+      let modalPointerStartY = 0;
+
+      function isInteractiveDetailHeroControl(target) {
+        if (!target || typeof target.closest !== "function") return false;
+        return Boolean(
+          target.closest(
+            "button, a, select, input, .detail-cast-track, .detail-similar-track, .expandable-desc-box.is-expanded"
+          )
+        );
+      }
+
       function onModalHeroTouchStart(ev) {
-        if (ev.touches && ev.touches[0]) modalTouchStartX = ev.touches[0].clientX;
+        if (isInteractiveDetailHeroControl(ev.target)) {
+          modalTouchStartX = 0;
+          modalTouchStartY = 0;
+          return;
+        }
+        if (ev.touches && ev.touches[0]) {
+          modalTouchStartX = ev.touches[0].clientX;
+          modalTouchStartY = ev.touches[0].clientY;
+        }
       }
 
       function onModalHeroTouchEnd(ev) {
         if (!modalTouchStartX || !ev.changedTouches || !ev.changedTouches[0]) return;
         const dx = ev.changedTouches[0].clientX - modalTouchStartX;
+        const dy = ev.changedTouches[0].clientY - (modalTouchStartY || ev.changedTouches[0].clientY);
         modalTouchStartX = 0;
-        if (Math.abs(dx) > 55) {
+        modalTouchStartY = 0;
+        if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.25) {
           navigateDetailModalAdjacent(dx < 0 ? 1 : -1);
         }
       }
 
+      function onModalHeroMouseDown(ev) {
+        if (ev.button !== 0 || isInteractiveDetailHeroControl(ev.target)) {
+          modalPointerStartX = 0;
+          modalPointerStartY = 0;
+          return;
+        }
+        modalPointerStartX = ev.clientX;
+        modalPointerStartY = ev.clientY;
+      }
+
+      function onModalHeroMouseUp(ev) {
+        if (!modalPointerStartX) return;
+        const dx = ev.clientX - modalPointerStartX;
+        const dy = ev.clientY - (modalPointerStartY || ev.clientY);
+        modalPointerStartX = 0;
+        modalPointerStartY = 0;
+        if (Math.abs(dx) > 75 && Math.abs(dx) > Math.abs(dy) * 1.35) {
+          navigateDetailModalAdjacent(dx < 0 ? 1 : -1);
+        }
+      }
+
+      function getDetailBackButtonLabelClient(typeCode) {
+        if (state.isSearchMode) return "← Zurück zu den Suchergebnissen";
+        if (state.currentView === "wishlist") return "← Zurück zur Merkliste";
+        if (state.currentCollectionId) return "← Zurück zur Filmreihe";
+        if (state.currentUniverseId) return "← Zurück zum Universum";
+        if (state.currentPersonId) return "← Zurück zu " + (state.currentPersonName || "Person");
+        if (state.currentCompanyId) return "← Zurück zu " + (state.currentCompanyName || "Studio");
+        return typeCode === "s" ? "← Serien durchsuchen" : "← Filme durchsuchen";
+      }
+
+      function getPlayableMovieFilesForHeroClient(d) {
+        const allRawFiles = Array.isArray(d?.files) ? d.files.filter(f => f && f.telegram_file_id) : [];
+        const isArch = (f) => Boolean(
+          f.is_download_only || f.isArchive || f.type === "archive" ||
+          /\\.(?:rar|zip|7z|iso|tar|gz|r\\d{2}|z\\d{2})$|\\.(?:7z|zip|rar)\\.\\d{3}$/i.test(String(f.raw_filename || f.file_name || "")) ||
+          String(f.codec || "").toUpperCase() === "RAR"
+        );
+        return allRawFiles.filter(f => !isArch(f));
+      }
+
+      function getSeriesVersionProfilesForHeroClient(d) {
+        const files = Array.isArray(d?.allStreamFiles) && d.allStreamFiles.length > 0
+          ? d.allStreamFiles
+          : (Array.isArray(d?.files) ? d.files : []);
+        const map = new Map();
+        for (const f of files) {
+          if (!f || f.is_download_only || f.isDownloadOnly) continue;
+          const vLbl = String(f.versionLabel || f.version_label || cleanUserVisibleStreamTagsClient(f.tags || "") || "Originalfassung").trim() || "Originalfassung";
+          const qLbl = String(f.quality || "1080p").trim() || "1080p";
+          const key = qLbl + " · " + vLbl;
+          map.set(key, (map.get(key) || 0) + 1);
+        }
+        if (map.size === 0 && Array.isArray(d?.availableVersions)) {
+          for (const v of d.availableVersions) {
+            if (!v) continue;
+            const key = (d.vipQuality || "1080p") + " · " + String(v).trim();
+            map.set(key, 1);
+          }
+        }
+        return Array.from(map.entries()).map(([key, count]) => ({ key, count }));
+      }
+
+      function onDetailHeroVersionChangeClient(selectEl) {
+        if (!selectEl || !state.activeDetails) return;
+        const val = String(selectEl.value || "");
+        const d = state.activeDetails;
+        const type = d.typeCode || "m";
+        state.activeDetails._selectedHeroVersionValue = val;
+        if (type === "s") {
+          const curSeason = Number(state.activeDetails._activeLoadedSeason || d.firstVipSeason || 1);
+          selectSeasonPreferredProfileClient(d.id, curSeason, val || "auto");
+        }
+      }
+
+      function triggerDetailHeroPrimaryPlayClient() {
+        const d = state.activeDetails;
+        if (!d) return;
+        const type = d.typeCode || "m";
+        const vipAllowed = isCurrentUserVip();
+        if (!vipAllowed) {
+          const poster = resolvePosterUrlClient(d.poster_path, "w342", d.external_poster_url || "");
+          playInstantTrailerFromCard(null, type, d.id, d.title, poster);
+          return;
+        }
+        const selectEl = document.getElementById("detailHeroVersionSelect");
+        const selectedVal = selectEl ? String(selectEl.value || "0") : String(d._selectedHeroVersionValue || "0");
+
+        if (type === "m") {
+          const movieFiles = getPlayableMovieFilesForHeroClient(d);
+          if (movieFiles.length === 0) {
+            const seasonSec = document.getElementById("detailStreamsSection");
+            if (seasonSec) seasonSec.scrollIntoView({ behavior: "smooth" });
+            return;
+          }
+          const idx = Math.max(0, Math.min(movieFiles.length - 1, Number(selectedVal) || 0));
+          const f = movieFiles[idx] || movieFiles[0];
+          const sizeLabel = formatFileSizeClient(f.file_size);
+          const partLabel = normalizeClientPartLabel(f.part, f.raw_filename || "");
+          const tagsLabel = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "");
+          requestTelegramStream(
+            f.telegram_file_id,
+            d.title + (partLabel ? " (" + partLabel + ")" : ""),
+            f.quality || "1080p",
+            { fileSize: sizeLabel, tags: tagsLabel }
+          );
+          return;
+        }
+
+        // Serie: Spiele gespeicherte Fortschritts-Folge oder erste verfügbare Folge in der gewählten Version ab
+        const prog = getSeriesProgress(d.id);
+        const episodes = Array.isArray(activeSeasonCacheEpisodes) ? activeSeasonCacheEpisodes : [];
+        let targetEp = null;
+        if (prog && prog.episode) {
+          targetEp = episodes.find(e => Number(e.episode_number) === Number(prog.episode) && Array.isArray(e.files) && e.files.length > 0);
+        }
+        if (!targetEp) {
+          targetEp = episodes.find(e => Array.isArray(e.files) && e.files.length > 0) || null;
+        }
+        if (targetEp && Array.isArray(targetEp.files) && targetEp.files.length > 0) {
+          let chosenFile = targetEp._resolvedActiveFile || targetEp.files[0];
+          if (selectedVal && selectedVal !== "auto") {
+            const matched = targetEp.files.find(f => {
+              const vLbl = String(f.versionLabel || f.version_label || cleanUserVisibleStreamTagsClient(f.tags || "") || "Originalfassung").trim() || "Originalfassung";
+              const qLbl = String(f.quality || "1080p").trim() || "1080p";
+              return (qLbl + " · " + vLbl) === selectedVal;
+            });
+            if (matched) chosenFile = matched;
+          }
+          const curSeason = Number(targetEp.season_number || prog?.season || d.firstVipSeason || 1);
+          const epCode = "S" + String(curSeason).padStart(2, "0") + "E" + String(targetEp.episode_number).padStart(2, "0");
+          const sizeLabel = formatFileSizeClient(chosenFile.file_size);
+          const tagsLabel = cleanUserVisibleStreamTagsClient(chosenFile.tags || chosenFile.versionLabel || chosenFile.version_label || "");
+          setSeriesProgress(d.id, curSeason, targetEp.episode_number, targetEp.name || "");
+          requestTelegramStream(
+            chosenFile.telegram_file_id || chosenFile.file_id,
+            d.title + " " + epCode + (targetEp.name ? " - " + targetEp.name : ""),
+            chosenFile.quality || "1080p",
+            { fileSize: sizeLabel, tags: tagsLabel, seriesId: d.id, seasonNumber: curSeason, episodeNumber: targetEp.episode_number }
+          );
+          return;
+        }
+        const allSeriesFiles = Array.isArray(d.allStreamFiles) ? d.allStreamFiles.filter(f => f && f.telegram_file_id && !f.is_download_only) : [];
+        if (allSeriesFiles.length > 0) {
+          const f0 = allSeriesFiles[0];
+          const sNum = Number(f0.season_number || 1);
+          const eNum = Number(f0.episode_number || 1);
+          const epCode = "S" + String(sNum).padStart(2, "0") + "E" + String(eNum).padStart(2, "0");
+          requestTelegramStream(
+            f0.telegram_file_id,
+            d.title + " " + epCode,
+            f0.quality || "1080p",
+            { fileSize: formatFileSizeClient(f0.file_size), tags: cleanUserVisibleStreamTagsClient(f0.tags || ""), seriesId: d.id, seasonNumber: sNum, episodeNumber: eNum }
+          );
+          return;
+        }
+        const seasonBox = document.getElementById("seasonBox");
+        if (seasonBox) seasonBox.scrollIntoView({ behavior: "smooth" });
+      }
+
       function prepareDiscoverContextFromModal() {
-        document.getElementById("modalRoot").innerHTML = "";
+        closeDetailModal();
         closeAutocomplete();
         if (state.activeDetails && (state.activeDetails.typeCode === "m" || state.activeDetails.typeCode === "s")) {
           state.type = state.activeDetails.typeCode;
@@ -1642,12 +1872,13 @@
       function searchByYearFromModal(yearVal) {
         const y = String(yearVal || "").trim();
         if (!y) return;
-        document.getElementById("modalRoot").innerHTML = "";
+        closeDetailModal();
         runSearch(false, "(" + y + ")", "all");
       }
 
       function filterOrSearchStudioFromModal(studioName, companyId = "") {
         if (companyId) {
+          closeDetailModal();
           openStudioView(companyId, studioName);
           return;
         }
@@ -1661,7 +1892,7 @@
           prepareDiscoverContextFromModal();
           setDirectFilter("studio", matched.id, "force_include");
         } else {
-          document.getElementById("modalRoot").innerHTML = "";
+          closeDetailModal();
           runSearch(false, studioName, "all");
         }
       }
@@ -1677,7 +1908,7 @@
           prepareDiscoverContextFromModal();
           setDirectFilter("platform", matched.id, "force_include");
         } else {
-          document.getElementById("modalRoot").innerHTML = "";
+          closeDetailModal();
           runSearch(false, provName, "all");
         }
       }
@@ -1782,18 +2013,7 @@
         return out;
       }
 
-      function toggleModalCreditsBox() {
-        const box = document.getElementById("modalCreditsCollapseBox");
-        const btn = document.getElementById("modalCreditsToggleBtn");
-        if (!box) return;
-        const isHidden = box.style.display === "none";
-        box.style.display = isHidden ? "grid" : "none";
-        if (btn) {
-          btn.innerHTML = isHidden
-            ? '<span>👥 Besetzung, Regie, Studios & Jahr ausblenden</span><span>▴</span>'
-            : '<span>👥 Besetzung, Regie, Studios & Jahr anzeigen</span><span>▾</span>';
-        }
-      }
+      function toggleModalCreditsBox() {}
 
       function toggleModalMoreActions() {
         const box = document.getElementById("modalMoreActionsBox");
@@ -1811,7 +2031,6 @@
           return;
         }
         saveModalReturnFocusTarget(type, id);
-        // Sofort beim Anklicken "Zuletzt angesehen" aktualisieren (ohne auf API zu warten!)
         if (id && (preTitle || prePoster)) {
           addRecentViewedItem({ id, title: preTitle, poster_path: prePoster }, type);
         } else if (id && Array.isArray(state.items)) {
@@ -1839,293 +2058,345 @@
           if (d.botUsername) state.botUsername = d.botUsername;
           if (d.isSaved) savedKeysSet.add(type + "_" + (d.id || id));
           addRecentViewedItem(d, type);
+
+          if (document.body) {
+            document.body.classList.add("modal-open-pause-hero");
+          }
+
           const m = document.getElementById("modalRoot");
           const tr = d.trailers || null;
-          const posterOrig = resolvePosterUrlClient(d.poster_path, 'original', d.external_poster_url || '');
-          const posterThumb = resolvePosterUrlClient(d.poster_path, 'w342', d.external_poster_url || '');
+          const posterOrig = resolvePosterUrlClient(d.poster_path, "original", d.external_poster_url || "");
+          const posterW780 = resolvePosterUrlClient(d.poster_path, "w780", d.external_poster_url || "");
+          const posterThumb = resolvePosterUrlClient(d.poster_path, "w342", d.external_poster_url || "");
           if (posterThumb) {
             syncCardPosterInDom(type, d.id || id, posterThumb);
           }
-          const backdropOrig = resolvePosterUrlClient(d.backdrop_path, 'original', '');
-          const backdropBanner = resolvePosterUrlClient(d.backdrop_path, 'w780', posterOrig);
-          const ytSearchQuery = encodeURIComponent((d.title || '') + ' ' + (d.year && d.year !== 'K.A.' ? d.year : '') + ' Trailer Deutsch');
-          const ytSearchUrl = 'https://www.youtube.com/results?search_query=' + ytSearchQuery;
+          const backdropOrig = resolvePosterUrlClient(d.backdrop_path, "original", "");
+          const backdropW1280 = resolvePosterUrlClient(d.backdrop_path, "w1280", posterW780 || posterOrig);
+          const portraitBg = posterW780 || backdropW1280 || posterOrig;
+          const ytSearchQuery = encodeURIComponent((d.title || "") + " " + (d.year && d.year !== "K.A." ? d.year : "") + " Trailer Deutsch");
+          const ytSearchUrl = "https://www.youtube.com/results?search_query=" + ytSearchQuery;
 
-          // Klickbare Genres & bereinigte, deduplizierte Streaming-Anbieter
+          // Klickbare Genres, Studios, Regie, Besetzung & Streaming-Anbieter
           const genresListClean = (d.genres && d.genres !== "Keine Angabe")
             ? d.genres.split(",").map(g => g.trim()).filter(Boolean)
             : [];
-          const clickableGenresHtml = genresListClean.map(gName =>
-            '<span class="f-pill inc" tabindex="0" onclick="filterByCategoryFromModal(\\'' + 'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + genreEmoji(gName) + ' ' + esc(gName) + '</span>'
-          ).join(" ");
-          const heroInlineGenresHtml = genresListClean.map(gName =>
-            '<span class="modal-genre-link" tabindex="0" onclick="filterByCategoryFromModal(\\'' + 'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>'
-          ).join('<span class="modal-meta-dot">·</span>');
-
           const directorsArr = Array.isArray(d.directorsList) && d.directorsList.length > 0
             ? d.directorsList
             : (d.directors && d.directors !== "Keine Angabe" ? d.directors.split(",").map(n => ({ name: n.trim(), id: null })).filter(x => x.name) : []);
-          const clickableDirectorsHtml = directorsArr.map(p =>
-            '<span class="f-pill neutral" tabindex="0" onclick="' + (p.id ? ('openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')') : ('runSearch(false,\\'' + esc(p.name) + '\\',\\'person\\')')) + '" title="Alle Titel von ' + esc(p.name) + '">' + esc(p.name) + '</span>'
-          ).join(" ");
-
           const castArr = Array.isArray(d.castList) && d.castList.length > 0
             ? d.castList
-            : (d.casts && d.casts !== "Keine Angabe" ? d.casts.split(",").map(n => ({ name: n.trim(), id: null })).filter(x => x.name) : []);
-          const clickableCastHtml = castArr.map(p =>
-            '<span class="f-pill neutral" tabindex="0" onclick="' + (p.id ? ('openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')') : ('runSearch(false,\\'' + esc(p.name) + '\\',\\'person\\')')) + '" title="Alle Titel mit ' + esc(p.name) + '">' + esc(p.name) + '</span>'
-          ).join(" ");
-
+            : (d.casts && d.casts !== "Keine Angabe" ? d.casts.split(",").map(n => ({ name: n.trim(), id: null, character: "", profile_path: "" })).filter(x => x.name) : []);
           const studiosArr = Array.isArray(d.studiosList) && d.studiosList.length > 0
             ? d.studiosList
             : (d.studios && d.studios !== "Keine Angabe" ? d.studios.split(",").map(s => ({ name: s.trim(), id: null })).filter(x => x.name) : []);
-          const clickableStudiosHtml = studiosArr.map(sObj =>
-            '<span class="f-pill neutral" tabindex="0" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || '') + '\\')" title="Alle Titel von Studio ' + esc(sObj.name) + '">' + esc(sObj.name) + '</span>'
-          ).join(" ");
-
-          const hasValidYear = Boolean(d.year && d.year !== 'K.A.');
-          const clickableYearInDetailsHtml = hasValidYear
-            ? ('<span class="f-pill neutral" tabindex="0" onclick="searchByYearFromModal(\\'' + esc(d.year) + '\\')" title="Alle Filme & Serien aus dem Jahr ' + esc(d.year) + ' suchen">📅 ' + esc(d.year) + '</span>')
-            : '';
-
           const dedupedProvidersList = cleanAndDedupeProvidersClient(d.providers);
-          const clickableProvidersHtml = dedupedProvidersList.map(pName =>
-            '<span class="f-pill inc" tabindex="0" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</span>'
-          ).join(" ");
 
+          const hasValidYear = Boolean(d.year && d.year !== "K.A.");
           const fskClean = String(d.fsk || "").trim();
           const fskFilterTarget = FSK_OPTIONS_CLIENT.find(fo => fskClean.includes(fo)) || "";
           const hasValidFsk = Boolean(fskFilterTarget && !/keine angabe|unbekannt/i.test(fskClean));
           const prevAdj = getAdjacentDetailItem(-1);
           const nextAdj = getAdjacentDetailItem(1);
-          const hasCreditsOrStudios = Boolean(clickableDirectorsHtml || clickableCastHtml || clickableStudiosHtml || clickableYearInDetailsHtml);
+          const backBtnLabel = getDetailBackButtonLabelClient(type);
 
-          // Edle einzeilige Metadaten-Elemente mit Trennpunkten (Apple TV+ / Netflix Stil)
-          const cleanStatusLabel = (type === 's' && d.statusText && d.statusText !== 'Unbekannt')
-            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\\s*/, '').trim()
-            : '';
-          const heroMetaParts = [
-            (d.vote && d.vote !== '0.0') ? ('<span class="modal-meta-item modal-meta-rating">★ ' + esc(d.vote) + '</span>') : '',
-            hasValidFsk ? ('<span class="modal-meta-item modal-meta-fsk clickable" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : '',
-            (d.runtime && d.runtime !== 'Keine Angabe') ? ('<span class="modal-meta-item">' + esc(d.runtime) + '</span>') : '',
-            (d.country && d.country !== 'k.A.' && d.country !== 'Keine Angabe') ? ('<span class="modal-meta-item clickable" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + ' suchen">' + esc(d.country) + '</span>') : '',
-            (type === 's' && d.numberOfSeasons) ? ('<span class="modal-meta-item">' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? ' Staffel' : ' Staffeln') + ' (' + Number(d.numberOfEpisodes || 0) + ' Flg.)</span>') : '',
-            cleanStatusLabel ? ('<span class="modal-meta-item">' + esc(cleanStatusLabel) + '</span>') : ''
+          // 1. Kicker-Zeile über dem monumentalen Titel: Typ, Universum, Filmreihe & Streaming-Anbieter (dezent & direkt anklickbar)
+          const kickerItems = [
+            '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "📺 SERIE" : "🎬 FILM") + '</span>',
+            d.universe ? (
+              '<button type="button" class="detail-kicker-link" onclick="closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
+                '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
+              '</button>'
+            ) : "",
+            d.collection ? (
+              '<button type="button" class="detail-kicker-link" onclick="closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')" title="Filmreihe öffnen: ' + esc(d.collection.name) + '">' +
+                '<span>🍿</span><span>' + esc(d.collection.name) + '</span>' +
+              '</button>'
+            ) : "",
+            ...dedupedProvidersList.slice(0, 3).map(pName =>
+              '<button type="button" class="detail-kicker-link" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
+            )
+          ].filter(Boolean).join("");
+
+          // 2. Einzeilige, luftige Metadaten-Zeile unter dem Titel (Rating · Jahr · Laufzeit · FSK · Genres · Studios · Regie)
+          const cleanStatusLabel = (type === "s" && d.statusText && d.statusText !== "Unbekannt")
+            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\\s*/, "").trim()
+            : "";
+          const unboxedMetaParts = [
+            (d.vote && d.vote !== "0.0") ? ('<span class="detail-meta-rating">★ ' + esc(d.vote) + '</span>') : "",
+            hasValidYear ? ('<span class="detail-meta-link" tabindex="0" onclick="searchByYearFromModal(\\'' + esc(d.year) + '\\')" title="Alle Titel aus dem Jahr ' + esc(d.year) + '">' + esc(d.year) + '</span>') : "",
+            (d.runtime && d.runtime !== "Keine Angabe") ? ('<span>' + esc(d.runtime) + '</span>') : "",
+            (type === "s" && d.numberOfSeasons) ? ('<span>' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? " Staffel" : " Staffeln") + " (" + Number(d.numberOfEpisodes || 0) + " Flg.)</span>") : "",
+            hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
+            (d.country && d.country !== "k.A." && d.country !== "Keine Angabe") ? ('<span class="detail-meta-link" tabindex="0" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">' + esc(d.country) + '</span>') : "",
+            cleanStatusLabel ? ('<span>' + esc(cleanStatusLabel) + '</span>') : "",
+            ...genresListClean.map(gName =>
+              '<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>'
+            ),
+            ...studiosArr.slice(0, 2).map(sObj =>
+              '<span class="detail-meta-studio" tabindex="0" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || "") + '\\')" title="Studio öffnen: ' + esc(sObj.name) + '">🏢 ' + esc(sObj.name) + '</span>'
+            ),
+            ...directorsArr.slice(0, 2).map(p =>
+              '<span class="detail-meta-link" tabindex="0" onclick="' + (p.id ? ('closeDetailModal();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')') : ('closeDetailModal();runSearch(false,\\'' + esc(p.name) + '\\',\\'person\\')')) + '" title="Regie: ' + esc(p.name) + '">🎬 ' + esc(p.name) + '</span>'
+            )
           ].filter(Boolean);
-          const heroMetaInlineHtml = heroMetaParts.join('<span class="modal-meta-dot">·</span>');
+          const unboxedMetaHtml = unboxedMetaParts.join('<span class="detail-meta-dot">·</span>');
 
-          // Prüfen, ob mehrteilige Film-Teile (z.B. CD1 & CD2 / Part 1 & Part 2) vorliegen
-          const multiPartFiles = (vipAllowed && Array.isArray(d.files))
-            ? d.files.filter(f => f && f.telegram_file_id && f.part)
-            : [];
-          const hasMultipleParts = multiPartFiles.length >= 2;
+          // 3. VIP Direkt-"▶ Abspielen" & Inline Versions-Dropdown oben im Hero-Stage
+          const playableMovieFiles = type === "m" ? getPlayableMovieFilesForHeroClient(d) : [];
+          const seriesVersionProfiles = type === "s" ? getSeriesVersionProfilesForHeroClient(d) : [];
+          const hasVipStreams = Boolean(
+            vipAllowed && (
+              (type === "m" && playableMovieFiles.length > 0) ||
+              (type === "s" && (seriesVersionProfiles.length > 0 || (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0) || Number(d.firstVipSeason || 0) > 0))
+            )
+          );
+
+          let versionSelectHtml = "";
+          if (hasVipStreams) {
+            if (type === "m" && playableMovieFiles.length > 0) {
+              const optionsHtml = playableMovieFiles.map((f, idx) => {
+                const vLbl = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "") || String(d.primaryVersionLabel || "Originalfassung");
+                const qLbl = String(f.quality || "1080p").trim();
+                const cLbl = String(f.codec || "x264").trim();
+                const szLbl = formatFileSizeClient(f.file_size);
+                const ptLbl = normalizeClientPartLabel(f.part, f.raw_filename || "");
+                const labelParts = ["🎞️ " + vLbl, qLbl, cLbl, szLbl, ptLbl ? ("(" + ptLbl + ")") : ""].filter(Boolean).join(" · ");
+                return '<option value="' + idx + '">' + esc(labelParts) + '</option>';
+              }).join("");
+              versionSelectHtml = '<div class="detail-version-select-wrap">' +
+                '<select id="detailHeroVersionSelect" class="detail-version-select" onchange="onDetailHeroVersionChangeClient(this)" title="Gewünschte Schnittfassung & Qualität zum direkten Abspielen wählen">' +
+                  optionsHtml +
+                '</select>' +
+                '<span class="detail-version-select-caret">▾</span>' +
+              '</div>';
+            } else if (type === "s" && seriesVersionProfiles.length > 0) {
+              const optionsHtml = seriesVersionProfiles.map(prof =>
+                '<option value="' + esc(prof.key) + '">🎞️ ' + esc(prof.key) + (prof.count > 1 ? (' (' + prof.count + ' Flg.)') : '') + '</option>'
+              ).join("");
+              versionSelectHtml = '<div class="detail-version-select-wrap">' +
+                '<select id="detailHeroVersionSelect" class="detail-version-select" onchange="onDetailHeroVersionChangeClient(this)" title="Bevorzugte Serien-Fassung & Qualität wählen">' +
+                  optionsHtml +
+                '</select>' +
+                '<span class="detail-version-select-caret">▾</span>' +
+              '</div>';
+            }
+          }
+
+          const savedProg = type === "s" ? getSeriesProgress(d.id) : null;
+          const initialSeason = (forceSeasonNum && Number(forceSeasonNum) > 0)
+            ? Number(forceSeasonNum)
+            : (savedProg && savedProg.season > 0)
+              ? savedProg.season
+              : (Number(d.firstVipSeason || 0) > 0 ? Number(d.firstVipSeason) : 1);
+          state.activeDetails._activeLoadedSeason = initialSeason;
+
+          const primaryPlayBtnLabel = hasVipStreams
+            ? (type === "s"
+                ? (savedProg && savedProg.season && savedProg.episode
+                    ? ("▶ Abspielen (S" + String(savedProg.season).padStart(2, "0") + "E" + String(savedProg.episode).padStart(2, "0") + ")")
+                    : "▶ Abspielen")
+                : "▶ Abspielen")
+            : "▶ Trailer";
+
+          const primaryVersionBadgeText = String(d.primaryVersionLabel || (Array.isArray(d.availableVersions) && d.availableVersions[0]) || "").trim();
           const canReportMedia = Boolean(vipAllowed || state.authUser?.isAdmin);
           const isAdminUser = Boolean(state.authUser?.isAdmin);
 
-          // Kompaktes Versions-Badge für den Flixnet Hero-Header (z.B. "Netflix-Fassung" / "Originalfassung")
-          const allVersionsArr = Array.isArray(d.availableVersions) ? d.availableVersions.filter(Boolean) : [];
-          const primaryVersionBadgeText = String(d.primaryVersionLabel || allVersionsArr[0] || "").trim();
-          const allStreamFilesArr = Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
-            ? d.allStreamFiles
-            : (Array.isArray(d.files) ? d.files : []);
-          const distinctVersionCount = Math.max(allVersionsArr.length, allStreamFilesArr.length > 0 ? 1 : 0);
+          // Prüfen, ob bei einem Film mehrteilige Dateien (CD 1 / CD 2) oder Archiv-Downloads vorliegen
+          const hasMultiPartOrArchivesForMovie = Boolean(
+            vipAllowed && type === "m" && (
+              playableMovieFiles.some(f => Boolean(normalizeClientPartLabel(f.part, f.raw_filename || ""))) ||
+              (Array.isArray(d.downloads) && d.downloads.length > 0) ||
+              playableMovieFiles.length > 1
+            )
+          );
 
-          const initialTab = autoOpenTrailer ? "details" : "streams";
-          state.activeDetailTab = initialTab;
-
-          m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this)closeDetailModal()">' +
-            '<div class="modal">' +
-              /* 1. FLIXNET-INSPIRIERTER HERO-HEADER: Großes TMDb-Backdrop mit Fade-Out, links Cover-Poster, rechts Titel, Jahr, Rating, Laufzeit, Genres & Versions-Badge */
-              '<div class="modal-hero-banner" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" style="' + (backdropBanner ? ('background-image:url(' + esc(backdropBanner) + ')') : '') + '">' +
-                '<div class="modal-hero-top">' +
-                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-                    '<span class="hero-badge ' + (type === 's' ? 'series' : 'movie') + '">' + (type === 's' ? '📺 SERIE' : '🎬 FILM') + '</span>' +
-                    (primaryVersionBadgeText ? '<span class="flix-version-badge" title="Aktive Schnittfassung / Version">🎞️ ' + esc(primaryVersionBadgeText) + (allVersionsArr.length > 1 ? (' +' + (allVersionsArr.length - 1)) : '') + '</span>' : '') +
-                  '</div>' +
-                  '<div style="display:flex;gap:6px;align-items:center">' +
-                    (prevAdj ? '<button id="modalAdjPrevBtn" class="btn" onclick="navigateDetailModalAdjacent(-1)" title="Vorheriger Titel: ' + esc(prevAdj.title) + '">◀</button>' : '') +
-                    (nextAdj ? '<button id="modalAdjNextBtn" class="btn" onclick="navigateDetailModalAdjacent(1)" title="Nächster Titel: ' + esc(nextAdj.title) + '">▶</button>' : '') +
-                    '<button class="btn close-slate" onclick="closeDetailModal()" title="Schließen">✖</button>' +
-                  '</div>' +
+          // Cast-Karten mit Schauspieler-Fotos bauen
+          const castSectionHtml = castArr.length > 0 ? (
+            '<section class="detail-section-block">' +
+              '<div class="detail-section-header">' +
+                '<h3 class="detail-section-heading">Cast</h3>' +
+              '</div>' +
+              '<div class="detail-carousel-wrap">' +
+                (castArr.length > 5 ? '<button type="button" class="detail-carousel-arrow prev" onclick="scrollDetailHorizontalTrackClient(\\'detailCastTrackEl\\',-1)" title="Nach links scrollen">‹</button>' : '') +
+                '<div id="detailCastTrackEl" class="detail-cast-track">' +
+                  castArr.map(c => {
+                    const cName = String(c.name || "").trim();
+                    const cRole = String(c.character || "Darsteller").trim();
+                    const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
+                    const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w185", "") : fbAvatar;
+                    const clickHandler = c.id
+                      ? ('closeDetailModal();openPersonView(' + Number(c.id) + ',\\'' + esc(cName) + '\\')')
+                      : ('closeDetailModal();runSearch(false,\\'' + esc(cName) + '\\',\\'person\\')');
+                    return '<div class="detail-cast-card" tabindex="0" onclick="' + clickHandler + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + clickHandler + ';}" title="Alle Filme & Serien mit ' + esc(cName) + ' anzeigen">' +
+                      '<div class="detail-cast-photo-wrap">' +
+                        '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
+                      '</div>' +
+                      '<div class="detail-cast-name">' + esc(cName) + '</div>' +
+                      '<div class="detail-cast-role">' + esc(cRole) + '</div>' +
+                    '</div>';
+                  }).join("") +
                 '</div>' +
+                (castArr.length > 5 ? '<button type="button" class="detail-carousel-arrow next" onclick="scrollDetailHorizontalTrackClient(\\'detailCastTrackEl\\',1)" title="Nach rechts scrollen">›</button>' : '') +
+              '</div>' +
+            '</section>'
+          ) : "";
 
-                '<div class="flix-hero-grid">' +
-                  (posterThumb
-                    ? '<img class="flix-poster-card" src="' + esc(posterThumb) + '" onclick="openLightbox(\\''+esc(posterOrig)+'\\',\\''+esc(d.title)+'\\')" title="Antippen für großes Original-Poster" alt="' + esc(d.title) + '" />'
-                    : '<div class="flix-poster-card" style="display:flex;align-items:center;justify-content:center;font-size:32px">' + (type === 's' ? '📺' : '🎬') + '</div>') +
-                  '<div class="flix-meta-col">' +
-                    '<div class="flix-title-row" style="min-width:0;width:100%">' +
-                      '<h2 style="font-size:24px;font-weight:900;color:#ffffff;margin:0;line-height:1.22;letter-spacing:-0.01em;text-shadow:0 2px 14px rgba(0,0,0,0.95);display:flex;align-items:baseline;gap:8px;min-width:0;width:100%">' +
-                        '<span class="inline-marquee-wrap" data-marquee-always="1" style="cursor:pointer;color:#ffffff" onclick="runSearch(false,\\'' + esc(d.title) + '\\')" title="Antippen, um nach diesem Titel zu suchen: ' + esc(d.title) + '">' +
-                          '<span class="inline-marquee-text" style="font-size:24px;font-weight:900;color:#ffffff">' + esc(d.title) + '</span>' +
-                        '</span>' +
-                        (hasValidYear ? '<span style="color:#94a3b8;font-weight:600;font-size:17px;flex-shrink:0">(' + esc(d.year) + ')</span>' : '') +
-                      '</h2>' +
+          const bgVarsStyle =
+            "--hero-bg-landscape:url('" + esc(backdropW1280 || portraitBg) + "');" +
+            "--hero-bg-portrait:url('" + esc(portraitBg || backdropW1280) + "');";
+
+          m.innerHTML = '<div class="modal-backdrop">' +
+            '<div class="modal">' +
+              /* 1. STICKY TOP-BAR MIT EINZIGEM ZURÜCK-BUTTON (KEIN X-BUTTON) & VOR/ZURÜCK-NAVIGATION */
+              '<div class="detail-top-sticky-bar">' +
+                '<button type="button" id="detailBackBtn" class="detail-back-btn" onclick="closeDetailModal()" title="Zurück zur vorherigen Ansicht (Esc)">' +
+                  esc(backBtnLabel) +
+                '</button>' +
+                '<div class="detail-adj-nav">' +
+                  (prevAdj ? '<button type="button" id="modalAdjPrevBtn" class="detail-adj-btn" onclick="navigateDetailModalAdjacent(-1)" title="Vorheriger Titel: ' + esc(prevAdj.title) + '">◀</button>' : '') +
+                  (nextAdj ? '<button type="button" id="modalAdjNextBtn" class="detail-adj-btn" onclick="navigateDetailModalAdjacent(1)" title="Nächster Titel: ' + esc(nextAdj.title) + '">▶</button>' : '') +
+                '</div>' +
+              '</div>' +
+
+              /* 2. FULLSCREEN KINO-HERO-STAGE MIT SLIDER-BACKDROP, AMBILIGHT & SWIPE-FUNKTION */
+              '<section id="detailHeroStageEl" class="detail-hero-stage" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
+                '<div class="detail-backdrop-layer"></div>' +
+                '<div class="detail-ambilight-glow"></div>' +
+                '<div class="detail-scrim-layer"></div>' +
+
+                '<div class="detail-hero-content">' +
+                  '<div class="detail-kicker-row">' + kickerItems + '</div>' +
+
+                  '<h1 class="detail-monumental-title" onclick="closeDetailModal();runSearch(false,\\'' + esc(d.title) + '\\')" title="Nach „' + esc(d.title) + '“ suchen">' +
+                    esc(d.title) +
+                  '</h1>' +
+
+                  (unboxedMetaHtml ? '<div class="detail-unboxed-meta">' + unboxedMetaHtml + '</div>' : '') +
+
+                  /* 3. HAUPTAKTIONSLEISTE: FÜR VIPS DIREKT "▶ ABSPIELEN" + VERSIONS-AUSWAHL OBEN */
+                  '<div class="detail-action-bar">' +
+                    '<div class="detail-action-primary-group">' +
+                      '<button type="button" id="detailPrimaryPlayBtn" class="detail-btn-play-white" onclick="' + (hasVipStreams ? 'triggerDetailHeroPrimaryPlayClient()' : ('playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')')) + '">' +
+                        esc(primaryPlayBtnLabel) +
+                      '</button>' +
+                      versionSelectHtml +
+                      (hasVipStreams ? buildModalDeliveryTargetSelectorHtml() : '') +
+                      (hasVipStreams ? (
+                        '<button type="button" class="detail-btn-glass" onclick="playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')" title="Trailer im Vollbild abspielen">🎬 Trailer</button>'
+                      ) : '') +
+                      '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
+                        (d.isSaved ? "✓ Merkliste" : "＋ Merkliste") +
+                      '</button>' +
+                      ((d.providerButtons && d.providerButtons.length > 0) ? (
+                        d.providerButtons.map(pb =>
+                          '<a class="detail-btn-glass" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="border-color:' + esc(pb.border || "#0284c7") + '">' + esc(pb.buttonText) + '</a>'
+                        ).join("")
+                      ) : '') +
                     '</div>' +
 
-                    (heroMetaInlineHtml ? '<div class="modal-meta-inline">' + heroMetaInlineHtml + '</div>' : '') +
+                    '<div class="modal-actions-tools">' +
+                      (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern">🖼️ Cover</button>' : '') +
+                      (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen">🔄 Zuordnen</button>' : '') +
+                      (canReportMedia ? '<button type="button" class="btn-tool-quiet" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Fehler melden">⚠️ Melden</button>' : '') +
+                      '<button type="button" id="modalMoreActionsBtn" class="btn-tool-quiet" onclick="toggleModalMoreActions()" title="Teilen, Original-Poster & TMDb">⋯ Mehr ▾</button>' +
+                    '</div>' +
+                  '</div>' +
 
-                    (heroInlineGenresHtml ? '<div class="modal-genre-inline">' + heroInlineGenresHtml + '</div>' : '') +
-
-                    (function() {
-                      const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
-                      const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
-                      const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
-                      const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
-                      return '<div id="modalHeaderOverviewEl" class="expandable-desc-box" tabindex="0" role="button" aria-expanded="false" style="font-size:12.5px;line-height:1.55;color:#cbd5e1;margin:2px 0 0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
+                  /* 4. BESCHREIBUNG DIREKT UNTER DER AKTIONSLEISTE (MIT MEHR LESEN & ÜBERSETZEN) */
+                  (function() {
+                    const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
+                    const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
+                    const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
+                    const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
+                    return '<div class="detail-overview-wrap">' +
+                      '<div id="modalHeaderOverviewEl" class="expandable-desc-box" tabindex="0" role="button" aria-expanded="false" style="font-size:calc(14px * var(--scale-text));line-height:1.62;color:#e2e8f0" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
                         '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
                         '<div class="desc-actions-row">' +
                           '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                          (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? ' is-translated' : '') + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') + '</button>' : '') +
+                          (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? " is-translated" : "") + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? "🇬🇧 Original anzeigen" : "🌐 Auf Deutsch übersetzen") + '</button>' : '') +
                         '</div>' +
-                      '</div>';
-                    })() +
+                      '</div>' +
+                    '</div>';
+                  })() +
+
+                  '<div id="modalPosterPickerBox" style="display:none;margin:8px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.94);border:1px solid rgba(168,85,247,0.45)"></div>' +
+                  '<div id="modalRemapMediaBox" style="display:none;margin:8px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.94);border:1px solid rgba(56,189,248,0.45)"></div>' +
+                  '<div id="modalMoreActionsBox" style="display:none;gap:6px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.88);border:1px solid rgba(148,163,184,0.24)">' +
+                    '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
+                    '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
+                    '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
+                    (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
+                    (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(posterOrig) + '\\',\\'' + esc(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
+                    (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(backdropOrig) + '\\',\\'' + esc(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
+                    (d.tmdbDeUrl ? '<a class="btn" href="' + esc(d.tmdbDeUrl) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
+                    (!tr ? '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '') +
                   '</div>' +
                 '</div>' +
-              '</div>' +
+              '</section>' +
 
-              /* 2. TABS UNTER DEM HEADER: [ Staffeln & Episoden / Streams ] | [ Versionen ] | [ Details ] */
-              '<div class="flix-tabs-bar">' +
-                '<button type="button" id="flixTabBtn_streams" class="flix-tab-btn ' + (initialTab === 'streams' ? 'active' : '') + '" onclick="switchDetailModalTab(\\'streams\\')">' +
-                  (type === 's' ? '📺 Staffeln & Episoden' : '🎬 Streams & Dateien') +
-                '</button>' +
-                '<button type="button" id="flixTabBtn_versions" class="flix-tab-btn ' + (initialTab === 'versions' ? 'active' : '') + '" onclick="switchDetailModalTab(\\'versions\\')">' +
-                  '🎞️ Versionen' + (distinctVersionCount > 0 ? (' (' + distinctVersionCount + ')') : '') +
-                '</button>' +
-                '<button type="button" id="flixTabBtn_details" class="flix-tab-btn ' + (initialTab === 'details' ? 'active' : '') + '" onclick="switchDetailModalTab(\\'details\\')">' +
-                  'ℹ️ Details' + (tr ? ' & Trailer' : '') +
-                '</button>' +
-              '</div>' +
-
-              '<div class="modal-body">' +
-                /* Vereinte, ruhige Aktionsleiste: Links Hauptaktionen, rechts dezente Admin- & Melde-Werkzeuge */
-                '<div class="modal-actions-row">' +
-                  '<div class="modal-actions-primary">' +
-                    ((d.providerButtons && d.providerButtons.length > 0) ? (
-                      d.providerButtons.map(pb =>
-                        '<a class="btn-action-glass" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="background:' + esc(pb.bg || 'rgba(14,165,233,0.18)') + ';border-color:' + esc(pb.border || '#0284c7') + ';color:#fff">' + esc(pb.buttonText) + '</a>'
-                      ).join("")
-                    ) : '') +
-                    '<button id="modalWishlistBtn" class="btn-action-glass ' + (d.isSaved ? 'saved green' : '') + '" onclick="toggleWishlistItem(\\''+type+'\\','+d.id+')">' + (d.isSaved ? '✅ Gespeichert' : '💾 Merkliste') + '</button>' +
-                    '<button class="btn-action-glass" onclick="loadSimilarInTma(\\''+type+'\\','+d.id+')">✨ Ähnliche Titel</button>' +
-                  '</div>' +
-                  '<div class="modal-actions-tools">' +
-                    (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalPosterPicker(\\''+type+'\\','+d.id+')" title="Original-Cover von TMDb (EN/DE), Apple iTunes DE, OMDb oder eigene Bild-URL wählen">🖼️ Cover</button>' : '') +
-                    (isAdminUser ? '<button type="button" class="btn-tool-quiet" onclick="toggleModalRemapBox(\\''+type+'\\','+d.id+')" title="Falsch zugeordneten Film/Serie inkl. Original-Dateiname & Telegram-Link neu zuordnen">🔄 Zuordnen</button>' : '') +
-                    (canReportMedia ? '<button type="button" class="btn-tool-quiet" onclick="openMediaReportModal({typeCode:\\''+type+'\\',tmdbId:'+Number(d.id)+',title:\\''+esc(d.title)+'\\',versionLabel:\\''+esc(primaryVersionBadgeText || 'Originalfassung')+'\\'})" title="Falschen Titel, falsche Staffel/Folge oder defektes Video melden">⚠️ Melden</button>' : '') +
-                    '<button type="button" id="modalMoreActionsBtn" class="btn-tool-quiet" onclick="toggleModalMoreActions()" title="Teilen, Telegraph-Guide, Original-Poster & TMDb">⋯ Mehr ▾</button>' +
-                  '</div>' +
-                '</div>' +
-
-                '<div id="modalPosterPickerBox" style="display:none;margin:10px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.92);border:1px solid rgba(168,85,247,0.45)"></div>' +
-                '<div id="modalRemapMediaBox" style="display:none;margin:10px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.92);border:1px solid rgba(56,189,248,0.45)"></div>' +
-
-                '<div id="modalMoreActionsBox" style="display:none;gap:6px;flex-wrap:wrap;padding:8px 10px;margin-bottom:10px;border-radius:8px;background:rgba(255,255,255,0.04);border:1px solid rgba(148,163,184,0.2)">' +
-                  '<button class="btn purple" onclick="shareItemFromTma(\\''+type+'\\','+d.id+')">📤 Über Telegram teilen</button>' +
-                  '<button class="btn" onclick="sendSharePostToBotChat(\\''+type+'\\','+d.id+')">💬 Teilen-Post im Bot</button>' +
-                  '<button class="btn blue" onclick="openInBot(\\'' + type + '_' + d.id + '\\')">🤖 Im Bot öffnen</button>' +
-                  (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
-                  (posterOrig ? '<button class="btn" onclick="openLightbox(\\''+esc(posterOrig)+'\\',\\''+esc(d.title)+' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
-                  (backdropOrig ? '<button class="btn" onclick="openLightbox(\\''+esc(backdropOrig)+'\\',\\''+esc(d.title)+' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
-                  (d.tmdbDeUrl ? '<a class="btn" href="' + esc(d.tmdbDeUrl) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
-                  (!tr ? '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '') +
-                '</div>' +
-
-                '<div id="similarModalBox"></div>' +
-
-                /* TAB 1: STAFFELN & EPISODEN (bzw. STREAMS & DATEIEN bei Filmen) */
-                '<div id="flixTabPanel_streams" style="display:' + (initialTab === 'streams' ? 'block' : 'none') + '">' +
-                  ((vipAllowed && type === 'm' && ((d.files && d.files.length > 0) || (d.downloads && d.downloads.length > 0))) ? (
-                    buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia)
-                  ) : (!vipAllowed && type === 'm' ? (
-                    '<div class="panel-box" style="margin:6px 0;text-align:center;color:#94a3b8;font-size:12.5px">' +
-                      '🔒 Direkt-Streams & Downloads sind exklusiv für freigeschaltete <b>VIP-Mitglieder</b> sichtbar. Nutze die Tabs oben für <b>Versionen</b> & <b>Details / Trailer</b>.' +
-                    '</div>'
-                  ) : '')) +
-                  (type === 's' ? (
-                    '<div id="seasonBox" style="margin-top:4px">Lade Episoden...</div>' +
+              /* 5. UNTERER CONTENT-BEREICH: STAFFELN/EPISODEN BZW. MEHRTEILER, CAST MIT FOTOS & ÄHNLICHE TITEL MIT COVERN */
+              '<div class="detail-content-body">' +
+                (type === "s" ? (
+                  '<section id="detailStreamsSection" class="detail-section-block">' +
+                    '<div class="detail-section-header">' +
+                      '<h3 class="detail-section-heading">Staffeln & Episoden</h3>' +
+                    '</div>' +
+                    '<div id="seasonBox">Lade Episoden...</div>' +
                     '<div id="seriesArchiveDownloadsMount">' +
                       (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '') +
-                    '</div>'
-                  ) : '') +
-                '</div>' +
-
-                /* TAB 2: VERSIONEN (Übersicht aller Schnittfassungen, Episode-Groups & Dateien) */
-                '<div id="flixTabPanel_versions" style="display:' + (initialTab === 'versions' ? 'block' : 'none') + '">' +
-                  buildDetailModalVersionsTabHtml(d, type, vipAllowed, isAdminUser, canReportMedia) +
-                '</div>' +
-
-                /* TAB 3: DETAILS & TRAILER (Vollständige Beschreibung, Besetzung, Regie, Studios, Reihen, Trailer) */
-                '<div id="flixTabPanel_details" style="display:' + (initialTab === 'details' ? 'block' : 'none') + '">' +
-                  ((d.collection || d.universe) ? (
-                    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 10px">' +
-                      (d.collection ? (
-                        '<button class="btn purple" onclick="openCollectionView(' + d.collection.id + ')">🍿 Reihe: ' + esc(d.collection.name) + '</button>'
-                      ) : '') +
-                      (d.universe ? (
-                        '<button class="btn green" onclick="openUniverseView(\\''+esc(d.universe.id)+'\\')">' + esc(d.universe.icon || '🌌') + ' ' + esc(d.universe.name) + '</button>'
-                      ) : '') +
-                    '</div>'
-                  ) : '') +
-
-                  '<div id="modalDetailsOverviewPanel" class="panel-box" style="margin:6px 0 10px">' +
-                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
-                      '<div class="detail-meta-label" style="margin-bottom:0">📖 Handlung & Beschreibung</div>' +
-                      ((typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(d._originalOverviewEn || d.overview || ""))
-                        ? '<button type="button" id="modalDetailsTranslateBtn" class="desc-translate-btn" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalDetailsOverviewPanel\\',\\'modalDetailsOverviewTextEl\\',\\'modalDetailsTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">🌐 Auf Deutsch übersetzen</button>'
-                        : '') +
                     '</div>' +
-                    '<p id="modalDetailsOverviewTextEl" data-orig-overview="' + esc(d._originalOverviewEn || d.overview || '') + '" style="font-size:13px;line-height:1.6;color:var(--text);margin:0">' + esc(d.overview || 'Keine deutsche Beschreibung hinterlegt.') + '</p>' +
+                  '</section>'
+                ) : (hasMultiPartOrArchivesForMovie ? (
+                  '<section id="detailStreamsSection" class="detail-section-block">' +
+                    '<div class="detail-section-header">' +
+                      '<h3 class="detail-section-heading">Alle Teile & Versionen</h3>' +
+                    '</div>' +
+                    buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) +
+                  '</section>'
+                ) : '')) +
+
+                castSectionHtml +
+
+                '<section id="detailSimilarSectionWrap" class="detail-section-block" style="display:flex">' +
+                  '<div class="detail-section-header">' +
+                    '<h3 class="detail-section-heading">Das könnte dir auch gefallen</h3>' +
                   '</div>' +
-
-                  ((clickableGenresHtml || clickableProvidersHtml) ? (
-                    '<div class="detail-meta-grid" style="margin:8px 0">' +
-                      (clickableGenresHtml ? '<div class="detail-meta-row"><span class="detail-meta-label">🎞️ Genres</span><div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableGenresHtml + '</div></div>' : '') +
-                      (clickableProvidersHtml ? '<div class="detail-meta-row"><span class="detail-meta-label">📺 Verfügbar bei</span><div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableProvidersHtml + '</div></div>' : '') +
-                    '</div>'
-                  ) : '') +
-
-                  (hasCreditsOrStudios ? (
-                    '<div id="modalCreditsCollapseBox" class="detail-meta-grid" style="display:grid;margin-top:6px;margin-bottom:10px">' +
-                      (clickableYearInDetailsHtml ? '<div class="detail-meta-row"><span class="detail-meta-label">📅 Erscheinungsjahr</span><div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableYearInDetailsHtml + '</div></div>' : '') +
-                      (clickableDirectorsHtml ? '<div class="detail-meta-row"><span class="detail-meta-label">🎬 Regie</span><div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableDirectorsHtml + '</div></div>' : '') +
-                      (clickableStudiosHtml ? '<div class="detail-meta-row"><span class="detail-meta-label">🏢 Studios</span><div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableStudiosHtml + '</div></div>' : '') +
-                      (clickableCastHtml ? '<div class="detail-meta-row" style="grid-column:1 / -1"><span class="detail-meta-label">🌟 Besetzung</span><div style="display:flex;gap:5px;flex-wrap:wrap">' + clickableCastHtml + '</div></div>' : '') +
-                    '</div>'
-                  ) : '') +
-
-                  (tr ? '<div class="modal-sub-box" style="margin:10px 0;padding:10px;background:var(--card);border-radius:10px;border:1px solid rgba(14,165,233,0.35)">' +
-                    '<div style="font-size:12px;color:var(--text);margin-bottom:7px">🎬 <b>Trailer direkt abspielen & Standard-Quelle wählen:</b></div>' +
-                    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                      TRAILER_PROVIDERS_CLIENT.map(tp =>
-                        '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" data-detail-tp-id="' + esc(tp.id) + '" onclick="switchEmbedSource(\\'' + esc(tp.id) + '\\',true)">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
-                      ).join("") +
+                  '<div class="detail-carousel-wrap">' +
+                    '<button type="button" class="detail-carousel-arrow prev" onclick="scrollDetailHorizontalTrackClient(\\'detailSimilarTrackEl\\',-1)" title="Nach links scrollen">‹</button>' +
+                    '<div id="detailSimilarTrackEl" class="detail-similar-track">' +
+                      '<div style="font-size:12.5px;color:#94a3b8;padding:12px 4px">⏳ Lade passende Empfehlungen...</div>' +
                     '</div>' +
-                    '<div id="trailerEmbedContainer"></div>' +
-                  '</div>' : '') +
-                '</div>' +
+                    '<button type="button" class="detail-carousel-arrow next" onclick="scrollDetailHorizontalTrackClient(\\'detailSimilarTrackEl\\',1)" title="Nach rechts scrollen">›</button>' +
+                  '</div>' +
+                '</section>' +
               '</div>' +
             '</div>' +
           '</div>';
-          if (tr && autoOpenTrailer) switchEmbedSource(trailerProvider || "youtube", false);
+
+          if (backdropW1280 || portraitBg) {
+            applyDynamicHeroAmbilightClient(backdropW1280 || portraitBg);
+          }
+          unlockCatalogCoversLoadingClient(false);
+          observeLazyCoversInContainerClient(m);
+          autoLoadSimilarInDetailClient(type, d.id || id);
+
           if (typeof syncExpandableDescriptionsOverflowClient === "function") {
             requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(m));
           }
           if (typeof window.refreshModalAndEpisodeMarquees === "function") {
             setTimeout(() => window.refreshModalAndEpisodeMarquees(m), 60);
           }
-          if (type === 's') {
-            const savedProg = getSeriesProgress(d.id);
-            const initialSeason = (forceSeasonNum && Number(forceSeasonNum) > 0)
-              ? Number(forceSeasonNum)
-              : (savedProg && savedProg.season > 0)
-                ? savedProg.season
-                : (Number(d.firstVipSeason || 0) > 0 ? Number(d.firstVipSeason) : 1);
+          if (type === "s") {
             loadSeason(d.id, initialSeason, false);
           }
-          const firstModalBtn = m.querySelector("#modalWishlistBtn, .modal-body .btn");
+          const firstModalBtn = m.querySelector("#detailPrimaryPlayBtn, #modalWishlistBtn, #detailBackBtn");
           if (firstModalBtn && typeof jumpSpatialFocus === "function") {
             jumpSpatialFocus(firstModalBtn, false);
+          }
+          if (autoOpenTrailer) {
+            playInstantTrailerFromCard(null, type, d.id || id, d.title, posterThumb || posterOrig);
           }
           if (window._pendingModalAdminAction === "poster") {
             window._pendingModalAdminAction = null;
@@ -2148,22 +2419,6 @@
 
       function switchDetailModalTab(tabName) {
         state.activeDetailTab = tabName;
-        const tabs = ["streams", "versions", "details"];
-        for (const t of tabs) {
-          const btn = document.getElementById("flixTabBtn_" + t);
-          const panel = document.getElementById("flixTabPanel_" + t);
-          if (btn) btn.classList.toggle("active", t === tabName);
-          if (panel) panel.style.display = t === tabName ? "block" : "none";
-        }
-        if (tabName === "versions" && state.activeDetails) {
-          refreshDetailModalVersionsTabDomClient();
-        }
-        if (tabName === "details" && state.activeDetails?.trailers) {
-          const container = document.getElementById("trailerEmbedContainer");
-          if (container && !container.innerHTML.trim()) {
-            switchEmbedSource(trailerProvider || "youtube", false);
-          }
-        }
       }
 
       // Hilfsfunktionen für Qualitäts-Ranking, Qualitäts-Badge & Episodentitel-Auflösung
@@ -3929,6 +4184,9 @@
       }
 
       async function loadSeason(seriesId, seasonNum, jumpToFirstEpisode = false, forceRefresh = false) {
+        if (state.activeDetails && String(state.activeDetails.id) === String(seriesId)) {
+          state.activeDetails._activeLoadedSeason = Number(seasonNum) || 1;
+        }
         const vipAllowed = isCurrentUserVip();
         const cacheKey = seriesId + "_" + seasonNum + "_" + (vipAllowed ? "vip" : "std");
         const cachedEntry = !forceRefresh ? clientSeasonCache.get(cacheKey) : null;

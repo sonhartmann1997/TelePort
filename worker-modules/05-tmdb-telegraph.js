@@ -2188,11 +2188,16 @@
       const directorsList = (data.credits?.crew || [])
         .filter((c) => c && c.job === "Director" && c.name)
         .slice(0, 3)
-        .map((d) => ({ id: d.id, name: d.name }));
+        .map((d) => ({ id: d.id, name: d.name, profile_path: d.profile_path || "" }));
       const castList = (data.credits?.cast || [])
         .filter((c) => c && c.name)
-        .slice(0, 5)
-        .map((c) => ({ id: c.id, name: c.name }));
+        .slice(0, 14)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          character: c.character || "",
+          profile_path: c.profile_path || ""
+        }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
       const trailerKey = extractYoutubeTrailerFromVideos(data.videos);
 
@@ -2487,14 +2492,19 @@
       for (const d of rawDirectors) {
         if (d && d.name && !seenDirIds.has(d.id || d.name)) {
           seenDirIds.add(d.id || d.name);
-          directorsList.push({ id: d.id, name: d.name });
+          directorsList.push({ id: d.id, name: d.name, profile_path: d.profile_path || "" });
           if (directorsList.length >= 3) break;
         }
       }
       const castList = (data.credits?.cast || [])
         .filter((c) => c && c.name)
-        .slice(0, 5)
-        .map((c) => ({ id: c.id, name: c.name }));
+        .slice(0, 14)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          character: c.character || (Array.isArray(c.roles) && c.roles[0]?.character ? c.roles[0].character : ""),
+          profile_path: c.profile_path || ""
+        }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
       const trailerKey = extractYoutubeTrailerFromVideos(data.videos);
 

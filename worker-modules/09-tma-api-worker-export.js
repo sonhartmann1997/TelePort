@@ -2803,6 +2803,7 @@
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
         const id = url.searchParams.get("id") || "";
         const sortBy = url.searchParams.get("sort") || "pop_desc";
+        const forceOnlyVip = url.searchParams.get("onlyVip") === "1" || Boolean(settings?.onlyVipStreams);
         if (!id) {
           return new Response(JSON.stringify({ ok: false, error: "Keine ID angegeben" }), { status: 400, headers: corsHeaders });
         }
@@ -2810,10 +2811,35 @@
         const rawItems = simData?.results || [];
         let { visibleItems } = await filterAndSortMediaList(env, rawItems, settings, sortBy, true);
         visibleItems = await attachVipQualitiesToMediaList(env, visibleItems, typeCode, hasVipStreamAccess);
+        if (forceOnlyVip && hasVipStreamAccess) {
+          visibleItems = visibleItems.filter(it => Boolean(it && it.vipQuality));
+          if (visibleItems.length < 10 && typeof fetchVipStreamsDiscoverFromD1 === "function") {
+            try {
+              const d1Sim = await fetchVipStreamsDiscoverFromD1(env, typeCode, "all", "trend", 1, sortBy, settings, 16);
+              if (d1Sim && Array.isArray(d1Sim.items)) {
+                const seenIds = new Set([String(id), ...visibleItems.map(x => String(x.id))]);
+                const extraVip = await attachVipQualitiesToMediaList(
+                  env,
+                  d1Sim.items.filter(x => x && x.id && !seenIds.has(String(x.id))),
+                  typeCode,
+                  hasVipStreamAccess
+                );
+                for (const ex of extraVip) {
+                  if (ex && ex.vipQuality && !seenIds.has(String(ex.id))) {
+                    seenIds.add(String(ex.id));
+                    visibleItems.push(ex);
+                    if (visibleItems.length >= 12) break;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+        }
         return new Response(JSON.stringify({
           ok: true,
           typeCode,
           id,
+          onlyVipFiltered: Boolean(forceOnlyVip && hasVipStreamAccess),
           items: visibleItems
         }), { status: 200, headers: corsHeaders });
       }

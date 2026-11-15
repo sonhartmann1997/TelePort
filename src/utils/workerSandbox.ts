@@ -175,11 +175,14 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'US', name: 'USA' }],
     credits: {
       cast: [
-        { id: 10297, name: 'Matthew McConaughey', character: 'Cooper' },
-        { id: 1813, name: 'Anne Hathaway', character: 'Brand' },
-        { id: 83002, name: 'Jessica Chastain', character: 'Murph' },
+        { id: 10297, name: 'Matthew McConaughey', character: 'Cooper', profile_path: '/e9ZHRY5toiBZCIPEEyvOG9A8ers.jpg' },
+        { id: 1813, name: 'Anne Hathaway', character: 'Amelia Brand', profile_path: '/tLelKoPNiyJCSEtQTz1FGv4TLGc.jpg' },
+        { id: 83002, name: 'Jessica Chastain', character: 'Murph', profile_path: '/bXFXD9bf9S6kC3Y6R3x1yL22r5l.jpg' },
+        { id: 3895, name: 'Michael Caine', character: 'Professor Brand', profile_path: '/bVZRMlpjTAO2pJK6v90buFgVbSW.jpg' },
+        { id: 1892, name: 'Matt Damon', character: 'Dr. Mann', profile_path: '/At3JgvaNeEN4Z4ESKlhhes85Xo3.jpg' },
+        { id: 1190668, name: 'Timothée Chalamet', character: 'Young Tom', profile_path: '/BE2sdjpgsa2rNTFa66f7upkaOP.jpg' },
       ],
-      crew: [{ id: 525, name: 'Christopher Nolan', job: 'Director' }],
+      crew: [{ id: 525, name: 'Christopher Nolan', job: 'Director', profile_path: '/xuAIuYSmsUzKlUMBFGVZaWsY3DZ.jpg' }],
     },
     providersFlatrate: ['Netflix', 'Amazon Prime Video'],
     providerIds: [8, 9],
@@ -210,9 +213,10 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'US', name: 'USA' }],
     credits: {
       cast: [
-        { id: 6384, name: 'Keanu Reeves', character: 'Neo' },
-        { id: 2975, name: 'Laurence Fishburne', character: 'Morpheus' },
-        { id: 530, name: 'Carrie-Anne Moss', character: 'Trinity' },
+        { id: 6384, name: 'Keanu Reeves', character: 'Neo', profile_path: '/4D0PpNI0kmP58hgrwGC3wCjxhnm.jpg' },
+        { id: 2975, name: 'Laurence Fishburne', character: 'Morpheus', profile_path: '/8suOhUmPbfKqDQ17jQ1Gy0mI3P4.jpg' },
+        { id: 530, name: 'Carrie-Anne Moss', character: 'Trinity', profile_path: '/xD4jTA3KmVp5Rq3aHcymL9DUGjD.jpg' },
+        { id: 1331, name: 'Hugo Weaving', character: 'Agent Smith', profile_path: '/t4ScpYIHlXVD41scEyiGdQDYflX.jpg' },
       ],
       crew: [{ id: 9340, name: 'Lana Wachowski', job: 'Director' }],
     },
@@ -246,9 +250,11 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'NZ', name: 'Neuseeland' }],
     credits: {
       cast: [
-        { id: 109, name: 'Elijah Wood', character: 'Frodo Baggins' },
-        { id: 1327, name: 'Ian McKellen', character: 'Gandalf' },
-        { id: 110, name: 'Viggo Mortensen', character: 'Aragorn' },
+        { id: 109, name: 'Elijah Wood', character: 'Frodo Baggins', profile_path: '/7UKRbJBNG7mxBl2QQc5XsAh6F8B.jpg' },
+        { id: 1327, name: 'Ian McKellen', character: 'Gandalf', profile_path: '/5cnnnpnJG6TiYUSS7qgJheUZgnv.jpg' },
+        { id: 110, name: 'Viggo Mortensen', character: 'Aragorn', profile_path: '/vH5gVSpHAMhDaFWfh0Q7BG61O1y.jpg' },
+        { id: 114, name: 'Orlando Bloom', character: 'Legolas', profile_path: '/lwQoA0qJTCZ6l2FH6PjmhRQjiaB.jpg' },
+        { id: 48, name: 'Sean Bean', character: 'Boromir', profile_path: '/kTjiABk3TJ3yI0Cto5RsvyT6V3o.jpg' },
       ],
       crew: [{ id: 108, name: 'Peter Jackson', job: 'Director' }],
     },
@@ -281,8 +287,11 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'US', name: 'USA' }],
     credits: {
       cast: [
-        { id: 1190668, name: 'Timothée Chalamet', character: 'Paul Atreides' },
-        { id: 505710, name: 'Zendaya', character: 'Chani' },
+        { id: 1190668, name: 'Timothée Chalamet', character: 'Paul Atreides', profile_path: '/BE2sdjpgsa2rNTFa66f7upkaOP.jpg' },
+        { id: 505710, name: 'Zendaya', character: 'Chani', profile_path: '/3WdOloHpjtjL96uVOhFRRCcYSwq.jpg' },
+        { id: 933238, name: 'Rebecca Ferguson', character: 'Lady Jessica', profile_path: '/lJloTOheuQSirSLXNA3JHsrMNfH.jpg' },
+        { id: 3810, name: 'Javier Bardem', character: 'Stilgar', profile_path: '/IShnFg6ijWhpbu29dFBd9PtqQg.jpg' },
+        { id: 86654, name: 'Austin Butler', character: 'Feyd-Rautha', profile_path: '/rZyjfbN2P7t8b2zV43K7F9w2A7B.jpg' },
       ],
       crew: [{ id: 137427, name: 'Denis Villeneuve', job: 'Director' }],
     },
@@ -316,8 +325,11 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'US', name: 'USA' }],
     credits: {
       cast: [
-        { id: 3894, name: 'Christian Bale', character: 'Bruce Wayne / Batman' },
-        { id: 1810, name: 'Heath Ledger', character: 'Joker' },
+        { id: 3894, name: 'Christian Bale', character: 'Bruce Wayne / Batman', profile_path: '/b7fTC9WFkgqGOv77mLQtmD4Bwjx.jpg' },
+        { id: 1810, name: 'Heath Ledger', character: 'Joker', profile_path: '/5Y9HnYYa9jF4NunY9lSgJGjSe8E.jpg' },
+        { id: 64, name: 'Gary Oldman', character: 'James Gordon', profile_path: '/2v9FVVBUrrkW2m3QOcYkuhq9A6o.jpg' },
+        { id: 3895, name: 'Michael Caine', character: 'Alfred', profile_path: '/bVZRMlpjTAO2pJK6v90buFgVbSW.jpg' },
+        { id: 192, name: 'Morgan Freeman', character: 'Lucius Fox', profile_path: '/jPsLqiYGSofU4s6BjrxnefMfabb.jpg' },
       ],
       crew: [{ id: 525, name: 'Christopher Nolan', job: 'Director' }],
     },
@@ -349,8 +361,10 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'US', name: 'USA' }],
     credits: {
       cast: [
-        { id: 2037, name: 'Cillian Murphy', character: 'J. Robert Oppenheimer' },
-        { id: 3223, name: 'Robert Downey Jr.', character: 'Lewis Strauss' },
+        { id: 2037, name: 'Cillian Murphy', character: 'J. Robert Oppenheimer', profile_path: '/dm6V24NjjvjMiCtbMkc8Y2WPm2e.jpg' },
+        { id: 3223, name: 'Robert Downey Jr.', character: 'Lewis Strauss', profile_path: '/5qHNjhtjMD4YWH3UP0rm4tKwxCL.jpg' },
+        { id: 5081, name: 'Emily Blunt', character: 'Kitty Oppenheimer', profile_path: '/5nCSG5TL1bP1geD8aaBfaLnLLCD.jpg' },
+        { id: 1892, name: 'Matt Damon', character: 'Leslie Groves', profile_path: '/At3JgvaNeEN4Z4ESKlhhes85Xo3.jpg' },
       ],
       crew: [{ id: 525, name: 'Christopher Nolan', job: 'Director' }],
     },
@@ -384,8 +398,10 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'US', name: 'USA' }],
     credits: {
       cast: [
-        { id: 3223, name: 'Robert Downey Jr.', character: 'Tony Stark / Iron Man' },
-        { id: 16828, name: 'Chris Evans', character: 'Steve Rogers / Captain America' },
+        { id: 3223, name: 'Robert Downey Jr.', character: 'Tony Stark / Iron Man', profile_path: '/5qHNjhtjMD4YWH3UP0rm4tKwxCL.jpg' },
+        { id: 16828, name: 'Chris Evans', character: 'Steve Rogers / Captain America', profile_path: '/3bOGNsHlrswhyW79uvIHH1V43JI.jpg' },
+        { id: 1245, name: 'Scarlett Johansson', character: 'Natasha Romanoff', profile_path: '/6NsMbJXRlDZuDzatN2akFdGuTvx.jpg' },
+        { id: 74568, name: 'Chris Hemsworth', character: 'Thor', profile_path: '/xkHHiJXraaMFXgRYspN6KVrFn17.jpg' },
       ],
       crew: [{ id: 19272, name: 'Anthony Russo', job: 'Director' }],
     },
@@ -418,8 +434,8 @@ const SIMULATED_TMDB_MOVIES = [
     production_countries: [{ iso_3166_1: 'US', name: 'USA' }],
     credits: {
       cast: [
-        { id: 10859, name: 'Ryan Reynolds', character: 'Wade Wilson / Deadpool' },
-        { id: 6968, name: 'Hugh Jackman', character: 'Logan / Wolverine' },
+        { id: 10859, name: 'Ryan Reynolds', character: 'Wade Wilson / Deadpool', profile_path: '/4SYTH5FdB0dAORV98Nwg3llgVnY.jpg' },
+        { id: 6968, name: 'Hugh Jackman', character: 'Logan / Wolverine', profile_path: '/oX6CpXmnXCHLyqsa4NEed1DZAKx.jpg' },
       ],
       crew: [{ id: 17825, name: 'Shawn Levy', job: 'Director' }],
     },
@@ -454,6 +470,14 @@ const SIMULATED_TMDB_SERIES = [
     trailerKey: 'HhesaQXLuRY',
     production_companies: [{ id: 11073, name: 'Sony Pictures Television' }],
     origin_country: ['US'],
+    credits: {
+      cast: [
+        { id: 17419, name: 'Bryan Cranston', character: 'Walter White', profile_path: '/7Jahy5LZX2Fo8fGJltMreAI49hC.jpg' },
+        { id: 84497, name: 'Aaron Paul', character: 'Jesse Pinkman', profile_path: '/8Ac9uuoYwZoYVAIJfRLzzLsGGJn.jpg' },
+        { id: 59315, name: 'Bob Odenkirk', character: 'Saul Goodman', profile_path: '/rF0Lb6SBhGSTvjRffmlKRSeI3jE.jpg' },
+      ],
+      crew: [{ id: 66633, name: 'Vince Gilligan', job: 'Creator' }],
+    },
     providersFlatrate: ['Netflix'],
     providerIds: [8],
   },
@@ -483,6 +507,13 @@ const SIMULATED_TMDB_SERIES = [
     trailerKey: 'rrwycJ08PSA',
     production_companies: [{ id: 8, name: 'Netflix' }],
     origin_country: ['DE'],
+    credits: {
+      cast: [
+        { id: 1429346, name: 'Louis Hofmann', character: 'Jonas Kahnwald', profile_path: '/aB2K8v1K2B7H6X8c9y0G5o4K5x1.jpg' },
+        { id: 1468482, name: 'Lisa Vicari', character: 'Martha Nielsen', profile_path: '/4D0PpNI0kmP58hgrwGC3wCjxhnm.jpg' },
+      ],
+      crew: [{ id: 56241, name: 'Baran bo Odar', job: 'Director' }],
+    },
     providersFlatrate: ['Netflix'],
     providerIds: [8],
   },
@@ -512,6 +543,15 @@ const SIMULATED_TMDB_SERIES = [
     trailerKey: 'b9EkMc79ZSU',
     production_companies: [{ id: 8, name: 'Netflix' }],
     origin_country: ['US'],
+    credits: {
+      cast: [
+        { id: 1356210, name: 'Millie Bobby Brown', character: 'Eleven', profile_path: '/3bOGNsHlrswhyW79uvIHH1V43JI.jpg' },
+        { id: 1440619, name: 'Finn Wolfhard', character: 'Mike Wheeler', profile_path: '/BE2sdjpgsa2rNTFa66f7upkaOP.jpg' },
+        { id: 1920, name: 'Winona Ryder', character: 'Joyce Byers', profile_path: '/5nCSG5TL1bP1geD8aaBfaLnLLCD.jpg' },
+        { id: 35029, name: 'David Harbour', character: 'Jim Hopper', profile_path: '/chPekukMF5SNnW6b22NbYPqAStr.jpg' },
+      ],
+      crew: [{ id: 1179419, name: 'Matt Duffer', job: 'Creator' }],
+    },
     providersFlatrate: ['Netflix'],
     providerIds: [8],
   },
@@ -541,6 +581,14 @@ const SIMULATED_TMDB_SERIES = [
     trailerKey: 'yAN5uspO_hk',
     production_companies: [{ id: 25, name: 'FX Productions' }],
     origin_country: ['US', 'JP'],
+    credits: {
+      cast: [
+        { id: 9195, name: 'Hiroyuki Sanada', character: 'Lord Yoshii Toranaga', profile_path: '/SOw3K8z7hX8s8zF6s8Q8z8Q8z8Q.jpg' },
+        { id: 76961, name: 'Cosmo Jarvis', character: 'John Blackthorne', profile_path: '/At3JgvaNeEN4Z4ESKlhhes85Xo3.jpg' },
+        { id: 1966006, name: 'Anna Sawai', character: 'Toda Mariko', profile_path: '/tLelKoPNiyJCSEtQTz1FGv4TLGc.jpg' },
+      ],
+      crew: [{ id: 1223196, name: 'Rachel Kondo', job: 'Creator' }],
+    },
     providersFlatrate: ['Disney+'],
     providerIds: [337],
   },
@@ -570,6 +618,15 @@ const SIMULATED_TMDB_SERIES = [
     trailerKey: 'xEQP4VVuyrY',
     production_companies: [{ id: 350, name: 'Apple Studios' }],
     origin_country: ['US'],
+    credits: {
+      cast: [
+        { id: 36801, name: 'Adam Scott', character: 'Mark Scout', profile_path: '/b82C29R6fP0f9xV7R6N5q8z9w8E.jpg' },
+        { id: 1498158, name: 'Britt Lower', character: 'Helly R.', profile_path: '/bXFXD9bf9S6kC3Y6R3x1yL22r5l.jpg' },
+        { id: 1241, name: 'John Turturro', character: 'Irving Bailiff', profile_path: '/6dd81p5C2k8U5s3Z2y3Q2p6Y9W.jpg' },
+        { id: 4690, name: 'Christopher Walken', character: 'Burt Goodman', profile_path: '/ApgE3N2P7t8b2zV43K7F9w2A7B.jpg' },
+      ],
+      crew: [{ id: 7399, name: 'Ben Stiller', job: 'Director' }],
+    },
     providersFlatrate: ['Apple TV+'],
     providerIds: [350],
   },
@@ -598,6 +655,14 @@ const SIMULATED_TMDB_SERIES = [
     trailerKey: 'zSWdZVtXT7E',
     production_companies: [{ id: 8, name: 'Netflix' }],
     origin_country: ['CA'],
+    credits: {
+      cast: [
+        { id: 117642, name: 'Jason Momoa', character: 'Declan Harp', profile_path: '/6dEFBpZH8C8OijsynkSajQT99Pb.jpg' },
+        { id: 10990, name: 'Landon Liboiron', character: 'Michael Smyth', profile_path: '/BE2sdjpgsa2rNTFa66f7upkaOP.jpg' },
+        { id: 25147, name: 'Alun Armstrong', character: 'Lord Benton', profile_path: '/bVZRMlpjTAO2pJK6v90buFgVbSW.jpg' },
+      ],
+      crew: [{ id: 1215399, name: 'Brad Peyton', job: 'Director' }],
+    },
     providersFlatrate: ['Netflix'],
     providerIds: [8],
   },

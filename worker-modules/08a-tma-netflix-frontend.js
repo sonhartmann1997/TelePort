@@ -4513,131 +4513,560 @@
       .scale-label { font-size: calc(11.5px * var(--scale-text)); font-weight: 700; color: #e2e8f0; }
       .scale-opts { display: flex; gap: 4px; flex-wrap: wrap; }
 
-      /* Premium Detail-Modal im Flixnet- & Netflix-Design */
-      .modal-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(2, 6, 23, 0.86); backdrop-filter: blur(10px); overflow-y: auto; padding: 14px 10px 40px; scroll-padding-top: 64px; scroll-padding-bottom: 28px; animation: fadeIn 0.16s ease; }
-      .modal { background: var(--surface); border-radius: 16px; max-width: 820px; margin: 0 auto; overflow: hidden; border: 1px solid rgba(148, 163, 184, 0.18); box-shadow: 0 24px 65px rgba(0,0,0,0.92); }
-      .modal-hero-banner {
-        position: relative;
-        min-height: 280px;
-        background-size: cover;
-        background-position: center 18%;
+      /* Premium Fullscreen App Detail-View im Flixnet- & Kino-Slider-Design */
+      body.modal-open-pause-hero .hero-dot.active .hero-thumb-progress-fill {
+        animation-play-state: paused !important;
+      }
+      .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: var(--bg);
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 0;
+        scroll-padding-top: 64px;
+        scroll-padding-bottom: 32px;
+        animation: fadeIn 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .modal {
+        background: var(--bg);
+        border-radius: 0;
+        max-width: 100%;
+        width: 100%;
+        min-height: 100vh;
+        min-height: 100dvh;
+        margin: 0;
+        overflow: visible;
+        border: 0;
+        box-shadow: none;
         display: flex;
         flex-direction: column;
-        justify-content: space-between;
-        padding: 16px 20px 20px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.12);
       }
-      .modal-hero-banner::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: linear-gradient(to top, rgba(10, 15, 29, 0.98) 4%, rgba(10, 15, 29, 0.8) 52%, rgba(10, 15, 29, 0.5) 100%), radial-gradient(circle at 20% 50%, rgba(10, 15, 29, 0.72) 0%, transparent 70%);
-      }
-      .modal-hero-top {
-        position: relative;
-        z-index: 2;
-        width: 100%;
+      .detail-top-sticky-bar {
+        position: sticky;
+        top: 0;
+        z-index: 30;
         display: flex;
+        align-items: center;
         justify-content: space-between;
+        gap: 10px;
+        padding: 14px clamp(16px, 4.5vw, 56px);
+        background: linear-gradient(180deg, rgba(6, 9, 20, 0.88) 0%, rgba(6, 9, 20, 0.45) 68%, transparent 100%);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        pointer-events: none;
+      }
+      .detail-top-sticky-bar > * {
+        pointer-events: auto;
+      }
+      .detail-back-btn {
+        display: inline-flex;
         align-items: center;
         gap: 8px;
-        margin-bottom: 14px;
+        background: rgba(15, 23, 42, 0.68);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        color: #f8fafc;
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 700;
+        padding: 8px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+        transition: background 0.16s ease, border-color 0.16s ease, transform 0.14s ease;
       }
-      .modal-hero-inner {
+      .detail-back-btn:hover, .detail-back-btn.spatial-focus {
+        background: rgba(30, 41, 59, 0.92);
+        border-color: rgba(255, 255, 255, 0.42);
+        color: #ffffff;
+        transform: translateX(-2px);
+      }
+      .detail-adj-nav {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .detail-adj-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.68);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        color: #e2e8f0;
+        font-size: 13px;
+        font-weight: 800;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+        transition: all 0.15s ease;
+      }
+      .detail-adj-btn:hover, .detail-adj-btn.spatial-focus {
+        background: rgba(56, 189, 248, 0.22);
+        border-color: #38bdf8;
+        color: #ffffff;
+      }
+      /* Fullbleed Detail Hero Stage mit identischem Kino-Backdrop & Ambilight wie beim Haupt-Slider */
+      .detail-hero-stage {
         position: relative;
-        z-index: 2;
         width: 100%;
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-end;
-        gap: 10px;
-        margin-top: auto;
-      }
-      /* Flixnet Hero Layout: Poster links, Metadaten & Genres rechts */
-      .flix-hero-grid {
-        position: relative;
-        z-index: 2;
-        display: flex;
-        gap: 20px;
-        align-items: flex-end;
-        width: 100%;
-        margin-top: auto;
-      }
-      .flix-poster-card {
-        width: 128px;
-        aspect-ratio: 2 / 3;
-        border-radius: 10px;
-        object-fit: cover;
-        border: 1px solid rgba(255,255,255,0.22);
-        box-shadow: 0 12px 28px rgba(0,0,0,0.78);
-        flex-shrink: 0;
-        cursor: zoom-in;
-        background: #0f172a;
-        transition: transform 0.16s ease, border-color 0.16s ease;
-      }
-      .flix-poster-card:hover {
-        transform: scale(1.03);
-        border-color: var(--accent-primary);
-      }
-      .flix-meta-col {
-        flex: 1;
-        min-width: 0;
+        min-height: clamp(500px, 76vh, 840px);
+        margin-top: -64px;
+        padding: 88px clamp(16px, 4.5vw, 56px) 38px;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        justify-content: flex-end;
+        overflow: hidden;
+        isolation: isolate;
       }
-      .flix-title-row {
+      .detail-backdrop-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        background-image: var(--hero-bg-landscape);
+        background-size: cover;
+        background-position: center 18%;
+        background-repeat: no-repeat;
+        transform: scale(1.02);
+        animation: heroKenBurns 18s ease-out forwards;
+        filter: saturate(1.08) contrast(1.04);
+      }
+      @media (max-width: 640px), (orientation: portrait) {
+        .detail-backdrop-layer {
+          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape));
+          background-position: center 14%;
+        }
+      }
+      .detail-ambilight-glow {
+        position: absolute;
+        inset: -12%;
+        z-index: 1;
+        pointer-events: none;
+        background:
+          radial-gradient(60% 55% at 72% 28%, rgba(var(--ambi-1, 14, 165, 233), 0.24) 0%, transparent 72%),
+          radial-gradient(55% 50% at 24% 68%, rgba(var(--ambi-2, 99, 102, 241), 0.18) 0%, transparent 75%);
+        mix-blend-mode: screen;
+        opacity: 0.85;
+      }
+      .detail-scrim-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        background:
+          linear-gradient(90deg, rgba(6, 9, 20, 0.94) 0%, rgba(6, 9, 20, 0.80) 38%, rgba(6, 9, 20, 0.34) 72%, rgba(6, 9, 20, 0.14) 100%),
+          linear-gradient(180deg, rgba(6, 9, 20, 0.52) 0%, rgba(6, 9, 20, 0.12) 32%, rgba(6, 9, 20, 0.72) 76%, var(--bg) 100%);
+      }
+      .detail-hero-stage.hero-bright-backdrop .detail-scrim-layer {
+        background:
+          linear-gradient(90deg, rgba(4, 7, 16, 0.97) 0%, rgba(4, 7, 16, 0.88) 44%, rgba(4, 7, 16, 0.48) 76%, rgba(4, 7, 16, 0.22) 100%),
+          linear-gradient(180deg, rgba(4, 7, 16, 0.62) 0%, rgba(4, 7, 16, 0.20) 32%, rgba(4, 7, 16, 0.82) 76%, var(--bg) 100%);
+      }
+      .detail-hero-content {
+        position: relative;
+        z-index: 3;
+        max-width: 860px;
+        width: 100%;
         display: flex;
-        align-items: baseline;
-        gap: 8px;
-        flex-wrap: wrap;
+        flex-direction: column;
+        gap: 12px;
       }
-      .flix-version-badge {
+      .detail-kicker-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 700;
+        color: #cbd5e1;
+      }
+      .detail-kicker-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: #e2e8f0;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: calc(11.5px * var(--scale-text));
+        font-weight: 700;
+        transition: all 0.15s ease;
+      }
+      .detail-kicker-link:hover, .detail-kicker-link.spatial-focus {
+        background: rgba(56, 189, 248, 0.2);
+        border-color: #38bdf8;
+        color: #ffffff;
+      }
+      .detail-monumental-title {
+        margin: 0;
+        font-size: clamp(28px, 4.6vw, 56px);
+        font-weight: 900;
+        line-height: 1.06;
+        letter-spacing: -0.02em;
+        text-transform: uppercase;
+        color: #f8fafc;
+        text-shadow: 0 6px 28px rgba(0, 0, 0, 0.92);
+        cursor: pointer;
+        word-break: break-word;
+      }
+      .detail-monumental-title:hover {
+        color: #ffffff;
+      }
+      .detail-unboxed-meta {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        font-size: calc(13.5px * var(--scale-text));
+        font-weight: 600;
+        color: #cbd5e1;
+        line-height: 1.45;
+      }
+      .detail-meta-rating {
+        color: #facc15;
+        font-weight: 800;
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        font-size: calc(11px * var(--scale-text));
-        font-weight: 800;
-        padding: 3px 9px;
-        border-radius: 6px;
-        background: rgba(99, 102, 241, 0.24);
-        border: 1px solid rgba(129, 140, 248, 0.65);
-        color: #e0e7ff;
-        letter-spacing: 0.2px;
       }
-      /* Flixnet Tabs unter dem Hero-Header */
-      .flix-tabs-bar {
-        display: flex;
-        gap: 6px;
-        padding: 0 20px;
-        background: var(--card);
-        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
-        overflow-x: auto;
-        scrollbar-width: none;
+      .detail-meta-dot {
+        color: rgba(148, 163, 184, 0.65);
+        margin: 0 2px;
+        user-select: none;
       }
-      .flix-tabs-bar::-webkit-scrollbar { display: none; }
-      .flix-tab-btn {
-        background: transparent;
-        border: 0;
-        border-bottom: 2.5px solid transparent;
-        color: #94a3b8;
-        font-size: calc(12.5px * var(--scale-text));
-        font-weight: 800;
-        padding: 11px 12px;
+      .detail-meta-link {
+        color: #e2e8f0;
         cursor: pointer;
-        white-space: nowrap;
+        transition: color 0.14s ease, text-decoration 0.14s ease;
+      }
+      .detail-meta-link:hover, .detail-meta-link.spatial-focus {
+        color: #38bdf8;
+        text-decoration: underline;
+      }
+      .detail-meta-studio {
+        color: #cbd5e1;
+        font-weight: 700;
+        cursor: pointer;
+        transition: color 0.14s ease;
+      }
+      .detail-meta-studio:hover, .detail-meta-studio.spatial-focus {
+        color: #ffffff;
+        text-decoration: underline;
+      }
+      /* Flixnet Hero Action Bar: Weißer Play-Button + Versions-Auswahl + Sekundär-Buttons */
+      .detail-action-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 4px;
+      }
+      .detail-action-primary-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .detail-btn-play-white {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+        justify-content: center;
+        gap: 9px;
+        background: #ffffff;
+        color: #090d16;
+        border: 1px solid #ffffff;
+        border-radius: 8px;
+        padding: 11px 22px;
+        font-size: calc(14px * var(--scale-text));
+        font-weight: 800;
+        cursor: pointer;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
       }
-      .flix-tab-btn:hover, .flix-tab-btn.spatial-focus {
+      .detail-btn-play-white:hover, .detail-btn-play-white.spatial-focus {
+        background: #f1f5f9;
+        transform: translateY(-1px) scale(1.02);
+        box-shadow: 0 12px 28px rgba(255, 255, 255, 0.22);
+      }
+      .detail-version-select-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+      .detail-version-select {
+        appearance: none;
+        -webkit-appearance: none;
+        background: rgba(15, 23, 42, 0.82);
         color: #f8fafc;
-        background: rgba(14, 165, 233, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        border-radius: 8px;
+        padding: 10px 34px 10px 14px;
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 700;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+        max-width: min(360px, 84vw);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        overflow: hidden;
+        transition: border-color 0.15s ease, background 0.15s ease;
       }
-      .flix-tab-btn.active {
+      .detail-version-select:hover, .detail-version-select:focus, .detail-version-select.spatial-focus {
+        border-color: #38bdf8;
+        background: rgba(30, 41, 59, 0.95);
+        outline: none;
+      }
+      .detail-version-select-caret {
+        position: absolute;
+        right: 12px;
+        pointer-events: none;
+        font-size: 11px;
+        color: #94a3b8;
+      }
+      .detail-btn-glass {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        background: rgba(15, 23, 42, 0.68);
+        color: #f8fafc;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 700;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+        text-decoration: none;
+        transition: all 0.15s ease;
+      }
+      .detail-btn-glass:hover, .detail-btn-glass.spatial-focus {
+        background: rgba(30, 41, 59, 0.92);
+        border-color: rgba(255, 255, 255, 0.45);
         color: #ffffff;
-        border-bottom-color: var(--accent-primary);
+      }
+      .detail-btn-glass.saved {
+        background: rgba(16, 185, 129, 0.22);
+        border-color: rgba(16, 185, 129, 0.65);
+        color: #a7f3d0;
+      }
+      .detail-overview-wrap {
+        max-width: 68ch;
+        margin-top: 4px;
+      }
+      /* Untere Sektionen im Fullscreen-App-View (Episoden/Teile, Cast mit Fotos, Ähnliche Titel mit Covern) */
+      .detail-content-body {
+        width: 100%;
+        padding: 8px clamp(16px, 4.5vw, 56px) 56px;
+        display: flex;
+        flex-direction: column;
+        gap: 32px;
+      }
+      .detail-section-block {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .detail-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .detail-section-heading {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0;
+        font-size: clamp(18px, 2vw, 22px);
+        font-weight: 900;
+        color: #f8fafc;
+        letter-spacing: -0.01em;
+      }
+      .detail-section-heading::before {
+        content: "";
+        display: inline-block;
+        width: 4px;
+        height: 22px;
+        border-radius: 2px;
+        background: #e50914;
+        box-shadow: 0 0 12px rgba(229, 9, 20, 0.65);
+      }
+      /* Horizontaler Cast-Foto-Track (wie in Flixnet Screenshot 1) */
+      .detail-carousel-wrap {
+        position: relative;
+        width: 100%;
+      }
+      .detail-cast-track {
+        display: flex;
+        gap: 14px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 4px 2px 12px;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+      }
+      .detail-cast-track::-webkit-scrollbar { display: none; }
+      .detail-cast-card {
+        flex: 0 0 auto;
+        width: 112px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        cursor: pointer;
+        border-radius: 10px;
+        transition: transform 0.16s ease;
+      }
+      .detail-cast-card:hover, .detail-cast-card.spatial-focus {
+        transform: translateY(-4px);
+      }
+      .detail-cast-photo-wrap {
+        width: 112px;
+        height: 146px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #0f172a;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+      }
+      .detail-cast-card:hover .detail-cast-photo-wrap,
+      .detail-cast-card.spatial-focus .detail-cast-photo-wrap {
+        border-color: #38bdf8;
+      }
+      .detail-cast-photo {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center 20%;
+        display: block;
+      }
+      .detail-cast-name {
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 800;
+        color: #f8fafc;
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .detail-cast-role {
+        font-size: calc(11px * var(--scale-text));
+        color: #94a3b8;
+        line-height: 1.2;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-top: -3px;
+      }
+      /* Horizontale "Das könnte dir auch gefallen" Cover-Reihe (wie in Flixnet Screenshot 2) */
+      .detail-similar-track {
+        display: flex;
+        gap: 14px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 4px 2px 14px;
+        scroll-behavior: smooth;
+        scrollbar-width: none;
+      }
+      .detail-similar-track::-webkit-scrollbar { display: none; }
+      .detail-sim-card {
+        position: relative;
+        flex: 0 0 auto;
+        width: clamp(148px, 16vw, 196px);
+        aspect-ratio: 2 / 3;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #0f172a;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.65);
+        cursor: pointer;
+        transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      }
+      .detail-sim-card:hover, .detail-sim-card.spatial-focus {
+        transform: translateY(-5px) scale(1.02);
+        border-color: rgba(255, 255, 255, 0.45);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.85);
+      }
+      .detail-sim-poster {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .detail-sim-overlay {
+        position: absolute;
+        inset: auto 0 0 0;
+        padding: 36px 12px 11px;
+        background: linear-gradient(180deg, transparent 0%, rgba(4, 7, 16, 0.84) 55%, rgba(4, 7, 16, 0.98) 100%);
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .detail-sim-title {
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 800;
+        color: #ffffff;
+        line-height: 1.22;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .detail-sim-sub {
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 600;
+        color: #94a3b8;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .detail-carousel-arrow {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 6;
+        width: 38px;
+        height: 56px;
+        border-radius: 8px;
+        background: rgba(9, 13, 22, 0.82);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: #ffffff;
+        font-size: 20px;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        backdrop-filter: blur(8px);
+        transition: all 0.15s ease;
+      }
+      .detail-carousel-arrow:hover, .detail-carousel-arrow.spatial-focus {
+        background: rgba(30, 41, 59, 0.96);
+        border-color: #38bdf8;
+      }
+      .detail-carousel-arrow.prev { left: 6px; }
+      .detail-carousel-arrow.next { right: 6px; }
+      @media (max-width: 640px) {
+        .detail-hero-stage {
+          min-height: 500px;
+          padding: 78px 16px 26px;
+        }
+        .detail-monumental-title {
+          font-size: clamp(24px, 7.5vw, 36px);
+        }
+        .detail-cast-card, .detail-cast-photo-wrap {
+          width: 98px;
+        }
+        .detail-cast-photo-wrap {
+          height: 128px;
+        }
+        .detail-carousel-arrow {
+          display: none;
+        }
       }
       .ep-icon-btn {
         padding: 4px 7px !important;
@@ -4675,12 +5104,6 @@
         overflow-y: auto;
         padding: 16px;
         box-shadow: 0 24px 60px rgba(0,0,0,0.92);
-      }
-      @media (max-width: 540px) {
-        .flix-hero-grid { gap: 12px; align-items: flex-start; }
-        .flix-poster-card { width: 96px; }
-        .modal-hero-banner { padding: 12px 14px 14px; min-height: 220px; }
-        .flix-tabs-bar { padding: 0 12px; }
       }
       .modal-body { padding: 14px 18px 20px; }
       .detail-meta-grid {
@@ -6958,6 +7381,7 @@
       }
 
       function closeDetailModal() {
+        if (document.body) document.body.classList.remove("modal-open-pause-hero");
         const m = document.getElementById("modalRoot");
         if (m) m.innerHTML = "";
         if (lastModalHeroReturnId && !heroCurtainScrolledToCatalog && !state.heroHidden) {
@@ -7083,21 +7507,20 @@
           addRecentViewedItem(d, tc);
           const tr = d.trailers || null;
           const m = document.getElementById("modalRoot");
+          if (document.body) document.body.classList.add("modal-open-pause-hero");
           if (!tr || !tr.embeds) {
             const ytSearchQuery = encodeURIComponent((d.title || titleText || '') + ' ' + (d.year && d.year !== 'K.A.' ? d.year : '') + ' Trailer Deutsch');
             const ytSearchUrl = 'https://www.youtube.com/results?search_query=' + ytSearchQuery;
-            m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this)closeDetailModal()">' +
-              '<div class="modal" style="max-width:680px">' +
-                '<div class="modal-body">' +
-                  '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">' +
-                    '<div style="font-size:15px;font-weight:900">🎬 Trailer: ' + esc(d.title || titleText || 'Titel') + '</div>' +
-                    '<button class="btn close-slate" onclick="closeDetailModal()">✖</button>' +
-                  '</div>' +
-                  '<p style="font-size:12.5px;color:var(--muted);margin-bottom:12px">Für diesen Titel ist aktuell kein direkter TMDB-Trailer hinterlegt. Du kannst direkt auf YouTube suchen oder die Detailansicht öffnen:</p>' +
-                  '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-                    '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Auf YouTube suchen</a>' +
-                    '<button class="btn purple" onclick="openDetails(\\'' + tc + '\\',' + Number(d.id || id) + ',false)">ℹ️ Vollständige Details öffnen</button>' +
-                  '</div>' +
+            m.innerHTML = '<div class="modal-backdrop" style="display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(4,7,16,0.94)" onclick="if(event.target===this)closeDetailModal()">' +
+              '<div style="background:var(--surface);border:1px solid rgba(148,163,184,0.22);border-radius:14px;max-width:640px;width:100%;padding:20px;box-shadow:0 24px 60px rgba(0,0,0,0.9)">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px">' +
+                  '<div style="font-size:16px;font-weight:900">🎬 Trailer: ' + esc(d.title || titleText || 'Titel') + '</div>' +
+                  '<button class="detail-back-btn" onclick="closeDetailModal()">← Schließen</button>' +
+                '</div>' +
+                '<p style="font-size:13px;color:var(--muted);margin-bottom:14px">Für diesen Titel ist aktuell kein direkter TMDB-Trailer hinterlegt. Du kannst direkt auf YouTube suchen oder die Detailansicht öffnen:</p>' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+                  '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Auf YouTube suchen</a>' +
+                  '<button class="btn purple" onclick="openDetails(\\'' + tc + '\\',' + Number(d.id || id) + ',false)">ℹ️ Vollständige Details öffnen</button>' +
                 '</div>' +
               '</div>' +
             '</div>';
@@ -7105,29 +7528,22 @@
           }
           const activeProviderKey = (tr.embeds && tr.embeds[trailerProvider]) ? trailerProvider : "youtube";
           const embedUrl = tr.embeds[activeProviderKey] || tr.embeds.youtube;
-          m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this)closeDetailModal()">' +
-            '<div class="modal" style="max-width:860px">' +
-              '<div class="modal-body" style="padding:14px">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
-                  '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-                    '<span class="hero-badge ' + (tc === 's' ? 'series' : 'movie') + '">' + (tc === 's' ? '📺 SERIE' : '🎬 FILM') + '</span>' +
-                    '<strong style="font-size:15px;font-weight:900">' + esc(d.title || titleText || 'Trailer') + (d.year && d.year !== 'K.A.' ? ' (' + esc(d.year) + ')' : '') + '</strong>' +
-                  '</div>' +
-                  '<div style="display:flex;gap:6px;align-items:center">' +
-                    '<button class="btn purple" onclick="openDetails(\\'' + tc + '\\',' + Number(d.id || id) + ',false)">ℹ️ Alle Details</button>' +
-                    '<button class="btn blue" onclick="openInBot(\\'' + tc + '_' + Number(d.id || id) + '\\')" title="Im Telegram-Bot öffnen">🤖</button>' +
-                    '<button class="btn close-slate" onclick="closeDetailModal()" title="Schließen">✖</button>' +
-                  '</div>' +
-                '</div>' +
-                '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin-bottom:6px">' +
-                  '<span style="font-size:11px;color:var(--text-muted);margin-right:4px">⚡ Standard-Quelle wählen:</span>' +
-                  TRAILER_PROVIDERS_CLIENT.map(tp =>
-                    '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" style="padding:3px 8px;font-size:11px" data-tp-id="' + esc(tp.id) + '" onclick="switchInstantTrailerModalProvider(\\'' + esc(tp.id) + '\\')">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓ Standard' : '') + '</button>'
-                  ).join("") +
-                '</div>' +
-                '<div id="trailerEmbedContainer">' +
-                  '<div class="embed-box" style="margin-top:4px"><iframe class="embed-frame" src="' + esc(embedUrl) + '" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>' +
-                '</div>' +
+          m.innerHTML = '<div class="modal-backdrop" style="background:rgba(3,6,14,0.97);display:flex;flex-direction:column;min-height:100vh" onclick="if(event.target===this)closeDetailModal()">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:16px clamp(16px,4vw,48px);border-bottom:1px solid rgba(255,255,255,0.08)">' +
+              '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+                '<button class="detail-back-btn" onclick="openDetails(\\'' + tc + '\\',' + Number(d.id || id) + ',false)" title="Zurück zur Detailansicht">← Zurück zum Titel</button>' +
+                '<strong style="font-size:clamp(15px,2vw,20px);font-weight:900;color:#fff">' + esc(d.title || titleText || 'Trailer') + (d.year && d.year !== 'K.A.' ? ' (' + esc(d.year) + ')' : '') + '</strong>' +
+              '</div>' +
+              '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                TRAILER_PROVIDERS_CLIENT.map(tp =>
+                  '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" data-tp-id="' + esc(tp.id) + '" onclick="switchInstantTrailerModalProvider(\\'' + esc(tp.id) + '\\')">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
+                ).join("") +
+                '<button class="detail-back-btn" style="background:rgba(225,29,72,0.22);border-color:rgba(244,63,94,0.5)" onclick="closeDetailModal()" title="Trailer schließen">✖ Schließen</button>' +
+              '</div>' +
+            '</div>' +
+            '<div style="flex:1;display:flex;align-items:center;justify-content:center;padding:clamp(12px,2.5vw,32px)">' +
+              '<div id="trailerEmbedContainer" style="width:100%;max-width:1360px">' +
+                '<div class="embed-box" style="margin:0;box-shadow:0 24px 70px rgba(0,0,0,0.95)"><iframe class="embed-frame" src="' + esc(embedUrl) + '" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>' +
               '</div>' +
             '</div>' +
           '</div>';
@@ -8872,6 +9288,14 @@
         const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
           if (state.isSearchMode || state.heroSlides.length <= 1) return;
+          if (
+            document.getElementById("modalRoot")?.innerHTML.trim() ||
+            document.getElementById("lightboxRoot")?.innerHTML.trim() ||
+            document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
+            document.getElementById("customDialogRoot")?.innerHTML.trim()
+          ) {
+            return;
+          }
           const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
           if (!state.heroHidden && !isScrolledPast) {
             if (state.searchFocused || heroPointerHovered) return;
@@ -9191,6 +9615,13 @@
             target.style.setProperty("--ambi-2", pal.c2);
             target.style.setProperty("--ambi-3", pal.c3);
             target.classList.toggle("hero-bright-backdrop", Boolean(pal.isBrightLeft));
+          }
+          const detailStage = document.getElementById("detailHeroStageEl");
+          if (detailStage) {
+            detailStage.style.setProperty("--ambi-1", pal.c1);
+            detailStage.style.setProperty("--ambi-2", pal.c2);
+            detailStage.style.setProperty("--ambi-3", pal.c3);
+            detailStage.classList.toggle("hero-bright-backdrop", Boolean(pal.isBrightLeft));
           }
         };
         if (heroAmbilightColorCache.has(backdropUrl)) {
