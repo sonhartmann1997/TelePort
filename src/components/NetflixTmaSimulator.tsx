@@ -338,6 +338,262 @@ export function useSwipeable(
   }, [iframeRef, srcDocDependency]);
 }
 
+export function useMouseDragScroll(
+  iframeRef: React.RefObject<HTMLIFrameElement | null>,
+  workspaceContainerRef: React.RefObject<HTMLElement | null>,
+  srcDocDependency: string
+) {
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    const workspaceEl = workspaceContainerRef.current;
+
+    const attachTouchLikeMouseScroll = (
+      doc: Document,
+      win: Window,
+      fallbackRootEl?: HTMLElement | null
+    ) => {
+      let isMouseDown = false;
+      let isDragging = false;
+      let startX = 0;
+      let startY = 0;
+      let lastX = 0;
+      let lastY = 0;
+      let lastTime = 0;
+      let velocityX = 0;
+      let velocityY = 0;
+      let momentumRafId = 0;
+      let suppressNextClickUntil = 0;
+      let scrollTargetEl: HTMLElement | Window | null = null;
+
+      const stopMomentum = () => {
+        if (momentumRafId) {
+          win.cancelAnimationFrame(momentumRafId);
+          momentumRafId = 0;
+        }
+      };
+
+      const isInteractiveSkipTarget = (target: EventTarget | null): boolean => {
+        if (!target || !(target instanceof Element)) return false;
+        if (
+          target.closest(
+            'input, textarea, select, [contenteditable="true"], [data-drag-handle], .admin-drag-handle'
+          )
+        ) {
+          return true;
+        }
+        // Inside the open Hero Slider (when not inside an expanded description box), let useSwipeable handle rubber-band/slide gestures
+        const inOpenHero =
+          Boolean(target.closest('.hero, #heroStageWrapEl')) &&
+          !doc.body?.classList.contains('hero-scrolled-past') &&
+          !target.closest('.expandable-desc-box.is-expanded');
+        if (inOpenHero) return true;
+        return false;
+      };
+
+      const resolveScrollableTarget = (target: EventTarget | null): HTMLElement | Window | null => {
+        let el = target instanceof Element ? (target as HTMLElement) : null;
+        while (el && el !== doc.body && el !== doc.documentElement) {
+          const style = win.getComputedStyle(el);
+          const overflowY = style.overflowY;
+          const overflowX = style.overflowX;
+          const canScrollY =
+            (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') &&
+            el.scrollHeight > el.clientHeight + 2;
+          const canScrollX =
+            (overflowX === 'auto' || overflowX === 'scroll' || overflowX === 'overlay') &&
+            el.scrollWidth > el.clientWidth + 2;
+          if (canScrollY || canScrollX) {
+            return el;
+          }
+          el = el.parentElement;
+        }
+        const docEl = doc.scrollingElement || doc.documentElement || doc.body;
+        if (docEl && (docEl.scrollHeight > docEl.clientHeight + 2 || docEl.scrollWidth > docEl.clientWidth + 2)) {
+          return win;
+        }
+        if (
+          fallbackRootEl &&
+          (fallbackRootEl.scrollHeight > fallbackRootEl.clientHeight + 2 ||
+            fallbackRootEl.scrollWidth > fallbackRootEl.clientWidth + 2)
+        ) {
+          return fallbackRootEl;
+        }
+        return win;
+      };
+
+      const scrollByDelta = (target: HTMLElement | Window, dx: number, dy: number) => {
+        if (target === win) {
+          win.scrollBy(dx, dy);
+        } else {
+          const htmlEl = target as HTMLElement;
+          if (dx !== 0) htmlEl.scrollLeft += dx;
+          if (dy !== 0) htmlEl.scrollTop += dy;
+        }
+      };
+
+      const startMomentum = () => {
+        stopMomentum();
+        const target = scrollTargetEl;
+        if (!target) return;
+        let vx = velocityX * 16; // px per 16ms frame
+        let vy = velocityY * 16;
+        const friction = 0.94;
+
+        const step = () => {
+          vx *= friction;
+          vy *= friction;
+          if (Math.abs(vx) < 0.35 && Math.abs(vy) < 0.35) {
+            momentumRafId = 0;
+            return;
+          }
+          // When scrolling up in the main window and reaching top (scrollY <= 0), stop momentum so rubber-band guard takes over cleanly
+          if (target === win && vy < 0 && (win.scrollY || win.pageYOffset || 0) <= 0) {
+            momentumRafId = 0;
+            return;
+          }
+          scrollByDelta(target, -vx, -vy);
+          momentumRafId = win.requestAnimationFrame(step);
+        };
+
+        if (Math.abs(vx) >= 0.8 || Math.abs(vy) >= 0.8) {
+          momentumRafId = win.requestAnimationFrame(step);
+        }
+      };
+
+      const onMouseDown = (ev: MouseEvent) => {
+        if (ev.button !== 0) return;
+        stopMomentum();
+        if (isInteractiveSkipTarget(ev.target)) return;
+        scrollTargetEl = resolveScrollableTarget(ev.target);
+        if (!scrollTargetEl) return;
+        isMouseDown = true;
+        isDragging = false;
+        startX = ev.clientX;
+        startY = ev.clientY;
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        lastTime = performance.now();
+        velocityX = 0;
+        velocityY = 0;
+      };
+
+      const onMouseMove = (ev: MouseEvent) => {
+        if (!isMouseDown || !scrollTargetEl) return;
+        const now = performance.now();
+        const dt = Math.max(4, now - lastTime);
+        const totalDx = ev.clientX - startX;
+        const totalDy = ev.clientY - startY;
+
+        if (!isDragging) {
+          if (Math.hypot(totalDx, totalDy) < 6) return;
+          isDragging = true;
+          if (doc.body) {
+            doc.body.style.userSelect = 'none';
+            doc.body.style.cursor = 'grabbing';
+          }
+        }
+
+        const stepDx = ev.clientX - lastX;
+        const stepDy = ev.clientY - lastY;
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        lastTime = now;
+
+        // If at catalog top (scrollY <= 2) and dragging down, let useSwipeable handle the Covers -> Slider rubber-band pull
+        if (
+          scrollTargetEl === win &&
+          Boolean(doc.body?.classList.contains('hero-scrolled-past')) &&
+          (win.scrollY || win.pageYOffset || 0) <= 2 &&
+          totalDy > 0
+        ) {
+          return;
+        }
+
+        const instVx = stepDx / dt;
+        const instVy = stepDy / dt;
+        velocityX = velocityX * 0.35 + instVx * 0.65;
+        velocityY = velocityY * 0.35 + instVy * 0.65;
+
+        scrollByDelta(scrollTargetEl, -stepDx, -stepDy);
+      };
+
+      const finishDrag = () => {
+        if (!isMouseDown) return;
+        const wasDragging = isDragging;
+        isMouseDown = false;
+        isDragging = false;
+        if (doc.body) {
+          doc.body.style.userSelect = '';
+          doc.body.style.cursor = '';
+        }
+        if (wasDragging) {
+          suppressNextClickUntil = performance.now() + 180;
+          startMomentum();
+        }
+      };
+
+      const onClickCapture = (ev: MouseEvent) => {
+        if (performance.now() < suppressNextClickUntil) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          suppressNextClickUntil = 0;
+        }
+      };
+
+      const onDragStart = (ev: DragEvent) => {
+        if (isMouseDown || isDragging) {
+          ev.preventDefault();
+        }
+      };
+
+      doc.addEventListener('mousedown', onMouseDown, { passive: true });
+      win.addEventListener('mousemove', onMouseMove, { passive: true });
+      win.addEventListener('mouseup', finishDrag, { passive: true });
+      win.addEventListener('mouseleave', finishDrag, { passive: true });
+      doc.addEventListener('click', onClickCapture, true);
+      doc.addEventListener('dragstart', onDragStart);
+
+      return () => {
+        stopMomentum();
+        doc.removeEventListener('mousedown', onMouseDown);
+        win.removeEventListener('mousemove', onMouseMove);
+        win.removeEventListener('mouseup', finishDrag);
+        win.removeEventListener('mouseleave', finishDrag);
+        doc.removeEventListener('click', onClickCapture, true);
+        doc.removeEventListener('dragstart', onDragStart);
+      };
+    };
+
+    const cleanupWorkspace = workspaceEl
+      ? attachTouchLikeMouseScroll(document, window, workspaceEl)
+      : null;
+
+    let cleanupIframe: (() => void) | null = null;
+    const bindIframe = () => {
+      if (cleanupIframe) {
+        cleanupIframe();
+        cleanupIframe = null;
+      }
+      const doc = iframe?.contentDocument || iframe?.contentWindow?.document;
+      const win = iframe?.contentWindow;
+      if (doc && win) {
+        cleanupIframe = attachTouchLikeMouseScroll(doc, win, null);
+      }
+    };
+
+    if (iframe) {
+      iframe.addEventListener('load', bindIframe);
+      bindIframe();
+    }
+
+    return () => {
+      if (cleanupWorkspace) cleanupWorkspace();
+      if (iframe) iframe.removeEventListener('load', bindIframe);
+      if (cleanupIframe) cleanupIframe();
+    };
+  }, [iframeRef, workspaceContainerRef, srcDocDependency]);
+}
+
 export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   workerCode,
   envVars,
@@ -352,6 +608,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   const [lastApiRoute, setLastApiRoute] = useState<string>('/app');
   const [lastDurationMs, setLastDurationMs] = useState<number>(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const workspaceContainerRef = useRef<HTMLDivElement>(null);
 
   const buildEnvMap = useCallback(() => {
     const map: Record<string, string> = {
@@ -698,6 +955,8 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     },
   });
 
+  useMouseDragScroll(iframeRef, workspaceContainerRef, srcDocHtml);
+
   // Listen for fetch requests coming from inside the simulated STREAMFLIX iframe
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
@@ -754,6 +1013,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
 
   return (
     <div
+      ref={workspaceContainerRef}
       className={`flex flex-col bg-[#0b0d13] border border-white/[0.07] rounded-xl overflow-hidden shadow-2xl ${
         isFullscreen ? 'fixed inset-2 z-50' : 'h-full w-full'
       }`}

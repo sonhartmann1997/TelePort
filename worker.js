@@ -29332,7 +29332,7 @@
           180deg,
           rgba(6, 9, 17, 0.95) 0%,
           rgba(var(--ambi-1), 0.18) 55%,
-          rgba(6, 9, 17, 0.90) 100%
+          rgba(6, 9, 17, 0.92) 100%
         );
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
@@ -29348,14 +29348,6 @@
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
         transition: background 0.28s ease, border-color 0.28s ease, box-shadow 0.28s ease;
-      }
-      /* Ganz oben über dem geöffneten Hero-Slider: Kein hässlicher Balken! Alle 38px-Glas-Elemente schweben frei im oberen Kino-Fade */
-      body:not(.page-scrolled):has(#heroCurtainShell:not(.is-collapsed)) header {
-        background: transparent !important;
-        backdrop-filter: none !important;
-        -webkit-backdrop-filter: none !important;
-        border-bottom-color: transparent !important;
-        box-shadow: none !important;
       }
       header .top-btn-icon {
         display: inline-flex;
@@ -29388,7 +29380,7 @@
         background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(var(--ambi-1), 0.20) 100%);
         border: 1px solid rgba(var(--ambi-2), 0.34);
         border-radius: 10px;
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42);
         transform: translate3d(0, 0, 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
@@ -29419,7 +29411,7 @@
         border-radius: 10px;
         background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(var(--ambi-1), 0.18) 100%);
         border: 1px solid rgba(var(--ambi-2), 0.32);
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
         transform: translate3d(0, 0, 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
@@ -29699,7 +29691,7 @@
         padding: 3px;
         border-radius: 10px;
         border: 1px solid rgba(var(--ambi-2), 0.32);
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42);
         transform: translate3d(0, 0, 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
@@ -29780,8 +29772,7 @@
         padding: 0 3px;
         box-shadow:
           0 4px 16px rgba(2, 6, 23, 0.44),
-          0 0 18px rgba(var(--ambi-1), 0.12),
-          inset 0 1px 0 rgba(255, 255, 255, 0.14);
+          0 0 14px rgba(var(--ambi-1), 0.10);
         transform: translate3d(0, 0, 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
@@ -30152,7 +30143,7 @@
         display: grid;
         grid-template-rows: 1fr;
         opacity: 1;
-        margin-top: -54px;
+        margin-top: 0px;
         margin-bottom: 0px;
         transition:
           grid-template-rows 0.42s cubic-bezier(0.22, 1, 0.36, 1),
@@ -30233,26 +30224,10 @@
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
       }
-      /* Flackerfreie atmosphärische Farblicht-Ausfüllung ohne teures Live-Blur-Rastern auf Mobilgeräten */
-      .hero-ambilight-glow {
-        display: none;
-      }
+      /* Flackerfreie atmosphärische Farblicht-Ausfüllung ohne seitliche Scheinwerfer oder helle Blende */
+      .hero-ambilight-glow,
       .hero-ambilight-beams {
-        position: absolute;
-        inset: 0;
-        z-index: 0;
-        pointer-events: none;
-        background:
-          radial-gradient(80% 50% at 50% 0%, rgba(var(--ambi-2), 0.42) 0%, rgba(var(--ambi-2), 0) 75%),
-          radial-gradient(65% 70% at 15% 45%, rgba(var(--ambi-1), 0.36) 0%, rgba(var(--ambi-1), 0) 75%),
-          radial-gradient(65% 75% at 85% 55%, rgba(var(--ambi-3), 0.34) 0%, rgba(var(--ambi-3), 0) 78%);
-        opacity: 0.9;
-        transform: translate3d(0, 0, 0);
-        backface-visibility: hidden;
-        -webkit-backface-visibility: hidden;
-      }
-      body[data-theme="light"] .hero-ambilight-beams {
-        opacity: 0.45;
+        display: none !important;
       }
       /* Hardwarebeschleunigtes Scroll-Abdunklungs-Overlay (reines GPU-Opacity statt Live-Blur-Neuberechnung beim Scrollen) */
       .hero-scroll-dim-overlay {
@@ -30271,9 +30246,9 @@
         position: relative;
         z-index: 1;
         margin: 0;
-        min-height: 100vh;
-        min-height: 100svh;
-        height: 100svh;
+        min-height: calc(100vh - var(--sticky-header-height, 54px));
+        min-height: calc(100svh - var(--sticky-header-height, 54px));
+        height: calc(100svh - var(--sticky-header-height, 54px));
         box-sizing: border-box;
         border-radius: 0;
         border: none;
@@ -30282,14 +30257,14 @@
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        padding: 68px 28px 14px;
+        padding: 16px 28px 14px;
         overflow: hidden;
         touch-action: pan-x;
       }
       .hero:has(.expandable-desc-box.is-expanded) {
         touch-action: pan-x pan-y;
       }
-      /* Scharfes Slider-Bild: Reiner GPU-Opacity-Crossfade ab top: 0 ohne -webkit-mask-image Flackern unter der Top-Leiste */
+      /* Scharfes Slider-Bild direkt unterhalb der oberen Suchleiste (top: 0) */
       .hero-backdrop-layer {
         position: absolute;
         inset: 0;
@@ -30309,14 +30284,14 @@
         opacity: 1;
         transform: translate3d(0, 0, 0);
       }
-      /* Sanfter Kino-Fade (oben mit Ambilight-Schimmer hinter der Top-Leiste, unten nahtlos in den Katalog) */
+      /* Sanfter Kino-Fade (ohne obere Highlight-Blende, unten nahtlos in den Katalog) */
       .hero-scrim-layer {
         position: absolute;
         inset: 0;
         z-index: 1;
         pointer-events: none;
         background:
-          linear-gradient(180deg, rgba(5, 8, 16, 0.76) 0%, rgba(var(--ambi-1), 0.22) 34px, rgba(5, 8, 16, 0.24) 72px, rgba(5, 8, 16, 0) 135px),
+          linear-gradient(180deg, rgba(5, 8, 16, 0.22) 0%, rgba(5, 8, 16, 0) 48px),
           linear-gradient(0deg, var(--bg) 0%, rgba(6, 9, 17, 0.92) 9%, rgba(6, 9, 17, 0.44) 24%, rgba(6, 9, 17, 0.08) 42%, rgba(6, 9, 17, 0) 58%),
           linear-gradient(90deg, rgba(4, 7, 15, 0.84) 0%, rgba(4, 7, 15, 0.62) 22%, rgba(4, 7, 15, 0.28) 44%, rgba(4, 7, 15, 0.05) 64%, rgba(4, 7, 15, 0) 78%),
           linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
@@ -30327,7 +30302,7 @@
       /* Automatische Kontrast-Unterstützung bei extrem hellen Szenenbildern (wie Schnee/Eis in Interstellar) */
       .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
         background:
-          linear-gradient(180deg, rgba(5, 8, 16, 0.82) 0%, rgba(var(--ambi-1), 0.26) 36px, rgba(5, 8, 16, 0.34) 78px, rgba(5, 8, 16, 0) 145px),
+          linear-gradient(180deg, rgba(5, 8, 16, 0.28) 0%, rgba(5, 8, 16, 0) 56px),
           linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.95) 11%, rgba(5, 8, 16, 0.52) 27%, rgba(5, 8, 16, 0.12) 45%, rgba(5, 8, 16, 0) 62%),
           linear-gradient(90deg, rgba(4, 7, 15, 0.92) 0%, rgba(4, 7, 15, 0.76) 26%, rgba(4, 7, 15, 0.42) 48%, rgba(4, 7, 15, 0.10) 68%, rgba(4, 7, 15, 0) 84%),
           linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
@@ -30340,14 +30315,14 @@
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
-        min-height: clamp(320px, 66svh, 640px);
+        min-height: clamp(280px, 62svh, 600px);
         gap: 12px;
         transform: translate3d(0, var(--hero-rubber-y, 0px), 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
         will-change: transform;
       }
-      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten oben + sanfter Top-Verlauf ohne Masken-Flackern */
+      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten direkt unter der Suchleiste */
       @media (orientation: portrait), (max-width: 640px) {
         .hero-backdrop-layer {
           inset: 0 !important;
@@ -30358,7 +30333,7 @@
         .hero-scrim-layer,
         .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
           background:
-            linear-gradient(180deg, rgba(4, 7, 15, 0.74) 0%, rgba(var(--ambi-1), 0.22) 32px, rgba(4, 7, 15, 0.22) 66px, rgba(4, 7, 15, 0) 120px),
+            linear-gradient(180deg, rgba(4, 7, 15, 0.22) 0%, rgba(4, 7, 15, 0) 48px),
             linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.96) 14%, rgba(5, 8, 16, 0.74) 30%, rgba(5, 8, 16, 0.24) 46%, rgba(5, 8, 16, 0) 64%) !important;
         }
       }
@@ -34544,6 +34519,7 @@
       let modalTouchStartX = 0;
       let lastModalTriggerKey = "";
       let lastModalTriggerEl = null;
+      let lastModalHeroReturnId = "";
 
       // Clientseitiger Instant-Cache (5 Min TTL) für Detailansichten & Staffeln (#3)
       const CLIENT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -34567,6 +34543,28 @@
         if (!modalAlreadyOpen) {
           lastModalTriggerKey = (typeCode && id) ? (typeCode + "_" + id) : "";
           lastModalTriggerEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : null;
+          const activeEl = document.activeElement;
+          const inHeroSlider = !heroCurtainScrolledToCatalog && !state.heroHidden && !state.isSearchMode && (!state.currentView || state.currentView === "discover");
+          if (inHeroSlider) {
+            if (
+              (lastModalTriggerEl && lastModalTriggerEl.id === "heroBtnTrailer") ||
+              (activeEl && activeEl.id === "heroBtnTrailer")
+            ) {
+              lastModalHeroReturnId = "heroBtnTrailer";
+            } else {
+              const curHero = Array.isArray(state.heroSlides) ? (state.heroSlides[state.heroIndex] || state.heroSlides[0]) : null;
+              const curHeroType = curHero && (curHero.media_type === "tv" || state.type === "s") ? "s" : "m";
+              const matchesHeroSlide = Boolean(curHero && String(curHero.id) === String(id) && curHeroType === typeCode);
+              const triggeredFromHero = Boolean(
+                (lastModalTriggerEl && lastModalTriggerEl.closest && lastModalTriggerEl.closest(".hero")) ||
+                (activeEl && activeEl.closest && activeEl.closest(".hero")) ||
+                matchesHeroSlide
+              );
+              lastModalHeroReturnId = triggeredFromHero ? "heroBtnDetails" : "";
+            }
+          } else {
+            lastModalHeroReturnId = "";
+          }
         } else if (typeCode && id) {
           lastModalTriggerKey = typeCode + "_" + id;
         }
@@ -34575,6 +34573,21 @@
       function closeDetailModal() {
         const m = document.getElementById("modalRoot");
         if (m) m.innerHTML = "";
+        if (lastModalHeroReturnId && !heroCurtainScrolledToCatalog && !state.heroHidden) {
+          const heroReturnBtn = document.getElementById(lastModalHeroReturnId) || document.getElementById("heroBtnDetails");
+          lastModalHeroReturnId = "";
+          if (heroReturnBtn && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(heroReturnBtn, false);
+            return;
+          }
+        }
+        if (lastModalTriggerEl && document.body.contains(lastModalTriggerEl) && lastModalTriggerEl.closest && lastModalTriggerEl.closest(".hero") && !heroCurtainScrolledToCatalog && !state.heroHidden) {
+          const heroDetailsBtn = document.getElementById("heroBtnDetails") || lastModalTriggerEl;
+          if (typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(heroDetailsBtn, false);
+            return;
+          }
+        }
         if (lastModalTriggerKey) {
           const cardEl = document.querySelector('.card[data-card-key="' + lastModalTriggerKey + '"]');
           if (cardEl && typeof jumpSpatialFocus === "function") {
@@ -35444,7 +35457,7 @@
           : [];
         const genreStr = genreItems.length ? genreItems.map(g => g.name).join(", ") : "";
         const metaParts = [voteStr, yearStr, typeLabel, genreStr].filter(Boolean);
-        return "💡 Highlight: " + titleRaw + (metaParts.length ? (" · " + metaParts.join(" · ")) : "") + " — Tippen zum Suchen…";
+        return "💡 " + titleRaw + (metaParts.length ? (" · " + metaParts.join(" · ")) : "") + " — Tippen zum Suchen…";
       }
 
       function isMobileCompactSearchPillActiveClient() {
@@ -35721,6 +35734,8 @@
         syncHeroSearchPlaceholderAndToggleBtnClient();
       }
 
+      let heroLastHorizWheelAt = 0;
+
       function onHeroCatalogWheelClient(ev) {
         if (!isHeroScrollCouplingActiveClient()) return;
         const targetEl = ev.target;
@@ -35734,7 +35749,24 @@
           }
         }
         const now = Date.now();
-        const dy = Number(ev.deltaY) || 0;
+        const rawDx = Number(ev.deltaX) || 0;
+        const rawDy = Number(ev.deltaY) || 0;
+        const dx = Math.abs(rawDx) > 0.5 ? rawDx : (ev.shiftKey ? rawDy : 0);
+        const dy = ev.shiftKey && Math.abs(rawDx) <= 0.5 ? 0 : rawDy;
+
+        // Horizontal Wheel / Trackpad Scroll Left & Right im geöffneten Slider: Blättert direkt durch die Slides!
+        if (!heroCurtainScrolledToCatalog && !state.heroHidden && Array.isArray(state.heroSlides) && state.heroSlides.length > 1) {
+          if (Math.abs(dx) >= 14 && Math.abs(dx) > Math.abs(dy) * 1.15) {
+            ev.preventDefault();
+            if (now - heroLastHorizWheelAt >= 260) {
+              heroLastHorizWheelAt = now;
+              triggerTmaHapticClient("selection");
+              setHeroSlideIndex(state.heroIndex + (dx > 0 ? 1 : -1));
+            }
+            return;
+          }
+        }
+
         const gapMs = now - heroLastWheelEventAt;
         heroLastWheelEventAt = now;
 
@@ -36349,10 +36381,12 @@
                 }
               }
               const avgLeftLum = leftLumCount > 0 ? (leftLumSum / leftLumCount) : 60;
+              const centerMain = sampleZone(5, 19, 1, 11);
+              const centerAccent = sampleZone(6, 18, 2, 10);
               const palette = {
-                c1: sampleZone(0, 8, 1, 13),
-                c2: sampleZone(8, 16, 0, 10),
-                c3: sampleZone(16, 24, 1, 13),
+                c1: centerMain,
+                c2: centerAccent,
+                c3: centerMain,
                 isBrightLeft: avgLeftLum > 136
               };
               heroAmbilightColorCache.set(backdropUrl, palette);
@@ -36544,7 +36578,7 @@
                   '</div>' +
                   '<div class="hero-bottom-bar">' +
                     thumbsNavHtml +
-                    '<button type="button" id="heroScrollDownHintBtn" class="hero-scroll-down-hint" onclick="scrollToCatalogBelowHeroClient(event)" title="Nach unten zu den Filmen & Serien scrollen" aria-label="Nach unten zu den Filmen & Serien scrollen">' +
+                    '<button type="button" id="heroScrollDownHintBtn" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToCatalogBelowHeroClient(event)" title="Nach unten zu den Filmen & Serien scrollen" aria-label="Nach unten zu den Filmen & Serien scrollen">' +
                       '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
                         '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
                       '</svg>' +
@@ -47353,6 +47387,83 @@
         loadAdminPanelView(false);
       }
 
+      let adminJsonImportPanelCollapsed = false;
+      const adminPanelDragOffsets = new WeakMap();
+
+      function bindDraggableAdminPanelClient(panelEl, handleEl) {
+        if (!panelEl || !handleEl || handleEl._dragBound) return;
+        handleEl._dragBound = true;
+        handleEl.style.cursor = "grab";
+        handleEl.style.userSelect = "none";
+        let dragging = false;
+        let startX = 0;
+        let startY = 0;
+        let baseX = 0;
+        let baseY = 0;
+
+        const applyOffset = (nx, ny) => {
+          adminPanelDragOffsets.set(panelEl, { x: nx, y: ny });
+          if (panelEl.id === "floatingImportStatusWidget") {
+            panelEl.style.transform = "translate3d(calc(-50% + " + Math.round(nx) + "px), " + Math.round(ny) + "px, 0)";
+          } else {
+            panelEl.style.transform = "translate3d(" + Math.round(nx) + "px, " + Math.round(ny) + "px, 0)";
+            panelEl.style.position = "relative";
+            panelEl.style.zIndex = "75";
+          }
+        };
+
+        handleEl.addEventListener("pointerdown", (ev) => {
+          if (ev.button !== undefined && ev.button !== 0) return;
+          if (ev.target && ev.target.closest && ev.target.closest("button, input, select, a")) return;
+          ev.preventDefault();
+          const cur = adminPanelDragOffsets.get(panelEl) || { x: 0, y: 0 };
+          startX = ev.clientX;
+          startY = ev.clientY;
+          baseX = cur.x;
+          baseY = cur.y;
+          dragging = true;
+          handleEl.style.cursor = "grabbing";
+          if (typeof handleEl.setPointerCapture === "function") {
+            try { handleEl.setPointerCapture(ev.pointerId); } catch (_e) {}
+          }
+        });
+
+        handleEl.addEventListener("pointermove", (ev) => {
+          if (!dragging) return;
+          const dx = ev.clientX - startX;
+          const dy = ev.clientY - startY;
+          applyOffset(baseX + dx, baseY + dy);
+        });
+
+        const endDrag = () => {
+          if (!dragging) return;
+          dragging = false;
+          handleEl.style.cursor = "grab";
+        };
+        handleEl.addEventListener("pointerup", endDrag);
+        handleEl.addEventListener("pointercancel", endDrag);
+      }
+
+      function toggleAdminJsonImportCollapseClient() {
+        adminJsonImportPanelCollapsed = !adminJsonImportPanelCollapsed;
+        const bodyEl = document.getElementById("adminJsonImportPanelBody");
+        const btnEl = document.getElementById("adminJsonImportCollapseBtn");
+        if (bodyEl) {
+          bodyEl.style.display = adminJsonImportPanelCollapsed ? "none" : "block";
+        }
+        if (btnEl) {
+          btnEl.innerHTML = adminJsonImportPanelCollapsed ? "▾ Ausklappen" : "▴ Einklappen";
+        }
+      }
+
+      function resetAdminJsonImportDragClient() {
+        const panelEl = document.getElementById("adminJsonImportPanelBox");
+        if (panelEl) {
+          adminPanelDragOffsets.set(panelEl, { x: 0, y: 0 });
+          panelEl.style.transform = "translate3d(0px, 0px, 0)";
+        }
+      }
+
       function updateFloatingImportStatusBarDom() {
         try {
           let widgetEl = document.getElementById("floatingImportStatusWidget");
@@ -47375,7 +47486,7 @@
             widgetEl = document.createElement("div");
             widgetEl.id = "floatingImportStatusWidget";
             widgetEl.style.cssText =
-              "position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:9500;" +
+              "position:fixed;bottom:14px;left:50%;transform:translate3d(-50%,0,0);z-index:9500;" +
               "width:min(94vw,680px);background:rgba(15,23,42,0.96);border:1px solid rgba(56,189,248,0.55);" +
               "border-radius:12px;padding:9px 12px;box-shadow:0 12px 32px rgba(0,0,0,0.8);backdrop-filter:blur(10px);";
             document.body.appendChild(widgetEl);
@@ -47386,8 +47497,9 @@
           const issuesCount = Number(j.failedCount || 0) + Number(j.uncertainCount || 0);
           widgetEl.style.display = "block";
           widgetEl.innerHTML =
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+            '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben">' +
               '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc">' +
+                '<span style="font-size:11px;padding:2px 6px;border-radius:5px;background:rgba(30,41,59,0.9);border:1px solid rgba(148,163,184,0.28);color:#94a3b8">⠿</span>' +
                 '<span style="font-weight:900;color:' + (j.running ? '#38bdf8' : '#fbbf24') + '">' +
                   (j.running ? '⚡ Backup-Import läuft:' : '⏸️ Import pausiert:') +
                 '</span>' +
@@ -47407,6 +47519,10 @@
             '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px">' +
               '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
             '</div>';
+          const dragHandle = document.getElementById("floatingImportDragHandle");
+          if (dragHandle) {
+            bindDraggableAdminPanelClient(widgetEl, dragHandle);
+          }
         } catch (e) {}
       }
 
@@ -47414,6 +47530,11 @@
 
       function renderBackupImportBoxDom() {
         updateFloatingImportStatusBarDom();
+        const adminPanelBox = document.getElementById("adminJsonImportPanelBox");
+        const adminDragHandle = document.getElementById("adminJsonImportDragHandle");
+        if (adminPanelBox && adminDragHandle) {
+          bindDraggableAdminPanelClient(adminPanelBox, adminDragHandle);
+        }
         const mount = document.getElementById("backupImportLiveMount");
         if (!mount) return;
         const j = backupImportJob;
@@ -50499,17 +50620,23 @@
             ) : state.adminTab === "diaglog" ? (
               renderImportDiagnosticLogBoxHtml()
             ) : state.adminTab === "backup" ? (
-              '<div class="panel-box" style="border-color:rgba(14,165,233,0.35)">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">' +
-                  '<div>' +
-                    '<div style="font-size:14px;font-weight:900;color:var(--text)">📦 JSON-Backup-Import & Ziel-Playlist-Steuerung</div>' +
-                    '<div style="font-size:11.5px;color:var(--muted)">1. Quell-Kanal verifizieren · 2. JSON-Backup wählen · 3. Ziel-Account, Playlist, Modus & Name festlegen</div>' +
+              '<div id="adminJsonImportPanelBox" class="panel-box" style="border-color:rgba(14,165,233,0.35);transition:box-shadow 0.2s ease">' +
+                '<div id="adminJsonImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(148,163,184,0.16)" title="Klicken & Ziehen zum freien Verschieben des JSON-Import-Panels">' +
+                  '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                    '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;padding:3px 8px;border-radius:6px;background:rgba(14,165,233,0.16);border:1px solid rgba(56,189,248,0.35);color:#38bdf8">⠿ Verschieben</span>' +
+                    '<div>' +
+                      '<div style="font-size:14px;font-weight:900;color:var(--text)">📦 JSON-Backup-Import & Ziel-Playlist-Steuerung</div>' +
+                      '<div style="font-size:11.5px;color:var(--muted)">1. Quell-Kanal verifizieren · 2. JSON-Backup wählen · 3. Ziel-Account, Playlist, Modus & Name festlegen</div>' +
+                    '</div>' +
                   '</div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn" onclick="resetAdminJsonImportDragClient()" title="Position zurücksetzen">↺ Position</button>' +
+                    '<button type="button" id="adminJsonImportCollapseBtn" class="btn" onclick="toggleAdminJsonImportCollapseClient()" title="Import-Panel kompakt einklappen">' + (adminJsonImportPanelCollapsed ? '▾ Ausklappen' : '▴ Einklappen') + '</button>' +
                     '<button type="button" class="btn" onclick="runSimulatedJsonImportTestSuiteClient()" title="Testet die Import-Pipeline mit 7 Testfällen">🧪 E2E-Test</button>' +
                     '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ &gt;200 MB Hilfe</button>' +
                   '</div>' +
                 '</div>' +
+                '<div id="adminJsonImportPanelBody" style="display:' + (adminJsonImportPanelCollapsed ? 'none' : 'block') + '">' +
 
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;margin-bottom:10px">' +
                   '<div class="backup-step-card">' +
@@ -50560,6 +50687,7 @@
                     '</div>' +
                   '</div>'
                 ) : '') +
+                '</div>' +
               '</div>'
             ) : (
               '<div class="panel-box">' +
@@ -50828,7 +50956,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -51287,6 +51415,18 @@
           const descHeroEl = document.getElementById("heroDescEl");
           const hideBtn = document.getElementById("heroHideBtn");
 
+          const scrollDownFromHeroToCatalog = () => {
+            if (typeof scrollToCatalogBelowHeroClient === "function") {
+              scrollToCatalogBelowHeroClient();
+            }
+            setTimeout(() => {
+              const firstCatalogEl = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select, .floating-filter-bar .new-filter-select, #resultsGridContainer .card, #appRoot .card");
+              if (firstCatalogEl) {
+                jumpSpatialFocus(firstCatalogEl, true, "down");
+              }
+            }, 60);
+          };
+
           if (currentSpatialEl.id === "heroDescEl") {
             if (dir === "down") {
               if (trBtn) { setSpatialFocus(trBtn, true); return; }
@@ -51314,6 +51454,8 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
+              scrollDownFromHeroToCatalog();
+              return;
             }
             if (dir === "up") {
               if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
@@ -51332,6 +51474,8 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
+              scrollDownFromHeroToCatalog();
+              return;
             }
             if (dir === "up") {
               if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
@@ -51350,6 +51494,8 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
+              scrollDownFromHeroToCatalog();
+              return;
             }
             if (dir === "up") {
               if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
@@ -51358,7 +51504,7 @@
             }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
             // 2. Fokus auf der Punktleiste (< • • • • ━━ • >):
-            // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Runter öffnet/fokussiert den "∨" Scroll-Pfeil bzw. den Katalog!
+            // Links / Rechts blättert sofort durch die Highlights; Hoch springt zu "▶ Trailer"; Runter scrollt direkt nach unten in den Katalog (ohne Umweg über den "∨"-Hinweisbutton)!
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
@@ -51371,20 +51517,8 @@
               if (focusSearchOrHeaderUp()) return;
             }
             if (dir === "down") {
-              if (document.body) document.body.classList.add("page-scrolled");
-              const hintBtn = document.getElementById("heroScrollDownHintBtn");
-              if (hintBtn) { setSpatialFocus(hintBtn, true); return; }
-            }
-          } else if (currentSpatialEl.id === "heroScrollDownHintBtn" || currentSpatialEl.classList.contains("hero-scroll-down-hint")) {
-            if (dir === "up") {
-              if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (trBtn) { setSpatialFocus(trBtn, true); return; }
-            }
-            if (dir === "down") {
-              if (document.body) document.body.classList.add("page-scrolled");
-              if (typeof scrollToCatalogBelowHeroClient === "function") {
-                scrollToCatalogBelowHeroClient();
-              }
+              scrollDownFromHeroToCatalog();
+              return;
             }
           }
         }

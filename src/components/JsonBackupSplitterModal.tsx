@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Scissors,
@@ -13,6 +13,10 @@ import {
   Check,
   Sparkles,
   HardDrive,
+  GripHorizontal,
+  Minimize2,
+  Maximize2,
+  RotateCcw,
 } from 'lucide-react';
 import {
   StreamSplitProgress,
@@ -119,6 +123,50 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const abortBatchRef = useRef<boolean>(false);
+
+  const [dragPos, setDragPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDraggingPanel, setIsDraggingPanel] = useState<boolean>(false);
+  const [isMinimized, setIsMinimized] = useState<boolean>(false);
+  const dragOriginRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+
+  useEffect(() => {
+    if (!isDraggingPanel) return;
+    const onPointerMove = (ev: PointerEvent) => {
+      if (!dragOriginRef.current) return;
+      const dx = ev.clientX - dragOriginRef.current.startX;
+      const dy = ev.clientY - dragOriginRef.current.startY;
+      const maxX = Math.max(240, window.innerWidth * 0.46);
+      const maxY = Math.max(180, window.innerHeight * 0.44);
+      setDragPos({
+        x: Math.max(-maxX, Math.min(maxX, dragOriginRef.current.baseX + dx)),
+        y: Math.max(-maxY, Math.min(maxY, dragOriginRef.current.baseY + dy)),
+      });
+    };
+    const onPointerUp = () => {
+      setIsDraggingPanel(false);
+      dragOriginRef.current = null;
+    };
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [isDraggingPanel]);
+
+  const handleHeaderPointerDown = (ev: React.PointerEvent<HTMLDivElement>) => {
+    if (ev.button !== 0) return;
+    const target = ev.target as HTMLElement | null;
+    if (target && target.closest('button, input, select, a')) return;
+    ev.preventDefault();
+    dragOriginRef.current = {
+      startX: ev.clientX,
+      startY: ev.clientY,
+      baseX: dragPos.x,
+      baseY: dragPos.y,
+    };
+    setIsDraggingPanel(true);
+  };
 
   if (!isOpen) return null;
 
@@ -553,43 +601,81 @@ for idx in range(0, len(video_msgs), chunk_size):
   const jqCommandSnippet = `jq '{name: .name, messages: [.messages[] | select(.media_type == "video_file" or (.file_name // "" | test("\\\\.(mp4|mkv|avi)$"; "i")))]}' result.json > result_videos_only.json`;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 font-sans tabular-nums">
-      <div className="w-full max-w-4xl max-h-[90vh] bg-[#0d1320] border border-slate-700/80 rounded-xl shadow-2xl flex flex-col overflow-hidden">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between gap-4 px-5 py-3.5 bg-[#111827] border-b border-slate-800">
-          <div className="flex items-center gap-2.5 min-w-0">
+    <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center p-4 font-sans tabular-nums">
+      <div
+        style={{ transform: `translate3d(${dragPos.x}px, ${dragPos.y}px, 0)` }}
+        className={`pointer-events-auto w-full ${
+          isMinimized ? 'max-w-xl' : 'max-w-4xl max-h-[88vh]'
+        } bg-[#0d1320]/95 backdrop-blur-md border border-sky-500/40 rounded-xl shadow-[0_24px_60px_rgba(0,0,0,0.85)] flex flex-col overflow-hidden`}
+      >
+        {/* Modal Header (Drag Handle) */}
+        <div
+          data-drag-handle="true"
+          onPointerDown={handleHeaderPointerDown}
+          className={`flex items-center justify-between gap-3 px-4 py-3 bg-[#111827] border-b border-slate-800 select-none ${
+            isDraggingPanel ? 'cursor-grabbing' : 'cursor-grab'
+          }`}
+          title="Klicken & Ziehen zum freien Verschieben des Import-Panels"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-slate-300 text-[10px] font-semibold shrink-0">
+              <GripHorizontal className="w-3.5 h-3.5 text-sky-400" />
+              <span>Verschieben</span>
+            </span>
             <Scissors className="w-4 h-4 text-sky-400 shrink-0" />
             <h2 className="text-sm font-bold text-slate-100 truncate">
               &gt;200 MB Telegram JSON Backup Stream Splitter &amp; Batch Importer
             </h2>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center gap-1 p-0.5 bg-slate-900 rounded-lg border border-slate-800">
+          <div className="flex items-center gap-1.5 shrink-0">
+            {!isMinimized && (
+              <div className="flex items-center gap-1 p-0.5 bg-slate-900 rounded-lg border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('splitter')}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                    activeTab === 'splitter'
+                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Stream Splitter &amp; Batch Import
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('howto')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
+                    activeTab === 'howto'
+                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>How-To &amp; CLI Tools</span>
+                </button>
+              </div>
+            )}
+
+            {(dragPos.x !== 0 || dragPos.y !== 0) && (
               <button
                 type="button"
-                onClick={() => setActiveTab('splitter')}
-                className={`px-3 py-1 rounded-md text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
-                  activeTab === 'splitter'
-                    ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
+                onClick={() => setDragPos({ x: 0, y: 0 })}
+                title="Position zentrieren"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
               >
-                Stream Splitter &amp; Batch Import
+                <RotateCcw className="w-3.5 h-3.5" />
               </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('howto')}
-                className={`flex items-center gap-1 px-3 py-1 rounded-md text-xs font-medium whitespace-nowrap shrink-0 transition-colors ${
-                  activeTab === 'howto'
-                    ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-                <span>How-To &amp; CLI Tools</span>
-              </button>
-            </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsMinimized((prev) => !prev)}
+              title={isMinimized ? 'Panel ausklappen' : 'Panel kompakt einklappen (freie Sicht)'}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              {isMinimized ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+            </button>
 
             <button
               type="button"
@@ -602,7 +688,7 @@ for idx in range(0, len(video_msgs), chunk_size):
         </div>
 
         {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className={`flex-1 overflow-y-auto p-5 space-y-4 ${isMinimized ? 'hidden' : ''}`}>
           {activeTab === 'splitter' ? (
             <>
               {/* SCHRITT 1 (PFLICHT): Quell-Kanal / Gruppen-ID oder Beispiel-Link vor jedem JSON-Upload */}

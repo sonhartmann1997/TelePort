@@ -3237,6 +3237,83 @@
         loadAdminPanelView(false);
       }
 
+      let adminJsonImportPanelCollapsed = false;
+      const adminPanelDragOffsets = new WeakMap();
+
+      function bindDraggableAdminPanelClient(panelEl, handleEl) {
+        if (!panelEl || !handleEl || handleEl._dragBound) return;
+        handleEl._dragBound = true;
+        handleEl.style.cursor = "grab";
+        handleEl.style.userSelect = "none";
+        let dragging = false;
+        let startX = 0;
+        let startY = 0;
+        let baseX = 0;
+        let baseY = 0;
+
+        const applyOffset = (nx, ny) => {
+          adminPanelDragOffsets.set(panelEl, { x: nx, y: ny });
+          if (panelEl.id === "floatingImportStatusWidget") {
+            panelEl.style.transform = "translate3d(calc(-50% + " + Math.round(nx) + "px), " + Math.round(ny) + "px, 0)";
+          } else {
+            panelEl.style.transform = "translate3d(" + Math.round(nx) + "px, " + Math.round(ny) + "px, 0)";
+            panelEl.style.position = "relative";
+            panelEl.style.zIndex = "75";
+          }
+        };
+
+        handleEl.addEventListener("pointerdown", (ev) => {
+          if (ev.button !== undefined && ev.button !== 0) return;
+          if (ev.target && ev.target.closest && ev.target.closest("button, input, select, a")) return;
+          ev.preventDefault();
+          const cur = adminPanelDragOffsets.get(panelEl) || { x: 0, y: 0 };
+          startX = ev.clientX;
+          startY = ev.clientY;
+          baseX = cur.x;
+          baseY = cur.y;
+          dragging = true;
+          handleEl.style.cursor = "grabbing";
+          if (typeof handleEl.setPointerCapture === "function") {
+            try { handleEl.setPointerCapture(ev.pointerId); } catch (_e) {}
+          }
+        });
+
+        handleEl.addEventListener("pointermove", (ev) => {
+          if (!dragging) return;
+          const dx = ev.clientX - startX;
+          const dy = ev.clientY - startY;
+          applyOffset(baseX + dx, baseY + dy);
+        });
+
+        const endDrag = () => {
+          if (!dragging) return;
+          dragging = false;
+          handleEl.style.cursor = "grab";
+        };
+        handleEl.addEventListener("pointerup", endDrag);
+        handleEl.addEventListener("pointercancel", endDrag);
+      }
+
+      function toggleAdminJsonImportCollapseClient() {
+        adminJsonImportPanelCollapsed = !adminJsonImportPanelCollapsed;
+        const bodyEl = document.getElementById("adminJsonImportPanelBody");
+        const btnEl = document.getElementById("adminJsonImportCollapseBtn");
+        if (bodyEl) {
+          bodyEl.style.display = adminJsonImportPanelCollapsed ? "none" : "block";
+        }
+        if (btnEl) {
+          btnEl.innerHTML = adminJsonImportPanelCollapsed ? "▾ Ausklappen" : "▴ Einklappen";
+        }
+      }
+
+      function resetAdminJsonImportDragClient() {
+        const panelEl = document.getElementById("adminJsonImportPanelBox");
+        if (panelEl) {
+          adminPanelDragOffsets.set(panelEl, { x: 0, y: 0 });
+          panelEl.style.transform = "translate3d(0px, 0px, 0)";
+        }
+      }
+
       function updateFloatingImportStatusBarDom() {
         try {
           let widgetEl = document.getElementById("floatingImportStatusWidget");
@@ -3259,7 +3336,7 @@
             widgetEl = document.createElement("div");
             widgetEl.id = "floatingImportStatusWidget";
             widgetEl.style.cssText =
-              "position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:9500;" +
+              "position:fixed;bottom:14px;left:50%;transform:translate3d(-50%,0,0);z-index:9500;" +
               "width:min(94vw,680px);background:rgba(15,23,42,0.96);border:1px solid rgba(56,189,248,0.55);" +
               "border-radius:12px;padding:9px 12px;box-shadow:0 12px 32px rgba(0,0,0,0.8);backdrop-filter:blur(10px);";
             document.body.appendChild(widgetEl);
@@ -3270,8 +3347,9 @@
           const issuesCount = Number(j.failedCount || 0) + Number(j.uncertainCount || 0);
           widgetEl.style.display = "block";
           widgetEl.innerHTML =
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+            '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben">' +
               '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc">' +
+                '<span style="font-size:11px;padding:2px 6px;border-radius:5px;background:rgba(30,41,59,0.9);border:1px solid rgba(148,163,184,0.28);color:#94a3b8">⠿</span>' +
                 '<span style="font-weight:900;color:' + (j.running ? '#38bdf8' : '#fbbf24') + '">' +
                   (j.running ? '⚡ Backup-Import läuft:' : '⏸️ Import pausiert:') +
                 '</span>' +
@@ -3291,6 +3369,10 @@
             '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px">' +
               '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
             '</div>';
+          const dragHandle = document.getElementById("floatingImportDragHandle");
+          if (dragHandle) {
+            bindDraggableAdminPanelClient(widgetEl, dragHandle);
+          }
         } catch (e) {}
       }
 
@@ -3298,6 +3380,11 @@
 
       function renderBackupImportBoxDom() {
         updateFloatingImportStatusBarDom();
+        const adminPanelBox = document.getElementById("adminJsonImportPanelBox");
+        const adminDragHandle = document.getElementById("adminJsonImportDragHandle");
+        if (adminPanelBox && adminDragHandle) {
+          bindDraggableAdminPanelClient(adminPanelBox, adminDragHandle);
+        }
         const mount = document.getElementById("backupImportLiveMount");
         if (!mount) return;
         const j = backupImportJob;
@@ -6383,17 +6470,23 @@
             ) : state.adminTab === "diaglog" ? (
               renderImportDiagnosticLogBoxHtml()
             ) : state.adminTab === "backup" ? (
-              '<div class="panel-box" style="border-color:rgba(14,165,233,0.35)">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">' +
-                  '<div>' +
-                    '<div style="font-size:14px;font-weight:900;color:var(--text)">📦 JSON-Backup-Import & Ziel-Playlist-Steuerung</div>' +
-                    '<div style="font-size:11.5px;color:var(--muted)">1. Quell-Kanal verifizieren · 2. JSON-Backup wählen · 3. Ziel-Account, Playlist, Modus & Name festlegen</div>' +
+              '<div id="adminJsonImportPanelBox" class="panel-box" style="border-color:rgba(14,165,233,0.35);transition:box-shadow 0.2s ease">' +
+                '<div id="adminJsonImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid rgba(148,163,184,0.16)" title="Klicken & Ziehen zum freien Verschieben des JSON-Import-Panels">' +
+                  '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                    '<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;padding:3px 8px;border-radius:6px;background:rgba(14,165,233,0.16);border:1px solid rgba(56,189,248,0.35);color:#38bdf8">⠿ Verschieben</span>' +
+                    '<div>' +
+                      '<div style="font-size:14px;font-weight:900;color:var(--text)">📦 JSON-Backup-Import & Ziel-Playlist-Steuerung</div>' +
+                      '<div style="font-size:11.5px;color:var(--muted)">1. Quell-Kanal verifizieren · 2. JSON-Backup wählen · 3. Ziel-Account, Playlist, Modus & Name festlegen</div>' +
+                    '</div>' +
                   '</div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button type="button" class="btn" onclick="resetAdminJsonImportDragClient()" title="Position zurücksetzen">↺ Position</button>' +
+                    '<button type="button" id="adminJsonImportCollapseBtn" class="btn" onclick="toggleAdminJsonImportCollapseClient()" title="Import-Panel kompakt einklappen">' + (adminJsonImportPanelCollapsed ? '▾ Ausklappen' : '▴ Einklappen') + '</button>' +
                     '<button type="button" class="btn" onclick="runSimulatedJsonImportTestSuiteClient()" title="Testet die Import-Pipeline mit 7 Testfällen">🧪 E2E-Test</button>' +
                     '<button type="button" class="btn" onclick="openLargeJsonHowToModalClient()">✂️ &gt;200 MB Hilfe</button>' +
                   '</div>' +
                 '</div>' +
+                '<div id="adminJsonImportPanelBody" style="display:' + (adminJsonImportPanelCollapsed ? 'none' : 'block') + '">' +
 
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px;margin-bottom:10px">' +
                   '<div class="backup-step-card">' +
@@ -6444,6 +6537,7 @@
                     '</div>' +
                   '</div>'
                 ) : '') +
+                '</div>' +
               '</div>'
             ) : (
               '<div class="panel-box">' +
@@ -6712,7 +6806,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-scroll-down-hint, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .detail-collapse-btn, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -7171,6 +7265,18 @@
           const descHeroEl = document.getElementById("heroDescEl");
           const hideBtn = document.getElementById("heroHideBtn");
 
+          const scrollDownFromHeroToCatalog = () => {
+            if (typeof scrollToCatalogBelowHeroClient === "function") {
+              scrollToCatalogBelowHeroClient();
+            }
+            setTimeout(() => {
+              const firstCatalogEl = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select, .floating-filter-bar .new-filter-select, #resultsGridContainer .card, #appRoot .card");
+              if (firstCatalogEl) {
+                jumpSpatialFocus(firstCatalogEl, true, "down");
+              }
+            }, 60);
+          };
+
           if (currentSpatialEl.id === "heroDescEl") {
             if (dir === "down") {
               if (trBtn) { setSpatialFocus(trBtn, true); return; }
@@ -7198,6 +7304,8 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
+              scrollDownFromHeroToCatalog();
+              return;
             }
             if (dir === "up") {
               if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
@@ -7216,6 +7324,8 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
+              scrollDownFromHeroToCatalog();
+              return;
             }
             if (dir === "up") {
               if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
@@ -7234,6 +7344,8 @@
             }
             if (dir === "down") {
               if (actDot) { setSpatialFocus(actDot, true); return; }
+              scrollDownFromHeroToCatalog();
+              return;
             }
             if (dir === "up") {
               if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
@@ -7242,7 +7354,7 @@
             }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
             // 2. Fokus auf der Punktleiste (< • • • • ━━ • >):
-            // Links / Rechts blättert sofort durch die 6 Highlights; Hoch springt zu "▶ Trailer"; Runter öffnet/fokussiert den "∨" Scroll-Pfeil bzw. den Katalog!
+            // Links / Rechts blättert sofort durch die Highlights; Hoch springt zu "▶ Trailer"; Runter scrollt direkt nach unten in den Katalog (ohne Umweg über den "∨"-Hinweisbutton)!
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
@@ -7255,20 +7367,8 @@
               if (focusSearchOrHeaderUp()) return;
             }
             if (dir === "down") {
-              if (document.body) document.body.classList.add("page-scrolled");
-              const hintBtn = document.getElementById("heroScrollDownHintBtn");
-              if (hintBtn) { setSpatialFocus(hintBtn, true); return; }
-            }
-          } else if (currentSpatialEl.id === "heroScrollDownHintBtn" || currentSpatialEl.classList.contains("hero-scroll-down-hint")) {
-            if (dir === "up") {
-              if (actDot) { setSpatialFocus(actDot, true); return; }
-              if (trBtn) { setSpatialFocus(trBtn, true); return; }
-            }
-            if (dir === "down") {
-              if (document.body) document.body.classList.add("page-scrolled");
-              if (typeof scrollToCatalogBelowHeroClient === "function") {
-                scrollToCatalogBelowHeroClient();
-              }
+              scrollDownFromHeroToCatalog();
+              return;
             }
           }
         }
