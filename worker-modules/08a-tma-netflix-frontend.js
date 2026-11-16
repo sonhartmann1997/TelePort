@@ -4830,6 +4830,9 @@
         background: var(--bg);
         overflow-y: auto;
         overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-y: contain;
+        touch-action: pan-y;
         padding: var(--sticky-header-height, 54px) 0 0 0;
         scroll-padding-top: calc(var(--sticky-header-height, 54px) + 18px);
         scroll-padding-bottom: 32px;
@@ -4958,8 +4961,11 @@
         justify-content: space-between;
         overflow: hidden;
         isolation: isolate;
-        touch-action: pan-x;
+        touch-action: pan-x pan-y;
         transition: opacity 0.18s ease;
+      }
+      .detail-hero-stage:has(.detail-bg-video-layer.is-playing) {
+        cursor: pointer;
       }
       .detail-hero-stage:has(.expandable-desc-box.is-expanded) {
         touch-action: pan-x pan-y;
@@ -5510,6 +5516,8 @@
         gap: calc(10px * var(--scale-cover));
         overflow-x: auto;
         overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-x pan-y;
         padding: 5px 4px 12px;
         scroll-behavior: smooth;
         scrollbar-width: none;
@@ -5594,6 +5602,8 @@
         gap: calc(11px * var(--scale-cover));
         overflow-x: auto;
         overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-x pan-y;
         padding: 5px 4px 12px;
         scroll-behavior: smooth;
         scrollbar-width: none;
@@ -6944,6 +6954,12 @@
           return v === null ? true : v === "1";
         } catch (e) { return true; }
       })();
+      let trailerPreviewEnabled = (function() {
+        try {
+          const v = localStorage.getItem("tma_trailer_preview_enabled");
+          return v === null ? true : v === "1";
+        } catch (e) { return true; }
+      })();
 
       const TRAILER_PROVIDERS_CLIENT = [
         { id: "youtube", label: "▶️ YouTube", shortLabel: "YouTube" },
@@ -7120,6 +7136,35 @@
           }
         }
         showHudToast(modalHoldNavEnabled ? "⏩ Pfeiltaste gedrückt halten (450ms) im Detail-Modal: AKTIV" : "⏩ Pfeiltaste gedrückt halten im Detail-Modal: AUS");
+      }
+
+      function toggleTrailerPreviewSettingClient() {
+        trailerPreviewEnabled = !trailerPreviewEnabled;
+        try { localStorage.setItem("tma_trailer_preview_enabled", trailerPreviewEnabled ? "1" : "0"); } catch (e) {}
+        if (state && state.sidebarOpen) {
+          renderFilterSidebarContent(false);
+          const sbBtn = document.getElementById("sidebarTrailerPreviewBtn") || document.getElementById("sidebarTrailerPreviewQuickBtn");
+          if (sbBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(sbBtn, false);
+        }
+        if (state && state.currentView === "settings") {
+          const stBtn = document.getElementById("settingsTrailerPreviewBtn");
+          if (stBtn) {
+            stBtn.className = "btn " + (trailerPreviewEnabled ? "blue" : "");
+            stBtn.innerHTML = '<span>🎥 Automatische Trailer-Vorschau auf der Detailbühne (Netflix-Modus)</span><b>' + (trailerPreviewEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>';
+            if (!state.sidebarOpen && typeof jumpSpatialFocus === "function") jumpSpatialFocus(stBtn, false);
+          }
+        }
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (stageEl && state && state.activeDetails) {
+          if (!trailerPreviewEnabled && !stageEl.classList.contains("is-trailer-foreground-mode")) {
+            if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
+              stopDetailBackgroundVideoTeaserClient();
+            }
+          } else if (trailerPreviewEnabled && typeof scheduleDetailBackgroundVideoTeaserClient === "function") {
+            scheduleDetailBackgroundVideoTeaserClient(state.activeDetails.trailers, false);
+          }
+        }
+        showHudToast(trailerPreviewEnabled ? "🎥 Automatische Trailer-Vorschau: EIN (Netflix-Modus)" : "🎥 Automatische Trailer-Vorschau: AUS (Nur bei Klick auf Trailer)");
       }
 
       let hudToastTimer = null;
@@ -7541,6 +7586,10 @@
                 '<span class="sidebar-menu-row-left">🔠 Skalierung & Textgröße</span>' +
                 '<span class="sidebar-menu-row-right">' + scaleBadge + ' ▸</span>' +
               '</button>' +
+              '<button type="button" id="sidebarTrailerPreviewQuickBtn" class="sidebar-menu-row ' + (trailerPreviewEnabled ? 'active has-inc' : '') + '" onclick="toggleTrailerPreviewSettingClient()" title="Automatische Trailer-Vorschau auf der Detailbühne ein- oder ausschalten">' +
+                '<span class="sidebar-menu-row-left">🎥 Trailer-Vorschau</span>' +
+                '<span class="sidebar-menu-row-right">' + (trailerPreviewEnabled ? 'EIN ✓' : 'AUS') + '</span>' +
+              '</button>' +
             '</div>' +
           '</div>';
 
@@ -7630,6 +7679,10 @@
                   '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
                     '<span>🎬 Spotlight-Banner</span>' +
                     '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
+                  '</button>' +
+                  '<button id="sidebarTrailerPreviewBtn" class="btn ' + (trailerPreviewEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleTrailerPreviewSettingClient()">' +
+                    '<span>🎥 Trailer-Vorschau (Detailseite)</span>' +
+                    '<b>' + (trailerPreviewEnabled ? 'EIN' : 'AUS') + '</b>' +
                   '</button>' +
                 '</div>';
             } else if (curTab === "scale") {

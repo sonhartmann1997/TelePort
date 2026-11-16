@@ -32697,6 +32697,9 @@
         background: var(--bg);
         overflow-y: auto;
         overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-y: contain;
+        touch-action: pan-y;
         padding: var(--sticky-header-height, 54px) 0 0 0;
         scroll-padding-top: calc(var(--sticky-header-height, 54px) + 18px);
         scroll-padding-bottom: 32px;
@@ -32825,8 +32828,11 @@
         justify-content: space-between;
         overflow: hidden;
         isolation: isolate;
-        touch-action: pan-x;
+        touch-action: pan-x pan-y;
         transition: opacity 0.18s ease;
+      }
+      .detail-hero-stage:has(.detail-bg-video-layer.is-playing) {
+        cursor: pointer;
       }
       .detail-hero-stage:has(.expandable-desc-box.is-expanded) {
         touch-action: pan-x pan-y;
@@ -33377,6 +33383,8 @@
         gap: calc(10px * var(--scale-cover));
         overflow-x: auto;
         overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-x pan-y;
         padding: 5px 4px 12px;
         scroll-behavior: smooth;
         scrollbar-width: none;
@@ -33461,6 +33469,8 @@
         gap: calc(11px * var(--scale-cover));
         overflow-x: auto;
         overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-x pan-y;
         padding: 5px 4px 12px;
         scroll-behavior: smooth;
         scrollbar-width: none;
@@ -34811,6 +34821,12 @@
           return v === null ? true : v === "1";
         } catch (e) { return true; }
       })();
+      let trailerPreviewEnabled = (function() {
+        try {
+          const v = localStorage.getItem("tma_trailer_preview_enabled");
+          return v === null ? true : v === "1";
+        } catch (e) { return true; }
+      })();
 
       const TRAILER_PROVIDERS_CLIENT = [
         { id: "youtube", label: "▶️ YouTube", shortLabel: "YouTube" },
@@ -34987,6 +35003,35 @@
           }
         }
         showHudToast(modalHoldNavEnabled ? "⏩ Pfeiltaste gedrückt halten (450ms) im Detail-Modal: AKTIV" : "⏩ Pfeiltaste gedrückt halten im Detail-Modal: AUS");
+      }
+
+      function toggleTrailerPreviewSettingClient() {
+        trailerPreviewEnabled = !trailerPreviewEnabled;
+        try { localStorage.setItem("tma_trailer_preview_enabled", trailerPreviewEnabled ? "1" : "0"); } catch (e) {}
+        if (state && state.sidebarOpen) {
+          renderFilterSidebarContent(false);
+          const sbBtn = document.getElementById("sidebarTrailerPreviewBtn") || document.getElementById("sidebarTrailerPreviewQuickBtn");
+          if (sbBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(sbBtn, false);
+        }
+        if (state && state.currentView === "settings") {
+          const stBtn = document.getElementById("settingsTrailerPreviewBtn");
+          if (stBtn) {
+            stBtn.className = "btn " + (trailerPreviewEnabled ? "blue" : "");
+            stBtn.innerHTML = '<span>🎥 Automatische Trailer-Vorschau auf der Detailbühne (Netflix-Modus)</span><b>' + (trailerPreviewEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>';
+            if (!state.sidebarOpen && typeof jumpSpatialFocus === "function") jumpSpatialFocus(stBtn, false);
+          }
+        }
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (stageEl && state && state.activeDetails) {
+          if (!trailerPreviewEnabled && !stageEl.classList.contains("is-trailer-foreground-mode")) {
+            if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
+              stopDetailBackgroundVideoTeaserClient();
+            }
+          } else if (trailerPreviewEnabled && typeof scheduleDetailBackgroundVideoTeaserClient === "function") {
+            scheduleDetailBackgroundVideoTeaserClient(state.activeDetails.trailers, false);
+          }
+        }
+        showHudToast(trailerPreviewEnabled ? "🎥 Automatische Trailer-Vorschau: EIN (Netflix-Modus)" : "🎥 Automatische Trailer-Vorschau: AUS (Nur bei Klick auf Trailer)");
       }
 
       let hudToastTimer = null;
@@ -35408,6 +35453,10 @@
                 '<span class="sidebar-menu-row-left">🔠 Skalierung & Textgröße</span>' +
                 '<span class="sidebar-menu-row-right">' + scaleBadge + ' ▸</span>' +
               '</button>' +
+              '<button type="button" id="sidebarTrailerPreviewQuickBtn" class="sidebar-menu-row ' + (trailerPreviewEnabled ? 'active has-inc' : '') + '" onclick="toggleTrailerPreviewSettingClient()" title="Automatische Trailer-Vorschau auf der Detailbühne ein- oder ausschalten">' +
+                '<span class="sidebar-menu-row-left">🎥 Trailer-Vorschau</span>' +
+                '<span class="sidebar-menu-row-right">' + (trailerPreviewEnabled ? 'EIN ✓' : 'AUS') + '</span>' +
+              '</button>' +
             '</div>' +
           '</div>';
 
@@ -35497,6 +35546,10 @@
                   '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
                     '<span>🎬 Spotlight-Banner</span>' +
                     '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
+                  '</button>' +
+                  '<button id="sidebarTrailerPreviewBtn" class="btn ' + (trailerPreviewEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleTrailerPreviewSettingClient()">' +
+                    '<span>🎥 Trailer-Vorschau (Detailseite)</span>' +
+                    '<b>' + (trailerPreviewEnabled ? 'EIN' : 'AUS') + '</b>' +
                   '</button>' +
                 '</div>';
             } else if (curTab === "scale") {
@@ -40990,17 +41043,32 @@
       function scrollToDetailBelowFoldClient(ev, targetId = "detailContentBodyEl") {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const targetEl = document.getElementById(targetId) || document.getElementById("detailContentBodyEl");
+        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        if (modalBackdrop && targetEl) {
+          const backdropRect = modalBackdrop.getBoundingClientRect();
+          const targetRect = targetEl.getBoundingClientRect();
+          const offsetTop = modalBackdrop.scrollTop + (targetRect.top - backdropRect.top) - 12;
+          modalBackdrop.scrollTo({ top: Math.max(0, offsetTop), behavior: "smooth" });
+          return;
+        }
         if (targetEl && typeof targetEl.scrollIntoView === "function") {
           targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       }
 
-      // Intelligente Trailer-Engine: YouTube IFrame postMessage State-Check, Multi-Kandidaten-Fallback, Ken-Burns-Zoom & Klickbares Glas-Mini-Dock
+      // Reverse-Engineered Netflix Trailer-Engine:
+      // Phase 1: Artwork-Hold (~1,45s ruhiges Szenenbild während Pre-Buffering im Hintergrund)
+      // Phase 2: Verifizierter Crossfade (erst bei playerState === 1) + Klick/Tap auf Bühne -> Vordergrund
+      // Phase 3: End-Fade zurück auf Szenenbild (1,45s vor Schluss gegen YouTube-Endscreen) + Scroll-Auto-Pause
       let detailBgTeaserTimer = null;
+      let detailBgTeaserRevealTimer = null;
       let detailBgTeaserWatchdogTimer = null;
       let detailBgTeaserHandshakeTimer = null;
+      let detailBgTeaserStageOpenedAt = 0;
       let detailBgTeaserMuted = true;
       let detailBgTeaserPaused = false;
+      let detailBgTeaserEnded = false;
+      let detailBgTeaserPausedByScroll = false;
       let detailBgTeaserIsPlayingConfirmed = false;
       let detailBgTeaserActiveKey = "";
       let detailBgTeaserCandidates = [];
@@ -41043,6 +41111,10 @@
           clearTimeout(detailBgTeaserTimer);
           detailBgTeaserTimer = null;
         }
+        if (detailBgTeaserRevealTimer) {
+          clearTimeout(detailBgTeaserRevealTimer);
+          detailBgTeaserRevealTimer = null;
+        }
         if (detailBgTeaserWatchdogTimer) {
           clearTimeout(detailBgTeaserWatchdogTimer);
           detailBgTeaserWatchdogTimer = null;
@@ -41057,6 +41129,7 @@
         clearDetailBgTeaserTimersClient();
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
+        detailBgTeaserEnded = false;
         const stageEl = document.getElementById("detailHeroStageEl");
         if (stageEl) {
           stageEl.classList.remove("is-trailer-foreground-mode");
@@ -41074,17 +41147,42 @@
         }
       }
 
+      function finishDetailTrailerToArtworkClient() {
+        if (detailBgTeaserRevealTimer) {
+          clearTimeout(detailBgTeaserRevealTimer);
+          detailBgTeaserRevealTimer = null;
+        }
+        detailBgTeaserEnded = true;
+        detailBgTeaserPaused = true;
+        detailBgTeaserPausedByScroll = false;
+        sendYoutubeBgTeaserCommandClient("pauseVideo");
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer) {
+          layer.classList.remove("is-playing");
+        }
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (stageEl) {
+          stageEl.classList.remove("is-trailer-foreground-mode");
+        }
+        syncDetailCinemaDockUiClient();
+      }
+
       function syncDetailCinemaDockUiClient() {
         const dock = document.getElementById("detailCinemaPlayerDock");
         if (!dock) return;
         const stageEl = document.getElementById("detailHeroStageEl");
         const isForeground = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
-        dock.classList.toggle("is-ready", Boolean(detailBgTeaserIsPlayingConfirmed || (detailBgTeaserActiveKey && detailBgTeaserPaused) || isForeground));
+        dock.classList.toggle("is-ready", Boolean(detailBgTeaserIsPlayingConfirmed || (detailBgTeaserActiveKey && (detailBgTeaserPaused || detailBgTeaserEnded)) || isForeground));
 
         const playBtn = document.getElementById("detailCinemaPlayBtn");
         if (playBtn) {
-          playBtn.textContent = detailBgTeaserPaused ? "▶" : "⏸";
-          playBtn.title = detailBgTeaserPaused ? "Trailer fortsetzen" : "Trailer pausieren";
+          if (detailBgTeaserEnded) {
+            playBtn.textContent = "↺";
+            playBtn.title = "Trailer erneut abspielen";
+          } else {
+            playBtn.textContent = detailBgTeaserPaused ? "▶" : "⏸";
+            playBtn.title = detailBgTeaserPaused ? "Trailer fortsetzen" : "Trailer pausieren";
+          }
         }
         const muteBtn = document.getElementById("detailCinemaMuteBtn");
         if (muteBtn) {
@@ -41123,6 +41221,8 @@
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
         detailBgTeaserPaused = false;
+        detailBgTeaserEnded = false;
+        detailBgTeaserPausedByScroll = false;
         detailBgTeaserCurTime = 0;
         detailBgTeaserDuration = 0;
         const stageEl = document.getElementById("detailHeroStageEl");
@@ -41197,6 +41297,8 @@
         detailBgTeaserActiveKey = cleanKey;
         detailBgTeaserIsPlayingConfirmed = false;
         detailBgTeaserPaused = false;
+        detailBgTeaserEnded = false;
+        detailBgTeaserPausedByScroll = false;
         detailBgTeaserCurTime = 0;
         detailBgTeaserDuration = 0;
         detailBgTeaserMuted = !startUnmuted;
@@ -41205,7 +41307,7 @@
         const originParam = (typeof location !== "undefined" && location.origin) ? ("&origin=" + encodeURIComponent(location.origin)) : "";
         const muteParam = startUnmuted ? "0" : "1";
         const embedSrc = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
-          "?autoplay=1&mute=" + muteParam + "&controls=0&disablekb=1&fs=0&showinfo=0&rel=0&loop=1&playlist=" + encodeURIComponent(cleanKey) +
+          "?autoplay=1&mute=" + muteParam + "&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
           "&enablejsapi=1&playsinline=1&iv_load_policy=3&modestbranding=1&start=" + Math.max(0, Number(startSeconds || 0)) + originParam;
         layer.innerHTML = '<iframe id="detailBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onDetailBgYoutubeIframeLoadClient()" allow="autoplay; encrypted-media" tabindex="-1" aria-hidden="true"></iframe>';
 
@@ -41263,6 +41365,17 @@
             if (typeof msg.info.muted === "boolean") {
               detailBgTeaserMuted = msg.info.muted;
             }
+            // Netflix End-Fade: 1,45s vor Ende sanft auf das Film-Szenenbild zurückblenden, bevor YouTube fremde Endscreen-Kacheln einblendet!
+            if (
+              detailBgTeaserDuration > 6 &&
+              detailBgTeaserCurTime > 2 &&
+              (detailBgTeaserDuration - detailBgTeaserCurTime) <= 1.45 &&
+              !detailBgTeaserEnded &&
+              !detailBgTeaserScrubbing
+            ) {
+              finishDetailTrailerToArtworkClient();
+              return;
+            }
             syncDetailCinemaDockUiClient();
           }
 
@@ -41270,21 +41383,40 @@
             const layer = document.getElementById("detailBgVideoLayer");
             const stageEl = document.getElementById("detailHeroStageEl");
             if (pState === 1) {
-              // Video läuft nachweislich! Jetzt erst sanft einblenden (keine unbedienbaren YouTube-Controls in der Mitte sichtbar)
               if (detailBgTeaserWatchdogTimer) {
                 clearTimeout(detailBgTeaserWatchdogTimer);
                 detailBgTeaserWatchdogTimer = null;
               }
               detailBgTeaserIsPlayingConfirmed = true;
               detailBgTeaserPaused = false;
+              detailBgTeaserEnded = false;
               if (stageEl) {
                 const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
                 if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
               }
-              if (layer && !detailBgTeaserStoppedByUser) {
-                layer.classList.add("is-playing");
+              // Netflix Phase 1 -> Phase 2: Mindestens ~1,4s ruhiges Artwork-Standbild beim Öffnen wahren, bevor das laufende Video weich einblendet
+              const isFg = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
+              const elapsedSinceOpen = Date.now() - (detailBgTeaserStageOpenedAt || 0);
+              const holdRemainingMs = isFg ? 0 : Math.max(0, 1400 - elapsedSinceOpen);
+              if (detailBgTeaserRevealTimer) {
+                clearTimeout(detailBgTeaserRevealTimer);
+                detailBgTeaserRevealTimer = null;
               }
-              syncDetailCinemaDockUiClient();
+              if (holdRemainingMs <= 20) {
+                if (layer && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll) {
+                  layer.classList.add("is-playing");
+                }
+                syncDetailCinemaDockUiClient();
+              } else {
+                detailBgTeaserRevealTimer = setTimeout(() => {
+                  detailBgTeaserRevealTimer = null;
+                  const liveLayer = document.getElementById("detailBgVideoLayer");
+                  if (liveLayer && detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll) {
+                    liveLayer.classList.add("is-playing");
+                  }
+                  syncDetailCinemaDockUiClient();
+                }, holdRemainingMs);
+              }
             } else if (pState === 2) {
               detailBgTeaserPaused = true;
               // Im Hintergrund-Modus bei Pause sofort das saubere Szenenbild zeigen, damit keine YouTube-Pause-Empfehlungen in der Mitte erscheinen
@@ -41293,8 +41425,8 @@
               }
               syncDetailCinemaDockUiClient();
             } else if (pState === 0) {
-              sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
-              sendYoutubeBgTeaserCommandClient("playVideo");
+              // Netflix End-of-Trailer: Zurück zum sauberen Film-Artwork statt Endlosschleife oder YouTube-Endscreen
+              finishDetailTrailerToArtworkClient();
             } else if (pState === -1 && detailBgTeaserIsPlayingConfirmed) {
               syncDetailCinemaDockUiClient();
             }
@@ -41305,6 +41437,7 @@
       function scheduleDetailBackgroundVideoTeaserClient(trailersOrKey, immediateForeground = false) {
         stopDetailBackgroundVideoTeaserClient();
         detailBgTeaserStoppedByUser = false;
+        detailBgTeaserStageOpenedAt = Date.now();
         const candidates = extractCandidateKeysFromTrailersClient(trailersOrKey || state.activeDetails?.trailers);
         detailBgTeaserCandidates = candidates;
         detailBgTeaserCandidateIdx = 0;
@@ -41322,12 +41455,24 @@
           return;
         }
 
+        // Wenn die automatische Trailer-Vorschau im Menü deaktiviert wurde -> Ruhiges Szenenbild stehen lassen (Klick auf "🎬 Trailer" bleibt jederzeit aktiv!)
+        if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) {
+          const stageEl = document.getElementById("detailHeroStageEl");
+          if (stageEl) {
+            const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
+            if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
+          }
+          return;
+        }
+
+        // Netflix-Logik: Sofort im Hintergrund vorpuffern (nach 450ms), aber das Szenenbild für mindestens 1,4s ruhig stehen lassen
         detailBgTeaserTimer = setTimeout(() => {
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
           if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML) return;
-          mountDetailTrailerCandidateAtIndexClient(0, false, 3);
-        }, 1850);
+          if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) return;
+          mountDetailTrailerCandidateAtIndexClient(0, false, 2);
+        }, 450);
       }
 
       function toggleDetailCinemaPlayPauseClient(ev) {
@@ -41335,17 +41480,31 @@
         const frame = document.getElementById("detailBgVideoIframe");
         if (!frame) {
           if (detailBgTeaserCandidates.length > 0) {
+            detailBgTeaserStoppedByUser = false;
             mountDetailTrailerCandidateAtIndexClient(detailBgTeaserCandidateIdx || 0, !detailBgTeaserMuted, 0);
           }
           return;
         }
-        if (detailBgTeaserPaused) {
+        if (detailBgTeaserEnded) {
+          detailBgTeaserEnded = false;
           detailBgTeaserPaused = false;
+          detailBgTeaserPausedByScroll = false;
+          detailBgTeaserStoppedByUser = false;
+          detailBgTeaserCurTime = 0;
+          sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
+          sendYoutubeBgTeaserCommandClient("playVideo");
+          const layer = document.getElementById("detailBgVideoLayer");
+          if (layer) layer.classList.add("is-playing");
+        } else if (detailBgTeaserPaused) {
+          detailBgTeaserPaused = false;
+          detailBgTeaserPausedByScroll = false;
+          detailBgTeaserStoppedByUser = false;
           sendYoutubeBgTeaserCommandClient("playVideo");
           const layer = document.getElementById("detailBgVideoLayer");
           if (layer) layer.classList.add("is-playing");
         } else {
           detailBgTeaserPaused = true;
+          detailBgTeaserStoppedByUser = true;
           sendYoutubeBgTeaserCommandClient("pauseVideo");
           const layer = document.getElementById("detailBgVideoLayer");
           if (layer) layer.classList.remove("is-playing");
@@ -41367,9 +41526,18 @@
           detailBgTeaserMuted = false;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
-          if (detailBgTeaserPaused) {
+          if (detailBgTeaserEnded) {
+            detailBgTeaserEnded = false;
+            detailBgTeaserPaused = false;
+            sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
+            sendYoutubeBgTeaserCommandClient("playVideo");
+            const layer = document.getElementById("detailBgVideoLayer");
+            if (layer) layer.classList.add("is-playing");
+          } else if (detailBgTeaserPaused) {
             detailBgTeaserPaused = false;
             sendYoutubeBgTeaserCommandClient("playVideo");
+            const layer = document.getElementById("detailBgVideoLayer");
+            if (layer) layer.classList.add("is-playing");
           }
         } else {
           detailBgTeaserMuted = true;
@@ -41398,11 +41566,14 @@
         const targetSec = Math.max(0, Number(inpEl.value || 0));
         detailBgTeaserCurTime = targetSec;
         detailBgTeaserScrubbing = false;
+        detailBgTeaserEnded = false;
         sendYoutubeBgTeaserCommandClient("seekTo", [targetSec, true]);
         if (detailBgTeaserPaused) {
           detailBgTeaserPaused = false;
           sendYoutubeBgTeaserCommandClient("playVideo");
         }
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer) layer.classList.add("is-playing");
         syncDetailCinemaDockUiClient();
       }
 
@@ -41425,6 +41596,8 @@
           return;
         }
         detailBgTeaserCandidates = candidates;
+        detailBgTeaserStoppedByUser = false;
+        detailBgTeaserPausedByScroll = false;
         const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
         if (modalBackdrop && modalBackdrop.scrollTop > 10) {
           modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
@@ -41435,6 +41608,11 @@
           // Zero-Reload: Bestehendes Video läuft nahtlos im Vordergrund mit Ton weiter!
           detailBgTeaserMuted = false;
           detailBgTeaserPaused = false;
+          if (detailBgTeaserEnded) {
+            detailBgTeaserEnded = false;
+            detailBgTeaserCurTime = 0;
+            sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
+          }
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
           sendYoutubeBgTeaserCommandClient("playVideo");
@@ -41462,7 +41640,7 @@
         }
       }
 
-      // Wow-Effekt #4: Cinematic Scroll-Parallax & Sticky-Mini-Header beim Runterscrollen
+      // Wow-Effekt #4: Cinematic Scroll-Parallax, Sticky-Mini-Header & Netflix Scroll-Auto-Pause beim Runterscrollen zum Cast
       function onDetailModalScrollClient(scrollEl) {
         if (!scrollEl) return;
         const st = Number(scrollEl.scrollTop || 0);
@@ -41479,10 +41657,23 @@
         if (stickyHeader) {
           stickyHeader.classList.toggle("is-visible", st > 310);
         }
-        if (st > 380 && detailBgTeaserActiveKey) {
-          sendYoutubeBgTeaserCommandClient("pauseVideo");
-        } else if (st < 140 && detailBgTeaserActiveKey && !detailBgTeaserStoppedByUser) {
-          sendYoutubeBgTeaserCommandClient("playVideo");
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (st > 250 && detailBgTeaserActiveKey) {
+          if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
+            detailBgTeaserPausedByScroll = true;
+            detailBgTeaserPaused = true;
+            sendYoutubeBgTeaserCommandClient("pauseVideo");
+            if (layer) layer.classList.remove("is-playing");
+            syncDetailCinemaDockUiClient();
+          }
+        } else if (st < 110 && detailBgTeaserActiveKey && detailBgTeaserPausedByScroll && !detailBgTeaserStoppedByUser && !detailBgTeaserEnded) {
+          if (typeof trailerPreviewEnabled === "undefined" || trailerPreviewEnabled) {
+            detailBgTeaserPausedByScroll = false;
+            detailBgTeaserPaused = false;
+            sendYoutubeBgTeaserCommandClient("playVideo");
+            if (layer && detailBgTeaserIsPlayingConfirmed) layer.classList.add("is-playing");
+            syncDetailCinemaDockUiClient();
+          }
         }
       }
 
@@ -41786,6 +41977,8 @@
       }
 
       let modalTouchStartY = 0;
+      let modalTouchStartTime = 0;
+      let modalLastTouchTapAt = 0;
       let modalPointerStartX = 0;
       let modalPointerStartY = 0;
 
@@ -41793,20 +41986,37 @@
         if (!target || typeof target.closest !== "function") return false;
         return Boolean(
           target.closest(
-            "button, a, select, input, .detail-cast-track, .detail-similar-track, .expandable-desc-box.is-expanded"
+            "button, a, select, input, .detail-cinema-player-dock, .detail-kicker-row, .hero-title, .expandable-desc-box, .detail-action-bar, .hero-scroll-down-hint, .detail-cast-track, .detail-similar-track, #modalPosterPickerBox, #modalRemapMediaBox, #modalMoreActionsBox"
           )
         );
+      }
+
+      function tryToggleTrailerForegroundOnStageTapClient(ev) {
+        const stageEl = document.getElementById("detailHeroStageEl");
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (!stageEl || !layer) return false;
+        if (stageEl.classList.contains("is-trailer-foreground-mode")) {
+          exitDetailForegroundTrailerModeClient(ev);
+          return true;
+        }
+        if (layer.classList.contains("is-playing") && detailBgTeaserActiveKey) {
+          enterDetailForegroundTrailerModeClient(ev);
+          return true;
+        }
+        return false;
       }
 
       function onModalHeroTouchStart(ev) {
         if (isInteractiveDetailHeroControl(ev.target)) {
           modalTouchStartX = 0;
           modalTouchStartY = 0;
+          modalTouchStartTime = 0;
           return;
         }
         if (ev.touches && ev.touches[0]) {
           modalTouchStartX = ev.touches[0].clientX;
           modalTouchStartY = ev.touches[0].clientY;
+          modalTouchStartTime = Date.now();
         }
       }
 
@@ -41814,10 +42024,18 @@
         if (!modalTouchStartX || !ev.changedTouches || !ev.changedTouches[0]) return;
         const dx = ev.changedTouches[0].clientX - modalTouchStartX;
         const dy = ev.changedTouches[0].clientY - (modalTouchStartY || ev.changedTouches[0].clientY);
+        const dt = Date.now() - (modalTouchStartTime || Date.now());
         modalTouchStartX = 0;
         modalTouchStartY = 0;
-        if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+        modalTouchStartTime = 0;
+        if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.35) {
           navigateDetailModalAdjacent(dx < 0 ? 1 : -1);
+          return;
+        }
+        // Kurzes Antippen (<12px Bewegung) auf die freie Bühne des laufenden Trailers -> Trailer in den Vordergrund rücken!
+        if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && dt < 420 && !isInteractiveDetailHeroControl(ev.target)) {
+          modalLastTouchTapAt = Date.now();
+          tryToggleTrailerForegroundOnStageTapClient(ev);
         }
       }
 
@@ -41837,8 +42055,14 @@
         const dy = ev.clientY - (modalPointerStartY || ev.clientY);
         modalPointerStartX = 0;
         modalPointerStartY = 0;
+        if (Date.now() - modalLastTouchTapAt < 450) return;
         if (Math.abs(dx) > 75 && Math.abs(dx) > Math.abs(dy) * 1.35) {
           navigateDetailModalAdjacent(dx < 0 ? 1 : -1);
+          return;
+        }
+        // Klick (<8px Bewegung) auf die freie Bühne des laufenden Trailers -> Trailer in den Vordergrund rücken!
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8 && !isInteractiveDetailHeroControl(ev.target)) {
+          tryToggleTrailerForegroundOnStageTapClient(ev);
         }
       }
 
@@ -46309,6 +46533,10 @@
                 '<button id="settingsHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
                   '<span>🎬 Spotlight-Banner auf der Startseite</span>' +
                   '<b>' + (state.heroHidden ? 'AUSGEBLENDET' : 'SICHTBAR') + '</b>' +
+                '</button>' +
+                '<button id="settingsTrailerPreviewBtn" class="btn ' + (trailerPreviewEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleTrailerPreviewSettingClient()">' +
+                  '<span>🎥 Automatische Trailer-Vorschau auf der Detailbühne (Netflix-Modus)</span>' +
+                  '<b>' + (trailerPreviewEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
                 '</button>' +
               '</div>' +
             '</div>' +
