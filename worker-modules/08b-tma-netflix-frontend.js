@@ -1758,6 +1758,118 @@
         }
       }
 
+      let detailCinemaZoomMode = "fill";
+      let detailFgTapTimer = null;
+      let detailFgLastTapAt = 0;
+      let detailSeekRippleTimer = null;
+
+      function showDetailSeekRippleBadgeClient(text, zone = "center") {
+        const badge = document.getElementById("detailSeekRippleBadge");
+        if (!badge) return;
+        if (detailSeekRippleTimer) {
+          clearTimeout(detailSeekRippleTimer);
+          detailSeekRippleTimer = null;
+        }
+        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center");
+        badge.textContent = text;
+        requestAnimationFrame(() => {
+          badge.classList.add("is-visible");
+        });
+        detailSeekRippleTimer = setTimeout(() => {
+          badge.classList.remove("is-visible");
+          detailSeekRippleTimer = null;
+        }, 680);
+      }
+
+      function toggleDetailCinemaZoomModeClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        detailCinemaZoomMode = detailCinemaZoomMode === "fit" ? "fill" : "fit";
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (stageEl) {
+          stageEl.classList.toggle("is-cinema-zoom-fit", detailCinemaZoomMode === "fit");
+        }
+        syncDetailCinemaDockUiClient();
+        showDetailSeekRippleBadgeClient(
+          detailCinemaZoomMode === "fit" ? "▭ Original-Kinoformat" : "⤢ Randlos-Vollbild",
+          "center"
+        );
+      }
+
+      function seekDetailCinemaRelativeClient(deltaSec, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const frame = document.getElementById("detailBgVideoIframe");
+        if (!frame || !detailBgTeaserActiveKey) return;
+        const maxDur = detailBgTeaserDuration > 2 ? Math.max(1, detailBgTeaserDuration - 1.5) : 9999;
+        const nextSec = Math.max(0, Math.min(maxDur, (detailBgTeaserCurTime || 0) + Number(deltaSec || 0)));
+        detailBgTeaserCurTime = nextSec;
+        detailBgTeaserEnded = false;
+        sendYoutubeBgTeaserCommandClient("seekTo", [nextSec, true]);
+        if (detailBgTeaserPaused) {
+          detailBgTeaserPaused = false;
+          sendYoutubeBgTeaserCommandClient("playVideo");
+        }
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer) layer.classList.add("is-playing");
+        syncDetailCinemaDockUiClient();
+        showDetailSeekRippleBadgeClient(
+          deltaSec < 0 ? ("⏪ " + deltaSec + "s") : ("⏩ +" + deltaSec + "s"),
+          deltaSec < 0 ? "left" : "right"
+        );
+      }
+
+      function switchNextDetailTrailerCandidateManualClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (!Array.isArray(detailBgTeaserCandidates) || detailBgTeaserCandidates.length <= 1) return;
+        const nextIdx = (detailBgTeaserCandidateIdx + 1) % detailBgTeaserCandidates.length;
+        const keepUnmuted = !detailBgTeaserMuted || Boolean(document.getElementById("detailHeroStageEl")?.classList.contains("is-trailer-foreground-mode"));
+        detailBgTeaserStoppedByUser = false;
+        mountDetailTrailerCandidateAtIndexClient(nextIdx, keepUnmuted, 0);
+        syncDetailCinemaDockUiClient();
+        showDetailSeekRippleBadgeClient("⏭ Clip " + (nextIdx + 1) + "/" + detailBgTeaserCandidates.length, "center");
+      }
+
+      function onForegroundStageCatcherTapClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (!stageEl) return;
+        const now = Date.now();
+        let clientX = 0;
+        if (ev && typeof ev.clientX === "number" && ev.clientX > 0) {
+          clientX = ev.clientX;
+        } else if (ev && ev.changedTouches && ev.changedTouches[0]) {
+          clientX = ev.changedTouches[0].clientX;
+        }
+        const rect = stageEl.getBoundingClientRect();
+        const relX = rect.width > 0 ? ((clientX - rect.left) / rect.width) : 0.5;
+
+        if (now - detailFgLastTapAt < 270) {
+          // Doppel-Tipp erkannt! Links = -10s, Rechts = +10s, Mitte = Format-Zoom
+          detailFgLastTapAt = 0;
+          if (detailFgTapTimer) {
+            clearTimeout(detailFgTapTimer);
+            detailFgTapTimer = null;
+          }
+          if (relX < 0.38 && detailBgTeaserActiveKey) {
+            seekDetailCinemaRelativeClient(-10, ev);
+          } else if (relX > 0.62 && detailBgTeaserActiveKey) {
+            seekDetailCinemaRelativeClient(10, ev);
+          } else {
+            toggleDetailCinemaZoomModeClient(ev);
+          }
+          return;
+        }
+
+        detailFgLastTapAt = now;
+        if (detailFgTapTimer) {
+          clearTimeout(detailFgTapTimer);
+        }
+        detailFgTapTimer = setTimeout(() => {
+          detailFgTapTimer = null;
+          detailFgLastTapAt = 0;
+          exitDetailForegroundTrailerModeClient(ev);
+        }, 255);
+      }
+
       function finishDetailTrailerToArtworkClient() {
         if (detailBgTeaserRevealTimer) {
           clearTimeout(detailBgTeaserRevealTimer);
@@ -1783,10 +1895,12 @@
         if (!dock) return;
         const stageEl = document.getElementById("detailHeroStageEl");
         const isForeground = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
+        const hasVideoControls = Boolean(detailBgTeaserActiveKey || detailBgTeaserIsPlayingConfirmed);
         dock.classList.toggle("is-ready", Boolean(detailBgTeaserIsPlayingConfirmed || (detailBgTeaserActiveKey && (detailBgTeaserPaused || detailBgTeaserEnded)) || isForeground));
 
         const playBtn = document.getElementById("detailCinemaPlayBtn");
         if (playBtn) {
+          playBtn.style.display = hasVideoControls ? "inline-flex" : "none";
           if (detailBgTeaserEnded) {
             playBtn.textContent = "↺";
             playBtn.title = "Trailer erneut abspielen";
@@ -1797,8 +1911,30 @@
         }
         const muteBtn = document.getElementById("detailCinemaMuteBtn");
         if (muteBtn) {
+          muteBtn.style.display = hasVideoControls ? "inline-flex" : "none";
           muteBtn.textContent = detailBgTeaserMuted ? "🔇" : "🔊";
           muteBtn.title = detailBgTeaserMuted ? "Ton einschalten" : "Ton stummschalten";
+        }
+        const timelineWrap = document.getElementById("detailCinemaTimelineWrap");
+        if (timelineWrap) {
+          timelineWrap.style.display = hasVideoControls ? "inline-flex" : "none";
+        }
+        const nextClipBtn = document.getElementById("detailCinemaNextClipBtn");
+        if (nextClipBtn) {
+          const totalClips = Array.isArray(detailBgTeaserCandidates) ? detailBgTeaserCandidates.length : 0;
+          if (totalClips > 1 && hasVideoControls) {
+            nextClipBtn.style.display = "inline-flex";
+            nextClipBtn.textContent = "⏭ " + ((detailBgTeaserCandidateIdx % totalClips) + 1) + "/" + totalClips;
+            nextClipBtn.title = "Nächsten verfügbaren Trailer / Clip abspielen";
+          } else {
+            nextClipBtn.style.display = "none";
+          }
+        }
+        const zoomBtn = document.getElementById("detailCinemaZoomBtn");
+        if (zoomBtn) {
+          zoomBtn.classList.toggle("is-active-mode", detailCinemaZoomMode === "fit");
+          zoomBtn.textContent = detailCinemaZoomMode === "fit" ? "▭ Fit" : "⤢ Fill";
+          zoomBtn.title = detailCinemaZoomMode === "fit" ? "Zu Randlos-Vollbild wechseln" : "Zu Original-Kinoformat ohne Beschnitt wechseln";
         }
         const modeBtn = document.getElementById("detailCinemaModeBtn");
         if (modeBtn) {
@@ -1829,6 +1965,10 @@
 
       function stopDetailBackgroundVideoTeaserClient() {
         clearDetailBgTeaserTimersClient();
+        if (detailFgTapTimer) {
+          clearTimeout(detailFgTapTimer);
+          detailFgTapTimer = null;
+        }
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
         detailBgTeaserPaused = false;
@@ -2188,7 +2328,7 @@
         syncDetailCinemaDockUiClient();
       }
 
-      function enterDetailForegroundTrailerModeClient(ev) {
+      function enterDetailForegroundTrailerModeClient(ev, fromStageTap = false) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const stageEl = document.getElementById("detailHeroStageEl");
         if (!stageEl) return;
@@ -2199,7 +2339,17 @@
         const candidates = detailBgTeaserCandidates.length > 0
           ? detailBgTeaserCandidates
           : extractCandidateKeysFromTrailersClient(state.activeDetails?.trailers);
+        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        if (modalBackdrop && modalBackdrop.scrollTop > 4) {
+          modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+        }
         if (candidates.length === 0) {
+          if (fromStageTap) {
+            // Auf dem Tablet/Smartphone/Desktop beim Tipp auf das Szenenbild auch ohne Trailer alle Details für den Clean-Cinema-Blick ausblenden!
+            stageEl.classList.add("is-trailer-foreground-mode");
+            syncDetailCinemaDockUiClient();
+            return;
+          }
           const d = state.activeDetails || {};
           const ytQ = encodeURIComponent((d.title || "") + " " + (d.year && d.year !== "K.A." ? d.year : "") + " Trailer Deutsch");
           showHudToast("ℹ️ Kein einbettbarer Trailer – öffne YouTube-Suche");
@@ -2209,11 +2359,11 @@
         detailBgTeaserCandidates = candidates;
         detailBgTeaserStoppedByUser = false;
         detailBgTeaserPausedByScroll = false;
-        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
-        if (modalBackdrop && modalBackdrop.scrollTop > 10) {
-          modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
-        }
         stageEl.classList.add("is-trailer-foreground-mode");
+        if (detailBgTeaserRevealTimer) {
+          clearTimeout(detailBgTeaserRevealTimer);
+          detailBgTeaserRevealTimer = null;
+        }
         const existingFrame = document.getElementById("detailBgVideoIframe");
         if (existingFrame && detailBgTeaserActiveKey) {
           // Zero-Reload: Bestehendes Video läuft nahtlos im Vordergrund mit Ton weiter!
@@ -2228,7 +2378,9 @@
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
           sendYoutubeBgTeaserCommandClient("playVideo");
           const layer = document.getElementById("detailBgVideoLayer");
-          if (layer) layer.classList.add("is-playing");
+          if (layer && detailBgTeaserIsPlayingConfirmed) {
+            layer.classList.add("is-playing");
+          }
         } else {
           mountDetailTrailerCandidateAtIndexClient(0, true, 0);
         }
@@ -2597,24 +2749,21 @@
         if (!target || typeof target.closest !== "function") return false;
         return Boolean(
           target.closest(
-            "button, a, select, input, .detail-cinema-player-dock, .detail-kicker-row, .hero-title, .expandable-desc-box, .detail-action-bar, .hero-scroll-down-hint, .detail-cast-track, .detail-similar-track, #modalPosterPickerBox, #modalRemapMediaBox, #modalMoreActionsBox"
+            "button, a, select, input, .detail-foreground-stage-catcher, .detail-cinema-player-dock, .detail-kicker-link, .return-last-detail-chip, .expandable-desc-box, .hero-scroll-down-hint, .detail-cast-track, .detail-similar-track, #modalPosterPickerBox, #modalRemapMediaBox, #modalMoreActionsBox"
           )
         );
       }
 
       function tryToggleTrailerForegroundOnStageTapClient(ev) {
         const stageEl = document.getElementById("detailHeroStageEl");
-        const layer = document.getElementById("detailBgVideoLayer");
-        if (!stageEl || !layer) return false;
+        if (!stageEl) return false;
         if (stageEl.classList.contains("is-trailer-foreground-mode")) {
           exitDetailForegroundTrailerModeClient(ev);
           return true;
         }
-        if (layer.classList.contains("is-playing") && detailBgTeaserActiveKey) {
-          enterDetailForegroundTrailerModeClient(ev);
-          return true;
-        }
-        return false;
+        // Jeder Tipp/Klick auf das freie Szenenbild (Backdrop-Foto) oder den Hintergrund-Trailer blendet alle Details aus & holt den Trailer in den Vordergrund!
+        enterDetailForegroundTrailerModeClient(ev, true);
+        return true;
       }
 
       function onModalHeroTouchStart(ev) {
@@ -2643,8 +2792,8 @@
           navigateDetailModalAdjacent(dx < 0 ? 1 : -1);
           return;
         }
-        // Kurzes Antippen (<12px Bewegung) auf die freie Bühne des laufenden Trailers -> Trailer in den Vordergrund rücken!
-        if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && dt < 420 && !isInteractiveDetailHeroControl(ev.target)) {
+        // Kurzes Antippen (<14px Bewegung auf Tablet/Smartphone) auf das Szenenbild oder Video -> Alle Details ausblenden & Trailer in den Vordergrund!
+        if (Math.abs(dx) < 14 && Math.abs(dy) < 14 && dt < 450 && !isInteractiveDetailHeroControl(ev.target)) {
           modalLastTouchTapAt = Date.now();
           tryToggleTrailerForegroundOnStageTapClient(ev);
         }
@@ -2671,8 +2820,8 @@
           navigateDetailModalAdjacent(dx < 0 ? 1 : -1);
           return;
         }
-        // Klick (<8px Bewegung) auf die freie Bühne des laufenden Trailers -> Trailer in den Vordergrund rücken!
-        if (Math.abs(dx) < 8 && Math.abs(dy) < 8 && !isInteractiveDetailHeroControl(ev.target)) {
+        // Klick (<10px Bewegung) auf das Szenenbild oder Video -> Alle Details ausblenden & Trailer in den Vordergrund!
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && !isInteractiveDetailHeroControl(ev.target)) {
           tryToggleTrailerForegroundOnStageTapClient(ev);
         }
       }
@@ -3494,7 +3643,7 @@
 
           const titleBoxEl = document.getElementById("detailTitleBoxEl");
           if (titleBoxEl && activeLogoPath && !titleBoxEl.querySelector("img")) {
-            titleBoxEl.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath, "saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'" + esc(d.title) + "\\')");
+            titleBoxEl.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath);
           }
 
           const metaEl = document.getElementById("detailMetaCleanEl");
@@ -3576,22 +3725,25 @@
             '</div>' +
 
             /* 1:1 FULLSCREEN KINO-HERO-STAGE EXAKT WIE IM HAUPT-SLIDER (ZERO JUMP) */
-            '<section id="detailHeroStageEl" class="detail-hero-stage' + (autoOpenTrailer ? ' is-trailer-foreground-mode' : '') + '" data-detail-key="' + esc(detailKey) + '" data-has-backdrop="' + (d.backdrop_path ? '1' : '') + '" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
+            '<section id="detailHeroStageEl" class="detail-hero-stage' + (autoOpenTrailer ? ' is-trailer-foreground-mode' : '') + (detailCinemaZoomMode === 'fit' ? ' is-cinema-zoom-fit' : '') + '" data-detail-key="' + esc(detailKey) + '" data-has-backdrop="' + (d.backdrop_path ? '1' : '') + '" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
               '<div class="detail-backdrop-layer"></div>' +
               '<div id="detailBgVideoLayer" class="detail-bg-video-layer"></div>' +
               '<div class="detail-ambilight-glow"></div>' +
               '<div class="detail-scrim-layer"></div>' +
               '<div class="detail-scroll-dim-overlay"></div>' +
-              '<div id="detailForegroundStageCatcher" class="detail-foreground-stage-catcher" onclick="exitDetailForegroundTrailerModeClient(event)" title="Klicken, um Filminfos wieder einzublenden"></div>' +
+              '<div id="detailForegroundStageCatcher" class="detail-foreground-stage-catcher" onclick="onForegroundStageCatcherTapClient(event)" title="Einfach tippen: Filminfos einblenden · Doppelt tippen links/rechts: ±10s spulen · Doppelt tippen Mitte: Format-Zoom"></div>' +
+              '<div id="detailSeekRippleBadge" class="detail-seek-ripple-badge" aria-live="polite"></div>' +
 
-              /* EDLES KLICKBARES GLAS-MINI-DOCK UNTEN RECHTS (PLAY/PAUSE, TON, ZEITLEISTE & KINO-ANSICHT) */
+              /* EDLES KLICKBARES GLAS-MINI-DOCK UNTEN RECHTS (PLAY/PAUSE, TON, ZEITLEISTE, CLIP-WECHSEL, FORMAT-ZOOM & KINO-ANSICHT) */
               '<div id="detailCinemaPlayerDock" class="detail-cinema-player-dock" onclick="event.stopPropagation()">' +
                 '<button type="button" id="detailCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleDetailCinemaPlayPauseClient(event)" title="Trailer pausieren / fortsetzen">⏸</button>' +
                 '<button type="button" id="detailCinemaMuteBtn" class="cinema-dock-btn" onclick="toggleDetailBackgroundTeaserAudioClient(event)" title="Ton ein- / ausschalten">🔇</button>' +
-                '<div class="cinema-dock-timeline-wrap">' +
+                '<div id="detailCinemaTimelineWrap" class="cinema-dock-timeline-wrap">' +
                   '<input type="range" id="detailCinemaScrubber" class="cinema-dock-scrubber" min="0" max="120" value="0" step="1" oninput="onDetailCinemaScrubInputClient(this,event)" onchange="onDetailCinemaScrubChangeClient(this,event)" onclick="event.stopPropagation()" title="Im Trailer vor- oder zurückspulen" />' +
                   '<span id="detailCinemaTimeLbl" class="cinema-dock-time">0:00</span>' +
                 '</div>' +
+                '<button type="button" id="detailCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextDetailTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen">⏭</button>' +
+                '<button type="button" id="detailCinemaZoomBtn" class="cinema-dock-btn' + (detailCinemaZoomMode === 'fit' ? ' is-active-mode' : '') + '" onclick="toggleDetailCinemaZoomModeClient(event)" title="Zwischen Randlos-Vollbild und Original-Kinoformat wechseln">' + (detailCinemaZoomMode === 'fit' ? '▭ Fit' : '⤢ Fill') + '</button>' +
                 '<button type="button" id="detailCinemaModeBtn" class="cinema-dock-btn' + (autoOpenTrailer ? ' is-active-mode' : '') + '" onclick="enterDetailForegroundTrailerModeClient(event)" title="Alle Elemente ausblenden & Trailer in den Vordergrund holen">' + (autoOpenTrailer ? '✕ Infos' : '⛶ Kino') + '</button>' +
               '</div>' +
 
@@ -3601,9 +3753,9 @@
                     /* 1. EDLE KICKER-ZEILE DIREKT ÜBER DEM TITEL */
                     '<div id="detailKickerEl" class="detail-kicker-row">' + kickerRowHtml + '</div>' +
 
-                    /* 2. FILMTITEL / OFFIZIELLES TMDB CLEARLOGO (1:1 MIT SLIDER) */
+                    /* 2. FILMTITEL / OFFIZIELLES TMDB CLEARLOGO (OHNE KLICK-SUCHE AUF DER DETAILSEITE) */
                     '<div id="detailTitleBoxEl" class="hero-title">' +
-                      buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath, "saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'" + esc(d.title) + "\\')") +
+                      buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath) +
                     '</div>' +
 
                     /* 3. KOMPAKTE 1-ZEILIGE META-ZEILE (1:1 MIT SLIDER) */

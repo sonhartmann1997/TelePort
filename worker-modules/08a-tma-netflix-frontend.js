@@ -4962,10 +4962,13 @@
         overflow: hidden;
         isolation: isolate;
         touch-action: pan-x pan-y;
+        cursor: pointer;
         transition: opacity 0.18s ease;
       }
-      .detail-hero-stage:has(.detail-bg-video-layer.is-playing) {
-        cursor: pointer;
+      #detailTitleBoxEl,
+      #detailTitleBoxEl * {
+        pointer-events: none !important;
+        cursor: pointer !important;
       }
       .detail-hero-stage:has(.expandable-desc-box.is-expanded) {
         touch-action: pan-x pan-y;
@@ -5038,7 +5041,7 @@
         transform: translate(-50%, -50%) scale(1.16);
         border: 0;
         pointer-events: none;
-        transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s ease, height 0.32s ease;
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -5099,12 +5102,21 @@
         flex-direction: column;
         gap: 6px;
         padding: 4px 0;
-        transition: opacity 0.34s cubic-bezier(0.22, 1, 0.36, 1), transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
       }
       .detail-hero-stage .hero-bottom-bar {
-        transition: opacity 0.34s cubic-bezier(0.22, 1, 0.36, 1), transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
       }
-      /* Vordergrund-Trailer-Modus (Beim Klick auf "Trailer": Alle Bühnen-Elemente außer Taskbar, Video & Mini-Dock blenden aus) */
+      /* Vordergrund-Trailer-Modus (Beim Klick auf Szenenbild, Video oder "Trailer": ALLE Elemente inkl. Cast darunter blenden aus) */
+      .modal-backdrop:has(.detail-hero-stage.is-trailer-foreground-mode) {
+        overflow: hidden !important;
+      }
+      .modal:has(.detail-hero-stage.is-trailer-foreground-mode) .detail-content-body,
+      .modal:has(.detail-hero-stage.is-trailer-foreground-mode) .detail-sticky-mini-header {
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transition: opacity 0.26s ease;
+      }
       .detail-hero-stage.is-trailer-foreground-mode .detail-hero-content,
       .detail-hero-stage.is-trailer-foreground-mode .hero-bottom-bar,
       .detail-hero-stage.is-trailer-foreground-mode .detail-ambilight-glow {
@@ -5113,15 +5125,32 @@
         transform: translateY(10px);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-scrim-layer {
-        opacity: 0.14 !important;
+        opacity: 0.08 !important;
       }
-      .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer {
+      .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer.is-playing {
         opacity: 1 !important;
         z-index: 3;
         filter: brightness(1.03) contrast(1.03);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame {
-        transform: translate(-50%, -50%) scale(1.03);
+        transform: translate(-50%, -50%) scale(1.12);
+      }
+      /* Format-Zoom-Modus (Original 16:9 / 21:9 Kinoformat ohne Randbeschnitt) */
+      .detail-hero-stage.is-cinema-zoom-fit {
+        background: #03060d;
+      }
+      .detail-hero-stage.is-cinema-zoom-fit .detail-bg-video-layer {
+        background: #03060d;
+      }
+      .detail-hero-stage.is-cinema-zoom-fit .detail-bg-video-frame {
+        width: min(100vw, 177.78vh) !important;
+        height: min(56.25vw, calc(100svh - var(--sticky-header-height, 54px))) !important;
+        transform: translate(-50%, -50%) scale(1) !important;
+      }
+      .detail-hero-stage.is-cinema-zoom-fit .detail-backdrop-layer {
+        background-size: contain !important;
+        background-position: center center !important;
+        background-color: #03060d !important;
       }
       .detail-foreground-stage-catcher {
         position: absolute;
@@ -5129,9 +5158,39 @@
         z-index: 4;
         display: none;
         cursor: pointer;
+        user-select: none;
+        -webkit-user-select: none;
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-foreground-stage-catcher {
         display: block;
+      }
+      /* Glas-Ripple-Feedback bei Doppel-Tipp ±10s Spulen & Format-Zoom */
+      .detail-seek-ripple-badge {
+        position: absolute;
+        top: 50%;
+        z-index: 15;
+        transform: translate(-50%, -50%) scale(0.86);
+        padding: 9px 18px;
+        border-radius: 999px;
+        background: rgba(8, 13, 24, 0.82);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(56, 189, 248, 0.48);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.72);
+        color: #ffffff;
+        font-size: calc(14px * var(--scale-text));
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .detail-seek-ripple-badge.is-left { left: 22%; }
+      .detail-seek-ripple-badge.is-center { left: 50%; }
+      .detail-seek-ripple-badge.is-right { left: 78%; }
+      .detail-seek-ripple-badge.is-visible {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
       }
       /* Edles Glas-Mini-Dock unten rechts für Play/Pause, Ton, Zeitleiste & Kino-Ansicht */
       .detail-cinema-player-dock {
