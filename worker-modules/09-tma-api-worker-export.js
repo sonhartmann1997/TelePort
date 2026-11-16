@@ -2679,7 +2679,10 @@
         const vote = details.vote_average ? Math.round(details.vote_average * 10) / 10 : "–";
 
         // Parallel & mit Timeout-Schutz für Telegraph ausführen, damit Detailansicht auch nach langer Standzeit sofort lädt!
-        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads, resolvedLogoPath] = await Promise.all([
+        const rawCandidateKeys = Array.isArray(details.trailerCandidates) && details.trailerCandidates.length > 0
+          ? details.trailerCandidates
+          : (details.trailerKey ? [details.trailerKey] : []);
+        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads, resolvedLogoPath, verifiedTrailerCandidates] = await Promise.all([
           Promise.race([
             ensureMovieOrSeriesTelegraphUrl(env, typeCode, details).catch(() => ""),
             new Promise(resolve => setTimeout(() => resolve(details.telegraphUrl || ""), 2200))
@@ -2689,7 +2692,10 @@
           tgApi(env).getBotUsername(env).catch(() => ""),
           (!isMovie && hasVipStreamAccess) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
           (hasVipStreamAccess || auth.isAdmin) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
-          resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || "")
+          resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || ""),
+          typeof verifyEmbeddableYoutubeCandidates === "function"
+            ? verifyEmbeddableYoutubeCandidates(rawCandidateKeys).catch(() => rawCandidateKeys)
+            : Promise.resolve(rawCandidateKeys)
         ]);
         // Falls Details ein Poster gefunden haben, sofort in D1, Bot-VIP-Playlist und User-Merkliste zurückschreiben!
         if (details.poster_path || details.external_poster_url) {
@@ -2699,9 +2705,13 @@
         const vipSeasonsSorted = Object.keys(seasonCounts).map(Number).filter(n => n > 0).sort((a, b) => a - b);
         const firstVipSeason = vipSeasonsSorted[0] || 1;
         const isSaved = (savedList || []).some(i => String(i.tmdbId) === String(details.id) && i.contentType !== "episode");
-        const ytKey = details.trailerKey || "";
+        const candidateKeys = Array.isArray(verifiedTrailerCandidates) && verifiedTrailerCandidates.length > 0
+          ? verifiedTrailerCandidates
+          : [];
+        const ytKey = candidateKeys[0] || "";
         const trailers = ytKey ? {
           key: ytKey,
+          candidates: candidateKeys,
           youtube: `https://www.youtube.com/watch?v=${ytKey}`,
           piped: `https://piped.video/watch?v=${ytKey}`,
           invidious1: `https://yewtu.be/watch?v=${ytKey}`,

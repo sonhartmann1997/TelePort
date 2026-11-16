@@ -793,7 +793,7 @@
           '</div>' +
           '<div class="card-body">' +
             '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
-            '<div class="card-sub"><span>⭐ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
+            '<div class="card-sub"><span style="color:#fbbf24">★ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
           '</div>' +
         '</div>';
       }
@@ -1555,26 +1555,42 @@
         const initials = parts.length >= 2
           ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
           : clean.slice(0, 2).toUpperCase();
-        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">' +
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="360" viewBox="0 0 240 360">' +
           '<defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#1e293b"/><stop offset="100%" stop-color="#090d18"/></linearGradient></defs>' +
-          '<rect width="120" height="120" rx="60" fill="url(#ag)"/>' +
-          '<circle cx="60" cy="46" r="20" fill="#334155"/>' +
-          '<path d="M22 108 C22 78 98 78 98 108" fill="#334155"/>' +
-          '<text x="60" y="53" fill="#f8fafc" font-family="sans-serif" font-size="16" font-weight="800" text-anchor="middle">' + esc(initials) + '</text>' +
+          '<rect width="240" height="360" rx="12" fill="url(#ag)"/>' +
+          '<circle cx="120" cy="128" r="44" fill="#334155"/>' +
+          '<path d="M44 268 C44 198 196 198 196 268" fill="#334155"/>' +
+          '<text x="120" y="142" fill="#f8fafc" font-family="sans-serif" font-size="30" font-weight="800" text-anchor="middle">' + esc(initials) + '</text>' +
         '</svg>';
         return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+      }
+
+      function syncDetailCarouselSideButtonsClient(trackEl) {
+        if (!trackEl) return;
+        const wrap = trackEl.closest ? trackEl.closest(".detail-carousel-wrap") : null;
+        if (!wrap) return;
+        const prevBtn = wrap.querySelector(".detail-carousel-side-btn.prev");
+        const nextBtn = wrap.querySelector(".detail-carousel-side-btn.next");
+        const maxScroll = Math.max(0, trackEl.scrollWidth - trackEl.clientWidth);
+        if (prevBtn) {
+          prevBtn.classList.toggle("is-edge-disabled", trackEl.scrollLeft <= 6);
+        }
+        if (nextBtn) {
+          nextBtn.classList.toggle("is-edge-disabled", maxScroll <= 6 || trackEl.scrollLeft >= maxScroll - 6);
+        }
       }
 
       function scrollDetailHorizontalTrackClient(trackId, dir, ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const el = document.getElementById(trackId);
         if (!el) return;
-        const step = Math.max(240, Math.round(el.clientWidth * 0.74));
+        const step = Math.max(260, Math.round(el.clientWidth * 0.76));
         try {
           el.scrollBy({ left: dir * step, behavior: "smooth" });
         } catch (_e) {
           el.scrollLeft += dir * step;
         }
+        setTimeout(() => syncDetailCarouselSideButtonsClient(el), 320);
       }
 
       function initDetailHorizontalDragScrollClient(containerEl) {
@@ -1582,12 +1598,18 @@
         if (!root) return;
         const tracks = root.querySelectorAll(".detail-cast-track, .detail-similar-track");
         tracks.forEach(track => {
+          syncDetailCarouselSideButtonsClient(track);
+          setTimeout(() => syncDetailCarouselSideButtonsClient(track), 140);
           if (track._dragScrollBound) return;
           track._dragScrollBound = true;
           let isDown = false;
           let startX = 0;
           let scrollLeftStart = 0;
           let movedDist = 0;
+
+          track.addEventListener("scroll", () => {
+            syncDetailCarouselSideButtonsClient(track);
+          }, { passive: true });
 
           track.addEventListener("mousedown", (e) => {
             if (e.button !== 0) return;
@@ -1637,27 +1659,148 @@
         }
       }
 
-      // Wow-Effekt #2: Lautloser Hintergrund-Video-Teaser mit Ton-Schalter (Apple TV+ / Netflix Style)
+      // Intelligente Trailer-Engine: YouTube IFrame postMessage State-Check, Multi-Kandidaten-Fallback, Ken-Burns-Zoom & Klickbares Glas-Mini-Dock
       let detailBgTeaserTimer = null;
+      let detailBgTeaserWatchdogTimer = null;
+      let detailBgTeaserHandshakeTimer = null;
       let detailBgTeaserMuted = true;
+      let detailBgTeaserPaused = false;
+      let detailBgTeaserIsPlayingConfirmed = false;
       let detailBgTeaserActiveKey = "";
+      let detailBgTeaserCandidates = [];
+      let detailBgTeaserCandidateIdx = 0;
       let detailBgTeaserStoppedByUser = false;
+      let detailBgTeaserCurTime = 0;
+      let detailBgTeaserDuration = 0;
+      let detailBgTeaserScrubbing = false;
+      const clientBlockedYoutubeKeys = new Set();
 
-      function stopDetailBackgroundVideoTeaserClient() {
+      function formatTrailerDockTimeClient(secInput) {
+        const s = Math.max(0, Math.floor(Number(secInput) || 0));
+        const mins = Math.floor(s / 60);
+        const secs = s % 60;
+        return mins + ":" + (secs < 10 ? "0" + secs : secs);
+      }
+
+      function extractCandidateKeysFromTrailersClient(trailersInput) {
+        if (!trailersInput) return [];
+        if (typeof trailersInput === "string") {
+          const k = trailersInput.trim();
+          return k && !clientBlockedYoutubeKeys.has(k) ? [k] : [];
+        }
+        const rawArr = Array.isArray(trailersInput.candidates) && trailersInput.candidates.length > 0
+          ? trailersInput.candidates
+          : (trailersInput.key ? [trailersInput.key] : []);
+        const seen = new Set();
+        const out = [];
+        for (const item of rawArr) {
+          const k = String(item || "").trim();
+          if (!k || seen.has(k) || clientBlockedYoutubeKeys.has(k)) continue;
+          seen.add(k);
+          out.push(k);
+        }
+        return out;
+      }
+
+      function clearDetailBgTeaserTimersClient() {
         if (detailBgTeaserTimer) {
           clearTimeout(detailBgTeaserTimer);
           detailBgTeaserTimer = null;
         }
+        if (detailBgTeaserWatchdogTimer) {
+          clearTimeout(detailBgTeaserWatchdogTimer);
+          detailBgTeaserWatchdogTimer = null;
+        }
+        if (detailBgTeaserHandshakeTimer) {
+          clearInterval(detailBgTeaserHandshakeTimer);
+          detailBgTeaserHandshakeTimer = null;
+        }
+      }
+
+      function activateDetailKenBurnsFallbackClient() {
+        clearDetailBgTeaserTimersClient();
         detailBgTeaserActiveKey = "";
+        detailBgTeaserIsPlayingConfirmed = false;
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (stageEl) {
+          stageEl.classList.remove("is-trailer-foreground-mode");
+          const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
+          if (backdropLayer) backdropLayer.classList.add("is-ken-burns-active");
+        }
         const layer = document.getElementById("detailBgVideoLayer");
         if (layer) {
           layer.classList.remove("is-playing");
           layer.innerHTML = "";
         }
-        const btn = document.getElementById("detailBgTeaserAudioBtn");
-        if (btn) {
-          btn.classList.remove("teaser-active");
-          btn.textContent = "🎬 Live-Szene";
+        const dock = document.getElementById("detailCinemaPlayerDock");
+        if (dock) {
+          dock.classList.remove("is-ready");
+        }
+      }
+
+      function syncDetailCinemaDockUiClient() {
+        const dock = document.getElementById("detailCinemaPlayerDock");
+        if (!dock) return;
+        const stageEl = document.getElementById("detailHeroStageEl");
+        const isForeground = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
+        dock.classList.toggle("is-ready", Boolean(detailBgTeaserIsPlayingConfirmed || (detailBgTeaserActiveKey && detailBgTeaserPaused) || isForeground));
+
+        const playBtn = document.getElementById("detailCinemaPlayBtn");
+        if (playBtn) {
+          playBtn.textContent = detailBgTeaserPaused ? "▶" : "⏸";
+          playBtn.title = detailBgTeaserPaused ? "Trailer fortsetzen" : "Trailer pausieren";
+        }
+        const muteBtn = document.getElementById("detailCinemaMuteBtn");
+        if (muteBtn) {
+          muteBtn.textContent = detailBgTeaserMuted ? "🔇" : "🔊";
+          muteBtn.title = detailBgTeaserMuted ? "Ton einschalten" : "Ton stummschalten";
+        }
+        const modeBtn = document.getElementById("detailCinemaModeBtn");
+        if (modeBtn) {
+          modeBtn.classList.toggle("is-active-mode", isForeground);
+          modeBtn.innerHTML = isForeground ? "✕ Infos" : "⛶ Kino";
+          modeBtn.title = isForeground ? "Filminfos wieder einblenden (Esc)" : "Alle Elemente ausblenden & Trailer in den Vordergrund holen";
+        }
+        const timeLbl = document.getElementById("detailCinemaTimeLbl");
+        if (timeLbl) {
+          if (detailBgTeaserDuration > 0) {
+            timeLbl.textContent = formatTrailerDockTimeClient(detailBgTeaserCurTime) + " / " + formatTrailerDockTimeClient(detailBgTeaserDuration);
+          } else {
+            timeLbl.textContent = formatTrailerDockTimeClient(detailBgTeaserCurTime);
+          }
+        }
+        const scrubber = document.getElementById("detailCinemaScrubber");
+        if (scrubber && !detailBgTeaserScrubbing) {
+          const maxDur = detailBgTeaserDuration > 0 ? Math.floor(detailBgTeaserDuration) : 120;
+          scrubber.max = String(maxDur);
+          scrubber.value = String(Math.min(maxDur, Math.floor(detailBgTeaserCurTime || 0)));
+        }
+        const legacyAudioBtn = document.getElementById("detailBgTeaserAudioBtn");
+        if (legacyAudioBtn) {
+          legacyAudioBtn.classList.toggle("teaser-active", Boolean(detailBgTeaserIsPlayingConfirmed));
+          legacyAudioBtn.textContent = detailBgTeaserMuted ? "🔇 Ton an" : "🔊 Ton aus";
+        }
+      }
+
+      function stopDetailBackgroundVideoTeaserClient() {
+        clearDetailBgTeaserTimersClient();
+        detailBgTeaserActiveKey = "";
+        detailBgTeaserIsPlayingConfirmed = false;
+        detailBgTeaserPaused = false;
+        detailBgTeaserCurTime = 0;
+        detailBgTeaserDuration = 0;
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (stageEl) {
+          stageEl.classList.remove("is-trailer-foreground-mode");
+        }
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer) {
+          layer.classList.remove("is-playing");
+          layer.innerHTML = "";
+        }
+        const dock = document.getElementById("detailCinemaPlayerDock");
+        if (dock) {
+          dock.classList.remove("is-ready");
         }
       }
 
@@ -1673,85 +1816,313 @@
         } catch (_e) {}
       }
 
-      function scheduleDetailBackgroundVideoTeaserClient(ytKey) {
+      function onDetailBgYoutubeIframeLoadClient() {
+        if (detailBgTeaserHandshakeTimer) {
+          clearInterval(detailBgTeaserHandshakeTimer);
+          detailBgTeaserHandshakeTimer = null;
+        }
+        let ticks = 0;
+        const sendHandshake = () => {
+          const frame = document.getElementById("detailBgVideoIframe");
+          if (!frame || !frame.contentWindow) {
+            if (detailBgTeaserHandshakeTimer) {
+              clearInterval(detailBgTeaserHandshakeTimer);
+              detailBgTeaserHandshakeTimer = null;
+            }
+            return;
+          }
+          try {
+            frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "detailBgVideoIframe" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"] }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"] }), "*");
+          } catch (_e) {}
+          ticks++;
+          if (ticks >= 12 || detailBgTeaserIsPlayingConfirmed) {
+            if (detailBgTeaserHandshakeTimer) {
+              clearInterval(detailBgTeaserHandshakeTimer);
+              detailBgTeaserHandshakeTimer = null;
+            }
+          }
+        };
+        sendHandshake();
+        detailBgTeaserHandshakeTimer = setInterval(sendHandshake, 320);
+      }
+
+      function mountDetailTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2) {
+        clearDetailBgTeaserTimersClient();
+        if (idx < 0 || idx >= detailBgTeaserCandidates.length) {
+          activateDetailKenBurnsFallbackClient();
+          return;
+        }
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (!layer) return;
+        detailBgTeaserCandidateIdx = idx;
+        const cleanKey = detailBgTeaserCandidates[idx];
+        detailBgTeaserActiveKey = cleanKey;
+        detailBgTeaserIsPlayingConfirmed = false;
+        detailBgTeaserPaused = false;
+        detailBgTeaserCurTime = 0;
+        detailBgTeaserDuration = 0;
+        detailBgTeaserMuted = !startUnmuted;
+        layer.classList.remove("is-playing");
+
+        const originParam = (typeof location !== "undefined" && location.origin) ? ("&origin=" + encodeURIComponent(location.origin)) : "";
+        const muteParam = startUnmuted ? "0" : "1";
+        const embedSrc = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
+          "?autoplay=1&mute=" + muteParam + "&controls=0&disablekb=1&fs=0&showinfo=0&rel=0&loop=1&playlist=" + encodeURIComponent(cleanKey) +
+          "&enablejsapi=1&playsinline=1&iv_load_policy=3&modestbranding=1&start=" + Math.max(0, Number(startSeconds || 0)) + originParam;
+        layer.innerHTML = '<iframe id="detailBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onDetailBgYoutubeIframeLoadClient()" allow="autoplay; encrypted-media" tabindex="-1" aria-hidden="true"></iframe>';
+
+        // Watchdog: Falls YouTube das Video blockiert oder nach 3,4s noch nicht im Playing-State (1) ist -> nächsten Trailer testen!
+        detailBgTeaserWatchdogTimer = setTimeout(() => {
+          if (!detailBgTeaserIsPlayingConfirmed && detailBgTeaserActiveKey === cleanKey && !detailBgTeaserStoppedByUser) {
+            clientBlockedYoutubeKeys.add(cleanKey);
+            advanceToNextDetailTrailerCandidateClient(startUnmuted);
+          }
+        }, 3400);
+      }
+
+      function advanceToNextDetailTrailerCandidateClient(keepUnmuted = false) {
+        const nextIdx = detailBgTeaserCandidateIdx + 1;
+        if (nextIdx < detailBgTeaserCandidates.length) {
+          mountDetailTrailerCandidateAtIndexClient(nextIdx, keepUnmuted, 2);
+        } else {
+          activateDetailKenBurnsFallbackClient();
+        }
+      }
+
+      if (typeof window !== "undefined" && !window._detailYtMessageListenerBound) {
+        window._detailYtMessageListenerBound = true;
+        window.addEventListener("message", (ev) => {
+          if (!detailBgTeaserActiveKey) return;
+          const orig = String(ev.origin || "");
+          if (!orig.includes("youtube.com") && !orig.includes("youtube-nocookie.com")) return;
+          let msg = null;
+          try {
+            msg = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
+          } catch (_e) {
+            return;
+          }
+          if (!msg || typeof msg !== "object") return;
+
+          if (msg.event === "onError" || (msg.info && typeof msg.info === "number" && msg.event === "onError")) {
+            clientBlockedYoutubeKeys.add(detailBgTeaserActiveKey);
+            advanceToNextDetailTrailerCandidateClient(!detailBgTeaserMuted);
+            return;
+          }
+
+          let pState = null;
+          if (msg.event === "onStateChange" && typeof msg.info === "number") {
+            pState = msg.info;
+          } else if (msg.event === "infoDelivery" && msg.info && typeof msg.info === "object") {
+            if (typeof msg.info.playerState === "number") {
+              pState = msg.info.playerState;
+            }
+            if (typeof msg.info.currentTime === "number") {
+              detailBgTeaserCurTime = msg.info.currentTime;
+            }
+            if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
+              detailBgTeaserDuration = msg.info.duration;
+            }
+            if (typeof msg.info.muted === "boolean") {
+              detailBgTeaserMuted = msg.info.muted;
+            }
+            syncDetailCinemaDockUiClient();
+          }
+
+          if (pState !== null) {
+            const layer = document.getElementById("detailBgVideoLayer");
+            const stageEl = document.getElementById("detailHeroStageEl");
+            if (pState === 1) {
+              // Video läuft nachweislich! Jetzt erst sanft einblenden (keine unbedienbaren YouTube-Controls in der Mitte sichtbar)
+              if (detailBgTeaserWatchdogTimer) {
+                clearTimeout(detailBgTeaserWatchdogTimer);
+                detailBgTeaserWatchdogTimer = null;
+              }
+              detailBgTeaserIsPlayingConfirmed = true;
+              detailBgTeaserPaused = false;
+              if (stageEl) {
+                const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
+                if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
+              }
+              if (layer && !detailBgTeaserStoppedByUser) {
+                layer.classList.add("is-playing");
+              }
+              syncDetailCinemaDockUiClient();
+            } else if (pState === 2) {
+              detailBgTeaserPaused = true;
+              // Im Hintergrund-Modus bei Pause sofort das saubere Szenenbild zeigen, damit keine YouTube-Pause-Empfehlungen in der Mitte erscheinen
+              if (layer) {
+                layer.classList.remove("is-playing");
+              }
+              syncDetailCinemaDockUiClient();
+            } else if (pState === 0) {
+              sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
+              sendYoutubeBgTeaserCommandClient("playVideo");
+            } else if (pState === -1 && detailBgTeaserIsPlayingConfirmed) {
+              syncDetailCinemaDockUiClient();
+            }
+          }
+        });
+      }
+
+      function scheduleDetailBackgroundVideoTeaserClient(trailersOrKey, immediateForeground = false) {
         stopDetailBackgroundVideoTeaserClient();
         detailBgTeaserStoppedByUser = false;
-        detailBgTeaserMuted = true;
-        const cleanKey = String(ytKey || "").trim();
-        if (!cleanKey) return;
+        const candidates = extractCandidateKeysFromTrailersClient(trailersOrKey || state.activeDetails?.trailers);
+        detailBgTeaserCandidates = candidates;
+        detailBgTeaserCandidateIdx = 0;
+
+        if (candidates.length === 0) {
+          activateDetailKenBurnsFallbackClient();
+          return;
+        }
+
+        if (immediateForeground) {
+          const stageEl = document.getElementById("detailHeroStageEl");
+          if (stageEl) stageEl.classList.add("is-trailer-foreground-mode");
+          mountDetailTrailerCandidateAtIndexClient(0, true, 0);
+          syncDetailCinemaDockUiClient();
+          return;
+        }
+
         detailBgTeaserTimer = setTimeout(() => {
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
           if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML) return;
+          mountDetailTrailerCandidateAtIndexClient(0, false, 3);
+        }, 1850);
+      }
+
+      function toggleDetailCinemaPlayPauseClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const frame = document.getElementById("detailBgVideoIframe");
+        if (!frame) {
+          if (detailBgTeaserCandidates.length > 0) {
+            mountDetailTrailerCandidateAtIndexClient(detailBgTeaserCandidateIdx || 0, !detailBgTeaserMuted, 0);
+          }
+          return;
+        }
+        if (detailBgTeaserPaused) {
+          detailBgTeaserPaused = false;
+          sendYoutubeBgTeaserCommandClient("playVideo");
           const layer = document.getElementById("detailBgVideoLayer");
-          if (!layer) return;
-          detailBgTeaserActiveKey = cleanKey;
-          const originParam = (typeof location !== "undefined" && location.origin) ? ("&origin=" + encodeURIComponent(location.origin)) : "";
-          const embedSrc = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
-            "?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&loop=1&playlist=" + encodeURIComponent(cleanKey) +
-            "&enablejsapi=1&playsinline=1&iv_load_policy=3&modestbranding=1& start=4" + originParam;
-          layer.innerHTML = '<iframe id="detailBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc.replace("& start=4", "&start=4")) + '" allow="autoplay; encrypted-media" tabindex="-1" aria-hidden="true"></iframe>';
-          setTimeout(() => {
-            const curLayer = document.getElementById("detailBgVideoLayer");
-            if (curLayer && detailBgTeaserActiveKey === cleanKey && !detailBgTeaserStoppedByUser) {
-              curLayer.classList.add("is-playing");
-              const btn = document.getElementById("detailBgTeaserAudioBtn");
-              if (btn) {
-                btn.classList.add("teaser-active");
-                btn.textContent = "🔇 Ton an";
-                btn.title = "Hintergrund-Teaser läuft lautlos – Klicken für Ton an / Standbild";
-              }
-            }
-          }, 950);
-        }, 2600);
+          if (layer) layer.classList.add("is-playing");
+        } else {
+          detailBgTeaserPaused = true;
+          sendYoutubeBgTeaserCommandClient("pauseVideo");
+          const layer = document.getElementById("detailBgVideoLayer");
+          if (layer) layer.classList.remove("is-playing");
+        }
+        syncDetailCinemaDockUiClient();
       }
 
       function toggleDetailBackgroundTeaserAudioClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
-        const d = state.activeDetails;
-        const ytKey = d?.trailers?.key || "";
-        if (!ytKey) return;
-        const layer = document.getElementById("detailBgVideoLayer");
-        const btn = document.getElementById("detailBgTeaserAudioBtn");
-        if (!layer || !layer.classList.contains("is-playing")) {
-          detailBgTeaserStoppedByUser = false;
-          scheduleDetailBackgroundVideoTeaserClient(ytKey);
-          if (detailBgTeaserTimer) {
-            clearTimeout(detailBgTeaserTimer);
-            detailBgTeaserTimer = null;
-          }
-          // Sofort starten bei manuellem Klick
-          detailBgTeaserActiveKey = ytKey;
-          const originParam = (typeof location !== "undefined" && location.origin) ? ("&origin=" + encodeURIComponent(location.origin)) : "";
-          const embedSrc = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(ytKey) +
-            "?autoplay=1&mute=0&controls=0&showinfo=0&rel=0&loop=1&playlist=" + encodeURIComponent(ytKey) +
-            "&enablejsapi=1&playsinline=1&iv_load_policy=3&modestbranding=1&start=2" + originParam;
-          layer.innerHTML = '<iframe id="detailBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" allow="autoplay; encrypted-media" tabindex="-1" aria-hidden="true"></iframe>';
-          detailBgTeaserMuted = false;
-          setTimeout(() => {
-            layer.classList.add("is-playing");
-            if (btn) {
-              btn.classList.add("teaser-active");
-              btn.textContent = "🔊 Ton aus";
-            }
-          }, 600);
+        const frame = document.getElementById("detailBgVideoIframe");
+        if (!frame) {
+          const candidates = extractCandidateKeysFromTrailersClient(state.activeDetails?.trailers);
+          if (candidates.length === 0) return;
+          detailBgTeaserCandidates = candidates;
+          mountDetailTrailerCandidateAtIndexClient(0, true, 2);
           return;
         }
         if (detailBgTeaserMuted) {
           detailBgTeaserMuted = false;
           sendYoutubeBgTeaserCommandClient("unMute");
-          sendYoutubeBgTeaserCommandClient("setVolume", [85]);
-          if (btn) {
-            btn.textContent = "🔊 Ton aus";
-            btn.title = "Ton stummschalten oder Hintergrund-Video beenden";
+          sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+          if (detailBgTeaserPaused) {
+            detailBgTeaserPaused = false;
+            sendYoutubeBgTeaserCommandClient("playVideo");
           }
         } else {
-          detailBgTeaserStoppedByUser = true;
-          stopDetailBackgroundVideoTeaserClient();
-          if (btn) {
-            btn.textContent = "🎬 Live-Szene";
-            btn.title = "Hintergrund-Video-Teaser erneut starten";
-          }
+          detailBgTeaserMuted = true;
+          sendYoutubeBgTeaserCommandClient("mute");
+        }
+        syncDetailCinemaDockUiClient();
+      }
+
+      function onDetailCinemaScrubInputClient(inpEl, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (!inpEl) return;
+        detailBgTeaserScrubbing = true;
+        const targetSec = Math.max(0, Number(inpEl.value || 0));
+        detailBgTeaserCurTime = targetSec;
+        const timeLbl = document.getElementById("detailCinemaTimeLbl");
+        if (timeLbl) {
+          timeLbl.textContent = detailBgTeaserDuration > 0
+            ? (formatTrailerDockTimeClient(targetSec) + " / " + formatTrailerDockTimeClient(detailBgTeaserDuration))
+            : formatTrailerDockTimeClient(targetSec);
+        }
+      }
+
+      function onDetailCinemaScrubChangeClient(inpEl, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (!inpEl) return;
+        const targetSec = Math.max(0, Number(inpEl.value || 0));
+        detailBgTeaserCurTime = targetSec;
+        detailBgTeaserScrubbing = false;
+        sendYoutubeBgTeaserCommandClient("seekTo", [targetSec, true]);
+        if (detailBgTeaserPaused) {
+          detailBgTeaserPaused = false;
+          sendYoutubeBgTeaserCommandClient("playVideo");
+        }
+        syncDetailCinemaDockUiClient();
+      }
+
+      function enterDetailForegroundTrailerModeClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (!stageEl) return;
+        if (stageEl.classList.contains("is-trailer-foreground-mode")) {
+          exitDetailForegroundTrailerModeClient(ev);
+          return;
+        }
+        const candidates = detailBgTeaserCandidates.length > 0
+          ? detailBgTeaserCandidates
+          : extractCandidateKeysFromTrailersClient(state.activeDetails?.trailers);
+        if (candidates.length === 0) {
+          const d = state.activeDetails || {};
+          const ytQ = encodeURIComponent((d.title || "") + " " + (d.year && d.year !== "K.A." ? d.year : "") + " Trailer Deutsch");
+          showHudToast("ℹ️ Kein einbettbarer Trailer – öffne YouTube-Suche");
+          window.open("https://www.youtube.com/results?search_query=" + ytQ, "_blank", "noopener,noreferrer");
+          return;
+        }
+        detailBgTeaserCandidates = candidates;
+        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        if (modalBackdrop && modalBackdrop.scrollTop > 10) {
+          modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+        }
+        stageEl.classList.add("is-trailer-foreground-mode");
+        const existingFrame = document.getElementById("detailBgVideoIframe");
+        if (existingFrame && detailBgTeaserActiveKey) {
+          // Zero-Reload: Bestehendes Video läuft nahtlos im Vordergrund mit Ton weiter!
+          detailBgTeaserMuted = false;
+          detailBgTeaserPaused = false;
+          sendYoutubeBgTeaserCommandClient("unMute");
+          sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+          sendYoutubeBgTeaserCommandClient("playVideo");
+          const layer = document.getElementById("detailBgVideoLayer");
+          if (layer) layer.classList.add("is-playing");
+        } else {
+          mountDetailTrailerCandidateAtIndexClient(0, true, 0);
+        }
+        syncDetailCinemaDockUiClient();
+        const modeBtn = document.getElementById("detailCinemaModeBtn");
+        if (modeBtn && typeof jumpSpatialFocus === "function") {
+          jumpSpatialFocus(modeBtn, false);
+        }
+      }
+
+      function exitDetailForegroundTrailerModeClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (!stageEl) return;
+        stageEl.classList.remove("is-trailer-foreground-mode");
+        syncDetailCinemaDockUiClient();
+        const trBtn = document.getElementById("detailTrailerBtn") || document.getElementById("detailPrimaryPlayBtn");
+        if (trBtn && typeof jumpSpatialFocus === "function") {
+          jumpSpatialFocus(trBtn, false);
         }
       }
 
@@ -1924,6 +2295,8 @@
           }).join("");
           unlockCatalogCoversLoadingClient(false);
           observeLazyCoversInContainerClient(track);
+          syncDetailCarouselSideButtonsClient(track);
+          setTimeout(() => syncDetailCarouselSideButtonsClient(track), 120);
         } catch (_err) {
           if (wrap) wrap.style.display = "none";
         }
@@ -1966,6 +2339,8 @@
           }).join("");
           unlockCatalogCoversLoadingClient(false);
           observeLazyCoversInContainerClient(track);
+          syncDetailCarouselSideButtonsClient(track);
+          setTimeout(() => syncDetailCarouselSideButtonsClient(track), 120);
         } catch (_err) {
           if (wrap) wrap.style.display = "none";
         }
@@ -2507,462 +2882,486 @@
         }
       }
 
-      async function openDetails(type, id, autoOpenTrailer = false, preTitle = "", prePoster = "", forceSeasonNum = null) {
-        if (typeof lastCardLongPressAt !== "undefined" && Date.now() - lastCardLongPressAt < 650) {
-          return;
-        }
-        saveModalReturnFocusTarget(type, id);
-        if (id && (preTitle || prePoster)) {
-          addRecentViewedItem({ id, title: preTitle, poster_path: prePoster }, type);
-        } else if (id && Array.isArray(state.items)) {
-          const foundInGrid = state.items.find(x => String(x.id) === String(id));
-          if (foundInGrid) addRecentViewedItem(foundInGrid, type);
-        }
-        const vipAllowed = isCurrentUserVip();
-        const cacheKey = type + "_" + id + "_" + (vipAllowed ? "vip" : "std");
-        const cachedEntry = clientDetailsCache.get(cacheKey);
-        const hasValidCache = Boolean(cachedEntry && (Date.now() - cachedEntry.ts < CLIENT_CACHE_TTL_MS));
-        if (!hasValidCache) {
-          setBusyState(true, "⏳ Lade Details...");
-        }
-        try {
-          const d = hasValidCache
-            ? cachedEntry.data
-            : await apiFetchJson(API_BASE + "/details?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&id=" + id);
-          if (!d || d.ok === false) {
-            throw new Error(d?.error || "Titeldetails konnten nicht geladen werden.");
-          }
-          if (!hasValidCache) {
-            clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
-          }
-          state.activeDetails = { ...d, typeCode: type, id: d.id || id };
-          if (d.botUsername) state.botUsername = d.botUsername;
-          if (d.isSaved) savedKeysSet.add(type + "_" + (d.id || id));
-          addRecentViewedItem(d, type);
-
-          if (document.body) {
-            document.body.classList.add("modal-open-pause-hero");
-          }
-          // Suchbegriff oben in der Suchleiste sichtbar halten, falls man aus einer Suche oder Personen-Ansicht kommt
-          const topSearchInp = document.getElementById("searchInput");
-          if (topSearchInp && state.searchQuery && !topSearchInp.value) {
-            topSearchInp.value = state.searchQuery;
-            updateSearchClearBtnVisibility();
-          }
-
-          const m = document.getElementById("modalRoot");
-          const tr = d.trailers || null;
-          const posterOrig = resolvePosterUrlClient(d.poster_path, "original", d.external_poster_url || "");
-          const posterW780 = resolvePosterUrlClient(d.poster_path, "w780", d.external_poster_url || "");
-          const posterThumb = resolvePosterUrlClient(d.poster_path, "w342", d.external_poster_url || "");
-          if (posterThumb) {
-            syncCardPosterInDom(type, d.id || id, posterThumb);
-          }
-          const backdropOrig = resolvePosterUrlClient(d.backdrop_path, "original", "");
-          const backdropW1280 = resolvePosterUrlClient(d.backdrop_path, "w1280", posterW780 || posterOrig);
-          const portraitBg = posterW780 || backdropW1280 || posterOrig;
-          const ytSearchQuery = encodeURIComponent((d.title || "") + " " + (d.year && d.year !== "K.A." ? d.year : "") + " Trailer Deutsch");
-          const ytSearchUrl = "https://www.youtube.com/results?search_query=" + ytSearchQuery;
-
-          // Klickbare Genres, Studios, Regie, Besetzung & Streaming-Anbieter
-          const genresListClean = (d.genres && d.genres !== "Keine Angabe")
-            ? d.genres.split(",").map(g => g.trim()).filter(Boolean)
-            : [];
-          const directorsArr = Array.isArray(d.directorsList) && d.directorsList.length > 0
-            ? d.directorsList
-            : (d.directors && d.directors !== "Keine Angabe" ? d.directors.split(",").map(n => ({ name: n.trim(), id: null })).filter(x => x.name) : []);
-          const castArr = Array.isArray(d.castList) && d.castList.length > 0
-            ? d.castList
-            : (d.casts && d.casts !== "Keine Angabe" ? d.casts.split(",").map(n => ({ name: n.trim(), id: null, character: "", profile_path: "" })).filter(x => x.name) : []);
-          const studiosArr = Array.isArray(d.studiosList) && d.studiosList.length > 0
-            ? d.studiosList
-            : (d.studios && d.studios !== "Keine Angabe" ? d.studios.split(",").map(s => ({ name: s.trim(), id: null })).filter(x => x.name) : []);
-          const dedupedProvidersList = cleanAndDedupeProvidersClient(d.providers);
-
-          const hasValidYear = Boolean(d.year && d.year !== "K.A.");
-          const fskClean = String(d.fsk || "").trim();
-          const fskFilterTarget = FSK_OPTIONS_CLIENT.find(fo => fskClean.includes(fo)) || "";
-          const hasValidFsk = Boolean(fskFilterTarget && !/keine angabe|unbekannt/i.test(fskClean));
-          const prevAdj = getAdjacentDetailItem(-1);
-          const nextAdj = getAdjacentDetailItem(1);
-          const backBtnLabel = getDetailBackButtonLabelClient(type);
-
-          // Einheitliche Topbar (#topUnifiedBar) aktualisieren: Links "← Zurück", Rechts "◀ / ▶"
-          const topBackBtn = document.getElementById("topBarBackBtn");
-          const topBackLbl = document.getElementById("topBarBackBtnLabel");
-          if (topBackLbl) topBackLbl.textContent = backBtnLabel.replace(/^←\\s*/, "");
-          if (topBackBtn) topBackBtn.title = backBtnLabel + " (Esc / B / ○)";
-          const topPrevBtn = document.getElementById("modalAdjPrevBtn");
-          const topNextBtn = document.getElementById("modalAdjNextBtn");
-          if (topPrevBtn) {
-            topPrevBtn.disabled = !prevAdj;
-            topPrevBtn.style.opacity = prevAdj ? "1" : "0.35";
-            topPrevBtn.title = prevAdj ? ("Vorheriger Titel: " + prevAdj.title + " (L1 / LB)") : "Kein vorheriger Titel";
-          }
-          if (topNextBtn) {
-            topNextBtn.disabled = !nextAdj;
-            topNextBtn.style.opacity = nextAdj ? "1" : "0.35";
-            topNextBtn.title = nextAdj ? ("Nächster Titel: " + nextAdj.title + " (R1 / RB)") : "Kein nächster Titel";
-          }
-
-          // ClearLogo im Client-Cache sichern, damit Hero-Slider & Detailseite 1:1 synchron bleiben
-          if (d.logo_path && typeof clientClearLogoCache !== "undefined") {
-            clientClearLogoCache.set(type + "_" + (d.id || id), d.logo_path);
-          }
-          const activeLogoPath = d.logo_path || (typeof clientClearLogoCache !== "undefined" ? (clientClearLogoCache.get(type + "_" + (d.id || id)) || "") : "");
-
-          // 1. Edle Kicker-Zeile direkt über dem Filmtitel (exakt an der Position von HIGHLIGHT DIESE WOCHE im Slider)
-          const returnChipHtml = (state.lastClosedDetailItem && String(state.lastClosedDetailItem.id) !== String(d.id || id))
-            ? ('<button type="button" class="return-last-detail-chip" onclick="reopenLastClosedDetailItemClient()" title="Zurück zum vorherigen Titel: ' + esc(state.lastClosedDetailItem.title || "Titel") + '">↩ ' + esc(String(state.lastClosedDetailItem.title || "Zurück").slice(0, 26)) + '</button>')
-            : "";
-          const mutedActiveFiltersHtml = buildMutedActiveFiltersForDetailHtml();
-          const kickerRowHtml = [
-            '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "📺 SERIE" : "🎬 FILM") + '</span>',
-            d.collection ? (
-              '<button type="button" class="detail-kicker-link" onclick="scrollToDetailBelowFoldClient(event,\\'detailCollectionSectionWrap\\')" title="Zur Filmreihe springen: ' + esc(d.collection.name) + '">' +
-                '<span>🍿</span><span>' + esc(d.collection.name) + '</span>' +
-              '</button>'
-            ) : "",
-            d.universe ? (
-              '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
-                '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
-              '</button>'
-            ) : "",
-            returnChipHtml,
-            mutedActiveFiltersHtml
-          ].filter(Boolean).join("");
-
-          // 2. Kompakte 1-zeilige Meta-Zeile unter dem Titel (1:1 wie im Hero-Slider: ★ Bewertung · Jahr · Laufzeit · FSK · HD · Genres)
-          const cleanStatusLabel = (type === "s" && d.statusText && d.statusText !== "Unbekannt")
-            ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\\s*/, "").trim()
-            : "";
-          const heroStyleGenresHtml = genresListClean.length > 0
-            ? ('<span class="hero-meta-sep">·</span><span class="hero-meta-genres">' +
-                genresListClean.slice(0, 3).map((gName, idx, arr) =>
-                  '<span class="hero-meta-genre" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>' +
-                  (idx < arr.length - 1 ? '<span>, </span>' : '')
-                ).join("") +
-              '</span>')
-            : "";
-          const unboxedMetaHtml = [
-            (d.vote && d.vote !== "0.0") ? ('<span><span class="hero-meta-star">★</span> ' + esc(d.vote) + '</span>') : "",
-            hasValidYear ? ('<span class="hero-meta-year" tabindex="0" onclick="searchByYearFromModal(\\'' + esc(d.year) + '\\')" title="Alle Titel aus dem Jahr ' + esc(d.year) + '">' + esc(d.year) + '</span>') : "",
-            (d.runtime && d.runtime !== "Keine Angabe") ? ('<span>' + esc(d.runtime) + '</span>') : "",
-            (type === "s" && d.numberOfSeasons) ? ('<span>' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? " Staffel" : " Staffeln") + '</span>') : "",
-            hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
-            '<span class="hero-meta-hd" title="Im Katalog in HD verfügbar">HD</span>'
-          ].filter(Boolean).join('<span class="hero-meta-sep">·</span>') + heroStyleGenresHtml;
-
-          // Zusatz-Infos (Regie, Studio, Produktionsland, Streaming-Anbieter, Serien-Status) für die edle Kino-Glas-Infoleiste beim Runterscrollen
-          const creditsPillsArr = [
-            ...directorsArr.slice(0, 2).map(p => {
-              const pPhoto = p.profile_path ? resolvePosterUrlClient(p.profile_path, "w185", "") : "";
-              return '<button type="button" class="detail-credit-pill" onclick="openPersonSpotlightOverlayClient(' + (p.id ? Number(p.id) : 'null') + ',\\'' + esc(p.name) + '\\',\\'Regie\\',\\'' + esc(pPhoto) + '\\')" title="Spotlight & Filmografie von ' + esc(p.name) + ' öffnen">🎬 <b>Regie:</b> ' + esc(p.name) + '</button>';
-            }),
-            ...studiosArr.slice(0, 3).map(sObj =>
-              '<button type="button" class="detail-credit-pill" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || "") + '\\')" title="Alle Titel von ' + esc(sObj.name) + '">🏢 <b>Studio:</b> ' + esc(sObj.name) + '</button>'
-            ),
-            (d.country && d.country !== "k.A." && d.country !== "Keine Angabe")
-              ? ('<button type="button" class="detail-credit-pill" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">🌍 <b>Land:</b> ' + esc(d.country) + '</button>')
-              : "",
-            cleanStatusLabel
-              ? ('<span class="detail-credit-pill" style="cursor:default">📡 <b>Status:</b> ' + esc(cleanStatusLabel) + (d.numberOfEpisodes ? (' · ' + Number(d.numberOfEpisodes) + ' Folgen') : '') + '</span>')
-              : "",
-            ...dedupedProvidersList.slice(0, 3).map(pName =>
-              '<button type="button" class="detail-credit-pill" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
-            ),
-            ...((d.providerButtons && d.providerButtons.length > 0) ? d.providerButtons.map(pb =>
-              '<a class="detail-credit-pill" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="border-color:' + esc(pb.border || "#0284c7") + '">' + esc(pb.buttonText) + '</a>'
-            ) : [])
-          ].filter(Boolean);
-          const creditsGlassStripHtml = creditsPillsArr.length > 0
-            ? ('<div class="detail-credits-glass-strip">' + creditsPillsArr.join("") + '</div>')
-            : "";
-
-          // 3. VIP Direkt-"▶ Abspielen" & Inline Versions-Dropdown oben im Hero-Stage
-          const playableMovieFiles = type === "m" ? getPlayableMovieFilesForHeroClient(d) : [];
-          const seriesVersionProfiles = type === "s" ? getSeriesVersionProfilesForHeroClient(d) : [];
-          const hasVipStreams = Boolean(
-            vipAllowed && (
-              (type === "m" && playableMovieFiles.length > 0) ||
-              (type === "s" && (seriesVersionProfiles.length > 0 || (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0) || Number(d.firstVipSeason || 0) > 0))
-            )
-          );
-
-          let versionSelectHtml = "";
-          if (hasVipStreams) {
-            if (type === "m" && playableMovieFiles.length > 0) {
-              const optionsHtml = playableMovieFiles.map((f, idx) => {
-                const vLbl = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "") || String(d.primaryVersionLabel || "Originalfassung");
-                const qLbl = String(f.quality || "1080p").trim();
-                const cLbl = String(f.codec || "x264").trim();
-                const szLbl = formatFileSizeClient(f.file_size);
-                const ptLbl = normalizeClientPartLabel(f.part, f.raw_filename || "");
-                const labelParts = ["🎞️ " + vLbl, qLbl, cLbl, szLbl, ptLbl ? ("(" + ptLbl + ")") : ""].filter(Boolean).join(" · ");
-                return '<option value="' + idx + '">' + esc(labelParts) + '</option>';
-              }).join("");
-              versionSelectHtml = '<div class="detail-version-select-wrap">' +
-                '<select id="detailHeroVersionSelect" class="detail-version-select" onchange="onDetailHeroVersionChangeClient(this)" title="Gewünschte Schnittfassung & Qualität zum direkten Abspielen wählen">' +
-                  optionsHtml +
-                '</select>' +
-                '<span class="detail-version-select-caret">▾</span>' +
-              '</div>';
-            } else if (type === "s" && seriesVersionProfiles.length > 0) {
-              const optionsHtml = seriesVersionProfiles.map(prof =>
-                '<option value="' + esc(prof.key) + '">🎞️ ' + esc(prof.key) + (prof.count > 1 ? (' (' + prof.count + ' Flg.)') : '') + '</option>'
-              ).join("");
-              versionSelectHtml = '<div class="detail-version-select-wrap">' +
-                '<select id="detailHeroVersionSelect" class="detail-version-select" onchange="onDetailHeroVersionChangeClient(this)" title="Bevorzugte Serien-Fassung & Qualität wählen">' +
-                  optionsHtml +
-                '</select>' +
-                '<span class="detail-version-select-caret">▾</span>' +
-              '</div>';
+      function findPreloadedSeedItemClient(typeCode, id, preTitle = "", prePoster = "") {
+        const tc = typeCode === "s" ? "s" : "m";
+        const idStr = String(id || "");
+        const pools = [
+          Array.isArray(state.heroSlides) ? state.heroSlides : [],
+          Array.isArray(state.items) ? state.items : [],
+          Array.isArray(state.collectionItems) ? state.collectionItems : [],
+          Array.isArray(state.universeItems) ? state.universeItems : []
+        ];
+        let hit = null;
+        for (const list of pools) {
+          const found = list.find(it => {
+            if (!it || String(it.id || it.tmdbId || "") !== idStr) return false;
+            if (it.media_type) {
+              const itTc = it.media_type === "tv" ? "s" : "m";
+              return itTc === tc;
             }
+            return true;
+          });
+          if (found) {
+            hit = found;
+            break;
           }
+        }
+        if (!hit && !preTitle && !prePoster) return null;
+        const rawTitle = String(hit?.title || hit?.name || preTitle || "").replace(/\\s*\\(\\d{4}\\)$/, "").trim();
+        if (!rawTitle) return null;
+        const posterPath = hit?.poster_path || hit?.poster || prePoster || "";
+        const backdropPath = hit?.backdrop_path || "";
+        const extPoster = hit?.external_poster_url || "";
+        if (!posterPath && !backdropPath && !extPoster) return null;
 
-          const savedProg = type === "s" ? getSeriesProgress(d.id) : null;
-          const initialSeason = (forceSeasonNum && Number(forceSeasonNum) > 0)
-            ? Number(forceSeasonNum)
-            : (savedProg && savedProg.season > 0)
-              ? savedProg.season
-              : (Number(d.firstVipSeason || 0) > 0 ? Number(d.firstVipSeason) : 1);
+        const rawDate = String(hit?.release_date || hit?.first_air_date || hit?.year || "");
+        const yearStr = rawDate.slice(0, 4) || "K.A.";
+        const voteNum = Number(hit?.vote_average || hit?.vote || 0);
+        const voteStr = voteNum > 0 ? String(Math.round(voteNum * 10) / 10) : "–";
+        const cardKey = tc + "_" + idStr;
+        const logoPath = hit?.logo_path || (typeof clientClearLogoCache !== "undefined" ? (clientClearLogoCache.get(cardKey) || "") : "");
+
+        let genresStr = "";
+        if (typeof hit?.genres === "string" && hit.genres) {
+          genresStr = hit.genres;
+        } else if (Array.isArray(hit?.genre_ids) && hit.genre_ids.length > 0 && state.genres && typeof state.genres === "object") {
+          genresStr = hit.genre_ids.map(gid => state.genres[gid] || "").filter(Boolean).slice(0, 3).join(", ");
+        }
+
+        return {
+          id: Number(id) || id,
+          typeCode: tc,
+          title: rawTitle,
+          year: yearStr,
+          vote: voteStr,
+          fsk: "",
+          runtime: "",
+          country: "",
+          statusText: "",
+          numberOfSeasons: 0,
+          numberOfEpisodes: 0,
+          genres: genresStr,
+          studios: "",
+          studiosList: [],
+          providers: "",
+          providerButtons: [],
+          directors: "",
+          directorsList: [],
+          casts: "",
+          castList: [],
+          overview: String(hit?.overview || "").trim(),
+          _originalOverviewEn: hit?._originalOverviewEn || "",
+          _translatedOverviewDe: hit?._translatedOverviewDe || "",
+          _showTranslatedOverviewDe: Boolean(hit?._showTranslatedOverviewDe),
+          poster_path: posterPath,
+          external_poster_url: extPoster,
+          backdrop_path: backdropPath,
+          logo_path: logoPath,
+          collection: null,
+          universe: null,
+          telegraphUrl: "",
+          tmdbDeUrl: "https://www.themoviedb.org/" + (tc === "m" ? "movie" : "tv") + "/" + idStr + "?language=de-DE",
+          isSaved: typeof savedKeysSet !== "undefined" && savedKeysSet.has(cardKey),
+          trailers: null,
+          files: [],
+          downloads: [],
+          allStreamFiles: [],
+          availableVersions: hit?.vipQuality ? [String(hit.vipQuality)] : [],
+          primaryVersionLabel: hit?.vipQuality ? String(hit.vipQuality) : "",
+          _isSeedStageOnly: true
+        };
+      }
+
+      function renderOrPatchDetailStageClient(type, id, d, forceSeasonNum = null, autoOpenTrailer = false, isDeltaHydration = false) {
+        const vipAllowed = isCurrentUserVip();
+        const isSeedOnly = Boolean(d._isSeedStageOnly);
+        const detailKey = type + "_" + (d.id || id);
+
+        if (document.body) {
+          document.body.classList.add("modal-open-pause-hero");
+        }
+        const topSearchInp = document.getElementById("searchInput");
+        if (topSearchInp && state.searchQuery && !topSearchInp.value) {
+          topSearchInp.value = state.searchQuery;
+          updateSearchClearBtnVisibility();
+        }
+
+        const m = document.getElementById("modalRoot");
+        if (!m) return;
+        const tr = d.trailers || null;
+        const posterOrig = resolvePosterUrlClient(d.poster_path, "original", d.external_poster_url || "");
+        const posterW780 = resolvePosterUrlClient(d.poster_path, "w780", d.external_poster_url || "");
+        const posterThumb = resolvePosterUrlClient(d.poster_path, "w342", d.external_poster_url || "");
+        if (posterThumb && !isSeedOnly) {
+          syncCardPosterInDom(type, d.id || id, posterThumb);
+        }
+        const backdropOrig = resolvePosterUrlClient(d.backdrop_path, "original", "");
+        const backdropW1280 = resolvePosterUrlClient(d.backdrop_path, "w1280", posterW780 || posterOrig);
+        const portraitBg = posterW780 || backdropW1280 || posterOrig;
+        const ytSearchQuery = encodeURIComponent((d.title || "") + " " + (d.year && d.year !== "K.A." ? d.year : "") + " Trailer Deutsch");
+        const ytSearchUrl = "https://www.youtube.com/results?search_query=" + ytSearchQuery;
+
+        const genresListClean = (d.genres && d.genres !== "Keine Angabe")
+          ? d.genres.split(",").map(g => g.trim()).filter(Boolean)
+          : [];
+        const directorsArr = Array.isArray(d.directorsList) && d.directorsList.length > 0
+          ? d.directorsList
+          : (d.directors && d.directors !== "Keine Angabe" ? d.directors.split(",").map(n => ({ name: n.trim(), id: null })).filter(x => x.name) : []);
+        const castArr = Array.isArray(d.castList) && d.castList.length > 0
+          ? d.castList
+          : (d.casts && d.casts !== "Keine Angabe" ? d.casts.split(",").map(n => ({ name: n.trim(), id: null, character: "", profile_path: "" })).filter(x => x.name) : []);
+        const studiosArr = Array.isArray(d.studiosList) && d.studiosList.length > 0
+          ? d.studiosList
+          : (d.studios && d.studios !== "Keine Angabe" ? d.studios.split(",").map(s => ({ name: s.trim(), id: null })).filter(x => x.name) : []);
+        const dedupedProvidersList = cleanAndDedupeProvidersClient(d.providers);
+
+        const hasValidYear = Boolean(d.year && d.year !== "K.A.");
+        const fskClean = String(d.fsk || "").trim();
+        const fskFilterTarget = FSK_OPTIONS_CLIENT.find(fo => fskClean.includes(fo)) || "";
+        const hasValidFsk = Boolean(fskFilterTarget && !/keine angabe|unbekannt/i.test(fskClean));
+        const prevAdj = getAdjacentDetailItem(-1);
+        const nextAdj = getAdjacentDetailItem(1);
+        const backBtnLabel = getDetailBackButtonLabelClient(type);
+
+        const topBackBtn = document.getElementById("topBarBackBtn");
+        const topBackLbl = document.getElementById("topBarBackBtnLabel");
+        if (topBackLbl) topBackLbl.textContent = backBtnLabel.replace(/^←\\s*/, "");
+        if (topBackBtn) topBackBtn.title = backBtnLabel + " (Esc / B / ○)";
+        const topPrevBtn = document.getElementById("modalAdjPrevBtn");
+        const topNextBtn = document.getElementById("modalAdjNextBtn");
+        if (topPrevBtn) {
+          topPrevBtn.disabled = !prevAdj;
+          topPrevBtn.style.opacity = prevAdj ? "1" : "0.35";
+          topPrevBtn.title = prevAdj ? ("Vorheriger Titel: " + prevAdj.title + " (L1 / LB)") : "Kein vorheriger Titel";
+        }
+        if (topNextBtn) {
+          topNextBtn.disabled = !nextAdj;
+          topNextBtn.style.opacity = nextAdj ? "1" : "0.35";
+          topNextBtn.title = nextAdj ? ("Nächster Titel: " + nextAdj.title + " (R1 / RB)") : "Kein nächster Titel";
+        }
+
+        if (d.logo_path && typeof clientClearLogoCache !== "undefined") {
+          clientClearLogoCache.set(detailKey, d.logo_path);
+        }
+        const activeLogoPath = d.logo_path || (typeof clientClearLogoCache !== "undefined" ? (clientClearLogoCache.get(detailKey) || "") : "");
+
+        const returnChipHtml = (state.lastClosedDetailItem && String(state.lastClosedDetailItem.id) !== String(d.id || id))
+          ? ('<button type="button" class="return-last-detail-chip" onclick="reopenLastClosedDetailItemClient()" title="Zurück zum vorherigen Titel: ' + esc(state.lastClosedDetailItem.title || "Titel") + '">↩ ' + esc(String(state.lastClosedDetailItem.title || "Zurück").slice(0, 26)) + '</button>')
+          : "";
+        const mutedActiveFiltersHtml = buildMutedActiveFiltersForDetailHtml();
+        const kickerRowHtml = [
+          '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "📺 SERIE" : "🎬 FILM") + '</span>',
+          d.collection ? (
+            '<button type="button" class="detail-kicker-link" onclick="scrollToDetailBelowFoldClient(event,\\'detailCollectionSectionWrap\\')" title="Zur Filmreihe springen: ' + esc(d.collection.name) + '">' +
+              '<span>🍿</span><span>' + esc(d.collection.name) + '</span>' +
+            '</button>'
+          ) : "",
+          d.universe ? (
+            '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
+              '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
+            '</button>'
+          ) : "",
+          returnChipHtml,
+          mutedActiveFiltersHtml
+        ].filter(Boolean).join("");
+
+        const cleanStatusLabel = (type === "s" && d.statusText && d.statusText !== "Unbekannt")
+          ? String(d.statusText).replace(/^[🔴🟢🟡⚪]\\s*/, "").trim()
+          : "";
+        const heroStyleGenresHtml = genresListClean.length > 0
+          ? ('<span class="hero-meta-sep">·</span><span class="hero-meta-genres">' +
+              genresListClean.slice(0, 3).map((gName, idx, arr) =>
+                '<span class="hero-meta-genre" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>' +
+                (idx < arr.length - 1 ? '<span>, </span>' : '')
+              ).join("") +
+            '</span>')
+          : "";
+        const unboxedMetaHtml = [
+          (d.vote && d.vote !== "0.0") ? ('<span><span class="hero-meta-star">★</span> ' + esc(d.vote) + '</span>') : "",
+          hasValidYear ? ('<span class="hero-meta-year" tabindex="0" onclick="searchByYearFromModal(\\'' + esc(d.year) + '\\')" title="Alle Titel aus dem Jahr ' + esc(d.year) + '">' + esc(d.year) + '</span>') : "",
+          (d.runtime && d.runtime !== "Keine Angabe") ? ('<span>' + esc(d.runtime) + '</span>') : "",
+          (type === "s" && d.numberOfSeasons) ? ('<span>' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? " Staffel" : " Staffeln") + '</span>') : "",
+          hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
+          '<span class="hero-meta-hd" title="Im Katalog in HD verfügbar">HD</span>'
+        ].filter(Boolean).join('<span class="hero-meta-sep">·</span>') + heroStyleGenresHtml;
+
+        const creditsPillsArr = [
+          ...directorsArr.slice(0, 2).map(p => {
+            const pPhoto = p.profile_path ? resolvePosterUrlClient(p.profile_path, "w185", "") : "";
+            return '<button type="button" class="detail-credit-pill" onclick="openPersonSpotlightOverlayClient(' + (p.id ? Number(p.id) : 'null') + ',\\'' + esc(p.name) + '\\',\\'Regie\\',\\'' + esc(pPhoto) + '\\')" title="Spotlight & Filmografie von ' + esc(p.name) + ' öffnen">🎬 <b>Regie:</b> ' + esc(p.name) + '</button>';
+          }),
+          ...studiosArr.slice(0, 3).map(sObj =>
+            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || "") + '\\')" title="Alle Titel von ' + esc(sObj.name) + '">🏢 <b>Studio:</b> ' + esc(sObj.name) + '</button>'
+          ),
+          (d.country && d.country !== "k.A." && d.country !== "Keine Angabe")
+            ? ('<button type="button" class="detail-credit-pill" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">🌍 <b>Land:</b> ' + esc(d.country) + '</button>')
+            : "",
+          cleanStatusLabel
+            ? ('<span class="detail-credit-pill" style="cursor:default">📡 <b>Status:</b> ' + esc(cleanStatusLabel) + (d.numberOfEpisodes ? (' · ' + Number(d.numberOfEpisodes) + ' Folgen') : '') + '</span>')
+            : "",
+          ...dedupedProvidersList.slice(0, 3).map(pName =>
+            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
+          ),
+          ...((d.providerButtons && d.providerButtons.length > 0) ? d.providerButtons.map(pb =>
+            '<a class="detail-credit-pill" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="border-color:' + esc(pb.border || "#0284c7") + '">' + esc(pb.buttonText) + '</a>'
+          ) : [])
+        ].filter(Boolean);
+        const creditsGlassStripHtml = creditsPillsArr.length > 0
+          ? ('<div class="detail-credits-glass-strip">' + creditsPillsArr.join("") + '</div>')
+          : "";
+
+        const playableMovieFiles = type === "m" ? getPlayableMovieFilesForHeroClient(d) : [];
+        const seriesVersionProfiles = type === "s" ? getSeriesVersionProfilesForHeroClient(d) : [];
+        const hasVipStreams = Boolean(
+          vipAllowed && (
+            (type === "m" && playableMovieFiles.length > 0) ||
+            (type === "s" && (seriesVersionProfiles.length > 0 || (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0) || Number(d.firstVipSeason || 0) > 0))
+          )
+        );
+
+        let versionSelectHtml = "";
+        if (hasVipStreams) {
+          if (type === "m" && playableMovieFiles.length > 0) {
+            const optionsHtml = playableMovieFiles.map((f, idx) => {
+              const vLbl = cleanUserVisibleStreamTagsClient(f.tags || f.versionLabel || f.version_label || "") || String(d.primaryVersionLabel || "Originalfassung");
+              const qLbl = String(f.quality || "1080p").trim();
+              const cLbl = String(f.codec || "x264").trim();
+              const szLbl = formatFileSizeClient(f.file_size);
+              const ptLbl = normalizeClientPartLabel(f.part, f.raw_filename || "");
+              const labelParts = ["🎞️ " + vLbl, qLbl, cLbl, szLbl, ptLbl ? ("(" + ptLbl + ")") : ""].filter(Boolean).join(" · ");
+              return '<option value="' + idx + '">' + esc(labelParts) + '</option>';
+            }).join("");
+            versionSelectHtml = '<div class="detail-version-select-wrap">' +
+              '<select id="detailHeroVersionSelect" class="detail-version-select" onchange="onDetailHeroVersionChangeClient(this)" title="Gewünschte Schnittfassung & Qualität zum direkten Abspielen wählen">' +
+                optionsHtml +
+              '</select>' +
+              '<span class="detail-version-select-caret">▾</span>' +
+            '</div>';
+          } else if (type === "s" && seriesVersionProfiles.length > 0) {
+            const optionsHtml = seriesVersionProfiles.map(prof =>
+              '<option value="' + esc(prof.key) + '">🎞️ ' + esc(prof.key) + (prof.count > 1 ? (' (' + prof.count + ' Flg.)') : '') + '</option>'
+            ).join("");
+            versionSelectHtml = '<div class="detail-version-select-wrap">' +
+              '<select id="detailHeroVersionSelect" class="detail-version-select" onchange="onDetailHeroVersionChangeClient(this)" title="Bevorzugte Serien-Fassung & Qualität wählen">' +
+                optionsHtml +
+              '</select>' +
+              '<span class="detail-version-select-caret">▾</span>' +
+            '</div>';
+          }
+        }
+
+        const savedProg = type === "s" ? getSeriesProgress(d.id) : null;
+        const initialSeason = (forceSeasonNum && Number(forceSeasonNum) > 0)
+          ? Number(forceSeasonNum)
+          : (savedProg && savedProg.season > 0)
+            ? savedProg.season
+            : (Number(d.firstVipSeason || 0) > 0 ? Number(d.firstVipSeason) : 1);
+        if (state.activeDetails) {
           state.activeDetails._activeLoadedSeason = initialSeason;
+        }
 
-          const primaryPlayBtnLabel = hasVipStreams
-            ? (type === "s"
-                ? (savedProg && savedProg.season && savedProg.episode
-                    ? ("▶ Weiter: S" + Number(savedProg.season) + " · E" + Number(savedProg.episode))
-                    : "▶ Abspielen")
-                : "▶ Abspielen")
-            : "▶ Trailer";
+        const primaryPlayBtnLabel = hasVipStreams
+          ? (type === "s"
+              ? (savedProg && savedProg.season && savedProg.episode
+                  ? ("▶ Weiter: S" + Number(savedProg.season) + " · E" + Number(savedProg.episode))
+                  : "▶ Abspielen")
+              : "▶ Abspielen")
+          : "▶ Trailer";
 
-          const primaryVersionBadgeText = String(d.primaryVersionLabel || (Array.isArray(d.availableVersions) && d.availableVersions[0]) || "").trim();
-          const canReportMedia = Boolean(vipAllowed || state.authUser?.isAdmin);
-          const isAdminUser = Boolean(state.authUser?.isAdmin);
+        const primaryVersionBadgeText = String(d.primaryVersionLabel || (Array.isArray(d.availableVersions) && d.availableVersions[0]) || "").trim();
+        const canReportMedia = Boolean(vipAllowed || state.authUser?.isAdmin);
+        const isAdminUser = Boolean(state.authUser?.isAdmin);
 
-          // Prüfen, ob bei einem Film mehrteilige Dateien (CD 1 / CD 2) oder Archiv-Downloads vorliegen
-          const hasMultiPartOrArchivesForMovie = Boolean(
-            vipAllowed && type === "m" && (
-              playableMovieFiles.some(f => Boolean(normalizeClientPartLabel(f.part, f.raw_filename || ""))) ||
-              (Array.isArray(d.downloads) && d.downloads.length > 0) ||
-              playableMovieFiles.length > 1
-            )
-          );
+        const hasMultiPartOrArchivesForMovie = Boolean(
+          vipAllowed && type === "m" && (
+            playableMovieFiles.some(f => Boolean(normalizeClientPartLabel(f.part, f.raw_filename || ""))) ||
+            (Array.isArray(d.downloads) && d.downloads.length > 0) ||
+            playableMovieFiles.length > 1
+          )
+        );
 
-          // Neuer Cast-Slider: Kompakte Glas-Karten mit rundem Porträt, Name + Rolle daneben und Header-Pfeilen
-          const castSectionHtml = castArr.length > 0 ? (
-            '<section class="detail-section-block">' +
-              '<div class="detail-section-header">' +
-                '<h3 class="detail-section-heading">Cast</h3>' +
-                '<div class="detail-section-header-right">' +
-                  '<div class="detail-header-nav-group">' +
-                    '<button type="button" class="detail-carousel-arrow prev" onclick="scrollDetailHorizontalTrackClient(\\'detailCastTrackEl\\',-1,event)" title="Cast nach links scrollen">‹</button>' +
-                    '<button type="button" class="detail-carousel-arrow next" onclick="scrollDetailHorizontalTrackClient(\\'detailCastTrackEl\\',1,event)" title="Cast nach rechts scrollen">›</button>' +
-                  '</div>' +
-                '</div>' +
-              '</div>' +
-              '<div class="detail-carousel-wrap">' +
-                '<div id="detailCastTrackEl" class="detail-cast-track">' +
-                  castArr.map(c => {
-                    const cName = String(c.name || "").trim();
-                    const cRole = String(c.character || "Darsteller").trim();
-                    const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
-                    const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w185", "") : fbAvatar;
-                    const spotlightCall = 'openPersonSpotlightOverlayClient(' + (c.id ? Number(c.id) : 'null') + ',\\'' + esc(cName) + '\\',\\'' + esc(cRole) + '\\',\\'' + esc(photoUrl) + '\\')';
-                    return '<div class="detail-cast-card" tabindex="0" onclick="' + spotlightCall + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + spotlightCall + ';}" title="Spotlight & Filme mit ' + esc(cName) + ' anzeigen">' +
-                      '<div class="detail-cast-photo-wrap">' +
-                        '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
-                      '</div>' +
-                      '<div class="detail-cast-info">' +
-                        '<div class="detail-cast-name">' + esc(cName) + '</div>' +
-                        '<div class="detail-cast-role">' + esc(cRole) + '</div>' +
-                      '</div>' +
-                    '</div>';
-                  }).join("") +
-                '</div>' +
-              '</div>' +
-            '</section>'
-          ) : "";
-
-          const bgVarsStyle =
-            "--hero-bg-landscape:url('" + esc(backdropW1280 || portraitBg) + "');" +
-            "--hero-bg-portrait:url('" + esc(portraitBg || backdropW1280) + "');";
-
-          const collectionSectionHtml = (type === "m" && d.collection && d.collection.id) ? (
-            '<section id="detailCollectionSectionWrap" class="detail-section-block" style="display:none">' +
-              '<div class="detail-section-header">' +
-                '<h3 class="detail-section-heading">🍿 Alle Teile der Filmreihe: ' + esc(d.collection.name || "Filmreihe") + '</h3>' +
-                '<div class="detail-section-header-right">' +
-                  '<button type="button" class="btn-tool-quiet" onclick="saveLastClosedDetailItemClient();closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')">Komplette Reihe öffnen ➔</button>' +
-                  '<div class="detail-header-nav-group">' +
-                    '<button type="button" class="detail-carousel-arrow prev" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',-1,event)" title="Nach links scrollen">‹</button>' +
-                    '<button type="button" class="detail-carousel-arrow next" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',1,event)" title="Nach rechts scrollen">›</button>' +
-                  '</div>' +
-                '</div>' +
-              '</div>' +
-              '<div class="detail-carousel-wrap">' +
-                '<div id="detailCollectionTrackEl" class="detail-similar-track">' +
-                  '<div style="font-size:12.5px;color:#94a3b8;padding:12px 4px">⏳ Lade alle Teile der Filmreihe...</div>' +
-                '</div>' +
-              '</div>' +
-            '</section>'
-          ) : "";
-
-          const primaryClickJs = hasVipStreams
-            ? 'triggerDetailHeroPrimaryPlayClient()'
-            : ('playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')');
-
-          m.innerHTML = '<div class="modal-backdrop" onwheel="onModalWheelHorizontalClient(event)" onscroll="onDetailModalScrollClient(this)">' +
-            '<div class="modal detail-morph-enter">' +
-              /* STICKY MINI-HEADER BEIM RUNTERSCROLLEN */
-              '<div id="detailStickyMiniHeader" class="detail-sticky-mini-header">' +
-                '<div class="detail-sticky-mini-left">' +
-                  '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "SERIE" : "FILM") + '</span>' +
-                  '<span class="detail-sticky-mini-title">' + esc(d.title) + '</span>' +
-                  ((d.vote && d.vote !== "0.0") ? ('<span class="hero-meta-star" style="font-size:13px">★ ' + esc(d.vote) + '</span>') : '') +
-                '</div>' +
-                '<div class="detail-sticky-mini-actions">' +
-                  '<button type="button" class="detail-btn-play-white" style="padding:6px 14px;font-size:12.5px" onclick="' + primaryClickJs + '">' + esc(primaryPlayBtnLabel) + '</button>' +
-                  '<button type="button" class="detail-btn-glass" style="padding:6px 12px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
-                '</div>' +
-              '</div>' +
-
-              /* 1:1 FULLSCREEN KINO-HERO-STAGE EXAKT WIE IM HAUPT-SLIDER (ZERO JUMP) */
-              '<section id="detailHeroStageEl" class="detail-hero-stage" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
-                '<div class="detail-backdrop-layer"></div>' +
-                '<div id="detailBgVideoLayer" class="detail-bg-video-layer"></div>' +
-                '<div class="detail-ambilight-glow"></div>' +
-                '<div class="detail-scrim-layer"></div>' +
-                '<div class="detail-scroll-dim-overlay"></div>' +
-
-                '<div class="hero-inner">' +
-                  '<div class="hero-widescreen-body">' +
-                    '<div class="detail-hero-content">' +
-                      /* 1. EDLE KICKER-ZEILE DIREKT ÜBER DEM TITEL */
-                      '<div id="detailKickerEl" class="detail-kicker-row">' + kickerRowHtml + '</div>' +
-
-                      /* 2. FILMTITEL / OFFIZIELLES TMDB CLEARLOGO (1:1 MIT SLIDER) */
-                      '<div id="detailTitleBoxEl" class="hero-title">' +
-                        buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath, "saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'" + esc(d.title) + "\\')") +
-                      '</div>' +
-
-                      /* 3. KOMPAKTE 1-ZEILIGE META-ZEILE (1:1 MIT SLIDER) */
-                      (unboxedMetaHtml ? '<div class="hero-meta-clean">' + unboxedMetaHtml + '</div>' : '') +
-
-                      /* 4. BESCHREIBUNG ÜBER DEN AKTIONS-BUTTONS (1:1 WIE IM SLIDER, OHNE BLAUEN KASTEN-RAHMEN) */
-                      (function() {
-                        const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
-                        const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
-                        const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
-                        const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
-                        return '<div id="modalHeaderOverviewEl" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
-                          '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
-                          '<div class="desc-actions-row">' +
-                            '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                            (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? " is-translated" : "") + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? "🇬🇧 Original anzeigen" : "🌐 Auf Deutsch übersetzen") + '</button>' : '') +
-                          '</div>' +
-                        '</div>';
-                      })() +
-
-                      /* 5. AKTIONS-BUTTONS UNTER DER BESCHREIBUNG (1:1 WIE IM SLIDER) */
-                      '<div class="detail-action-bar">' +
-                        '<div class="detail-action-primary-group">' +
-                          '<button type="button" id="detailPrimaryPlayBtn" class="detail-btn-play-white" onclick="' + primaryClickJs + '">' +
-                            esc(primaryPlayBtnLabel) +
-                          '</button>' +
-                          versionSelectHtml +
-                          (hasVipStreams ? buildModalDeliveryTargetSelectorHtml() : '') +
-                          (hasVipStreams ? (
-                            '<button type="button" id="detailTrailerBtn" class="detail-btn-glass" onclick="playInstantTrailerFromCard(event,\\'' + type + '\\',' + Number(d.id) + ',\\'' + esc(d.title) + '\\',\\'' + esc(posterThumb || posterOrig) + '\\')" title="Trailer im Vollbild abspielen">🎬 Trailer</button>'
-                          ) : '') +
-                          '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
-                            (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +
-                          '</button>' +
-                          ((tr && tr.key) ? (
-                            '<button type="button" id="detailBgTeaserAudioBtn" class="detail-btn-glass" onclick="toggleDetailBackgroundTeaserAudioClient(event)" title="Hintergrund-Video-Teaser & Ton umschalten">🔇 Ton an</button>'
-                          ) : '') +
-                          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern">🖼️ Cover</button>' : '') +
-                          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen">🔄 Zuordnen</button>' : '') +
-                          (canReportMedia ? '<button type="button" class="detail-btn-glass" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Fehler melden">⚠️ Melden</button>' : '') +
-                          '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Original-Poster & TMDb">⋯ Mehr ▾</button>' +
-                        '</div>' +
-                      '</div>' +
-
-                      '<div id="modalPosterPickerBox" style="display:none;margin:8px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.94);border:1px solid rgba(168,85,247,0.45)"></div>' +
-                      '<div id="modalRemapMediaBox" style="display:none;margin:8px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.94);border:1px solid rgba(56,189,248,0.45)"></div>' +
-                      '<div id="modalMoreActionsBox" style="display:none;gap:6px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.88);border:1px solid rgba(148,163,184,0.24)">' +
-                        '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
-                        '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
-                        '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
-                        (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
-                        (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(posterOrig) + '\\',\\'' + esc(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
-                        (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(backdropOrig) + '\\',\\'' + esc(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
-                        (d.tmdbDeUrl ? '<a class="btn" href="' + esc(d.tmdbDeUrl) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
-                        (!tr ? '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '') +
-                      '</div>' +
-                    '</div>' +
-                  '</div>' +
-                  '<div class="hero-bottom-bar">' +
-                    '<button type="button" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToDetailBelowFoldClient(event)" title="Nach unten zu Cast, Infos & Empfehlungen scrollen" aria-label="Nach unten zu Cast, Infos & Empfehlungen scrollen">' +
-                      '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
-                        '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
-                      '</svg>' +
-                    '</button>' +
-                  '</div>' +
-                '</div>' +
-              '</section>' +
-
-              /* 6. UNTERER CONTENT-BEREICH BEIM RUNTERSCROLLEN: ZUSATZ-INFOS, STAFFELN/EPISODEN, NEUER CAST-SLIDER, FILMREIHE & ÄHNLICHE TITEL */
-              '<div id="detailContentBodyEl" class="detail-content-body">' +
-                creditsGlassStripHtml +
-
-                (type === "s" ? (
-                  '<section id="detailStreamsSection" class="detail-section-block">' +
-                    '<div class="detail-section-header">' +
-                      '<h3 class="detail-section-heading">Staffeln & Episoden</h3>' +
-                    '</div>' +
-                    '<div id="seasonBox">Lade Episoden...</div>' +
-                    '<div id="seriesArchiveDownloadsMount">' +
-                      (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '') +
-                    '</div>' +
-                  '</section>'
-                ) : (hasMultiPartOrArchivesForMovie ? (
-                  '<section id="detailStreamsSection" class="detail-section-block">' +
-                    '<div class="detail-section-header">' +
-                      '<h3 class="detail-section-heading">Alle Teile & Versionen</h3>' +
-                    '</div>' +
-                    buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) +
-                  '</section>'
-                ) : '')) +
-
-                castSectionHtml +
-
-                collectionSectionHtml +
-
-                '<section id="detailSimilarSectionWrap" class="detail-section-block" style="display:flex">' +
-                  '<div class="detail-section-header">' +
-                    '<h3 class="detail-section-heading">Das könnte dir auch gefallen</h3>' +
-                    '<div class="detail-section-header-right">' +
-                      '<div class="detail-header-nav-group">' +
-                        '<button type="button" class="detail-carousel-arrow prev" onclick="scrollDetailHorizontalTrackClient(\\'detailSimilarTrackEl\\',-1,event)" title="Nach links scrollen">‹</button>' +
-                        '<button type="button" class="detail-carousel-arrow next" onclick="scrollDetailHorizontalTrackClient(\\'detailSimilarTrackEl\\',1,event)" title="Nach rechts scrollen">›</button>' +
-                      '</div>' +
-                    '</div>' +
-                  '</div>' +
-                  '<div class="detail-carousel-wrap">' +
-                    '<div id="detailSimilarTrackEl" class="detail-similar-track">' +
-                      '<div style="font-size:12.5px;color:#94a3b8;padding:12px 4px">⏳ Lade passende Empfehlungen...</div>' +
-                    '</div>' +
-                  '</div>' +
-                '</section>' +
-              '</div>' +
-              '<div id="personSpotlightOverlayRoot"></div>' +
+        const castSectionHtml = castArr.length > 0 ? (
+          '<section class="detail-section-block">' +
+            '<div class="detail-section-header">' +
+              '<h3 class="detail-section-heading">Cast</h3>' +
             '</div>' +
-          '</div>';
+            '<div class="detail-carousel-wrap">' +
+              '<button type="button" tabindex="-1" class="detail-carousel-side-btn prev" onclick="scrollDetailHorizontalTrackClient(\\'detailCastTrackEl\\',-1,event)" title="Cast nach links scrollen" aria-label="Cast nach links scrollen">‹</button>' +
+              '<div id="detailCastTrackEl" class="detail-cast-track">' +
+                castArr.map(c => {
+                  const cName = String(c.name || "").trim();
+                  const cRole = String(c.character || "Darsteller").trim();
+                  const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
+                  const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w342", "") : fbAvatar;
+                  const spotlightCall = 'openPersonSpotlightOverlayClient(' + (c.id ? Number(c.id) : 'null') + ',\\'' + esc(cName) + '\\',\\'' + esc(cRole) + '\\',\\'' + esc(photoUrl) + '\\')';
+                  return '<div class="detail-cast-card" tabindex="0" onclick="' + spotlightCall + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + spotlightCall + ';}" title="Spotlight & Filme mit ' + esc(cName) + ' anzeigen">' +
+                    '<div class="detail-cast-photo-wrap">' +
+                      '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
+                    '</div>' +
+                    '<div class="detail-cast-info">' +
+                      '<div class="detail-cast-name">' + esc(cName) + '</div>' +
+                      '<div class="detail-cast-role">' + esc(cRole) + '</div>' +
+                    '</div>' +
+                  '</div>';
+                }).join("") +
+              '</div>' +
+              '<button type="button" tabindex="-1" class="detail-carousel-side-btn next" onclick="scrollDetailHorizontalTrackClient(\\'detailCastTrackEl\\',1,event)" title="Cast nach rechts scrollen" aria-label="Cast nach rechts scrollen">›</button>' +
+            '</div>' +
+          '</section>'
+        ) : "";
 
-          if (backdropW1280 || portraitBg) {
+        const bgVarsStyle =
+          "--hero-bg-landscape:url('" + esc(backdropW1280 || portraitBg) + "');" +
+          "--hero-bg-portrait:url('" + esc(portraitBg || backdropW1280) + "');";
+
+        const collectionSectionHtml = (type === "m" && d.collection && d.collection.id) ? (
+          '<section id="detailCollectionSectionWrap" class="detail-section-block" style="display:none">' +
+            '<div class="detail-section-header">' +
+              '<h3 class="detail-section-heading">🍿 Alle Teile der Filmreihe: ' + esc(d.collection.name || "Filmreihe") + '</h3>' +
+              '<div class="detail-section-header-right">' +
+                '<button type="button" class="btn-tool-quiet" onclick="saveLastClosedDetailItemClient();closeDetailModal();openCollectionView(' + Number(d.collection.id) + ')">Komplette Reihe öffnen ➔</button>' +
+              '</div>' +
+            '</div>' +
+            '<div class="detail-carousel-wrap">' +
+              '<button type="button" tabindex="-1" class="detail-carousel-side-btn prev" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',-1,event)" title="Nach links scrollen" aria-label="Nach links scrollen">‹</button>' +
+              '<div id="detailCollectionTrackEl" class="detail-similar-track">' +
+                '<div style="font-size:12.5px;color:#94a3b8;padding:12px 4px">⏳ Lade alle Teile der Filmreihe...</div>' +
+              '</div>' +
+              '<button type="button" tabindex="-1" class="detail-carousel-side-btn next" onclick="scrollDetailHorizontalTrackClient(\\'detailCollectionTrackEl\\',1,event)" title="Nach rechts scrollen" aria-label="Nach rechts scrollen">›</button>' +
+            '</div>' +
+          '</section>'
+        ) : "";
+
+        const primaryClickJs = hasVipStreams
+          ? 'triggerDetailHeroPrimaryPlayClient()'
+          : 'enterDetailForegroundTrailerModeClient(event)';
+
+        const primaryActionButtonsHtml =
+          '<button type="button" id="detailPrimaryPlayBtn" class="detail-btn-play-white" onclick="' + primaryClickJs + '">' +
+            esc(primaryPlayBtnLabel) +
+          '</button>' +
+          versionSelectHtml +
+          (hasVipStreams ? buildModalDeliveryTargetSelectorHtml() : '') +
+          (hasVipStreams ? (
+            '<button type="button" id="detailTrailerBtn" class="detail-btn-glass" onclick="enterDetailForegroundTrailerModeClient(event)" title="Alle Elemente ausblenden & Trailer im Vordergrund abspielen (ohne Neuladen)">🎬 Trailer</button>'
+          ) : '') +
+          '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
+            (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +
+          '</button>' +
+          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern">🖼️ Cover</button>' : '') +
+          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen">🔄 Zuordnen</button>' : '') +
+          (canReportMedia ? '<button type="button" class="detail-btn-glass" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Fehler melden">⚠️ Melden</button>' : '') +
+          '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Original-Poster & TMDb">⋯ Mehr ▾</button>';
+
+        const moreActionsInnerHtml =
+          '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
+          '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
+          '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
+          (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
+          (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(posterOrig) + '\\',\\'' + esc(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
+          (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(backdropOrig) + '\\',\\'' + esc(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
+          (d.tmdbDeUrl ? '<a class="btn" href="' + esc(d.tmdbDeUrl) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
+          (!tr ? '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '');
+
+        const similarSectionHtml =
+          '<section id="detailSimilarSectionWrap" class="detail-section-block" style="display:flex">' +
+            '<div class="detail-section-header">' +
+              '<h3 class="detail-section-heading">Das könnte dir auch gefallen</h3>' +
+            '</div>' +
+            '<div class="detail-carousel-wrap">' +
+              '<button type="button" tabindex="-1" class="detail-carousel-side-btn prev" onclick="scrollDetailHorizontalTrackClient(\\'detailSimilarTrackEl\\',-1,event)" title="Nach links scrollen" aria-label="Nach links scrollen">‹</button>' +
+              '<div id="detailSimilarTrackEl" class="detail-similar-track">' +
+                '<div style="font-size:12.5px;color:#94a3b8;padding:12px 4px">⏳ Lade passende Empfehlungen...</div>' +
+              '</div>' +
+              '<button type="button" tabindex="-1" class="detail-carousel-side-btn next" onclick="scrollDetailHorizontalTrackClient(\\'detailSimilarTrackEl\\',1,event)" title="Nach rechts scrollen" aria-label="Nach rechts scrollen">›</button>' +
+            '</div>' +
+          '</section>';
+
+        const contentBodyInnerHtml = isSeedOnly
+          ? (
+              '<div style="padding:18px 4px;font-size:13px;color:#94a3b8;display:flex;align-items:center;gap:8px">' +
+                '<span>⏳ Lade Besetzung, Streams & Empfehlungen...</span>' +
+              '</div>' +
+              similarSectionHtml
+            )
+          : (
+              creditsGlassStripHtml +
+              (type === "s" ? (
+                '<section id="detailStreamsSection" class="detail-section-block">' +
+                  '<div class="detail-section-header">' +
+                    '<h3 class="detail-section-heading">Staffeln & Episoden</h3>' +
+                  '</div>' +
+                  '<div id="seasonBox">Lade Episoden...</div>' +
+                  '<div id="seriesArchiveDownloadsMount">' +
+                    (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '') +
+                  '</div>' +
+                '</section>'
+              ) : (hasMultiPartOrArchivesForMovie ? (
+                '<section id="detailStreamsSection" class="detail-section-block">' +
+                  '<div class="detail-section-header">' +
+                    '<h3 class="detail-section-heading">Alle Teile & Versionen</h3>' +
+                  '</div>' +
+                  buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) +
+                '</section>'
+              ) : '')) +
+              castSectionHtml +
+              collectionSectionHtml +
+              similarSectionHtml
+            );
+
+        const existingStageEl = document.getElementById("detailHeroStageEl");
+        if (isDeltaHydration && existingStageEl && existingStageEl.getAttribute("data-detail-key") === detailKey) {
+          // DELTA-HYDRATION: Obere Bühne steht bereits aus dem Slider/Katalog! Nur noch fehlende Felder & unteren Bereich nachziehen (0ms Flackern)
+          if (!existingStageEl.getAttribute("data-has-backdrop") && (backdropW1280 || portraitBg)) {
+            existingStageEl.style.setProperty("--hero-bg-landscape", "url('" + (backdropW1280 || portraitBg) + "')");
+            existingStageEl.style.setProperty("--hero-bg-portrait", "url('" + (portraitBg || backdropW1280) + "')");
+            existingStageEl.setAttribute("data-has-backdrop", "1");
             applyDynamicHeroAmbilightClient(backdropW1280 || portraitBg);
           }
+          const kickerEl = document.getElementById("detailKickerEl");
+          if (kickerEl) kickerEl.innerHTML = kickerRowHtml;
+
+          const titleBoxEl = document.getElementById("detailTitleBoxEl");
+          if (titleBoxEl && activeLogoPath && !titleBoxEl.querySelector("img")) {
+            titleBoxEl.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath, "saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'" + esc(d.title) + "\\')");
+          }
+
+          const metaEl = document.getElementById("detailMetaCleanEl");
+          if (metaEl && unboxedMetaHtml) {
+            metaEl.innerHTML = unboxedMetaHtml;
+          }
+
+          const ovTextEl = document.getElementById("modalHeaderOverviewTextEl");
+          if (ovTextEl && d.overview && (!ovTextEl.textContent || ovTextEl.textContent.includes("Keine deutsche Beschreibung"))) {
+            const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : d.overview).trim();
+            ovTextEl.textContent = ovText;
+            ovTextEl.setAttribute("data-orig-overview", String(d._originalOverviewEn || d.overview || "").trim());
+          }
+
+          const hadFocusInPrimaryGroup = Boolean(
+            typeof currentSpatialEl !== "undefined" &&
+            currentSpatialEl &&
+            currentSpatialEl.closest &&
+            currentSpatialEl.closest("#detailActionPrimaryGroupEl")
+          );
+          const actionGroupEl = document.getElementById("detailActionPrimaryGroupEl");
+          if (actionGroupEl) {
+            actionGroupEl.innerHTML = primaryActionButtonsHtml;
+          }
+          const stickyPlayBtn = document.getElementById("detailStickyPrimaryPlayBtn");
+          if (stickyPlayBtn) {
+            stickyPlayBtn.textContent = primaryPlayBtnLabel;
+            stickyPlayBtn.setAttribute("onclick", primaryClickJs);
+          }
+          const moreBoxEl = document.getElementById("modalMoreActionsBox");
+          if (moreBoxEl) {
+            moreBoxEl.innerHTML = moreActionsInnerHtml;
+          }
+          const bodyEl = document.getElementById("detailContentBodyEl");
+          if (bodyEl) {
+            bodyEl.innerHTML = contentBodyInnerHtml;
+          }
+
           initDetailHorizontalDragScrollClient(m);
           unlockCatalogCoversLoadingClient(false);
           observeLazyCoversInContainerClient(m);
@@ -2970,9 +3369,7 @@
             autoLoadCollectionInDetailClient(d.collection.id, d.id || id);
           }
           autoLoadSimilarInDetailClient(type, d.id || id);
-          if (tr && tr.key && !autoOpenTrailer) {
-            scheduleDetailBackgroundVideoTeaserClient(tr.key);
-          }
+          scheduleDetailBackgroundVideoTeaserClient(tr, autoOpenTrailer);
 
           if (typeof syncExpandableDescriptionsOverflowClient === "function") {
             requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(m));
@@ -2983,14 +3380,187 @@
           if (type === "s") {
             loadSeason(d.id, initialSeason, false);
           }
-          // Standard-Fokus beim Öffnen der Detailansicht direkt auf den primären Play/Trailer-Button legen
-          const firstModalBtn = m.querySelector("#detailPrimaryPlayBtn, #detailTrailerBtn, #modalWishlistBtn") || document.getElementById("topBarBackBtn");
-          if (firstModalBtn && typeof jumpSpatialFocus === "function") {
-            jumpSpatialFocus(firstModalBtn, false);
+          if (hadFocusInPrimaryGroup && !autoOpenTrailer) {
+            const firstModalBtn = m.querySelector("#detailPrimaryPlayBtn, #detailTrailerBtn, #modalWishlistBtn");
+            if (firstModalBtn && typeof jumpSpatialFocus === "function") {
+              jumpSpatialFocus(firstModalBtn, false);
+            }
           }
-          if (autoOpenTrailer) {
-            playInstantTrailerFromCard(null, type, d.id || id, d.title, posterThumb || posterOrig);
+          return;
+        }
+
+        m.innerHTML = '<div class="modal-backdrop" onwheel="onModalWheelHorizontalClient(event)" onscroll="onDetailModalScrollClient(this)">' +
+          '<div class="modal detail-morph-enter">' +
+            /* STICKY MINI-HEADER BEIM RUNTERSCROLLEN */
+            '<div id="detailStickyMiniHeader" class="detail-sticky-mini-header">' +
+              '<div class="detail-sticky-mini-left">' +
+                '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "SERIE" : "FILM") + '</span>' +
+                '<span class="detail-sticky-mini-title">' + esc(d.title) + '</span>' +
+                ((d.vote && d.vote !== "0.0") ? ('<span class="hero-meta-star" style="font-size:13px">★ ' + esc(d.vote) + '</span>') : '') +
+              '</div>' +
+              '<div class="detail-sticky-mini-actions">' +
+                '<button type="button" id="detailStickyPrimaryPlayBtn" class="detail-btn-play-white" style="padding:6px 14px;font-size:12.5px" onclick="' + primaryClickJs + '">' + esc(primaryPlayBtnLabel) + '</button>' +
+                '<button type="button" class="detail-btn-glass" style="padding:6px 12px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
+              '</div>' +
+            '</div>' +
+
+            /* 1:1 FULLSCREEN KINO-HERO-STAGE EXAKT WIE IM HAUPT-SLIDER (ZERO JUMP) */
+            '<section id="detailHeroStageEl" class="detail-hero-stage' + (autoOpenTrailer ? ' is-trailer-foreground-mode' : '') + '" data-detail-key="' + esc(detailKey) + '" data-has-backdrop="' + (d.backdrop_path ? '1' : '') + '" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
+              '<div class="detail-backdrop-layer"></div>' +
+              '<div id="detailBgVideoLayer" class="detail-bg-video-layer"></div>' +
+              '<div class="detail-ambilight-glow"></div>' +
+              '<div class="detail-scrim-layer"></div>' +
+              '<div class="detail-scroll-dim-overlay"></div>' +
+              '<div id="detailForegroundStageCatcher" class="detail-foreground-stage-catcher" onclick="exitDetailForegroundTrailerModeClient(event)" title="Klicken, um Filminfos wieder einzublenden"></div>' +
+
+              /* EDLES KLICKBARES GLAS-MINI-DOCK UNTEN RECHTS (PLAY/PAUSE, TON, ZEITLEISTE & KINO-ANSICHT) */
+              '<div id="detailCinemaPlayerDock" class="detail-cinema-player-dock" onclick="event.stopPropagation()">' +
+                '<button type="button" id="detailCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleDetailCinemaPlayPauseClient(event)" title="Trailer pausieren / fortsetzen">⏸</button>' +
+                '<button type="button" id="detailCinemaMuteBtn" class="cinema-dock-btn" onclick="toggleDetailBackgroundTeaserAudioClient(event)" title="Ton ein- / ausschalten">🔇</button>' +
+                '<div class="cinema-dock-timeline-wrap">' +
+                  '<input type="range" id="detailCinemaScrubber" class="cinema-dock-scrubber" min="0" max="120" value="0" step="1" oninput="onDetailCinemaScrubInputClient(this,event)" onchange="onDetailCinemaScrubChangeClient(this,event)" onclick="event.stopPropagation()" title="Im Trailer vor- oder zurückspulen" />' +
+                  '<span id="detailCinemaTimeLbl" class="cinema-dock-time">0:00</span>' +
+                '</div>' +
+                '<button type="button" id="detailCinemaModeBtn" class="cinema-dock-btn' + (autoOpenTrailer ? ' is-active-mode' : '') + '" onclick="enterDetailForegroundTrailerModeClient(event)" title="Alle Elemente ausblenden & Trailer in den Vordergrund holen">' + (autoOpenTrailer ? '✕ Infos' : '⛶ Kino') + '</button>' +
+              '</div>' +
+
+              '<div class="hero-inner">' +
+                '<div class="hero-widescreen-body">' +
+                  '<div class="detail-hero-content">' +
+                    /* 1. EDLE KICKER-ZEILE DIREKT ÜBER DEM TITEL */
+                    '<div id="detailKickerEl" class="detail-kicker-row">' + kickerRowHtml + '</div>' +
+
+                    /* 2. FILMTITEL / OFFIZIELLES TMDB CLEARLOGO (1:1 MIT SLIDER) */
+                    '<div id="detailTitleBoxEl" class="hero-title">' +
+                      buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath, "saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'" + esc(d.title) + "\\')") +
+                    '</div>' +
+
+                    /* 3. KOMPAKTE 1-ZEILIGE META-ZEILE (1:1 MIT SLIDER) */
+                    '<div id="detailMetaCleanEl" class="hero-meta-clean">' + unboxedMetaHtml + '</div>' +
+
+                    /* 4. BESCHREIBUNG ÜBER DEN AKTIONS-BUTTONS (1:1 WIE IM SLIDER) */
+                    (function() {
+                      const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
+                      const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
+                      const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
+                      const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
+                      return '<div id="modalHeaderOverviewEl" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
+                        '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
+                        '<div class="desc-actions-row">' +
+                          '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+                          (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? " is-translated" : "") + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? "🇬🇧 Original anzeigen" : "🌐 Auf Deutsch übersetzen") + '</button>' : '') +
+                        '</div>' +
+                      '</div>';
+                    })() +
+
+                    /* 5. AKTIONS-BUTTONS UNTER DER BESCHREIBUNG */
+                    '<div class="detail-action-bar">' +
+                      '<div id="detailActionPrimaryGroupEl" class="detail-action-primary-group">' +
+                        primaryActionButtonsHtml +
+                      '</div>' +
+                    '</div>' +
+
+                    '<div id="modalPosterPickerBox" style="display:none;margin:8px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.94);border:1px solid rgba(168,85,247,0.45)"></div>' +
+                    '<div id="modalRemapMediaBox" style="display:none;margin:8px 0;padding:12px;border-radius:10px;background:rgba(15,23,42,0.94);border:1px solid rgba(56,189,248,0.45)"></div>' +
+                    '<div id="modalMoreActionsBox" style="display:none;gap:6px;flex-wrap:wrap;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.88);border:1px solid rgba(148,163,184,0.24)">' +
+                      moreActionsInnerHtml +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+                '<div class="hero-bottom-bar">' +
+                  '<button type="button" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToDetailBelowFoldClient(event)" title="Nach unten zu Cast, Infos & Empfehlungen scrollen" aria-label="Nach unten zu Cast, Infos & Empfehlungen scrollen">' +
+                    '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+                      '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
+                    '</svg>' +
+                  '</button>' +
+                '</div>' +
+              '</div>' +
+            '</section>' +
+
+            /* 6. UNTERER CONTENT-BEREICH BEIM RUNTERSCROLLEN */
+            '<div id="detailContentBodyEl" class="detail-content-body">' +
+              contentBodyInnerHtml +
+            '</div>' +
+            '<div id="personSpotlightOverlayRoot"></div>' +
+          '</div>' +
+        '</div>';
+
+        if (backdropW1280 || portraitBg) {
+          applyDynamicHeroAmbilightClient(backdropW1280 || portraitBg);
+        }
+        initDetailHorizontalDragScrollClient(m);
+        unlockCatalogCoversLoadingClient(false);
+        observeLazyCoversInContainerClient(m);
+
+        if (!isSeedOnly) {
+          if (type === "m" && d.collection && d.collection.id) {
+            autoLoadCollectionInDetailClient(d.collection.id, d.id || id);
           }
+          autoLoadSimilarInDetailClient(type, d.id || id);
+          scheduleDetailBackgroundVideoTeaserClient(tr, autoOpenTrailer);
+          if (type === "s") {
+            loadSeason(d.id, initialSeason, false);
+          }
+        }
+
+        if (typeof syncExpandableDescriptionsOverflowClient === "function") {
+          requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(m));
+        }
+        if (typeof window.refreshModalAndEpisodeMarquees === "function") {
+          setTimeout(() => window.refreshModalAndEpisodeMarquees(m), 60);
+        }
+        const firstModalBtn = m.querySelector("#detailPrimaryPlayBtn, #detailTrailerBtn, #modalWishlistBtn") || document.getElementById("topBarBackBtn");
+        if (firstModalBtn && typeof jumpSpatialFocus === "function") {
+          jumpSpatialFocus(firstModalBtn, false);
+        }
+      }
+
+      async function openDetails(type, id, autoOpenTrailer = false, preTitle = "", prePoster = "", forceSeasonNum = null) {
+        if (typeof lastCardLongPressAt !== "undefined" && Date.now() - lastCardLongPressAt < 650) {
+          return;
+        }
+        saveModalReturnFocusTarget(type, id);
+        const seedItem = findPreloadedSeedItemClient(type, id, preTitle, prePoster);
+        if (seedItem) {
+          addRecentViewedItem(seedItem, type);
+        } else if (id && (preTitle || prePoster)) {
+          addRecentViewedItem({ id, title: preTitle, poster_path: prePoster }, type);
+        }
+        const vipAllowed = isCurrentUserVip();
+        const cacheKey = type + "_" + id + "_" + (vipAllowed ? "vip" : "std");
+        const cachedEntry = clientDetailsCache.get(cacheKey);
+        const hasValidCache = Boolean(cachedEntry && (Date.now() - cachedEntry.ts < CLIENT_CACHE_TTL_MS));
+
+        if (!hasValidCache && seedItem) {
+          // 0ms SOFORT-BÜHNE: Vorhandene Daten aus dem Hero-Slider / Katalog sofort rendern, ohne alles neu zu laden!
+          state.activeDetails = { ...seedItem, typeCode: type, id: seedItem.id || id };
+          renderOrPatchDetailStageClient(type, id, state.activeDetails, forceSeasonNum, autoOpenTrailer, false);
+        } else if (!hasValidCache) {
+          setBusyState(true, "⏳ Lade Details...");
+        }
+
+        try {
+          const d = hasValidCache
+            ? cachedEntry.data
+            : await apiFetchJson(API_BASE + "/details?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&id=" + id);
+          if (!d || d.ok === false) {
+            throw new Error(d?.error || "Titeldetails konnten nicht geladen werden.");
+          }
+          if (!hasValidCache) {
+            clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
+          }
+          if (seedItem && seedItem._showTranslatedOverviewDe && seedItem._translatedOverviewDe) {
+            d._translatedOverviewDe = seedItem._translatedOverviewDe;
+            d._showTranslatedOverviewDe = true;
+            d._originalOverviewEn = seedItem._originalOverviewEn || d.overview || "";
+          }
+          state.activeDetails = { ...d, typeCode: type, id: d.id || id };
+          if (d.botUsername) state.botUsername = d.botUsername;
+          if (d.isSaved) savedKeysSet.add(type + "_" + (d.id || id));
+          addRecentViewedItem(d, type);
+
+          renderOrPatchDetailStageClient(type, id, state.activeDetails, forceSeasonNum, autoOpenTrailer, Boolean(!hasValidCache && seedItem));
+
           if (window._pendingModalAdminAction === "poster") {
             window._pendingModalAdminAction = null;
             toggleModalPosterPicker(type, d.id || id);
@@ -3004,7 +3574,9 @@
           }
         } catch (err) {
           clientDetailsCache.delete(cacheKey);
-          showHudToast("⚠️ Details konnten nicht geladen werden – bitte erneut antippen.");
+          if (!seedItem) {
+            showHudToast("⚠️ Details konnten nicht geladen werden – bitte erneut antippen.");
+          }
         } finally {
           setBusyState(false);
         }

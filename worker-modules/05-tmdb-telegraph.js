@@ -2102,15 +2102,66 @@
     return null;
   }
 
+  function extractYoutubeTrailerCandidatesFromVideos(videosObj) {
+    const results = Array.isArray(videosObj?.results) ? videosObj.results : [];
+    if (results.length === 0) return [];
+    const ytList = results.filter(v => v && v.site === "YouTube" && typeof v.key === "string" && v.key.trim());
+    if (ytList.length === 0) return [];
+    const scoreVideo = (v) => {
+      let s = 0;
+      const lang = String(v.iso_639_1 || "").toLowerCase();
+      const type = String(v.type || "");
+      if (lang === "de") s += 40;
+      else if (lang === "en") s += 20;
+      if (type === "Trailer") s += 30;
+      else if (type === "Teaser") s += 18;
+      else if (type === "Clip" || type === "Opening Credits") s += 10;
+      if (v.official) s += 8;
+      return s;
+    };
+    const sorted = [...ytList].sort((a, b) => scoreVideo(b) - scoreVideo(a));
+    const seen = new Set();
+    const out = [];
+    for (const v of sorted) {
+      const k = v.key.trim();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      out.push(k);
+      if (out.length >= 6) break;
+    }
+    return out;
+  }
+
   function extractYoutubeTrailerFromVideos(videosObj) {
-    const results = videosObj?.results || [];
-    if (!Array.isArray(results) || results.length === 0) return null;
-    const deTrailer = results.find(v => v && v.site === "YouTube" && v.type === "Trailer" && v.iso_639_1 === "de");
-    if (deTrailer?.key) return deTrailer.key;
-    const anyTrailer = results.find(v => v && v.site === "YouTube" && v.type === "Trailer");
-    if (anyTrailer?.key) return anyTrailer.key;
-    const anyYt = results.find(v => v && v.site === "YouTube" && v.key);
-    return anyYt ? anyYt.key : null;
+    const candidates = extractYoutubeTrailerCandidatesFromVideos(videosObj);
+    return candidates.length > 0 ? candidates[0] : null;
+  }
+
+  async function verifyEmbeddableYoutubeCandidates(candidatesInput) {
+    const rawList = Array.isArray(candidatesInput)
+      ? candidatesInput.map(k => String(k || "").trim()).filter(Boolean)
+      : (candidatesInput ? [String(candidatesInput).trim()] : []);
+    if (rawList.length === 0) return [];
+    const uniqueKeys = Array.from(new Set(rawList)).slice(0, 6);
+    const toVerify = uniqueKeys.slice(0, 3);
+    if (hasSubrequestBudget(30)) {
+      await Promise.all(toVerify.map(async (key) => {
+        const memKey = `yt_oembed_${key}`;
+        if (memoryFallback.has(memKey)) return;
+        try {
+          const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${key}`)}&format=json`;
+          const res = await fetchWithTimeout(oembedUrl, { method: "GET" }, 1100);
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            memoryFallback.set(memKey, false);
+          } else if (res.ok) {
+            memoryFallback.set(memKey, true);
+          }
+        } catch (_e) {
+          // Bei Timeout Kandidaten nicht verwerfen; Client prüft per IFrame-API weiter
+        }
+      }));
+    }
+    return uniqueKeys.filter(key => memoryFallback.get(`yt_oembed_${key}`) !== false);
   }
 
   function extractBestTmdbClearLogoPath(imagesObj) {
@@ -2245,7 +2296,9 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
-      const trailerKey = extractYoutubeTrailerFromVideos(data.videos);
+      const rawTrailerCandidates = extractYoutubeTrailerCandidatesFromVideos(data.videos);
+      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(rawTrailerCandidates);
+      const trailerKey = trailerCandidates[0] || null;
 
       const result = {
         id: data.id || movieId,
@@ -2272,7 +2325,8 @@
         logo_path: extractBestTmdbClearLogoPath(data.images),
         vote_average: data.vote_average,
         title: data.title || "Unbekannt",
-        trailerKey
+        trailerKey,
+        trailerCandidates
       };
       if (result.logo_path) {
         memoryFallback.set(`logo_m_${result.id}`, result.logo_path);
@@ -2556,7 +2610,9 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
-      const trailerKey = extractYoutubeTrailerFromVideos(data.videos);
+      const rawTrailerCandidates = extractYoutubeTrailerCandidatesFromVideos(data.videos);
+      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(rawTrailerCandidates);
+      const trailerKey = trailerCandidates[0] || null;
 
       let seasons = (data.seasons || [])
         .filter(s => s && s.season_number >= 1)
@@ -2598,6 +2654,7 @@
         title: data.name || tvMazeData?.title || "Unbekannt",
         original_name: data.original_name || data.name || "",
         trailerKey,
+        trailerCandidates,
         numberOfSeasons: data.number_of_seasons || seasons.length || 1,
         numberOfEpisodes: data.number_of_episodes || tvMazeData?.episodes?.length || 0,
         seasons

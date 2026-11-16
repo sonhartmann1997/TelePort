@@ -6806,7 +6806,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .detail-carousel-arrow, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -6858,6 +6858,7 @@
           if (el.disabled) return false;
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
           if (el.closest && el.closest(".hero-curtain-shell.is-collapsed")) return false;
+          if (el.closest && el.closest(".detail-sticky-mini-header:not(.is-visible)")) return false;
           const style = window.getComputedStyle(el);
           if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
           const r = el.getBoundingClientRect();
@@ -6969,11 +6970,43 @@
             const acBox = el.closest ? el.closest(".search-autocomplete-box") : null;
             const dialogBox = el.closest ? el.closest("#customDialogRoot") : null;
 
+            // 0. Horizontale Slider-Tracks (.detail-cast-track, .detail-similar-track, .season-toolbar-row, .detail-credits-strip)
+            // immer zuerst horizontal nachscrollen, damit fokussierte Karten niemals seitlich außerhalb des Sichtfeldes wandern!
+            const horizTrack = el.closest
+              ? el.closest(".detail-cast-track, .detail-similar-track, .season-toolbar-row, .detail-credits-strip")
+              : null;
+            if (horizTrack) {
+              const trRect = horizTrack.getBoundingClientRect();
+              const elRect = el.getBoundingClientRect();
+              const padX = 20;
+              if (elRect.left < trRect.left + padX) {
+                horizTrack.scrollLeft += (elRect.left - (trRect.left + padX));
+              } else if (elRect.right > trRect.right - padX) {
+                horizTrack.scrollLeft += (elRect.right - (trRect.right - padX));
+              }
+              if (typeof syncDetailCarouselSideButtonsClient === "function") {
+                syncDetailCarouselSideButtonsClient(horizTrack);
+              }
+            }
+
             if (modalBackdrop) {
+              const inHeroStageOrHeader = Boolean(
+                el.closest && (el.closest("#detailHeroStageEl") || el.closest("#topUnifiedBar"))
+              );
+              if (inHeroStageOrHeader && navDir === "up" && modalBackdrop.scrollTop > 0) {
+                const rTopCheck = el.getBoundingClientRect();
+                if (rTopCheck.top < 110) {
+                  modalBackdrop.scrollTop = 0;
+                  return;
+                }
+              }
               const r = el.getBoundingClientRect();
               const headerEl = document.getElementById("topUnifiedBar");
-              const stickyOffset = headerEl ? Math.max(58, headerEl.getBoundingClientRect().bottom + 14) : 58;
-              const botPad = window.innerHeight - 28;
+              const stickyMiniEl = document.getElementById("detailStickyMiniHeader");
+              const baseHeaderBottom = headerEl ? Math.max(54, headerEl.getBoundingClientRect().bottom) : 54;
+              const miniHeaderExtra = (stickyMiniEl && !inHeroStageOrHeader) ? 52 : 0;
+              const stickyOffset = baseHeaderBottom + miniHeaderExtra + 20;
+              const botPad = window.innerHeight - 36;
               if (r.top < stickyOffset) {
                 modalBackdrop.scrollTop += (r.top - stickyOffset);
               } else if (r.bottom > botPad) {
@@ -7620,6 +7653,23 @@
           }
         }
 
+        // Deterministische Links/Rechts-Navigation innerhalb horizontaler Cover-Slider (.detail-cast-track / .detail-similar-track),
+        // damit Pfeil Rechts/Links lückenlos Karte für Karte durch den Slider wandert und das Sichtfeld automatisch mitscrollt!
+        const curHorizTrack = currentSpatialEl.closest
+          ? currentSpatialEl.closest(".detail-cast-track, .detail-similar-track")
+          : null;
+        if (curHorizTrack && (dir === "left" || dir === "right")) {
+          const trackCards = Array.from(curHorizTrack.querySelectorAll(".detail-cast-card, .detail-sim-card")).filter(el => list.includes(el));
+          const tIdx = trackCards.indexOf(currentSpatialEl);
+          if (tIdx !== -1) {
+            const nextTIdx = dir === "right" ? tIdx + 1 : tIdx - 1;
+            if (nextTIdx >= 0 && nextTIdx < trackCards.length) {
+              setSpatialFocus(trackCards[nextTIdx], true, dir);
+            }
+            return;
+          }
+        }
+
         const curRect = getSpatialLayoutBox(curHero ? curHero : currentSpatialEl);
         const cx = curRect.left + curRect.width / 2;
         const cy = curRect.top + curRect.height / 2;
@@ -7647,6 +7697,22 @@
               continue;
             }
           }
+
+          // Wenn man von oben/unten in einen horizontalen Slider (.detail-cast-track / .detail-similar-track) wechselt,
+          // dürfen nur Karten angewählt werden, die aktuell im sichtbaren horizontalen Ausschnitt des Tracks liegen!
+          const candHorizTrack = cand.closest
+            ? cand.closest(".detail-cast-track, .detail-similar-track")
+            : null;
+          if (candHorizTrack && candHorizTrack !== curHorizTrack) {
+            const trRect = candHorizTrack.getBoundingClientRect();
+            const cRect = cand.getBoundingClientRect();
+            const isHorizVisible = (cRect.right > trRect.left + 24) && (cRect.left < trRect.right - 24);
+            if (!isHorizVisible) {
+              const firstCard = candHorizTrack.querySelector(".detail-cast-card, .detail-sim-card");
+              if (cand !== firstCard) continue;
+            }
+          }
+
           const r = getSpatialLayoutBox((!curHero && candHero) ? candHero : cand);
           // Nächsten Punkt auf der Bounding-Box berechnen (verhindert das Überspringen breiter Elemente wie #searchInput oder .hero)
           const nearestX = Math.max(r.left, Math.min(cx, r.right));
@@ -7686,18 +7752,10 @@
         }
 
         if (bestEl) {
-          setSpatialFocus(bestEl, true);
+          setSpatialFocus(bestEl, true, dir);
         } else {
-          const idx = list.indexOf(currentSpatialEl);
-          const nextIdx = (dir === "right" || dir === "down")
-            ? Math.min(list.length - 1, idx + 1)
-            : Math.max(0, idx - 1);
-          const fallbackCand = list[nextIdx];
-          if (fallbackCand && !curHero && fallbackCand.closest && fallbackCand.closest(".hero")) {
-            const actHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active") || document.getElementById("heroBtnTrailer");
-            if (actHeroDot) { setSpatialFocus(actHeroDot, true); return; }
-          }
-          setSpatialFocus(fallbackCand, true);
+          // Kein weiteres Element in dieser Richtung vorhanden -> Fokus bleibt sauber im Sichtfeld auf dem aktuellen Element
+          useSpatialScrollIntoView(currentSpatialEl, dir);
         }
       }
 
