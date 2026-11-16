@@ -30795,10 +30795,18 @@
         text-shadow: 0 4px 20px rgba(0, 0, 0, 0.92), 0 1px 4px rgba(0, 0, 0, 0.9);
       }
       .cinema-clear-logo-wrap {
+        position: relative;
         display: flex;
         align-items: flex-end;
         min-height: calc(clamp(44px, 7vh, 78px) * var(--scale-text));
         margin-bottom: 2px;
+      }
+      .cinema-clear-logo-fallback-title {
+        display: none;
+        width: 100%;
+      }
+      .cinema-clear-logo-wrap.is-logo-loading .cinema-clear-logo-fallback-title {
+        display: block;
       }
       .cinema-clear-logo {
         display: block;
@@ -30811,11 +30819,22 @@
         filter: drop-shadow(0 6px 22px rgba(0, 0, 0, 0.92)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.86));
         user-select: none;
         -webkit-user-drag: none;
-        transition: transform 0.2s ease, filter 0.2s ease;
+        transition: opacity 0.18s ease, transform 0.2s ease, filter 0.2s ease;
+      }
+      .cinema-clear-logo-wrap.is-logo-loading .cinema-clear-logo {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .cinema-clear-logo-wrap.is-logo-ready .cinema-clear-logo {
+        position: relative;
+        opacity: 1;
       }
       .cinema-clear-logo:hover {
         transform: scale(1.015);
-        filter: drop-shadow(0 8px 26px rgba(var(--ambi-1, 14, 165, 233), 0.45)) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.92));
+        filter: drop-shadow(0 8px 26px rgba(var(--ambi-1, 14, 165, 248), 0.45)) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.92));
       }
       .hero-meta-clean {
         font-size: var(--cinema-meta-size);
@@ -32894,7 +32913,11 @@
         overflow: hidden;
         pointer-events: none;
         opacity: 0;
-        transition: opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1), filter 0.38s ease;
+        transition: opacity 0.72s cubic-bezier(0.22, 1, 0.36, 1), filter 0.38s ease;
+      }
+      .detail-bg-video-layer.is-concealing {
+        opacity: 0 !important;
+        transition: opacity 0.36s cubic-bezier(0.4, 0, 0.2, 1) !important;
       }
       .detail-bg-video-layer.is-playing {
         opacity: 1;
@@ -32905,10 +32928,12 @@
         left: 50%;
         width: max(100vw, 177.78vh);
         height: max(56.25vw, 100vh);
-        transform: translate(-50%, -50%) scale(1.16);
+        transform: translate(-50%, -50%) scale(1.18);
+        clip-path: inset(7.2% 0 7.2% 0);
+        -webkit-clip-path: inset(7.2% 0 7.2% 0);
         border: 0;
         pointer-events: none;
-        transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s ease, height 0.32s ease;
+        transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s ease, height 0.32s ease, clip-path 0.32s ease;
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -33000,7 +33025,7 @@
         filter: brightness(1.03) contrast(1.03);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame {
-        transform: translate(-50%, -50%) scale(1.12);
+        transform: translate(-50%, -50%) scale(1.16);
       }
       /* Format-Zoom-Modus (Original 16:9 / 21:9 Kinoformat ohne Randbeschnitt) */
       .detail-hero-stage.is-cinema-zoom-fit {
@@ -33012,7 +33037,9 @@
       .detail-hero-stage.is-cinema-zoom-fit .detail-bg-video-frame {
         width: min(100vw, 177.78vh) !important;
         height: min(56.25vw, calc(100svh - var(--sticky-header-height, 54px))) !important;
-        transform: translate(-50%, -50%) scale(1) !important;
+        transform: translate(-50%, -50%) scale(1.08) !important;
+        clip-path: inset(6.8% 0 6.8% 0) !important;
+        -webkit-clip-path: inset(6.8% 0 6.8% 0) !important;
       }
       .detail-hero-stage.is-cinema-zoom-fit .detail-backdrop-layer {
         background-size: contain !important;
@@ -37022,7 +37049,10 @@
         startHeroRotationTimer();
         setTimeout(() => {
           ensureHeroSlidesOverviewsClient();
-        }, 40);
+          if (typeof prewarmAllHeroSlidesClearLogosClient === "function") {
+            prewarmAllHeroSlidesClearLogosClient();
+          }
+        }, 25);
       }
 
       // =========================================================================
@@ -37179,6 +37209,10 @@
 
       async function preloadHeroSlideAssetsPairClient(slideObj, highPriority = false) {
         if (!slideObj) return;
+        const slideType = slideObj.media_type === "tv" || state.type === "s" ? "s" : "m";
+        if (typeof ensureHeroSlideClearLogoClient === "function") {
+          ensureHeroSlideClearLogoClient(slideObj, slideType);
+        }
         const bpUrl = typeof resolveHeroSlideBackdropUrlClient === "function" ? resolveHeroSlideBackdropUrlClient(slideObj) : "";
         const posterUrl = typeof resolveHeroSlidePosterUrlClient === "function" ? resolveHeroSlidePosterUrlClient(slideObj, "w780") : "";
         const isPortraitViewport = (window.innerWidth || 1024) <= 640 || (window.innerHeight > window.innerWidth);
@@ -38563,6 +38597,40 @@
       }
 
       const clientClearLogoCache = new Map();
+      const clientDecodedClearLogoUrls = new Set();
+      const clientClearLogoPreloadPromises = new Map();
+      const clientClearLogoFetchPromises = new Map();
+
+      (function hydratePersistedClearLogoCacheClient() {
+        try {
+          const raw = localStorage.getItem("tma_clearlogo_map_v1");
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            for (const [k, v] of Object.entries(parsed)) {
+              if (k && typeof v === "string") {
+                clientClearLogoCache.set(k, v);
+              }
+            }
+          }
+        } catch (_e) {}
+      })();
+
+      let persistClearLogoTimer = null;
+      function schedulePersistClearLogoCacheClient() {
+        if (persistClearLogoTimer) return;
+        persistClearLogoTimer = setTimeout(() => {
+          persistClearLogoTimer = null;
+          try {
+            const entries = Array.from(clientClearLogoCache.entries()).slice(-300);
+            const obj = {};
+            for (const [k, v] of entries) {
+              obj[k] = v;
+            }
+            localStorage.setItem("tma_clearlogo_map_v1", JSON.stringify(obj));
+          } catch (_e) {}
+        }, 450);
+      }
 
       function resolveClearLogoUrlClient(logoPath) {
         const clean = String(logoPath || "").trim();
@@ -38571,13 +38639,69 @@
         return "https://image.tmdb.org/t/p/w500" + (clean.startsWith("/") ? clean : ("/" + clean));
       }
 
+      function preloadClearLogoBitmapClient(logoPathOrUrl) {
+        const logoUrl = resolveClearLogoUrlClient(logoPathOrUrl);
+        if (!logoUrl) return Promise.resolve(false);
+        if (clientDecodedClearLogoUrls.has(logoUrl)) return Promise.resolve(true);
+        if (clientClearLogoPreloadPromises.has(logoUrl)) {
+          return clientClearLogoPreloadPromises.get(logoUrl);
+        }
+        const p = new Promise((resolve) => {
+          let settled = false;
+          const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            clientClearLogoPreloadPromises.delete(logoUrl);
+            if (ok) clientDecodedClearLogoUrls.add(logoUrl);
+            resolve(Boolean(ok));
+          };
+          const timer = setTimeout(() => finish(false), 3500);
+          try {
+            const img = new Image();
+            img.decoding = "async";
+            img.onload = () => {
+              clearTimeout(timer);
+              if (typeof img.decode === "function") {
+                img.decode().then(() => finish(true)).catch(() => finish(true));
+              } else {
+                finish(true);
+              }
+            };
+            img.onerror = () => {
+              clearTimeout(timer);
+              finish(false);
+            };
+            img.src = logoUrl;
+          } catch (_err) {
+            clearTimeout(timer);
+            finish(false);
+          }
+        });
+        clientClearLogoPreloadPromises.set(logoUrl, p);
+        return p;
+      }
+
+      function onClearLogoImgLoadSuccessClient(imgEl) {
+        if (!imgEl) return;
+        const src = String(imgEl.getAttribute("src") || imgEl.src || "").trim();
+        if (src) clientDecodedClearLogoUrls.add(src);
+        const wrap = imgEl.closest ? imgEl.closest(".cinema-clear-logo-wrap") : imgEl.parentElement;
+        if (wrap) {
+          wrap.classList.remove("is-logo-loading");
+          wrap.classList.add("is-logo-ready");
+        }
+      }
+
       function onClearLogoImgErrorClient(imgEl) {
         if (!imgEl || !imgEl.parentElement) return;
         const altText = esc(imgEl.getAttribute("alt") || "Titel");
-        imgEl.parentElement.outerHTML =
-          '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1">' +
-            '<span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + altText + '</span>' +
-          '</div>';
+        const wrap = imgEl.closest ? imgEl.closest(".cinema-clear-logo-wrap") : imgEl.parentElement;
+        if (wrap) {
+          wrap.outerHTML =
+            '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1">' +
+              '<span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + altText + '</span>' +
+            '</div>';
+        }
       }
 
       function buildHeroTitleOrLogoInnerHtmlClient(titleRaw, logoPath, clickAttr = "") {
@@ -38585,8 +38709,12 @@
         const logoUrl = resolveClearLogoUrlClient(logoPath);
         const clickProp = clickAttr ? (' onclick="' + clickAttr + '" style="cursor:pointer" title="Nach „' + safeTitle + '“ suchen"') : '';
         if (logoUrl) {
-          return '<div class="cinema-clear-logo-wrap"' + clickProp + '>' +
-            '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" draggable="false" onerror="onClearLogoImgErrorClient(this)" />' +
+          const isReady = clientDecodedClearLogoUrls.has(logoUrl);
+          return '<div class="cinema-clear-logo-wrap ' + (isReady ? 'is-logo-ready' : 'is-logo-loading') + '"' + clickProp + '>' +
+            '<div class="cinema-clear-logo-fallback-title inline-marquee-wrap" data-marquee-always="1">' +
+              '<span class="inline-marquee-text hero-title-text">' + safeTitle + '</span>' +
+            '</div>' +
+            '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" draggable="false" onload="onClearLogoImgLoadSuccessClient(this)" onerror="onClearLogoImgErrorClient(this)" />' +
           '</div>';
         }
         return '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1"' + clickProp + '>' +
@@ -38595,31 +38723,72 @@
       }
 
       async function ensureHeroSlideClearLogoClient(hero, heroType) {
-        if (!hero || !hero.id || Number(hero.id) >= 8000000) return;
-        const key = (heroType === "s" ? "s" : "m") + "_" + Number(hero.id);
-        if (hero.logo_path) {
-          clientClearLogoCache.set(key, hero.logo_path);
-          return;
-        }
-        if (clientClearLogoCache.has(key)) {
-          hero.logo_path = clientClearLogoCache.get(key) || "";
-          return;
-        }
-        clientClearLogoCache.set(key, ""); // In-flight guard
-        try {
-          const r = await apiFetchJson(API_BASE + "/logo?type=" + encodeURIComponent(heroType === "s" ? "s" : "m") + "&id=" + encodeURIComponent(hero.id));
-          const lp = String(r?.logo_path || "").trim();
-          clientClearLogoCache.set(key, lp);
+        if (!hero || !hero.id || Number(hero.id) >= 8000000) return "";
+        const normType = heroType === "s" ? "s" : "m";
+        const key = normType + "_" + Number(hero.id);
+        let lp = String(hero.logo_path || "").trim();
+        if (!lp && clientClearLogoCache.has(key)) {
+          lp = String(clientClearLogoCache.get(key) || "").trim();
           hero.logo_path = lp;
-          if (!lp) return;
-          const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
-          if (activeHero && String(activeHero.id) === String(hero.id)) {
-            const heroTitleBox = document.getElementById("heroTitleBoxEl");
-            if (heroTitleBox) {
-              heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(hero.title || hero.name || "", lp);
+        }
+        if (lp) {
+          clientClearLogoCache.set(key, lp);
+          const ready = await preloadClearLogoBitmapClient(lp);
+          if (ready) {
+            const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            if (activeHero && String(activeHero.id) === String(hero.id)) {
+              const heroTitleBox = document.getElementById("heroTitleBoxEl");
+              if (heroTitleBox) {
+                heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(hero.title || hero.name || "", lp);
+              }
             }
           }
-        } catch (_e) {}
+          return lp;
+        }
+        if (clientClearLogoCache.has(key)) {
+          return "";
+        }
+        if (clientClearLogoFetchPromises.has(key)) {
+          return clientClearLogoFetchPromises.get(key);
+        }
+        const fetchPromise = (async () => {
+          try {
+            const r = await apiFetchJson(API_BASE + "/logo?type=" + encodeURIComponent(normType) + "&id=" + encodeURIComponent(hero.id));
+            const fetchedLp = String(r?.logo_path || "").trim();
+            clientClearLogoCache.set(key, fetchedLp);
+            schedulePersistClearLogoCacheClient();
+            hero.logo_path = fetchedLp;
+            if (!fetchedLp) return "";
+            // Zuerst das PNG-Bild komplett im Browser-RAM vorladen & dekodieren, BEVOR das Text-Logo im Slider ersetzt wird (0ms leeres Feld!)
+            const ready = await preloadClearLogoBitmapClient(fetchedLp);
+            if (!ready) return "";
+            const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            if (activeHero && String(activeHero.id) === String(hero.id)) {
+              const heroTitleBox = document.getElementById("heroTitleBoxEl");
+              if (heroTitleBox) {
+                heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(hero.title || hero.name || "", fetchedLp);
+              }
+            }
+            return fetchedLp;
+          } catch (_e) {
+            return "";
+          } finally {
+            clientClearLogoFetchPromises.delete(key);
+          }
+        })();
+        clientClearLogoFetchPromises.set(key, fetchPromise);
+        return fetchPromise;
+      }
+
+      function prewarmAllHeroSlidesClearLogosClient() {
+        if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return;
+        state.heroSlides.forEach((sl, idx) => {
+          if (!sl || !sl.id) return;
+          const slType = sl.media_type === "tv" || state.type === "s" ? "s" : "m";
+          setTimeout(() => {
+            ensureHeroSlideClearLogoClient(sl, slType);
+          }, idx * 55);
+        });
       }
 
       function buildHeroBannerInnerHtml() {
@@ -41121,9 +41290,12 @@
       // Phase 3: End-Fade zurück auf Szenenbild (1,45s vor Schluss gegen YouTube-Endscreen) + Scroll-Auto-Pause
       let detailBgTeaserTimer = null;
       let detailBgTeaserRevealTimer = null;
+      let detailBgTeaserDelayedPauseTimer = null;
       let detailBgTeaserWatchdogTimer = null;
       let detailBgTeaserHandshakeTimer = null;
       let detailBgTeaserStageOpenedAt = 0;
+      let detailBgTeaserPlayingStartedAt = 0;
+      let detailBgTeaserChromeShieldRequired = true;
       let detailBgTeaserMuted = true;
       let detailBgTeaserPaused = false;
       let detailBgTeaserEnded = false;
@@ -41174,6 +41346,10 @@
           clearTimeout(detailBgTeaserRevealTimer);
           detailBgTeaserRevealTimer = null;
         }
+        if (detailBgTeaserDelayedPauseTimer) {
+          clearTimeout(detailBgTeaserDelayedPauseTimer);
+          detailBgTeaserDelayedPauseTimer = null;
+        }
         if (detailBgTeaserWatchdogTimer) {
           clearTimeout(detailBgTeaserWatchdogTimer);
           detailBgTeaserWatchdogTimer = null;
@@ -41182,6 +41358,124 @@
           clearInterval(detailBgTeaserHandshakeTimer);
           detailBgTeaserHandshakeTimer = null;
         }
+      }
+
+      // Blendet das Video erst ein, nachdem YouTubes eigene Start-/Seek-/Resume-Leisten vollständig ausgeblendet sind
+      function scheduleDetailRevealAfterYoutubeChromeHidesClient(holdMs = 1900) {
+        if (detailBgTeaserRevealTimer) {
+          clearTimeout(detailBgTeaserRevealTimer);
+          detailBgTeaserRevealTimer = null;
+        }
+        if (detailBgTeaserDelayedPauseTimer) {
+          clearTimeout(detailBgTeaserDelayedPauseTimer);
+          detailBgTeaserDelayedPauseTimer = null;
+        }
+        detailBgTeaserChromeShieldRequired = true;
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer) {
+          layer.classList.remove("is-playing");
+        }
+        const safeHoldMs = Math.max(250, Number(holdMs) || 1900);
+        detailBgTeaserRevealTimer = setTimeout(() => {
+          detailBgTeaserRevealTimer = null;
+          const liveLayer = document.getElementById("detailBgVideoLayer");
+          if (
+            liveLayer &&
+            detailBgTeaserIsPlayingConfirmed &&
+            !detailBgTeaserPaused &&
+            !detailBgTeaserEnded &&
+            !detailBgTeaserStoppedByUser &&
+            !detailBgTeaserPausedByScroll
+          ) {
+            detailBgTeaserChromeShieldRequired = false;
+            liveLayer.classList.remove("is-concealing");
+            liveLayer.classList.add("is-playing");
+          }
+          syncDetailCinemaDockUiClient();
+        }, safeHoldMs);
+      }
+
+      // Cover-First, Pause-Second: Blendet zuerst das Szenenbild über das noch laufende Video und pausiert YouTube erst im verdeckten Zustand
+      function concealAndPauseDetailTrailerClient(opts = {}) {
+        if (detailBgTeaserRevealTimer) {
+          clearTimeout(detailBgTeaserRevealTimer);
+          detailBgTeaserRevealTimer = null;
+        }
+        if (detailBgTeaserDelayedPauseTimer) {
+          clearTimeout(detailBgTeaserDelayedPauseTimer);
+          detailBgTeaserDelayedPauseTimer = null;
+        }
+        detailBgTeaserPaused = true;
+        detailBgTeaserChromeShieldRequired = true;
+        if (typeof opts.stoppedByUser === "boolean") {
+          detailBgTeaserStoppedByUser = opts.stoppedByUser;
+        }
+        if (typeof opts.pausedByScroll === "boolean") {
+          detailBgTeaserPausedByScroll = opts.pausedByScroll;
+        }
+        if (typeof opts.ended === "boolean") {
+          detailBgTeaserEnded = opts.ended;
+        }
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer) {
+          layer.classList.add("is-concealing");
+          layer.classList.remove("is-playing");
+        }
+        if (opts.exitForeground) {
+          const stageEl = document.getElementById("detailHeroStageEl");
+          if (stageEl) {
+            stageEl.classList.remove("is-trailer-foreground-mode");
+          }
+        }
+        syncDetailCinemaDockUiClient();
+        const pauseDelayMs = typeof opts.pauseDelayMs === "number" ? opts.pauseDelayMs : 430;
+        detailBgTeaserDelayedPauseTimer = setTimeout(() => {
+          detailBgTeaserDelayedPauseTimer = null;
+          const liveLayer = document.getElementById("detailBgVideoLayer");
+          if (liveLayer) {
+            liveLayer.classList.remove("is-concealing");
+          }
+          if (detailBgTeaserPaused || detailBgTeaserEnded) {
+            sendYoutubeBgTeaserCommandClient("pauseVideo");
+          }
+        }, pauseDelayMs);
+      }
+
+      function resumeDetailTrailerWithBackdropShieldClient(opts = {}) {
+        const wasPendingPauseOnly = Boolean(detailBgTeaserDelayedPauseTimer && !detailBgTeaserEnded);
+        if (detailBgTeaserDelayedPauseTimer) {
+          clearTimeout(detailBgTeaserDelayedPauseTimer);
+          detailBgTeaserDelayedPauseTimer = null;
+        }
+        detailBgTeaserPaused = false;
+        detailBgTeaserPausedByScroll = false;
+        detailBgTeaserStoppedByUser = false;
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer) {
+          layer.classList.remove("is-concealing");
+        }
+        if (detailBgTeaserEnded && opts.restartIfEnded !== false) {
+          detailBgTeaserEnded = false;
+          detailBgTeaserCurTime = 0;
+          detailBgTeaserChromeShieldRequired = true;
+          if (layer) layer.classList.remove("is-playing");
+          sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
+          sendYoutubeBgTeaserCommandClient("playVideo");
+          scheduleDetailRevealAfterYoutubeChromeHidesClient(1850);
+          syncDetailCinemaDockUiClient();
+          return;
+        }
+        if (wasPendingPauseOnly && detailBgTeaserIsPlayingConfirmed) {
+          detailBgTeaserChromeShieldRequired = false;
+          if (layer) layer.classList.add("is-playing");
+          syncDetailCinemaDockUiClient();
+          return;
+        }
+        detailBgTeaserChromeShieldRequired = true;
+        if (layer) layer.classList.remove("is-playing");
+        sendYoutubeBgTeaserCommandClient("playVideo");
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(1750);
+        syncDetailCinemaDockUiClient();
       }
 
       function activateDetailKenBurnsFallbackClient() {
@@ -41197,7 +41491,7 @@
         }
         const layer = document.getElementById("detailBgVideoLayer");
         if (layer) {
-          layer.classList.remove("is-playing");
+          layer.classList.remove("is-playing", "is-concealing");
           layer.innerHTML = "";
         }
         const dock = document.getElementById("detailCinemaPlayerDock");
@@ -41247,17 +41541,22 @@
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const frame = document.getElementById("detailBgVideoIframe");
         if (!frame || !detailBgTeaserActiveKey) return;
-        const maxDur = detailBgTeaserDuration > 2 ? Math.max(1, detailBgTeaserDuration - 1.5) : 9999;
+        const maxDur = detailBgTeaserDuration > 2 ? Math.max(1, detailBgTeaserDuration - 2.2) : 9999;
         const nextSec = Math.max(0, Math.min(maxDur, (detailBgTeaserCurTime || 0) + Number(deltaSec || 0)));
         detailBgTeaserCurTime = nextSec;
         detailBgTeaserEnded = false;
+        if (detailBgTeaserDelayedPauseTimer) {
+          clearTimeout(detailBgTeaserDelayedPauseTimer);
+          detailBgTeaserDelayedPauseTimer = null;
+        }
         sendYoutubeBgTeaserCommandClient("seekTo", [nextSec, true]);
         if (detailBgTeaserPaused) {
           detailBgTeaserPaused = false;
+          detailBgTeaserPausedByScroll = false;
+          detailBgTeaserStoppedByUser = false;
           sendYoutubeBgTeaserCommandClient("playVideo");
         }
-        const layer = document.getElementById("detailBgVideoLayer");
-        if (layer) layer.classList.add("is-playing");
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(1650);
         syncDetailCinemaDockUiClient();
         showDetailSeekRippleBadgeClient(
           deltaSec < 0 ? ("⏪ " + deltaSec + "s") : ("⏩ +" + deltaSec + "s"),
@@ -41319,23 +41618,12 @@
       }
 
       function finishDetailTrailerToArtworkClient() {
-        if (detailBgTeaserRevealTimer) {
-          clearTimeout(detailBgTeaserRevealTimer);
-          detailBgTeaserRevealTimer = null;
-        }
-        detailBgTeaserEnded = true;
-        detailBgTeaserPaused = true;
-        detailBgTeaserPausedByScroll = false;
-        sendYoutubeBgTeaserCommandClient("pauseVideo");
-        const layer = document.getElementById("detailBgVideoLayer");
-        if (layer) {
-          layer.classList.remove("is-playing");
-        }
-        const stageEl = document.getElementById("detailHeroStageEl");
-        if (stageEl) {
-          stageEl.classList.remove("is-trailer-foreground-mode");
-        }
-        syncDetailCinemaDockUiClient();
+        concealAndPauseDetailTrailerClient({
+          ended: true,
+          pausedByScroll: false,
+          exitForeground: true,
+          pauseDelayMs: 430
+        });
       }
 
       function syncDetailCinemaDockUiClient() {
@@ -41419,6 +41707,8 @@
         }
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
+        detailBgTeaserChromeShieldRequired = true;
+        detailBgTeaserPlayingStartedAt = 0;
         detailBgTeaserPaused = false;
         detailBgTeaserEnded = false;
         detailBgTeaserPausedByScroll = false;
@@ -41430,7 +41720,7 @@
         }
         const layer = document.getElementById("detailBgVideoLayer");
         if (layer) {
-          layer.classList.remove("is-playing");
+          layer.classList.remove("is-playing", "is-concealing");
           layer.innerHTML = "";
         }
         const dock = document.getElementById("detailCinemaPlayerDock");
@@ -41495,13 +41785,15 @@
         const cleanKey = detailBgTeaserCandidates[idx];
         detailBgTeaserActiveKey = cleanKey;
         detailBgTeaserIsPlayingConfirmed = false;
+        detailBgTeaserChromeShieldRequired = true;
+        detailBgTeaserPlayingStartedAt = 0;
         detailBgTeaserPaused = false;
         detailBgTeaserEnded = false;
         detailBgTeaserPausedByScroll = false;
         detailBgTeaserCurTime = 0;
         detailBgTeaserDuration = 0;
         detailBgTeaserMuted = !startUnmuted;
-        layer.classList.remove("is-playing");
+        layer.classList.remove("is-playing", "is-concealing");
 
         const originParam = (typeof location !== "undefined" && location.origin) ? ("&origin=" + encodeURIComponent(location.origin)) : "";
         const muteParam = startUnmuted ? "0" : "1";
@@ -41564,11 +41856,11 @@
             if (typeof msg.info.muted === "boolean") {
               detailBgTeaserMuted = msg.info.muted;
             }
-            // Netflix End-Fade: 1,45s vor Ende sanft auf das Film-Szenenbild zurückblenden, bevor YouTube fremde Endscreen-Kacheln einblendet!
+            // Netflix End-Fade: 2,2s vor Ende sanft auf das Film-Szenenbild zurückblenden, bevor YouTube Pause-/Endscreen-Kacheln einblendet!
             if (
               detailBgTeaserDuration > 6 &&
               detailBgTeaserCurTime > 2 &&
-              (detailBgTeaserDuration - detailBgTeaserCurTime) <= 1.45 &&
+              (detailBgTeaserDuration - detailBgTeaserCurTime) <= 2.2 &&
               !detailBgTeaserEnded &&
               !detailBgTeaserScrubbing
             ) {
@@ -41586,39 +41878,33 @@
                 clearTimeout(detailBgTeaserWatchdogTimer);
                 detailBgTeaserWatchdogTimer = null;
               }
+              const wasConfirmedBefore = detailBgTeaserIsPlayingConfirmed;
               detailBgTeaserIsPlayingConfirmed = true;
               detailBgTeaserPaused = false;
               detailBgTeaserEnded = false;
+              if (!wasConfirmedBefore || !detailBgTeaserPlayingStartedAt) {
+                detailBgTeaserPlayingStartedAt = Date.now();
+              }
               if (stageEl) {
                 const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
                 if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
               }
-              // Netflix Phase 1 -> Phase 2: Mindestens ~1,4s ruhiges Artwork-Standbild beim Öffnen wahren, bevor das laufende Video weich einblendet
-              const isFg = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
-              const elapsedSinceOpen = Date.now() - (detailBgTeaserStageOpenedAt || 0);
-              const holdRemainingMs = isFg ? 0 : Math.max(0, 1400 - elapsedSinceOpen);
-              if (detailBgTeaserRevealTimer) {
-                clearTimeout(detailBgTeaserRevealTimer);
-                detailBgTeaserRevealTimer = null;
-              }
-              if (holdRemainingMs <= 20) {
-                if (layer && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll) {
-                  layer.classList.add("is-playing");
+              // Szenenbild bleibt so lange über dem laufenden Video, bis YouTubes initiale Start-/Resume-Controls (~1,9s nach echtem Playing-Start) verschwunden sind!
+              if (detailBgTeaserChromeShieldRequired) {
+                if (!detailBgTeaserRevealTimer) {
+                  const elapsedPlaying = Date.now() - (detailBgTeaserPlayingStartedAt || Date.now());
+                  const holdRemainingMs = Math.max(450, 1920 - elapsedPlaying);
+                  scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs);
                 }
-                syncDetailCinemaDockUiClient();
-              } else {
-                detailBgTeaserRevealTimer = setTimeout(() => {
-                  detailBgTeaserRevealTimer = null;
-                  const liveLayer = document.getElementById("detailBgVideoLayer");
-                  if (liveLayer && detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll) {
-                    liveLayer.classList.add("is-playing");
-                  }
-                  syncDetailCinemaDockUiClient();
-                }, holdRemainingMs);
+              } else if (layer && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll && !detailBgTeaserDelayedPauseTimer) {
+                layer.classList.remove("is-concealing");
+                layer.classList.add("is-playing");
               }
+              syncDetailCinemaDockUiClient();
             } else if (pState === 2) {
               detailBgTeaserPaused = true;
-              // Im Hintergrund-Modus bei Pause sofort das saubere Szenenbild zeigen, damit keine YouTube-Pause-Empfehlungen in der Mitte erscheinen
+              detailBgTeaserChromeShieldRequired = true;
+              // Bei Pause immer sofort das Szenenbild zeigen, damit niemals YouTubes Pause-Overlay sichtbar wird
               if (layer) {
                 layer.classList.remove("is-playing");
               }
@@ -41664,7 +41950,7 @@
           return;
         }
 
-        // Netflix-Logik: Sofort im Hintergrund vorpuffern (nach 450ms), aber das Szenenbild für mindestens 1,4s ruhig stehen lassen
+        // Netflix-Logik: Sofort im Hintergrund vorpuffern (nach 450ms), aber das Szenenbild so lange stehen lassen, bis YouTubes Start-UI weg ist
         detailBgTeaserTimer = setTimeout(() => {
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
@@ -41684,31 +41970,12 @@
           }
           return;
         }
-        if (detailBgTeaserEnded) {
-          detailBgTeaserEnded = false;
-          detailBgTeaserPaused = false;
-          detailBgTeaserPausedByScroll = false;
-          detailBgTeaserStoppedByUser = false;
-          detailBgTeaserCurTime = 0;
-          sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
-          sendYoutubeBgTeaserCommandClient("playVideo");
-          const layer = document.getElementById("detailBgVideoLayer");
-          if (layer) layer.classList.add("is-playing");
-        } else if (detailBgTeaserPaused) {
-          detailBgTeaserPaused = false;
-          detailBgTeaserPausedByScroll = false;
-          detailBgTeaserStoppedByUser = false;
-          sendYoutubeBgTeaserCommandClient("playVideo");
-          const layer = document.getElementById("detailBgVideoLayer");
-          if (layer) layer.classList.add("is-playing");
+        if (detailBgTeaserEnded || detailBgTeaserPaused) {
+          resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
         } else {
-          detailBgTeaserPaused = true;
-          detailBgTeaserStoppedByUser = true;
-          sendYoutubeBgTeaserCommandClient("pauseVideo");
-          const layer = document.getElementById("detailBgVideoLayer");
-          if (layer) layer.classList.remove("is-playing");
+          // Cover-First, Pause-Second: Zuerst Szenenbild einblenden, erst nach 430ms im Hintergrund pausieren!
+          concealAndPauseDetailTrailerClient({ stoppedByUser: true });
         }
-        syncDetailCinemaDockUiClient();
       }
 
       function toggleDetailBackgroundTeaserAudioClient(ev) {
@@ -41725,18 +41992,9 @@
           detailBgTeaserMuted = false;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
-          if (detailBgTeaserEnded) {
-            detailBgTeaserEnded = false;
-            detailBgTeaserPaused = false;
-            sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
-            sendYoutubeBgTeaserCommandClient("playVideo");
-            const layer = document.getElementById("detailBgVideoLayer");
-            if (layer) layer.classList.add("is-playing");
-          } else if (detailBgTeaserPaused) {
-            detailBgTeaserPaused = false;
-            sendYoutubeBgTeaserCommandClient("playVideo");
-            const layer = document.getElementById("detailBgVideoLayer");
-            if (layer) layer.classList.add("is-playing");
+          if (detailBgTeaserEnded || detailBgTeaserPaused) {
+            resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
+            return;
           }
         } else {
           detailBgTeaserMuted = true;
@@ -41766,13 +42024,18 @@
         detailBgTeaserCurTime = targetSec;
         detailBgTeaserScrubbing = false;
         detailBgTeaserEnded = false;
+        if (detailBgTeaserDelayedPauseTimer) {
+          clearTimeout(detailBgTeaserDelayedPauseTimer);
+          detailBgTeaserDelayedPauseTimer = null;
+        }
         sendYoutubeBgTeaserCommandClient("seekTo", [targetSec, true]);
         if (detailBgTeaserPaused) {
           detailBgTeaserPaused = false;
+          detailBgTeaserPausedByScroll = false;
+          detailBgTeaserStoppedByUser = false;
           sendYoutubeBgTeaserCommandClient("playVideo");
         }
-        const layer = document.getElementById("detailBgVideoLayer");
-        if (layer) layer.classList.add("is-playing");
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(1650);
         syncDetailCinemaDockUiClient();
       }
 
@@ -41808,26 +42071,21 @@
         detailBgTeaserStoppedByUser = false;
         detailBgTeaserPausedByScroll = false;
         stageEl.classList.add("is-trailer-foreground-mode");
-        if (detailBgTeaserRevealTimer) {
-          clearTimeout(detailBgTeaserRevealTimer);
-          detailBgTeaserRevealTimer = null;
-        }
         const existingFrame = document.getElementById("detailBgVideoIframe");
         if (existingFrame && detailBgTeaserActiveKey) {
-          // Zero-Reload: Bestehendes Video läuft nahtlos im Vordergrund mit Ton weiter!
           detailBgTeaserMuted = false;
-          detailBgTeaserPaused = false;
-          if (detailBgTeaserEnded) {
-            detailBgTeaserEnded = false;
-            detailBgTeaserCurTime = 0;
-            sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
-          }
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
-          sendYoutubeBgTeaserCommandClient("playVideo");
           const layer = document.getElementById("detailBgVideoLayer");
-          if (layer && detailBgTeaserIsPlayingConfirmed) {
-            layer.classList.add("is-playing");
+          // Falls der Trailer bereits im Hintergrund sichtbar läuft -> Ohne Unterbrechung & ohne playVideo-Aufruf sofort mit Ton weiterlaufen lassen!
+          if (detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserChromeShieldRequired) {
+            if (layer) {
+              layer.classList.remove("is-concealing");
+              layer.classList.add("is-playing");
+            }
+          } else {
+            // Falls pausiert, beendet oder noch im Vorlauf -> Szenenbild schützt vor den YouTube-Play-Controls, bis diese ausgeblendet sind
+            resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
           }
         } else {
           mountDetailTrailerCandidateAtIndexClient(0, true, 0);
@@ -41868,22 +42126,14 @@
         if (stickyHeader) {
           stickyHeader.classList.toggle("is-visible", st > 310);
         }
-        const layer = document.getElementById("detailBgVideoLayer");
         if (st > 250 && detailBgTeaserActiveKey) {
           if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
-            detailBgTeaserPausedByScroll = true;
-            detailBgTeaserPaused = true;
-            sendYoutubeBgTeaserCommandClient("pauseVideo");
-            if (layer) layer.classList.remove("is-playing");
-            syncDetailCinemaDockUiClient();
+            // Cover-First, Pause-Second beim Runterscrollen zum Cast
+            concealAndPauseDetailTrailerClient({ pausedByScroll: true });
           }
         } else if (st < 110 && detailBgTeaserActiveKey && detailBgTeaserPausedByScroll && !detailBgTeaserStoppedByUser && !detailBgTeaserEnded) {
           if (typeof trailerPreviewEnabled === "undefined" || trailerPreviewEnabled) {
-            detailBgTeaserPausedByScroll = false;
-            detailBgTeaserPaused = false;
-            sendYoutubeBgTeaserCommandClient("playVideo");
-            if (layer && detailBgTeaserIsPlayingConfirmed) layer.classList.add("is-playing");
-            syncDetailCinemaDockUiClient();
+            resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: false });
           }
         }
       }
@@ -43091,7 +43341,23 @@
 
           const titleBoxEl = document.getElementById("detailTitleBoxEl");
           if (titleBoxEl && activeLogoPath && !titleBoxEl.querySelector("img")) {
-            titleBoxEl.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath);
+            if (typeof clientClearLogoCache !== "undefined" && d.id) {
+              clientClearLogoCache.set(typeCode + "_" + Number(d.id), activeLogoPath);
+              if (typeof schedulePersistClearLogoCacheClient === "function") {
+                schedulePersistClearLogoCacheClient();
+              }
+            }
+            if (typeof preloadClearLogoBitmapClient === "function") {
+              preloadClearLogoBitmapClient(activeLogoPath).then((ready) => {
+                if (!ready) return;
+                const liveTitleBox = document.getElementById("detailTitleBoxEl");
+                if (liveTitleBox && state.activeDetails && String(state.activeDetails.id) === String(d.id)) {
+                  liveTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath);
+                }
+              });
+            } else {
+              titleBoxEl.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(d.title, activeLogoPath);
+            }
           }
 
           const metaEl = document.getElementById("detailMetaCleanEl");
@@ -58803,8 +59069,17 @@
           : visibleItems;
         items = await attachVipQualitiesToMediaList(env, items, typeCode, hasVipStreamAccess);
 
-        // Für die ersten 10 Highlight-Kandidaten auf Seite 1 fehlende Beschreibungen (overview) direkt nachladen (TMDb DE/EN, TVMaze, OMDb)
+        // Für die ersten 14 Highlight-Kandidaten auf Seite 1 bereits gecachte ClearLogos direkt mitliefern & fehlende Beschreibungen (overview) nachladen
         if (page === 1 && Array.isArray(items) && items.length > 0) {
+          for (const it of items.slice(0, 14)) {
+            if (!it || !it.id || it.logo_path) continue;
+            const isSer = it.media_type === "tv" || typeCode === "s";
+            const memKey = `logo_${isSer ? "s" : "m"}_${Number(it.id)}`;
+            if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(memKey)) {
+              const cachedLp = memoryFallback.get(memKey);
+              if (cachedLp) it.logo_path = cachedLp;
+            }
+          }
           const missingOvItems = items.slice(0, 10).filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
           if (missingOvItems.length > 0) {
             await Promise.race([

@@ -2928,10 +2928,18 @@
         text-shadow: 0 4px 20px rgba(0, 0, 0, 0.92), 0 1px 4px rgba(0, 0, 0, 0.9);
       }
       .cinema-clear-logo-wrap {
+        position: relative;
         display: flex;
         align-items: flex-end;
         min-height: calc(clamp(44px, 7vh, 78px) * var(--scale-text));
         margin-bottom: 2px;
+      }
+      .cinema-clear-logo-fallback-title {
+        display: none;
+        width: 100%;
+      }
+      .cinema-clear-logo-wrap.is-logo-loading .cinema-clear-logo-fallback-title {
+        display: block;
       }
       .cinema-clear-logo {
         display: block;
@@ -2944,11 +2952,22 @@
         filter: drop-shadow(0 6px 22px rgba(0, 0, 0, 0.92)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.86));
         user-select: none;
         -webkit-user-drag: none;
-        transition: transform 0.2s ease, filter 0.2s ease;
+        transition: opacity 0.18s ease, transform 0.2s ease, filter 0.2s ease;
+      }
+      .cinema-clear-logo-wrap.is-logo-loading .cinema-clear-logo {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .cinema-clear-logo-wrap.is-logo-ready .cinema-clear-logo {
+        position: relative;
+        opacity: 1;
       }
       .cinema-clear-logo:hover {
         transform: scale(1.015);
-        filter: drop-shadow(0 8px 26px rgba(var(--ambi-1, 14, 165, 233), 0.45)) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.92));
+        filter: drop-shadow(0 8px 26px rgba(var(--ambi-1, 14, 165, 248), 0.45)) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.92));
       }
       .hero-meta-clean {
         font-size: var(--cinema-meta-size);
@@ -5027,7 +5046,11 @@
         overflow: hidden;
         pointer-events: none;
         opacity: 0;
-        transition: opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1), filter 0.38s ease;
+        transition: opacity 0.72s cubic-bezier(0.22, 1, 0.36, 1), filter 0.38s ease;
+      }
+      .detail-bg-video-layer.is-concealing {
+        opacity: 0 !important;
+        transition: opacity 0.36s cubic-bezier(0.4, 0, 0.2, 1) !important;
       }
       .detail-bg-video-layer.is-playing {
         opacity: 1;
@@ -5038,10 +5061,12 @@
         left: 50%;
         width: max(100vw, 177.78vh);
         height: max(56.25vw, 100vh);
-        transform: translate(-50%, -50%) scale(1.16);
+        transform: translate(-50%, -50%) scale(1.18);
+        clip-path: inset(7.2% 0 7.2% 0);
+        -webkit-clip-path: inset(7.2% 0 7.2% 0);
         border: 0;
         pointer-events: none;
-        transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s ease, height 0.32s ease;
+        transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s ease, height 0.32s ease, clip-path 0.32s ease;
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -5133,7 +5158,7 @@
         filter: brightness(1.03) contrast(1.03);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame {
-        transform: translate(-50%, -50%) scale(1.12);
+        transform: translate(-50%, -50%) scale(1.16);
       }
       /* Format-Zoom-Modus (Original 16:9 / 21:9 Kinoformat ohne Randbeschnitt) */
       .detail-hero-stage.is-cinema-zoom-fit {
@@ -5145,7 +5170,9 @@
       .detail-hero-stage.is-cinema-zoom-fit .detail-bg-video-frame {
         width: min(100vw, 177.78vh) !important;
         height: min(56.25vw, calc(100svh - var(--sticky-header-height, 54px))) !important;
-        transform: translate(-50%, -50%) scale(1) !important;
+        transform: translate(-50%, -50%) scale(1.08) !important;
+        clip-path: inset(6.8% 0 6.8% 0) !important;
+        -webkit-clip-path: inset(6.8% 0 6.8% 0) !important;
       }
       .detail-hero-stage.is-cinema-zoom-fit .detail-backdrop-layer {
         background-size: contain !important;
@@ -9155,7 +9182,10 @@
         startHeroRotationTimer();
         setTimeout(() => {
           ensureHeroSlidesOverviewsClient();
-        }, 40);
+          if (typeof prewarmAllHeroSlidesClearLogosClient === "function") {
+            prewarmAllHeroSlidesClearLogosClient();
+          }
+        }, 25);
       }
 
       // =========================================================================
@@ -9312,6 +9342,10 @@
 
       async function preloadHeroSlideAssetsPairClient(slideObj, highPriority = false) {
         if (!slideObj) return;
+        const slideType = slideObj.media_type === "tv" || state.type === "s" ? "s" : "m";
+        if (typeof ensureHeroSlideClearLogoClient === "function") {
+          ensureHeroSlideClearLogoClient(slideObj, slideType);
+        }
         const bpUrl = typeof resolveHeroSlideBackdropUrlClient === "function" ? resolveHeroSlideBackdropUrlClient(slideObj) : "";
         const posterUrl = typeof resolveHeroSlidePosterUrlClient === "function" ? resolveHeroSlidePosterUrlClient(slideObj, "w780") : "";
         const isPortraitViewport = (window.innerWidth || 1024) <= 640 || (window.innerHeight > window.innerWidth);
@@ -10696,6 +10730,40 @@
       }
 
       const clientClearLogoCache = new Map();
+      const clientDecodedClearLogoUrls = new Set();
+      const clientClearLogoPreloadPromises = new Map();
+      const clientClearLogoFetchPromises = new Map();
+
+      (function hydratePersistedClearLogoCacheClient() {
+        try {
+          const raw = localStorage.getItem("tma_clearlogo_map_v1");
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            for (const [k, v] of Object.entries(parsed)) {
+              if (k && typeof v === "string") {
+                clientClearLogoCache.set(k, v);
+              }
+            }
+          }
+        } catch (_e) {}
+      })();
+
+      let persistClearLogoTimer = null;
+      function schedulePersistClearLogoCacheClient() {
+        if (persistClearLogoTimer) return;
+        persistClearLogoTimer = setTimeout(() => {
+          persistClearLogoTimer = null;
+          try {
+            const entries = Array.from(clientClearLogoCache.entries()).slice(-300);
+            const obj = {};
+            for (const [k, v] of entries) {
+              obj[k] = v;
+            }
+            localStorage.setItem("tma_clearlogo_map_v1", JSON.stringify(obj));
+          } catch (_e) {}
+        }, 450);
+      }
 
       function resolveClearLogoUrlClient(logoPath) {
         const clean = String(logoPath || "").trim();
@@ -10704,13 +10772,69 @@
         return "https://image.tmdb.org/t/p/w500" + (clean.startsWith("/") ? clean : ("/" + clean));
       }
 
+      function preloadClearLogoBitmapClient(logoPathOrUrl) {
+        const logoUrl = resolveClearLogoUrlClient(logoPathOrUrl);
+        if (!logoUrl) return Promise.resolve(false);
+        if (clientDecodedClearLogoUrls.has(logoUrl)) return Promise.resolve(true);
+        if (clientClearLogoPreloadPromises.has(logoUrl)) {
+          return clientClearLogoPreloadPromises.get(logoUrl);
+        }
+        const p = new Promise((resolve) => {
+          let settled = false;
+          const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            clientClearLogoPreloadPromises.delete(logoUrl);
+            if (ok) clientDecodedClearLogoUrls.add(logoUrl);
+            resolve(Boolean(ok));
+          };
+          const timer = setTimeout(() => finish(false), 3500);
+          try {
+            const img = new Image();
+            img.decoding = "async";
+            img.onload = () => {
+              clearTimeout(timer);
+              if (typeof img.decode === "function") {
+                img.decode().then(() => finish(true)).catch(() => finish(true));
+              } else {
+                finish(true);
+              }
+            };
+            img.onerror = () => {
+              clearTimeout(timer);
+              finish(false);
+            };
+            img.src = logoUrl;
+          } catch (_err) {
+            clearTimeout(timer);
+            finish(false);
+          }
+        });
+        clientClearLogoPreloadPromises.set(logoUrl, p);
+        return p;
+      }
+
+      function onClearLogoImgLoadSuccessClient(imgEl) {
+        if (!imgEl) return;
+        const src = String(imgEl.getAttribute("src") || imgEl.src || "").trim();
+        if (src) clientDecodedClearLogoUrls.add(src);
+        const wrap = imgEl.closest ? imgEl.closest(".cinema-clear-logo-wrap") : imgEl.parentElement;
+        if (wrap) {
+          wrap.classList.remove("is-logo-loading");
+          wrap.classList.add("is-logo-ready");
+        }
+      }
+
       function onClearLogoImgErrorClient(imgEl) {
         if (!imgEl || !imgEl.parentElement) return;
         const altText = esc(imgEl.getAttribute("alt") || "Titel");
-        imgEl.parentElement.outerHTML =
-          '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1">' +
-            '<span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + altText + '</span>' +
-          '</div>';
+        const wrap = imgEl.closest ? imgEl.closest(".cinema-clear-logo-wrap") : imgEl.parentElement;
+        if (wrap) {
+          wrap.outerHTML =
+            '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1">' +
+              '<span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + altText + '</span>' +
+            '</div>';
+        }
       }
 
       function buildHeroTitleOrLogoInnerHtmlClient(titleRaw, logoPath, clickAttr = "") {
@@ -10718,8 +10842,12 @@
         const logoUrl = resolveClearLogoUrlClient(logoPath);
         const clickProp = clickAttr ? (' onclick="' + clickAttr + '" style="cursor:pointer" title="Nach „' + safeTitle + '“ suchen"') : '';
         if (logoUrl) {
-          return '<div class="cinema-clear-logo-wrap"' + clickProp + '>' +
-            '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" draggable="false" onerror="onClearLogoImgErrorClient(this)" />' +
+          const isReady = clientDecodedClearLogoUrls.has(logoUrl);
+          return '<div class="cinema-clear-logo-wrap ' + (isReady ? 'is-logo-ready' : 'is-logo-loading') + '"' + clickProp + '>' +
+            '<div class="cinema-clear-logo-fallback-title inline-marquee-wrap" data-marquee-always="1">' +
+              '<span class="inline-marquee-text hero-title-text">' + safeTitle + '</span>' +
+            '</div>' +
+            '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" draggable="false" onload="onClearLogoImgLoadSuccessClient(this)" onerror="onClearLogoImgErrorClient(this)" />' +
           '</div>';
         }
         return '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1"' + clickProp + '>' +
@@ -10728,31 +10856,72 @@
       }
 
       async function ensureHeroSlideClearLogoClient(hero, heroType) {
-        if (!hero || !hero.id || Number(hero.id) >= 8000000) return;
-        const key = (heroType === "s" ? "s" : "m") + "_" + Number(hero.id);
-        if (hero.logo_path) {
-          clientClearLogoCache.set(key, hero.logo_path);
-          return;
-        }
-        if (clientClearLogoCache.has(key)) {
-          hero.logo_path = clientClearLogoCache.get(key) || "";
-          return;
-        }
-        clientClearLogoCache.set(key, ""); // In-flight guard
-        try {
-          const r = await apiFetchJson(API_BASE + "/logo?type=" + encodeURIComponent(heroType === "s" ? "s" : "m") + "&id=" + encodeURIComponent(hero.id));
-          const lp = String(r?.logo_path || "").trim();
-          clientClearLogoCache.set(key, lp);
+        if (!hero || !hero.id || Number(hero.id) >= 8000000) return "";
+        const normType = heroType === "s" ? "s" : "m";
+        const key = normType + "_" + Number(hero.id);
+        let lp = String(hero.logo_path || "").trim();
+        if (!lp && clientClearLogoCache.has(key)) {
+          lp = String(clientClearLogoCache.get(key) || "").trim();
           hero.logo_path = lp;
-          if (!lp) return;
-          const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
-          if (activeHero && String(activeHero.id) === String(hero.id)) {
-            const heroTitleBox = document.getElementById("heroTitleBoxEl");
-            if (heroTitleBox) {
-              heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(hero.title || hero.name || "", lp);
+        }
+        if (lp) {
+          clientClearLogoCache.set(key, lp);
+          const ready = await preloadClearLogoBitmapClient(lp);
+          if (ready) {
+            const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            if (activeHero && String(activeHero.id) === String(hero.id)) {
+              const heroTitleBox = document.getElementById("heroTitleBoxEl");
+              if (heroTitleBox) {
+                heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(hero.title || hero.name || "", lp);
+              }
             }
           }
-        } catch (_e) {}
+          return lp;
+        }
+        if (clientClearLogoCache.has(key)) {
+          return "";
+        }
+        if (clientClearLogoFetchPromises.has(key)) {
+          return clientClearLogoFetchPromises.get(key);
+        }
+        const fetchPromise = (async () => {
+          try {
+            const r = await apiFetchJson(API_BASE + "/logo?type=" + encodeURIComponent(normType) + "&id=" + encodeURIComponent(hero.id));
+            const fetchedLp = String(r?.logo_path || "").trim();
+            clientClearLogoCache.set(key, fetchedLp);
+            schedulePersistClearLogoCacheClient();
+            hero.logo_path = fetchedLp;
+            if (!fetchedLp) return "";
+            // Zuerst das PNG-Bild komplett im Browser-RAM vorladen & dekodieren, BEVOR das Text-Logo im Slider ersetzt wird (0ms leeres Feld!)
+            const ready = await preloadClearLogoBitmapClient(fetchedLp);
+            if (!ready) return "";
+            const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            if (activeHero && String(activeHero.id) === String(hero.id)) {
+              const heroTitleBox = document.getElementById("heroTitleBoxEl");
+              if (heroTitleBox) {
+                heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(hero.title || hero.name || "", fetchedLp);
+              }
+            }
+            return fetchedLp;
+          } catch (_e) {
+            return "";
+          } finally {
+            clientClearLogoFetchPromises.delete(key);
+          }
+        })();
+        clientClearLogoFetchPromises.set(key, fetchPromise);
+        return fetchPromise;
+      }
+
+      function prewarmAllHeroSlidesClearLogosClient() {
+        if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return;
+        state.heroSlides.forEach((sl, idx) => {
+          if (!sl || !sl.id) return;
+          const slType = sl.media_type === "tv" || state.type === "s" ? "s" : "m";
+          setTimeout(() => {
+            ensureHeroSlideClearLogoClient(sl, slType);
+          }, idx * 55);
+        });
       }
 
       function buildHeroBannerInnerHtml() {

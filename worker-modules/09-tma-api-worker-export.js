@@ -2287,8 +2287,17 @@
           : visibleItems;
         items = await attachVipQualitiesToMediaList(env, items, typeCode, hasVipStreamAccess);
 
-        // Für die ersten 10 Highlight-Kandidaten auf Seite 1 fehlende Beschreibungen (overview) direkt nachladen (TMDb DE/EN, TVMaze, OMDb)
+        // Für die ersten 14 Highlight-Kandidaten auf Seite 1 bereits gecachte ClearLogos direkt mitliefern & fehlende Beschreibungen (overview) nachladen
         if (page === 1 && Array.isArray(items) && items.length > 0) {
+          for (const it of items.slice(0, 14)) {
+            if (!it || !it.id || it.logo_path) continue;
+            const isSer = it.media_type === "tv" || typeCode === "s";
+            const memKey = `logo_${isSer ? "s" : "m"}_${Number(it.id)}`;
+            if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(memKey)) {
+              const cachedLp = memoryFallback.get(memKey);
+              if (cachedLp) it.logo_path = cachedLp;
+            }
+          }
           const missingOvItems = items.slice(0, 10).filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
           if (missingOvItems.length > 0) {
             await Promise.race([
