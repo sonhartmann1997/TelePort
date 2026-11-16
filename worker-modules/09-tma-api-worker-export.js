@@ -2476,7 +2476,15 @@
             items: visibleItems,
             collections: [],
             universes: [],
-            persons: pData ? [{ id: pData.id, name: pData.name, known_for: pData.known_for }] : []
+            persons: pData ? [{
+              id: pData.id,
+              name: pData.name,
+              known_for: pData.known_for,
+              profile_path: pData.profile_path || "",
+              biography: pData.biography || "",
+              birthday: pData.birthday || "",
+              place_of_birth: pData.place_of_birth || ""
+            }] : []
           }), { status: 200, headers: corsHeaders });
         }
 
@@ -2648,6 +2656,13 @@
         }), { status: 200, headers: corsHeaders });
       }
 
+      if (path === "/api/tma/logo" && request.method === "GET") {
+        const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
+        const id = url.searchParams.get("id") || "";
+        const logoPath = await resolveMediaClearLogoPath(env, typeCode, id, "");
+        return new Response(JSON.stringify({ ok: true, id: Number(id), typeCode, logo_path: logoPath || "" }), { status: 200, headers: corsHeaders });
+      }
+
       if (path === "/api/tma/details" && request.method === "GET") {
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
         const id = url.searchParams.get("id") || "";
@@ -2664,7 +2679,7 @@
         const vote = details.vote_average ? Math.round(details.vote_average * 10) / 10 : "–";
 
         // Parallel & mit Timeout-Schutz für Telegraph ausführen, damit Detailansicht auch nach langer Standzeit sofort lädt!
-        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads] = await Promise.all([
+        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads, resolvedLogoPath] = await Promise.all([
           Promise.race([
             ensureMovieOrSeriesTelegraphUrl(env, typeCode, details).catch(() => ""),
             new Promise(resolve => setTimeout(() => resolve(details.telegraphUrl || ""), 2200))
@@ -2673,7 +2688,8 @@
           (isMovie && hasVipStreamAccess) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
           tgApi(env).getBotUsername(env).catch(() => ""),
           (!isMovie && hasVipStreamAccess) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
-          (hasVipStreamAccess || auth.isAdmin) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([])
+          (hasVipStreamAccess || auth.isAdmin) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
+          resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || "")
         ]);
         // Falls Details ein Poster gefunden haben, sofort in D1, Bot-VIP-Playlist und User-Merkliste zurückschreiben!
         if (details.poster_path || details.external_poster_url) {
@@ -2784,6 +2800,7 @@
           poster_path: details.poster_path,
           external_poster_url: details.external_poster_url || "",
           backdrop_path: details.backdrop_path,
+          logo_path: resolvedLogoPath || details.logo_path || "",
           collection: details.collection || null,
           universe: matchedUniverse,
           telegraphUrl,

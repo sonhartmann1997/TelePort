@@ -6806,7 +6806,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .detail-carousel-arrow, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .detail-carousel-arrow, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -6828,10 +6828,12 @@
       function getVisibleFocusables() {
         const dialogEl = document.getElementById("customDialogRoot");
         const pageJumpEl = document.getElementById("pageJumpModalRoot");
+        const spotlightEl = document.getElementById("personSpotlightOverlayRoot");
         const modalEl = document.getElementById("modalRoot");
         const topUnifiedHeader = document.getElementById("topUnifiedBar");
         const lbEl = document.getElementById("lightboxRoot");
         const sidebarEl = document.getElementById("filterSidebarDrawer");
+        const isSpotlightActive = Boolean(spotlightEl && spotlightEl.innerHTML.trim());
         const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
@@ -6839,11 +6841,13 @@
             ? pageJumpEl
             : (lbEl && lbEl.innerHTML.trim())
               ? lbEl
-              : (state.sidebarOpen && sidebarEl)
-                ? sidebarEl
-                : isModalActive
-                  ? modalEl
-                  : document.body;
+              : isSpotlightActive
+                ? spotlightEl
+                : (state.sidebarOpen && sidebarEl)
+                  ? sidebarEl
+                  : isModalActive
+                    ? modalEl
+                    : document.body;
         const rawNodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
         if (isModalActive && !state.sidebarOpen && topUnifiedHeader) {
           const headerNodes = Array.from(topUnifiedHeader.querySelectorAll(FOCUSABLE_SELECTOR));
@@ -7909,6 +7913,12 @@
             const parentCard = currentSpatialEl.closest(".card");
             clearCardSubnavState(null);
             if (parentCard) setSpatialFocus(parentCard, false);
+            ev.preventDefault();
+            return;
+          }
+          const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
+          if (spotlightRoot && spotlightRoot.innerHTML.trim() && typeof closePersonSpotlightOverlayClient === "function") {
+            closePersonSpotlightOverlayClient(ev);
             ev.preventDefault();
             return;
           }

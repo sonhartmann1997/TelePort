@@ -2113,6 +2113,52 @@
     return anyYt ? anyYt.key : null;
   }
 
+  function extractBestTmdbClearLogoPath(imagesObj) {
+    const logos = Array.isArray(imagesObj?.logos)
+      ? imagesObj.logos.filter(l => l && l.file_path && !String(l.file_path).toLowerCase().endsWith(".svg"))
+      : [];
+    if (logos.length === 0) return "";
+    const deLogo = logos.find(l => l.iso_639_1 === "de");
+    if (deLogo) return deLogo.file_path;
+    const enLogo = logos.find(l => l.iso_639_1 === "en");
+    if (enLogo) return enLogo.file_path;
+    const nullLogo = logos.find(l => !l.iso_639_1 || l.iso_639_1 === "xx");
+    if (nullLogo) return nullLogo.file_path;
+    return logos[0].file_path || "";
+  }
+
+  async function resolveMediaClearLogoPath(env, typeCode, mediaId, existingLogoPath = "") {
+    if (existingLogoPath) return existingLogoPath;
+    const cleanId = Number(mediaId);
+    if (!cleanId || cleanId >= 8000000) return "";
+    const memKey = `logo_${typeCode === "s" ? "s" : "m"}_${cleanId}`;
+    if (memoryFallback.has(memKey)) {
+      return memoryFallback.get(memKey) || "";
+    }
+    const d1Cached = await getEntityFromD1(env, memKey, D1_MOVIE_TTL_MS).catch(() => null);
+    if (d1Cached && typeof d1Cached.logo_path === "string") {
+      memoryFallback.set(memKey, d1Cached.logo_path);
+      return d1Cached.logo_path;
+    }
+    if (!hasSubrequestBudget(32)) return "";
+    const ep = typeCode === "s" ? "tv" : "movie";
+    try {
+      const res = await fetchWithTimeout(
+        `https://api.themoviedb.org/3/${ep}/${cleanId}/images?include_image_language=de,en,null`,
+        { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
+        2200
+      );
+      if (!res.ok) return "";
+      const imgData = await res.json();
+      const logoPath = extractBestTmdbClearLogoPath(imgData);
+      memoryFallback.set(memKey, logoPath || "");
+      await saveEntityToD1(env, memKey, "tmdb_logo", { logo_path: logoPath || "" }).catch(() => {});
+      return logoPath || "";
+    } catch (_e) {
+      return "";
+    }
+  }
+
   async function fetchMovieDetails(env, movieId) {
     const cacheKey = `movie_${movieId}`;
     // 1. L1 In-Memory Cache prüfen (nur wenn Poster bereits vorhanden oder Fallback-ID >= 8000000)
@@ -2223,10 +2269,14 @@
         providerIds,
         poster_path: posterPath,
         backdrop_path: backdropPath,
+        logo_path: extractBestTmdbClearLogoPath(data.images),
         vote_average: data.vote_average,
         title: data.title || "Unbekannt",
         trailerKey
       };
+      if (result.logo_path) {
+        memoryFallback.set(`logo_m_${result.id}`, result.logo_path);
+      }
       setCachedTmdb(cacheKey, result);
       if (d1Movie) {
         await saveMovieToD1(env, result);
@@ -2543,6 +2593,7 @@
         poster_path: posterPath,
         external_poster_url: !posterPath ? fallbackExternalPoster : "",
         backdrop_path: backdropPath,
+        logo_path: extractBestTmdbClearLogoPath(data.images),
         vote_average: data.vote_average || tvMazeData?.vote_average || 0,
         title: data.name || tvMazeData?.title || "Unbekannt",
         original_name: data.original_name || data.name || "",
@@ -2551,6 +2602,9 @@
         numberOfEpisodes: data.number_of_episodes || tvMazeData?.episodes?.length || 0,
         seasons
       };
+      if (result.logo_path) {
+        memoryFallback.set(`logo_s_${result.id}`, result.logo_path);
+      }
       setCachedTmdb(cacheKey, result);
       if (d1Series) {
         await saveSeriesToD1(env, result);
@@ -3398,6 +3452,10 @@
         id: data.id,
         name: data.name || memoryFallback.get(`person_name_${personId}`) || "Unbekannt",
         known_for: data.known_for_department || "",
+        profile_path: data.profile_path || "",
+        biography: String(data.biography || "").trim().slice(0, 600),
+        birthday: data.birthday || "",
+        place_of_birth: data.place_of_birth || "",
         credits
       };
       setCachedTmdb(cacheKey, result);

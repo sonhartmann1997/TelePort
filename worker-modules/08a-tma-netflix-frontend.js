@@ -2935,6 +2935,29 @@
         text-transform: uppercase;
         text-shadow: 0 4px 20px rgba(0, 0, 0, 0.92), 0 1px 4px rgba(0, 0, 0, 0.9);
       }
+      .cinema-clear-logo-wrap {
+        display: flex;
+        align-items: flex-end;
+        min-height: calc(clamp(44px, 7vh, 78px) * var(--scale-text));
+        margin-bottom: 2px;
+      }
+      .cinema-clear-logo {
+        display: block;
+        max-height: calc(clamp(54px, 8.8vh, 88px) * var(--scale-text));
+        max-width: min(420px, 84vw);
+        width: auto;
+        height: auto;
+        object-fit: contain;
+        object-position: left bottom;
+        filter: drop-shadow(0 6px 22px rgba(0, 0, 0, 0.92)) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.86));
+        user-select: none;
+        -webkit-user-drag: none;
+        transition: transform 0.2s ease, filter 0.2s ease;
+      }
+      .cinema-clear-logo:hover {
+        transform: scale(1.015);
+        filter: drop-shadow(0 8px 26px rgba(var(--ambi-1, 14, 165, 233), 0.45)) drop-shadow(0 4px 12px rgba(0, 0, 0, 0.92));
+      }
       .hero-meta-clean {
         font-size: var(--cinema-meta-size);
         color: #f8fafc;
@@ -2992,8 +3015,8 @@
         position: relative;
         border-radius: 9px;
         border: 1px solid transparent;
-        padding: 3px 6px;
-        margin-left: -6px;
+        padding: 0;
+        margin-left: 0;
         cursor: default;
         transition: background 0.2s ease, border-color 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
         outline: none !important;
@@ -3002,19 +3025,10 @@
       .expandable-desc-box.is-expanded {
         cursor: pointer;
       }
-      @media (hover: hover) and (pointer: fine) {
-        .expandable-desc-box.is-long-desc:hover,
-        .expandable-desc-box.is-expanded:hover {
-          background: rgba(15, 23, 42, 0.56);
-          border-color: rgba(56, 189, 248, 0.52);
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
-        }
-      }
-      .expandable-desc-box.is-long-desc.spatial-focus,
-      .expandable-desc-box.is-expanded.spatial-focus {
-        background: rgba(15, 23, 42, 0.56);
-        border-color: rgba(56, 189, 248, 0.56);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+      .expandable-desc-box.is-long-desc:hover .desc-expand-hint,
+      .expandable-desc-box.is-long-desc.spatial-focus .desc-expand-hint {
+        color: #ffffff;
+        text-decoration: underline;
       }
       .expandable-desc-scroll {
         display: -webkit-box;
@@ -4811,33 +4825,19 @@
         display: flex;
         flex-direction: column;
       }
-      /* Kompakte Sub-Topbar-Leiste direkt unter der Unified-Topbar für Film/Serie, Universum, Reihe, Anbieter & ausgegraute aktive Filter */
-      .detail-sub-topbar-strip {
-        position: relative;
-        z-index: 15;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        flex-wrap: wrap;
-        padding: 8px clamp(16px, 4.5vw, 56px);
-        background: linear-gradient(90deg, rgba(8, 13, 25, 0.88) 0%, rgba(var(--ambi-1), 0.16) 55%, rgba(8, 13, 25, 0.86) 100%);
-        border-bottom: 1px solid rgba(var(--ambi-2), 0.22);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-      }
-      .detail-sub-topbar-left,
-      .detail-sub-topbar-right {
+      /* Natürliche Kicker-Zeile direkt über dem Filmtitel (ersetzt die alte künstliche Top-Extraleiste) */
+      .detail-kicker-row {
         display: flex;
         align-items: center;
         gap: 7px;
         flex-wrap: wrap;
+        margin-bottom: 2px;
       }
       .detail-active-filter-chip.muted {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        font-size: calc(11px * var(--scale-text));
+        font-size: calc(10.5px * var(--scale-text));
         font-weight: 600;
         color: rgba(148, 163, 184, 0.78);
         background: rgba(15, 23, 42, 0.52);
@@ -4854,9 +4854,9 @@
         background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(99, 102, 241, 0.22));
         border: 1px solid rgba(56, 189, 248, 0.58);
         color: #f0f9ff;
-        padding: calc(4px * var(--scale-menu)) calc(11px * var(--scale-menu));
+        padding: calc(3px * var(--scale-menu)) calc(10px * var(--scale-menu));
         border-radius: 999px;
-        font-size: calc(11.5px * var(--scale-text));
+        font-size: calc(11px * var(--scale-text));
         font-weight: 800;
         cursor: pointer;
         box-shadow: 0 4px 14px rgba(2, 132, 199, 0.25);
@@ -4869,19 +4869,76 @@
         color: #ffffff;
         transform: translateY(-1px);
       }
-      /* Fullbleed Detail Hero Stage mit identischem Kino-Backdrop, Ambilight & 1:1 Größen wie beim Haupt-Slider */
+      /* Sticky Mini-Header beim Runterscrollen auf der Detailseite */
+      .detail-sticky-mini-header {
+        position: fixed;
+        top: var(--sticky-header-height, 54px);
+        left: 0;
+        right: 0;
+        z-index: 115;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 28px;
+        background: linear-gradient(90deg, rgba(6, 9, 18, 0.92) 0%, rgba(var(--ambi-1, 14, 165, 233), 0.18) 55%, rgba(6, 9, 18, 0.94) 100%);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border-bottom: 1px solid rgba(var(--ambi-1, 56, 189, 248), 0.28);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
+        opacity: 0;
+        transform: translateY(-12px);
+        pointer-events: none;
+        transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .detail-sticky-mini-header.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+      .detail-sticky-mini-left {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .detail-sticky-mini-title {
+        font-size: calc(14px * var(--scale-text));
+        font-weight: 900;
+        color: #ffffff;
+        text-transform: uppercase;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: min(460px, 52vw);
+      }
+      .detail-sticky-mini-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+      }
+      /* 1:1 Identische Detail-Hero-Stage wie im Haupt-Slider (.hero) – Zero Jump */
       .detail-hero-stage {
         position: relative;
+        z-index: 1;
         width: 100%;
-        min-height: clamp(460px, 68vh, 780px);
-        margin-top: 0;
-        padding: clamp(28px, 4.5vh, 52px) clamp(16px, 4.5vw, 56px) 34px;
+        margin: 0;
+        min-height: calc(100vh - var(--sticky-header-height, 54px));
+        min-height: calc(100svh - var(--sticky-header-height, 54px));
+        height: calc(100svh - var(--sticky-header-height, 54px));
+        box-sizing: border-box;
+        padding: 16px 28px 14px;
         display: flex;
         flex-direction: column;
-        justify-content: flex-end;
+        justify-content: space-between;
         overflow: hidden;
         isolation: isolate;
-        transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+        touch-action: pan-x;
+        transition: opacity 0.18s ease;
+      }
+      .detail-hero-stage:has(.expandable-desc-box.is-expanded) {
+        touch-action: pan-x pan-y;
       }
       .detail-stage-transitioning .detail-hero-stage,
       .detail-stage-transitioning .detail-content-body {
@@ -4889,18 +4946,11 @@
         transform: translateX(var(--adj-slide-dir, 14px));
         transition: opacity 0.16s ease, transform 0.16s ease;
       }
-      .detail-morph-enter .detail-hero-content {
-        animation: detailHeroMorphIn 0.28s cubic-bezier(0.22, 1, 0.36, 1);
-      }
       .detail-morph-enter .detail-content-body {
-        animation: detailBodyRevealIn 0.34s cubic-bezier(0.22, 1, 0.36, 1);
-      }
-      @keyframes detailHeroMorphIn {
-        from { opacity: 0.45; transform: translateY(8px) scale(0.99); }
-        to { opacity: 1; transform: translateY(0) scale(1); }
+        animation: detailBodyRevealIn 0.28s cubic-bezier(0.22, 1, 0.36, 1);
       }
       @keyframes detailBodyRevealIn {
-        from { opacity: 0; transform: translateY(18px); }
+        from { opacity: 0; transform: translateY(14px); }
         to { opacity: 1; transform: translateY(0); }
       }
       .detail-backdrop-layer {
@@ -4909,70 +4959,125 @@
         z-index: 0;
         background-image: var(--hero-bg-landscape);
         background-size: cover;
-        background-position: center 18%;
+        background-position: center top;
         background-repeat: no-repeat;
-        transform: scale(1.02);
-        animation: heroKenBurns 18s ease-out forwards;
-        filter: saturate(1.08) contrast(1.04);
+        pointer-events: none;
+        transform: translate3d(0, var(--detail-parallax-y, 0px), 0) scale(var(--detail-parallax-scale, 1));
+        filter: blur(var(--detail-parallax-blur, 0px));
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        will-change: transform, filter;
       }
       @media (max-width: 640px), (orientation: portrait) {
         .detail-backdrop-layer {
-          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape));
-          background-position: center 14%;
+          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape)) !important;
+          background-position: center top !important;
+          background-size: cover !important;
         }
+      }
+      /* Lautloser Hintergrund-Video-Teaser (Apple TV+ / Netflix Style) */
+      .detail-bg-video-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        overflow: hidden;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.85s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .detail-bg-video-layer.is-playing {
+        opacity: 1;
+      }
+      .detail-bg-video-frame {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: max(100vw, 177.78vh);
+        height: max(56.25vw, 100vh);
+        transform: translate(-50%, -50%) scale(1.08);
+        border: 0;
+        pointer-events: none;
       }
       .detail-ambilight-glow {
         position: absolute;
-        inset: -12%;
+        inset: -10%;
         z-index: 1;
         pointer-events: none;
         background:
-          radial-gradient(60% 55% at 72% 28%, rgba(var(--ambi-1, 14, 165, 233), 0.24) 0%, transparent 72%),
-          radial-gradient(55% 50% at 24% 68%, rgba(var(--ambi-2, 99, 102, 241), 0.18) 0%, transparent 75%);
+          radial-gradient(58% 52% at 74% 26%, rgba(var(--ambi-1, 14, 165, 233), 0.16) 0%, transparent 72%),
+          radial-gradient(50% 46% at 22% 72%, rgba(var(--ambi-2, 99, 102, 241), 0.14) 0%, transparent 74%);
         mix-blend-mode: screen;
-        opacity: 0.85;
+        opacity: 0.78;
       }
+      /* 1:1 Exakt derselbe kristallklare Scrim-Verlauf wie im Haupt-Slider (.hero-scrim-layer) */
       .detail-scrim-layer {
         position: absolute;
         inset: 0;
         z-index: 1;
         pointer-events: none;
         background:
-          linear-gradient(90deg, rgba(6, 9, 20, 0.94) 0%, rgba(6, 9, 20, 0.80) 38%, rgba(6, 9, 20, 0.34) 72%, rgba(6, 9, 20, 0.14) 100%),
-          linear-gradient(180deg, rgba(6, 9, 20, 0.46) 0%, rgba(6, 9, 20, 0.12) 32%, rgba(6, 9, 20, 0.72) 76%, var(--bg) 100%);
+          linear-gradient(180deg, rgba(5, 8, 16, 0.22) 0%, rgba(5, 8, 16, 0) 48px),
+          linear-gradient(0deg, var(--bg) 0%, rgba(6, 9, 17, 0.92) 9%, rgba(6, 9, 17, 0.44) 24%, rgba(6, 9, 17, 0.08) 42%, rgba(6, 9, 17, 0) 58%),
+          linear-gradient(90deg, rgba(4, 7, 15, 0.84) 0%, rgba(4, 7, 15, 0.62) 22%, rgba(4, 7, 15, 0.28) 44%, rgba(4, 7, 15, 0.05) 64%, rgba(4, 7, 15, 0) 78%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
+        transform: translate3d(0, 0, 0);
       }
       .detail-hero-stage.hero-bright-backdrop .detail-scrim-layer {
         background:
-          linear-gradient(90deg, rgba(4, 7, 16, 0.97) 0%, rgba(4, 7, 16, 0.88) 44%, rgba(4, 7, 16, 0.48) 76%, rgba(4, 7, 16, 0.22) 100%),
-          linear-gradient(180deg, rgba(4, 7, 16, 0.62) 0%, rgba(4, 7, 16, 0.20) 32%, rgba(4, 7, 16, 0.82) 76%, var(--bg) 100%);
+          linear-gradient(180deg, rgba(5, 8, 16, 0.28) 0%, rgba(5, 8, 16, 0) 56px),
+          linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.95) 11%, rgba(5, 8, 16, 0.52) 27%, rgba(5, 8, 16, 0.12) 45%, rgba(5, 8, 16, 0) 62%),
+          linear-gradient(90deg, rgba(4, 7, 15, 0.92) 0%, rgba(4, 7, 15, 0.76) 26%, rgba(4, 7, 15, 0.42) 48%, rgba(4, 7, 15, 0.10) 68%, rgba(4, 7, 15, 0) 84%),
+          linear-gradient(90deg, var(--bg) 0%, rgba(5, 8, 16, 0) 3%, rgba(5, 8, 16, 0) 97%, var(--bg) 100%);
+      }
+      @media (orientation: portrait), (max-width: 640px) {
+        .detail-scrim-layer,
+        .detail-hero-stage.hero-bright-backdrop .detail-scrim-layer {
+          background:
+            linear-gradient(180deg, rgba(4, 7, 15, 0.22) 0%, rgba(4, 7, 15, 0) 48px),
+            linear-gradient(0deg, var(--bg) 0%, rgba(5, 8, 16, 0.96) 14%, rgba(5, 8, 16, 0.74) 30%, rgba(5, 8, 16, 0.24) 46%, rgba(5, 8, 16, 0) 64%) !important;
+        }
+      }
+      .detail-scroll-dim-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        background: var(--bg);
+        opacity: var(--detail-scroll-dim, 0);
       }
       .detail-hero-content {
         position: relative;
-        z-index: 3;
-        max-width: min(920px, 100%);
+        z-index: 2;
+        min-width: 0;
+        max-width: 600px;
         width: 100%;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 6px;
+        padding: 4px 0;
       }
       .detail-kicker-link {
         display: inline-flex;
         align-items: center;
         gap: 5px;
-        color: #e2e8f0;
-        background: rgba(255, 255, 255, 0.08);
-        border: 1px solid rgba(255, 255, 255, 0.16);
+        color: #f1f5f9;
+        background: rgba(15, 23, 42, 0.56);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(var(--ambi-1, 148, 163, 184), 0.34);
         padding: 3px 10px;
-        border-radius: 7px;
+        border-radius: 999px;
         cursor: pointer;
-        font-size: calc(11.5px * var(--scale-text));
-        font-weight: 700;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 800;
+        letter-spacing: 0.3px;
         transition: all 0.15s ease;
       }
       .detail-kicker-link:hover, .detail-kicker-link.spatial-focus {
-        background: rgba(56, 189, 248, 0.22);
+        background: rgba(56, 189, 248, 0.24);
         border-color: #38bdf8;
         color: #ffffff;
+        transform: translateY(-1px);
       }
       .detail-monumental-title {
         margin: 0;
@@ -4997,11 +5102,11 @@
         font-size: var(--cinema-meta-size);
         font-weight: 700;
         color: #f8fafc;
-        line-height: 1.45;
+        margin-bottom: 4px;
         text-shadow: 0 2px 8px rgba(0, 0, 0, 0.95);
       }
       .detail-meta-rating {
-        color: #facc15;
+        color: #ef4444;
         font-weight: 900;
         display: inline-flex;
         align-items: center;
@@ -5009,29 +5114,30 @@
       }
       .detail-meta-dot {
         color: rgba(255, 255, 255, 0.5);
-        margin: 0 2px;
         user-select: none;
       }
       .detail-meta-link {
         color: #e2e8f0;
         cursor: pointer;
       }
+      .detail-meta-link:hover, .detail-meta-link.spatial-focus {
+        color: #38bdf8;
+        text-decoration: underline;
+      }
       .detail-meta-studio {
         color: #e2e8f0;
         font-weight: 700;
         cursor: pointer;
       }
-      /* Flixnet Hero Action Bar: 1:1 mit Slider-Buttons */
+      /* Flixnet Hero Action Bar: 1:1 mit Slider-Buttons (unter der Beschreibung) */
       .detail-action-bar {
-        display: flex;
+        display: inline-flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 12px;
+        gap: 10px;
         flex-wrap: wrap;
-        margin-top: 2px;
       }
       .detail-action-primary-group {
-        display: flex;
+        display: inline-flex;
         align-items: center;
         gap: 10px;
         flex-wrap: wrap;
@@ -5075,7 +5181,7 @@
         font-weight: 700;
         cursor: pointer;
         backdrop-filter: blur(12px);
-        max-width: min(380px, 84vw);
+        max-width: min(360px, 84vw);
         text-overflow: ellipsis;
         white-space: nowrap;
         overflow: hidden;
@@ -5123,18 +5229,61 @@
         border-color: rgba(52, 211, 153, 0.72);
         color: #ecfdf5;
       }
+      .detail-btn-glass.teaser-active {
+        border-color: rgba(56, 189, 248, 0.68);
+        color: #e0f2fe;
+      }
       .detail-overview-wrap {
         max-width: min(68ch, 100%);
-        margin-top: 2px;
+        margin-bottom: 10px;
       }
-      /* Untere Sektionen im Fullscreen-App-View (Episoden/Teile, Cast mit Fotos, Filmreihe & Ähnliche Titel mit Covern) */
+      /* Untere Sektionen im Fullscreen-App-View (Zusatz-Infos, Episoden/Teile, Cast-Glas-Karten, Filmreihe & Ähnliche Titel) */
       .detail-content-body {
         width: 100%;
-        padding: 12px clamp(16px, 4.5vw, 56px) 64px;
+        padding: 18px 28px 64px;
         display: flex;
         flex-direction: column;
         gap: calc(28px * var(--scale-all));
         transition: opacity 0.22s ease, transform 0.22s ease;
+      }
+      /* Edle Kino-Glas-Infoleiste für Zusatz-Infos (Regie, Studio, Land, Streaming-Anbieter) beim Runterscrollen */
+      .detail-credits-glass-strip {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: calc(10px * var(--scale-all));
+        padding: calc(12px * var(--scale-all)) calc(16px * var(--scale-all));
+        border-radius: 14px;
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.68), rgba(9, 14, 28, 0.54));
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(var(--ambi-1, 148, 163, 184), 0.22);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+      }
+      .detail-credit-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: calc(5px * var(--scale-menu)) calc(12px * var(--scale-menu));
+        border-radius: 999px;
+        background: rgba(30, 41, 59, 0.62);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        color: #e2e8f0;
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+        transition: all 0.16s ease;
+      }
+      .detail-credit-pill b {
+        color: #94a3b8;
+        font-weight: 700;
+      }
+      .detail-credit-pill:hover, .detail-credit-pill.spatial-focus {
+        background: rgba(56, 189, 248, 0.22);
+        border-color: #38bdf8;
+        color: #ffffff;
+        transform: translateY(-1px);
       }
       .detail-section-block {
         display: flex;
@@ -5147,6 +5296,16 @@
         justify-content: space-between;
         gap: 12px;
         flex-wrap: wrap;
+      }
+      .detail-section-header-right {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .detail-header-nav-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
       }
       .detail-section-heading {
         display: inline-flex;
@@ -5164,45 +5323,63 @@
         width: 4px;
         height: calc(20px * var(--scale-text));
         border-radius: 2px;
-        background: linear-gradient(180deg, #38bdf8, #6366f1);
-        box-shadow: 0 0 12px rgba(56, 189, 248, 0.65);
+        background: linear-gradient(180deg, rgb(var(--ambi-1, 56, 189, 248)), rgb(var(--ambi-2, 99, 102, 241)));
+        box-shadow: 0 0 12px rgba(var(--ambi-1, 56, 189, 248), 0.65);
       }
-      /* Horizontaler Cast-Foto-Track (mit dynamischer Zoom-Skalierung via --scale-cover & --scale-text) */
+      /* Neuer Cast-Slider: Kompakte horizontale Glas-Karten mit rundem Porträt, Name + Rolle daneben */
       .detail-carousel-wrap {
         position: relative;
         width: 100%;
       }
       .detail-cast-track {
         display: flex;
-        gap: calc(14px * var(--scale-cover));
+        gap: calc(12px * var(--scale-cover));
         overflow-x: auto;
         overflow-y: hidden;
-        padding: 6px 4px 14px;
+        padding: 6px 4px 12px;
         scroll-behavior: smooth;
         scrollbar-width: none;
+        cursor: grab;
+        user-select: none;
+      }
+      .detail-cast-track.is-dragging,
+      .detail-similar-track.is-dragging {
+        cursor: grabbing;
+        scroll-behavior: auto;
       }
       .detail-cast-track::-webkit-scrollbar { display: none; }
       .detail-cast-card {
         flex: 0 0 auto;
-        width: calc(114px * var(--scale-cover));
+        width: calc(238px * var(--scale-cover));
         display: flex;
-        flex-direction: column;
-        gap: 6px;
+        flex-direction: row;
+        align-items: center;
+        gap: calc(12px * var(--scale-cover));
+        padding: calc(8px * var(--scale-cover)) calc(14px * var(--scale-cover)) calc(8px * var(--scale-cover)) calc(8px * var(--scale-cover));
         cursor: pointer;
-        border-radius: 11px;
-        transition: transform 0.16s ease;
+        border-radius: 999px;
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.76), rgba(30, 41, 59, 0.52));
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+        transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
       }
       .detail-cast-card:hover, .detail-cast-card.spatial-focus {
-        transform: translateY(-4px);
+        transform: translateY(-2px);
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.90), rgba(14, 165, 233, 0.22));
+        border-color: rgba(var(--ambi-1, 56, 189, 248), 0.72);
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.65);
       }
       .detail-cast-photo-wrap {
-        width: calc(114px * var(--scale-cover));
-        height: calc(150px * var(--scale-cover));
-        border-radius: 11px;
+        width: calc(52px * var(--scale-cover));
+        height: calc(52px * var(--scale-cover));
+        border-radius: 50%;
+        flex-shrink: 0;
         overflow: hidden;
         background: #0f172a;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+        border: 1.5px solid rgba(var(--ambi-1, 56, 189, 248), 0.42);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
       }
       .detail-cast-card:hover .detail-cast-photo-wrap,
       .detail-cast-card.spatial-focus .detail-cast-photo-wrap {
@@ -5215,27 +5392,29 @@
         object-position: center 20%;
         display: block;
       }
+      .detail-cast-info {
+        min-width: 0;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
       .detail-cast-name {
-        font-size: calc(12px * var(--scale-text));
+        font-size: calc(13px * var(--scale-text));
         font-weight: 800;
         color: #f8fafc;
         line-height: 1.25;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
+        white-space: nowrap;
         overflow: hidden;
-        word-break: break-word;
+        text-overflow: ellipsis;
       }
       .detail-cast-role {
-        font-size: calc(11px * var(--scale-text));
+        font-size: calc(11.5px * var(--scale-text));
         color: #94a3b8;
         line-height: 1.22;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
+        white-space: nowrap;
         overflow: hidden;
-        word-break: break-word;
-        margin-top: -2px;
+        text-overflow: ellipsis;
       }
       /* Horizontale Filmreihen- & "Das könnte dir auch gefallen" Cover-Reihe (mit --scale-cover Zoom) */
       .detail-similar-track {
@@ -5246,6 +5425,8 @@
         padding: 6px 4px 16px;
         scroll-behavior: smooth;
         scrollbar-width: none;
+        cursor: grab;
+        user-select: none;
       }
       .detail-similar-track::-webkit-scrollbar { display: none; }
       .detail-sim-card {
@@ -5317,32 +5498,112 @@
         overflow: hidden;
         text-overflow: ellipsis;
       }
+      /* Dauerhaft sichtbare & zuverlässige Header-Pfeile (‹ / ›) für Cast, Filmreihe & Ähnliche Titel */
       .detail-carousel-arrow {
-        position: absolute;
-        top: 50%;
-        transform: translateY(-50%);
+        position: relative;
         z-index: 6;
-        width: calc(38px * var(--scale-menu));
-        height: calc(56px * var(--scale-menu));
-        border-radius: 8px;
-        background: rgba(9, 13, 22, 0.82);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        color: #ffffff;
-        font-size: calc(20px * var(--scale-text));
-        font-weight: 800;
-        display: flex;
+        width: calc(34px * var(--scale-menu));
+        height: calc(34px * var(--scale-menu));
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.78);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: #f8fafc;
+        font-size: calc(18px * var(--scale-text));
+        font-weight: 900;
+        line-height: 1;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
-        backdrop-filter: blur(8px);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
         transition: all 0.15s ease;
       }
       .detail-carousel-arrow:hover, .detail-carousel-arrow.spatial-focus {
-        background: rgba(30, 41, 59, 0.96);
+        background: rgba(14, 165, 233, 0.32);
         border-color: #38bdf8;
+        color: #ffffff;
+        transform: translateY(-1px) scale(1.05);
       }
-      .detail-carousel-arrow.prev { left: 6px; }
-      .detail-carousel-arrow.next { right: 6px; }
+      /* Schauspieler- & Regie-Spotlight-Overlay (Mini-Filmografie direkt über der Detailansicht) */
+      .person-spotlight-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 260;
+        background: rgba(3, 7, 18, 0.78);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        animation: fadeIn 0.18s ease;
+      }
+      .person-spotlight-card {
+        width: min(880px, 96vw);
+        max-height: 86vh;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 22px 24px;
+        border-radius: 20px;
+        background: linear-gradient(145deg, rgba(15, 23, 42, 0.92), rgba(7, 11, 22, 0.96));
+        border: 1px solid rgba(var(--ambi-1, 56, 189, 248), 0.38);
+        box-shadow: 0 28px 70px rgba(0, 0, 0, 0.92);
+        overflow-y: auto;
+      }
+      .person-spotlight-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .person-spotlight-profile {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-width: 0;
+      }
+      .person-spotlight-avatar {
+        width: calc(74px * var(--scale-cover));
+        height: calc(74px * var(--scale-cover));
+        border-radius: 50%;
+        object-fit: cover;
+        object-position: center 20%;
+        border: 2px solid #38bdf8;
+        background: #0f172a;
+        flex-shrink: 0;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+      }
+      .person-spotlight-name {
+        font-size: calc(22px * var(--scale-text));
+        font-weight: 900;
+        color: #ffffff;
+        margin: 0;
+        line-height: 1.15;
+      }
+      .person-spotlight-sub {
+        font-size: calc(12.5px * var(--scale-text));
+        color: #7dd3fc;
+        font-weight: 700;
+        margin-top: 3px;
+      }
+      .person-spotlight-bio {
+        font-size: calc(12.5px * var(--scale-text));
+        color: #cbd5e1;
+        line-height: 1.55;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .person-spotlight-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(calc(132px * var(--scale-cover)), 1fr));
+        gap: calc(12px * var(--scale-cover));
+      }
       /* Live-Zoom-Badge (oben rechts bei L2/R2 oder +/-) & Controller-HUD (PlayStation / Xbox) */
       #liveZoomBadgeEl {
         position: fixed;
@@ -5398,11 +5659,10 @@
       }
       @media (max-width: 640px) {
         .detail-hero-stage {
-          min-height: 440px;
-          padding: 28px 16px 24px;
+          padding: 14px 16px 12px;
         }
-        .detail-carousel-arrow {
-          display: none;
+        .detail-content-body {
+          padding: 16px 16px 56px;
         }
         #controllerHudBar {
           display: none !important;
@@ -7787,6 +8047,9 @@
       }
 
       function closeDetailModal() {
+        if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
+          stopDetailBackgroundVideoTeaserClient();
+        }
         if (document.body) document.body.classList.remove("modal-open-pause-hero");
         const m = document.getElementById("modalRoot");
         if (m) m.innerHTML = "";
@@ -10183,6 +10446,66 @@
         }
       }
 
+      const clientClearLogoCache = new Map();
+
+      function resolveClearLogoUrlClient(logoPath) {
+        const clean = String(logoPath || "").trim();
+        if (!clean) return "";
+        if (clean.startsWith("http://") || clean.startsWith("https://")) return clean;
+        return "https://image.tmdb.org/t/p/w500" + (clean.startsWith("/") ? clean : ("/" + clean));
+      }
+
+      function onClearLogoImgErrorClient(imgEl) {
+        if (!imgEl || !imgEl.parentElement) return;
+        const altText = esc(imgEl.getAttribute("alt") || "Titel");
+        imgEl.parentElement.outerHTML =
+          '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1">' +
+            '<span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + altText + '</span>' +
+          '</div>';
+      }
+
+      function buildHeroTitleOrLogoInnerHtmlClient(titleRaw, logoPath, clickAttr = "") {
+        const safeTitle = esc(String(titleRaw || "Titel"));
+        const logoUrl = resolveClearLogoUrlClient(logoPath);
+        const clickProp = clickAttr ? (' onclick="' + clickAttr + '" style="cursor:pointer" title="Nach „' + safeTitle + '“ suchen"') : '';
+        if (logoUrl) {
+          return '<div class="cinema-clear-logo-wrap"' + clickProp + '>' +
+            '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" draggable="false" onerror="onClearLogoImgErrorClient(this)" />' +
+          '</div>';
+        }
+        return '<div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1"' + clickProp + '>' +
+          '<span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + safeTitle + '</span>' +
+        '</div>';
+      }
+
+      async function ensureHeroSlideClearLogoClient(hero, heroType) {
+        if (!hero || !hero.id || Number(hero.id) >= 8000000) return;
+        const key = (heroType === "s" ? "s" : "m") + "_" + Number(hero.id);
+        if (hero.logo_path) {
+          clientClearLogoCache.set(key, hero.logo_path);
+          return;
+        }
+        if (clientClearLogoCache.has(key)) {
+          hero.logo_path = clientClearLogoCache.get(key) || "";
+          return;
+        }
+        clientClearLogoCache.set(key, ""); // In-flight guard
+        try {
+          const r = await apiFetchJson(API_BASE + "/logo?type=" + encodeURIComponent(heroType === "s" ? "s" : "m") + "&id=" + encodeURIComponent(hero.id));
+          const lp = String(r?.logo_path || "").trim();
+          clientClearLogoCache.set(key, lp);
+          hero.logo_path = lp;
+          if (!lp) return;
+          const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+          if (activeHero && String(activeHero.id) === String(hero.id)) {
+            const heroTitleBox = document.getElementById("heroTitleBoxEl");
+            if (heroTitleBox) {
+              heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(hero.title || hero.name || "", lp);
+            }
+          }
+        } catch (_e) {}
+      }
+
       function buildHeroBannerInnerHtml() {
         syncHeroExpandedBodyClass();
         syncHeroSearchPlaceholderAndToggleBtnClient();
@@ -10250,7 +10573,9 @@
                   '<div class="hero-widescreen-body">' +
                     '<div id="heroContentEl" class="hero-content">' +
                       '<div id="heroKickerEl" class="hero-kicker">HIGHLIGHT DIESE WOCHE</div>' +
-                      '<div class="hero-title"><div id="heroTitleMarqueeWrap" class="inline-marquee-wrap" data-marquee-always="1"><span id="heroTitleTextEl" class="inline-marquee-text hero-title-text">' + heroTitleSafe + '</span></div></div>' +
+                      '<div id="heroTitleBoxEl" class="hero-title">' +
+                        buildHeroTitleOrLogoInnerHtmlClient(heroTitleRaw, hero.logo_path || clientClearLogoCache.get(heroCardKey) || "") +
+                      '</div>' +
                       '<div id="heroMetaCleanEl" class="hero-meta-clean">' +
                         buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr) +
                       '</div>' +
@@ -10347,14 +10672,21 @@
               setTimeout(() => contentEl.classList.remove("hero-fade-step"), 60);
             }
 
-            const titleWrap = document.getElementById("heroTitleMarqueeWrap");
-            const titleTextEl = document.getElementById("heroTitleTextEl");
-            if (titleWrap && typeof deactivateInlineTextMarquee === "function") {
-              deactivateInlineTextMarquee(titleWrap);
+            const heroLogoPath = hero.logo_path || clientClearLogoCache.get(heroCardKey) || "";
+            const heroTitleBox = document.getElementById("heroTitleBoxEl");
+            if (heroTitleBox) {
+              heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(heroTitleRaw, heroLogoPath);
+            } else {
+              const titleWrap = document.getElementById("heroTitleMarqueeWrap");
+              const titleTextEl = document.getElementById("heroTitleTextEl");
+              if (titleWrap && typeof deactivateInlineTextMarquee === "function") {
+                deactivateInlineTextMarquee(titleWrap);
+              }
+              if (titleTextEl) {
+                titleTextEl.textContent = heroTitleRaw;
+              }
             }
-            if (titleTextEl) {
-              titleTextEl.textContent = heroTitleRaw;
-            }
+            ensureHeroSlideClearLogoClient(hero, heroType);
             const metaEl = document.getElementById("heroMetaCleanEl");
             if (metaEl) {
               metaEl.innerHTML = buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr);
@@ -10437,7 +10769,9 @@
         container.innerHTML = buildHeroBannerInnerHtml();
         const curHero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
         if (curHero) {
+          const curHeroType = curHero.media_type === "tv" || state.type === "s" ? "s" : "m";
           applyDynamicHeroAmbilightClient(resolveHeroSlideBackdropUrlClient(curHero));
+          ensureHeroSlideClearLogoClient(curHero, curHeroType);
         }
         syncHeroSearchPlaceholderAndToggleBtnClient();
         if (typeof window.refreshModalAndEpisodeMarquees === "function") {
