@@ -126,15 +126,31 @@ export function useSwipeable(
         }
       };
 
+      const asDomElement = (target: EventTarget | null): Element | null => {
+        if (!target || typeof target !== 'object') return null;
+        const cand = target as Element;
+        if (typeof cand.closest === 'function') return cand;
+        const parent = (target as Node).parentElement;
+        if (parent && typeof parent.closest === 'function') return parent;
+        return null;
+      };
+
       const isTargetInsideHero = (target: EventTarget | null): boolean => {
-        if (!target || !(target instanceof Element)) return false;
-        if (target.closest('button, a, input, select, textarea, .expandable-desc-box')) return false;
-        if (target.closest('.hero, #heroStageWrapEl, #heroBannerSlot')) return true;
+        const el = asDomElement(target);
+        if (!el) return false;
+        if (
+          el.closest(
+            'button, a, input, select, textarea, .expandable-desc-box, [data-drag-handle], .admin-drag-handle, #floatingImportStatusWidget, #adminJsonImportPanelBox, .detail-cinema-player-dock, .hero-cinema-player-dock'
+          )
+        ) {
+          return false;
+        }
+        if (el.closest('.hero, #heroStageWrapEl, #heroBannerSlot')) return true;
         const win = iframe.contentWindow;
         const isAtCatalogTop =
           Boolean(doc.body?.classList.contains('hero-scrolled-past')) &&
           (win?.scrollY || win?.pageYOffset || 0) <= 8;
-        return isAtCatalogTop && Boolean(target.closest('.section, main, #app'));
+        return isAtCatalogTop && Boolean(el.closest('.section, main, #app, #appRoot'));
       };
 
       const onPointerDown = (ev: PointerEvent) => {
@@ -178,6 +194,12 @@ export function useSwipeable(
         const bounceVelThreshold = optionsRef.current.bounceLockVelocity ?? 1.15;
         const bounceMinDist = optionsRef.current.bounceLockMinDistance ?? 34;
         const bounceCooldownMs = optionsRef.current.bounceLockCooldownMs ?? 400;
+
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+          try {
+            doc.getSelection()?.removeAllRanges();
+          } catch {}
+        }
 
         // Mid-gesture Bounce-Lock: If user swipes too fast, immediately abort rubber-band animation and lock into full state
         if (Math.abs(dy) >= bounceMinDist && Math.abs(dy) > Math.abs(dx) * 1.15) {
@@ -272,7 +294,7 @@ export function useSwipeable(
           } else {
             optionsRef.current.onSwipedDown?.(dy, effectiveVy);
           }
-        } else if (Math.abs(dx) >= 44 && Math.abs(dx) > Math.abs(dy)) {
+        } else if (Math.abs(dx) >= 40 && Math.abs(dx) > Math.abs(dy)) {
           optionsRef.current.onSwipeReset?.();
           if (dx < 0) {
             optionsRef.current.onSwipedLeft?.(dx);
@@ -291,12 +313,24 @@ export function useSwipeable(
         optionsRef.current.onSwipeReset?.();
       };
 
+      const onHeroNativeDragStart = (ev: DragEvent) => {
+        if (isTracking) {
+          ev.preventDefault();
+        }
+      };
+
+      const onHeroSelectStart = (ev: Event) => {
+        if (isTracking) {
+          ev.preventDefault();
+        }
+      };
+
       const onDelegatedTactileClick = (ev: MouseEvent) => {
-        const target = ev.target;
-        if (!target || !(target instanceof Element)) return;
+        const el = asDomElement(ev.target);
+        if (!el) return;
         // Search pill expansion / collapse or genre dropdown trigger
         if (
-          target.closest(
+          el.closest(
             '#searchInput, .search-bar, .mobile-search-collapse-btn, #searchGenreTriggerBtn'
           )
         ) {
@@ -305,7 +339,7 @@ export function useSwipeable(
         }
         // Genre chips, quick filter pills, media tabs, modal tabs, or smart page jump controls
         if (
-          target.closest(
+          el.closest(
             '.hero-meta-genre, .genre-overlay-chip, .genre-chip, .pill, .media-mode-tab, .flix-tab-btn, #heroHideBtn, .hero-dot, .hero-circle-arrow, .desc-translate-btn, .expandable-desc-box.is-long-desc, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn'
           )
         ) {
@@ -317,6 +351,8 @@ export function useSwipeable(
       doc.addEventListener('pointermove', onPointerMove, { passive: true });
       doc.addEventListener('pointerup', onPointerUp, { passive: true });
       doc.addEventListener('pointercancel', onPointerCancel, { passive: true });
+      doc.addEventListener('dragstart', onHeroNativeDragStart);
+      doc.addEventListener('selectstart', onHeroSelectStart);
       doc.addEventListener('click', onDelegatedTactileClick, { passive: true });
 
       cleanupDocListeners = () => {
@@ -324,6 +360,8 @@ export function useSwipeable(
         doc.removeEventListener('pointermove', onPointerMove);
         doc.removeEventListener('pointerup', onPointerUp);
         doc.removeEventListener('pointercancel', onPointerCancel);
+        doc.removeEventListener('dragstart', onHeroNativeDragStart);
+        doc.removeEventListener('selectstart', onHeroSelectStart);
         doc.removeEventListener('click', onDelegatedTactileClick);
       };
     };
@@ -372,26 +410,36 @@ export function useMouseDragScroll(
         }
       };
 
+      const asDomElement = (target: EventTarget | null): HTMLElement | null => {
+        if (!target || typeof target !== 'object') return null;
+        const cand = target as HTMLElement;
+        if (typeof cand.closest === 'function') return cand;
+        const parent = (target as Node).parentElement;
+        if (parent && typeof parent.closest === 'function') return parent;
+        return null;
+      };
+
       const isInteractiveSkipTarget = (target: EventTarget | null): boolean => {
-        if (!target || !(target instanceof Element)) return false;
+        const el = asDomElement(target);
+        if (!el) return false;
         if (
-          target.closest(
-            'input, textarea, select, [contenteditable="true"], [data-drag-handle], .admin-drag-handle'
+          el.closest(
+            'input, textarea, select, [contenteditable="true"], [data-drag-handle], .admin-drag-handle, #floatingImportStatusWidget, #adminJsonImportDragHandle, .detail-cinema-player-dock, .hero-cinema-player-dock'
           )
         ) {
           return true;
         }
         // Inside the open Hero Slider (when not inside an expanded description box), let useSwipeable handle rubber-band/slide gestures
         const inOpenHero =
-          Boolean(target.closest('.hero, #heroStageWrapEl')) &&
+          Boolean(el.closest('.hero, #heroStageWrapEl')) &&
           !doc.body?.classList.contains('hero-scrolled-past') &&
-          !target.closest('.expandable-desc-box.is-expanded');
+          !el.closest('.expandable-desc-box.is-expanded');
         if (inOpenHero) return true;
         return false;
       };
 
       const resolveScrollableTarget = (target: EventTarget | null): HTMLElement | Window | null => {
-        let el = target instanceof Element ? (target as HTMLElement) : null;
+        let el = asDomElement(target);
         while (el && el !== doc.body && el !== doc.documentElement) {
           const style = win.getComputedStyle(el);
           const overflowY = style.overflowY;
@@ -485,12 +533,20 @@ export function useMouseDragScroll(
         const totalDy = ev.clientY - startY;
 
         if (!isDragging) {
-          if (Math.hypot(totalDx, totalDy) < 6) return;
+          if (Math.hypot(totalDx, totalDy) < 5) return;
           isDragging = true;
           if (doc.body) {
+            doc.body.classList.add('is-gesture-dragging');
             doc.body.style.userSelect = 'none';
             doc.body.style.cursor = 'grabbing';
           }
+          try {
+            doc.getSelection()?.removeAllRanges();
+          } catch {}
+        } else {
+          try {
+            doc.getSelection()?.removeAllRanges();
+          } catch {}
         }
 
         const stepDx = ev.clientX - lastX;
@@ -523,6 +579,7 @@ export function useMouseDragScroll(
         isMouseDown = false;
         isDragging = false;
         if (doc.body) {
+          doc.body.classList.remove('is-gesture-dragging');
           doc.body.style.userSelect = '';
           doc.body.style.cursor = '';
         }
@@ -546,12 +603,19 @@ export function useMouseDragScroll(
         }
       };
 
+      const onSelectStart = (ev: Event) => {
+        if (isDragging) {
+          ev.preventDefault();
+        }
+      };
+
       doc.addEventListener('mousedown', onMouseDown, { passive: true });
       win.addEventListener('mousemove', onMouseMove, { passive: true });
       win.addEventListener('mouseup', finishDrag, { passive: true });
       win.addEventListener('mouseleave', finishDrag, { passive: true });
       doc.addEventListener('click', onClickCapture, true);
       doc.addEventListener('dragstart', onDragStart);
+      doc.addEventListener('selectstart', onSelectStart);
 
       return () => {
         stopMomentum();

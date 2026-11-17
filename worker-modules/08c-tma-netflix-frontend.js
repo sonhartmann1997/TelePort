@@ -3238,60 +3238,130 @@
       }
 
       let adminJsonImportPanelCollapsed = false;
-      const adminPanelDragOffsets = new WeakMap();
+      const adminPanelDragOffsets = new Map();
+      let activeAdminDragState = null;
+
+      function applyAdminPanelDragOffsetClient(panelEl, nx, ny) {
+        if (!panelEl) return;
+        const key = panelEl.id || "default_admin_panel";
+        const rx = Math.round(Number(nx) || 0);
+        const ry = Math.round(Number(ny) || 0);
+        adminPanelDragOffsets.set(key, { x: rx, y: ry });
+        if (panelEl.id === "floatingImportStatusWidget") {
+          panelEl.style.transform = "translate3d(calc(-50% + " + rx + "px), " + ry + "px, 0)";
+        } else {
+          panelEl.style.transform = "translate3d(" + rx + "px, " + ry + "px, 0)";
+          panelEl.style.position = "relative";
+          panelEl.style.zIndex = "75";
+        }
+      }
+
+      if (typeof window !== "undefined" && !window._adminGlobalDragListenersBound) {
+        window._adminGlobalDragListenersBound = true;
+        const onMove = (ev) => {
+          if (!activeAdminDragState) return;
+          if (ev.buttons !== undefined && ev.buttons === 0 && ev.type === "mousemove") {
+            endGlobalAdminDrag();
+            return;
+          }
+          try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
+          const clientX = typeof ev.clientX === "number" ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : activeAdminDragState.startX);
+          const clientY = typeof ev.clientY === "number" ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : activeAdminDragState.startY);
+          const dx = clientX - activeAdminDragState.startX;
+          const dy = clientY - activeAdminDragState.startY;
+          const livePanel = document.getElementById(activeAdminDragState.panelId) || activeAdminDragState.panelEl;
+          if (livePanel) {
+            applyAdminPanelDragOffsetClient(livePanel, activeAdminDragState.baseX + dx, activeAdminDragState.baseY + dy);
+          }
+        };
+        const endGlobalAdminDrag = () => {
+          if (!activeAdminDragState) return;
+          const liveHandle = document.getElementById(activeAdminDragState.handleId) || activeAdminDragState.handleEl;
+          if (liveHandle) {
+            liveHandle.style.cursor = "grab";
+          }
+          if (document.body) {
+            document.body.classList.remove("is-gesture-dragging");
+            document.body.style.userSelect = "";
+          }
+          activeAdminDragState = null;
+        };
+        window.addEventListener("selectstart", (ev) => {
+          if (activeAdminDragState) {
+            if (ev.cancelable) ev.preventDefault();
+          }
+        });
+        window.addEventListener("pointermove", onMove, { passive: true });
+        window.addEventListener("mousemove", onMove, { passive: true });
+        window.addEventListener("touchmove", onMove, { passive: true });
+        window.addEventListener("pointerup", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("mouseup", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("touchend", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("pointercancel", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("blur", endGlobalAdminDrag, { passive: true });
+      }
 
       function bindDraggableAdminPanelClient(panelEl, handleEl) {
-        if (!panelEl || !handleEl || handleEl._dragBound) return;
+        if (!panelEl || !handleEl) return;
+        const key = panelEl.id || "default_admin_panel";
+        const saved = adminPanelDragOffsets.get(key);
+        if (saved && (saved.x !== 0 || saved.y !== 0)) {
+          applyAdminPanelDragOffsetClient(panelEl, saved.x, saved.y);
+        }
+        if (handleEl._dragBound) return;
         handleEl._dragBound = true;
         handleEl.style.cursor = "grab";
         handleEl.style.userSelect = "none";
-        let dragging = false;
-        let startX = 0;
-        let startY = 0;
-        let baseX = 0;
-        let baseY = 0;
+        handleEl.style.webkitUserSelect = "none";
+        handleEl.style.touchAction = "none";
 
-        const applyOffset = (nx, ny) => {
-          adminPanelDragOffsets.set(panelEl, { x: nx, y: ny });
-          if (panelEl.id === "floatingImportStatusWidget") {
-            panelEl.style.transform = "translate3d(calc(-50% + " + Math.round(nx) + "px), " + Math.round(ny) + "px, 0)";
-          } else {
-            panelEl.style.transform = "translate3d(" + Math.round(nx) + "px, " + Math.round(ny) + "px, 0)";
-            panelEl.style.position = "relative";
-            panelEl.style.zIndex = "75";
-          }
+        const isInteractiveChild = (rawTarget) => {
+          const targetEl = rawTarget && typeof rawTarget.closest === "function"
+            ? rawTarget
+            : (rawTarget && rawTarget.parentElement && typeof rawTarget.parentElement.closest === "function" ? rawTarget.parentElement : null);
+          return Boolean(targetEl && targetEl.closest("button, input, select, a"));
         };
 
-        handleEl.addEventListener("pointerdown", (ev) => {
+        const startDrag = (ev) => {
           if (ev.button !== undefined && ev.button !== 0) return;
-          if (ev.target && ev.target.closest && ev.target.closest("button, input, select, a")) return;
-          ev.preventDefault();
-          const cur = adminPanelDragOffsets.get(panelEl) || { x: 0, y: 0 };
-          startX = ev.clientX;
-          startY = ev.clientY;
-          baseX = cur.x;
-          baseY = cur.y;
-          dragging = true;
+          if (isInteractiveChild(ev.target)) return;
+          if (ev.cancelable) ev.preventDefault();
+          ev.stopPropagation();
+          try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
+          const cur = adminPanelDragOffsets.get(key) || { x: 0, y: 0 };
+          const clientX = typeof ev.clientX === "number" ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : 0);
+          const clientY = typeof ev.clientY === "number" ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : 0);
+          activeAdminDragState = {
+            panelId: panelEl.id || "",
+            handleId: handleEl.id || "",
+            panelEl,
+            handleEl,
+            startX: clientX,
+            startY: clientY,
+            baseX: cur.x,
+            baseY: cur.y
+          };
           handleEl.style.cursor = "grabbing";
-          if (typeof handleEl.setPointerCapture === "function") {
+          if (document.body) {
+            document.body.classList.add("is-gesture-dragging");
+            document.body.style.userSelect = "none";
+          }
+          if (ev.pointerId !== undefined && typeof handleEl.setPointerCapture === "function") {
             try { handleEl.setPointerCapture(ev.pointerId); } catch (_e) {}
           }
-        });
-
-        handleEl.addEventListener("pointermove", (ev) => {
-          if (!dragging) return;
-          const dx = ev.clientX - startX;
-          const dy = ev.clientY - startY;
-          applyOffset(baseX + dx, baseY + dy);
-        });
-
-        const endDrag = () => {
-          if (!dragging) return;
-          dragging = false;
-          handleEl.style.cursor = "grab";
         };
-        handleEl.addEventListener("pointerup", endDrag);
-        handleEl.addEventListener("pointercancel", endDrag);
+
+        handleEl.addEventListener("pointerdown", startDrag);
+        // WICHTIG für Linux Firefox: mousedown muss AUCH dann ev.preventDefault() aufrufen, wenn pointerdown bereits gefeuert hat, da Firefox sonst Text markiert!
+        handleEl.addEventListener("mousedown", (ev) => {
+          if (ev.button !== undefined && ev.button !== 0) return;
+          if (isInteractiveChild(ev.target)) return;
+          if (ev.cancelable) ev.preventDefault();
+          ev.stopPropagation();
+          try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
+          if (!activeAdminDragState) startDrag(ev);
+        });
+        handleEl.addEventListener("dragstart", (ev) => ev.preventDefault());
       }
 
       function toggleAdminJsonImportCollapseClient() {
@@ -3309,8 +3379,7 @@
       function resetAdminJsonImportDragClient() {
         const panelEl = document.getElementById("adminJsonImportPanelBox");
         if (panelEl) {
-          adminPanelDragOffsets.set(panelEl, { x: 0, y: 0 });
-          panelEl.style.transform = "translate3d(0px, 0px, 0)";
+          applyAdminPanelDragOffsetClient(panelEl, 0, 0);
         }
       }
 
@@ -3346,32 +3415,73 @@
           const pct = total > 0 ? ((done / total) * 100).toFixed(1) : "0.0";
           const issuesCount = Number(j.failedCount || 0) + Number(j.uncertainCount || 0);
           widgetEl.style.display = "block";
-          widgetEl.innerHTML =
-            '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben">' +
-              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc">' +
-                '<span style="font-size:11px;padding:2px 6px;border-radius:5px;background:rgba(30,41,59,0.9);border:1px solid rgba(148,163,184,0.28);color:#94a3b8">⠿</span>' +
-                '<span style="font-weight:900;color:' + (j.running ? '#38bdf8' : '#fbbf24') + '">' +
-                  (j.running ? '⚡ Backup-Import läuft:' : '⏸️ Import pausiert:') +
-                '</span>' +
-                '<b>' + done.toLocaleString("de-DE") + ' / ' + total.toLocaleString("de-DE") + ' (' + pct + '%)</b>' +
-                '<span style="color:#34d399;font-size:11.5px">🎬 ' + Number(j.moviesSaved || 0).toLocaleString("de-DE") + '</span>' +
-                '<span style="color:#38bdf8;font-size:11.5px">📺 ' + Number(j.seriesSaved || 0).toLocaleString("de-DE") + '</span>' +
-                (issuesCount > 0 ? ('<span style="color:#fbbf24;font-size:11.5px">⚠️ ' + issuesCount + '</span>') : '') +
+
+          // WICHTIG: Niemals alle 600ms das komplette innerHTML überschreiben, damit #floatingImportDragHandle beim Ziehen nicht zerstört wird!
+          if (!document.getElementById("floatingImportDragHandle")) {
+            widgetEl.innerHTML =
+              '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben">' +
+                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc;pointer-events:none">' +
+                  '<span style="font-size:11px;padding:2px 6px;border-radius:5px;background:rgba(30,41,59,0.9);border:1px solid rgba(148,163,184,0.28);color:#94a3b8">⠿</span>' +
+                  '<span id="floatingImportStateLbl" style="font-weight:900"></span>' +
+                  '<b id="floatingImportProgressTxt"></b>' +
+                  '<span id="floatingImportMoviesTxt" style="color:#34d399;font-size:11.5px"></span>' +
+                  '<span id="floatingImportSeriesTxt" style="color:#38bdf8;font-size:11.5px"></span>' +
+                  '<span id="floatingImportIssuesTxt" style="color:#fbbf24;font-size:11.5px;display:none"></span>' +
+                '</div>' +
+                '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                  '<button type="button" id="floatingImportToggleRunBtn" class="btn amber" style="padding:4px 9px;font-size:11px"></button>' +
+                  '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
+                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
+                '</div>' +
               '</div>' +
-              '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-                (j.running
-                  ? '<button type="button" class="btn amber" style="padding:4px 9px;font-size:11px" onclick="pauseBackupImport()">⏸️ Pause</button>'
-                  : '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="startOrResumeBackupImport()">▶️ Weiter</button>') +
-                '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
-                '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
-              '</div>' +
-            '</div>' +
-            '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px">' +
-              '<div style="width:' + Math.min(100, Number(pct)) + '%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
-            '</div>';
-          const dragHandle = document.getElementById("floatingImportDragHandle");
-          if (dragHandle) {
-            bindDraggableAdminPanelClient(widgetEl, dragHandle);
+              '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px;pointer-events:none">' +
+                '<div id="floatingImportProgressBarFill" style="width:0%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
+              '</div>';
+            const dragHandle = document.getElementById("floatingImportDragHandle");
+            if (dragHandle) {
+              bindDraggableAdminPanelClient(widgetEl, dragHandle);
+            }
+          }
+
+          const stateLbl = document.getElementById("floatingImportStateLbl");
+          if (stateLbl) {
+            stateLbl.style.color = j.running ? "#38bdf8" : "#fbbf24";
+            stateLbl.textContent = j.running ? "⚡ Backup-Import läuft:" : "⏸️ Import pausiert:";
+          }
+          const progTxt = document.getElementById("floatingImportProgressTxt");
+          if (progTxt) {
+            progTxt.textContent = done.toLocaleString("de-DE") + " / " + total.toLocaleString("de-DE") + " (" + pct + "%)";
+          }
+          const movTxt = document.getElementById("floatingImportMoviesTxt");
+          if (movTxt) {
+            movTxt.textContent = "🎬 " + Number(j.moviesSaved || 0).toLocaleString("de-DE");
+          }
+          const serTxt = document.getElementById("floatingImportSeriesTxt");
+          if (serTxt) {
+            serTxt.textContent = "📺 " + Number(j.seriesSaved || 0).toLocaleString("de-DE");
+          }
+          const issTxt = document.getElementById("floatingImportIssuesTxt");
+          if (issTxt) {
+            if (issuesCount > 0) {
+              issTxt.style.display = "inline";
+              issTxt.textContent = "⚠️ " + issuesCount;
+            } else {
+              issTxt.style.display = "none";
+            }
+          }
+          const toggleBtn = document.getElementById("floatingImportToggleRunBtn");
+          if (toggleBtn && toggleBtn._lastRunningState !== Boolean(j.running)) {
+            toggleBtn._lastRunningState = Boolean(j.running);
+            toggleBtn.className = "btn " + (j.running ? "amber" : "green");
+            toggleBtn.textContent = j.running ? "⏸️ Pause" : "▶️ Weiter";
+            toggleBtn.onclick = () => {
+              if (backupImportJob.running) pauseBackupImport();
+              else startOrResumeBackupImport();
+            };
+          }
+          const barFill = document.getElementById("floatingImportProgressBarFill");
+          if (barFill) {
+            barFill.style.width = Math.min(100, Number(pct)) + "%";
           }
         } catch (e) {}
       }

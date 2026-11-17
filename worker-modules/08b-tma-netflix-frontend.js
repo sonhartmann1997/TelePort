@@ -1301,11 +1301,31 @@
         '</select>';
 
         const isFranchiseActive = !state.isSearchMode && (state.currentView === 'franchises' || isColView || isUniView || state.worldsTrayOpen);
+        const totalActiveFilters = typeof countActiveUserFiltersClient === "function" ? countActiveUserFiltersClient() : 0;
+        const hasCustomSortOrMode = Boolean(
+          (curSort && curSort !== "default") ||
+          (isDiscoverView && curMode && curMode !== "trend")
+        );
+        const showQuickResetBtn = totalActiveFilters > 0 || hasCustomSortOrMode;
+
+        if (typeof syncTopBarFilterIndicatorsClient === "function") {
+          syncTopBarFilterIndicatorsClient();
+        }
+
+        const spotlightReturnBtnHtml = isDiscoverView
+          ? '<button type="button" class="btn ff-spotlight-return-btn" onclick="returnToHeroSpotlightFromCatalogClient(event)" title="Zurück nach oben zum Kino-Spotlight gleiten">🎬 Spotlight ▴</button>'
+          : '';
+
+        const quickResetBtnHtml = showQuickResetBtn
+          ? ('<button type="button" class="btn ff-quick-reset-btn" onclick="resetAllCatalogFiltersAndSortQuickClient(event)" title="Alle aktiven Filter, Anbieter & Sortierung mit 1 Klick auf Standard zurücksetzen">↺ ' + (totalActiveFilters > 0 ? ('Reset (' + totalActiveFilters + ')') : 'Standard') + '</button>')
+          : '';
 
         const controlsHtml =
+          spotlightReturnBtnHtml +
           modeOrScopeHtml +
           providerSelectHtml +
           sortGroupHtml +
+          quickResetBtnHtml +
           (!state.isSearchMode ? '<button class="btn ' + (isFranchiseActive ? 'blue' : '') + '" onclick="toggleWorldsTray()" title="Filmuniversen & Filmreihen Portal-Dock ein- oder ausklappen">🌌 Welten & Reihen ' + (state.worldsTrayOpen ? '▴' : '▾') + '</button>' : '') +
           ((state.isSearchMode || isColView || isUniView || isPerView || state.currentCompanyId) ? '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' : '');
 
@@ -1317,10 +1337,24 @@
           (pills.length > 0 ? (
             '<div class="ff-active-pills" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(148,163,184,0.2)">' +
               pills.join("") +
-              '<button class="btn danger" style="padding:2px 8px;font-size:10.5px" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')" title="Alle aktiven Filter löschen">🗑️ Reset</button>' +
+              (totalActiveFilters > 0 ? '<button class="btn danger" style="padding:2px 8px;font-size:10.5px" onclick="resetAllCatalogFiltersAndSortQuickClient(event)" title="Alle aktiven Filter löschen">🗑️ Alle Filter löschen</button>' : '') +
             '</div>'
           ) : '') +
         '</div>';
+      }
+
+      async function resetAllCatalogFiltersAndSortQuickClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        triggerTmaHapticClient("medium");
+        state.currentCompanyId = null;
+        state.currentCompanyName = "";
+        state.genreId = "all";
+        state.sort = "default";
+        if (!state.isSearchMode && state.currentView === "discover") {
+          state.mode = "trend";
+        }
+        syncSearchGenreSelectDom();
+        await setDirectFilter("reset_all", "", "neutral");
       }
 
       function toggleWorldsTray(forceState) {
@@ -1942,7 +1976,10 @@
         }
       }
 
-      // Blendet das Video erst ein, nachdem YouTubes eigene Start-/Seek-/Resume-Leisten vollständig ausgeblendet sind.
+      let detailBgTeaserPreloadedParked = false;
+
+      // Blendet das Video erst ein, nachdem YouTubes eigene Start-/Seek-/Resume-Leisten vollständig ausgeblendet sind
+      // UND der Nutzer den Trailer per Tipp/Button in den Vordergrund-Modus geholt hat.
       // WICHTIG: Überschreibt niemals einen bereits laufenden früheren Reveal-Timer nach hinten (kein Timer-Reset bei Mehrfach-Tipp!).
       function scheduleDetailRevealAfterYoutubeChromeHidesClient(holdMs = 1750, forceReset = false) {
         if (detailBgTeaserDelayedPauseTimer) {
@@ -1995,6 +2032,20 @@
             const elapsedSinceMount = Date.now() - (detailBgTeaserStageOpenedAt || Date.now());
             if (detailBgTeaserIsPlayingConfirmed || (isFg && elapsedSinceMount >= 1650)) {
               detailBgTeaserIsPlayingConfirmed = true;
+              // Hintergrund-Vorladen ohne ungefragtes Einblenden:
+              // Solange der Nutzer noch NICHT auf den Hintergrund / Trailer getippt hat (!isFg),
+              // bleibt das Szenenbild sichtbar und der vorgepufferte Player wird lautlos geparkt.
+              if (!isFg) {
+                detailBgTeaserPreloadedParked = true;
+                detailBgTeaserPaused = true;
+                detailBgTeaserChromeShieldRequired = true;
+                liveLayer.classList.remove("is-playing", "is-concealing");
+                setDetailTrailerLoadingBadgeClient(false);
+                sendYoutubeBgTeaserCommandClient("pauseVideo");
+                syncDetailCinemaDockUiClient();
+                return;
+              }
+              detailBgTeaserPreloadedParked = false;
               detailBgTeaserChromeShieldRequired = false;
               liveLayer.classList.remove("is-concealing");
               liveLayer.classList.add("is-playing");
@@ -2068,6 +2119,8 @@
 
       function resumeDetailTrailerWithBackdropShieldClient(opts = {}) {
         const wasPendingPauseOnly = Boolean(detailBgTeaserDelayedPauseTimer && !detailBgTeaserEnded);
+        const wasPreloadedParked = detailBgTeaserPreloadedParked;
+        detailBgTeaserPreloadedParked = false;
         if (detailBgTeaserDelayedPauseTimer) {
           clearTimeout(detailBgTeaserDelayedPauseTimer);
           detailBgTeaserDelayedPauseTimer = null;
@@ -2112,7 +2165,8 @@
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
         }
-        scheduleDetailRevealAfterYoutubeChromeHidesClient(1650, false);
+        // Wenn der Player bereits im Hintergrund vorgepuffert und geparkt war, reicht ein kürzerer Resume-Schutz (880ms statt 1650ms)
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 880 : 1450, false);
         syncDetailCinemaDockUiClient();
       }
 
@@ -2357,6 +2411,7 @@
         }
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
+        detailBgTeaserPreloadedParked = false;
         detailBgTeaserChromeShieldRequired = true;
         detailBgTeaserPendingUnmute = false;
         detailBgTeaserPlayingStartedAt = 0;
@@ -2444,6 +2499,7 @@
         detailBgTeaserActiveKey = cleanKey;
         detailBgTeaserStageOpenedAt = Date.now();
         detailBgTeaserIsPlayingConfirmed = false;
+        detailBgTeaserPreloadedParked = false;
         detailBgTeaserChromeShieldRequired = true;
         detailBgTeaserPlayingStartedAt = 0;
         detailBgTeaserPaused = false;
@@ -2491,6 +2547,8 @@
         window._detailYtMessageListenerBound = true;
         window.addEventListener("message", (ev) => {
           if (!detailBgTeaserActiveKey) return;
+          const detailFrame = document.getElementById("detailBgVideoIframe");
+          if (!detailFrame || (ev.source && ev.source !== detailFrame.contentWindow)) return;
           const orig = String(ev.origin || "");
           if (!orig.includes("youtube.com") && !orig.includes("youtube-nocookie.com")) return;
           let msg = null;
@@ -2540,6 +2598,7 @@
           if (pState !== null) {
             const layer = document.getElementById("detailBgVideoLayer");
             const stageEl = document.getElementById("detailHeroStageEl");
+            const isFg = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
             if (pState === 1) {
               if (detailBgTeaserWatchdogTimer) {
                 clearTimeout(detailBgTeaserWatchdogTimer);
@@ -2552,7 +2611,7 @@
               if (!wasConfirmedBefore || !detailBgTeaserPlayingStartedAt) {
                 detailBgTeaserPlayingStartedAt = Date.now();
               }
-              if (detailBgTeaserPendingUnmute || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode") && !detailBgTeaserMuted)) {
+              if (detailBgTeaserPendingUnmute || (isFg && !detailBgTeaserMuted)) {
                 detailBgTeaserPendingUnmute = false;
                 detailBgTeaserMuted = false;
                 sendYoutubeBgTeaserCommandClient("unMute");
@@ -2563,11 +2622,12 @@
                 if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
               }
               // Szenenbild bleibt so lange über dem laufenden Video, bis YouTubes initiale Start-/Resume-Controls (~1,75s nach echtem Playing-Start) verschwunden sind!
-              if (detailBgTeaserChromeShieldRequired) {
+              // Solange !isFg gilt, parkt scheduleDetailRevealAfterYoutubeChromeHidesClient den Player lautlos hinter dem Szenenbild.
+              if (detailBgTeaserChromeShieldRequired || !isFg) {
                 const elapsedPlaying = Date.now() - (detailBgTeaserPlayingStartedAt || Date.now());
                 const holdRemainingMs = Math.max(380, 1780 - elapsedPlaying);
                 scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
-              } else if (layer && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll && !detailBgTeaserDelayedPauseTimer) {
+              } else if (layer && isFg && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll && !detailBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
                 setDetailTrailerLoadingBadgeClient(false);
@@ -2624,7 +2684,7 @@
           return;
         }
 
-        // Netflix-Logik: Sofort im Hintergrund vorpuffern (nach 320ms), aber das Szenenbild so lange stehen lassen, bis YouTubes Start-UI weg ist
+        // Im Hintergrund vorladen (nach 320ms), aber erst beim Tippen auf Hintergrund / Trailer einblenden!
         detailBgTeaserTimer = setTimeout(() => {
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
@@ -2636,6 +2696,12 @@
 
       function toggleDetailCinemaPlayPauseClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const stageEl = document.getElementById("detailHeroStageEl");
+        const isFg = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
+        if (!isFg) {
+          enterDetailForegroundTrailerModeClient(ev, false);
+          return;
+        }
         const frame = document.getElementById("detailBgVideoIframe");
         if (!frame) {
           if (detailBgTeaserCandidates.length > 0) {
@@ -2787,7 +2853,7 @@
             const remainingMs = Math.max(400, 1750 - elapsed);
             scheduleDetailRevealAfterYoutubeChromeHidesClient(remainingMs, false);
           } else {
-            // 3. Trailer war pausiert oder beendet -> Mit Cover-Schutz fortsetzen / neu starten
+            // 3. Trailer war vorgepuffert-geparkt, pausiert oder beendet -> Mit kurzem Cover-Schutz fortsetzen / neu starten
             resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
           }
         } else {
@@ -2804,9 +2870,22 @@
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const stageEl = document.getElementById("detailHeroStageEl");
         if (!stageEl) return;
-        setDetailTrailerLoadingBadgeClient(false);
-        stageEl.classList.remove("is-trailer-foreground-mode");
-        syncDetailCinemaDockUiClient();
+        // Beim Verlassen des Kino-Vordergrund-Modus wieder das ruhige Szenenbild samt Text/Buttons einblenden und den Trailer dahinter pausieren
+        if (detailBgTeaserActiveKey && !detailBgTeaserPaused && !detailBgTeaserEnded) {
+          concealAndPauseDetailTrailerClient({
+            exitForeground: true,
+            stoppedByUser: true,
+            pauseDelayMs: 380
+          });
+        } else {
+          setDetailTrailerLoadingBadgeClient(false);
+          stageEl.classList.remove("is-trailer-foreground-mode");
+          const layer = document.getElementById("detailBgVideoLayer");
+          if (layer) {
+            layer.classList.remove("is-playing", "is-concealing");
+          }
+          syncDetailCinemaDockUiClient();
+        }
         const trBtn = document.getElementById("detailTrailerBtn") || document.getElementById("detailPrimaryPlayBtn");
         if (trBtn && typeof jumpSpatialFocus === "function") {
           jumpSpatialFocus(trBtn, false);
@@ -2845,11 +2924,7 @@
           if (st > 250 && detailBgTeaserActiveKey) {
             if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
               // Cover-First, Pause-Second beim Runterscrollen zum Cast
-              concealAndPauseDetailTrailerClient({ pausedByScroll: true });
-            }
-          } else if (st < 110 && detailBgTeaserActiveKey && detailBgTeaserPausedByScroll && !detailBgTeaserStoppedByUser && !detailBgTeaserEnded) {
-            if (typeof trailerPreviewEnabled === "undefined" || trailerPreviewEnabled) {
-              resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: false });
+              concealAndPauseDetailTrailerClient({ pausedByScroll: true, exitForeground: true });
             }
           }
         });
@@ -3143,8 +3218,9 @@
         if (ev.target && typeof ev.target.closest === "function" && ev.target.closest(".detail-cast-track, .detail-similar-track, .season-toolbar-row")) {
           return;
         }
-        const dx = Number(ev.deltaX || 0);
-        const dy = Number(ev.deltaY || 0);
+        const deltaMult = ev.deltaMode === 1 ? 24 : (ev.deltaMode === 2 ? 360 : 1);
+        const dx = (Number(ev.deltaX) || 0) * deltaMult;
+        const dy = (Number(ev.deltaY) || 0) * deltaMult;
         if (Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy) * 1.35) {
           const now = Date.now();
           if (now - lastModalHorizontalWheelAt < 450) return;
@@ -3220,6 +3296,8 @@
           modalPointerStartY = 0;
           return;
         }
+        if (ev.cancelable) ev.preventDefault();
+        try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
         modalPointerStartX = ev.clientX;
         modalPointerStartY = ev.clientY;
       }
@@ -4282,6 +4360,9 @@
       async function openDetails(type, id, autoOpenTrailer = false, preTitle = "", prePoster = "", forceSeasonNum = null) {
         if (typeof lastCardLongPressAt !== "undefined" && Date.now() - lastCardLongPressAt < 650) {
           return;
+        }
+        if (typeof stopHeroBackgroundVideoTeaserClient === "function") {
+          stopHeroBackgroundVideoTeaserClient();
         }
         saveModalReturnFocusTarget(type, id);
         const seedItem = findPreloadedSeedItemClient(type, id, preTitle, prePoster);

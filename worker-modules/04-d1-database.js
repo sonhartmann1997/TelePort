@@ -105,6 +105,11 @@
     activeD1WriteBuffer = null;
     if (!Array.isArray(pending) || pending.length === 0) return 0;
     memoryFallback.delete("d1_series_gaps_cache");
+    memoryFallback.delete("d1_vip_discover_cache_m");
+    memoryFallback.delete("d1_vip_discover_cache_s");
+    memoryFallback.delete("d1_admin_media_list_cache_m");
+    memoryFallback.delete("d1_admin_media_list_cache_s");
+    memoryFallback.delete("d1_db_stats_cache");
     const rawDb = getRawD1Binding(env);
     if (!rawDb) return 0;
     let flushedCount = 0;
@@ -412,7 +417,9 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_msg ON import_diagnostic_logs(msg_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlists_chat ON d1_playlists(chat_id, created_at)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_folder ON d1_playlist_items(chat_id, folder_id, added_at DESC)"),
-          db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_tmdb ON d1_playlist_items(tmdb_id, content_type)")
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_tmdb ON d1_playlist_items(tmdb_id, content_type)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_movies_updated_at ON movies(updated_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_series_updated_at ON series(updated_at DESC)")
         ]));
       } catch (e) {}
 
@@ -1314,6 +1321,10 @@
     if (!idNum) return false;
     memoryFallback.delete(`${typeCode === "s" ? "tv" : "movie"}_${idNum}`);
     memoryFallback.delete(`${typeCode === "s" ? "d1_catalog_series_" : "d1_catalog_movie_"}${idNum}`);
+    memoryFallback.delete(`d1_vip_summary_${typeCode === "s" ? "s" : "m"}_${idNum}`);
+    memoryFallback.delete(`d1_vip_discover_cache_${typeCode === "s" ? "s" : "m"}`);
+    memoryFallback.delete(`d1_admin_media_list_cache_${typeCode === "s" ? "s" : "m"}`);
+    memoryFallback.delete("d1_db_stats_cache");
     if (typeCode === "s") {
       memoryFallback.delete(`d1_series_best_quality_${idNum}`);
       for (const k of Array.from(memoryFallback.keys())) {
@@ -2265,6 +2276,9 @@
           )
       );
       await db.batch(stmts);
+      memoryFallback.delete(`d1_vip_summary_m_${mid}`);
+      memoryFallback.delete("d1_vip_discover_cache_m");
+      memoryFallback.delete("d1_admin_media_list_cache_m");
       return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     } catch (e) {
       return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
@@ -2645,6 +2659,9 @@
           .bind(entry.series_id, entry.season_number, entry.episode_number, epTitle, versionsPayload, entry.updated_at)
       );
       await db.batch(stmts);
+      memoryFallback.delete(`d1_vip_summary_s_${sid}`);
+      memoryFallback.delete("d1_vip_discover_cache_s");
+      memoryFallback.delete("d1_admin_media_list_cache_s");
       return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     } catch (e) {
       return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
@@ -3922,7 +3939,7 @@
         }
         if (hasVipStreamAccess) {
           const cachedVipS = memoryFallback.get(`d1_vip_summary_s_${tid}`);
-          if (cachedVipS && (nowVipCheckTs - Number(cachedVipS.ts || 0)) < 300000) {
+          if (cachedVipS && (nowVipCheckTs - Number(cachedVipS.ts || 0)) < 1800000) {
             if (!cachedVipS.none && cachedVipS.label) {
               bestSeriesMap.set(tid, { label: cachedVipS.label, count: Number(cachedVipS.count || 1) });
             }
@@ -3945,7 +3962,7 @@
         }
         if (hasVipStreamAccess) {
           const cachedVipM = memoryFallback.get(`d1_vip_summary_m_${tid}`);
-          if (cachedVipM && (nowVipCheckTs - Number(cachedVipM.ts || 0)) < 300000) {
+          if (cachedVipM && (nowVipCheckTs - Number(cachedVipM.ts || 0)) < 1800000) {
             if (!cachedVipM.none && cachedVipM.label) {
               bestMovieMap.set(tid, { label: cachedVipM.label, count: Number(cachedVipM.count || 1) });
             }
@@ -3974,7 +3991,7 @@
       }
     }
 
-    // 2. D1-Datenbank NUR für noch nicht im RAM-Cache geprüfte IDs abfragen!
+    // 2. D1-Datenbank NUR für noch nicht im RAM-Cache geprüfte IDs abfragen (komprimiert per SQL GROUP BY)!
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -3986,7 +4003,7 @@
               ? db.prepare(`SELECT tmdb_id, poster_path FROM movies WHERE tmdb_id IN (${uniqPosterM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterM).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] }),
             uniqVipM.length > 0
-              ? db.prepare(`SELECT movie_id, quality, codec, telegram_file_id FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipM).all().catch(() => ({ results: [] }))
+              ? db.prepare(`SELECT movie_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY movie_id, quality, codec`).bind(...uniqVipM).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
           const foundPosterM = new Set();
@@ -4004,12 +4021,13 @@
           for (const row of (resMFiles?.results || [])) {
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
             const mid = Number(row.movie_id);
+            const rowCnt = Math.max(1, Number(row.file_cnt || 1));
             const cur = bestMovieMap.get(mid);
             const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
             if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
-              bestMovieMap.set(mid, { label: candLabel, count: (cur?.count || 0) + 1 });
+              bestMovieMap.set(mid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
             } else {
-              cur.count += 1;
+              cur.count += rowCnt;
             }
           }
           for (const mid of uniqVipM) {
@@ -4030,7 +4048,7 @@
               ? db.prepare(`SELECT tmdb_id, poster_path FROM series WHERE tmdb_id IN (${uniqPosterS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterS).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] }),
             uniqVipS.length > 0
-              ? db.prepare(`SELECT series_id, quality, codec, telegram_file_id FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipS).all().catch(() => ({ results: [] }))
+              ? db.prepare(`SELECT series_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY series_id, quality, codec`).bind(...uniqVipS).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
           const foundPosterS = new Set();
@@ -4048,12 +4066,13 @@
           for (const row of (resSFiles?.results || [])) {
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
             const sid = Number(row.series_id);
+            const rowCnt = Math.max(1, Number(row.file_cnt || 1));
             const cur = bestSeriesMap.get(sid);
             const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
             if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
-              bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + 1 });
+              bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
             } else {
-              cur.count += 1;
+              cur.count += rowCnt;
             }
           }
           for (const sid of uniqVipS) {
@@ -4120,8 +4139,13 @@
 
   // Lädt direkt aus D1 (und Memory-Fallback) vorhandene VIP-Filme/-Serien für die Hauptseite (Discover),
   // damit bei aktiviertem "Nur VIP-Streams"-Filter oder nach einem JSON-Import alle D1-Einträge sofort sichtbar sind.
-  async function getD1VipCatalogCardsForDiscover(env, fallbackTypeCode = "m", limit = 24) {
+    async function getD1VipCatalogCardsForDiscover(env, fallbackTypeCode = "m", limit = 24) {
     const wantSeries = fallbackTypeCode === "s";
+    const cacheKey = wantSeries ? "d1_vip_discover_cache_s" : "d1_vip_discover_cache_m";
+    const cachedList = memoryFallback.get(cacheKey);
+    if (cachedList && Array.isArray(cachedList.items) && cachedList.items.length >= Math.min(limit, 8) && (Date.now() - Number(cachedList.ts || 0)) < 300000) {
+      return cachedList.items.slice(0, limit);
+    }
     const results = [];
     const seenIds = new Set();
 
@@ -4176,32 +4200,32 @@
       }
     } catch (e) {}
 
-    // 2. Aus D1 SQL-Tabellen (movies + movie_files / series + episode_files) abfragen
+    // 2. Aus D1 SQL-Tabellen (movies + movie_files / series + episode_files) komprimiert mit GROUP BY & json_extract abfragen
     const db = await ensureD1Schema(env);
     if (db && results.length < limit) {
       try {
         if (!wantSeries) {
           const mRes = await db.prepare(`
-            SELECT m.tmdb_id, m.title, m.release_date, m.vote_average, m.poster_path, m.backdrop_path, m.overview, m.details_json,
-                   mf.quality, mf.codec, mf.telegram_file_id
+            SELECT m.tmdb_id, m.title, m.release_date, m.vote_average, m.poster_path, m.backdrop_path, m.overview,
+                   json_extract(m.details_json, '$.external_poster_url') AS ext_poster,
+                   MAX(mf.quality) AS quality, MAX(mf.codec) AS codec,
+                   MAX(mf.telegram_file_id) AS telegram_file_id, COUNT(mf.id) AS stream_cnt
             FROM movies m
             INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
             WHERE mf.telegram_file_id IS NOT NULL
               AND mf.telegram_file_id != ''
               AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
               AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
+            GROUP BY m.tmdb_id
             ORDER BY m.updated_at DESC
-            LIMIT 80
+            LIMIT 60
           `).all();
           for (const row of (mRes?.results || [])) {
             const mid = Number(row.tmdb_id);
             if (!mid || seenIds.has(mid)) continue;
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
             seenIds.add(mid);
-            let pVal = row.poster_path || "";
-            if (!pVal && row.details_json) {
-              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
-            }
+            const pVal = row.poster_path || row.ext_poster || "";
             results.push({
               id: mid,
               media_type: "movie",
@@ -4212,32 +4236,32 @@
               backdrop_path: row.backdrop_path || null,
               overview: row.overview || "",
               vipQuality: `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim(),
-              vipStreamCount: 1
+              vipStreamCount: Math.max(1, Number(row.stream_cnt || 1))
             });
             if (results.length >= limit) break;
           }
         } else {
           const sRes = await db.prepare(`
-            SELECT s.tmdb_id, s.title, s.release_date, s.vote_average, s.poster_path, s.backdrop_path, s.overview, s.details_json,
-                   ef.quality, ef.codec, ef.telegram_file_id
+            SELECT s.tmdb_id, s.title, s.release_date, s.vote_average, s.poster_path, s.backdrop_path, s.overview,
+                   json_extract(s.details_json, '$.external_poster_url') AS ext_poster,
+                   MAX(ef.quality) AS quality, MAX(ef.codec) AS codec,
+                   MAX(ef.telegram_file_id) AS telegram_file_id, COUNT(ef.id) AS stream_cnt
             FROM series s
             INNER JOIN episode_files ef ON ef.series_id = s.tmdb_id
             WHERE ef.telegram_file_id IS NOT NULL
               AND ef.telegram_file_id != ''
               AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
               AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+            GROUP BY s.tmdb_id
             ORDER BY s.updated_at DESC
-            LIMIT 80
+            LIMIT 60
           `).all();
           for (const row of (sRes?.results || [])) {
             const sid = Number(row.tmdb_id);
             if (!sid || seenIds.has(sid)) continue;
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
             seenIds.add(sid);
-            let pVal = row.poster_path || "";
-            if (!pVal && row.details_json) {
-              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
-            }
+            const pVal = row.poster_path || row.ext_poster || "";
             results.push({
               id: sid,
               media_type: "tv",
@@ -4249,7 +4273,7 @@
               backdrop_path: row.backdrop_path || null,
               overview: row.overview || "",
               vipQuality: `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim(),
-              vipStreamCount: 1
+              vipStreamCount: Math.max(1, Number(row.stream_cnt || 1))
             });
             if (results.length >= limit) break;
           }
@@ -4257,6 +4281,9 @@
       } catch (e) {}
     }
 
+    if (results.length > 0) {
+      memoryFallback.set(cacheKey, { items: results, ts: Date.now() });
+    }
     return results.slice(0, limit);
   }
 
@@ -4516,6 +4543,9 @@
         ts: Date.now()
       });
       memoryFallback.set(`d1_movie_saved_ts_${mid}`, Date.now());
+      memoryFallback.delete("d1_vip_discover_cache_m");
+      memoryFallback.delete("d1_admin_media_list_cache_m");
+      memoryFallback.delete("d1_db_stats_cache");
     } catch (e) {}
   }
 
@@ -4739,6 +4769,9 @@
         ts: Date.now()
       });
       memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
+      memoryFallback.delete("d1_vip_discover_cache_s");
+      memoryFallback.delete("d1_admin_media_list_cache_s");
+      memoryFallback.delete("d1_db_stats_cache");
     } catch (e) {}
   }
 
@@ -5504,18 +5537,24 @@
       }
       return { enabled: false, moviesCount: memMovies, seriesCount: memSeries, searchesCount: 0 };
     }
+    const cachedStats = memoryFallback.get("d1_db_stats_cache");
+    if (cachedStats && (Date.now() - Number(cachedStats.ts || 0)) < 120000) {
+      return cachedStats.data;
+    }
     try {
       const [mRow, sRow, qRow] = await Promise.all([
         db.prepare("SELECT COUNT(*) AS cnt FROM movies").first(),
         db.prepare("SELECT COUNT(*) AS cnt FROM series").first(),
         db.prepare("SELECT COUNT(*) AS cnt FROM search_cache").first()
       ]);
-      return {
+      const data = {
         enabled: true,
         moviesCount: Number(mRow?.cnt || 0),
         seriesCount: Number(sRow?.cnt || 0),
         searchesCount: Number(qRow?.cnt || 0)
       };
+      memoryFallback.set("d1_db_stats_cache", { data, ts: Date.now() });
+      return data;
     } catch (e) {
       return { enabled: true, moviesCount: 0, seriesCount: 0, searchesCount: 0 };
     }
