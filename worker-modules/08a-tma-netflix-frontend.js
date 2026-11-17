@@ -5218,6 +5218,15 @@
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
       }
+      .detail-seek-ripple-badge.is-loading-pulse {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+        animation: detailTrailerLoadingPulse 1.2s ease-in-out infinite alternate;
+      }
+      @keyframes detailTrailerLoadingPulse {
+        from { opacity: 0.72; transform: translate(-50%, -50%) scale(0.97); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
+      }
       /* Edles Glas-Mini-Dock unten rechts für Play/Pause, Ton, Zeitleiste & Kino-Ansicht */
       .detail-cinema-player-dock {
         position: absolute;

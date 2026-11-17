@@ -33241,6 +33241,15 @@
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
       }
+      .detail-seek-ripple-badge.is-loading-pulse {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+        animation: detailTrailerLoadingPulse 1.2s ease-in-out infinite alternate;
+      }
+      @keyframes detailTrailerLoadingPulse {
+        from { opacity: 0.72; transform: translate(-50%, -50%) scale(0.97); }
+        to { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
+      }
       /* Edles Glas-Mini-Dock unten rechts für Play/Pause, Ton, Zeitleiste & Kino-Ansicht */
       .detail-cinema-player-dock {
         position: absolute;
@@ -41752,6 +41761,7 @@
       // Phase 3: End-Fade zurück auf Szenenbild (1,45s vor Schluss gegen YouTube-Endscreen) + Scroll-Auto-Pause
       let detailBgTeaserTimer = null;
       let detailBgTeaserRevealTimer = null;
+      let detailBgTeaserRevealTargetAt = 0;
       let detailBgTeaserDelayedPauseTimer = null;
       let detailBgTeaserWatchdogTimer = null;
       let detailBgTeaserHandshakeTimer = null;
@@ -41759,6 +41769,7 @@
       let detailBgTeaserPlayingStartedAt = 0;
       let detailBgTeaserChromeShieldRequired = true;
       let detailBgTeaserMuted = true;
+      let detailBgTeaserPendingUnmute = false;
       let detailBgTeaserPaused = false;
       let detailBgTeaserEnded = false;
       let detailBgTeaserPausedByScroll = false;
@@ -41777,6 +41788,21 @@
         const mins = Math.floor(s / 60);
         const secs = s % 60;
         return mins + ":" + (secs < 10 ? "0" + secs : secs);
+      }
+
+      function setDetailTrailerLoadingBadgeClient(visible, text = "🎬 Trailer startet…") {
+        const badge = document.getElementById("detailSeekRippleBadge");
+        if (!badge) return;
+        if (visible) {
+          if (detailSeekRippleTimer) {
+            clearTimeout(detailSeekRippleTimer);
+            detailSeekRippleTimer = null;
+          }
+          badge.className = "detail-seek-ripple-badge is-center is-loading-pulse";
+          badge.textContent = text;
+        } else if (badge.classList.contains("is-loading-pulse")) {
+          badge.classList.remove("is-loading-pulse", "is-visible");
+        }
       }
 
       function extractCandidateKeysFromTrailersClient(trailersInput) {
@@ -41808,6 +41834,7 @@
           clearTimeout(detailBgTeaserRevealTimer);
           detailBgTeaserRevealTimer = null;
         }
+        detailBgTeaserRevealTargetAt = 0;
         if (detailBgTeaserDelayedPauseTimer) {
           clearTimeout(detailBgTeaserDelayedPauseTimer);
           detailBgTeaserDelayedPauseTimer = null;
@@ -41822,36 +41849,77 @@
         }
       }
 
-      // Blendet das Video erst ein, nachdem YouTubes eigene Start-/Seek-/Resume-Leisten vollständig ausgeblendet sind
-      function scheduleDetailRevealAfterYoutubeChromeHidesClient(holdMs = 1900) {
-        if (detailBgTeaserRevealTimer) {
-          clearTimeout(detailBgTeaserRevealTimer);
-          detailBgTeaserRevealTimer = null;
-        }
+      // Blendet das Video erst ein, nachdem YouTubes eigene Start-/Seek-/Resume-Leisten vollständig ausgeblendet sind.
+      // WICHTIG: Überschreibt niemals einen bereits laufenden früheren Reveal-Timer nach hinten (kein Timer-Reset bei Mehrfach-Tipp!).
+      function scheduleDetailRevealAfterYoutubeChromeHidesClient(holdMs = 1750, forceReset = false) {
         if (detailBgTeaserDelayedPauseTimer) {
           clearTimeout(detailBgTeaserDelayedPauseTimer);
           detailBgTeaserDelayedPauseTimer = null;
         }
+        const safeHoldMs = Math.max(250, Number(holdMs) || 1750);
+        const now = Date.now();
+        const proposedTargetAt = now + safeHoldMs;
+
+        if (detailBgTeaserRevealTimer && !forceReset && detailBgTeaserRevealTargetAt > now) {
+          if (proposedTargetAt >= detailBgTeaserRevealTargetAt - 80) {
+            const stageEl = document.getElementById("detailHeroStageEl");
+            if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")) {
+              setDetailTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
+            }
+            return;
+          }
+          clearTimeout(detailBgTeaserRevealTimer);
+          detailBgTeaserRevealTimer = null;
+        } else if (detailBgTeaserRevealTimer) {
+          clearTimeout(detailBgTeaserRevealTimer);
+          detailBgTeaserRevealTimer = null;
+        }
+
         detailBgTeaserChromeShieldRequired = true;
+        detailBgTeaserRevealTargetAt = proposedTargetAt;
         const layer = document.getElementById("detailBgVideoLayer");
         if (layer) {
           layer.classList.remove("is-playing");
         }
-        const safeHoldMs = Math.max(250, Number(holdMs) || 1900);
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")) {
+          setDetailTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
+        }
+
         detailBgTeaserRevealTimer = setTimeout(() => {
           detailBgTeaserRevealTimer = null;
+          detailBgTeaserRevealTargetAt = 0;
           const liveLayer = document.getElementById("detailBgVideoLayer");
+          const liveStage = document.getElementById("detailHeroStageEl");
+          const isFg = Boolean(liveStage && liveStage.classList.contains("is-trailer-foreground-mode"));
           if (
             liveLayer &&
-            detailBgTeaserIsPlayingConfirmed &&
             !detailBgTeaserPaused &&
             !detailBgTeaserEnded &&
             !detailBgTeaserStoppedByUser &&
             !detailBgTeaserPausedByScroll
           ) {
-            detailBgTeaserChromeShieldRequired = false;
-            liveLayer.classList.remove("is-concealing");
-            liveLayer.classList.add("is-playing");
+            const elapsedSinceMount = Date.now() - (detailBgTeaserStageOpenedAt || Date.now());
+            if (detailBgTeaserIsPlayingConfirmed || (isFg && elapsedSinceMount >= 1650)) {
+              detailBgTeaserIsPlayingConfirmed = true;
+              detailBgTeaserChromeShieldRequired = false;
+              liveLayer.classList.remove("is-concealing");
+              liveLayer.classList.add("is-playing");
+              setDetailTrailerLoadingBadgeClient(false);
+              if (detailBgTeaserPendingUnmute || !detailBgTeaserMuted) {
+                detailBgTeaserPendingUnmute = false;
+                detailBgTeaserMuted = false;
+                sendYoutubeBgTeaserCommandClient("unMute");
+                sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+              }
+            } else {
+              // Falls YouTube noch lädt, Player anstoßen und kurzen Follow-up-Check planen
+              sendYoutubeBgTeaserCommandClient("playVideo");
+              scheduleDetailRevealAfterYoutubeChromeHidesClient(650, true);
+              return;
+            }
+          } else {
+            setDetailTrailerLoadingBadgeClient(false);
           }
           syncDetailCinemaDockUiClient();
         }, safeHoldMs);
@@ -41863,10 +41931,12 @@
           clearTimeout(detailBgTeaserRevealTimer);
           detailBgTeaserRevealTimer = null;
         }
+        detailBgTeaserRevealTargetAt = 0;
         if (detailBgTeaserDelayedPauseTimer) {
           clearTimeout(detailBgTeaserDelayedPauseTimer);
           detailBgTeaserDelayedPauseTimer = null;
         }
+        setDetailTrailerLoadingBadgeClient(false);
         detailBgTeaserPaused = true;
         detailBgTeaserChromeShieldRequired = true;
         if (typeof opts.stoppedByUser === "boolean") {
@@ -41923,25 +41993,39 @@
           if (layer) layer.classList.remove("is-playing");
           sendYoutubeBgTeaserCommandClient("seekTo", [0, true]);
           sendYoutubeBgTeaserCommandClient("playVideo");
-          scheduleDetailRevealAfterYoutubeChromeHidesClient(1850);
+          if (detailBgTeaserPendingUnmute || !detailBgTeaserMuted) {
+            sendYoutubeBgTeaserCommandClient("unMute");
+            sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+          }
+          scheduleDetailRevealAfterYoutubeChromeHidesClient(1750, true);
           syncDetailCinemaDockUiClient();
           return;
         }
         if (wasPendingPauseOnly && detailBgTeaserIsPlayingConfirmed) {
           detailBgTeaserChromeShieldRequired = false;
+          setDetailTrailerLoadingBadgeClient(false);
           if (layer) layer.classList.add("is-playing");
+          if (detailBgTeaserPendingUnmute || !detailBgTeaserMuted) {
+            sendYoutubeBgTeaserCommandClient("unMute");
+            sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+          }
           syncDetailCinemaDockUiClient();
           return;
         }
         detailBgTeaserChromeShieldRequired = true;
         if (layer) layer.classList.remove("is-playing");
         sendYoutubeBgTeaserCommandClient("playVideo");
-        scheduleDetailRevealAfterYoutubeChromeHidesClient(1750);
+        if (detailBgTeaserPendingUnmute || !detailBgTeaserMuted) {
+          sendYoutubeBgTeaserCommandClient("unMute");
+          sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+        }
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(1650, false);
         syncDetailCinemaDockUiClient();
       }
 
       function activateDetailKenBurnsFallbackClient() {
         clearDetailBgTeaserTimersClient();
+        setDetailTrailerLoadingBadgeClient(false);
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
         detailBgTeaserEnded = false;
@@ -42018,7 +42102,7 @@
           detailBgTeaserStoppedByUser = false;
           sendYoutubeBgTeaserCommandClient("playVideo");
         }
-        scheduleDetailRevealAfterYoutubeChromeHidesClient(1650);
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(1600, true);
         syncDetailCinemaDockUiClient();
         showDetailSeekRippleBadgeClient(
           deltaSec < 0 ? ("⏪ " + deltaSec + "s") : ("⏩ +" + deltaSec + "s"),
@@ -42065,6 +42149,16 @@
           } else {
             toggleDetailCinemaZoomModeClient(ev);
           }
+          return;
+        }
+
+        // Wenn der Trailer im Vordergrund-Modus gerade noch im kurzen Vorlauf steckt, bricht ein Tipp den Modus NICHT ab!
+        const layer = document.getElementById("detailBgVideoLayer");
+        if (layer && !layer.classList.contains("is-playing") && detailBgTeaserActiveKey && !detailBgTeaserPaused && !detailBgTeaserEnded) {
+          sendYoutubeBgTeaserCommandClient("playVideo");
+          sendYoutubeBgTeaserCommandClient("unMute");
+          sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+          setDetailTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
           return;
         }
 
@@ -42163,6 +42257,7 @@
 
       function stopDetailBackgroundVideoTeaserClient() {
         clearDetailBgTeaserTimersClient();
+        setDetailTrailerLoadingBadgeClient(false);
         if (detailFgTapTimer) {
           clearTimeout(detailFgTapTimer);
           detailFgTapTimer = null;
@@ -42170,6 +42265,7 @@
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
         detailBgTeaserChromeShieldRequired = true;
+        detailBgTeaserPendingUnmute = false;
         detailBgTeaserPlayingStartedAt = 0;
         detailBgTeaserPaused = false;
         detailBgTeaserEnded = false;
@@ -42222,9 +42318,16 @@
             frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "detailBgVideoIframe" }), "*");
             frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"] }), "*");
             frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"] }), "*");
+            if (!detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserStoppedByUser) {
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [] }), "*");
+            }
+            if (detailBgTeaserPendingUnmute || !detailBgTeaserMuted) {
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [90] }), "*");
+            }
           } catch (_e) {}
           ticks++;
-          if (ticks >= 12 || detailBgTeaserIsPlayingConfirmed) {
+          if (ticks >= 14 || detailBgTeaserIsPlayingConfirmed) {
             if (detailBgTeaserHandshakeTimer) {
               clearInterval(detailBgTeaserHandshakeTimer);
               detailBgTeaserHandshakeTimer = null;
@@ -42232,7 +42335,7 @@
           }
         };
         sendHandshake();
-        detailBgTeaserHandshakeTimer = setInterval(sendHandshake, 320);
+        detailBgTeaserHandshakeTimer = setInterval(sendHandshake, 280);
       }
 
       function mountDetailTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2) {
@@ -42246,6 +42349,7 @@
         detailBgTeaserCandidateIdx = idx;
         const cleanKey = detailBgTeaserCandidates[idx];
         detailBgTeaserActiveKey = cleanKey;
+        detailBgTeaserStageOpenedAt = Date.now();
         detailBgTeaserIsPlayingConfirmed = false;
         detailBgTeaserChromeShieldRequired = true;
         detailBgTeaserPlayingStartedAt = 0;
@@ -42254,23 +42358,31 @@
         detailBgTeaserPausedByScroll = false;
         detailBgTeaserCurTime = 0;
         detailBgTeaserDuration = 0;
+        detailBgTeaserPendingUnmute = Boolean(startUnmuted);
         detailBgTeaserMuted = !startUnmuted;
         layer.classList.remove("is-playing", "is-concealing");
 
         const originParam = (typeof location !== "undefined" && location.origin) ? ("&origin=" + encodeURIComponent(location.origin)) : "";
-        const muteParam = startUnmuted ? "0" : "1";
+        // WICHTIG: Immer mit autoplay=1&mute=1 starten (100% Autoplay-Erlaubnis auf iOS/Android/Telegram WebView) und Ton sofort per JS-API zuschalten!
         const embedSrc = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
-          "?autoplay=1&mute=" + muteParam + "&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
+          "?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
           "&enablejsapi=1&playsinline=1&iv_load_policy=3&modestbranding=1&start=" + Math.max(0, Number(startSeconds || 0)) + originParam;
         layer.innerHTML = '<iframe id="detailBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onDetailBgYoutubeIframeLoadClient()" allow="autoplay; encrypted-media" tabindex="-1" aria-hidden="true"></iframe>';
 
-        // Watchdog: Falls YouTube das Video blockiert oder nach 3,4s noch nicht im Playing-State (1) ist -> nächsten Trailer testen!
+        const stageEl = document.getElementById("detailHeroStageEl");
+        if (startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode"))) {
+          scheduleDetailRevealAfterYoutubeChromeHidesClient(1750, true);
+        }
+
+        // Watchdog: Falls YouTube das Video blockiert oder nach 5,2s noch nicht im Playing-State (1) ist -> nächsten Trailer testen!
         detailBgTeaserWatchdogTimer = setTimeout(() => {
           if (!detailBgTeaserIsPlayingConfirmed && detailBgTeaserActiveKey === cleanKey && !detailBgTeaserStoppedByUser) {
-            clientBlockedYoutubeKeys.add(cleanKey);
-            advanceToNextDetailTrailerCandidateClient(startUnmuted);
+            if (detailBgTeaserCandidates.length > 1) {
+              clientBlockedYoutubeKeys.add(cleanKey);
+              advanceToNextDetailTrailerCandidateClient(startUnmuted || !detailBgTeaserMuted);
+            }
           }
-        }, 3400);
+        }, 5200);
       }
 
       function advanceToNextDetailTrailerCandidateClient(keepUnmuted = false) {
@@ -42298,7 +42410,7 @@
 
           if (msg.event === "onError" || (msg.info && typeof msg.info === "number" && msg.event === "onError")) {
             clientBlockedYoutubeKeys.add(detailBgTeaserActiveKey);
-            advanceToNextDetailTrailerCandidateClient(!detailBgTeaserMuted);
+            advanceToNextDetailTrailerCandidateClient(detailBgTeaserPendingUnmute || !detailBgTeaserMuted);
             return;
           }
 
@@ -42315,7 +42427,7 @@
             if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
               detailBgTeaserDuration = msg.info.duration;
             }
-            if (typeof msg.info.muted === "boolean") {
+            if (typeof msg.info.muted === "boolean" && !detailBgTeaserPendingUnmute) {
               detailBgTeaserMuted = msg.info.muted;
             }
             // Netflix End-Fade: 2,2s vor Ende sanft auf das Film-Szenenbild zurückblenden, bevor YouTube Pause-/Endscreen-Kacheln einblendet!
@@ -42347,25 +42459,31 @@
               if (!wasConfirmedBefore || !detailBgTeaserPlayingStartedAt) {
                 detailBgTeaserPlayingStartedAt = Date.now();
               }
+              if (detailBgTeaserPendingUnmute || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode") && !detailBgTeaserMuted)) {
+                detailBgTeaserPendingUnmute = false;
+                detailBgTeaserMuted = false;
+                sendYoutubeBgTeaserCommandClient("unMute");
+                sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+              }
               if (stageEl) {
                 const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
                 if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
               }
-              // Szenenbild bleibt so lange über dem laufenden Video, bis YouTubes initiale Start-/Resume-Controls (~1,9s nach echtem Playing-Start) verschwunden sind!
+              // Szenenbild bleibt so lange über dem laufenden Video, bis YouTubes initiale Start-/Resume-Controls (~1,75s nach echtem Playing-Start) verschwunden sind!
               if (detailBgTeaserChromeShieldRequired) {
-                if (!detailBgTeaserRevealTimer) {
-                  const elapsedPlaying = Date.now() - (detailBgTeaserPlayingStartedAt || Date.now());
-                  const holdRemainingMs = Math.max(450, 1920 - elapsedPlaying);
-                  scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs);
-                }
+                const elapsedPlaying = Date.now() - (detailBgTeaserPlayingStartedAt || Date.now());
+                const holdRemainingMs = Math.max(380, 1780 - elapsedPlaying);
+                scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
               } else if (layer && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll && !detailBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
+                setDetailTrailerLoadingBadgeClient(false);
               }
               syncDetailCinemaDockUiClient();
             } else if (pState === 2) {
               detailBgTeaserPaused = true;
               detailBgTeaserChromeShieldRequired = true;
+              setDetailTrailerLoadingBadgeClient(false);
               // Bei Pause immer sofort das Szenenbild zeigen, damit niemals YouTubes Pause-Overlay sichtbar wird
               if (layer) {
                 layer.classList.remove("is-playing");
@@ -42374,7 +42492,8 @@
             } else if (pState === 0) {
               // Netflix End-of-Trailer: Zurück zum sauberen Film-Artwork statt Endlosschleife oder YouTube-Endscreen
               finishDetailTrailerToArtworkClient();
-            } else if (pState === -1 && detailBgTeaserIsPlayingConfirmed) {
+            } else if ((pState === -1 || pState === 5) && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserStoppedByUser) {
+              sendYoutubeBgTeaserCommandClient("playVideo");
               syncDetailCinemaDockUiClient();
             }
           }
@@ -42412,14 +42531,14 @@
           return;
         }
 
-        // Netflix-Logik: Sofort im Hintergrund vorpuffern (nach 450ms), aber das Szenenbild so lange stehen lassen, bis YouTubes Start-UI weg ist
+        // Netflix-Logik: Sofort im Hintergrund vorpuffern (nach 320ms), aber das Szenenbild so lange stehen lassen, bis YouTubes Start-UI weg ist
         detailBgTeaserTimer = setTimeout(() => {
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
           if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML) return;
           if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) return;
           mountDetailTrailerCandidateAtIndexClient(0, false, 2);
-        }, 450);
+        }, 320);
       }
 
       function toggleDetailCinemaPlayPauseClient(ev) {
@@ -42451,6 +42570,7 @@
           return;
         }
         if (detailBgTeaserMuted) {
+          detailBgTeaserPendingUnmute = true;
           detailBgTeaserMuted = false;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
@@ -42459,6 +42579,7 @@
             return;
           }
         } else {
+          detailBgTeaserPendingUnmute = false;
           detailBgTeaserMuted = true;
           sendYoutubeBgTeaserCommandClient("mute");
         }
@@ -42497,7 +42618,7 @@
           detailBgTeaserStoppedByUser = false;
           sendYoutubeBgTeaserCommandClient("playVideo");
         }
-        scheduleDetailRevealAfterYoutubeChromeHidesClient(1650);
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(1600, true);
         syncDetailCinemaDockUiClient();
       }
 
@@ -42506,6 +42627,18 @@
         const stageEl = document.getElementById("detailHeroStageEl");
         if (!stageEl) return;
         if (stageEl.classList.contains("is-trailer-foreground-mode")) {
+          const layer = document.getElementById("detailBgVideoLayer");
+          // Falls der Nutzer im Vordergrund-Modus ein zweites Mal tippt, während der Trailer noch im kurzen Vorlauf steckt -> Modus halten & Ton/Start sicherstellen!
+          if (layer && !layer.classList.contains("is-playing") && detailBgTeaserActiveKey && !detailBgTeaserPaused && !detailBgTeaserEnded) {
+            detailBgTeaserPendingUnmute = true;
+            detailBgTeaserMuted = false;
+            sendYoutubeBgTeaserCommandClient("playVideo");
+            sendYoutubeBgTeaserCommandClient("unMute");
+            sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+            setDetailTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
+            syncDetailCinemaDockUiClient();
+            return;
+          }
           exitDetailForegroundTrailerModeClient(ev);
           return;
         }
@@ -42529,24 +42662,39 @@
           window.open("https://www.youtube.com/results?search_query=" + ytQ, "_blank", "noopener,noreferrer");
           return;
         }
+        if (detailBgTeaserTimer) {
+          clearTimeout(detailBgTeaserTimer);
+          detailBgTeaserTimer = null;
+        }
         detailBgTeaserCandidates = candidates;
         detailBgTeaserStoppedByUser = false;
         detailBgTeaserPausedByScroll = false;
+        detailBgTeaserPendingUnmute = true;
+        detailBgTeaserMuted = false;
         stageEl.classList.add("is-trailer-foreground-mode");
+
         const existingFrame = document.getElementById("detailBgVideoIframe");
         if (existingFrame && detailBgTeaserActiveKey) {
-          detailBgTeaserMuted = false;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [90]);
           const layer = document.getElementById("detailBgVideoLayer");
-          // Falls der Trailer bereits im Hintergrund sichtbar läuft -> Ohne Unterbrechung & ohne playVideo-Aufruf sofort mit Ton weiterlaufen lassen!
+          // 1. Trailer läuft bereits sichtbar im Hintergrund -> 0ms sofort mit Ton weiterlaufen lassen!
           if (detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserChromeShieldRequired) {
+            setDetailTrailerLoadingBadgeClient(false);
             if (layer) {
               layer.classList.remove("is-concealing");
               layer.classList.add("is-playing");
             }
+          } else if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
+            // 2. Trailer lädt gerade schon im Hintergrund an -> KEIN Timer-Reset, nur Restzeit abwarten & Lade-Badge zeigen!
+            sendYoutubeBgTeaserCommandClient("playVideo");
+            const elapsed = detailBgTeaserPlayingStartedAt > 0
+              ? (Date.now() - detailBgTeaserPlayingStartedAt)
+              : (Date.now() - (detailBgTeaserStageOpenedAt || Date.now()));
+            const remainingMs = Math.max(400, 1750 - elapsed);
+            scheduleDetailRevealAfterYoutubeChromeHidesClient(remainingMs, false);
           } else {
-            // Falls pausiert, beendet oder noch im Vorlauf -> Szenenbild schützt vor den YouTube-Play-Controls, bis diese ausgeblendet sind
+            // 3. Trailer war pausiert oder beendet -> Mit Cover-Schutz fortsetzen / neu starten
             resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
           }
         } else {
@@ -42563,6 +42711,7 @@
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const stageEl = document.getElementById("detailHeroStageEl");
         if (!stageEl) return;
+        setDetailTrailerLoadingBadgeClient(false);
         stageEl.classList.remove("is-trailer-foreground-mode");
         syncDetailCinemaDockUiClient();
         const trBtn = document.getElementById("detailTrailerBtn") || document.getElementById("detailPrimaryPlayBtn");
@@ -43878,7 +44027,17 @@
             autoLoadCollectionInDetailClient(d.collection.id, d.id || id);
           }
           autoLoadSimilarInDetailClient(type, d.id || id);
-          scheduleDetailBackgroundVideoTeaserClient(tr, autoOpenTrailer);
+          const wasAlreadyForeground = Boolean(autoOpenTrailer || existingStageEl.classList.contains("is-trailer-foreground-mode"));
+          if (!detailBgTeaserActiveKey) {
+            scheduleDetailBackgroundVideoTeaserClient(tr, wasAlreadyForeground);
+          } else if (wasAlreadyForeground) {
+            existingStageEl.classList.add("is-trailer-foreground-mode");
+            detailBgTeaserPendingUnmute = true;
+            detailBgTeaserMuted = false;
+            sendYoutubeBgTeaserCommandClient("unMute");
+            sendYoutubeBgTeaserCommandClient("setVolume", [90]);
+            syncDetailCinemaDockUiClient();
+          }
 
           if (typeof syncExpandableDescriptionsOverflowClient === "function") {
             requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(m));
