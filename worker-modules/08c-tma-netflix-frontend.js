@@ -3618,7 +3618,22 @@
         return clientDiagnosticLogState.logs;
       }
 
-      function saveClientDiagnosticLogsToStorage() {
+      let _diagLogSaveTimer = null;
+      function saveClientDiagnosticLogsToStorage(immediate = true) {
+        if (!immediate) {
+          if (_diagLogSaveTimer) return;
+          _diagLogSaveTimer = setTimeout(() => {
+            _diagLogSaveTimer = null;
+            try {
+              localStorage.setItem(CLIENT_DIAG_LOG_STORAGE_KEY, JSON.stringify((clientDiagnosticLogState.logs || []).slice(0, 1000)));
+            } catch (e) {}
+          }, 900);
+          return;
+        }
+        if (_diagLogSaveTimer) {
+          clearTimeout(_diagLogSaveTimer);
+          _diagLogSaveTimer = null;
+        }
         try {
           localStorage.setItem(CLIENT_DIAG_LOG_STORAGE_KEY, JSON.stringify((clientDiagnosticLogState.logs || []).slice(0, 1000)));
         } catch (e) {}
@@ -3714,7 +3729,7 @@
             ...routineLogs.slice(0, remainingSlots)
           ];
         }
-        saveClientDiagnosticLogsToStorage();
+        saveClientDiagnosticLogsToStorage(Boolean(syncToServer));
         if (syncToServer && added.length > 0) {
           apiFetchJson(API_BASE + "/admin/import-logs", {
             method: "POST",
@@ -4202,6 +4217,46 @@
         if (!backupImportJob.resolvedTitlesCache || typeof backupImportJob.resolvedTitlesCache !== "object") {
           backupImportJob.resolvedTitlesCache = {};
         }
+        if (!(backupImportJob._knownD1FileIds instanceof Set)) {
+          backupImportJob._knownD1FileIds = new Set();
+        }
+        if (!(backupImportJob._knownD1Fingerprints instanceof Set)) {
+          backupImportJob._knownD1Fingerprints = new Set();
+        }
+        const PERSISTENT_BROWSER_TITLES_KEY = "tma_persistent_resolved_titles_v2";
+        if (!backupImportJob._loadedPersistentBrowserTitles) {
+          backupImportJob._loadedPersistentBrowserTitles = true;
+          try {
+            const rawSavedTitles = localStorage.getItem(PERSISTENT_BROWSER_TITLES_KEY);
+            if (rawSavedTitles) {
+              const parsedTitles = JSON.parse(rawSavedTitles);
+              if (parsedTitles && typeof parsedTitles === "object") {
+                for (const [k, v] of Object.entries(parsedTitles)) {
+                  if (v && v.tmdbId && !backupImportJob.resolvedTitlesCache[k]) {
+                    backupImportJob.resolvedTitlesCache[k] = v;
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        }
+        let _persistBrowserTitlesTimer = null;
+        const schedulePersistBrowserTitlesCache = () => {
+          if (_persistBrowserTitlesTimer) return;
+          _persistBrowserTitlesTimer = setTimeout(() => {
+            _persistBrowserTitlesTimer = null;
+            try {
+              const entries = Object.entries(backupImportJob.resolvedTitlesCache || {}).filter(([, v]) => v && v.tmdbId);
+              const trimmedObj = {};
+              const startIdx = Math.max(0, entries.length - 3500);
+              for (let i = startIdx; i < entries.length; i++) {
+                trimmedObj[entries[i][0]] = entries[i][1];
+              }
+              localStorage.setItem(PERSISTENT_BROWSER_TITLES_KEY, JSON.stringify(trimmedObj));
+            } catch (e) {}
+          }, 1200);
+        };
+
         const normClientTitleKey = (t) => String(t || "")
           .toLowerCase()
           .normalize("NFD")
@@ -4210,7 +4265,7 @@
           .replace(/[^a-z0-9]+/g, "")
           .trim();
 
-        // D1-Katalog Pre-Seed: Einmalig beim Start alle bereits in D1 gespeicherten Filme & Serien in den Browser-Cache vorladen (0 Such-Calls ab Eintrag #1!)
+        // D1-Katalog Pre-Seed: Einmalig beim Start alle bereits in D1 gespeicherten Filme, Serien, Entity-Mappings & Datei-Fingerprints in den Browser-Cache vorladen (0 Such-Calls ab Eintrag #1!)
         if (!backupImportJob._d1CatalogPreSeeded) {
           backupImportJob._d1CatalogPreSeeded = true;
           backupImportJob.currentBatchModeLabel = "🧠 Lade D1-Pre-Seed...";
@@ -4218,29 +4273,68 @@
           renderBackupImportBoxDom();
           try {
             const preRes = await apiFetchJson(API_BASE + "/admin/catalog-preseed", { method: "GET" });
-            if (preRes && preRes.ok && Array.isArray(preRes.items)) {
+            if (preRes && preRes.ok) {
               let preSeedAdded = 0;
-              for (const pItem of preRes.items) {
-                if (!pItem || !pItem.tmdbId || !pItem.title) continue;
-                const pNorm = normClientTitleKey(pItem.title);
-                if (!pNorm || pNorm === "unbekannt") continue;
-                const pType = pItem.typeCode === "s" ? "s" : "m";
-                const pYear = pItem.year ? String(pItem.year) : "any";
-                const cacheObj = {
-                  tmdbId: Number(pItem.tmdbId),
-                  typeCode: pType,
-                  cleanTitle: String(pItem.title),
-                  poster: pItem.poster || ""
-                };
-                backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
-                if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
-                  backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
+              if (Array.isArray(preRes.items)) {
+                for (const pItem of preRes.items) {
+                  if (!pItem || !pItem.tmdbId || !pItem.title) continue;
+                  const pNorm = normClientTitleKey(pItem.title);
+                  if (!pNorm || pNorm === "unbekannt") continue;
+                  const pType = pItem.typeCode === "s" ? "s" : "m";
+                  const pYear = pItem.year ? String(pItem.year) : "any";
+                  const cacheObj = {
+                    tmdbId: Number(pItem.tmdbId),
+                    typeCode: pType,
+                    cleanTitle: String(pItem.title),
+                    poster: pItem.poster || ""
+                  };
+                  backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
+                  if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
+                    backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
+                  }
+                  preSeedAdded++;
                 }
-                preSeedAdded++;
+              }
+              if (Array.isArray(preRes.entityMappings)) {
+                for (const em of preRes.entityMappings) {
+                  if (!em || !em.tmdbId) continue;
+                  const emNorm = normClientTitleKey(em.title || "");
+                  const emType = em.typeCode === "s" ? "s" : "m";
+                  const cacheObj = {
+                    tmdbId: Number(em.tmdbId),
+                    typeCode: emType,
+                    cleanTitle: String(em.title || ""),
+                    poster: em.poster || ""
+                  };
+                  if (emNorm && emNorm !== "unbekannt") {
+                    if (!backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"]) {
+                      backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"] = cacheObj;
+                    }
+                  }
+                  const strippedKey = String(em.cacheKey || "").replace(/^title_res_/, "");
+                  if (strippedKey && !backupImportJob.resolvedTitlesCache[strippedKey]) {
+                    backupImportJob.resolvedTitlesCache[strippedKey] = cacheObj;
+                  }
+                }
+              }
+              if (Array.isArray(preRes.existingFileIds)) {
+                for (const fid of preRes.existingFileIds) {
+                  if (fid) backupImportJob._knownD1FileIds.add(String(fid));
+                }
+              }
+              if (Array.isArray(preRes.existingFingerprints)) {
+                for (const fp of preRes.existingFingerprints) {
+                  if (fp && fp !== "0_0_0x0") backupImportJob._knownD1Fingerprints.add(String(fp));
+                }
               }
               backupImportJob.d1PreSeedCount = preSeedAdded;
-              if (preSeedAdded > 0) {
-                backupImportJob.recentLog.push("🧠 D1-Katalog Pre-Seed geladen: " + preSeedAdded.toLocaleString("de-DE") + " Filme & Serien vorab im Browser-Cache bereit (0 Such-Calls)!");
+              schedulePersistBrowserTitlesCache();
+              if (preSeedAdded > 0 || backupImportJob._knownD1FileIds.size > 0) {
+                backupImportJob.recentLog.push(
+                  "🧠 D1-Katalog Pre-Seed geladen: " +
+                  preSeedAdded.toLocaleString("de-DE") + " Titel & " +
+                  backupImportJob._knownD1FileIds.size.toLocaleString("de-DE") + " Datei-IDs im Browser-Cache bereit!"
+                );
               }
             }
           } catch (preErr) {}
@@ -4256,23 +4350,38 @@
           if (!backupImportJob.running || backupImportJob.paused) break;
 
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
-          const lookaheadSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + 16);
+          const lookaheadSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + 24);
           let lookaheadCacheHits = 0;
+          let consecutivePreResolved = 0;
+          let streakBroken = false;
+          const seenSeriesInLookahead = new Set();
           for (const lkItem of lookaheadSlice) {
             if (!lkItem || typeof lkItem !== "object") continue;
             if (lkItem.tmdb_id || lkItem.tmdbId) {
               lookaheadCacheHits++;
+              if (!streakBroken) consecutivePreResolved++;
               continue;
             }
             const lkKey = normClientTitleKey(lkItem.cleanTitle || lkItem.title || "");
-            if (!lkKey) continue;
+            if (!lkKey) {
+              streakBroken = true;
+              continue;
+            }
             const lkType = (lkItem.typeCode === "s" || lkItem.isSeries || lkItem.season || lkItem.episode) ? "s" : "m";
             const lkYear = lkItem.year && lkItem.year !== "k.A." ? String(lkItem.year) : "any";
-            if (
+            const isResolvedInBrowser = Boolean(
               backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_" + lkYear]?.tmdbId ||
               backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_any"]?.tmdbId
-            ) {
+            );
+            if (isResolvedInBrowser) {
               lookaheadCacheHits++;
+              if (!streakBroken) consecutivePreResolved++;
+            } else if (lkType === "s" && seenSeriesInLookahead.has(lkKey)) {
+              // Weitere Folgen derselben Serie im selben Batch benötigen 0 zusätzliche TMDb-Subrequests!
+              lookaheadCacheHits++;
+            } else {
+              if (lkType === "s") seenSeriesInLookahead.add(lkKey);
+              streakBroken = true;
             }
           }
 
@@ -4287,6 +4396,7 @@
           const curProfileBaseSize = getEffectiveImportBatchSizeClient();
           const healthRecSize = Number(healthSt.recommendedBatchSize || 5);
           let effectiveBatchSize = Math.min(curProfileBaseSize, healthRecSize);
+          let isPreResolvedFastBatch = false;
           if (curRetryCount > 0) {
             effectiveBatchSize = 1;
             backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
@@ -4296,12 +4406,18 @@
             backupImportJob._lastBatchHadLatencyCooldown = false;
             backupImportJob.currentBatchModeLabel = "🛡️ Auto-Throttle (" + effectiveBatchSize + "/Batch • <7ms CPU Schutz)";
             backupImportJob.currentBatchModeColor = "#f59e0b";
-          } else if (lookaheadCacheHits >= 6) {
-            effectiveBatchSize = Math.min(8, curProfileBaseSize + 2);
+          } else if (consecutivePreResolved >= 8) {
+            effectiveBatchSize = Math.min(20, consecutivePreResolved);
+            isPreResolvedFastBatch = true;
+            backupImportJob.currentBatchModeLabel = "⚡ Browser-Cache Fast-Batch (" + effectiveBatchSize + "/Batch • 0 Such-Calls)";
+            backupImportJob.currentBatchModeColor = "#10b981";
+          } else if (lookaheadCacheHits >= 5) {
+            effectiveBatchSize = Math.min(12, curProfileBaseSize + 5);
+            isPreResolvedFastBatch = consecutivePreResolved >= 5;
             backupImportJob.currentBatchModeLabel = "🚀 Turbo (" + effectiveBatchSize + "/Batch • Cache-Hits)";
             backupImportJob.currentBatchModeColor = "#34d399";
           } else {
-            effectiveBatchSize = Math.min(5, curProfileBaseSize);
+            effectiveBatchSize = Math.min(6, curProfileBaseSize + 1);
             const profShort = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo" ? "🛡️ Free-Turbo" : (state.adminWorkerSpeedProfile === "paid_pro" ? "🚀 Paid Pro" : "⚖️ Ausgewogen");
             backupImportJob.currentBatchModeLabel = profShort + " (" + effectiveBatchSize + "/Batch)";
             backupImportJob.currentBatchModeColor = "#00e5ff";
@@ -4383,7 +4499,7 @@
           try {
             const isFinalBatchFlag = (backupImportJob.cursor + rawSlice.length >= backupImportJob.entries.length);
             backupImportJob._batchStepCounter = Number(backupImportJob._batchStepCounter || 0) + 1;
-            const shouldPersistD1Checkpoint = isFinalBatchFlag || (backupImportJob._batchStepCounter % 6 === 0);
+            const shouldPersistD1Checkpoint = isFinalBatchFlag || (backupImportJob._batchStepCounter % 10 === 0);
             const lightweightCheckpoint = shouldPersistD1Checkpoint ? {
               fileName: backupImportJob.fileName,
               total: backupImportJob.entries.length,
@@ -4401,6 +4517,7 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 entries: slice,
+                isPreResolvedFastBatch,
                 batchStartCursor: backupImportJob.cursor,
                 isFinalBatch: isFinalBatchFlag,
                 sourceChannelId: activeChan,
@@ -4547,6 +4664,23 @@
                   backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "6s-Zeit-Guard" : "38-Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
                 }
                 appendClientDiagnosticLogs(batchDiagEntries, false);
+                schedulePersistBrowserTitlesCache();
+                if (backupImportJob.reviewItems.length > 900) {
+                  const priorityReviews = [];
+                  const routineReviews = [];
+                  for (const rv of backupImportJob.reviewItems) {
+                    if (rv && (rv.status === "failed" || rv.isUncertain || rv.contextError || !rv.tmdbId || Number(rv.tmdbId) >= 900000000)) {
+                      priorityReviews.push(rv);
+                    } else {
+                      routineReviews.push(rv);
+                    }
+                  }
+                  const keepRoutineCount = Math.max(200, 900 - priorityReviews.length);
+                  backupImportJob.reviewItems = [
+                    ...priorityReviews,
+                    ...routineReviews.slice(-keepRoutineCount)
+                  ];
+                }
                 if (backupImportJob.livePosterFeed.length > 16) {
                   backupImportJob.livePosterFeed = backupImportJob.livePosterFeed.slice(0, 16);
                 }

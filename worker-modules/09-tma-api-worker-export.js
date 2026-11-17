@@ -948,15 +948,21 @@
         }
         if (path === "/api/tma/admin/catalog-preseed" && (request.method === "GET" || request.method === "POST")) {
           const items = [];
+          const existingFileIds = [];
+          const existingFingerprints = [];
+          const entityMappings = [];
           try {
             await ensureD1Schema(env);
             const rawDb = getRawD1Binding(env);
             if (rawDb) {
               trackStat("d1Reads");
               if (typeof countD1Subrequest === "function") countD1Subrequest();
-              const [mRows, sRows] = await rawDb.batch([
+              const [mRows, sRows, mfRows, efRows, entRows] = await rawDb.batch([
                 rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM movies"),
-                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series")
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series"),
+                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 25000"),
+                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 25000"),
+                rawDb.prepare("SELECT cache_key, data_json FROM entity_cache WHERE entity_type = 'title_res' ORDER BY updated_at DESC LIMIT 2500")
               ]);
               for (const r of (mRows?.results || [])) {
                 if (r?.tmdb_id && r?.title) {
@@ -980,18 +986,60 @@
                   });
                 }
               }
+              const seenFidSet = new Set();
+              const seenFpSet = new Set();
+              for (const r of [...(mfRows?.results || []), ...(efRows?.results || [])]) {
+                const fid = String(r?.telegram_file_id || "").trim();
+                if (fid && !fid.startsWith("vip_playlist_") && !fid.startsWith("tmdb_card_") && !seenFidSet.has(fid)) {
+                  seenFidSet.add(fid);
+                  existingFileIds.push(fid);
+                }
+                const fp = String(r?.file_fingerprint || "").trim();
+                if (fp && fp !== "0_0_0x0" && fp !== "null" && !seenFpSet.has(fp)) {
+                  seenFpSet.add(fp);
+                  existingFingerprints.push(fp);
+                }
+              }
+              for (const r of (entRows?.results || [])) {
+                if (r?.cache_key && r?.data_json) {
+                  try {
+                    const parsedEnt = JSON.parse(r.data_json);
+                    if (parsedEnt && parsedEnt.tmdbId) {
+                      entityMappings.push({
+                        cacheKey: String(r.cache_key),
+                        tmdbId: Number(parsedEnt.tmdbId),
+                        typeCode: parsedEnt.typeCode === "s" ? "s" : "m",
+                        title: String(parsedEnt.title || parsedEnt.cleanTitle || ""),
+                        poster: parsedEnt.poster || ""
+                      });
+                    }
+                  } catch (e) {}
+                }
+              }
             }
           } catch (e) {}
-          return new Response(JSON.stringify({ ok: true, count: items.length, items }), { status: 200, headers: corsHeaders });
+          return new Response(JSON.stringify({
+            ok: true,
+            count: items.length,
+            items,
+            existingFileIds,
+            existingFingerprints,
+            entityMappings
+          }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
           const activeSpeedProf = await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
           const isPaidProf = activeSpeedProf?.id === "paid_highspeed";
+          const incomingArr = Array.isArray(body.entries) ? body.entries : [];
+          const preResolvedCount = incomingArr.filter(e => e && (e.tmdb_id || e.tmdbId)).length;
+          const isPreResolvedBatch = Boolean(body.isPreResolvedFastBatch || (incomingArr.length > 0 && preResolvedCount >= Math.ceil(incomingArr.length * 0.7)));
           const maxSliceCap = isPaidProf
-            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24) + 4), 28)
-            : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 5) + 1), 6);
-          const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, maxSliceCap) : [];
+            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24) + 8), 32)
+            : isPreResolvedBatch
+              ? 24
+              : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 5) + 3), 10);
+          const rawEntries = incomingArr.slice(0, maxSliceCap);
           if (rawEntries.length === 0) {
             return new Response(JSON.stringify({ ok: false, error: "Keine Einträge im Batch." }), { status: 400, headers: corsHeaders });
           }
@@ -1041,13 +1089,18 @@
           const playlistMode = ["vip_stream", "watchlist", "both"].includes(body.playlistMode)
             ? body.playlistMode
             : (targetChatId === "bot_vip" ? "vip_stream" : "both");
-          let playlistFolder = null;
-          if (body.playlistFolderId) {
+          const fastFolderCacheKey = `fast_import_folder_${targetChatId}_${body.playlistFolderId || playlistName.toLowerCase()}`;
+          let playlistFolder = memoryFallback.get(fastFolderCacheKey) || null;
+          if (!playlistFolder && body.playlistFolderId) {
             const existingFolders = await getFolders(env, targetChatId);
             playlistFolder = existingFolders.find(f => String(f.id) === String(body.playlistFolderId)) || null;
           }
           if (!playlistFolder) {
             playlistFolder = await createOrGetJsonPlaylistFolder(env, targetChatId, playlistName, sourceLabel, playlistMode);
+          }
+          if (playlistFolder && playlistFolder.id) {
+            memoryFallback.set(fastFolderCacheKey, playlistFolder);
+            memoryFallback.set(`fast_import_folder_${targetChatId}_${playlistFolder.id}`, playlistFolder);
           }
 
           const {

@@ -3078,13 +3078,20 @@
         }
         // Wenn als VIP-Stream oder Beides gewählt, zusätzlich in der globalen Bot-VIP-Playlist ("bot_vip") in D1 synchronisieren (0 KV-Writes!)
         if (shouldRegisterVipStream && String(playlistContext.chatId) !== "bot_vip") {
-          const botVipFolder = await createOrGetJsonPlaylistFolder(
-            env,
-            "bot_vip",
-            playlistContext.playlistName || "🌟 Bot-VIP-Playlist",
-            playlistContext.sourceLabel || "VIP-Import",
-            "vip_stream"
-          );
+          const mirrorNameKey = `fast_bot_vip_folder_${String(playlistContext.playlistName || "default").toLowerCase().trim()}`;
+          let botVipFolder = memoryFallback.get(mirrorNameKey);
+          if (!botVipFolder || !botVipFolder.id) {
+            botVipFolder = await createOrGetJsonPlaylistFolder(
+              env,
+              "bot_vip",
+              playlistContext.playlistName || "🌟 Bot-VIP-Playlist",
+              playlistContext.sourceLabel || "VIP-Import",
+              "vip_stream"
+            );
+            if (botVipFolder && botVipFolder.id) {
+              memoryFallback.set(mirrorNameKey, botVipFolder);
+            }
+          }
           const syncedCount = await batchSaveIngestedItemsToPlaylist(
             env,
             "bot_vip",

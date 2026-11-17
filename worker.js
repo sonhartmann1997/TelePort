@@ -7802,22 +7802,22 @@
 
     // D1-Write-Quota-Schutz: Im RAM bleiben alle Einträge sichtbar (mit Fehler-Priorität).
     // In D1 werden dauerhaft bevorzugt Konflikte, Fehler, Nicht-Gefunden und Vorabversionen gespeichert (spart ~85% D1-Writes beim Massen-Import!).
-    const d1ToPersist = options?.persistAll
+    const rawD1Candidates = options?.persistAll
       ? normalizedBatch
       : normalizedBatch.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE" && l.status !== "SKIPPED_HEADER" && l.status !== "SKIPPED_JUNK");
 
+    const nowPersistedTs = Date.now();
+    const d1ToPersist = rawD1Candidates.filter(l => {
+      const sigKey = `d1_diag_sig_${l.msgId || ""}_${l.fileName || ""}_${l.status}_${l.tmdbId || 0}`;
+      const prevTs = Number(memoryFallback.get(sigKey) || 0);
+      if (prevTs > 0 && (nowPersistedTs - prevTs) < 900000) return false;
+      memoryFallback.set(sigKey, nowPersistedTs);
+      return true;
+    });
+
     const db = await ensureD1Schema(env);
-    if (!db) return;
-    if (resolvedMsgIdsInBatch.size > 0) {
-      try {
-        const msgIdArr = Array.from(resolvedMsgIdsInBatch).slice(0, 40);
-        const delStmts = msgIdArr.map(mid =>
-          db.prepare("DELETE FROM import_diagnostic_logs WHERE msg_id = ?1 AND status = 'SUBREQUEST_PAUSE'").bind(String(mid))
-        );
-        if (delStmts.length > 0) await db.batch(delStmts);
-      } catch (e) {}
-    }
-    if (d1ToPersist.length === 0) return;
+    if (!db || d1ToPersist.length === 0) return;
+    memoryFallback.delete("d1_diag_logs_query_cache");
     try {
       const chunkSize = 40;
       for (let i = 0; i < d1ToPersist.length; i += chunkSize) {
@@ -7859,7 +7859,10 @@
     }
     const db = await ensureD1Schema(env);
     let d1Rows = [];
-    if (db) {
+    const cachedDiagQuery = memoryFallback.get("d1_diag_logs_query_cache");
+    if (cachedDiagQuery && Array.isArray(cachedDiagQuery.rows) && (Date.now() - Number(cachedDiagQuery.ts || 0)) < 45000) {
+      d1Rows = cachedDiagQuery.rows;
+    } else if (db) {
       try {
         const res = await db
           .prepare("SELECT * FROM import_diagnostic_logs ORDER BY id DESC LIMIT ?1")
@@ -7900,6 +7903,7 @@
               timestamp: r.created_at || Date.now()
             };
           });
+          memoryFallback.set("d1_diag_logs_query_cache", { rows: d1Rows, ts: Date.now() });
         }
       } catch (e) {}
     }
@@ -8395,6 +8399,7 @@
       cur.is_vip = vipVal;
       memoryFallback.set(`d1_user_${tid}`, cur);
     }
+    memoryFallback.delete("d1_admin_users_list_cache");
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -8410,6 +8415,10 @@
   }
 
   async function listAllUsersFromD1(env) {
+    const cachedUsers = memoryFallback.get("d1_admin_users_list_cache");
+    if (cachedUsers && Array.isArray(cachedUsers.rows) && (Date.now() - Number(cachedUsers.ts || 0)) < 30000) {
+      return cachedUsers.rows;
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -8418,7 +8427,9 @@
           .prepare("SELECT * FROM users ORDER BY is_admin DESC, is_vip DESC, last_seen_at DESC LIMIT 200")
           .all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
-          return res.results.map(r => formatUserRowForClient(r, env));
+          const formatted = res.results.map(r => formatUserRowForClient(r, env));
+          memoryFallback.set("d1_admin_users_list_cache", { rows: formatted, ts: Date.now() });
+          return formatted;
         }
       } catch (e) {}
     }
@@ -8432,11 +8443,16 @@
   }
 
   async function listAllMediaFromD1(env, typeCode = "m") {
+    const tcKey = typeCode === "s" ? "s" : "m";
+    const cachedMediaList = memoryFallback.get(`d1_admin_media_list_cache_${tcKey}`);
+    if (cachedMediaList && Array.isArray(cachedMediaList.rows) && (Date.now() - Number(cachedMediaList.ts || 0)) < 45000) {
+      return cachedMediaList.rows;
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Reads");
-        const query = typeCode === "s"
+        const query = tcKey === "s"
           ? `SELECT s.tmdb_id, s.title, s.release_year, s.fsk, s.vote_average, s.genres, s.providers, s.poster_path, s.updated_at,
                     COUNT(ef.id) AS stream_count,
                     GROUP_CONCAT(DISTINCT ef.quality) AS qualities
@@ -8446,17 +8462,19 @@
              HAVING COUNT(ef.id) > 0
              ORDER BY COUNT(ef.id) DESC, s.updated_at DESC
              LIMIT 250`
-          : `SELECT m.tmdb_id, m.title, m.release_year, m.fsk, m.vote_average, m.genres, m.providers, m.poster_path, m.updated_at,
-                    COUNT(mf.id) AS stream_count,
-                    GROUP_CONCAT(DISTINCT mf.quality) AS qualities
+          : `SELECT m.tmdb_id, m.title, s_cnt.stream_count, s_cnt.qualities, m.release_year, m.fsk, m.vote_average, m.genres, m.providers, m.poster_path, m.updated_at
              FROM movies m
-             INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
-             GROUP BY m.tmdb_id
-             HAVING COUNT(mf.id) > 0
-             ORDER BY COUNT(mf.id) DESC, m.updated_at DESC
+             INNER JOIN (
+               SELECT movie_id, COUNT(id) AS stream_count, GROUP_CONCAT(DISTINCT quality) AS qualities
+               FROM movie_files
+               GROUP BY movie_id
+               HAVING COUNT(id) > 0
+             ) s_cnt ON s_cnt.movie_id = m.tmdb_id
+             ORDER BY s_cnt.stream_count DESC, m.updated_at DESC
              LIMIT 250`;
         const res = await db.prepare(query).all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
+          memoryFallback.set(`d1_admin_media_list_cache_${tcKey}`, { rows: res.results, ts: Date.now() });
           return res.results;
         }
       } catch (e) {}
@@ -8510,6 +8528,8 @@
       memoryFallback.delete(`ingested_streams_m_${idNum}`);
     }
     const tc = typeCode === "s" ? "s" : "m";
+    memoryFallback.delete(`d1_vip_summary_${tc}_${idNum}`);
+    memoryFallback.delete(`d1_admin_media_list_cache_${tc}`);
     const memReports = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
     if (memReports.length > 0) {
       memoryFallback.set("d1_media_reports", memReports.filter(r => !(r && Number(r.tmdb_id) === idNum && r.type_code === tc)));
@@ -9347,35 +9367,58 @@
     ]);
     memoryFallback.set(memKey, nextMem);
     memoryFallback.set(memLoadedTsKey, Date.now());
+    memoryFallback.delete(`d1_vip_summary_m_${mid}`);
+    memoryFallback.delete("d1_admin_media_list_cache_m");
+    if (entry.telegram_file_id) {
+      memoryFallback.set(`d1_fid_lookup_${entry.telegram_file_id}`, {
+        matchedBy: "file_id",
+        typeCode: "m",
+        tmdbId: mid,
+        confidence: 100,
+        source: "D1 (Datei-ID)"
+      });
+      memoryFallback.delete(`d1_fid_miss_${entry.telegram_file_id}`);
+    }
 
     if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
-      // MODUL 3: Nur identische Fingerprints oder defekte Platzhalter ersetzen; abweichende Fingerprints bleiben als zusätzliche Qualitäts-Versionen erhalten!
-      const stmts = [
-        db.prepare(
-          `DELETE FROM movie_files WHERE movie_id = ?1 AND (
-            telegram_file_id IS NULL OR telegram_file_id = ''
-            OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
-            ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (COALESCE(part_number, 1) = ?2 AND COALESCE(file_fingerprint, '') = ?3 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?4)
-          )`
-        ).bind(mid, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
-      ];
+      const stmts = [];
+      // MODUL 3: Nur dann DELETE-Statements an D1 senden, wenn tatsächlich zu bereinigende Platzhalter/Duplikate existieren!
+      const needsPlaceholderOrFpDelete = allExistingRows.some(r => {
+        if (!r) return false;
+        const rfid = String(r.telegram_file_id || "");
+        if (!rfid || rfid.startsWith("vip_playlist_") || rfid.startsWith("tmdb_card_")) return true;
+        if (isHighValidity && (rfid.startsWith("tg_export_0_") || rfid.startsWith("tg_export_vip_"))) return true;
+        if (Number(r.part_number || 1) === entry.part_number && entry.file_fingerprint && entry.file_fingerprint !== "0_0_0x0" && r.file_fingerprint === entry.file_fingerprint && rfid !== entry.telegram_file_id) return true;
+        return false;
+      });
+      if (needsPlaceholderOrFpDelete) {
+        stmts.push(
+          db.prepare(
+            `DELETE FROM movie_files WHERE movie_id = ?1 AND (
+              telegram_file_id IS NULL OR telegram_file_id = ''
+              OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
+              ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
+              OR (COALESCE(part_number, 1) = ?2 AND COALESCE(file_fingerprint, '') = ?3 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?4)
+            )`
+          ).bind(mid, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
+        );
+      }
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
           db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_file_id = ?2")
             .bind(mid, preFid)
         );
       }
-      if (entry.telegram_unique_id) {
+      if (entry.telegram_unique_id && allExistingRows.some(r => r && r.telegram_unique_id === entry.telegram_unique_id && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_unique_id = ?2 AND telegram_file_id != ?3")
             .bind(entry.movie_id, entry.telegram_unique_id, entry.telegram_file_id)
         );
       }
-      if (msgId) {
+      if (msgId && allExistingRows.some(r => r && String(r.telegram_file_id || "").endsWith(`_${msgId}`) && String(r.telegram_file_id || "").startsWith("tg_export_") && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_file_id LIKE ?2 AND telegram_file_id != ?3")
             .bind(mid, `tg_export_%_${msgId}`, entry.telegram_file_id)
@@ -9687,7 +9730,21 @@
     if (!isArchiveDownload) {
       memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
     }
+    memoryFallback.delete(`d1_vip_summary_s_${sid}`);
+    memoryFallback.delete("d1_admin_media_list_cache_s");
     memoryFallback.delete("d1_series_gaps_cache");
+    if (entry.telegram_file_id) {
+      memoryFallback.set(`d1_fid_lookup_${entry.telegram_file_id}`, {
+        matchedBy: "file_id",
+        typeCode: "s",
+        tmdbId: sid,
+        season: sNum,
+        episode: eNum,
+        confidence: 100,
+        source: "D1 (Datei-ID)"
+      });
+      memoryFallback.delete(`d1_fid_miss_${entry.telegram_file_id}`);
+    }
 
     const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped.filter(x => !x.is_download_only && !x.isDownloadOnly && x.codec !== "ARCHIVE" && Number(x.is_bonus || 0) !== 2)));
 
@@ -9695,30 +9752,41 @@
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
-      // MODUL 3: Nur identische Fingerprints oder defekte Platzhalter ersetzen; abweichende Fingerprints bleiben als zusätzliche Qualitäts-Versionen erhalten!
-      const stmts = [
-        db.prepare(
-          `DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND (
-            telegram_file_id IS NULL OR telegram_file_id = ''
-            OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
-            ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (COALESCE(part_number, 1) = ?4 AND COALESCE(file_fingerprint, '') = ?5 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?6)
-          )`
-        ).bind(sid, sNum, eNum, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
-      ];
+      const stmts = [];
+      // MODUL 3: Nur dann DELETE-Statements an D1 senden, wenn in allExistingEpRows tatsächlich Platzhalter oder veraltete IDs vorliegen!
+      const needsEpPlaceholderOrFpDelete = allExistingEpRows.some(r => {
+        if (!r) return false;
+        const rfid = String(r.telegram_file_id || "");
+        if (!rfid || rfid.startsWith("vip_playlist_") || rfid.startsWith("tmdb_card_")) return true;
+        if (isHighValidity && (rfid.startsWith("tg_export_0_") || rfid.startsWith("tg_export_vip_"))) return true;
+        if (Number(r.part_number || 1) === entry.part_number && entry.file_fingerprint && entry.file_fingerprint !== "0_0_0x0" && r.file_fingerprint === entry.file_fingerprint && rfid !== entry.telegram_file_id) return true;
+        return false;
+      });
+      if (needsEpPlaceholderOrFpDelete) {
+        stmts.push(
+          db.prepare(
+            `DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND (
+              telegram_file_id IS NULL OR telegram_file_id = ''
+              OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
+              ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
+              OR (COALESCE(part_number, 1) = ?4 AND COALESCE(file_fingerprint, '') = ?5 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?6)
+            )`
+          ).bind(sid, sNum, eNum, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
+        );
+      }
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND telegram_file_id = ?4")
             .bind(sid, sNum, eNum, preFid)
         );
       }
-      if (entry.telegram_unique_id) {
+      if (entry.telegram_unique_id && allExistingEpRows.some(r => r && r.telegram_unique_id === entry.telegram_unique_id && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND telegram_unique_id = ?4 AND telegram_file_id != ?5")
             .bind(entry.series_id, entry.season_number, entry.episode_number, entry.telegram_unique_id, entry.telegram_file_id)
         );
       }
-      if (msgId) {
+      if (msgId && allExistingEpRows.some(r => r && String(r.telegram_file_id || "").endsWith(`_${msgId}`) && String(r.telegram_file_id || "").startsWith("tg_export_") && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND telegram_file_id LIKE ?4 AND telegram_file_id != ?5")
             .bind(sid, sNum, eNum, `tg_export_%_${msgId}`, entry.telegram_file_id)
@@ -11035,60 +11103,105 @@
     const bestSeriesMap = new Map();
     const posterMap = new Map();
 
-    // 1. Memory-Fallback & L1-Cache prüfen (auch für fehlende Poster!)
-    for (const mid of movieIds) {
-      const cachedM = getCachedTmdb(`movie_${mid}`) || memoryFallback.get(`d1_catalog_movie_${mid}`);
-      if (cachedM && (cachedM.poster_path || cachedM.external_poster_url)) {
-        posterMap.set(`m_${mid}`, cachedM.poster_path || cachedM.external_poster_url);
-      }
-      if (hasVipStreamAccess) {
-        const mFiles = memoryFallback.get(`d1_movie_files_${mid}`);
-        if (Array.isArray(mFiles) && mFiles.length > 0) {
-          const validMFiles = mFiles.filter(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
-          const sorted = sortAndDedupeStreamFiles(validMFiles);
-          const top = sorted[0];
-          if (top) {
-            bestMovieMap.set(mid, {
-              label: `${top.quality || "1080p"}${top.codec ? " " + top.codec : ""}`.trim(),
-              count: sorted.length
-            });
+    // 1. Memory-Fallback & L1-Cache prüfen (inkl. positivem & negativem VIP-Summary-Cache -> spart >90% D1-Reads beim Katalog-Blättern!)
+    const nowVipCheckTs = Date.now();
+    const uncachedVipMovieIds = [];
+    const uncachedPosterMovieIds = [];
+    const uncachedVipSeriesIds = [];
+    const uncachedPosterSeriesIds = [];
+
+    for (const it of items) {
+      if (!it || !it.id) continue;
+      const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
+      const tid = Number(it.id);
+      const hasInlinePoster = Boolean(it.poster_path || it.external_poster_url);
+      if (tc === "s") {
+        const cachedS = getCachedTmdb(`tv_${tid}`) || memoryFallback.get(`d1_catalog_series_${tid}`);
+        if (cachedS && (cachedS.poster_path || cachedS.external_poster_url)) {
+          posterMap.set(`s_${tid}`, cachedS.poster_path || cachedS.external_poster_url);
+        } else if (!hasInlinePoster && !memoryFallback.has(`d1_poster_miss_s_${tid}`)) {
+          uncachedPosterSeriesIds.push(tid);
+        }
+        if (hasVipStreamAccess) {
+          const cachedVipS = memoryFallback.get(`d1_vip_summary_s_${tid}`);
+          if (cachedVipS && (nowVipCheckTs - Number(cachedVipS.ts || 0)) < 300000) {
+            if (!cachedVipS.none && cachedVipS.label) {
+              bestSeriesMap.set(tid, { label: cachedVipS.label, count: Number(cachedVipS.count || 1) });
+            }
+          } else {
+            const memBest = memoryFallback.get(`d1_series_best_quality_${tid}`);
+            if (memBest) {
+              bestSeriesMap.set(tid, { label: String(memBest), count: 1 });
+              memoryFallback.set(`d1_vip_summary_s_${tid}`, { label: String(memBest), count: 1, ts: nowVipCheckTs });
+            } else {
+              uncachedVipSeriesIds.push(tid);
+            }
+          }
+        }
+      } else {
+        const cachedM = getCachedTmdb(`movie_${tid}`) || memoryFallback.get(`d1_catalog_movie_${tid}`);
+        if (cachedM && (cachedM.poster_path || cachedM.external_poster_url)) {
+          posterMap.set(`m_${tid}`, cachedM.poster_path || cachedM.external_poster_url);
+        } else if (!hasInlinePoster && !memoryFallback.has(`d1_poster_miss_m_${tid}`)) {
+          uncachedPosterMovieIds.push(tid);
+        }
+        if (hasVipStreamAccess) {
+          const cachedVipM = memoryFallback.get(`d1_vip_summary_m_${tid}`);
+          if (cachedVipM && (nowVipCheckTs - Number(cachedVipM.ts || 0)) < 300000) {
+            if (!cachedVipM.none && cachedVipM.label) {
+              bestMovieMap.set(tid, { label: cachedVipM.label, count: Number(cachedVipM.count || 1) });
+            }
+          } else {
+            const mFiles = memoryFallback.get(`d1_movie_files_${tid}`);
+            if (Array.isArray(mFiles) && mFiles.length > 0) {
+              const validMFiles = mFiles.filter(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
+              const sorted = sortAndDedupeStreamFiles(validMFiles);
+              const top = sorted[0];
+              if (top) {
+                const summaryObj = {
+                  label: `${top.quality || "1080p"}${top.codec ? " " + top.codec : ""}`.trim(),
+                  count: sorted.length,
+                  ts: nowVipCheckTs
+                };
+                bestMovieMap.set(tid, summaryObj);
+                memoryFallback.set(`d1_vip_summary_m_${tid}`, summaryObj);
+              } else {
+                uncachedVipMovieIds.push(tid);
+              }
+            } else {
+              uncachedVipMovieIds.push(tid);
+            }
           }
         }
       }
     }
-    for (const sid of seriesIds) {
-      const cachedS = getCachedTmdb(`tv_${sid}`) || memoryFallback.get(`d1_catalog_series_${sid}`);
-      if (cachedS && (cachedS.poster_path || cachedS.external_poster_url)) {
-        posterMap.set(`s_${sid}`, cachedS.poster_path || cachedS.external_poster_url);
-      }
-      if (hasVipStreamAccess) {
-        const memBest = memoryFallback.get(`d1_series_best_quality_${sid}`);
-        if (memBest) {
-          bestSeriesMap.set(sid, { label: String(memBest), count: 1 });
-        }
-      }
-    }
 
-    // 2. D1-Datenbank prüfen (für ECHTE VIP-Qualitäten mit gültiger telegram_file_id UND fehlende Poster aus movies / series)
+    // 2. D1-Datenbank NUR für noch nicht im RAM-Cache geprüfte IDs abfragen!
     const db = await ensureD1Schema(env);
     if (db) {
       try {
-        if (movieIds.length > 0) {
-          const uniqM = [...new Set(movieIds)].slice(0, 60);
-          const placeholders = uniqM.map((_, i) => `?${i + 1}`).join(",");
+        const uniqPosterM = [...new Set(uncachedPosterMovieIds)].slice(0, 60);
+        const uniqVipM = hasVipStreamAccess ? [...new Set(uncachedVipMovieIds)].slice(0, 60) : [];
+        if (uniqPosterM.length > 0 || uniqVipM.length > 0) {
           const [resMPoster, resMFiles] = await Promise.all([
-            db.prepare(`SELECT tmdb_id, poster_path, details_json FROM movies WHERE tmdb_id IN (${placeholders})`).bind(...uniqM).all().catch(() => ({ results: [] })),
-            hasVipStreamAccess
-              ? db.prepare(`SELECT movie_id, quality, codec, telegram_file_id FROM movie_files WHERE movie_id IN (${placeholders}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqM).all().catch(() => ({ results: [] }))
+            uniqPosterM.length > 0
+              ? db.prepare(`SELECT tmdb_id, poster_path FROM movies WHERE tmdb_id IN (${uniqPosterM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterM).all().catch(() => ({ results: [] }))
+              : Promise.resolve({ results: [] }),
+            uniqVipM.length > 0
+              ? db.prepare(`SELECT movie_id, quality, codec, telegram_file_id FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipM).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
+          const foundPosterM = new Set();
           for (const row of (resMPoster?.results || [])) {
             const mid = Number(row.tmdb_id);
-            let pVal = row.poster_path || "";
-            if (!pVal && row.details_json) {
-              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
+            const pVal = row.poster_path || "";
+            if (pVal) {
+              posterMap.set(`m_${mid}`, pVal);
+              foundPosterM.add(mid);
             }
-            if (pVal) posterMap.set(`m_${mid}`, pVal);
+          }
+          for (const mid of uniqPosterM) {
+            if (!foundPosterM.has(mid)) memoryFallback.set(`d1_poster_miss_m_${mid}`, nowVipCheckTs);
           }
           for (const row of (resMFiles?.results || [])) {
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
@@ -11101,23 +11214,38 @@
               cur.count += 1;
             }
           }
+          for (const mid of uniqVipM) {
+            const matched = bestMovieMap.get(mid);
+            if (matched) {
+              memoryFallback.set(`d1_vip_summary_m_${mid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+            } else {
+              memoryFallback.set(`d1_vip_summary_m_${mid}`, { none: true, ts: nowVipCheckTs });
+            }
+          }
         }
-        if (seriesIds.length > 0) {
-          const uniqS = [...new Set(seriesIds)].slice(0, 60);
-          const placeholders = uniqS.map((_, i) => `?${i + 1}`).join(",");
+
+        const uniqPosterS = [...new Set(uncachedPosterSeriesIds)].slice(0, 60);
+        const uniqVipS = hasVipStreamAccess ? [...new Set(uncachedVipSeriesIds)].slice(0, 60) : [];
+        if (uniqPosterS.length > 0 || uniqVipS.length > 0) {
           const [resSPoster, resSFiles] = await Promise.all([
-            db.prepare(`SELECT tmdb_id, poster_path, details_json FROM series WHERE tmdb_id IN (${placeholders})`).bind(...uniqS).all().catch(() => ({ results: [] })),
-            hasVipStreamAccess
-              ? db.prepare(`SELECT series_id, quality, codec, telegram_file_id FROM episode_files WHERE series_id IN (${placeholders}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqS).all().catch(() => ({ results: [] }))
+            uniqPosterS.length > 0
+              ? db.prepare(`SELECT tmdb_id, poster_path FROM series WHERE tmdb_id IN (${uniqPosterS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterS).all().catch(() => ({ results: [] }))
+              : Promise.resolve({ results: [] }),
+            uniqVipS.length > 0
+              ? db.prepare(`SELECT series_id, quality, codec, telegram_file_id FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipS).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
+          const foundPosterS = new Set();
           for (const row of (resSPoster?.results || [])) {
             const sid = Number(row.tmdb_id);
-            let pVal = row.poster_path || "";
-            if (!pVal && row.details_json) {
-              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
+            const pVal = row.poster_path || "";
+            if (pVal) {
+              posterMap.set(`s_${sid}`, pVal);
+              foundPosterS.add(sid);
             }
-            if (pVal) posterMap.set(`s_${sid}`, pVal);
+          }
+          for (const sid of uniqPosterS) {
+            if (!foundPosterS.has(sid)) memoryFallback.set(`d1_poster_miss_s_${sid}`, nowVipCheckTs);
           }
           for (const row of (resSFiles?.results || [])) {
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
@@ -11128,6 +11256,14 @@
               bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + 1 });
             } else {
               cur.count += 1;
+            }
+          }
+          for (const sid of uniqVipS) {
+            const matched = bestSeriesMap.get(sid);
+            if (matched) {
+              memoryFallback.set(`d1_vip_summary_s_${sid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+            } else {
+              memoryFallback.set(`d1_vip_summary_s_${sid}`, { none: true, ts: nowVipCheckTs });
             }
           }
         }
@@ -11801,6 +11937,7 @@
         poster_path: seriesObj.poster_path || null,
         external_poster_url: seriesObj.external_poster_url || null,
         telegraphUrl: seriesObj.telegraphUrl || null,
+        downloadsCount: existingSeriesDownloads.length,
         ts: Date.now()
       });
       memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
@@ -12874,10 +13011,22 @@
     const db = await ensureD1Schema(env);
     if (!db) return normalizedItems.length;
     try {
+      // Überspringe identische Playlist-Items, die in den letzten 10 Min bereits in D1 gespeichert wurden (verhindert 400x UPSERT bei 200 Serien-Episoden!)
+      const itemsNeedingD1Write = normalizedItems.filter(it => {
+        const sigKey = `d1_pl_item_sig_${cleanChatId}_${it.uid}`;
+        const prevSig = memoryFallback.get(sigKey);
+        const curSig = `${it.tmdbId}|${it.folderId}|${it.title}|${it.poster_path || ""}|${it.vipQuality || ""}`;
+        if (prevSig && prevSig.sig === curSig && (now - Number(prevSig.ts || 0)) < 600000) {
+          return false;
+        }
+        memoryFallback.set(sigKey, { sig: curSig, ts: now });
+        return true;
+      });
+      if (itemsNeedingD1Write.length === 0) return normalizedItems.length;
       trackStat("d1Writes");
       const CHUNK_SIZE = 50;
-      for (let offset = 0; offset < normalizedItems.length; offset += CHUNK_SIZE) {
-        const chunk = normalizedItems.slice(offset, offset + CHUNK_SIZE);
+      for (let offset = 0; offset < itemsNeedingD1Write.length; offset += CHUNK_SIZE) {
+        const chunk = itemsNeedingD1Write.slice(offset, offset + CHUNK_SIZE);
         const stmts = chunk.map(it =>
           db.prepare(`
             INSERT OR REPLACE INTO d1_playlist_items (
@@ -24921,13 +25070,20 @@
         }
         // Wenn als VIP-Stream oder Beides gewählt, zusätzlich in der globalen Bot-VIP-Playlist ("bot_vip") in D1 synchronisieren (0 KV-Writes!)
         if (shouldRegisterVipStream && String(playlistContext.chatId) !== "bot_vip") {
-          const botVipFolder = await createOrGetJsonPlaylistFolder(
-            env,
-            "bot_vip",
-            playlistContext.playlistName || "🌟 Bot-VIP-Playlist",
-            playlistContext.sourceLabel || "VIP-Import",
-            "vip_stream"
-          );
+          const mirrorNameKey = `fast_bot_vip_folder_${String(playlistContext.playlistName || "default").toLowerCase().trim()}`;
+          let botVipFolder = memoryFallback.get(mirrorNameKey);
+          if (!botVipFolder || !botVipFolder.id) {
+            botVipFolder = await createOrGetJsonPlaylistFolder(
+              env,
+              "bot_vip",
+              playlistContext.playlistName || "🌟 Bot-VIP-Playlist",
+              playlistContext.sourceLabel || "VIP-Import",
+              "vip_stream"
+            );
+            if (botVipFolder && botVipFolder.id) {
+              memoryFallback.set(mirrorNameKey, botVipFolder);
+            }
+          }
           const syncedCount = await batchSaveIngestedItemsToPlaylist(
             env,
             "bot_vip",
@@ -32882,10 +33038,9 @@
         background-repeat: no-repeat;
         pointer-events: none;
         transform: translate3d(0, var(--detail-parallax-y, 0px), 0) scale(var(--detail-parallax-scale, 1));
-        filter: blur(var(--detail-parallax-blur, 0px));
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
-        will-change: transform, filter;
+        will-change: transform;
       }
       @media (max-width: 640px), (orientation: portrait) {
         .detail-backdrop-layer {
@@ -33962,15 +34117,19 @@
         align-items: stretch;
         justify-content: center;
         padding: calc(11px * var(--scale-menu)) calc(14px * var(--scale-menu));
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.52) 0%, rgba(10, 15, 28, 0.72) 100%);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.84) 0%, rgba(10, 15, 28, 0.94) 100%);
+        content-visibility: auto;
+        contain-intrinsic-size: 0 74px;
         border-radius: 12px;
         margin-bottom: calc(8px * var(--scale-all));
         gap: calc(7px * var(--scale-all));
         border: 1px solid rgba(255, 255, 255, 0.08);
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
-        transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.14s ease;
+        transition: background 0.14s ease, border-color 0.14s ease, transform 0.12s ease;
+      }
+      button, .btn, .detail-btn-glass, .detail-btn-play-white, .cinema-dock-btn, .season-tab-btn, .mode-pill, .f-pill, .recent-chip {
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
       }
       .ep-row:hover,
       .ep-row:focus-within {
@@ -36199,6 +36358,17 @@
       function clearClientMediaCaches() {
         clientDetailsCache.clear();
         clientSeasonCache.clear();
+        if (window._clientApiGetCache instanceof Map) {
+          window._clientApiGetCache.clear();
+        }
+        try {
+          const keysToRemove = [];
+          for (let i = 0; i < sessionStorage.length; i++) {
+            const k = sessionStorage.key(i);
+            if (k && k.startsWith("tma_api_c_")) keysToRemove.push(k);
+          }
+          for (const k of keysToRemove) sessionStorage.removeItem(k);
+        } catch (e) {}
       }
 
       // Prüft strikt, ob der aktuelle Nutzer VIP-Mitglied (oder Admin) ist:
@@ -36545,13 +36715,67 @@
       }, { passive: false });
 
       // Intelligenter Lauftext (Marquee) für überlange Kartentitel, Folgennamen & Modal-Titel bei Hover, Fokus oder Auswahl
+      let cardHoverPrewarmTimer = null;
+      let cardTouchPrewarmTimer = null;
+      const prewarmedDetailKeysInFlightSet = new Set();
+
+      function prewarmItemDetailsClient(typeCode, id) {
+        if (!id || typeof apiFetchJson !== "function") return;
+        if (typeof backupImportJob !== "undefined" && backupImportJob && backupImportJob.running) return;
+        const tc = typeCode === "s" ? "s" : "m";
+        const vipAllowed = typeof isCurrentUserVip === "function" ? isCurrentUserVip() : false;
+        const cacheKey = tc + "_" + id + "_" + (vipAllowed ? "vip" : "std");
+        if (typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
+          const existing = clientDetailsCache.get(cacheKey);
+          if (existing && (Date.now() - existing.ts < CLIENT_CACHE_TTL_MS)) return;
+        }
+        if (prewarmedDetailKeysInFlightSet.has(cacheKey)) return;
+        prewarmedDetailKeysInFlightSet.add(cacheKey);
+        apiFetchJson(API_BASE + "/details?chatId=" + encodeURIComponent(chatId) + "&type=" + tc + "&id=" + encodeURIComponent(id))
+          .then((d) => {
+            if (d && d.ok !== false && typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
+              clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
+              if (d.logo_path && typeof preloadClearLogoBitmapClient === "function") {
+                preloadClearLogoBitmapClient(d.logo_path);
+              }
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            prewarmedDetailKeysInFlightSet.delete(cacheKey);
+          });
+      }
+
+      function scheduleCardIntentPrewarmClient(cardEl, delayMs = 70) {
+        if (!cardEl || typeof cardEl.getAttribute !== "function") return;
+        const rawKey = cardEl.getAttribute("data-card-key") || "";
+        if (!rawKey) return;
+        const parts = rawKey.split("_");
+        if (parts.length < 2) return;
+        const tc = parts[0] === "s" ? "s" : "m";
+        const idNum = Number(parts[1]);
+        if (!idNum) return;
+        if (cardHoverPrewarmTimer) clearTimeout(cardHoverPrewarmTimer);
+        cardHoverPrewarmTimer = setTimeout(() => {
+          cardHoverPrewarmTimer = null;
+          prewarmItemDetailsClient(tc, idNum);
+        }, delayMs);
+      }
+
       function activateCardTitleMarquee(card) {
-        if (!card || !card.querySelector) return;
+        if (!card || !card.querySelector || card._noMarqueeNeeded) return;
         const titleEl = card.querySelector(".card-title");
         if (!titleEl || titleEl.classList.contains("is-marquee-overflow")) return;
         const rawText = (card.getAttribute("data-card-title") || titleEl.textContent || "").trim();
+        if (rawText.length <= 20) {
+          card._noMarqueeNeeded = true;
+          return;
+        }
         const isClamped = (titleEl.scrollHeight > titleEl.clientHeight + 2) || (rawText.length > 30);
-        if (!isClamped) return;
+        if (!isClamped) {
+          card._noMarqueeNeeded = true;
+          return;
+        }
         let textSpan = titleEl.querySelector(".card-title-text");
         if (!textSpan) {
           titleEl.innerHTML = '<span class="card-title-text">' + esc(rawText) + '</span>';
@@ -36565,6 +36789,7 @@
           titleEl.style.setProperty("--marquee-dur", durSec);
         } else {
           titleEl.classList.remove("is-marquee-overflow");
+          card._noMarqueeNeeded = true;
         }
       }
 
@@ -36617,6 +36842,7 @@
         });
         if (activeCard) {
           activateCardTitleMarquee(activeCard);
+          scheduleCardIntentPrewarmClient(activeCard, 60);
         }
         const activeEpRow = focusedEl && focusedEl.closest ? focusedEl.closest(".ep-row, .inline-marquee-wrap") : null;
         document.querySelectorAll(".ep-name-wrap.is-marquee-overflow, .inline-marquee-wrap.is-marquee-overflow").forEach(el => {
@@ -36634,9 +36860,16 @@
         }
       };
 
+      let lastMouseOverCardEl = null;
       document.addEventListener("mouseover", function(ev) {
         const card = ev.target && ev.target.closest ? ev.target.closest(".card") : null;
-        if (card) activateCardTitleMarquee(card);
+        if (card) {
+          if (card !== lastMouseOverCardEl) {
+            lastMouseOverCardEl = card;
+            activateCardTitleMarquee(card);
+            scheduleCardIntentPrewarmClient(card, 75);
+          }
+        }
         const epRow = ev.target && ev.target.closest ? ev.target.closest(".ep-row, .inline-marquee-wrap") : null;
         if (epRow) {
           if (epRow.classList.contains("inline-marquee-wrap")) {
@@ -36652,6 +36885,11 @@
         if (card) {
           const rel = ev.relatedTarget;
           if (!rel || !card.contains(rel)) {
+            if (lastMouseOverCardEl === card) lastMouseOverCardEl = null;
+            if (cardHoverPrewarmTimer) {
+              clearTimeout(cardHoverPrewarmTimer);
+              cardHoverPrewarmTimer = null;
+            }
             if (!card.classList.contains("spatial-focus") && !card.classList.contains("card-subnav-active")) {
               deactivateCardTitleMarquee(card);
             }
@@ -36686,6 +36924,11 @@
         const tc = parts[0] === "s" ? "s" : "m";
         const idNum = Number(parts[1]);
         if (!idNum) return;
+        if (cardTouchPrewarmTimer) clearTimeout(cardTouchPrewarmTimer);
+        cardTouchPrewarmTimer = setTimeout(() => {
+          cardTouchPrewarmTimer = null;
+          prewarmItemDetailsClient(tc, idNum);
+        }, 42);
         const titleEl = card.querySelector(".card-title");
         const titleTxt = card.getAttribute("data-card-title") || (titleEl ? titleEl.textContent : "") || "Titel";
 
@@ -36710,6 +36953,10 @@
       }, { passive: true });
 
       document.addEventListener("touchmove", function(ev) {
+        if (cardTouchPrewarmTimer) {
+          clearTimeout(cardTouchPrewarmTimer);
+          cardTouchPrewarmTimer = null;
+        }
         if (!cardLongPressTimer || !ev.touches || !ev.touches[0]) return;
         const dx = ev.touches[0].clientX - cardLongPressStartX;
         const dy = ev.touches[0].clientY - cardLongPressStartY;
@@ -37048,11 +37295,18 @@
         state.heroActionsEngaged = false;
         startHeroRotationTimer();
         setTimeout(() => {
-          ensureHeroSlidesOverviewsClient();
           if (typeof prewarmAllHeroSlidesClearLogosClient === "function") {
             prewarmAllHeroSlidesClearLogosClient();
           }
-        }, 25);
+          const activeSlide = state.heroSlides[0];
+          if (activeSlide && activeSlide.id) {
+            const activeType = activeSlide.media_type === "tv" || state.type === "s" ? "s" : "m";
+            prewarmItemDetailsClient(activeType, activeSlide.id);
+          }
+        }, 35);
+        setTimeout(() => {
+          ensureHeroSlidesOverviewsClient();
+        }, 380);
       }
 
       // =========================================================================
@@ -37090,6 +37344,7 @@
         if (lazyCoverObserver) {
           try { lazyCoverObserver.unobserve(img); } catch (_e) {}
         }
+        try { img.decoding = "async"; } catch (_e) {}
         const finalizeLoaded = () => {
           img.classList.remove("is-loading");
           img.classList.add("is-loaded");
@@ -37112,14 +37367,7 @@
                   pendingIntersectedCoversSet.add(img);
                   continue;
                 }
-                if (img._dwellTimer) clearTimeout(img._dwellTimer);
-                // 65ms Schnell-Scroll-Schutz: Lädt nur Cover, an denen der Nutzer nicht im extremen Eiltempo vorbeirauscht
-                img._dwellTimer = setTimeout(() => {
-                  img._dwellTimer = null;
-                  if (img._isIntersectingViewportZone && catalogCoversUnlocked) {
-                    hydrateLazyCoverImageClient(img);
-                  }
-                }, 65);
+                hydrateLazyCoverImageClient(img);
               } else {
                 img._isIntersectingViewportZone = false;
                 pendingIntersectedCoversSet.delete(img);
@@ -37132,7 +37380,7 @@
           },
           {
             root: null,
-            rootMargin: "100% 0px 100% 0px", // Ca. 1 Bildschirmhöhe im Voraus oben & unten
+            rootMargin: "120% 0px 120% 0px",
             threshold: 0.01
           }
         );
@@ -37153,13 +37401,13 @@
         let idx = 0;
         const loadBatch = () => {
           if (!catalogCoversUnlocked) return;
-          const slice = listToLoad.slice(idx, idx + 4);
-          idx += 4;
+          const slice = listToLoad.slice(idx, idx + 8);
+          idx += 8;
           for (const img of slice) {
             hydrateLazyCoverImageClient(img);
           }
           if (idx < listToLoad.length) {
-            setTimeout(loadBatch, 24);
+            requestAnimationFrame(loadBatch);
           }
         };
         loadBatch();
@@ -37301,36 +37549,12 @@
         cards.forEach((c) => catalogPageTrackObserver.observe(c));
       }
 
+      let lastPageIndicatorDomSig = "";
       function syncSmartPageIndicatorDomClient(pulseActive = false) {
         const totPages = Math.max(1, Number(state.totalPages) || 1);
         const curLoadedMaxPage = Math.max(1, Number(state.page) || 1);
         const startP = Math.max(1, Math.min(curLoadedMaxPage, Number(state.startPage) || 1));
         const visPage = Math.max(startP, Math.min(curLoadedMaxPage, Number(state.visibleCatalogPage) || curLoadedMaxPage));
-
-        const topPill = document.getElementById("sectionPageCounterPill");
-        if (topPill) {
-          topPill.innerHTML = "📄 Seite " + visPage + " / " + totPages + " ▾";
-        }
-
-        const sentinelInfo = document.getElementById("infiniteScrollStatusLabel");
-        if (sentinelInfo) {
-          if (state.hasMorePages && curLoadedMaxPage < totPages) {
-            sentinelInfo.innerHTML = "📄 Seiten " + startP + (curLoadedMaxPage > startP ? ("–" + curLoadedMaxPage) : "") + " von " + totPages + " geladen • Nächste Seite lädt beim Scrollen automatisch";
-          } else if (totPages > 1) {
-            sentinelInfo.innerHTML = "✅ Alle " + totPages + " Seiten geladen";
-          }
-        }
-
-        let floatBtn = document.getElementById("smartPageIndicatorBtn");
-        if (!floatBtn && document.body) {
-          floatBtn = document.createElement("button");
-          floatBtn.type = "button";
-          floatBtn.id = "smartPageIndicatorBtn";
-          floatBtn.setAttribute("onclick", "openPageJumpModalClient()");
-          floatBtn.setAttribute("title", "Aktuelle Seite – Klicken oder Enter für direkte Seitenwahl (TV & Touch)");
-          document.body.appendChild(floatBtn);
-        }
-        if (!floatBtn) return;
 
         const isCatalogVisible = Boolean(
           (state.currentView === "discover" || state.isSearchMode) &&
@@ -37342,15 +37566,48 @@
           (state.isSearchMode || state.heroHidden || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
         );
 
-        if (!isCatalogVisible) {
-          floatBtn.style.display = "none";
-          return;
+        let floatBtn = document.getElementById("smartPageIndicatorBtn");
+        if (!floatBtn && document.body) {
+          floatBtn = document.createElement("button");
+          floatBtn.type = "button";
+          floatBtn.id = "smartPageIndicatorBtn";
+          floatBtn.setAttribute("onclick", "openPageJumpModalClient()");
+          floatBtn.setAttribute("title", "Aktuelle Seite – Klicken oder Enter für direkte Seitenwahl (TV & Touch)");
+          document.body.appendChild(floatBtn);
         }
-        floatBtn.style.display = "inline-flex";
-        floatBtn.innerHTML = '<span>📄 Seite ' + visPage + ' / ' + totPages + '</span><span style="font-size:10px;opacity:0.8">▾</span>';
 
-        if (pulseActive) {
-          floatBtn.classList.add("is-scrolling-active");
+        const nextSig = visPage + "|" + totPages + "|" + startP + "|" + curLoadedMaxPage + "|" + (state.hasMorePages ? "1" : "0") + "|" + (isCatalogVisible ? "1" : "0");
+        const topPill = document.getElementById("sectionPageCounterPill");
+        if (nextSig !== lastPageIndicatorDomSig || (topPill && !topPill._sigSynced)) {
+          lastPageIndicatorDomSig = nextSig;
+          if (topPill) {
+            topPill.innerHTML = "📄 Seite " + visPage + " / " + totPages + " ▾";
+            topPill._sigSynced = true;
+          }
+
+          const sentinelInfo = document.getElementById("infiniteScrollStatusLabel");
+          if (sentinelInfo) {
+            if (state.hasMorePages && curLoadedMaxPage < totPages) {
+              sentinelInfo.innerHTML = "📄 Seiten " + startP + (curLoadedMaxPage > startP ? ("–" + curLoadedMaxPage) : "") + " von " + totPages + " geladen • Nächste Seite lädt beim Scrollen automatisch";
+            } else if (totPages > 1) {
+              sentinelInfo.innerHTML = "✅ Alle " + totPages + " Seiten geladen";
+            }
+          }
+
+          if (floatBtn) {
+            if (!isCatalogVisible) {
+              floatBtn.style.display = "none";
+            } else {
+              floatBtn.style.display = "inline-flex";
+              floatBtn.innerHTML = '<span>📄 Seite ' + visPage + ' / ' + totPages + '</span><span style="font-size:10px;opacity:0.8">▾</span>';
+            }
+          }
+        }
+
+        if (pulseActive && floatBtn && isCatalogVisible) {
+          if (!floatBtn.classList.contains("is-scrolling-active")) {
+            floatBtn.classList.add("is-scrolling-active");
+          }
           if (smartPageIndicatorIdleTimer) clearTimeout(smartPageIndicatorIdleTimer);
           smartPageIndicatorIdleTimer = setTimeout(() => {
             floatBtn.classList.remove("is-scrolling-active");
@@ -37511,14 +37768,23 @@
         }
       }
 
+      let catalogWindowScrollRafPending = false;
       window.addEventListener("scroll", () => {
-        const y = window.scrollY || window.pageYOffset || 0;
-        if (y > 8 || heroCurtainScrolledToCatalog) {
-          if (!catalogCoversUnlocked) {
-            unlockCatalogCoversLoadingClient(true);
+        if (catalogWindowScrollRafPending) return;
+        catalogWindowScrollRafPending = true;
+        requestAnimationFrame(() => {
+          catalogWindowScrollRafPending = false;
+          const y = window.scrollY || window.pageYOffset || 0;
+          if (y > 8 || heroCurtainScrolledToCatalog) {
+            if (!catalogCoversUnlocked) {
+              unlockCatalogCoversLoadingClient(true);
+            }
+            syncSmartPageIndicatorDomClient(true);
           }
-          syncSmartPageIndicatorDomClient(true);
-        }
+          if (typeof syncHeroScrollFadeAndTopBarStateClient === "function") {
+            syncHeroScrollFadeAndTopBarStateClient();
+          }
+        });
       }, { passive: true });
 
       function setHeroPointerHover(isHovered) {
@@ -37586,13 +37852,18 @@
         }
       }
 
+      let windowResizeDebounceTimer = null;
       window.addEventListener("resize", () => {
         if ((window.innerWidth || 1024) > 760) {
           const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
           if (hdr) hdr.classList.remove("mobile-search-expanded");
         }
-        syncHeroSearchPlaceholderAndToggleBtnClient();
-        syncExpandableDescriptionsOverflowClient();
+        if (windowResizeDebounceTimer) clearTimeout(windowResizeDebounceTimer);
+        windowResizeDebounceTimer = setTimeout(() => {
+          windowResizeDebounceTimer = null;
+          syncHeroSearchPlaceholderAndToggleBtnClient();
+          syncExpandableDescriptionsOverflowClient();
+        }, 90);
       }, { passive: true });
 
       let heroWheelDownAccum = 0;
@@ -38099,8 +38370,6 @@
         animateHeroCatalogSnapScrollClient(getHeroCatalogSnapScrollYClient(), opts);
       }
 
-      window.addEventListener("scroll", syncHeroScrollFadeAndTopBarStateClient, { passive: true });
-
       function startHeroRotationTimer() {
         if (heroRotationTimer) clearInterval(heroRotationTimer);
         if (state.isSearchMode || state.heroSlides.length <= 1) return;
@@ -38125,6 +38394,10 @@
             state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
             state.heroActionsEngaged = false;
             updateHeroBannerDomOnly();
+            const curSlide = state.heroSlides[state.heroIndex];
+            if (curSlide && curSlide.id) {
+              prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
+            }
           } else {
             // Eingeklappter oder vorbeigescrollter Zustand: Rotiere alle paar Sekunden den ausgegrauten Highlight-Vorschlag im Suchfeld
             const inp = document.getElementById("searchInput");
@@ -38142,6 +38415,10 @@
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = false;
         updateHeroBannerDomOnly();
+        const curSlide = state.heroSlides[state.heroIndex];
+        if (curSlide && curSlide.id) {
+          prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
+        }
         startHeroRotationTimer();
       }
 
@@ -38152,6 +38429,10 @@
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = true;
         updateHeroBannerDomOnly();
+        const curSlide = state.heroSlides[state.heroIndex];
+        if (curSlide && curSlide.id) {
+          prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
+        }
         startHeroRotationTimer();
         const trBtn = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
         if (trBtn && typeof jumpSpatialFocus === "function") {
@@ -39757,20 +40038,19 @@
         if (filterMount) filterMount.innerHTML = buildFloatingFilterBarHtml();
         if (state.sidebarOpen) renderFilterSidebarContent(false);
 
-        try {
-          await apiFetchJson(API_BASE + "/settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chatId,
-              action: "set_direct_filter",
-              clientSettings: state.settings,
-              clientSettingsAuthoritative: true,
-              includeDiscover: false,
-              includeSearch: false
-            })
-          });
-        } catch (e) {}
+        // Hintergrund-Sync ohne Blockade (X-Tma-Settings Header überträgt den Filter bereits sofort mit dem Discover/Search-Aufruf!)
+        apiFetchJson(API_BASE + "/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chatId,
+            action: "set_direct_filter",
+            clientSettings: state.settings,
+            clientSettingsAuthoritative: true,
+            includeDiscover: false,
+            includeSearch: false
+          })
+        }).catch(() => {});
 
         if (state.isSearchMode && state.searchQuery) {
           await runSearch(false);
@@ -39856,7 +40136,150 @@
         }
       }
 
+      window._clientApiGetCache = window._clientApiGetCache || new Map();
+      window._clientApiInFlightGetMap = window._clientApiInFlightGetMap || new Map();
+
+      function buildBrowserApiCacheKeyClient(urlStr) {
+        let settingsHash = "";
+        try {
+          if (state.settings && Object.keys(state.settings).length > 0) {
+            const s = state.settings;
+            settingsHash = [
+              s.fsk || "",
+              s.onlyVipStreams ? "1" : "0",
+              (s.includedGenres || []).join(","),
+              (s.excludedGenres || []).join(","),
+              (s.providers || []).join(","),
+              s.minRating || "",
+              s.yearFrom || "",
+              s.yearTo || ""
+            ].join("|");
+          }
+        } catch (e) {}
+        return String(urlStr || "") + "::" + settingsHash;
+      }
+
+      function getBrowserApiCacheTtlMsClient(urlStr) {
+        const u = String(urlStr || "");
+        if (u.includes("refresh=1")) return 0;
+        if (
+          u.includes("/discover") ||
+          u.includes("/details") ||
+          u.includes("/similar") ||
+          u.includes("/collections") ||
+          u.includes("/universes") ||
+          u.includes("/person") ||
+          u.includes("/season") ||
+          u.includes("/search") ||
+          u.includes("/logo")
+        ) {
+          return 5 * 60 * 1000; // 5 Minuten direkt aus dem Browser-Cache (0 Worker/D1-Hits!)
+        }
+        if (u.includes("/wishlist") || u.includes("/reports") || u.includes("/admin/overview") || u.includes("/admin/import-logs")) {
+          return 22 * 1000; // 22 Sekunden Kurzzeit-Puffer gegen Doppel-Klicks
+        }
+        if (u.includes("/admin/catalog-preseed") || u.includes("/admin/tmdb-candidates")) {
+          return 2 * 60 * 1000;
+        }
+        return 0;
+      }
+
+      function readBrowserApiCacheEntryClient(cacheKey) {
+        const memMap = window._clientApiGetCache;
+        if (memMap instanceof Map && memMap.has(cacheKey)) {
+          return memMap.get(cacheKey);
+        }
+        try {
+          let h = 2166136261;
+          for (let i = 0; i < cacheKey.length; i++) {
+            h ^= cacheKey.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+          }
+          const ssKey = "tma_api_c_" + (h >>> 0).toString(36);
+          const raw = sessionStorage.getItem(ssKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.key === cacheKey && parsed.data) {
+              if (memMap instanceof Map) memMap.set(cacheKey, parsed);
+              return parsed;
+            }
+          }
+        } catch (e) {}
+        return null;
+      }
+
+      function hasFreshBrowserApiCacheClient(urlStr) {
+        const ttl = getBrowserApiCacheTtlMsClient(urlStr);
+        if (ttl <= 0) return false;
+        const key = buildBrowserApiCacheKeyClient(urlStr);
+        const entry = readBrowserApiCacheEntryClient(key);
+        return Boolean(entry && entry.data && (Date.now() - Number(entry.ts || 0)) < ttl);
+      }
+
+      function writeBrowserApiCacheEntryClient(cacheKey, dataObj, urlStr) {
+        if (!dataObj || dataObj.ok === false) return;
+        const entry = { key: cacheKey, data: dataObj, ts: Date.now() };
+        const memMap = window._clientApiGetCache;
+        if (memMap instanceof Map) {
+          if (memMap.size > 260) {
+            const oldestKey = memMap.keys().next().value;
+            if (oldestKey) memMap.delete(oldestKey);
+          }
+          memMap.set(cacheKey, entry);
+        }
+        const u = String(urlStr || "");
+        if (u.includes("/discover") || u.includes("/details") || u.includes("/similar") || u.includes("/collections") || u.includes("/universes") || u.includes("/season")) {
+          try {
+            let h = 2166136261;
+            for (let i = 0; i < cacheKey.length; i++) {
+              h ^= cacheKey.charCodeAt(i);
+              h = Math.imul(h, 16777619);
+            }
+            const ssKey = "tma_api_c_" + (h >>> 0).toString(36);
+            sessionStorage.setItem(ssKey, JSON.stringify(entry));
+          } catch (e) {}
+        }
+      }
+
       async function apiFetchJson(url, opts = {}) {
+        const method = String(opts.method || "GET").toUpperCase();
+        const urlStr = String(url || "");
+        const isImportBatch = urlStr.includes("/admin/import-batch");
+        const isGetRequest = method === "GET" && !opts.bypassCache;
+        const cacheTtlMs = isGetRequest ? getBrowserApiCacheTtlMsClient(urlStr) : 0;
+        const cacheKey = isGetRequest ? buildBrowserApiCacheKeyClient(urlStr) : "";
+        let staleCacheEntry = null;
+
+        if (isGetRequest && cacheKey) {
+          const cached = readBrowserApiCacheEntryClient(cacheKey);
+          if (cached && cached.data) {
+            staleCacheEntry = cached;
+            if (cacheTtlMs > 0 && (Date.now() - Number(cached.ts || 0)) < cacheTtlMs) {
+              return cached.data;
+            }
+          }
+          const inFlightMap = window._clientApiInFlightGetMap;
+          if (inFlightMap instanceof Map && inFlightMap.has(cacheKey) && !opts.signal) {
+            return inFlightMap.get(cacheKey);
+          }
+        } else if (method !== "GET" && !isImportBatch) {
+          // Bei Schreibzugriffen (Merkliste, Admin-Änderung, Settings) relevante GET-Caches sofort invalidieren
+          if (window._clientApiGetCache instanceof Map) {
+            for (const k of Array.from(window._clientApiGetCache.keys())) {
+              if (
+                urlStr.includes("/wishlist") ||
+                urlStr.includes("/settings") ||
+                urlStr.includes("/admin/") ||
+                k.includes("/wishlist") ||
+                k.includes("/admin/overview") ||
+                k.includes("/admin/import-logs")
+              ) {
+                window._clientApiGetCache.delete(k);
+              }
+            }
+          }
+        }
+
         const headers = { ...(opts.headers || {}) };
         if (!rawInitData && typeof extractClientTelegramInitData === "function") {
           rawInitData = extractClientTelegramInitData();
@@ -39871,99 +40294,132 @@
             headers["X-Tma-Settings"] = encodeURIComponent(JSON.stringify(state.settings));
           } catch (e) {}
         }
-        const isImportBatch = String(url || "").includes("/admin/import-batch");
-        const timeoutMs = isImportBatch ? 22000 : 11500;
-        const doSingleFetch = async (isRetry = false) => {
-          const reqStartMs = Date.now();
-          const timeoutCtrl = new AbortController();
-          const timer = setTimeout(() => {
-            try { timeoutCtrl.abort(); } catch (e) {}
-          }, timeoutMs);
-          if (opts.signal) {
-            if (opts.signal.aborted) {
-              clearTimeout(timer);
-              throw new DOMException("Aborted", "AbortError");
-            }
-            opts.signal.addEventListener("abort", () => {
-              clearTimeout(timer);
-              try { timeoutCtrl.abort(); } catch (e) {}
-            }, { once: true });
-          }
+        const timeoutMs = isImportBatch ? 24000 : 12000;
+        const isInteractiveDuringImport = !isImportBatch && typeof backupImportJob !== "undefined" && backupImportJob && backupImportJob.running;
+        if (isInteractiveDuringImport) {
+          window._adminPriorityRequestInFlight = (Number(window._adminPriorityRequestInFlight || 0) + 1);
+        }
+
+        const executeNetworkFetchWithRetries = async () => {
           try {
-            const fetchOpts = {
-              ...opts,
-              headers,
-              signal: timeoutCtrl.signal
-            };
-            if (isRetry) fetchOpts.cache = "no-store";
-            const res = await fetch(url, fetchOpts);
-            const text = await res.text();
-            const wallElapsed = Date.now() - reqStartMs;
-            const trimmed = String(text || "").trim();
-            const isHtmlError =
-              trimmed.startsWith("<!DOCTYPE") ||
-              trimmed.startsWith("<html") ||
-              trimmed.includes("<!--[if lt IE 7]>") ||
-              res.status === 429 ||
-              res.status === 502 ||
-              res.status === 503 ||
-              res.status === 524;
-            if (isHtmlError) {
-              recordClientWorkerHealthSample({
-                cpuMs: res.status === 503 ? 9.9 : 8.5,
-                wallMs: wallElapsed,
-                subrequests: 15,
-                d1Ops: 8,
-                route: String(url || ""),
-                forcedOverload: true
-              });
-              const rateErr = new Error(
-                "API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP " + (res.status || 524) + ") – automatischer Cooldown aktiv"
-              );
-              rateErr.isRateLimitOrHtml = true;
-              throw rateErr;
-            }
-            try {
-              const parsed = JSON.parse(text);
-              if (parsed && parsed._workerHealth && typeof parsed._workerHealth === "object") {
-                recordClientWorkerHealthSample(parsed._workerHealth);
-              } else {
-                const approxCpu = Math.min(9.2, Math.max(0.4, Number((text.length / 48000 + (isImportBatch ? 2.4 : 0.7)).toFixed(2))));
-                recordClientWorkerHealthSample({
-                  cpuMs: approxCpu,
-                  wallMs: wallElapsed,
-                  subrequests: Number(parsed?.subrequestCount || 1),
-                  d1Ops: 1,
-                  route: String(url || "")
-                });
+            const doSingleFetch = async (isRetry = false) => {
+              const reqStartMs = Date.now();
+              const timeoutCtrl = new AbortController();
+              const timer = setTimeout(() => {
+                try { timeoutCtrl.abort(); } catch (e) {}
+              }, timeoutMs);
+              if (opts.signal) {
+                if (opts.signal.aborted) {
+                  clearTimeout(timer);
+                  throw new DOMException("Aborted", "AbortError");
+                }
+                opts.signal.addEventListener("abort", () => {
+                  clearTimeout(timer);
+                  try { timeoutCtrl.abort(); } catch (e) {}
+                }, { once: true });
               }
-              return parsed;
-            } catch (e) {
-              const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 90);
-              const parseErr = new Error("Server-Antwort kein JSON (HTTP " + res.status + "): " + (cleanSnippet || "Leere Antwort"));
-              parseErr.isRateLimitOrHtml = res.status >= 500 || res.status === 429;
-              throw parseErr;
+              try {
+                const fetchOpts = {
+                  ...opts,
+                  headers,
+                  signal: timeoutCtrl.signal
+                };
+                if (isRetry) fetchOpts.cache = "no-store";
+                const res = await fetch(url, fetchOpts);
+                const text = await res.text();
+                const wallElapsed = Date.now() - reqStartMs;
+                const trimmed = String(text || "").trim();
+                const isHtmlError =
+                  trimmed.startsWith("<!DOCTYPE") ||
+                  trimmed.startsWith("<html") ||
+                  trimmed.includes("<!--[if lt IE 7]>") ||
+                  res.status === 429 ||
+                  res.status === 502 ||
+                  res.status === 503 ||
+                  res.status === 524;
+                if (isHtmlError) {
+                  recordClientWorkerHealthSample({
+                    cpuMs: res.status === 503 ? 9.5 : 8.2,
+                    wallMs: wallElapsed,
+                    subrequests: 12,
+                    d1Ops: 4,
+                    route: urlStr,
+                    forcedOverload: true
+                  });
+                  const rateErr = new Error(
+                    "API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP " + (res.status || 524) + ") – automatischer Cooldown aktiv"
+                  );
+                  rateErr.isRateLimitOrHtml = true;
+                  rateErr.httpStatus = res.status || 503;
+                  throw rateErr;
+                }
+                try {
+                  const parsed = JSON.parse(text);
+                  if (parsed && parsed._workerHealth && typeof parsed._workerHealth === "object") {
+                    recordClientWorkerHealthSample(parsed._workerHealth);
+                  } else {
+                    const approxCpu = Math.min(8.5, Math.max(0.4, Number((text.length / 55000 + (isImportBatch ? 1.8 : 0.5)).toFixed(2))));
+                    recordClientWorkerHealthSample({
+                      cpuMs: approxCpu,
+                      wallMs: wallElapsed,
+                      subrequests: Number(parsed?.subrequestCount || 1),
+                      d1Ops: 1,
+                      route: urlStr
+                    });
+                  }
+                  if (isGetRequest && cacheKey && parsed && parsed.ok !== false) {
+                    writeBrowserApiCacheEntryClient(cacheKey, parsed, urlStr);
+                  }
+                  return parsed;
+                } catch (e) {
+                  const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 90);
+                  const parseErr = new Error("Server-Antwort kein JSON (HTTP " + res.status + "): " + (cleanSnippet || "Leere Antwort"));
+                  parseErr.isRateLimitOrHtml = res.status >= 500 || res.status === 429;
+                  throw parseErr;
+                }
+              } finally {
+                clearTimeout(timer);
+              }
+            };
+
+            const backoffDelays = isImportBatch ? [1400, 3200, 6200] : [900, 2100, 4200];
+            let lastErr = null;
+            for (let attempt = 0; attempt <= backoffDelays.length; attempt++) {
+              try {
+                return await doSingleFetch(attempt > 0);
+              } catch (err) {
+                lastErr = err;
+                if (opts.signal && opts.signal.aborted) throw err;
+                // Wenn ein Stale-Browser-Cache für diesen GET-Aufruf vorliegt und HTTP 503/429 auftritt, liefere sofort die gecachte Antwort ohne Blockade!
+                if (isGetRequest && staleCacheEntry && staleCacheEntry.data && err && err.isRateLimitOrHtml && attempt >= 1) {
+                  return staleCacheEntry.data;
+                }
+                if (attempt < backoffDelays.length) {
+                  const jitterMs = Math.floor(Math.random() * 260);
+                  const waitMs = (err && err.isRateLimitOrHtml ? backoffDelays[attempt] : 420 * (attempt + 1)) + jitterMs;
+                  await new Promise(r => setTimeout(r, waitMs));
+                }
+              }
             }
+            if (isGetRequest && staleCacheEntry && staleCacheEntry.data) {
+              return staleCacheEntry.data;
+            }
+            throw lastErr || new Error("Netzwerkfehler");
           } finally {
-            clearTimeout(timer);
+            if (isInteractiveDuringImport) {
+              window._adminPriorityRequestInFlight = Math.max(0, Number(window._adminPriorityRequestInFlight || 1) - 1);
+            }
+            if (isGetRequest && cacheKey && window._clientApiInFlightGetMap instanceof Map) {
+              window._clientApiInFlightGetMap.delete(cacheKey);
+            }
           }
         };
 
-        const backoffDelays = [1100, 2600, 5200];
-        let lastErr = null;
-        for (let attempt = 0; attempt <= backoffDelays.length; attempt++) {
-          try {
-            return await doSingleFetch(attempt > 0);
-          } catch (err) {
-            lastErr = err;
-            if (opts.signal && opts.signal.aborted) throw err;
-            if (attempt < backoffDelays.length) {
-              const waitMs = err && err.isRateLimitOrHtml ? backoffDelays[attempt] : 450 * (attempt + 1);
-              await new Promise(r => setTimeout(r, waitMs));
-            }
-          }
+        const p = executeNetworkFetchWithRetries();
+        if (isGetRequest && cacheKey && !opts.signal && window._clientApiInFlightGetMap instanceof Map) {
+          window._clientApiInFlightGetMap.set(cacheKey, p);
         }
-        throw lastErr || new Error("Netzwerkfehler");
+        return p;
       }
 
       // =========================================================================
@@ -40221,14 +40677,18 @@
         updateMediaModeIndicatorDom();
         syncSearchGenreSelectDom();
         const root = document.getElementById("appRoot");
-        const existingGrid = document.getElementById("resultsGridContainer");
-        if (existingGrid) {
-          existingGrid.innerHTML = buildSkeletonCardsHtml();
+        const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
+        const discoverUrl = API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam;
+        const isInstantFromCache = hasFreshBrowserApiCacheClient(discoverUrl);
+        if (!isInstantFromCache) {
+          const existingGrid = document.getElementById("resultsGridContainer");
+          if (existingGrid) {
+            existingGrid.innerHTML = buildSkeletonCardsHtml();
+          }
+          setBusyState(true, "⏳ Lade " + (type === "s" ? "Serien" : "Filme") + (pageNum > 1 ? (" (Seite " + pageNum + ")") : "") + "...");
         }
-        setBusyState(true, "⏳ Lade " + (type === "s" ? "Serien" : "Filme") + (pageNum > 1 ? (" (Seite " + pageNum + ")") : "") + "...");
         try {
-          const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
-          const res = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam);
+          const res = await apiFetchJson(discoverUrl);
           state.items = (res.items || []).map(it => ({ ...it, _pageNum: pageNum }));
           state.totalPages = Math.max(1, Number(res.totalPages) || 1);
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
@@ -40263,7 +40723,7 @@
         } catch (err) {
           root.innerHTML = '<div class="section"><div class="panel-box"><div class="section-title">⚠️ Fehler beim Laden</div><p style="font-size:12px;color:#ccc;margin-bottom:8px">' + esc(err.message) + '</p><button class="btn red" onclick="loadDiscover(\\''+type+'\\',\\''+genreId+'\\',\\''+mode+'\\',\\''+sort+'\\')">🔄 Erneut versuchen</button></div></div>';
         } finally {
-          setBusyState(false);
+          if (!isInstantFromCache) setBusyState(false);
         }
       }
 
@@ -40316,19 +40776,21 @@
         if (heroRotationTimer) clearInterval(heroRotationTimer);
 
         const root = document.getElementById("appRoot");
-        const existingGrid = document.getElementById("resultsGridContainer");
-        if (existingGrid) {
-          existingGrid.innerHTML = buildSkeletonCardsHtml();
+        const searchUrl = API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
+          "&q=" + encodeURIComponent(q) +
+          "&scope=" + encodeURIComponent(state.searchScope || "all") +
+          "&sort=" + encodeURIComponent(state.sort) +
+          "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0");
+        const isInstantSearchCache = hasFreshBrowserApiCacheClient(searchUrl);
+        if (!isInstantSearchCache) {
+          const existingGrid = document.getElementById("resultsGridContainer");
+          if (existingGrid) {
+            existingGrid.innerHTML = buildSkeletonCardsHtml();
+          }
+          setBusyState(true, '🔍 Suche nach "' + q + '"' + (pageNum > 1 ? (' (Seite ' + pageNum + ')') : '') + '...');
         }
-        setBusyState(true, '🔍 Suche nach "' + q + '"' + (pageNum > 1 ? (' (Seite ' + pageNum + ')') : '') + '...');
         try {
-          const res = await apiFetchJson(
-            API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-            "&q=" + encodeURIComponent(q) +
-            "&scope=" + encodeURIComponent(state.searchScope || "all") +
-            "&sort=" + encodeURIComponent(state.sort) +
-            "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0")
-          );
+          const res = await apiFetchJson(searchUrl);
           state.searchMatchedCollections = res.collections || [];
           state.searchMatchedUniverses = res.universes || [];
           state.searchMatchedPersons = res.persons || [];
@@ -40352,7 +40814,7 @@
           root.innerHTML = '<div class="section"><div class="panel-box">⚠️ Fehler bei der Suche: ' + esc(err.message) + '</div></div>';
         } finally {
           document.body.classList.remove("search-active-dim");
-          setBusyState(false);
+          if (!isInstantSearchCache) setBusyState(false);
         }
       }
 
@@ -42109,33 +42571,46 @@
         }
       }
 
-      // Wow-Effekt #4: Cinematic Scroll-Parallax, Sticky-Mini-Header & Netflix Scroll-Auto-Pause beim Runterscrollen zum Cast
+      // Wow-Effekt #4: Cinematic Scroll-Parallax, Sticky-Mini-Header & Netflix Scroll-Auto-Pause beim Runterscrollen zum Cast (rAF-gedrosselt & GPU-optimiert ohne Blur-Lag)
+      let detailModalScrollRafPending = false;
       function onDetailModalScrollClient(scrollEl) {
-        if (!scrollEl) return;
-        const st = Number(scrollEl.scrollTop || 0);
-        const stageEl = document.getElementById("detailHeroStageEl");
-        if (stageEl) {
-          const pY = Math.min(180, Math.round(st * 0.32));
-          const pBlur = Math.min(10, (st / 62)).toFixed(1);
-          const pDim = Math.min(0.84, (st / 480)).toFixed(2);
-          stageEl.style.setProperty("--detail-parallax-y", pY + "px");
-          stageEl.style.setProperty("--detail-parallax-blur", (st > 24 ? pBlur : 0) + "px");
-          stageEl.style.setProperty("--detail-scroll-dim", st > 16 ? pDim : 0);
-        }
-        const stickyHeader = document.getElementById("detailStickyMiniHeader");
-        if (stickyHeader) {
-          stickyHeader.classList.toggle("is-visible", st > 310);
-        }
-        if (st > 250 && detailBgTeaserActiveKey) {
-          if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
-            // Cover-First, Pause-Second beim Runterscrollen zum Cast
-            concealAndPauseDetailTrailerClient({ pausedByScroll: true });
+        if (!scrollEl || detailModalScrollRafPending) return;
+        detailModalScrollRafPending = true;
+        requestAnimationFrame(() => {
+          detailModalScrollRafPending = false;
+          const st = Number(scrollEl.scrollTop || 0);
+          const stageEl = document.getElementById("detailHeroStageEl");
+          if (stageEl) {
+            const pY = Math.min(180, Math.round(st * 0.32));
+            const pDim = st > 16 ? Math.min(0.86, (st / 460)).toFixed(2) : "0";
+            if (stageEl._lastPy !== pY) {
+              stageEl._lastPy = pY;
+              stageEl.style.setProperty("--detail-parallax-y", pY + "px");
+            }
+            if (stageEl._lastPdim !== pDim) {
+              stageEl._lastPdim = pDim;
+              stageEl.style.setProperty("--detail-scroll-dim", pDim);
+            }
           }
-        } else if (st < 110 && detailBgTeaserActiveKey && detailBgTeaserPausedByScroll && !detailBgTeaserStoppedByUser && !detailBgTeaserEnded) {
-          if (typeof trailerPreviewEnabled === "undefined" || trailerPreviewEnabled) {
-            resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: false });
+          const stickyHeader = document.getElementById("detailStickyMiniHeader");
+          if (stickyHeader) {
+            const shouldShowSticky = st > 310;
+            if (stickyHeader._lastVis !== shouldShowSticky) {
+              stickyHeader._lastVis = shouldShowSticky;
+              stickyHeader.classList.toggle("is-visible", shouldShowSticky);
+            }
           }
-        }
+          if (st > 250 && detailBgTeaserActiveKey) {
+            if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
+              // Cover-First, Pause-Second beim Runterscrollen zum Cast
+              concealAndPauseDetailTrailerClient({ pausedByScroll: true });
+            }
+          } else if (st < 110 && detailBgTeaserActiveKey && detailBgTeaserPausedByScroll && !detailBgTeaserStoppedByUser && !detailBgTeaserEnded) {
+            if (typeof trailerPreviewEnabled === "undefined" || trailerPreviewEnabled) {
+              resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: false });
+            }
+          }
+        });
       }
 
       // Wow-Effekt #3: Schauspieler- & Regie-Spotlight-Overlay (Mini-Filmografie direkt über der Detailansicht)
@@ -45389,6 +45864,16 @@
         if (state.activeDetails && String(state.activeDetails.id) === String(seriesId)) {
           state.activeDetails._activeLoadedSeason = Number(seasonNum) || 1;
         }
+        // 0ms Optimistisches UI-Feedback beim Staffel-Tab-Wechsel
+        const existingBox = document.getElementById("seasonBox");
+        if (existingBox) {
+          existingBox.querySelectorAll(".season-tab-btn").forEach(btn => {
+            const m = String(btn.textContent || "").match(/Staffel\\s+(\\d+)/i);
+            if (m) {
+              btn.classList.toggle("active", Number(m[1]) === Number(seasonNum));
+            }
+          });
+        }
         const vipAllowed = isCurrentUserVip();
         const cacheKey = seriesId + "_" + seasonNum + "_" + (vipAllowed ? "vip" : "std");
         const cachedEntry = !forceRefresh ? clientSeasonCache.get(cacheKey) : null;
@@ -45398,6 +45883,22 @@
           : await apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + seasonNum);
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
+        }
+        // Nächste Staffel im Hintergrund vorwärmen (für 0ms Wechsel zur Folge-Staffel)
+        if (s && Array.isArray(s.seasons) && s.seasons.includes(Number(seasonNum) + 1)) {
+          const nextS = Number(seasonNum) + 1;
+          const nextKey = seriesId + "_" + nextS + "_" + (vipAllowed ? "vip" : "std");
+          if (!clientSeasonCache.has(nextKey)) {
+            setTimeout(() => {
+              if (state.activeDetails && String(state.activeDetails.id) === String(seriesId) && !clientSeasonCache.has(nextKey)) {
+                apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + nextS)
+                  .then(ns => {
+                    if (ns && ns.ok !== false) clientSeasonCache.set(nextKey, { data: ns, ts: Date.now() });
+                  })
+                  .catch(() => {});
+              }
+            }, 320);
+          }
         }
         const box = document.getElementById("seasonBox");
         if (!box) return;
@@ -51999,7 +52500,22 @@
         return clientDiagnosticLogState.logs;
       }
 
-      function saveClientDiagnosticLogsToStorage() {
+      let _diagLogSaveTimer = null;
+      function saveClientDiagnosticLogsToStorage(immediate = true) {
+        if (!immediate) {
+          if (_diagLogSaveTimer) return;
+          _diagLogSaveTimer = setTimeout(() => {
+            _diagLogSaveTimer = null;
+            try {
+              localStorage.setItem(CLIENT_DIAG_LOG_STORAGE_KEY, JSON.stringify((clientDiagnosticLogState.logs || []).slice(0, 1000)));
+            } catch (e) {}
+          }, 900);
+          return;
+        }
+        if (_diagLogSaveTimer) {
+          clearTimeout(_diagLogSaveTimer);
+          _diagLogSaveTimer = null;
+        }
         try {
           localStorage.setItem(CLIENT_DIAG_LOG_STORAGE_KEY, JSON.stringify((clientDiagnosticLogState.logs || []).slice(0, 1000)));
         } catch (e) {}
@@ -52095,7 +52611,7 @@
             ...routineLogs.slice(0, remainingSlots)
           ];
         }
-        saveClientDiagnosticLogsToStorage();
+        saveClientDiagnosticLogsToStorage(Boolean(syncToServer));
         if (syncToServer && added.length > 0) {
           apiFetchJson(API_BASE + "/admin/import-logs", {
             method: "POST",
@@ -52583,6 +53099,46 @@
         if (!backupImportJob.resolvedTitlesCache || typeof backupImportJob.resolvedTitlesCache !== "object") {
           backupImportJob.resolvedTitlesCache = {};
         }
+        if (!(backupImportJob._knownD1FileIds instanceof Set)) {
+          backupImportJob._knownD1FileIds = new Set();
+        }
+        if (!(backupImportJob._knownD1Fingerprints instanceof Set)) {
+          backupImportJob._knownD1Fingerprints = new Set();
+        }
+        const PERSISTENT_BROWSER_TITLES_KEY = "tma_persistent_resolved_titles_v2";
+        if (!backupImportJob._loadedPersistentBrowserTitles) {
+          backupImportJob._loadedPersistentBrowserTitles = true;
+          try {
+            const rawSavedTitles = localStorage.getItem(PERSISTENT_BROWSER_TITLES_KEY);
+            if (rawSavedTitles) {
+              const parsedTitles = JSON.parse(rawSavedTitles);
+              if (parsedTitles && typeof parsedTitles === "object") {
+                for (const [k, v] of Object.entries(parsedTitles)) {
+                  if (v && v.tmdbId && !backupImportJob.resolvedTitlesCache[k]) {
+                    backupImportJob.resolvedTitlesCache[k] = v;
+                  }
+                }
+              }
+            }
+          } catch (e) {}
+        }
+        let _persistBrowserTitlesTimer = null;
+        const schedulePersistBrowserTitlesCache = () => {
+          if (_persistBrowserTitlesTimer) return;
+          _persistBrowserTitlesTimer = setTimeout(() => {
+            _persistBrowserTitlesTimer = null;
+            try {
+              const entries = Object.entries(backupImportJob.resolvedTitlesCache || {}).filter(([, v]) => v && v.tmdbId);
+              const trimmedObj = {};
+              const startIdx = Math.max(0, entries.length - 3500);
+              for (let i = startIdx; i < entries.length; i++) {
+                trimmedObj[entries[i][0]] = entries[i][1];
+              }
+              localStorage.setItem(PERSISTENT_BROWSER_TITLES_KEY, JSON.stringify(trimmedObj));
+            } catch (e) {}
+          }, 1200);
+        };
+
         const normClientTitleKey = (t) => String(t || "")
           .toLowerCase()
           .normalize("NFD")
@@ -52591,7 +53147,7 @@
           .replace(/[^a-z0-9]+/g, "")
           .trim();
 
-        // D1-Katalog Pre-Seed: Einmalig beim Start alle bereits in D1 gespeicherten Filme & Serien in den Browser-Cache vorladen (0 Such-Calls ab Eintrag #1!)
+        // D1-Katalog Pre-Seed: Einmalig beim Start alle bereits in D1 gespeicherten Filme, Serien, Entity-Mappings & Datei-Fingerprints in den Browser-Cache vorladen (0 Such-Calls ab Eintrag #1!)
         if (!backupImportJob._d1CatalogPreSeeded) {
           backupImportJob._d1CatalogPreSeeded = true;
           backupImportJob.currentBatchModeLabel = "🧠 Lade D1-Pre-Seed...";
@@ -52599,29 +53155,68 @@
           renderBackupImportBoxDom();
           try {
             const preRes = await apiFetchJson(API_BASE + "/admin/catalog-preseed", { method: "GET" });
-            if (preRes && preRes.ok && Array.isArray(preRes.items)) {
+            if (preRes && preRes.ok) {
               let preSeedAdded = 0;
-              for (const pItem of preRes.items) {
-                if (!pItem || !pItem.tmdbId || !pItem.title) continue;
-                const pNorm = normClientTitleKey(pItem.title);
-                if (!pNorm || pNorm === "unbekannt") continue;
-                const pType = pItem.typeCode === "s" ? "s" : "m";
-                const pYear = pItem.year ? String(pItem.year) : "any";
-                const cacheObj = {
-                  tmdbId: Number(pItem.tmdbId),
-                  typeCode: pType,
-                  cleanTitle: String(pItem.title),
-                  poster: pItem.poster || ""
-                };
-                backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
-                if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
-                  backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
+              if (Array.isArray(preRes.items)) {
+                for (const pItem of preRes.items) {
+                  if (!pItem || !pItem.tmdbId || !pItem.title) continue;
+                  const pNorm = normClientTitleKey(pItem.title);
+                  if (!pNorm || pNorm === "unbekannt") continue;
+                  const pType = pItem.typeCode === "s" ? "s" : "m";
+                  const pYear = pItem.year ? String(pItem.year) : "any";
+                  const cacheObj = {
+                    tmdbId: Number(pItem.tmdbId),
+                    typeCode: pType,
+                    cleanTitle: String(pItem.title),
+                    poster: pItem.poster || ""
+                  };
+                  backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
+                  if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
+                    backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
+                  }
+                  preSeedAdded++;
                 }
-                preSeedAdded++;
+              }
+              if (Array.isArray(preRes.entityMappings)) {
+                for (const em of preRes.entityMappings) {
+                  if (!em || !em.tmdbId) continue;
+                  const emNorm = normClientTitleKey(em.title || "");
+                  const emType = em.typeCode === "s" ? "s" : "m";
+                  const cacheObj = {
+                    tmdbId: Number(em.tmdbId),
+                    typeCode: emType,
+                    cleanTitle: String(em.title || ""),
+                    poster: em.poster || ""
+                  };
+                  if (emNorm && emNorm !== "unbekannt") {
+                    if (!backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"]) {
+                      backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"] = cacheObj;
+                    }
+                  }
+                  const strippedKey = String(em.cacheKey || "").replace(/^title_res_/, "");
+                  if (strippedKey && !backupImportJob.resolvedTitlesCache[strippedKey]) {
+                    backupImportJob.resolvedTitlesCache[strippedKey] = cacheObj;
+                  }
+                }
+              }
+              if (Array.isArray(preRes.existingFileIds)) {
+                for (const fid of preRes.existingFileIds) {
+                  if (fid) backupImportJob._knownD1FileIds.add(String(fid));
+                }
+              }
+              if (Array.isArray(preRes.existingFingerprints)) {
+                for (const fp of preRes.existingFingerprints) {
+                  if (fp && fp !== "0_0_0x0") backupImportJob._knownD1Fingerprints.add(String(fp));
+                }
               }
               backupImportJob.d1PreSeedCount = preSeedAdded;
-              if (preSeedAdded > 0) {
-                backupImportJob.recentLog.push("🧠 D1-Katalog Pre-Seed geladen: " + preSeedAdded.toLocaleString("de-DE") + " Filme & Serien vorab im Browser-Cache bereit (0 Such-Calls)!");
+              schedulePersistBrowserTitlesCache();
+              if (preSeedAdded > 0 || backupImportJob._knownD1FileIds.size > 0) {
+                backupImportJob.recentLog.push(
+                  "🧠 D1-Katalog Pre-Seed geladen: " +
+                  preSeedAdded.toLocaleString("de-DE") + " Titel & " +
+                  backupImportJob._knownD1FileIds.size.toLocaleString("de-DE") + " Datei-IDs im Browser-Cache bereit!"
+                );
               }
             }
           } catch (preErr) {}
@@ -52637,23 +53232,38 @@
           if (!backupImportJob.running || backupImportJob.paused) break;
 
           const curRetryCount = Number(backupImportJob.cursorRetries[backupImportJob.cursor] || 0);
-          const lookaheadSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + 16);
+          const lookaheadSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + 24);
           let lookaheadCacheHits = 0;
+          let consecutivePreResolved = 0;
+          let streakBroken = false;
+          const seenSeriesInLookahead = new Set();
           for (const lkItem of lookaheadSlice) {
             if (!lkItem || typeof lkItem !== "object") continue;
             if (lkItem.tmdb_id || lkItem.tmdbId) {
               lookaheadCacheHits++;
+              if (!streakBroken) consecutivePreResolved++;
               continue;
             }
             const lkKey = normClientTitleKey(lkItem.cleanTitle || lkItem.title || "");
-            if (!lkKey) continue;
+            if (!lkKey) {
+              streakBroken = true;
+              continue;
+            }
             const lkType = (lkItem.typeCode === "s" || lkItem.isSeries || lkItem.season || lkItem.episode) ? "s" : "m";
             const lkYear = lkItem.year && lkItem.year !== "k.A." ? String(lkItem.year) : "any";
-            if (
+            const isResolvedInBrowser = Boolean(
               backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_" + lkYear]?.tmdbId ||
               backupImportJob.resolvedTitlesCache[lkType + "_" + lkKey + "_any"]?.tmdbId
-            ) {
+            );
+            if (isResolvedInBrowser) {
               lookaheadCacheHits++;
+              if (!streakBroken) consecutivePreResolved++;
+            } else if (lkType === "s" && seenSeriesInLookahead.has(lkKey)) {
+              // Weitere Folgen derselben Serie im selben Batch benötigen 0 zusätzliche TMDb-Subrequests!
+              lookaheadCacheHits++;
+            } else {
+              if (lkType === "s") seenSeriesInLookahead.add(lkKey);
+              streakBroken = true;
             }
           }
 
@@ -52668,6 +53278,7 @@
           const curProfileBaseSize = getEffectiveImportBatchSizeClient();
           const healthRecSize = Number(healthSt.recommendedBatchSize || 5);
           let effectiveBatchSize = Math.min(curProfileBaseSize, healthRecSize);
+          let isPreResolvedFastBatch = false;
           if (curRetryCount > 0) {
             effectiveBatchSize = 1;
             backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
@@ -52677,12 +53288,18 @@
             backupImportJob._lastBatchHadLatencyCooldown = false;
             backupImportJob.currentBatchModeLabel = "🛡️ Auto-Throttle (" + effectiveBatchSize + "/Batch • <7ms CPU Schutz)";
             backupImportJob.currentBatchModeColor = "#f59e0b";
-          } else if (lookaheadCacheHits >= 6) {
-            effectiveBatchSize = Math.min(8, curProfileBaseSize + 2);
+          } else if (consecutivePreResolved >= 8) {
+            effectiveBatchSize = Math.min(20, consecutivePreResolved);
+            isPreResolvedFastBatch = true;
+            backupImportJob.currentBatchModeLabel = "⚡ Browser-Cache Fast-Batch (" + effectiveBatchSize + "/Batch • 0 Such-Calls)";
+            backupImportJob.currentBatchModeColor = "#10b981";
+          } else if (lookaheadCacheHits >= 5) {
+            effectiveBatchSize = Math.min(12, curProfileBaseSize + 5);
+            isPreResolvedFastBatch = consecutivePreResolved >= 5;
             backupImportJob.currentBatchModeLabel = "🚀 Turbo (" + effectiveBatchSize + "/Batch • Cache-Hits)";
             backupImportJob.currentBatchModeColor = "#34d399";
           } else {
-            effectiveBatchSize = Math.min(5, curProfileBaseSize);
+            effectiveBatchSize = Math.min(6, curProfileBaseSize + 1);
             const profShort = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo" ? "🛡️ Free-Turbo" : (state.adminWorkerSpeedProfile === "paid_pro" ? "🚀 Paid Pro" : "⚖️ Ausgewogen");
             backupImportJob.currentBatchModeLabel = profShort + " (" + effectiveBatchSize + "/Batch)";
             backupImportJob.currentBatchModeColor = "#00e5ff";
@@ -52764,7 +53381,7 @@
           try {
             const isFinalBatchFlag = (backupImportJob.cursor + rawSlice.length >= backupImportJob.entries.length);
             backupImportJob._batchStepCounter = Number(backupImportJob._batchStepCounter || 0) + 1;
-            const shouldPersistD1Checkpoint = isFinalBatchFlag || (backupImportJob._batchStepCounter % 6 === 0);
+            const shouldPersistD1Checkpoint = isFinalBatchFlag || (backupImportJob._batchStepCounter % 10 === 0);
             const lightweightCheckpoint = shouldPersistD1Checkpoint ? {
               fileName: backupImportJob.fileName,
               total: backupImportJob.entries.length,
@@ -52782,6 +53399,7 @@
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 entries: slice,
+                isPreResolvedFastBatch,
                 batchStartCursor: backupImportJob.cursor,
                 isFinalBatch: isFinalBatchFlag,
                 sourceChannelId: activeChan,
@@ -52928,6 +53546,23 @@
                   backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "6s-Zeit-Guard" : "38-Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
                 }
                 appendClientDiagnosticLogs(batchDiagEntries, false);
+                schedulePersistBrowserTitlesCache();
+                if (backupImportJob.reviewItems.length > 900) {
+                  const priorityReviews = [];
+                  const routineReviews = [];
+                  for (const rv of backupImportJob.reviewItems) {
+                    if (rv && (rv.status === "failed" || rv.isUncertain || rv.contextError || !rv.tmdbId || Number(rv.tmdbId) >= 900000000)) {
+                      priorityReviews.push(rv);
+                    } else {
+                      routineReviews.push(rv);
+                    }
+                  }
+                  const keepRoutineCount = Math.max(200, 900 - priorityReviews.length);
+                  backupImportJob.reviewItems = [
+                    ...priorityReviews,
+                    ...routineReviews.slice(-keepRoutineCount)
+                  ];
+                }
                 if (backupImportJob.livePosterFeed.length > 16) {
                   backupImportJob.livePosterFeed = backupImportJob.livePosterFeed.slice(0, 16);
                 }
@@ -57730,15 +58365,21 @@
         }
         if (path === "/api/tma/admin/catalog-preseed" && (request.method === "GET" || request.method === "POST")) {
           const items = [];
+          const existingFileIds = [];
+          const existingFingerprints = [];
+          const entityMappings = [];
           try {
             await ensureD1Schema(env);
             const rawDb = getRawD1Binding(env);
             if (rawDb) {
               trackStat("d1Reads");
               if (typeof countD1Subrequest === "function") countD1Subrequest();
-              const [mRows, sRows] = await rawDb.batch([
+              const [mRows, sRows, mfRows, efRows, entRows] = await rawDb.batch([
                 rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM movies"),
-                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series")
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series"),
+                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 25000"),
+                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 25000"),
+                rawDb.prepare("SELECT cache_key, data_json FROM entity_cache WHERE entity_type = 'title_res' ORDER BY updated_at DESC LIMIT 2500")
               ]);
               for (const r of (mRows?.results || [])) {
                 if (r?.tmdb_id && r?.title) {
@@ -57762,18 +58403,60 @@
                   });
                 }
               }
+              const seenFidSet = new Set();
+              const seenFpSet = new Set();
+              for (const r of [...(mfRows?.results || []), ...(efRows?.results || [])]) {
+                const fid = String(r?.telegram_file_id || "").trim();
+                if (fid && !fid.startsWith("vip_playlist_") && !fid.startsWith("tmdb_card_") && !seenFidSet.has(fid)) {
+                  seenFidSet.add(fid);
+                  existingFileIds.push(fid);
+                }
+                const fp = String(r?.file_fingerprint || "").trim();
+                if (fp && fp !== "0_0_0x0" && fp !== "null" && !seenFpSet.has(fp)) {
+                  seenFpSet.add(fp);
+                  existingFingerprints.push(fp);
+                }
+              }
+              for (const r of (entRows?.results || [])) {
+                if (r?.cache_key && r?.data_json) {
+                  try {
+                    const parsedEnt = JSON.parse(r.data_json);
+                    if (parsedEnt && parsedEnt.tmdbId) {
+                      entityMappings.push({
+                        cacheKey: String(r.cache_key),
+                        tmdbId: Number(parsedEnt.tmdbId),
+                        typeCode: parsedEnt.typeCode === "s" ? "s" : "m",
+                        title: String(parsedEnt.title || parsedEnt.cleanTitle || ""),
+                        poster: parsedEnt.poster || ""
+                      });
+                    }
+                  } catch (e) {}
+                }
+              }
             }
           } catch (e) {}
-          return new Response(JSON.stringify({ ok: true, count: items.length, items }), { status: 200, headers: corsHeaders });
+          return new Response(JSON.stringify({
+            ok: true,
+            count: items.length,
+            items,
+            existingFileIds,
+            existingFingerprints,
+            entityMappings
+          }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
           const activeSpeedProf = await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
           const isPaidProf = activeSpeedProf?.id === "paid_highspeed";
+          const incomingArr = Array.isArray(body.entries) ? body.entries : [];
+          const preResolvedCount = incomingArr.filter(e => e && (e.tmdb_id || e.tmdbId)).length;
+          const isPreResolvedBatch = Boolean(body.isPreResolvedFastBatch || (incomingArr.length > 0 && preResolvedCount >= Math.ceil(incomingArr.length * 0.7)));
           const maxSliceCap = isPaidProf
-            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24) + 4), 28)
-            : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 5) + 1), 6);
-          const rawEntries = Array.isArray(body.entries) ? body.entries.slice(0, maxSliceCap) : [];
+            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24) + 8), 32)
+            : isPreResolvedBatch
+              ? 24
+              : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 5) + 3), 10);
+          const rawEntries = incomingArr.slice(0, maxSliceCap);
           if (rawEntries.length === 0) {
             return new Response(JSON.stringify({ ok: false, error: "Keine Einträge im Batch." }), { status: 400, headers: corsHeaders });
           }
@@ -57823,13 +58506,18 @@
           const playlistMode = ["vip_stream", "watchlist", "both"].includes(body.playlistMode)
             ? body.playlistMode
             : (targetChatId === "bot_vip" ? "vip_stream" : "both");
-          let playlistFolder = null;
-          if (body.playlistFolderId) {
+          const fastFolderCacheKey = `fast_import_folder_${targetChatId}_${body.playlistFolderId || playlistName.toLowerCase()}`;
+          let playlistFolder = memoryFallback.get(fastFolderCacheKey) || null;
+          if (!playlistFolder && body.playlistFolderId) {
             const existingFolders = await getFolders(env, targetChatId);
             playlistFolder = existingFolders.find(f => String(f.id) === String(body.playlistFolderId)) || null;
           }
           if (!playlistFolder) {
             playlistFolder = await createOrGetJsonPlaylistFolder(env, targetChatId, playlistName, sourceLabel, playlistMode);
+          }
+          if (playlistFolder && playlistFolder.id) {
+            memoryFallback.set(fastFolderCacheKey, playlistFolder);
+            memoryFallback.set(`fast_import_folder_${targetChatId}_${playlistFolder.id}`, playlistFolder);
           }
 
           const {

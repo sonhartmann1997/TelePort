@@ -600,22 +600,22 @@
 
     // D1-Write-Quota-Schutz: Im RAM bleiben alle Einträge sichtbar (mit Fehler-Priorität).
     // In D1 werden dauerhaft bevorzugt Konflikte, Fehler, Nicht-Gefunden und Vorabversionen gespeichert (spart ~85% D1-Writes beim Massen-Import!).
-    const d1ToPersist = options?.persistAll
+    const rawD1Candidates = options?.persistAll
       ? normalizedBatch
       : normalizedBatch.filter(l => l.status !== "OK" && l.status !== "SKIPPED_DUPLICATE" && l.status !== "SKIPPED_HEADER" && l.status !== "SKIPPED_JUNK");
 
+    const nowPersistedTs = Date.now();
+    const d1ToPersist = rawD1Candidates.filter(l => {
+      const sigKey = `d1_diag_sig_${l.msgId || ""}_${l.fileName || ""}_${l.status}_${l.tmdbId || 0}`;
+      const prevTs = Number(memoryFallback.get(sigKey) || 0);
+      if (prevTs > 0 && (nowPersistedTs - prevTs) < 900000) return false;
+      memoryFallback.set(sigKey, nowPersistedTs);
+      return true;
+    });
+
     const db = await ensureD1Schema(env);
-    if (!db) return;
-    if (resolvedMsgIdsInBatch.size > 0) {
-      try {
-        const msgIdArr = Array.from(resolvedMsgIdsInBatch).slice(0, 40);
-        const delStmts = msgIdArr.map(mid =>
-          db.prepare("DELETE FROM import_diagnostic_logs WHERE msg_id = ?1 AND status = 'SUBREQUEST_PAUSE'").bind(String(mid))
-        );
-        if (delStmts.length > 0) await db.batch(delStmts);
-      } catch (e) {}
-    }
-    if (d1ToPersist.length === 0) return;
+    if (!db || d1ToPersist.length === 0) return;
+    memoryFallback.delete("d1_diag_logs_query_cache");
     try {
       const chunkSize = 40;
       for (let i = 0; i < d1ToPersist.length; i += chunkSize) {
@@ -657,7 +657,10 @@
     }
     const db = await ensureD1Schema(env);
     let d1Rows = [];
-    if (db) {
+    const cachedDiagQuery = memoryFallback.get("d1_diag_logs_query_cache");
+    if (cachedDiagQuery && Array.isArray(cachedDiagQuery.rows) && (Date.now() - Number(cachedDiagQuery.ts || 0)) < 45000) {
+      d1Rows = cachedDiagQuery.rows;
+    } else if (db) {
       try {
         const res = await db
           .prepare("SELECT * FROM import_diagnostic_logs ORDER BY id DESC LIMIT ?1")
@@ -698,6 +701,7 @@
               timestamp: r.created_at || Date.now()
             };
           });
+          memoryFallback.set("d1_diag_logs_query_cache", { rows: d1Rows, ts: Date.now() });
         }
       } catch (e) {}
     }
@@ -1193,6 +1197,7 @@
       cur.is_vip = vipVal;
       memoryFallback.set(`d1_user_${tid}`, cur);
     }
+    memoryFallback.delete("d1_admin_users_list_cache");
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -1208,6 +1213,10 @@
   }
 
   async function listAllUsersFromD1(env) {
+    const cachedUsers = memoryFallback.get("d1_admin_users_list_cache");
+    if (cachedUsers && Array.isArray(cachedUsers.rows) && (Date.now() - Number(cachedUsers.ts || 0)) < 30000) {
+      return cachedUsers.rows;
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
@@ -1216,7 +1225,9 @@
           .prepare("SELECT * FROM users ORDER BY is_admin DESC, is_vip DESC, last_seen_at DESC LIMIT 200")
           .all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
-          return res.results.map(r => formatUserRowForClient(r, env));
+          const formatted = res.results.map(r => formatUserRowForClient(r, env));
+          memoryFallback.set("d1_admin_users_list_cache", { rows: formatted, ts: Date.now() });
+          return formatted;
         }
       } catch (e) {}
     }
@@ -1230,11 +1241,16 @@
   }
 
   async function listAllMediaFromD1(env, typeCode = "m") {
+    const tcKey = typeCode === "s" ? "s" : "m";
+    const cachedMediaList = memoryFallback.get(`d1_admin_media_list_cache_${tcKey}`);
+    if (cachedMediaList && Array.isArray(cachedMediaList.rows) && (Date.now() - Number(cachedMediaList.ts || 0)) < 45000) {
+      return cachedMediaList.rows;
+    }
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Reads");
-        const query = typeCode === "s"
+        const query = tcKey === "s"
           ? `SELECT s.tmdb_id, s.title, s.release_year, s.fsk, s.vote_average, s.genres, s.providers, s.poster_path, s.updated_at,
                     COUNT(ef.id) AS stream_count,
                     GROUP_CONCAT(DISTINCT ef.quality) AS qualities
@@ -1244,17 +1260,19 @@
              HAVING COUNT(ef.id) > 0
              ORDER BY COUNT(ef.id) DESC, s.updated_at DESC
              LIMIT 250`
-          : `SELECT m.tmdb_id, m.title, m.release_year, m.fsk, m.vote_average, m.genres, m.providers, m.poster_path, m.updated_at,
-                    COUNT(mf.id) AS stream_count,
-                    GROUP_CONCAT(DISTINCT mf.quality) AS qualities
+          : `SELECT m.tmdb_id, m.title, s_cnt.stream_count, s_cnt.qualities, m.release_year, m.fsk, m.vote_average, m.genres, m.providers, m.poster_path, m.updated_at
              FROM movies m
-             INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
-             GROUP BY m.tmdb_id
-             HAVING COUNT(mf.id) > 0
-             ORDER BY COUNT(mf.id) DESC, m.updated_at DESC
+             INNER JOIN (
+               SELECT movie_id, COUNT(id) AS stream_count, GROUP_CONCAT(DISTINCT quality) AS qualities
+               FROM movie_files
+               GROUP BY movie_id
+               HAVING COUNT(id) > 0
+             ) s_cnt ON s_cnt.movie_id = m.tmdb_id
+             ORDER BY s_cnt.stream_count DESC, m.updated_at DESC
              LIMIT 250`;
         const res = await db.prepare(query).all();
         if (Array.isArray(res?.results) && res.results.length > 0) {
+          memoryFallback.set(`d1_admin_media_list_cache_${tcKey}`, { rows: res.results, ts: Date.now() });
           return res.results;
         }
       } catch (e) {}
@@ -1308,6 +1326,8 @@
       memoryFallback.delete(`ingested_streams_m_${idNum}`);
     }
     const tc = typeCode === "s" ? "s" : "m";
+    memoryFallback.delete(`d1_vip_summary_${tc}_${idNum}`);
+    memoryFallback.delete(`d1_admin_media_list_cache_${tc}`);
     const memReports = Array.isArray(memoryFallback.get("d1_media_reports")) ? memoryFallback.get("d1_media_reports") : [];
     if (memReports.length > 0) {
       memoryFallback.set("d1_media_reports", memReports.filter(r => !(r && Number(r.tmdb_id) === idNum && r.type_code === tc)));
@@ -2145,35 +2165,58 @@
     ]);
     memoryFallback.set(memKey, nextMem);
     memoryFallback.set(memLoadedTsKey, Date.now());
+    memoryFallback.delete(`d1_vip_summary_m_${mid}`);
+    memoryFallback.delete("d1_admin_media_list_cache_m");
+    if (entry.telegram_file_id) {
+      memoryFallback.set(`d1_fid_lookup_${entry.telegram_file_id}`, {
+        matchedBy: "file_id",
+        typeCode: "m",
+        tmdbId: mid,
+        confidence: 100,
+        source: "D1 (Datei-ID)"
+      });
+      memoryFallback.delete(`d1_fid_miss_${entry.telegram_file_id}`);
+    }
 
     if (!db) return { ok: true, isExactDuplicate, isUpdated, isMergedQuality, isArchiveDownload, skippedPrerelease: false, replacedPrereleaseCount };
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
-      // MODUL 3: Nur identische Fingerprints oder defekte Platzhalter ersetzen; abweichende Fingerprints bleiben als zusätzliche Qualitäts-Versionen erhalten!
-      const stmts = [
-        db.prepare(
-          `DELETE FROM movie_files WHERE movie_id = ?1 AND (
-            telegram_file_id IS NULL OR telegram_file_id = ''
-            OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
-            ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (COALESCE(part_number, 1) = ?2 AND COALESCE(file_fingerprint, '') = ?3 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?4)
-          )`
-        ).bind(mid, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
-      ];
+      const stmts = [];
+      // MODUL 3: Nur dann DELETE-Statements an D1 senden, wenn tatsächlich zu bereinigende Platzhalter/Duplikate existieren!
+      const needsPlaceholderOrFpDelete = allExistingRows.some(r => {
+        if (!r) return false;
+        const rfid = String(r.telegram_file_id || "");
+        if (!rfid || rfid.startsWith("vip_playlist_") || rfid.startsWith("tmdb_card_")) return true;
+        if (isHighValidity && (rfid.startsWith("tg_export_0_") || rfid.startsWith("tg_export_vip_"))) return true;
+        if (Number(r.part_number || 1) === entry.part_number && entry.file_fingerprint && entry.file_fingerprint !== "0_0_0x0" && r.file_fingerprint === entry.file_fingerprint && rfid !== entry.telegram_file_id) return true;
+        return false;
+      });
+      if (needsPlaceholderOrFpDelete) {
+        stmts.push(
+          db.prepare(
+            `DELETE FROM movie_files WHERE movie_id = ?1 AND (
+              telegram_file_id IS NULL OR telegram_file_id = ''
+              OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
+              ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
+              OR (COALESCE(part_number, 1) = ?2 AND COALESCE(file_fingerprint, '') = ?3 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?4)
+            )`
+          ).bind(mid, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
+        );
+      }
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
           db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_file_id = ?2")
             .bind(mid, preFid)
         );
       }
-      if (entry.telegram_unique_id) {
+      if (entry.telegram_unique_id && allExistingRows.some(r => r && r.telegram_unique_id === entry.telegram_unique_id && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_unique_id = ?2 AND telegram_file_id != ?3")
             .bind(entry.movie_id, entry.telegram_unique_id, entry.telegram_file_id)
         );
       }
-      if (msgId) {
+      if (msgId && allExistingRows.some(r => r && String(r.telegram_file_id || "").endsWith(`_${msgId}`) && String(r.telegram_file_id || "").startsWith("tg_export_") && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_file_id LIKE ?2 AND telegram_file_id != ?3")
             .bind(mid, `tg_export_%_${msgId}`, entry.telegram_file_id)
@@ -2485,7 +2528,21 @@
     if (!isArchiveDownload) {
       memoryFallback.set(`d1_series_best_quality_${sid}`, entry.quality + (entry.codec ? ` ${entry.codec}` : ""));
     }
+    memoryFallback.delete(`d1_vip_summary_s_${sid}`);
+    memoryFallback.delete("d1_admin_media_list_cache_s");
     memoryFallback.delete("d1_series_gaps_cache");
+    if (entry.telegram_file_id) {
+      memoryFallback.set(`d1_fid_lookup_${entry.telegram_file_id}`, {
+        matchedBy: "file_id",
+        typeCode: "s",
+        tmdbId: sid,
+        season: sNum,
+        episode: eNum,
+        confidence: 100,
+        source: "D1 (Datei-ID)"
+      });
+      memoryFallback.delete(`d1_fid_miss_${entry.telegram_file_id}`);
+    }
 
     const versionsPayload = JSON.stringify(buildEpisodeVersionsArray(sameEpDeduped.filter(x => !x.is_download_only && !x.isDownloadOnly && x.codec !== "ARCHIVE" && Number(x.is_bonus || 0) !== 2)));
 
@@ -2493,30 +2550,41 @@
     try {
       trackStat("d1Writes");
       const isHighValidity = scoreTelegramFileIdValidity(entry.telegram_file_id) >= 2;
-      // MODUL 3: Nur identische Fingerprints oder defekte Platzhalter ersetzen; abweichende Fingerprints bleiben als zusätzliche Qualitäts-Versionen erhalten!
-      const stmts = [
-        db.prepare(
-          `DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND (
-            telegram_file_id IS NULL OR telegram_file_id = ''
-            OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
-            ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
-            OR (COALESCE(part_number, 1) = ?4 AND COALESCE(file_fingerprint, '') = ?5 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?6)
-          )`
-        ).bind(sid, sNum, eNum, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
-      ];
+      const stmts = [];
+      // MODUL 3: Nur dann DELETE-Statements an D1 senden, wenn in allExistingEpRows tatsächlich Platzhalter oder veraltete IDs vorliegen!
+      const needsEpPlaceholderOrFpDelete = allExistingEpRows.some(r => {
+        if (!r) return false;
+        const rfid = String(r.telegram_file_id || "");
+        if (!rfid || rfid.startsWith("vip_playlist_") || rfid.startsWith("tmdb_card_")) return true;
+        if (isHighValidity && (rfid.startsWith("tg_export_0_") || rfid.startsWith("tg_export_vip_"))) return true;
+        if (Number(r.part_number || 1) === entry.part_number && entry.file_fingerprint && entry.file_fingerprint !== "0_0_0x0" && r.file_fingerprint === entry.file_fingerprint && rfid !== entry.telegram_file_id) return true;
+        return false;
+      });
+      if (needsEpPlaceholderOrFpDelete) {
+        stmts.push(
+          db.prepare(
+            `DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND (
+              telegram_file_id IS NULL OR telegram_file_id = ''
+              OR telegram_file_id LIKE 'vip_playlist_%' OR telegram_file_id LIKE 'tmdb_card_%'
+              ${isHighValidity ? "OR telegram_file_id LIKE 'tg_export_0_%' OR telegram_file_id LIKE 'tg_export_vip_%'" : ""}
+              OR (COALESCE(part_number, 1) = ?4 AND COALESCE(file_fingerprint, '') = ?5 AND file_fingerprint != '0_0_0x0' AND telegram_file_id != ?6)
+            )`
+          ).bind(sid, sNum, eNum, entry.part_number, entry.file_fingerprint || "", entry.telegram_file_id)
+        );
+      }
       for (const preFid of prereleaseFidsToDelete) {
         stmts.push(
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND telegram_file_id = ?4")
             .bind(sid, sNum, eNum, preFid)
         );
       }
-      if (entry.telegram_unique_id) {
+      if (entry.telegram_unique_id && allExistingEpRows.some(r => r && r.telegram_unique_id === entry.telegram_unique_id && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND telegram_unique_id = ?4 AND telegram_file_id != ?5")
             .bind(entry.series_id, entry.season_number, entry.episode_number, entry.telegram_unique_id, entry.telegram_file_id)
         );
       }
-      if (msgId) {
+      if (msgId && allExistingEpRows.some(r => r && String(r.telegram_file_id || "").endsWith(`_${msgId}`) && String(r.telegram_file_id || "").startsWith("tg_export_") && r.telegram_file_id !== entry.telegram_file_id)) {
         stmts.push(
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1 AND season_number = ?2 AND episode_number = ?3 AND telegram_file_id LIKE ?4 AND telegram_file_id != ?5")
             .bind(sid, sNum, eNum, `tg_export_%_${msgId}`, entry.telegram_file_id)
@@ -3833,60 +3901,105 @@
     const bestSeriesMap = new Map();
     const posterMap = new Map();
 
-    // 1. Memory-Fallback & L1-Cache prüfen (auch für fehlende Poster!)
-    for (const mid of movieIds) {
-      const cachedM = getCachedTmdb(`movie_${mid}`) || memoryFallback.get(`d1_catalog_movie_${mid}`);
-      if (cachedM && (cachedM.poster_path || cachedM.external_poster_url)) {
-        posterMap.set(`m_${mid}`, cachedM.poster_path || cachedM.external_poster_url);
-      }
-      if (hasVipStreamAccess) {
-        const mFiles = memoryFallback.get(`d1_movie_files_${mid}`);
-        if (Array.isArray(mFiles) && mFiles.length > 0) {
-          const validMFiles = mFiles.filter(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
-          const sorted = sortAndDedupeStreamFiles(validMFiles);
-          const top = sorted[0];
-          if (top) {
-            bestMovieMap.set(mid, {
-              label: `${top.quality || "1080p"}${top.codec ? " " + top.codec : ""}`.trim(),
-              count: sorted.length
-            });
+    // 1. Memory-Fallback & L1-Cache prüfen (inkl. positivem & negativem VIP-Summary-Cache -> spart >90% D1-Reads beim Katalog-Blättern!)
+    const nowVipCheckTs = Date.now();
+    const uncachedVipMovieIds = [];
+    const uncachedPosterMovieIds = [];
+    const uncachedVipSeriesIds = [];
+    const uncachedPosterSeriesIds = [];
+
+    for (const it of items) {
+      if (!it || !it.id) continue;
+      const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
+      const tid = Number(it.id);
+      const hasInlinePoster = Boolean(it.poster_path || it.external_poster_url);
+      if (tc === "s") {
+        const cachedS = getCachedTmdb(`tv_${tid}`) || memoryFallback.get(`d1_catalog_series_${tid}`);
+        if (cachedS && (cachedS.poster_path || cachedS.external_poster_url)) {
+          posterMap.set(`s_${tid}`, cachedS.poster_path || cachedS.external_poster_url);
+        } else if (!hasInlinePoster && !memoryFallback.has(`d1_poster_miss_s_${tid}`)) {
+          uncachedPosterSeriesIds.push(tid);
+        }
+        if (hasVipStreamAccess) {
+          const cachedVipS = memoryFallback.get(`d1_vip_summary_s_${tid}`);
+          if (cachedVipS && (nowVipCheckTs - Number(cachedVipS.ts || 0)) < 300000) {
+            if (!cachedVipS.none && cachedVipS.label) {
+              bestSeriesMap.set(tid, { label: cachedVipS.label, count: Number(cachedVipS.count || 1) });
+            }
+          } else {
+            const memBest = memoryFallback.get(`d1_series_best_quality_${tid}`);
+            if (memBest) {
+              bestSeriesMap.set(tid, { label: String(memBest), count: 1 });
+              memoryFallback.set(`d1_vip_summary_s_${tid}`, { label: String(memBest), count: 1, ts: nowVipCheckTs });
+            } else {
+              uncachedVipSeriesIds.push(tid);
+            }
+          }
+        }
+      } else {
+        const cachedM = getCachedTmdb(`movie_${tid}`) || memoryFallback.get(`d1_catalog_movie_${tid}`);
+        if (cachedM && (cachedM.poster_path || cachedM.external_poster_url)) {
+          posterMap.set(`m_${tid}`, cachedM.poster_path || cachedM.external_poster_url);
+        } else if (!hasInlinePoster && !memoryFallback.has(`d1_poster_miss_m_${tid}`)) {
+          uncachedPosterMovieIds.push(tid);
+        }
+        if (hasVipStreamAccess) {
+          const cachedVipM = memoryFallback.get(`d1_vip_summary_m_${tid}`);
+          if (cachedVipM && (nowVipCheckTs - Number(cachedVipM.ts || 0)) < 300000) {
+            if (!cachedVipM.none && cachedVipM.label) {
+              bestMovieMap.set(tid, { label: cachedVipM.label, count: Number(cachedVipM.count || 1) });
+            }
+          } else {
+            const mFiles = memoryFallback.get(`d1_movie_files_${tid}`);
+            if (Array.isArray(mFiles) && mFiles.length > 0) {
+              const validMFiles = mFiles.filter(f => f && scoreTelegramFileIdValidity(f.telegram_file_id || f.fileId || f.file_id) > 0);
+              const sorted = sortAndDedupeStreamFiles(validMFiles);
+              const top = sorted[0];
+              if (top) {
+                const summaryObj = {
+                  label: `${top.quality || "1080p"}${top.codec ? " " + top.codec : ""}`.trim(),
+                  count: sorted.length,
+                  ts: nowVipCheckTs
+                };
+                bestMovieMap.set(tid, summaryObj);
+                memoryFallback.set(`d1_vip_summary_m_${tid}`, summaryObj);
+              } else {
+                uncachedVipMovieIds.push(tid);
+              }
+            } else {
+              uncachedVipMovieIds.push(tid);
+            }
           }
         }
       }
     }
-    for (const sid of seriesIds) {
-      const cachedS = getCachedTmdb(`tv_${sid}`) || memoryFallback.get(`d1_catalog_series_${sid}`);
-      if (cachedS && (cachedS.poster_path || cachedS.external_poster_url)) {
-        posterMap.set(`s_${sid}`, cachedS.poster_path || cachedS.external_poster_url);
-      }
-      if (hasVipStreamAccess) {
-        const memBest = memoryFallback.get(`d1_series_best_quality_${sid}`);
-        if (memBest) {
-          bestSeriesMap.set(sid, { label: String(memBest), count: 1 });
-        }
-      }
-    }
 
-    // 2. D1-Datenbank prüfen (für ECHTE VIP-Qualitäten mit gültiger telegram_file_id UND fehlende Poster aus movies / series)
+    // 2. D1-Datenbank NUR für noch nicht im RAM-Cache geprüfte IDs abfragen!
     const db = await ensureD1Schema(env);
     if (db) {
       try {
-        if (movieIds.length > 0) {
-          const uniqM = [...new Set(movieIds)].slice(0, 60);
-          const placeholders = uniqM.map((_, i) => `?${i + 1}`).join(",");
+        const uniqPosterM = [...new Set(uncachedPosterMovieIds)].slice(0, 60);
+        const uniqVipM = hasVipStreamAccess ? [...new Set(uncachedVipMovieIds)].slice(0, 60) : [];
+        if (uniqPosterM.length > 0 || uniqVipM.length > 0) {
           const [resMPoster, resMFiles] = await Promise.all([
-            db.prepare(`SELECT tmdb_id, poster_path, details_json FROM movies WHERE tmdb_id IN (${placeholders})`).bind(...uniqM).all().catch(() => ({ results: [] })),
-            hasVipStreamAccess
-              ? db.prepare(`SELECT movie_id, quality, codec, telegram_file_id FROM movie_files WHERE movie_id IN (${placeholders}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqM).all().catch(() => ({ results: [] }))
+            uniqPosterM.length > 0
+              ? db.prepare(`SELECT tmdb_id, poster_path FROM movies WHERE tmdb_id IN (${uniqPosterM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterM).all().catch(() => ({ results: [] }))
+              : Promise.resolve({ results: [] }),
+            uniqVipM.length > 0
+              ? db.prepare(`SELECT movie_id, quality, codec, telegram_file_id FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipM).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
+          const foundPosterM = new Set();
           for (const row of (resMPoster?.results || [])) {
             const mid = Number(row.tmdb_id);
-            let pVal = row.poster_path || "";
-            if (!pVal && row.details_json) {
-              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
+            const pVal = row.poster_path || "";
+            if (pVal) {
+              posterMap.set(`m_${mid}`, pVal);
+              foundPosterM.add(mid);
             }
-            if (pVal) posterMap.set(`m_${mid}`, pVal);
+          }
+          for (const mid of uniqPosterM) {
+            if (!foundPosterM.has(mid)) memoryFallback.set(`d1_poster_miss_m_${mid}`, nowVipCheckTs);
           }
           for (const row of (resMFiles?.results || [])) {
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
@@ -3899,23 +4012,38 @@
               cur.count += 1;
             }
           }
+          for (const mid of uniqVipM) {
+            const matched = bestMovieMap.get(mid);
+            if (matched) {
+              memoryFallback.set(`d1_vip_summary_m_${mid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+            } else {
+              memoryFallback.set(`d1_vip_summary_m_${mid}`, { none: true, ts: nowVipCheckTs });
+            }
+          }
         }
-        if (seriesIds.length > 0) {
-          const uniqS = [...new Set(seriesIds)].slice(0, 60);
-          const placeholders = uniqS.map((_, i) => `?${i + 1}`).join(",");
+
+        const uniqPosterS = [...new Set(uncachedPosterSeriesIds)].slice(0, 60);
+        const uniqVipS = hasVipStreamAccess ? [...new Set(uncachedVipSeriesIds)].slice(0, 60) : [];
+        if (uniqPosterS.length > 0 || uniqVipS.length > 0) {
           const [resSPoster, resSFiles] = await Promise.all([
-            db.prepare(`SELECT tmdb_id, poster_path, details_json FROM series WHERE tmdb_id IN (${placeholders})`).bind(...uniqS).all().catch(() => ({ results: [] })),
-            hasVipStreamAccess
-              ? db.prepare(`SELECT series_id, quality, codec, telegram_file_id FROM episode_files WHERE series_id IN (${placeholders}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqS).all().catch(() => ({ results: [] }))
+            uniqPosterS.length > 0
+              ? db.prepare(`SELECT tmdb_id, poster_path FROM series WHERE tmdb_id IN (${uniqPosterS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterS).all().catch(() => ({ results: [] }))
+              : Promise.resolve({ results: [] }),
+            uniqVipS.length > 0
+              ? db.prepare(`SELECT series_id, quality, codec, telegram_file_id FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipS).all().catch(() => ({ results: [] }))
               : Promise.resolve({ results: [] })
           ]);
+          const foundPosterS = new Set();
           for (const row of (resSPoster?.results || [])) {
             const sid = Number(row.tmdb_id);
-            let pVal = row.poster_path || "";
-            if (!pVal && row.details_json) {
-              try { pVal = JSON.parse(row.details_json)?.external_poster_url || ""; } catch (e) {}
+            const pVal = row.poster_path || "";
+            if (pVal) {
+              posterMap.set(`s_${sid}`, pVal);
+              foundPosterS.add(sid);
             }
-            if (pVal) posterMap.set(`s_${sid}`, pVal);
+          }
+          for (const sid of uniqPosterS) {
+            if (!foundPosterS.has(sid)) memoryFallback.set(`d1_poster_miss_s_${sid}`, nowVipCheckTs);
           }
           for (const row of (resSFiles?.results || [])) {
             if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
@@ -3926,6 +4054,14 @@
               bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + 1 });
             } else {
               cur.count += 1;
+            }
+          }
+          for (const sid of uniqVipS) {
+            const matched = bestSeriesMap.get(sid);
+            if (matched) {
+              memoryFallback.set(`d1_vip_summary_s_${sid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+            } else {
+              memoryFallback.set(`d1_vip_summary_s_${sid}`, { none: true, ts: nowVipCheckTs });
             }
           }
         }
@@ -4599,6 +4735,7 @@
         poster_path: seriesObj.poster_path || null,
         external_poster_url: seriesObj.external_poster_url || null,
         telegraphUrl: seriesObj.telegraphUrl || null,
+        downloadsCount: existingSeriesDownloads.length,
         ts: Date.now()
       });
       memoryFallback.set(`d1_series_saved_ts_${sid}`, Date.now());
@@ -5672,10 +5809,22 @@
     const db = await ensureD1Schema(env);
     if (!db) return normalizedItems.length;
     try {
+      // Überspringe identische Playlist-Items, die in den letzten 10 Min bereits in D1 gespeichert wurden (verhindert 400x UPSERT bei 200 Serien-Episoden!)
+      const itemsNeedingD1Write = normalizedItems.filter(it => {
+        const sigKey = `d1_pl_item_sig_${cleanChatId}_${it.uid}`;
+        const prevSig = memoryFallback.get(sigKey);
+        const curSig = `${it.tmdbId}|${it.folderId}|${it.title}|${it.poster_path || ""}|${it.vipQuality || ""}`;
+        if (prevSig && prevSig.sig === curSig && (now - Number(prevSig.ts || 0)) < 600000) {
+          return false;
+        }
+        memoryFallback.set(sigKey, { sig: curSig, ts: now });
+        return true;
+      });
+      if (itemsNeedingD1Write.length === 0) return normalizedItems.length;
       trackStat("d1Writes");
       const CHUNK_SIZE = 50;
-      for (let offset = 0; offset < normalizedItems.length; offset += CHUNK_SIZE) {
-        const chunk = normalizedItems.slice(offset, offset + CHUNK_SIZE);
+      for (let offset = 0; offset < itemsNeedingD1Write.length; offset += CHUNK_SIZE) {
+        const chunk = itemsNeedingD1Write.slice(offset, offset + CHUNK_SIZE);
         const stmts = chunk.map(it =>
           db.prepare(`
             INSERT OR REPLACE INTO d1_playlist_items (

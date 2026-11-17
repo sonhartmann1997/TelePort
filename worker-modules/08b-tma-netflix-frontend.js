@@ -140,20 +140,19 @@
         if (filterMount) filterMount.innerHTML = buildFloatingFilterBarHtml();
         if (state.sidebarOpen) renderFilterSidebarContent(false);
 
-        try {
-          await apiFetchJson(API_BASE + "/settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chatId,
-              action: "set_direct_filter",
-              clientSettings: state.settings,
-              clientSettingsAuthoritative: true,
-              includeDiscover: false,
-              includeSearch: false
-            })
-          });
-        } catch (e) {}
+        // Hintergrund-Sync ohne Blockade (X-Tma-Settings Header überträgt den Filter bereits sofort mit dem Discover/Search-Aufruf!)
+        apiFetchJson(API_BASE + "/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chatId,
+            action: "set_direct_filter",
+            clientSettings: state.settings,
+            clientSettingsAuthoritative: true,
+            includeDiscover: false,
+            includeSearch: false
+          })
+        }).catch(() => {});
 
         if (state.isSearchMode && state.searchQuery) {
           await runSearch(false);
@@ -239,7 +238,150 @@
         }
       }
 
+      window._clientApiGetCache = window._clientApiGetCache || new Map();
+      window._clientApiInFlightGetMap = window._clientApiInFlightGetMap || new Map();
+
+      function buildBrowserApiCacheKeyClient(urlStr) {
+        let settingsHash = "";
+        try {
+          if (state.settings && Object.keys(state.settings).length > 0) {
+            const s = state.settings;
+            settingsHash = [
+              s.fsk || "",
+              s.onlyVipStreams ? "1" : "0",
+              (s.includedGenres || []).join(","),
+              (s.excludedGenres || []).join(","),
+              (s.providers || []).join(","),
+              s.minRating || "",
+              s.yearFrom || "",
+              s.yearTo || ""
+            ].join("|");
+          }
+        } catch (e) {}
+        return String(urlStr || "") + "::" + settingsHash;
+      }
+
+      function getBrowserApiCacheTtlMsClient(urlStr) {
+        const u = String(urlStr || "");
+        if (u.includes("refresh=1")) return 0;
+        if (
+          u.includes("/discover") ||
+          u.includes("/details") ||
+          u.includes("/similar") ||
+          u.includes("/collections") ||
+          u.includes("/universes") ||
+          u.includes("/person") ||
+          u.includes("/season") ||
+          u.includes("/search") ||
+          u.includes("/logo")
+        ) {
+          return 5 * 60 * 1000; // 5 Minuten direkt aus dem Browser-Cache (0 Worker/D1-Hits!)
+        }
+        if (u.includes("/wishlist") || u.includes("/reports") || u.includes("/admin/overview") || u.includes("/admin/import-logs")) {
+          return 22 * 1000; // 22 Sekunden Kurzzeit-Puffer gegen Doppel-Klicks
+        }
+        if (u.includes("/admin/catalog-preseed") || u.includes("/admin/tmdb-candidates")) {
+          return 2 * 60 * 1000;
+        }
+        return 0;
+      }
+
+      function readBrowserApiCacheEntryClient(cacheKey) {
+        const memMap = window._clientApiGetCache;
+        if (memMap instanceof Map && memMap.has(cacheKey)) {
+          return memMap.get(cacheKey);
+        }
+        try {
+          let h = 2166136261;
+          for (let i = 0; i < cacheKey.length; i++) {
+            h ^= cacheKey.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+          }
+          const ssKey = "tma_api_c_" + (h >>> 0).toString(36);
+          const raw = sessionStorage.getItem(ssKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.key === cacheKey && parsed.data) {
+              if (memMap instanceof Map) memMap.set(cacheKey, parsed);
+              return parsed;
+            }
+          }
+        } catch (e) {}
+        return null;
+      }
+
+      function hasFreshBrowserApiCacheClient(urlStr) {
+        const ttl = getBrowserApiCacheTtlMsClient(urlStr);
+        if (ttl <= 0) return false;
+        const key = buildBrowserApiCacheKeyClient(urlStr);
+        const entry = readBrowserApiCacheEntryClient(key);
+        return Boolean(entry && entry.data && (Date.now() - Number(entry.ts || 0)) < ttl);
+      }
+
+      function writeBrowserApiCacheEntryClient(cacheKey, dataObj, urlStr) {
+        if (!dataObj || dataObj.ok === false) return;
+        const entry = { key: cacheKey, data: dataObj, ts: Date.now() };
+        const memMap = window._clientApiGetCache;
+        if (memMap instanceof Map) {
+          if (memMap.size > 260) {
+            const oldestKey = memMap.keys().next().value;
+            if (oldestKey) memMap.delete(oldestKey);
+          }
+          memMap.set(cacheKey, entry);
+        }
+        const u = String(urlStr || "");
+        if (u.includes("/discover") || u.includes("/details") || u.includes("/similar") || u.includes("/collections") || u.includes("/universes") || u.includes("/season")) {
+          try {
+            let h = 2166136261;
+            for (let i = 0; i < cacheKey.length; i++) {
+              h ^= cacheKey.charCodeAt(i);
+              h = Math.imul(h, 16777619);
+            }
+            const ssKey = "tma_api_c_" + (h >>> 0).toString(36);
+            sessionStorage.setItem(ssKey, JSON.stringify(entry));
+          } catch (e) {}
+        }
+      }
+
       async function apiFetchJson(url, opts = {}) {
+        const method = String(opts.method || "GET").toUpperCase();
+        const urlStr = String(url || "");
+        const isImportBatch = urlStr.includes("/admin/import-batch");
+        const isGetRequest = method === "GET" && !opts.bypassCache;
+        const cacheTtlMs = isGetRequest ? getBrowserApiCacheTtlMsClient(urlStr) : 0;
+        const cacheKey = isGetRequest ? buildBrowserApiCacheKeyClient(urlStr) : "";
+        let staleCacheEntry = null;
+
+        if (isGetRequest && cacheKey) {
+          const cached = readBrowserApiCacheEntryClient(cacheKey);
+          if (cached && cached.data) {
+            staleCacheEntry = cached;
+            if (cacheTtlMs > 0 && (Date.now() - Number(cached.ts || 0)) < cacheTtlMs) {
+              return cached.data;
+            }
+          }
+          const inFlightMap = window._clientApiInFlightGetMap;
+          if (inFlightMap instanceof Map && inFlightMap.has(cacheKey) && !opts.signal) {
+            return inFlightMap.get(cacheKey);
+          }
+        } else if (method !== "GET" && !isImportBatch) {
+          // Bei Schreibzugriffen (Merkliste, Admin-Änderung, Settings) relevante GET-Caches sofort invalidieren
+          if (window._clientApiGetCache instanceof Map) {
+            for (const k of Array.from(window._clientApiGetCache.keys())) {
+              if (
+                urlStr.includes("/wishlist") ||
+                urlStr.includes("/settings") ||
+                urlStr.includes("/admin/") ||
+                k.includes("/wishlist") ||
+                k.includes("/admin/overview") ||
+                k.includes("/admin/import-logs")
+              ) {
+                window._clientApiGetCache.delete(k);
+              }
+            }
+          }
+        }
+
         const headers = { ...(opts.headers || {}) };
         if (!rawInitData && typeof extractClientTelegramInitData === "function") {
           rawInitData = extractClientTelegramInitData();
@@ -254,99 +396,132 @@
             headers["X-Tma-Settings"] = encodeURIComponent(JSON.stringify(state.settings));
           } catch (e) {}
         }
-        const isImportBatch = String(url || "").includes("/admin/import-batch");
-        const timeoutMs = isImportBatch ? 22000 : 11500;
-        const doSingleFetch = async (isRetry = false) => {
-          const reqStartMs = Date.now();
-          const timeoutCtrl = new AbortController();
-          const timer = setTimeout(() => {
-            try { timeoutCtrl.abort(); } catch (e) {}
-          }, timeoutMs);
-          if (opts.signal) {
-            if (opts.signal.aborted) {
-              clearTimeout(timer);
-              throw new DOMException("Aborted", "AbortError");
-            }
-            opts.signal.addEventListener("abort", () => {
-              clearTimeout(timer);
-              try { timeoutCtrl.abort(); } catch (e) {}
-            }, { once: true });
-          }
+        const timeoutMs = isImportBatch ? 24000 : 12000;
+        const isInteractiveDuringImport = !isImportBatch && typeof backupImportJob !== "undefined" && backupImportJob && backupImportJob.running;
+        if (isInteractiveDuringImport) {
+          window._adminPriorityRequestInFlight = (Number(window._adminPriorityRequestInFlight || 0) + 1);
+        }
+
+        const executeNetworkFetchWithRetries = async () => {
           try {
-            const fetchOpts = {
-              ...opts,
-              headers,
-              signal: timeoutCtrl.signal
-            };
-            if (isRetry) fetchOpts.cache = "no-store";
-            const res = await fetch(url, fetchOpts);
-            const text = await res.text();
-            const wallElapsed = Date.now() - reqStartMs;
-            const trimmed = String(text || "").trim();
-            const isHtmlError =
-              trimmed.startsWith("<!DOCTYPE") ||
-              trimmed.startsWith("<html") ||
-              trimmed.includes("<!--[if lt IE 7]>") ||
-              res.status === 429 ||
-              res.status === 502 ||
-              res.status === 503 ||
-              res.status === 524;
-            if (isHtmlError) {
-              recordClientWorkerHealthSample({
-                cpuMs: res.status === 503 ? 9.9 : 8.5,
-                wallMs: wallElapsed,
-                subrequests: 15,
-                d1Ops: 8,
-                route: String(url || ""),
-                forcedOverload: true
-              });
-              const rateErr = new Error(
-                "API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP " + (res.status || 524) + ") – automatischer Cooldown aktiv"
-              );
-              rateErr.isRateLimitOrHtml = true;
-              throw rateErr;
-            }
-            try {
-              const parsed = JSON.parse(text);
-              if (parsed && parsed._workerHealth && typeof parsed._workerHealth === "object") {
-                recordClientWorkerHealthSample(parsed._workerHealth);
-              } else {
-                const approxCpu = Math.min(9.2, Math.max(0.4, Number((text.length / 48000 + (isImportBatch ? 2.4 : 0.7)).toFixed(2))));
-                recordClientWorkerHealthSample({
-                  cpuMs: approxCpu,
-                  wallMs: wallElapsed,
-                  subrequests: Number(parsed?.subrequestCount || 1),
-                  d1Ops: 1,
-                  route: String(url || "")
-                });
+            const doSingleFetch = async (isRetry = false) => {
+              const reqStartMs = Date.now();
+              const timeoutCtrl = new AbortController();
+              const timer = setTimeout(() => {
+                try { timeoutCtrl.abort(); } catch (e) {}
+              }, timeoutMs);
+              if (opts.signal) {
+                if (opts.signal.aborted) {
+                  clearTimeout(timer);
+                  throw new DOMException("Aborted", "AbortError");
+                }
+                opts.signal.addEventListener("abort", () => {
+                  clearTimeout(timer);
+                  try { timeoutCtrl.abort(); } catch (e) {}
+                }, { once: true });
               }
-              return parsed;
-            } catch (e) {
-              const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 90);
-              const parseErr = new Error("Server-Antwort kein JSON (HTTP " + res.status + "): " + (cleanSnippet || "Leere Antwort"));
-              parseErr.isRateLimitOrHtml = res.status >= 500 || res.status === 429;
-              throw parseErr;
+              try {
+                const fetchOpts = {
+                  ...opts,
+                  headers,
+                  signal: timeoutCtrl.signal
+                };
+                if (isRetry) fetchOpts.cache = "no-store";
+                const res = await fetch(url, fetchOpts);
+                const text = await res.text();
+                const wallElapsed = Date.now() - reqStartMs;
+                const trimmed = String(text || "").trim();
+                const isHtmlError =
+                  trimmed.startsWith("<!DOCTYPE") ||
+                  trimmed.startsWith("<html") ||
+                  trimmed.includes("<!--[if lt IE 7]>") ||
+                  res.status === 429 ||
+                  res.status === 502 ||
+                  res.status === 503 ||
+                  res.status === 524;
+                if (isHtmlError) {
+                  recordClientWorkerHealthSample({
+                    cpuMs: res.status === 503 ? 9.5 : 8.2,
+                    wallMs: wallElapsed,
+                    subrequests: 12,
+                    d1Ops: 4,
+                    route: urlStr,
+                    forcedOverload: true
+                  });
+                  const rateErr = new Error(
+                    "API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP " + (res.status || 524) + ") – automatischer Cooldown aktiv"
+                  );
+                  rateErr.isRateLimitOrHtml = true;
+                  rateErr.httpStatus = res.status || 503;
+                  throw rateErr;
+                }
+                try {
+                  const parsed = JSON.parse(text);
+                  if (parsed && parsed._workerHealth && typeof parsed._workerHealth === "object") {
+                    recordClientWorkerHealthSample(parsed._workerHealth);
+                  } else {
+                    const approxCpu = Math.min(8.5, Math.max(0.4, Number((text.length / 55000 + (isImportBatch ? 1.8 : 0.5)).toFixed(2))));
+                    recordClientWorkerHealthSample({
+                      cpuMs: approxCpu,
+                      wallMs: wallElapsed,
+                      subrequests: Number(parsed?.subrequestCount || 1),
+                      d1Ops: 1,
+                      route: urlStr
+                    });
+                  }
+                  if (isGetRequest && cacheKey && parsed && parsed.ok !== false) {
+                    writeBrowserApiCacheEntryClient(cacheKey, parsed, urlStr);
+                  }
+                  return parsed;
+                } catch (e) {
+                  const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 90);
+                  const parseErr = new Error("Server-Antwort kein JSON (HTTP " + res.status + "): " + (cleanSnippet || "Leere Antwort"));
+                  parseErr.isRateLimitOrHtml = res.status >= 500 || res.status === 429;
+                  throw parseErr;
+                }
+              } finally {
+                clearTimeout(timer);
+              }
+            };
+
+            const backoffDelays = isImportBatch ? [1400, 3200, 6200] : [900, 2100, 4200];
+            let lastErr = null;
+            for (let attempt = 0; attempt <= backoffDelays.length; attempt++) {
+              try {
+                return await doSingleFetch(attempt > 0);
+              } catch (err) {
+                lastErr = err;
+                if (opts.signal && opts.signal.aborted) throw err;
+                // Wenn ein Stale-Browser-Cache für diesen GET-Aufruf vorliegt und HTTP 503/429 auftritt, liefere sofort die gecachte Antwort ohne Blockade!
+                if (isGetRequest && staleCacheEntry && staleCacheEntry.data && err && err.isRateLimitOrHtml && attempt >= 1) {
+                  return staleCacheEntry.data;
+                }
+                if (attempt < backoffDelays.length) {
+                  const jitterMs = Math.floor(Math.random() * 260);
+                  const waitMs = (err && err.isRateLimitOrHtml ? backoffDelays[attempt] : 420 * (attempt + 1)) + jitterMs;
+                  await new Promise(r => setTimeout(r, waitMs));
+                }
+              }
             }
+            if (isGetRequest && staleCacheEntry && staleCacheEntry.data) {
+              return staleCacheEntry.data;
+            }
+            throw lastErr || new Error("Netzwerkfehler");
           } finally {
-            clearTimeout(timer);
+            if (isInteractiveDuringImport) {
+              window._adminPriorityRequestInFlight = Math.max(0, Number(window._adminPriorityRequestInFlight || 1) - 1);
+            }
+            if (isGetRequest && cacheKey && window._clientApiInFlightGetMap instanceof Map) {
+              window._clientApiInFlightGetMap.delete(cacheKey);
+            }
           }
         };
 
-        const backoffDelays = [1100, 2600, 5200];
-        let lastErr = null;
-        for (let attempt = 0; attempt <= backoffDelays.length; attempt++) {
-          try {
-            return await doSingleFetch(attempt > 0);
-          } catch (err) {
-            lastErr = err;
-            if (opts.signal && opts.signal.aborted) throw err;
-            if (attempt < backoffDelays.length) {
-              const waitMs = err && err.isRateLimitOrHtml ? backoffDelays[attempt] : 450 * (attempt + 1);
-              await new Promise(r => setTimeout(r, waitMs));
-            }
-          }
+        const p = executeNetworkFetchWithRetries();
+        if (isGetRequest && cacheKey && !opts.signal && window._clientApiInFlightGetMap instanceof Map) {
+          window._clientApiInFlightGetMap.set(cacheKey, p);
         }
-        throw lastErr || new Error("Netzwerkfehler");
+        return p;
       }
 
       // =========================================================================
@@ -604,14 +779,18 @@
         updateMediaModeIndicatorDom();
         syncSearchGenreSelectDom();
         const root = document.getElementById("appRoot");
-        const existingGrid = document.getElementById("resultsGridContainer");
-        if (existingGrid) {
-          existingGrid.innerHTML = buildSkeletonCardsHtml();
+        const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
+        const discoverUrl = API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam;
+        const isInstantFromCache = hasFreshBrowserApiCacheClient(discoverUrl);
+        if (!isInstantFromCache) {
+          const existingGrid = document.getElementById("resultsGridContainer");
+          if (existingGrid) {
+            existingGrid.innerHTML = buildSkeletonCardsHtml();
+          }
+          setBusyState(true, "⏳ Lade " + (type === "s" ? "Serien" : "Filme") + (pageNum > 1 ? (" (Seite " + pageNum + ")") : "") + "...");
         }
-        setBusyState(true, "⏳ Lade " + (type === "s" ? "Serien" : "Filme") + (pageNum > 1 ? (" (Seite " + pageNum + ")") : "") + "...");
         try {
-          const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
-          const res = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam);
+          const res = await apiFetchJson(discoverUrl);
           state.items = (res.items || []).map(it => ({ ...it, _pageNum: pageNum }));
           state.totalPages = Math.max(1, Number(res.totalPages) || 1);
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
@@ -646,7 +825,7 @@
         } catch (err) {
           root.innerHTML = '<div class="section"><div class="panel-box"><div class="section-title">⚠️ Fehler beim Laden</div><p style="font-size:12px;color:#ccc;margin-bottom:8px">' + esc(err.message) + '</p><button class="btn red" onclick="loadDiscover(\\''+type+'\\',\\''+genreId+'\\',\\''+mode+'\\',\\''+sort+'\\')">🔄 Erneut versuchen</button></div></div>';
         } finally {
-          setBusyState(false);
+          if (!isInstantFromCache) setBusyState(false);
         }
       }
 
@@ -699,19 +878,21 @@
         if (heroRotationTimer) clearInterval(heroRotationTimer);
 
         const root = document.getElementById("appRoot");
-        const existingGrid = document.getElementById("resultsGridContainer");
-        if (existingGrid) {
-          existingGrid.innerHTML = buildSkeletonCardsHtml();
+        const searchUrl = API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
+          "&q=" + encodeURIComponent(q) +
+          "&scope=" + encodeURIComponent(state.searchScope || "all") +
+          "&sort=" + encodeURIComponent(state.sort) +
+          "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0");
+        const isInstantSearchCache = hasFreshBrowserApiCacheClient(searchUrl);
+        if (!isInstantSearchCache) {
+          const existingGrid = document.getElementById("resultsGridContainer");
+          if (existingGrid) {
+            existingGrid.innerHTML = buildSkeletonCardsHtml();
+          }
+          setBusyState(true, '🔍 Suche nach "' + q + '"' + (pageNum > 1 ? (' (Seite ' + pageNum + ')') : '') + '...');
         }
-        setBusyState(true, '🔍 Suche nach "' + q + '"' + (pageNum > 1 ? (' (Seite ' + pageNum + ')') : '') + '...');
         try {
-          const res = await apiFetchJson(
-            API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-            "&q=" + encodeURIComponent(q) +
-            "&scope=" + encodeURIComponent(state.searchScope || "all") +
-            "&sort=" + encodeURIComponent(state.sort) +
-            "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0")
-          );
+          const res = await apiFetchJson(searchUrl);
           state.searchMatchedCollections = res.collections || [];
           state.searchMatchedUniverses = res.universes || [];
           state.searchMatchedPersons = res.persons || [];
@@ -735,7 +916,7 @@
           root.innerHTML = '<div class="section"><div class="panel-box">⚠️ Fehler bei der Suche: ' + esc(err.message) + '</div></div>';
         } finally {
           document.body.classList.remove("search-active-dim");
-          setBusyState(false);
+          if (!isInstantSearchCache) setBusyState(false);
         }
       }
 
@@ -2492,33 +2673,46 @@
         }
       }
 
-      // Wow-Effekt #4: Cinematic Scroll-Parallax, Sticky-Mini-Header & Netflix Scroll-Auto-Pause beim Runterscrollen zum Cast
+      // Wow-Effekt #4: Cinematic Scroll-Parallax, Sticky-Mini-Header & Netflix Scroll-Auto-Pause beim Runterscrollen zum Cast (rAF-gedrosselt & GPU-optimiert ohne Blur-Lag)
+      let detailModalScrollRafPending = false;
       function onDetailModalScrollClient(scrollEl) {
-        if (!scrollEl) return;
-        const st = Number(scrollEl.scrollTop || 0);
-        const stageEl = document.getElementById("detailHeroStageEl");
-        if (stageEl) {
-          const pY = Math.min(180, Math.round(st * 0.32));
-          const pBlur = Math.min(10, (st / 62)).toFixed(1);
-          const pDim = Math.min(0.84, (st / 480)).toFixed(2);
-          stageEl.style.setProperty("--detail-parallax-y", pY + "px");
-          stageEl.style.setProperty("--detail-parallax-blur", (st > 24 ? pBlur : 0) + "px");
-          stageEl.style.setProperty("--detail-scroll-dim", st > 16 ? pDim : 0);
-        }
-        const stickyHeader = document.getElementById("detailStickyMiniHeader");
-        if (stickyHeader) {
-          stickyHeader.classList.toggle("is-visible", st > 310);
-        }
-        if (st > 250 && detailBgTeaserActiveKey) {
-          if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
-            // Cover-First, Pause-Second beim Runterscrollen zum Cast
-            concealAndPauseDetailTrailerClient({ pausedByScroll: true });
+        if (!scrollEl || detailModalScrollRafPending) return;
+        detailModalScrollRafPending = true;
+        requestAnimationFrame(() => {
+          detailModalScrollRafPending = false;
+          const st = Number(scrollEl.scrollTop || 0);
+          const stageEl = document.getElementById("detailHeroStageEl");
+          if (stageEl) {
+            const pY = Math.min(180, Math.round(st * 0.32));
+            const pDim = st > 16 ? Math.min(0.86, (st / 460)).toFixed(2) : "0";
+            if (stageEl._lastPy !== pY) {
+              stageEl._lastPy = pY;
+              stageEl.style.setProperty("--detail-parallax-y", pY + "px");
+            }
+            if (stageEl._lastPdim !== pDim) {
+              stageEl._lastPdim = pDim;
+              stageEl.style.setProperty("--detail-scroll-dim", pDim);
+            }
           }
-        } else if (st < 110 && detailBgTeaserActiveKey && detailBgTeaserPausedByScroll && !detailBgTeaserStoppedByUser && !detailBgTeaserEnded) {
-          if (typeof trailerPreviewEnabled === "undefined" || trailerPreviewEnabled) {
-            resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: false });
+          const stickyHeader = document.getElementById("detailStickyMiniHeader");
+          if (stickyHeader) {
+            const shouldShowSticky = st > 310;
+            if (stickyHeader._lastVis !== shouldShowSticky) {
+              stickyHeader._lastVis = shouldShowSticky;
+              stickyHeader.classList.toggle("is-visible", shouldShowSticky);
+            }
           }
-        }
+          if (st > 250 && detailBgTeaserActiveKey) {
+            if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
+              // Cover-First, Pause-Second beim Runterscrollen zum Cast
+              concealAndPauseDetailTrailerClient({ pausedByScroll: true });
+            }
+          } else if (st < 110 && detailBgTeaserActiveKey && detailBgTeaserPausedByScroll && !detailBgTeaserStoppedByUser && !detailBgTeaserEnded) {
+            if (typeof trailerPreviewEnabled === "undefined" || trailerPreviewEnabled) {
+              resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: false });
+            }
+          }
+        });
       }
 
       // Wow-Effekt #3: Schauspieler- & Regie-Spotlight-Overlay (Mini-Filmografie direkt über der Detailansicht)
@@ -5772,6 +5966,16 @@
         if (state.activeDetails && String(state.activeDetails.id) === String(seriesId)) {
           state.activeDetails._activeLoadedSeason = Number(seasonNum) || 1;
         }
+        // 0ms Optimistisches UI-Feedback beim Staffel-Tab-Wechsel
+        const existingBox = document.getElementById("seasonBox");
+        if (existingBox) {
+          existingBox.querySelectorAll(".season-tab-btn").forEach(btn => {
+            const m = String(btn.textContent || "").match(/Staffel\\s+(\\d+)/i);
+            if (m) {
+              btn.classList.toggle("active", Number(m[1]) === Number(seasonNum));
+            }
+          });
+        }
         const vipAllowed = isCurrentUserVip();
         const cacheKey = seriesId + "_" + seasonNum + "_" + (vipAllowed ? "vip" : "std");
         const cachedEntry = !forceRefresh ? clientSeasonCache.get(cacheKey) : null;
@@ -5781,6 +5985,22 @@
           : await apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + seasonNum);
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
+        }
+        // Nächste Staffel im Hintergrund vorwärmen (für 0ms Wechsel zur Folge-Staffel)
+        if (s && Array.isArray(s.seasons) && s.seasons.includes(Number(seasonNum) + 1)) {
+          const nextS = Number(seasonNum) + 1;
+          const nextKey = seriesId + "_" + nextS + "_" + (vipAllowed ? "vip" : "std");
+          if (!clientSeasonCache.has(nextKey)) {
+            setTimeout(() => {
+              if (state.activeDetails && String(state.activeDetails.id) === String(seriesId) && !clientSeasonCache.has(nextKey)) {
+                apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + nextS)
+                  .then(ns => {
+                    if (ns && ns.ok !== false) clientSeasonCache.set(nextKey, { data: ns, ts: Date.now() });
+                  })
+                  .catch(() => {});
+              }
+            }, 320);
+          }
         }
         const box = document.getElementById("seasonBox");
         if (!box) return;
