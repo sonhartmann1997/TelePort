@@ -6019,9 +6019,16 @@
           await displaySavedList(env, chatId, msgId);
           return;
         }
+
+        // Sicherheits-Fallback: Falls ein unbekannter oder veralteter Button geklickt wurde,
+        // Laderädchen in Telegram sofort quittieren, um einen 30s-Freeze zu verhindern.
+        await answerCallbackQuery(cq.id).catch(() => {});
       }
     } catch (err) {
       console.error("[Telegram Router Error]:", err);
+      if (update?.callback_query?.id) {
+        await answerCallbackQuery(update.callback_query.id, "⚠️ Vorgang konnte nicht abgeschlossen werden.").catch(() => {});
+      }
     } finally {
       if (activeSessionChatId) {
         await flushUserSession(env, activeSessionChatId);
