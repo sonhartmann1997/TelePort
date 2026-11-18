@@ -72,6 +72,19 @@
       });
     }
 
+    if (path === "/sw.js" || path === "/service-worker.js") {
+      const swCode = `const CACHE_NAME="streamflix-v1";const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname.startsWith("/assets/")||u.pathname==="/favicon.svg")){e.respondWith(caches.match(r).then(cached=>{const fp=fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>cached);return cached||fp}));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
+      return new Response(swCode, {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/javascript; charset=utf-8",
+          "Service-Worker-Allowed": "/",
+          "Cache-Control": "no-cache, no-store, must-revalidate"
+        }
+      });
+    }
+
     if (path === "/" || path === "/app" || path === "/miniapp") {
       return new Response(renderNetflixMiniAppHtml(url.origin), {
         status: 200,
@@ -4214,6 +4227,8 @@
             url.pathname === "/favicon.svg" ||
             url.pathname === "/manifest.json" ||
             url.pathname === "/manifest.webmanifest" ||
+            url.pathname === "/sw.js" ||
+            url.pathname === "/service-worker.js" ||
             url.pathname === "/worker.js"
           ) {
             return await env.ASSETS.fetch(request);
@@ -4269,6 +4284,8 @@
           url.pathname === "/botfather-splash.svg" ||
           url.pathname === "/manifest.json" ||
           url.pathname === "/manifest.webmanifest" ||
+          url.pathname === "/sw.js" ||
+          url.pathname === "/service-worker.js" ||
           url.pathname === "/api/import-json" ||
           url.pathname.startsWith("/api/tma/") ||
           (request.method === "GET" && url.pathname === "/" && url.searchParams.get("status") !== "1")

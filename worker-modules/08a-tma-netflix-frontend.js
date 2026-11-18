@@ -7332,6 +7332,23 @@
           }
         } catch (e) {}
       }
+
+      if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+        window.addEventListener("load", function() {
+          navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function() {});
+        });
+      }
+
+      window.addEventListener("offline", function() {
+        if (typeof showHudToast === "function") {
+          showHudToast("📡 Offline – Gecachte Filme & Merkliste bleiben verfügbar.");
+        }
+      });
+      window.addEventListener("online", function() {
+        if (typeof showHudToast === "function") {
+          showHudToast("🟢 Verbindung wiederhergestellt");
+        }
+      });
       function extractClientTelegramInitData() {
         try {
           const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
