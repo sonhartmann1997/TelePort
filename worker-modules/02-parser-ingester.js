@@ -461,7 +461,7 @@
   const FULL_DATE_REGEX = /\b\d{1,2}\.\d{1,2}\.(?:19\d{2}|20\d{2}|\d{2})\b/g;
 
   // Ignoriert Jahreszahlen, denen direkt ein Tag.Monat. (z.B. 21.07.2012) vorausgeht, und erkennt Länder-Präfixe wie (DDR 1976), (BRD 1980), (USA 2005)
-  const YEAR_REGEX = /(?<!\d{1,2}[./-]\d{1,2}[./-])(?:[(\[\-\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)(?![./-]\d|\d)(?:[)\]\s._\-·‧]|$)/i;
+  const YEAR_REGEX = /(?<!\d{1,2}[./-]\d{1,2}[./-])(?:[(\[\-\s_.·‧])(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(18\d{2}|19\d{2}|20[0-3]\d)(?![./-]\d|\d)(?:[)\]\s._\-·‧]|$)/i;
 
   function detectLanguages(rawText = "", rawFileName = "") {
     const combined = `${rawText || ""}\n${rawFileName || ""}`;
@@ -1305,7 +1305,7 @@
 
     const inlineExplicitTitle = text.match(/(?:Titel|Title):\s*([^\n]+)/i)?.[1]?.trim() || null;
     const inlineExplicitYear  = text.match(/(?:Erscheinungsjahr|Jahr|Release):\s*(\d{4})/i)?.[1] || null;
-    const EARLY_PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]]/i;
+    const EARLY_PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(18\d{2}|19\d{2}|20[0-3]\d)\s*[\)\]]/i;
     const EARLY_EXPLICIT_SERIES_MARKER = /(?:^|[\s._\-(🔸🔶#])(?:S\d{1,2}[\s._-]*E\d{1,3}|E\d{1,3}[\s._-]*S\d{1,2}|\d{1,2}x\d{2,3}|Staffel\s*\d{1,2}|Season\s*\d{1,2}|Folge\s*\d{1,3}|Episode\s*\d{1,3}|Ep\.?\s*\d{1,3})\b/i;
     const hasOwnParenYear = Boolean(
       inlineExplicitYear ||
@@ -1440,7 +1440,7 @@
                            || fileName.match(/^(?:Folge|Episode)[_\s.]*(\d{1,3})\b(.*)$/i));
 
     // Datum vor Jahres-Extraktion entfernen, damit (21.07.2012) oder (01.12.2018) niemals als Jahr 2012/2018 erkannt wird (Fall 17)
-    const PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(19[2-9]\d|20[0-2]\d)\s*[\)\]]/i;
+    const PAREN_YEAR_REGEX = /[\(\[]\s*(?:(?:DDR|BRD|USA|UK|DE|FR|IT|ES)\s+)?(18\d{2}|19\d{2}|20[0-3]\d)\s*[\)\]]/i;
     const dateSafePrimary = ` ${primarySource.replace(FULL_DATE_REGEX, " ")} `;
     const dateSafeFile = ` ${fileName.replace(FULL_DATE_REGEX, " ")} `;
     const dateSafeLine1 = ` ${line1.replace(FULL_DATE_REGEX, " ")} `;
