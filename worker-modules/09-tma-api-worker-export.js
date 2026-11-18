@@ -3693,7 +3693,20 @@
           name: `Folge ${episode}`
         };
         const telegraphUrl = await ensureEpisodeTelegraphUrl(env, seriesId, sDetails, season, epObj);
-        return new Response(JSON.stringify({ ok: true, telegraphUrl }), { status: 200, headers: corsHeaders });
+        return new Response(JSON.stringify({
+          ok: true,
+          telegraphUrl,
+          episode: {
+            episode_number: Number(epObj.episode_number || episode),
+            season_number: Number(epObj.season_number || season),
+            name: epObj.name || `Folge ${episode}`,
+            overview: epObj.overview || "",
+            air_date: epObj.air_date || "",
+            still_path: epObj.still_path || "",
+            vote_average: Number(epObj.vote_average || 0),
+            runtime: Number(epObj.runtime || 0)
+          }
+        }), { status: 200, headers: corsHeaders });
       }
 
       if (path === "/api/tma/wishlist") {
@@ -3776,6 +3789,35 @@
             const res = await saveCollectionOrUniverseToFolders(env, targetChatId, `${uni.icon} ${uni.name}`, visibleItems, "universe", uni.id);
             await flushUserSession(env, targetChatId);
             return new Response(JSON.stringify({ ok: true, ...res }), { status: 200, headers: corsHeaders });
+          }
+          if (body.action === "move_item_folder") {
+            const list = await getSavedList(env, targetChatId);
+            const targetIdx = list.findIndex(i => String(i.uid) === String(body.uid));
+            if (targetIdx === -1) {
+              return new Response(JSON.stringify({ ok: false, error: "Eintrag nicht gefunden." }), { status: 404, headers: corsHeaders });
+            }
+            const item = list[targetIdx];
+            const oldUid = item.uid;
+            const oldFolderId = item.folderId || null;
+            const defaultCat = (item.contentType === "series" || item.contentType === "episode") ? "cat_series" : "cat_movies";
+            const nextFolderId = (body.targetFolderId && body.targetFolderId !== "root") ? String(body.targetFolderId) : defaultCat;
+            const prefix = (item.contentType === "series" || item.contentType === "episode") ? "s" : "m";
+            const baseId = item.tmdbId || item.seriesId || Date.now();
+            const nextUid = (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series")
+              ? `${prefix}_${baseId}_${nextFolderId}`
+              : `${prefix}_${baseId}`;
+            if (oldFolderId && oldFolderId !== nextFolderId) {
+              await deletePlaylistItemFromD1(env, targetChatId, oldUid, oldFolderId);
+            }
+            item.folderId = nextFolderId;
+            item.uid = nextUid;
+            list[targetIdx] = item;
+            if (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series") {
+              await batchUpsertPlaylistItemsInD1(env, targetChatId, nextFolderId, [item]);
+            }
+            await saveRawList(env, targetChatId, list);
+            await flushUserSession(env, targetChatId);
+            return new Response(JSON.stringify({ ok: true, uid: nextUid, folderId: nextFolderId }), { status: 200, headers: corsHeaders });
           }
           if (body.action === "delete_uid") {
             const list = await getSavedList(env, targetChatId);

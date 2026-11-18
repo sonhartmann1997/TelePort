@@ -29609,7 +29609,9 @@
         --cinema-btn-pad: calc(9.5px * var(--scale-menu)) calc(18px * var(--scale-menu));
       }
 
-      /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen) */
+      /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen):
+         WICHTIG: outline-offset: -2px + inset Box-Shadow + kein horizontales scale(), damit die linken & rechten Ränder
+         in Scrollboxen (Suchvorschläge, Sidebar, Genre-Grid, Cast-Slider, Katalog) NIEMALS überstehen oder abgeschnitten werden! */
       .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable),
       .brand-logo:focus-visible,
       .btn:focus-visible,
@@ -29621,10 +29623,10 @@
       .df-btn:focus-visible,
       .hero-thumb-card:focus-visible,
       .search-clear-btn:focus-visible {
-        outline: 3px solid var(--accent-primary) !important;
-        outline-offset: 2px !important;
-        box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.38), 0 8px 24px rgba(0, 0, 0, 0.85) !important;
-        transform: translateY(-2px) scale(1.02);
+        outline: 2px solid var(--accent-primary) !important;
+        outline-offset: -2px !important;
+        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 6px 18px rgba(0, 0, 0, 0.72) !important;
+        transform: none;
         z-index: 25;
       }
 
@@ -30557,13 +30559,13 @@
         position: fixed;
         right: 16px;
         bottom: 18px;
-        z-index: 64;
+        z-index: 75;
         display: inline-flex;
         align-items: center;
         gap: 6px;
         padding: 8px 13px;
         border-radius: 999px;
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.92));
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(30, 41, 59, 0.94));
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
         border: 1px solid rgba(56, 189, 248, 0.55);
@@ -30575,7 +30577,10 @@
         opacity: 0;
         pointer-events: none;
         transform: translate3d(0, 14px, 0) scale(0.94);
-        transition: opacity 0.22s ease, transform 0.22s ease, border-color 0.18s ease, background 0.18s ease;
+        transition: opacity 0.22s ease, transform 0.22s ease, bottom 0.22s ease, border-color 0.18s ease, background 0.18s ease;
+      }
+      body:has(#smartPageIndicatorBtn[style*="inline-flex"]) .catalog-back-to-top-fab {
+        bottom: 58px;
       }
       body.catalog-deep-scrolled .catalog-back-to-top-fab {
         opacity: 1;
@@ -30587,7 +30592,104 @@
         background: linear-gradient(135deg, #0284c7, #2563eb);
         border-color: #bae6fd;
         color: #ffffff;
-        transform: translate3d(0, -2px, 0) scale(1.04);
+        transform: translate3d(0, -2px, 0);
+      }
+      /* Seitlicher TV- & Konsolen-Schnellsprung-Fahrstuhl (Rechts-Rand-Ausbruch & 1-Klick Oben/Filter/Mitte/Unten) */
+      .tv-quick-jump-elevator {
+        position: fixed;
+        right: 10px;
+        top: 50%;
+        transform: translate3d(12px, -50%, 0);
+        z-index: 76;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 6px;
+        border-radius: 14px;
+        background: linear-gradient(165deg, rgba(8, 13, 24, 0.90), rgba(15, 23, 42, 0.94));
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(56, 189, 248, 0.38);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.78), 0 0 18px rgba(14, 165, 233, 0.16);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+      }
+      body.catalog-deep-scrolled .tv-quick-jump-elevator,
+      body.kb-nav-active .tv-quick-jump-elevator,
+      .tv-quick-jump-elevator.is-visible,
+      .tv-quick-jump-elevator:focus-within {
+        opacity: 0.94;
+        pointer-events: auto;
+        transform: translate3d(0, -50%, 0);
+      }
+      .tv-quick-jump-elevator:hover,
+      .tv-quick-jump-elevator:focus-within {
+        opacity: 1;
+        border-color: rgba(56, 189, 248, 0.72);
+      }
+      body:has(#modalRoot .modal-backdrop) .tv-quick-jump-elevator,
+      body:has(#filterSidebarDrawer.open) .tv-quick-jump-elevator,
+      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .tv-elevator-btn {
+        min-height: 36px;
+        padding: 0 10px;
+        border-radius: 9px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(30, 41, 59, 0.68);
+        color: #e2e8f0;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 800;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 6px;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+      }
+      .tv-elevator-btn:hover,
+      .tv-elevator-btn.spatial-focus {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        border-color: #7dd3fc;
+        color: #ffffff;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.48), 0 6px 16px rgba(2, 132, 199, 0.45);
+        transform: translate3d(-2px, 0, 0);
+      }
+      @media (max-width: 720px) {
+        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elev-label {
+          display: none;
+        }
+        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elevator-btn {
+          padding: 0 8px;
+          justify-content: center;
+        }
+      }
+      .recent-strip-scroll-btn {
+        width: 26px;
+        height: 26px;
+        min-width: 26px;
+        border-radius: 999px;
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        background: rgba(15, 23, 42, 0.85);
+        color: #bae6fd;
+        font-size: 13px;
+        font-weight: 900;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: all 0.15s ease;
+      }
+      .recent-strip-scroll-btn:hover,
+      .recent-strip-scroll-btn.spatial-focus {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        border-color: #7dd3fc;
+        color: #ffffff;
       }
       /* Schwebendes Ambilight-Glas-Dropdown-Overlay mit Genre-Chips */
       .search-genre-dropdown-overlay {
@@ -30615,6 +30717,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        flex-wrap: wrap;
         gap: 8px;
         padding-bottom: 8px;
         margin-bottom: 8px;
@@ -30627,7 +30730,38 @@
         letter-spacing: 0.3px;
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .genre-overlay-type-pills {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 2px;
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+      }
+      .genre-overlay-type-btn {
+        background: transparent;
+        border: 0;
+        color: #94a3b8;
+        font-size: 11px;
+        font-weight: 800;
+        padding: 3px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.14s ease;
+      }
+      .genre-overlay-type-btn:hover,
+      .genre-overlay-type-btn.spatial-focus {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .genre-overlay-type-btn.active {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        color: #ffffff;
+        box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);
       }
       .genre-overlay-close-btn {
         background: rgba(255, 255, 255, 0.08);
@@ -30652,7 +30786,9 @@
         gap: 6px;
         max-height: 290px;
         overflow-y: auto;
-        padding: 2px;
+        overflow-x: hidden;
+        padding: 6px;
+        box-sizing: border-box;
       }
       .genre-overlay-chip {
         background: rgba(30, 41, 59, 0.68);
@@ -30670,14 +30806,15 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+        box-sizing: border-box;
+        transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
       }
       .genre-overlay-chip:hover,
       .genre-overlay-chip.spatial-focus {
         background: rgba(14, 165, 233, 0.22);
         border-color: #38bdf8;
         color: #ffffff;
-        transform: translateY(-1px);
+        transform: none;
       }
       .genre-overlay-chip.active {
         background: linear-gradient(135deg, #0284c7, #2563eb);
@@ -30779,44 +30916,132 @@
         left: 14px;
         right: 14px;
         top: calc(100% + 4px);
-        background: rgba(14, 18, 28, 0.96);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(var(--ambi-2), 0.55);
+        max-width: 860px;
+        margin: 0 auto;
+        box-sizing: border-box;
+        background: rgba(11, 15, 25, 0.98);
+        backdrop-filter: blur(22px);
+        -webkit-backdrop-filter: blur(22px);
+        border: 1px solid rgba(56, 189, 248, 0.58);
         border-radius: 12px;
-        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.88);
-        max-height: 360px;
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.92), 0 0 22px rgba(14, 165, 233, 0.18);
+        max-height: min(410px, 72vh);
         overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
         scroll-padding-top: 12px;
         scroll-padding-bottom: 12px;
-        z-index: 80;
-        padding: 8px;
+        z-index: 95;
+        padding: 10px 12px;
         display: none;
+        pointer-events: auto;
       }
       .search-autocomplete-box.open { display: block; }
+      .ac-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 3px 6px 6px;
+        margin-bottom: 4px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+        font-size: calc(10.5px * var(--scale-text));
+        color: #94a3b8;
+        font-weight: 700;
+      }
+      .ac-close-mini-btn {
+        background: rgba(30, 41, 59, 0.78);
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        color: #cbd5e1;
+        border-radius: 6px;
+        padding: 2px 7px;
+        font-size: 10.5px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+      .ac-close-mini-btn:hover {
+        background: rgba(239, 68, 68, 0.25);
+        border-color: rgba(248, 113, 113, 0.55);
+        color: #ffffff;
+      }
       .ac-group-title {
         font-size: calc(10.5px * var(--scale-text));
         font-weight: 800;
         color: #94a3b8;
         text-transform: uppercase;
         letter-spacing: 0.6px;
-        padding: 4px 6px;
+        padding: 5px 6px 3px;
       }
       .ac-item {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 8px;
-        padding: 6px 8px;
-        border-radius: 7px;
+        gap: 10px;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 7px 10px;
+        margin: 2px 0;
+        border-radius: 8px;
         cursor: pointer;
         font-size: calc(12.5px * var(--scale-text));
         color: #f1f5f9;
-        border: 1px solid transparent;
+        border: 2px solid transparent;
+        user-select: none;
+        transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
       }
-      .ac-item:hover, .ac-item.spatial-focus {
-        background: rgba(14, 165, 233, 0.18);
-        border-color: rgba(56, 189, 248, 0.5);
+      .ac-item:hover,
+      .ac-item.spatial-focus,
+      .ac-item.ac-kb-active {
+        background: rgba(14, 165, 233, 0.22);
+        border-color: #38bdf8 !important;
+        outline: none !important;
+        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.5), 0 2px 10px rgba(14, 165, 233, 0.18) !important;
+        transform: none !important;
+      }
+      .ac-item-left {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+        flex: 1;
+      }
+      .ac-item-thumb {
+        width: 26px;
+        height: 38px;
+        border-radius: 4px;
+        object-fit: cover;
+        flex-shrink: 0;
+        background: rgba(30, 41, 59, 0.85);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .ac-item-icon-box {
+        width: 26px;
+        height: 32px;
+        border-radius: 5px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        background: rgba(30, 41, 59, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        font-size: 13px;
+      }
+      .ac-item-text {
+        min-width: 0;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ac-item-action {
+        flex-shrink: 0;
+        font-size: 11px;
+        font-weight: 800;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.65);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        white-space: nowrap;
       }
 
       /* Kein Ausgrauen der Filmergebnisse mehr bei aktiver Suche (#21) */
@@ -31630,7 +31855,9 @@
         gap: 7px;
         max-height: 235px;
         overflow-y: auto;
-        padding: 2px;
+        overflow-x: hidden;
+        padding: 6px;
+        box-sizing: border-box;
       }
       .world-portal-card {
         display: flex;
@@ -31642,13 +31869,14 @@
         border: 1px solid rgba(148, 163, 184, 0.24);
         cursor: pointer;
         text-align: left;
+        box-sizing: border-box;
         transition: all 0.15s ease;
       }
       .world-portal-card:hover,
       .world-portal-card.spatial-focus {
         border-color: var(--accent-primary);
         background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(30, 41, 59, 0.95));
-        transform: translateY(-1px);
+        transform: none;
       }
       .world-portal-icon {
         font-size: 20px;
@@ -31715,14 +31943,20 @@
         }
         /* Kompaktes Such-Pill im mobilen Ruhezustand: Nur Genre-Emoji ohne abgeschnittenen Text */
         header:not(.mobile-search-expanded) .search-genre-trigger-label,
-        header:not(.mobile-search-expanded) .search-genre-caret {
+        header:not(.mobile-search-expanded) .search-genre-caret,
+        header:not(.mobile-search-expanded) .search-genre-quick-reset {
           display: none !important;
         }
         header:not(.mobile-search-expanded) .search-genre-trigger-btn {
-          width: 30px;
-          min-width: 30px;
-          max-width: 30px;
+          width: 32px;
+          min-width: 32px;
+          max-width: 32px;
           padding: 0;
+          justify-content: center;
+        }
+        header:not(.mobile-search-expanded) .search-genre-trigger-btn.has-active-genre {
+          background: rgba(14, 165, 233, 0.25);
+          box-shadow: inset 0 0 0 1.5px rgba(56, 189, 248, 0.78);
         }
         header:not(.mobile-search-expanded) .search-input-wrap input {
           padding: 0 24px 0 7px;
@@ -31757,8 +31991,8 @@
         }
         header.mobile-search-expanded .search-genre-trigger-btn {
           border-radius: 0;
-          max-width: 118px;
-          padding: 0 7px;
+          max-width: 96px;
+          padding: 0 6px;
         }
         .search-autocomplete-box,
         .search-genre-dropdown-overlay {
@@ -32040,9 +32274,11 @@
       }
       .card:hover,
       .card.spatial-focus {
-        border-color: rgba(56, 189, 248, 0.78);
-        transform: translateY(-4px) scale(1.015);
-        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.75), 0 0 0 2px rgba(56, 189, 248, 0.32);
+        border-color: #38bdf8 !important;
+        outline: 2px solid #38bdf8 !important;
+        outline-offset: -2px !important;
+        transform: translateY(-2px);
+        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 14px 28px rgba(0, 0, 0, 0.75) !important;
       }
       .card:active { transform: scale(0.98); }
       .card-poster-wrap {
@@ -32299,9 +32535,7 @@
         box-shadow: 0 4px 12px rgba(0,0,0,0.75);
         transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
       }
-      .card:hover .card-quick-info,
-      .card:focus-within .card-quick-info,
-      .card.spatial-focus .card-quick-info,
+      /* ℹ️ Details auf dem Cover im normalen Maus-Hover ausgeblendet (da Klick auf Karte bereits Details öffnet), nur im TV/Gamepad-Subnav-Modus sichtbar */
       .card.card-subnav-active .card-quick-info {
         display: inline-flex !important;
         opacity: 1;
@@ -32691,6 +32925,7 @@
         align-items: center;
         margin-top: 1px;
         font-weight: 700;
+        font-variant-numeric: tabular-nums;
       }
       @keyframes cardFadeIn {
         from { opacity: 0.35; }
@@ -32924,9 +33159,10 @@
         align-items: center;
         gap: 4px;
         overflow-x: auto;
-        padding: 4px 2px 6px;
+        padding: 6px 6px 8px;
         margin-bottom: 8px;
         scrollbar-width: thin;
+        box-sizing: border-box;
       }
       .wl-az-btn {
         min-width: 26px;
@@ -32963,8 +33199,9 @@
         align-items: center;
         gap: 8px;
         overflow-x: auto;
-        padding: 4px 2px 8px;
+        padding: 6px 6px 8px;
         scrollbar-width: thin;
+        box-sizing: border-box;
       }
       .recent-chip {
         display: inline-flex;
@@ -33442,7 +33679,7 @@
         gap: 8px;
         padding: 5px 12px;
         border-radius: 999px;
-        background: rgba(8, 13, 24, 0.68);
+        background: rgba(8, 13, 24, 0.72);
         backdrop-filter: blur(18px);
         -webkit-backdrop-filter: blur(18px);
         border: 1px solid rgba(255, 255, 255, 0.16);
@@ -33451,7 +33688,12 @@
         opacity: 0;
         pointer-events: none;
         transform: translateY(8px);
-        transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1), transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, background 0.2s ease;
+        transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1), transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s ease, border-color 0.2s ease, background 0.2s ease;
+      }
+      /* Wenn die untere Hinweis-/Thumbnail-Leiste sichtbar ist, schwebt das Player-Dock kollisionsfrei darüber */
+      .hero:not(.is-trailer-foreground-mode) .hero-cinema-player-dock,
+      .detail-hero-stage:not(.is-trailer-foreground-mode) .detail-cinema-player-dock {
+        bottom: 60px;
       }
       .detail-cinema-player-dock.is-ready,
       .detail-hero-stage.is-trailer-foreground-mode .detail-cinema-player-dock,
@@ -33461,8 +33703,8 @@
         transform: translateY(0);
       }
       .detail-cinema-player-dock:hover {
-        background: rgba(8, 13, 24, 0.84);
-        border-color: rgba(56, 189, 248, 0.42);
+        background: rgba(8, 13, 24, 0.88);
+        border-color: rgba(56, 189, 248, 0.48);
       }
       .cinema-dock-btn {
         height: 28px;
@@ -33480,6 +33722,7 @@
         gap: 4px;
         cursor: pointer;
         white-space: nowrap;
+        box-sizing: border-box;
         transition: all 0.16s ease;
       }
       .cinema-dock-btn:hover,
@@ -33487,7 +33730,7 @@
         background: rgba(56, 189, 248, 0.24);
         border-color: #38bdf8;
         color: #ffffff;
-        transform: translateY(-1px);
+        transform: none;
       }
       .cinema-dock-btn.is-active-mode {
         background: rgba(225, 29, 72, 0.25);
@@ -33523,6 +33766,10 @@
           bottom: 12px;
           justify-content: space-between;
           padding: 5px 10px;
+        }
+        .hero:not(.is-trailer-foreground-mode) .hero-cinema-player-dock,
+        .detail-hero-stage:not(.is-trailer-foreground-mode) .detail-cinema-player-dock {
+          bottom: 54px;
         }
         .cinema-dock-scrubber {
           flex: 1;
@@ -33720,44 +33967,48 @@
         gap: calc(28px * var(--scale-all));
         transition: opacity 0.22s ease, transform 0.22s ease;
       }
-      /* Edle Kino-Glas-Infoleiste für Zusatz-Infos (Regie, Studio, Land, Streaming-Anbieter) beim Runterscrollen */
+      /* Ruhige, edle Kino-Metadaten-Zeile für Zusatz-Infos (Regie, Studio, Land, Streaming-Anbieter) ohne schwere Kapsel-Flut */
       .detail-credits-glass-strip {
         display: flex;
         align-items: center;
         flex-wrap: wrap;
-        gap: calc(10px * var(--scale-all));
-        padding: calc(12px * var(--scale-all)) calc(16px * var(--scale-all));
-        border-radius: 14px;
-        background: linear-gradient(135deg, rgba(15, 23, 42, 0.68), rgba(9, 14, 28, 0.54));
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(var(--ambi-1, 148, 163, 184), 0.22);
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+        gap: 6px 4px;
+        padding: calc(10px * var(--scale-all)) calc(14px * var(--scale-all));
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.42);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+      }
+      .detail-credit-sep {
+        color: rgba(148, 163, 184, 0.45);
+        font-size: calc(12px * var(--scale-text));
+        padding: 0 4px;
+        user-select: none;
       }
       .detail-credit-pill {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        padding: calc(5px * var(--scale-menu)) calc(12px * var(--scale-menu));
-        border-radius: 999px;
-        background: rgba(30, 41, 59, 0.62);
-        border: 1px solid rgba(255, 255, 255, 0.14);
+        gap: 5px;
+        padding: 4px 8px;
+        border-radius: 7px;
+        background: transparent;
+        border: 1px solid transparent;
         color: #e2e8f0;
         font-size: calc(12px * var(--scale-text));
         font-weight: 700;
         cursor: pointer;
         text-decoration: none;
-        transition: all 0.16s ease;
+        transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
       }
       .detail-credit-pill b {
         color: #94a3b8;
-        font-weight: 700;
+        font-weight: 600;
       }
       .detail-credit-pill:hover, .detail-credit-pill.spatial-focus {
-        background: rgba(56, 189, 248, 0.22);
-        border-color: #38bdf8;
-        color: #ffffff;
-        transform: translateY(-1px);
+        background: rgba(56, 189, 248, 0.14);
+        border-color: rgba(56, 189, 248, 0.42);
+        color: #38bdf8;
       }
       .detail-section-block {
         display: flex;
@@ -33817,11 +34068,12 @@
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
         touch-action: pan-x pan-y;
-        padding: 5px 4px 12px;
+        padding: 8px 8px 14px;
         scroll-behavior: smooth;
         scrollbar-width: none;
         cursor: grab;
         user-select: none;
+        box-sizing: border-box;
       }
       .detail-cast-track.is-dragging,
       .detail-similar-track.is-dragging {
@@ -33843,9 +34095,11 @@
         transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
       }
       .detail-cast-card:hover, .detail-cast-card.spatial-focus {
-        transform: translateY(-4px) scale(1.02);
-        border-color: rgba(56, 189, 248, 0.78);
-        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.82), 0 0 0 2px rgba(56, 189, 248, 0.35);
+        transform: translateY(-2px);
+        border-color: #38bdf8 !important;
+        outline: 2px solid #38bdf8 !important;
+        outline-offset: -2px !important;
+        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 12px 24px rgba(0, 0, 0, 0.82) !important;
       }
       .detail-cast-photo-wrap {
         width: 100%;
@@ -33903,11 +34157,12 @@
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
         touch-action: pan-x pan-y;
-        padding: 5px 4px 12px;
+        padding: 8px 8px 14px;
         scroll-behavior: smooth;
         scrollbar-width: none;
         cursor: grab;
         user-select: none;
+        box-sizing: border-box;
       }
       .detail-similar-track::-webkit-scrollbar { display: none; }
       .detail-sim-card {
@@ -33928,9 +34183,11 @@
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.45), 0 10px 24px rgba(0, 0, 0, 0.75);
       }
       .detail-sim-card:hover, .detail-sim-card.spatial-focus {
-        transform: translateY(-4px) scale(1.02);
-        border-color: rgba(56, 189, 248, 0.78);
-        box-shadow: 0 14px 28px rgba(0, 0, 0, 0.82), 0 0 0 2px rgba(56, 189, 248, 0.35);
+        transform: translateY(-2px);
+        border-color: #38bdf8 !important;
+        outline: 2px solid #38bdf8 !important;
+        outline-offset: -2px !important;
+        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 12px 24px rgba(0, 0, 0, 0.82) !important;
       }
       .detail-sim-current-badge {
         position: absolute;
@@ -34095,11 +34352,21 @@
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
+        cursor: pointer;
+      }
+      .person-spotlight-bio.is-expanded {
+        display: block !important;
+        -webkit-line-clamp: unset !important;
+        max-height: 180px;
+        overflow-y: auto;
+        padding-right: 4px;
       }
       .person-spotlight-grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(calc(132px * var(--scale-cover)), 1fr));
         gap: calc(12px * var(--scale-cover));
+        padding: 6px;
+        box-sizing: border-box;
       }
       /* Live-Zoom-Badge (oben rechts bei L2/R2 oder +/-) & Controller-HUD (PlayStation / Xbox) */
       #liveZoomBadgeEl {
@@ -34368,9 +34635,10 @@
         cursor: pointer;
         flex: 1;
         min-width: 0;
-        border-radius: 6px;
-        padding: 2px 0;
-        transition: color 0.14s ease;
+        border-radius: 7px;
+        padding: 3px 6px;
+        box-sizing: border-box;
+        transition: color 0.14s ease, background 0.14s ease;
         display: flex;
         align-items: center;
         gap: 10px;
@@ -34379,6 +34647,7 @@
       .ep-title.spatial-focus,
       .ep-title:hover {
         color: #38bdf8;
+        background: rgba(14, 165, 233, 0.10);
       }
       .ep-title:hover .ep-name-text,
       .ep-title.spatial-focus .ep-name-text {
@@ -34518,15 +34787,15 @@
         color: #ffffff;
       }
       .ep-ghost-btn {
-        background: rgba(30, 41, 59, 0.65);
-        border: 1px solid rgba(148, 163, 184, 0.24);
-        color: #cbd5e1;
+        background: rgba(30, 41, 59, 0.45);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        color: #94a3b8;
         padding: 4px 8px;
         border-radius: 6px;
         font-size: calc(11px * var(--scale-text));
         font-weight: 700;
         cursor: pointer;
-        opacity: 0.92;
+        opacity: 0.62;
         transition: opacity 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
         display: inline-flex;
         align-items: center;
@@ -34741,26 +35010,33 @@
       .embed-frame { width: 100%; aspect-ratio: 16/9; border: 0; display: block; background: #000; }
       .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
       .panel-box { background: rgba(18, 21, 30, 0.88); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
-      .lightbox-backdrop { position: fixed; inset: 0; z-index: 220; background: rgba(0,0,0,0.94); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; }
-      .lightbox-img { max-width: 96vw; max-height: 82vh; object-fit: contain; border-radius: 8px; box-shadow: 0 12px 40px rgba(0,0,0,0.9); transition: transform 0.2s ease; cursor: zoom-in; }
-      .lightbox-img.zoomed { transform: scale(1.65); cursor: zoom-out; }
+      .lightbox-backdrop { position: fixed; inset: 0; z-index: 1700; background: rgba(4, 7, 17, 0.95); backdrop-filter: blur(10px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; overflow: hidden; }
+      .lightbox-toolbar { position: relative; z-index: 5; display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 720px; margin-bottom: 12px; gap: 10px; padding: 8px 12px; border-radius: 12px; background: rgba(7, 12, 26, 0.88); border: 1px solid rgba(56, 189, 248, 0.25); box-shadow: 0 8px 24px rgba(0,0,0,0.65); }
+      .lightbox-img { position: relative; z-index: 1; max-width: 96vw; max-height: 78vh; object-fit: contain; border-radius: 10px; box-shadow: 0 14px 44px rgba(0,0,0,0.92); transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1); cursor: zoom-in; }
+      .lightbox-img.zoomed { transform: scale(1.62); cursor: zoom-out; }
       a.link { color: #38bdf8; text-decoration: none; font-weight: 600; }
       body[data-theme="light"] a.link { color: #0284c7; }
       #hudToast {
         position: fixed;
-        bottom: 18px;
-        right: 14px;
-        z-index: 260;
-        background: rgba(15, 23, 42, 0.96);
+        bottom: 20px;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
+        z-index: 2600;
+        max-width: min(92vw, 560px);
+        text-align: center;
+        background: rgba(7, 12, 26, 0.96);
+        backdrop-filter: blur(12px);
         border: 1px solid rgba(56, 189, 248, 0.65);
         color: #fff;
-        padding: 8px 14px;
+        padding: 9px 16px;
         border-radius: 999px;
-        font-size: 12px;
+        font-size: 12.5px;
         font-weight: 800;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.75);
+        box-shadow: 0 10px 28px rgba(0,0,0,0.82), 0 0 16px rgba(56, 189, 248, 0.2);
         display: none;
-        pointer-events: none;
+        pointer-events: auto;
+        cursor: pointer;
       }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
       /* Futuristischer Neon-Cinema Boot-Splashscreen */
@@ -34925,7 +35201,7 @@
             onfocus="onSearchInputFocus()"
             onblur="onSearchInputBlur()"
             oninput="onSearchInputLive(this.value)"
-            onkeydown="if(event.key==='Enter'){event.preventDefault();closeSearchGenreDropdownOverlay();closeAutocomplete();this.blur();runSearch(false,this.value,undefined,true);}"
+            onkeydown="onSearchInputKeyDownClient(event, this)"
           />
           <button type="button" id="searchClearBtn" class="search-clear-btn is-empty" onclick="clearSearchInput()" title="Suchfeld leeren" aria-label="Suchfeld leeren">✕</button>
         </div>
@@ -34937,10 +35213,16 @@
         <button type="button" id="modalAdjPrevBtn" class="top-adj-nav-btn" onclick="navigateDetailModalAdjacent(-1)" title="Vorheriger Titel (L1 / LB)">◀</button>
         <button type="button" id="modalAdjNextBtn" class="top-adj-nav-btn" onclick="navigateDetailModalAdjacent(1)" title="Nächster Titel (R1 / RB)">▶</button>
       </div>
-      <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen"></div>
-      <div id="searchAutocompleteBox" class="search-autocomplete-box"></div>
+      <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen" onmousedown="event.preventDefault()"></div>
+      <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
     <button type="button" id="catalogBackToTopFab" class="catalog-back-to-top-fab" onclick="scrollCatalogBackToTopOrSpotlightClient(event)" title="Nach oben zum Kataloganfang / Spotlight">▴ Nach oben</button>
+    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" aria-label="TV- & Konsolen-Schnellsprung">
+      <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="tvElevatorJumpClient('top')" title="Sofort ganz nach oben zur Suche & Kopfleiste (Pos1 / Home)"><span>⬆️</span><span class="tv-elev-label">Oben / Suche</span></button>
+      <button type="button" id="tvElevBtnFilter" class="tv-elevator-btn" onclick="tvElevatorJumpClient('filter')" title="Direkt zur Filter- & Sortierleiste springen"><span>🎛️</span><span class="tv-elev-label">Filter</span></button>
+      <button type="button" id="tvElevBtnMid" class="tv-elevator-btn" onclick="tvElevatorJumpClient('middle')" title="Direkt in die Mitte des aktuellen Rasters springen"><span>🎯</span><span class="tv-elev-label">Mitte</span></button>
+      <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="tvElevatorJumpClient('bottom')" title="Direkt nach unten zur Seitenwahl / Pagination springen (Ende)"><span>📄</span><span class="tv-elev-label">Seiten / Unten</span></button>
+    </nav>
 
     <!-- Linke 2-Spalten Ambilight-Glas Sidebar (Links: Einzeilige Kategorien | Rechts: Dynamisches Optionen-Panel) -->
     <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="closeFilterSidebar()"></div>
@@ -35477,13 +35759,19 @@
         const el = document.getElementById("hudToast");
         if (!el) return;
         el.textContent = msg;
+        el.title = "Antippen zum Ausblenden";
+        el.onclick = () => {
+          if (hudToastTimer) clearTimeout(hudToastTimer);
+          el.style.display = "none";
+        };
         el.style.display = "block";
         if (hudToastTimer) clearTimeout(hudToastTimer);
-        hudToastTimer = setTimeout(() => { el.style.display = "none"; }, 2400);
+        hudToastTimer = setTimeout(() => { el.style.display = "none"; }, 2500);
       }
 
       // Nicht-blockierende Custom Dialoge (Ersatz für window.prompt & window.confirm im iFrame/Telegram WebApp)
       let activeCustomDialogResolver = null;
+      let lastCustomDialogTriggerEl = null;
       function closeCustomDialog(resultValue) {
         const root = document.getElementById("customDialogRoot");
         if (root) root.innerHTML = "";
@@ -35492,6 +35780,11 @@
           activeCustomDialogResolver = null;
           fn(resultValue);
         }
+        if (lastCustomDialogTriggerEl && document.body.contains(lastCustomDialogTriggerEl) && typeof jumpSpatialFocus === "function") {
+          const restoreEl = lastCustomDialogTriggerEl;
+          lastCustomDialogTriggerEl = null;
+          setTimeout(() => jumpSpatialFocus(restoreEl, false), 20);
+        }
       }
 
       function showCustomConfirm(messageText, confirmLabel = "✅ Bestätigen") {
@@ -35499,17 +35792,25 @@
           activeCustomDialogResolver = resolve;
           const root = document.getElementById("customDialogRoot");
           if (!root) { resolve(true); return; }
+          const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
+          if (curEl && curEl !== document.body && !root.contains(curEl)) {
+            lastCustomDialogTriggerEl = curEl;
+          }
           const isDangerConfirm = /lösch|reset|leeren|entfern|trennen|deaktivier|abmeld/i.test(String(confirmLabel || "") + " " + String(messageText || ""));
           root.innerHTML = '<div class="modal-backdrop" style="z-index:1600;align-items:center" onclick="if(event.target===this)closeCustomDialog(false)">' +
             '<div class="modal" style="max-width:420px;padding:18px;border:1px solid rgba(255,255,255,0.2)">' +
               '<div style="font-size:15px;font-weight:800;margin-bottom:10px">🛡️ Bestätigung</div>' +
               '<div style="font-size:13px;color:var(--text-muted);line-height:1.5;margin-bottom:16px">' + esc(messageText) + '</div>' +
               '<div style="display:flex;justify-content:flex-end;gap:8px">' +
-                '<button class="btn" onclick="closeCustomDialog(false)">Abbrechen</button>' +
-                '<button class="btn ' + (isDangerConfirm ? 'danger' : 'red') + '" onclick="closeCustomDialog(true)">' + esc(confirmLabel) + '</button>' +
+                '<button id="customConfirmCancelBtn" class="btn" onclick="closeCustomDialog(false)">Abbrechen</button>' +
+                '<button id="customConfirmOkBtn" class="btn ' + (isDangerConfirm ? 'danger' : 'red') + '" onclick="closeCustomDialog(true)">' + esc(confirmLabel) + '</button>' +
               '</div>' +
             '</div>' +
           '</div>';
+          setTimeout(() => {
+            const okBtn = document.getElementById("customConfirmOkBtn");
+            if (okBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(okBtn, false);
+          }, 25);
         });
       }
 
@@ -35518,6 +35819,10 @@
           activeCustomDialogResolver = resolve;
           const root = document.getElementById("customDialogRoot");
           if (!root) { resolve(defaultValue || null); return; }
+          const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
+          if (curEl && curEl !== document.body && !root.contains(curEl)) {
+            lastCustomDialogTriggerEl = curEl;
+          }
           root.innerHTML = '<div class="modal-backdrop" style="z-index:1600;align-items:center" onclick="if(event.target===this)closeCustomDialog(null)">' +
             '<div class="modal" style="max-width:440px;padding:18px;border:1px solid rgba(255,255,255,0.2)">' +
               '<div style="font-size:15px;font-weight:800;margin-bottom:10px">' + esc(titleText) + '</div>' +
@@ -35800,52 +36105,33 @@
           ? currentSpatialEl.id
           : null;
 
-        // Linke Hauptspalte: Alle Katalog-Filter + Darstellung & Skalierung jeweils einzeilig untereinander
+        const totalCatFilters = gCount + pCount + eCount + stCount + fCount + (s.onlyVipStreams ? 1 : 0);
+
+        // Linke Hauptspalte: Kompakter Konto-Kopfbereich -> Direkt darunter Katalog-Filter im Hauptfokus -> Ansicht -> Kompakte Werkzeuge unten
         body.innerHTML =
-          /* 0. Schnellzugriff & Konto */
+          /* 0. Konto & Schnell-Entdecken */
           '<div class="sidebar-section">' +
-            '<div class="sidebar-section-title">' +
-              '<span>⚡ Navigation & Konto</span>' +
-            '</div>' +
             '<div class="sidebar-nav-grid">' +
               '<button id="syncBadge" class="btn sidebar-account-btn ' + (isAuth ? 'is-auth' : 'is-guest') + '" style="grid-column:1 / -1;justify-content:space-between" onclick="closeFilterSidebar();openAccountModal()">' +
                 '<span>' + esc(accLabel) + '</span><span class="sidebar-account-cta">🔐 Konto ▸</span>' +
               '</button>' +
+              (u.isAdmin ? (
+                '<button id="adminHeaderBtn" class="btn blue" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'
+              ) : '') +
               '<button id="sidebarRandomBtn" class="btn" onclick="closeFilterSidebar();triggerRandom()" title="Zufälligen Titel mit aktiven Filtern ziehen">' +
                 (state.type === 's' ? '🎲 Zufalls-Serie' : '🎲 Zufalls-Film') +
               '</button>' +
               '<button class="btn" onclick="closeFilterSidebar();loadFranchisesHub()" title="Alle Filmreihen & Filmuniversen öffnen">' +
                 '🌌 Welten & Reihen' +
               '</button>' +
-              '<button id="sidebarOpenInBotBtn" class="btn" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
-                '🤖 Im Bot öffnen' +
-              '</button>' +
-              '<button class="btn" onclick="closeFilterSidebar();loadSettingsView()" title="Alle Einstellungen öffnen">' +
-                '⚙️ Einstellungen' +
-              '</button>' +
-              '<button class="btn" onclick="closeFilterSidebar();goBack()" title="Zurück zur vorherigen Ansicht">' +
-                '⬅️ Zurück' +
-              '</button>' +
-              '<button class="btn" onclick="closeFilterSidebar();restartApp()" title="Alle aktiven Filter zurücksetzen & neu starten">' +
-                '🔄 Neu starten' +
-              '</button>' +
-              '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
-                '⛶ Vollbild' +
-              '</button>' +
-              '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
-                '📲 Home-Icon' +
-              '</button>' +
-              (u.isAdmin ? (
-                '<button id="adminHeaderBtn" class="btn blue" style="grid-column:1 / -1;justify-content:center" onclick="closeFilterSidebar();loadAdminPanelView()">👑 Admin-Dashboard & VIP-Verwaltung</button>'
-              ) : '') +
             '</div>' +
           '</div>' +
 
-          /* 1. Katalog-Filter jeweils einzeilig (Rechts öffnen sich die Optionen nach Auswahl) */
+          /* 1. Katalog-Filter direkt im oberen Hauptblickfeld (Rechts öffnen sich die Optionen nach Auswahl) */
           '<div class="sidebar-section">' +
             '<div class="sidebar-section-title">' +
-              '<span>🎛️ Katalog-Filter</span>' +
-              '<span style="font-size:10px;color:var(--muted)">Rechts ▸ Optionen</span>' +
+              '<span>🎛️ Katalog-Filter' + (totalCatFilters > 0 ? (' (' + totalCatFilters + ' aktiv)') : '') + '</span>' +
+              '<span style="font-size:10px;color:var(--muted)">Optionen ▸</span>' +
             '</div>' +
             '<div class="sidebar-menu-stack">' +
               '<button type="button" id="sidebarCatTab_genres" data-sb-cat="genres" class="sidebar-menu-row ' + (curTab === 'genres' ? 'active' : '') + (gCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'genres\\',true)">' +
@@ -35861,7 +36147,7 @@
                 '<span class="sidebar-menu-row-right">' + (eCount ? (eCount + ' aktiv ') : '') + '▸</span>' +
               '</button>' +
               '<button type="button" id="sidebarCatTab_studios" data-sb-cat="studios" class="sidebar-menu-row ' + (curTab === 'studios' ? 'active' : '') + (stCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'studios\\',true)">' +
-                '<span class="sidebar-menu-row-left">🏢 Studios & Produktionsfirmen</span>' +
+                '<span class="sidebar-menu-row-left">🏢 Studios & Produktion</span>' +
                 '<span class="sidebar-menu-row-right">' + (stCount ? (stCount + ' aktiv ') : '') + '▸</span>' +
               '</button>' +
               '<button type="button" id="sidebarCatTab_fsk" data-sb-cat="fsk" class="sidebar-menu-row ' + (curTab === 'fsk' ? 'active' : '') + (fCount ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'fsk\\',true)">' +
@@ -35896,6 +36182,33 @@
                 '<span class="sidebar-menu-row-right">' + (trailerPreviewEnabled ? 'EIN ✓' : 'AUS') + '</span>' +
               '</button>' +
             '</div>' +
+          '</div>' +
+
+          /* 3. Kompakte System- & App-Werkzeuge am unteren Rand */
+          '<div class="sidebar-section">' +
+            '<div class="sidebar-section-title">' +
+              '<span>🛠️ App & Werkzeuge</span>' +
+            '</div>' +
+            '<div class="sidebar-nav-grid">' +
+              '<button class="btn" onclick="closeFilterSidebar();loadSettingsView()" title="Alle Einstellungen öffnen">' +
+                '⚙️ Einstellungen' +
+              '</button>' +
+              '<button id="sidebarOpenInBotBtn" class="btn" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
+                '🤖 Im Bot öffnen' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
+                '⛶ Vollbild' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
+                '📲 Home-Icon' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();goBack()" title="Zurück zur vorherigen Ansicht">' +
+                '⬅️ Zurück' +
+              '</button>' +
+              '<button class="btn" onclick="closeFilterSidebar();restartApp()" title="Alle aktiven Filter zurücksetzen & neu starten">' +
+                '🔄 Neu starten' +
+              '</button>' +
+            '</div>' +
           '</div>';
 
         // Rechtes Optionen-Panel (#sidebarRightSubPanel) aufbauen, sobald eine Kategorie aktiv ist
@@ -35908,8 +36221,11 @@
           } else {
             let subTitle = "";
             let subContentHtml = "";
+            let catActiveCount = 0;
+            const isFilterCat = curTab === "genres" || curTab === "platforms" || curTab === "eras" || curTab === "studios" || curTab === "fsk";
             if (curTab === "genres") {
               subTitle = "🎞️ Genres wählen";
+              catActiveCount = gCount;
               const allGenreNames = Array.from(new Set([
                 ...Object.keys(state.genres || {}),
                 "Action", "Abenteuer", "Animation", "Komödie", "Krimi", "Dokumentarfilm", "Drama", "Familie", "Fantasy", "Historie", "Horror", "Musik", "Mystery", "Liebesfilm", "Sci-Fi", "Thriller", "Kriegsfilm", "Western",
@@ -35925,6 +36241,7 @@
               '</div>';
             } else if (curTab === "platforms") {
               subTitle = "📺 Streaming-Anbieter";
+              catActiveCount = pCount;
               subContentHtml = '<div class="direct-filter-grid">' +
                 PLATFORM_OPTIONS_CLIENT.map(pl => {
                   const isInc = (s.includedPlatforms || []).includes(pl.id);
@@ -35934,6 +36251,7 @@
               '</div>';
             } else if (curTab === "eras") {
               subTitle = "📅 Epochen & Jahrzehnte";
+              catActiveCount = eCount;
               subContentHtml = '<div class="direct-filter-grid">' +
                 ERA_OPTIONS_CLIENT.map(er => {
                   const isInc = (s.includedEras || []).includes(er.id);
@@ -35943,6 +36261,7 @@
               '</div>';
             } else if (curTab === "studios") {
               subTitle = "🏢 Studios & Produktion";
+              catActiveCount = stCount;
               subContentHtml = '<div class="direct-filter-grid">' +
                 STUDIO_OPTIONS_CLIENT.map(st => {
                   const isInc = (s.includedStudios || []).includes(st.id);
@@ -35952,6 +36271,7 @@
               '</div>';
             } else if (curTab === "fsk") {
               subTitle = "🔞 Altersfreigabe (FSK)";
+              catActiveCount = fCount;
               subContentHtml = '<div class="direct-filter-grid">' +
                 FSK_OPTIONS_CLIENT.map(f => {
                   const isInc = (s.includedFsk || []).includes(f);
@@ -36008,9 +36328,18 @@
             subPanel.innerHTML =
               '<div class="sidebar-subpanel-top">' +
                 '<div class="sidebar-subpanel-title">' + subTitle + '</div>' +
-                '<button type="button" id="sidebarSubBackBtn" class="btn" onclick="closeSidebarSubPanelToMain()" title="Zurück in die linke Menü-Übersicht (Pfeil links)">← Übersicht</button>' +
+                '<div style="display:flex;gap:6px;align-items:center">' +
+                  (isFilterCat && catActiveCount > 0
+                    ? ('<button type="button" class="btn danger" style="padding:3px 8px;font-size:10.5px" onclick="resetSidebarCategoryFiltersQuickClient(\\'' + curTab + '\\')" title="Filter dieser Kategorie zurücksetzen">↺ Reset (' + catActiveCount + ')</button>')
+                    : '') +
+                  '<button type="button" id="sidebarSubBackBtn" class="btn" onclick="closeSidebarSubPanelToMain()" title="Zurück in die linke Menü-Übersicht (Pfeil links)">← Übersicht</button>' +
+                '</div>' +
               '</div>' +
-              '<div style="font-size:calc(10.5px * var(--scale-text));color:var(--muted);margin-bottom:2px">◀ Pfeil nach links führt direkt zurück in die Menü-Übersicht</div>' +
+              '<div style="font-size:calc(10.5px * var(--scale-text));color:var(--muted);margin-bottom:4px">' +
+                (isFilterCat
+                  ? '✅ = Einschließen · 🚫 = Ausschließen · ◀ Pfeil links = Übersicht'
+                  : '◀ Pfeil nach links führt direkt zurück in die Menü-Übersicht') +
+              '</div>' +
               subContentHtml;
           }
         }
@@ -36207,6 +36536,11 @@
         await pollBotCodeChallengeClient(challengeId);
       }
 
+      function toggleAccountSecurityDrawerClient() {
+        state.accountSecurityOpen = !state.accountSecurityOpen;
+        openAccountModal();
+      }
+
       function openAccountModal() {
         const m = document.getElementById("modalRoot");
         if (!m) return;
@@ -36214,55 +36548,57 @@
         const u = state.authUser || {};
         const canCreateOrUpdateAccount = Boolean(state.hasInitData || (isAuth && u.hasPasswordAccount));
         const activeTab = state.loginModalTab || "telegram";
+        const isSecOpen = Boolean(state.accountSecurityOpen || !isAuth);
 
         let bodyHtml = "";
         if (isAuth) {
           stopBotCodePollClient();
           bodyHtml += '<div class="panel-box" style="border-color:rgba(16,185,129,0.35)">' +
-            '<div style="font-size:13.5px;font-weight:800;color:#34d399;margin-bottom:6px">✅ Authentifiziertes Konto aktiv</div>' +
-            '<div style="font-size:12px;color:#ddd;line-height:1.6">' +
-              '<div>🆔 <b>Telegram-ID:</b> ' + esc(u.telegramId) + '</div>' +
-              (u.tgUsername ? '<div>💬 <b>Telegram:</b> @' + esc(u.tgUsername) + '</div>' : '') +
-              '<div>🔐 <b>Web-Account:</b> ' + (u.hasPasswordAccount ? ('<span style="color:#34d399">Abgesichert als <b>' + esc(u.customUsername) + '</b> (Login überall ohne initData möglich)</span>') : '<span style="color:#fbbf24">Noch kein Passwort gesetzt (Über Telegram angemeldet)</span>') + '</div>' +
-              '<div>🛡️ <b>Zwei-Faktor-Schutz (2FA):</b> ' + (u.totpEnabled ? '<span style="color:#34d399;font-weight:800">🟢 TOTP 2FA Aktiv (Google Authenticator / Authy)</span>' : '<span style="color:#94a3b8">⚪ Optional (Nicht aktiviert)</span>') + '</div>' +
-              '<div>🌟 <b>VIP-Status:</b> ' + (u.isVip ? '<span style="color:#fbbf24;font-weight:800">🌟 VIP Aktiv</span>' : 'Standard-Nutzer') + '</div>' +
-              (u.isAdmin ? '<div>👑 <b>Rolle:</b> <span style="color:#f87171;font-weight:800">Autorisierter Administrator</span></div>' : '') +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
+              '<div style="font-size:14px;font-weight:800;color:#34d399">✅ Angemeldet ' + (u.tgUsername ? ('als @' + esc(u.tgUsername)) : ('(ID: ' + esc(u.telegramId) + ')')) + '</div>' +
+              '<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:' + (u.isVip ? 'rgba(251,191,36,0.18);color:#fbbf24;border:1px solid rgba(251,191,36,0.4)' : 'rgba(148,163,184,0.15);color:#cbd5e1') + '">' +
+                (u.isVip ? '🌟 VIP Aktiv' : 'Standard-Konto') +
+              '</span>' +
             '</div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">' +
-              (u.isAdmin ? '<button class="btn amber" onclick="document.getElementById(\\'modalRoot\\').innerHTML=\\'\\';loadAdminPanelView()">👑 Admin-Panel öffnen</button>' : '') +
-              '<button class="btn danger" onclick="logoutWebSession()">🚪 Abmelden (In Gast-Modus wechseln)</button>' +
+            '<div style="font-size:12px;color:#cbd5e1;line-height:1.65;display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px;background:rgba(15,23,42,0.55);padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06)">' +
+              '<div>🆔 <b>Telegram-ID:</b> ' + esc(u.telegramId) + '</div>' +
+              '<div>🔐 <b>Web-Login:</b> ' + (u.hasPasswordAccount ? ('<span style="color:#34d399"><b>' + esc(u.customUsername) + '</b></span>') : '<span style="color:#fbbf24">Noch kein Passwort</span>') + '</div>' +
+              '<div>🛡️ <b>2FA-Schutz:</b> ' + (u.totpEnabled ? '<span style="color:#34d399;font-weight:800">🟢 Aktiv</span>' : '<span style="color:#94a3b8">⚪ Optional</span>') + '</div>' +
+              (u.isAdmin ? '<div>👑 <b>Rolle:</b> <span style="color:#f87171;font-weight:800">Administrator</span></div>' : '') +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px">' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button type="button" class="btn ' + (isSecOpen ? 'active' : 'blue') + '" onclick="toggleAccountSecurityDrawerClient()">⚙️ Passwort & 2FA ' + (isSecOpen ? '▴' : '▾') + '</button>' +
+                (u.isAdmin ? '<button class="btn amber" onclick="document.getElementById(\\'modalRoot\\').innerHTML=\\'\\';loadAdminPanelView()">👑 Admin-Panel</button>' : '') +
+              '</div>' +
+              '<button class="btn danger" onclick="logoutWebSession()">🚪 Abmelden</button>' +
             '</div>' +
           '</div>';
         } else {
-          bodyHtml += '<div class="panel-box" style="border-color:rgba(0,240,255,0.35);background:linear-gradient(145deg,rgba(11,16,33,0.95),rgba(16,16,24,0.96))">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
-              '<div style="font-size:13.5px;font-weight:800;color:#00f0ff">🔐 Anmeldung für Browser, PC & Smart-TV (Ohne initData)</div>' +
+          bodyHtml += '<div class="panel-box" style="border-color:rgba(56,189,248,0.4);background:linear-gradient(145deg,rgba(11,16,33,0.95),rgba(16,16,24,0.96))">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+              '<div style="font-size:13.5px;font-weight:800;color:#38bdf8">🔐 Anmeldung für Browser, PC & Smart-TV</div>' +
               '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-                '<button type="button" class="btn ' + (activeTab === "telegram" ? "blue" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'telegram\\')">📲 Telegram Widget & TV-Code</button>' +
-                '<button type="button" class="btn ' + (activeTab === "password" ? "green" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'password\\')">🔑 Username & Passwort</button>' +
+                '<button type="button" class="btn ' + (activeTab === "telegram" ? "active" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'telegram\\')">📲 Per Telegram-Bot / Code</button>' +
+                '<button type="button" class="btn ' + (activeTab === "password" ? "active" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'password\\')">🔑 Username & Passwort</button>' +
               '</div>' +
             '</div>' +
             (activeTab === "telegram" ? (
               '<div style="display:flex;flex-direction:column;gap:10px">' +
-                /* Säule 1: 1-Klick Bot-Bestätigung & 6-stelliger Code (funktioniert immer, auch auf TV & ohne Cookies) */
-                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:10px">' +
-                  '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">1️⃣ 1-Klick Bot-Bestätigung & 6-stelliger Smart-TV / Browser-Code (Empfohlen)</div>' +
+                '<div style="background:rgba(14,165,233,0.08);border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:11px">' +
+                  '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">📲 Schnell-Login per 6-stelligem Code oder 1-Klick im Bot (Empfohlen)</div>' +
                   '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
-                    'Funktioniert auf jedem Gerät (PC, Smartphone-Browser, Smart-TV) – ganz ohne Drittanbieter-Cookies:' +
+                    'Funktioniert sofort auf jedem Gerät (Smart-TV, PC & Smartphone) ohne Drittanbieter-Cookies:' +
                   '</div>' +
-                  '<button type="button" class="btn blue" onclick="startBotCodeLoginChallengeClient()">📲 6-stelligen Login-Code & 1-Klick Bot-Link anfordern</button>' +
+                  '<button type="button" class="btn blue" onclick="startBotCodeLoginChallengeClient()">📲 6-stelligen Login-Code & Bot-Link anfordern</button>' +
                   '<div id="botCodeChallengeBox"></div>' +
                 '</div>' +
-                /* Säule 2: Offizielles Telegram Login Widget (HMAC-SHA256) */
-                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:10px">' +
-                  '<div style="font-size:12.5px;font-weight:800;color:#c4b5fd;margin-bottom:4px">2️⃣ Offizielles Telegram Login Widget (HMAC-SHA256)</div>' +
-                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
-                    'Direktes Browser-Login über <code>telegram-widget.js</code> (Hinweis: Bei @BotFather muss einmalig <code>/setdomain</code> auf deine Worker-Domain gesetzt sein):' +
-                  '</div>' +
-                  '<div id="tgLoginWidgetContainer" style="min-height:38px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>' +
+                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(139,92,246,0.28);border-radius:10px;padding:10px">' +
+                  '<div style="font-size:12px;font-weight:800;color:#c4b5fd;margin-bottom:4px">🌐 Alternativ: Browser-Login über Telegram Widget</div>' +
+                  '<div id="tgLoginWidgetContainer" style="min-height:34px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>' +
                   '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-                    '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px" onclick="onTelegramWidgetAuthClient({id:100998877,first_name:\\'Admin\\',username:\\'teleport_admin\\',auth_date:Math.floor(Date.now()/1000),hash:\\'sim_valid_widget_hmac\\'})">' +
-                      '⚡ Telegram-Widget Login direkt ausführen (Demo / Admin)' +
+                    '<button type="button" class="btn purple" style="padding:4px 9px;font-size:11px" onclick="onTelegramWidgetAuthClient({id:100998877,first_name:\\'Admin\\',username:\\'teleport_admin\\',auth_date:Math.floor(Date.now()/1000),hash:\\'sim_valid_widget_hmac\\'})">' +
+                      '⚡ Direkt-Login (Demo / Admin)' +
                     '</button>' +
                   '</div>' +
                 '</div>' +
@@ -36271,49 +36607,55 @@
             ) : (
               '<div style="display:flex;flex-direction:column;gap:8px">' +
                 '<p style="font-size:12px;color:#cbd5e1;line-height:1.45;margin:0 0 4px 0">' +
-                  'Logge dich mit deinem abgesicherten <b>Username & Passwort</b> (sowie optionalem 6-stelligem 2FA-Code) ein:' +
+                  'Melde dich mit deinem gespeicherten <b>Username & Passwort</b> an:' +
                 '</p>' +
-                '<input id="loginUsernameInp" class="tma-input" placeholder="Username" style="padding:8px 10px;font-size:13px" />' +
-                '<input id="loginPasswordInp" class="tma-input" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;font-size:13px" />' +
+                '<input id="loginUsernameInp" class="tma-input" placeholder="Username" onkeydown="if(event.key===\\'Enter\\'){const p=document.getElementById(\\'loginPasswordInp\\');if(p&&!p.value)p.focus();else submitWebLogin();}" style="padding:8px 10px;font-size:13px" />' +
+                '<div style="display:flex;gap:6px;align-items:center">' +
+                  '<input id="loginPasswordInp" class="tma-input" type="password" placeholder="Passwort" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="flex:1;padding:8px 10px;font-size:13px" />' +
+                  '<button type="button" class="btn" style="padding:8px 10px" onclick="togglePasswordVisibilityClient(\\'loginPasswordInp\\',this)" title="Passwort ein-/ausblenden">👁️</button>' +
+                '</div>' +
                 '<div id="login2faWrap" style="display:none;flex-direction:column;gap:6px;padding:8px;border-radius:6px;background:rgba(91,70,245,0.14);border:1px solid rgba(91,70,245,0.4)">' +
                   '<div style="font-size:11.5px;font-weight:700;color:#c4b5fd">🛡️ 2FA-Schutz aktiv: Bitte 6-stelligen Authenticator-Code eingeben</div>' +
                   '<input id="loginTotpInp" class="tma-input" placeholder="6-stelliger 2FA-Code (z. B. 123456)" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitWebLogin()" style="padding:8px 10px;border-color:rgba(167,139,250,0.5);font-size:14px;letter-spacing:3px;font-weight:800;text-align:center" />' +
                 '</div>' +
-                '<button class="btn green" onclick="submitWebLogin()">🔑 Mit Username & Passwort einloggen</button>' +
+                '<button class="btn green" onclick="submitWebLogin()">🔑 Einloggen</button>' +
                 '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
               '</div>'
             )) +
           '</div>';
         }
 
-        if (canCreateOrUpdateAccount || isAuth) {
+        if ((canCreateOrUpdateAccount || isAuth) && isSecOpen) {
           bodyHtml += '<div class="panel-box">' +
-            '<div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Account-Zugangsdaten ändern' : 'Account zusätzlich mit Username & Passwort absichern') + '</div>' +
-            '<p style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Sobald dein Account mit Username & Passwort abgesichert ist, kannst du dich jederzeit auch per Passwort auf jedem Gerät (TV, PC, Browser) einloggen.</p>' +
+            '<div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:6px">🔐 ' + (u.hasPasswordAccount ? 'Username & Passwort ändern' : 'Web-Zugang (Username & Passwort) einrichten') + '</div>' +
+            '<p style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Ermöglicht den bequemen Login im Browser und auf dem Smart-TV auch ohne Telegram auf dem Zweitgerät.</p>' +
             '<div style="display:flex;flex-direction:column;gap:8px">' +
-              '<input id="setAccUsernameInp" class="tma-input" value="' + esc(u.customUsername || u.tgUsername || '') + '" placeholder="Gewünschter Username (3–32 Zeichen)" style="padding:8px 10px;font-size:13px" />' +
-              '<input id="setAccPasswordInp" class="tma-input" type="password" placeholder="Neues sicheres Passwort (mind. 6 Zeichen)" style="padding:8px 10px;font-size:13px" />' +
-              '<button class="btn purple" onclick="submitSaveAccountCredentials()">💾 Account mit Username & Passwort absichern</button>' +
+              '<input id="setAccUsernameInp" class="tma-input" value="' + esc(u.customUsername || u.tgUsername || '') + '" placeholder="Gewünschter Username (3–32 Zeichen)" onkeydown="if(event.key===\\'Enter\\'){const p=document.getElementById(\\'setAccPasswordInp\\');if(p&&!p.value)p.focus();else submitSaveAccountCredentials();}" style="padding:8px 10px;font-size:13px" />' +
+              '<div style="display:flex;gap:6px;align-items:center">' +
+                '<input id="setAccPasswordInp" class="tma-input" type="password" placeholder="Neues sicheres Passwort (mind. 6 Zeichen)" onkeydown="if(event.key===\\'Enter\\')submitSaveAccountCredentials()" style="flex:1;padding:8px 10px;font-size:13px" />' +
+                '<button type="button" class="btn" style="padding:8px 10px" onclick="togglePasswordVisibilityClient(\\'setAccPasswordInp\\',this)" title="Passwort ein-/ausblenden">👁️</button>' +
+              '</div>' +
+              '<button class="btn purple" onclick="submitSaveAccountCredentials()">💾 Zugangsdaten speichern</button>' +
               '<div id="setAccFeedback" style="font-size:12px;color:#fbbf24"></div>' +
             '</div>' +
           '</div>';
 
           bodyHtml += '<div class="panel-box" style="border-color:rgba(91,70,245,0.35)">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
-              '<div style="font-size:13px;font-weight:800;color:#c4b5fd">🛡️ Zwei-Faktor-Authentifizierung (TOTP 2FA)</div>' +
+              '<div style="font-size:13px;font-weight:800;color:#c4b5fd">🛡️ Zwei-Faktor-Schutz (TOTP 2FA)</div>' +
               '<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:999px;background:' + (u.totpEnabled ? 'rgba(16,185,129,0.2);color:#34d399' : 'rgba(148,163,184,0.16);color:var(--muted)') + '">' +
-                (u.totpEnabled ? '🟢 2FA AKTIV' : '⚪ INAKTIV') +
+                (u.totpEnabled ? '🟢 2FA AKTIV' : '⚪ OPTIONAL') +
               '</span>' +
             '</div>' +
-            '<p style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Schütze deinen Web-Login zusätzlich mit einem 6-stelligen Einmalcode (kompatibel mit Google Authenticator, Authy, 1Password & Apple Passwörter).</p>' +
+            '<p style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Zusätzlicher Schutz per 6-stelligem Einmalcode (Google Authenticator, Authy, 1Password, Apple Passwörter).</p>' +
             (u.totpEnabled ? (
               '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-                '<input id="disable2faCodeInp" class="tma-input" placeholder="6-stelliger 2FA-Code zur Bestätigung" maxlength="6" style="padding:7px 10px;font-size:12.5px;width:230px" />' +
+                '<input id="disable2faCodeInp" class="tma-input" placeholder="6-stelliger 2FA-Code zur Bestätigung" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')disable2faProtection()" style="padding:7px 10px;font-size:12.5px;width:230px" />' +
                 '<button class="btn danger" onclick="disable2faProtection()">🔓 2FA deaktivieren</button>' +
               '</div>'
             ) : (
               '<div>' +
-                '<button class="btn blue" onclick="start2faQrSetup()">📲 2FA jetzt mit QR-Code einrichten</button>' +
+                '<button class="btn blue" onclick="start2faQrSetup()">📲 2FA mit QR-Code einrichten</button>' +
                 '<div id="totpSetupMount" style="margin-top:10px"></div>' +
               '</div>'
             )) +
@@ -36321,13 +36663,29 @@
           '</div>';
         }
 
-        m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this){stopBotCodePollClient();this.parentElement.innerHTML=\\'\\';}"><div class="modal"><div class="modal-body">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:18px">🔐 Account, Telegram-Login & 2FA</h2><button class="btn close-slate" onclick="stopBotCodePollClient();document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖</button></div>' +
+        m.innerHTML = '<div class="modal-backdrop" onclick="if(event.target===this){stopBotCodePollClient();this.parentElement.innerHTML=\\'\\';}"><div class="modal"><div class="modal-body" style="max-width:680px;margin:0 auto;width:100%">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h2 style="font-size:17px">👤 Konto & Anmeldung</h2><button class="btn close-slate" onclick="stopBotCodePollClient();document.getElementById(\\'modalRoot\\').innerHTML=\\'\\'">✖ Schließen</button></div>' +
           bodyHtml +
         '</div></div></div>';
 
         if (!isAuth && activeTab === "telegram") {
           setTimeout(mountTelegramLoginWidgetClient, 40);
+        } else if (!isAuth && activeTab === "password") {
+          setTimeout(() => {
+            const uInp = document.getElementById("loginUsernameInp");
+            if (uInp) uInp.focus();
+          }, 40);
+        }
+      }
+
+      function togglePasswordVisibilityClient(inputId, btnEl) {
+        const inp = document.getElementById(inputId);
+        if (!inp) return;
+        const isPwd = inp.type === "password";
+        inp.type = isPwd ? "text" : "password";
+        if (btnEl) {
+          btnEl.textContent = isPwd ? "🙈" : "👁️";
+          btnEl.title = isPwd ? "Wieder verbergen" : "Passwort / Token anzeigen";
         }
       }
 
@@ -36353,10 +36711,14 @@
               '<div style="font-size:11px;color:var(--muted)">Manueller Setup-Schlüssel (Base32):<br><code style="color:#fbbf24;font-size:12px;user-select:all;letter-spacing:1px">' + esc(r.secret) + '</code></div>' +
               '<div style="font-size:12px;color:var(--text);font-weight:700;margin-top:4px">2. Gib zur Aktivierung den 6-stelligen Code aus der App ein:</div>' +
               '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
-                '<input id="verifyTotpSetupInp" class="tma-input" placeholder="123456" maxlength="6" inputmode="numeric" style="padding:8px 12px;border-color:rgba(16,185,129,0.5);font-size:15px;letter-spacing:3px;font-weight:800;width:140px;text-align:center" />' +
+                '<input id="verifyTotpSetupInp" class="tma-input" placeholder="123456" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')confirm2faSetupEnable()" style="padding:8px 12px;border-color:rgba(16,185,129,0.5);font-size:15px;letter-spacing:3px;font-weight:800;width:140px;text-align:center" />' +
                 '<button class="btn green" onclick="confirm2faSetupEnable()">✅ Code prüfen & 2FA aktivieren</button>' +
               '</div>' +
             '</div>';
+            setTimeout(() => {
+              const vInp = document.getElementById("verifyTotpSetupInp");
+              if (vInp) vInp.focus();
+            }, 40);
           }
         } catch (err) {
           if (fb) { fb.style.color = "#f87171"; fb.textContent = "❌ " + err.message; }
@@ -36511,25 +36873,48 @@
         return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       }
 
+      let lastLightboxTriggerEl = null;
+      function toggleLightboxZoomClient() {
+        const im = document.getElementById("lbImg");
+        const zBtn = document.getElementById("lbZoomToggleBtn");
+        if (!im) return;
+        const isZoomed = im.classList.toggle("zoomed");
+        if (zBtn) zBtn.textContent = isZoomed ? "🔎 Verkleinern" : "🔍 Vergrößern";
+      }
+
       function openLightbox(imgUrl, titleText) {
         if (!imgUrl) return;
         const lb = document.getElementById("lightboxRoot");
         if (!lb) return;
+        const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
+        if (curEl && curEl !== document.body && !lb.contains(curEl)) {
+          lastLightboxTriggerEl = curEl;
+        }
         lb.innerHTML = '<div class="lightbox-backdrop" onclick="if(event.target===this)closeLightbox()">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;width:100%;max-width:680px;margin-bottom:10px;gap:8px">' +
-            '<div style="font-size:13.5px;font-weight:700;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(titleText || 'Großansicht') + '</div>' +
-            '<div style="display:flex;gap:6px">' +
-              '<button class="btn" onclick="const im=document.getElementById(\\'lbImg\\');if(im)im.classList.toggle(\\'zoomed\\')">🔍 Zoom</button>' +
-              '<button class="btn close-slate" onclick="closeLightbox()">✖ Schließen</button>' +
+          '<div class="lightbox-toolbar">' +
+            '<div style="font-size:13.5px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(titleText || 'Großansicht') + '</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0">' +
+              '<button type="button" id="lbZoomToggleBtn" class="btn" onclick="toggleLightboxZoomClient()">🔍 Vergrößern</button>' +
+              '<a href="' + esc(imgUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Originalbild in voller Auflösung öffnen">🔗 Original ↗</a>' +
+              '<button type="button" id="lbCloseBtn" class="btn close-slate" onclick="closeLightbox()">✖ Schließen</button>' +
             '</div>' +
           '</div>' +
-          '<img id="lbImg" class="lightbox-img" src="' + esc(imgUrl) + '" onclick="this.classList.toggle(\\'zoomed\\')" alt="Poster" />' +
-          '<div style="font-size:11px;color:#aaa;margin-top:8px">💡 Auf das Bild tippen zum Vergrößern / Verkleinern</div>' +
+          '<img id="lbImg" class="lightbox-img" src="' + esc(imgUrl) + '" onclick="toggleLightboxZoomClient()" alt="' + esc(titleText || 'Poster') + '" />' +
+          '<div style="position:relative;z-index:5;font-size:11px;color:#94a3b8;margin-top:10px;background:rgba(7,12,26,0.75);padding:4px 12px;border-radius:999px">💡 Auf das Bild tippen zum Vergrößern / Verkleinern · ESC zum Schließen</div>' +
         '</div>';
+        setTimeout(() => {
+          const closeBtn = document.getElementById("lbCloseBtn");
+          if (closeBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(closeBtn, false);
+        }, 25);
       }
       function closeLightbox() {
         const lb = document.getElementById("lightboxRoot");
         if (lb) lb.innerHTML = "";
+        if (lastLightboxTriggerEl && document.body.contains(lastLightboxTriggerEl) && typeof jumpSpatialFocus === "function") {
+          const restoreEl = lastLightboxTriggerEl;
+          lastLightboxTriggerEl = null;
+          setTimeout(() => jumpSpatialFocus(restoreEl, false), 20);
+        }
       }
 
       let filterClickSeq = 0;
@@ -36700,18 +37085,37 @@
         showHudToast("🗑️ Verlauf „Zuletzt angesehen“ geleert");
       }
 
+      function toggleRecentViewedCollapsedClient() {
+        state.recentStripCollapsed = !state.recentStripCollapsed;
+        refreshRecentViewedStripDom();
+      }
+
+      function scrollRecentStripClient(dirStep) {
+        const track = document.getElementById("recentViewedStripTrack") || document.querySelector(".recent-strip");
+        if (!track) return;
+        triggerTmaHapticClient("selection");
+        const stepPx = Math.max(220, Math.round(track.clientWidth * 0.65));
+        track.scrollBy({ left: (Number(dirStep) || 1) * stepPx, behavior: "smooth" });
+      }
+
       function buildRecentViewedStripHtml() {
         if (state.isSearchMode || state.currentView !== "discover" || !recentViewedList.length) return "";
-        return '<div class="recent-strip">' +
-          '<button type="button" class="btn danger" style="padding:2px 7px;font-size:11px;flex-shrink:0" onclick="clearAllRecentViewed()" title="Gesamten Verlauf leeren">🗑️</button>' +
-          '<span style="font-size:11px;font-weight:800;color:var(--text-muted);flex-shrink:0">🕒 Zuletzt:</span>' +
-          recentViewedList.slice(0, 8).map(rv =>
-            '<div class="recent-chip" tabindex="0" onclick="openDetails(\\'' + esc(rv.type) + '\\',' + Number(rv.id) + ',false)" title="' + esc(rv.title) + '">' +
-              (rv.poster ? '<img src="' + esc(rv.poster) + '" alt="" loading="lazy" />' : '<span>' + (rv.type === 's' ? '📺' : '🎬') + '</span>') +
-              '<span style="max-width:130px;overflow:hidden;text-overflow:ellipsis">' + esc(rv.title) + '</span>' +
-              '<button type="button" class="recent-chip-del" tabindex="-1" onclick="removeRecentViewedItem(event,\\'' + esc(rv.type) + '\\',' + Number(rv.id) + ')" title="Diesen Eintrag entfernen">✕</button>' +
-            '</div>'
-          ).join("") +
+        const isCollapsed = Boolean(state.recentStripCollapsed);
+        const showArrows = !isCollapsed && recentViewedList.length > 2;
+        return '<div class="recent-strip" id="recentViewedStripTrack">' +
+          '<button type="button" class="btn" style="padding:3px 9px;font-size:11px;flex-shrink:0;border-radius:999px;color:var(--text-muted)" onclick="toggleRecentViewedCollapsedClient()" title="Verlauf „Zuletzt angesehen“ ein- oder ausklappen">🕒 Zuletzt (' + recentViewedList.length + ') ' + (isCollapsed ? '▸' : '▾') + '</button>' +
+          (showArrows ? '<button type="button" class="recent-strip-scroll-btn" onclick="scrollRecentStripClient(-1)" title="Verlauf nach links scrollen">‹</button>' : '') +
+          (!isCollapsed ? (
+            recentViewedList.slice(0, 8).map(rv =>
+              '<div class="recent-chip" tabindex="0" onclick="openDetails(\\'' + esc(rv.type) + '\\',' + Number(rv.id) + ',false)" title="' + esc(rv.title) + '">' +
+                (rv.poster ? '<img src="' + esc(rv.poster) + '" alt="" loading="lazy" />' : '<span>' + (rv.type === 's' ? '📺' : '🎬') + '</span>') +
+                '<span style="max-width:130px;overflow:hidden;text-overflow:ellipsis">' + esc(rv.title) + '</span>' +
+                '<button type="button" class="recent-chip-del" tabindex="-1" onclick="removeRecentViewedItem(event,\\'' + esc(rv.type) + '\\',' + Number(rv.id) + ')" title="Diesen Eintrag entfernen">✕</button>' +
+              '</div>'
+            ).join("") +
+            (showArrows ? '<button type="button" class="recent-strip-scroll-btn" onclick="scrollRecentStripClient(1)" title="Verlauf nach rechts scrollen">›</button>' : '') +
+            '<button type="button" class="btn" style="padding:3px 8px;font-size:10.5px;flex-shrink:0;border-radius:999px;opacity:0.75" onclick="clearAllRecentViewed()" title="Gesamten Verlauf leeren">🗑️ Leeren</button>'
+          ) : '') +
         '</div>';
       }
 
@@ -37789,10 +38193,23 @@
           const sentinelInfo = document.getElementById("infiniteScrollStatusLabel");
           if (sentinelInfo) {
             if (state.hasMorePages && curLoadedMaxPage < totPages) {
-              sentinelInfo.innerHTML = "📄 Seiten " + startP + (curLoadedMaxPage > startP ? ("–" + curLoadedMaxPage) : "") + " von " + totPages + " geladen • Nächste Seite lädt beim Scrollen automatisch";
+              sentinelInfo.innerHTML = "📄 Seiten " + startP + (curLoadedMaxPage > startP ? ("–" + curLoadedMaxPage) : "") + " von " + totPages + " geladen";
             } else if (totPages > 1) {
               sentinelInfo.innerHTML = "✅ Alle " + totPages + " Seiten geladen";
             }
+          }
+          const manualMoreBtn = document.getElementById("manualLoadMoreBtn");
+          if (manualMoreBtn) {
+            if (state.hasMorePages && curLoadedMaxPage < totPages) {
+              manualMoreBtn.style.display = "inline-flex";
+              manualMoreBtn.innerHTML = "➕ Seite " + (curLoadedMaxPage + 1) + " laden";
+            } else {
+              manualMoreBtn.style.display = "none";
+            }
+          }
+          const bottomPill = document.getElementById("bottomPageCounterPill");
+          if (bottomPill) {
+            bottomPill.innerHTML = "🎯 Seite wählen (" + visPage + " / " + totPages + ") ▾";
           }
 
           if (floatBtn) {
@@ -37882,23 +38299,55 @@
         if (totPages <= 1) return;
         triggerTmaHapticClient("light");
         const curPage = Math.max(1, Math.min(totPages, Number(state.visibleCatalogPage || state.page) || 1));
+        const curLoadedMax = Math.max(1, Number(state.page) || 1);
+        const startLoaded = Math.max(1, Math.min(curLoadedMax, Number(state.startPage) || 1));
         pendingModalJumpPage = curPage;
         const dialogRoot = document.getElementById("customDialogRoot");
         if (!dialogRoot) return;
+
+        // 1-Klick-Schnellwahl-Seiten (Anfang, Nachbarseiten, Mitte, Ende) berechnen
+        const quickSet = new Set([1, totPages]);
+        if (totPages >= 4) quickSet.add(Math.max(1, Math.round(totPages / 2)));
+        if (totPages >= 8) {
+          quickSet.add(Math.max(1, Math.round(totPages * 0.25)));
+          quickSet.add(Math.max(1, Math.round(totPages * 0.75)));
+        }
+        for (let d = -2; d <= 2; d++) {
+          const p = curPage + d;
+          if (p >= 1 && p <= totPages) quickSet.add(p);
+        }
+        const quickPages = Array.from(quickSet).sort((a, b) => a - b);
+        const quickButtonsHtml = quickPages.map(p =>
+          '<button type="button" class="page-jump-btn ' + (p === curPage ? 'active' : '') + '" onclick="confirmPageJumpModalClient(' + p + ')" title="Direkt zu Seite ' + p + ' springen">' +
+            (p === 1 && curPage !== 1 ? '⏮ 1' : (p === totPages && curPage !== totPages ? (totPages + ' ⏭') : p)) +
+          '</button>'
+        ).join("");
+
+        const loadedRangeText = startLoaded === curLoadedMax
+          ? ("Seite " + startLoaded + " im Stream geladen")
+          : ("Seiten " + startLoaded + "–" + curLoadedMax + " im Stream geladen");
+
         dialogRoot.innerHTML =
           '<div class="page-jump-modal-backdrop" onclick="if(event.target===this)closePageJumpModalClient()">' +
             '<div class="page-jump-modal-box" role="dialog" aria-modal="true" aria-label="Seiten-Schnellwahl">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid rgba(148,163,184,0.18);padding-bottom:10px">' +
-                '<div style="font-size:14px;font-weight:900;color:#f8fafc">🎯 Seiten-Schnellwahl (Touch & TV)</div>' +
-                '<button type="button" class="btn" style="padding:4px 10px" onclick="closePageJumpModalClient()">✕</button>' +
+                '<div>' +
+                  '<div style="font-size:14px;font-weight:900;color:#f8fafc">🎯 Seiten-Schnellwahl</div>' +
+                  '<div style="font-size:11px;color:#94a3b8;margin-top:2px">' + loadedRangeText + ' • ' + totPages + ' Seiten gesamt</div>' +
+                '</div>' +
+                '<button type="button" class="btn" style="padding:4px 10px" onclick="closePageJumpModalClient()" title="Schließen">✕</button>' +
+              '</div>' +
+              '<div style="display:flex;flex-direction:column;gap:6px">' +
+                '<div style="font-size:11px;color:#94a3b8;font-weight:800;letter-spacing:0.3px">⚡ DIREKT-SPRUNG (1 KLICK)</div>' +
+                '<div class="page-jump-row" style="justify-content:flex-start">' + quickButtonsHtml + '</div>' +
               '</div>' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:rgba(15,23,42,0.75);padding:10px 12px;border-radius:12px;border:1px solid rgba(56,189,248,0.28)">' +
                 '<div>' +
-                  '<div style="font-size:11px;color:#94a3b8;font-weight:700">GEWÄHLTE ZIELSEITE</div>' +
-                  '<div id="pageJumpLiveTargetLabel" style="font-size:18px;font-weight:900;color:#38bdf8;margin-top:2px">Seite ' + curPage + ' von ' + totPages + '</div>' +
+                  '<div style="font-size:11px;color:#94a3b8;font-weight:700">ZIELSEITE WÄHLEN</div>' +
+                  '<div id="pageJumpLiveTargetLabel" style="font-size:17px;font-weight:900;color:#38bdf8;margin-top:2px">Seite ' + curPage + ' von ' + totPages + '</div>' +
                 '</div>' +
                 '<div style="display:flex;align-items:center;gap:6px">' +
-                  '<span style="font-size:11.5px;color:#cbd5e1;font-weight:700">Direkt:</span>' +
+                  '<span style="font-size:11.5px;color:#cbd5e1;font-weight:700">Nr.:</span>' +
                   '<input id="pageJumpNumberInput" type="number" min="1" max="' + totPages + '" value="' + curPage + '" class="page-jump-number-inp" oninput="updatePageJumpModalDomValueClient(this.value)" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();confirmPageJumpModalClient(this.value);}" />' +
                 '</div>' +
               '</div>' +
@@ -40876,6 +41325,22 @@
         onSearchGenreSelectChange("all");
       }
 
+      function switchGenreOverlayMediaTypeClient(nextType, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const cleanType = nextType === "s" ? "s" : "m";
+        if (state.type === cleanType) return;
+        triggerTmaHapticClient("selection");
+        state.type = cleanType;
+        state.genres = cleanType === "s" ? SERIES_GENRES_CLIENT : MOVIE_GENRES_CLIENT;
+        state.genreId = "all";
+        updateMediaModeIndicatorDom();
+        syncSearchGenreSelectDom();
+        renderSearchGenreDropdownOverlayContent();
+        if (typeof loadDiscover === "function") {
+          loadDiscover(cleanType, "all", state.mode || "trend", state.sort || "default", false, false);
+        }
+      }
+
       function renderSearchGenreDropdownOverlayContent() {
         const overlayEl = document.getElementById("searchGenreDropdownOverlay");
         if (!overlayEl) return;
@@ -40896,8 +41361,17 @@
         });
         overlayEl.innerHTML =
           '<div class="genre-overlay-header">' +
-            '<span class="genre-overlay-title">🎞️ Genre wählen (' + (isMovie ? 'Filme' : 'Serien') + ')</span>' +
-            '<button type="button" class="genre-overlay-close-btn" onclick="closeSearchGenreDropdownOverlay()">✕ Schließen</button>' +
+            '<div class="genre-overlay-title">' +
+              '<span>🎞️ Genre wählen</span>' +
+              '<span class="genre-overlay-type-pills">' +
+                '<button type="button" class="genre-overlay-type-btn ' + (isMovie ? 'active' : '') + '" onclick="switchGenreOverlayMediaTypeClient(\\'m\\', event)">🎬 Filme</button>' +
+                '<button type="button" class="genre-overlay-type-btn ' + (!isMovie ? 'active' : '') + '" onclick="switchGenreOverlayMediaTypeClient(\\'s\\', event)">📺 Serien</button>' +
+              '</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
+              (curGenreId !== "all" ? '<button type="button" class="genre-overlay-close-btn" style="border-color:rgba(56,189,248,0.45);color:#7dd3fc" onclick="selectGenreFromSearchOverlay(\\'all\\')" title="Genre-Filter zurücksetzen">↺ Alle</button>' : '') +
+              '<button type="button" class="genre-overlay-close-btn" onclick="closeSearchGenreDropdownOverlay()">✕ Schließen</button>' +
+            '</div>' +
           '</div>' +
           '<div class="genre-overlay-grid">' + chipsHtml + '</div>';
       }
@@ -40911,9 +41385,6 @@
         const willOpen = !overlayEl.classList.contains("open");
         if (willOpen) {
           closeAutocomplete();
-          if ((window.innerWidth || 1024) <= 760) {
-            expandMobileSearchBarClient(false);
-          }
           renderSearchGenreDropdownOverlayContent();
           overlayEl.classList.add("open");
           if (trigBtn) {
@@ -41047,6 +41518,8 @@
         if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) { closeSearchGenreDropdownOverlay(); return; }
         if (document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded")) { collapseMobileSearchBarClient(); return; }
         if (document.getElementById("customDialogRoot")?.innerHTML) { closeCustomDialog(null); return; }
+        if (document.getElementById("subModalOverlayRoot")?.innerHTML && typeof closeSubModalOverlayClient === "function") { closeSubModalOverlayClient(); return; }
+        if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML && typeof closePersonSpotlightOverlayClient === "function") { closePersonSpotlightOverlayClient(); return; }
         if (state.sidebarOpen) { closeFilterSidebar(); return; }
         if (document.getElementById("lightboxRoot").innerHTML) { closeLightbox(); return; }
         if (document.getElementById("modalRoot").innerHTML) { closeDetailModal(); return; }
@@ -41174,38 +41647,151 @@
         if (state.isSearchMode) goHome();
       }
 
+      let lastAutocompleteResponseCache = null;
+      let lastAutocompleteQueryCache = "";
+      let activeAutocompleteIndex = -1;
+
       function onSearchInputFocus() {
         closeSearchGenreDropdownOverlay();
         expandMobileSearchBarClient(false);
         updateSearchClearBtnVisibility();
         state.searchFocused = true;
+        const inp = document.getElementById("searchInput");
+        const val = (inp ? inp.value : "").trim();
+        const box = document.getElementById("searchAutocompleteBox");
+        if (val && box && !box.classList.contains("open") && lastAutocompleteResponseCache && lastAutocompleteQueryCache.toLowerCase() === val.toLowerCase()) {
+          renderAutocompleteSuggestions(val, lastAutocompleteResponseCache);
+        }
       }
 
       function onSearchInputBlur() {
         setTimeout(() => {
           const inp = document.getElementById("searchInput");
+          const box = document.getElementById("searchAutocompleteBox");
+          const activeEl = document.activeElement;
+          const isFocusInsideAutocomplete = Boolean(
+            (activeEl && activeEl === inp) ||
+            (activeEl && activeEl.closest && activeEl.closest("#searchAutocompleteBox")) ||
+            (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchAutocompleteBox")) ||
+            (box && typeof box.matches === "function" && box.matches(":hover"))
+          );
           const val = (inp ? inp.value : "").trim();
           updateSearchClearBtnVisibility();
           const genreOverlayOpen = Boolean(document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open"));
           if (!val && !state.isSearchMode) {
             state.searchFocused = false;
-            if (!genreOverlayOpen && document.activeElement !== inp) {
+            if (!genreOverlayOpen && activeEl !== inp && !isFocusInsideAutocomplete) {
               const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
               if (hdr) hdr.classList.remove("mobile-search-expanded");
               syncHeroSearchPlaceholderAndToggleBtnClient();
             }
           }
-          closeAutocomplete();
-        }, 220);
+          if (!isFocusInsideAutocomplete) {
+            closeAutocomplete();
+          }
+        }, 240);
       }
 
       function closeAutocomplete() {
+        activeAutocompleteIndex = -1;
         const box = document.getElementById("searchAutocompleteBox");
         if (box) {
           box.classList.remove("open");
           box.innerHTML = "";
         }
       }
+
+      function setAutocompleteHighlightIndexClient(nextIdx) {
+        const box = document.getElementById("searchAutocompleteBox");
+        if (!box || !box.classList.contains("open")) {
+          activeAutocompleteIndex = -1;
+          return null;
+        }
+        const items = Array.from(box.querySelectorAll(".ac-item"));
+        if (!items.length) {
+          activeAutocompleteIndex = -1;
+          return null;
+        }
+        if (nextIdx < -1) nextIdx = items.length - 1;
+        if (nextIdx >= items.length) nextIdx = -1;
+        activeAutocompleteIndex = nextIdx;
+        items.forEach((el, idx) => {
+          const isAct = idx === activeAutocompleteIndex;
+          el.classList.toggle("ac-kb-active", isAct);
+          el.classList.toggle("spatial-focus", isAct);
+        });
+        if (activeAutocompleteIndex >= 0 && items[activeAutocompleteIndex]) {
+          const targetEl = items[activeAutocompleteIndex];
+          if (typeof currentSpatialEl !== "undefined") {
+            currentSpatialEl = targetEl;
+          }
+          if (typeof targetEl.scrollIntoView === "function") {
+            try { targetEl.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (e) {}
+          }
+          return targetEl;
+        }
+        return null;
+      }
+
+      function onSearchInputKeyDownClient(event, inpEl) {
+        if (!event) return;
+        const box = document.getElementById("searchAutocompleteBox");
+        const isAcOpen = Boolean(box && box.classList.contains("open"));
+        if (event.key === "ArrowDown" && isAcOpen) {
+          const items = Array.from(box.querySelectorAll(".ac-item"));
+          if (items.length > 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            const nextIdx = activeAutocompleteIndex + 1 >= items.length ? 0 : activeAutocompleteIndex + 1;
+            setAutocompleteHighlightIndexClient(nextIdx);
+            return;
+          }
+        }
+        if (event.key === "ArrowUp" && isAcOpen) {
+          const items = Array.from(box.querySelectorAll(".ac-item"));
+          if (items.length > 0) {
+            event.preventDefault();
+            event.stopPropagation();
+            const prevIdx = activeAutocompleteIndex <= 0 ? (activeAutocompleteIndex === 0 ? -1 : items.length - 1) : activeAutocompleteIndex - 1;
+            setAutocompleteHighlightIndexClient(prevIdx);
+            return;
+          }
+        }
+        if (event.key === "Escape" && isAcOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAutocomplete();
+          return;
+        }
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (isAcOpen) {
+            const items = Array.from(box.querySelectorAll(".ac-item"));
+            const highlighted = (activeAutocompleteIndex >= 0 && items[activeAutocompleteIndex])
+              ? items[activeAutocompleteIndex]
+              : box.querySelector(".ac-item.ac-kb-active, .ac-item.spatial-focus");
+            if (highlighted) {
+              highlighted.click();
+              return;
+            }
+          }
+          closeSearchGenreDropdownOverlay();
+          closeAutocomplete();
+          if (inpEl && typeof inpEl.blur === "function") inpEl.blur();
+          runSearch(false, inpEl ? inpEl.value : "", undefined, true);
+        }
+      }
+
+      document.addEventListener("pointerdown", (ev) => {
+        const box = document.getElementById("searchAutocompleteBox");
+        if (!box || !box.classList.contains("open")) return;
+        const t = ev.target;
+        if (t && typeof t.closest === "function") {
+          if (t.closest("#searchAutocompleteBox") || t.closest(".search-bar")) return;
+        }
+        closeAutocomplete();
+      }, { passive: true });
 
       function onSearchScopeChange(newScope) {
         const selEl = document.getElementById("searchScopeSelect");
@@ -41239,6 +41825,8 @@
         state.searchFocused = true;
         if (liveSearchDebounceTimer) clearTimeout(liveSearchDebounceTimer);
         if (!q) {
+          lastAutocompleteResponseCache = null;
+          lastAutocompleteQueryCache = "";
           closeAutocomplete();
           return;
         }
@@ -41252,6 +41840,8 @@
               "&sort=" + encodeURIComponent(state.sort)
             );
             if (mySeq !== liveSearchReqSeq || !res || !res.ok) return;
+            lastAutocompleteResponseCache = res;
+            lastAutocompleteQueryCache = q;
             state.searchMatchedCollections = res.collections || [];
             state.searchMatchedUniverses = res.universes || [];
             state.searchMatchedPersons = res.persons || [];
@@ -41273,6 +41863,16 @@
         }, 280);
       }
 
+      function selectFullSearchFromAutocompleteClient(qStr) {
+        const cleanQ = String(qStr || "").trim();
+        closeAutocomplete();
+        const inp = document.getElementById("searchInput");
+        if (inp && typeof inp.blur === "function") inp.blur();
+        if (cleanQ) {
+          runSearch(false, cleanQ, undefined, true);
+        }
+      }
+
       function renderAutocompleteSuggestions(q, res) {
         const box = document.getElementById("searchAutocompleteBox");
         if (!box) return;
@@ -41280,54 +41880,75 @@
         const unis = (res.universes || []).slice(0, 3);
         const studs = (res.studios || []).slice(0, 4);
         const pers = (res.persons || []).slice(0, 4);
-        const media = (res.items || []).slice(0, 5);
+        const media = (res.items || []).slice(0, 6);
         if (!cols.length && !unis.length && !studs.length && !pers.length && !media.length) {
           closeAutocomplete();
           return;
         }
-        let html = "";
+        activeAutocompleteIndex = -1;
+        let html = '<div class="ac-header-row">' +
+          '<span>💡 Direktwahl: Klick / Tipp oder Pfeiltasten ⇅ + Enter</span>' +
+          '<button type="button" class="ac-close-mini-btn" onmousedown="event.preventDefault()" onclick="closeAutocomplete()">✕ Schließen</button>' +
+        '</div>';
+
+        if (media.length) {
+          html += '<div class="ac-group-title">🎬 Filme & 📺 Serien (Direkt öffnen)</div>';
+          media.forEach(m => {
+            const tc = m.media_type === "tv" ? "s" : "m";
+            const yr = (m.release_date || m.first_air_date || "").slice(0, 4);
+            const thumbSrc = m.poster_path ? resolvePosterUrlClient(m.poster_path, "w92", "") : "";
+            const thumbHtml = thumbSrc
+              ? '<img class="ac-item-thumb" src="' + esc(thumbSrc) + '" alt="" loading="lazy" />'
+              : '<span class="ac-item-icon-box">' + (tc === "s" ? "📺" : "🎬") + '</span>';
+            const typeBadge = tc === "s" ? "Serie" : "Film";
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openDetails(\\'' + tc + '\\',' + Number(m.id) + ',false)">' +
+              '<div class="ac-item-left">' +
+                thumbHtml +
+                '<div class="ac-item-text">' +
+                  '<b>' + esc(m.title || m.name) + '</b>' +
+                  '<div style="font-size:11px;color:#94a3b8;margin-top:1px">' + (tc === "s" ? "📺 " : "🎬 ") + typeBadge + (yr ? " • " + esc(yr) : "") + '</div>' +
+                '</div>' +
+              '</div>' +
+              '<span class="ac-item-action" style="color:#fbbf24;border-color:rgba(251,191,36,0.35)">⭐ ' + (m.vote_average ? m.vote_average.toFixed(1) : '–') + ' ➔</span>' +
+            '</div>';
+          });
+        }
         if (cols.length || unis.length || studs.length) {
-          html += '<div class="ac-group-title">🍿 Reihen, 🌌 Universen & 🏢 Filmstudios (Automatisch erkannt)</div>';
+          html += '<div class="ac-group-title">🍿 Reihen, 🌌 Universen & 🏢 Filmstudios</div>';
           unis.forEach(u => {
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openUniverseView(\\'' + esc(u.id) + '\\')">' +
-              '<span>' + esc(u.icon || '🌌') + ' <b>' + esc(u.name) + '</b></span>' +
-              '<span style="font-size:11px;color:#34d399">Universum öffnen ➔</span>' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openUniverseView(\\'' + esc(u.id) + '\\')">' +
+              '<div class="ac-item-left"><span class="ac-item-icon-box">' + esc(u.icon || '🌌') + '</span><span class="ac-item-text"><b>' + esc(u.name) + '</b></span></div>' +
+              '<span class="ac-item-action" style="color:#34d399;border-color:rgba(52,211,153,0.35)">Universum ➔</span>' +
             '</div>';
           });
           cols.forEach(c => {
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openCollectionView(' + Number(c.id) + ')">' +
-              '<span>🍿 <b>' + esc(c.name) + '</b></span>' +
-              '<span style="font-size:11px;color:#a78bfa">Filmreihe öffnen ➔</span>' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openCollectionView(' + Number(c.id) + ')">' +
+              '<div class="ac-item-left"><span class="ac-item-icon-box">🍿</span><span class="ac-item-text"><b>' + esc(c.name) + '</b></span></div>' +
+              '<span class="ac-item-action" style="color:#a78bfa;border-color:rgba(167,139,250,0.35)">Filmreihe ➔</span>' +
             '</div>';
           });
           studs.forEach(st => {
             const cid = st.companyIds || st.id;
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openStudioView(\\'' + esc(String(cid)) + '\\',\\'' + esc(st.name) + '\\',\\'' + esc(st.presetStudioId || '') + '\\')">' +
-              '<span>' + esc(st.icon || '🏢') + ' <b>' + esc(st.name) + '</b></span>' +
-              '<span style="font-size:11px;color:#f59e0b">Studio-Katalog ➔</span>' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openStudioView(\\'' + esc(String(cid)) + '\\',\\'' + esc(st.name) + '\\',\\'' + esc(st.presetStudioId || '') + '\\')">' +
+              '<div class="ac-item-left"><span class="ac-item-icon-box">' + esc(st.icon || '🏢') + '</span><span class="ac-item-text"><b>' + esc(st.name) + '</b></span></div>' +
+              '<span class="ac-item-action" style="color:#f59e0b;border-color:rgba(245,158,11,0.35)">Studio ➔</span>' +
             '</div>';
           });
         }
         if (pers.length) {
           html += '<div class="ac-group-title">🌟 Personen (Schauspieler & Regie)</div>';
           pers.forEach(p => {
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')">' +
-              '<span>🌟 <b>' + esc(p.name) + '</b>' + (p.known_for ? ' <span style="color:#94a3b8;font-size:11px">(' + esc(p.known_for) + ')</span>' : '') + '</span>' +
-              '<span style="font-size:11px;color:#38bdf8">Filmografie ➔</span>' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')">' +
+              '<div class="ac-item-left"><span class="ac-item-icon-box">🌟</span><span class="ac-item-text"><b>' + esc(p.name) + '</b>' + (p.known_for ? ' <span style="color:#94a3b8;font-size:11px">(' + esc(p.known_for) + ')</span>' : '') + '</span></div>' +
+              '<span class="ac-item-action" style="color:#38bdf8;border-color:rgba(56,189,248,0.35)">Person ➔</span>' +
             '</div>';
           });
         }
-        if (media.length) {
-          html += '<div class="ac-group-title">🎬 Filme & 📺 Serien (Mit aktiven Filtern)</div>';
-          media.forEach(m => {
-            const tc = m.media_type === "tv" ? "s" : "m";
-            const yr = (m.release_date || m.first_air_date || "").slice(0, 4);
-            html += '<div class="ac-item" tabindex="0" onclick="closeAutocomplete();openDetails(\\'' + tc + '\\',' + Number(m.id) + ',false)">' +
-              '<span>' + (tc === 's' ? '📺' : '🎬') + ' <b>' + esc(m.title || m.name) + '</b>' + (yr ? ' <span style="color:#94a3b8">(' + esc(yr) + ')</span>' : '') + '</span>' +
-              '<span style="font-size:11px;color:#fbbf24">⭐ ' + (m.vote_average ? m.vote_average.toFixed(1) : '–') + '</span>' +
-            '</div>';
-          });
-        }
+        const totalHitsNum = Math.max(media.length, Number(res.totalResults) || media.length);
+        html += '<div class="ac-item" role="option" tabindex="0" style="margin-top:4px;border-top:1px solid rgba(148,163,184,0.16)" onmousedown="event.preventDefault()" onclick="selectFullSearchFromAutocompleteClient(\\'' + esc(q) + '\\')">' +
+          '<div class="ac-item-left"><span class="ac-item-icon-box">🔍</span><span class="ac-item-text">Alle Suchergebnisse für „<b>' + esc(q) + '</b>“ im Katalog anzeigen</span></div>' +
+          '<span class="ac-item-action" style="color:#38bdf8;border-color:rgba(56,189,248,0.45)">' + totalHitsNum + ' Treffer ➔</span>' +
+        '</div>';
         box.innerHTML = html;
         box.classList.add("open");
       }
@@ -41972,6 +42593,22 @@
           else if (mode === "exclude" || mode === "neutral") s.onlyVipStreams = false;
           else s.onlyVipStreams = !Boolean(s.onlyVipStreams);
         }
+        else if (category === "reset_category") {
+          if (effectiveVal === "genres") {
+            s.includedGenres = []; s.excludedGenres = [];
+            state.genreId = "all";
+            syncSearchGenreSelectDom();
+          } else if (effectiveVal === "platforms") {
+            s.includedPlatforms = []; s.excludedPlatforms = [];
+          } else if (effectiveVal === "eras") {
+            s.includedEras = []; s.excludedEras = [];
+          } else if (effectiveVal === "studios") {
+            s.includedStudios = []; s.excludedStudios = [];
+          } else if (effectiveVal === "fsk") {
+            s.includedFsk = []; s.excludedFsk = [];
+            s.showUnreleased = false;
+          }
+        }
         else if (category === "reset_all") {
           s.includedGenres = []; s.excludedGenres = [];
           s.includedPlatforms = []; s.excludedPlatforms = [];
@@ -42093,6 +42730,11 @@
         toggleFilterSidebar(tabKey || "genres");
       }
 
+      async function resetSidebarCategoryFiltersQuickClient(catKey) {
+        triggerTmaHapticClient("selection");
+        await setDirectFilter("reset_category", String(catKey || ""), "neutral");
+      }
+
       function toggleSearchFilterCollapse() {
         state.filtersCollapsedInSearch = !state.filtersCollapsedInSearch;
         const filterMount = document.getElementById("floatingFilterMount");
@@ -42101,11 +42743,21 @@
 
       async function triggerRandom() {
         const isMovie = state.type !== "s";
+        triggerTmaHapticClient("medium");
         setBusyState(true, "🎲 Ziehe zufälligen " + (isMovie ? "Film" : "Serien-Tipp") + " mit deinen aktiven Filtern...");
         try {
-          const r = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + state.type + "&genreId=" + state.genreId + "&mode=random");
-          if (r.items && r.items[0]) {
-            await openDetails(state.type, r.items[0].id);
+          const r = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + state.type + "&genreId=" + state.genreId + "&mode=random&bypass=1");
+          if (r.items && r.items.length > 0) {
+            if (!Array.isArray(state.recentRandomKeys)) state.recentRandomKeys = [];
+            const recentSet = new Set(state.recentRandomKeys);
+            const pick = r.items.find(it => it && it.id && !recentSet.has(state.type + "_" + it.id)) || r.items[0];
+            const pickKey = state.type + "_" + pick.id;
+            state.recentRandomKeys.push(pickKey);
+            if (state.recentRandomKeys.length > 16) {
+              state.recentRandomKeys.shift();
+            }
+            window._openingViaRandomDice = true;
+            await openDetails(state.type, pick.id, false, pick.title || pick.name || "", pick.poster_path || "");
           } else {
             showHudToast("⚠️ Kein Zufallstreffer mit den aktuellen Filtern gefunden.");
           }
@@ -42218,6 +42870,10 @@
         if (!q) return;
         if (inp && document.activeElement === inp) {
           inp.blur();
+        }
+        const topHdr = document.getElementById("topUnifiedBar");
+        if (topHdr && topHdr.classList.contains("mobile-search-expanded")) {
+          topHdr.classList.remove("mobile-search-expanded");
         }
         closeAutocomplete();
         if (document.getElementById("modalRoot")?.innerHTML) {
@@ -42450,10 +43106,23 @@
             const nextStatusLbl = document.getElementById("infiniteScrollStatusLabel");
             if (nextStatusLbl) {
               if (state.hasMorePages) {
-                nextStatusLbl.innerHTML = '📜 Scrolle weiter nach unten für Seite ' + (state.page + 1) + ' von ' + state.totalPages;
+                nextStatusLbl.innerHTML = '📜 Seite ' + state.page + ' von ' + state.totalPages + ' geladen';
               } else {
-                nextStatusLbl.innerHTML = '✓ Alle verfügbaren Treffer bis Seite ' + state.page + ' geladen';
+                nextStatusLbl.innerHTML = '✅ Alle verfügbaren Treffer bis Seite ' + state.page + ' geladen';
               }
+            }
+            const manualMoreBtn = document.getElementById("manualLoadMoreBtn");
+            if (manualMoreBtn) {
+              if (state.hasMorePages && state.page < state.totalPages) {
+                manualMoreBtn.style.display = "inline-flex";
+                manualMoreBtn.innerHTML = "➕ Seite " + (state.page + 1) + " laden";
+              } else {
+                manualMoreBtn.style.display = "none";
+              }
+            }
+            const bottomPill = document.getElementById("bottomPageCounterPill");
+            if (bottomPill) {
+              bottomPill.innerHTML = "🎯 Seite wählen (" + (state.visibleCatalogPage || state.page) + " / " + state.totalPages + ") ▾";
             }
 
             observeLazyCoversInContainerClient(liveGridEl);
@@ -42697,6 +43366,7 @@
           providerSelectHtml +
           sortGroupHtml +
           quickResetBtnHtml +
+          (!state.isSearchMode ? '<button type="button" class="btn" onclick="triggerRandom()" title="Zufälligen Titel mit deinen aktiven Filtern ziehen">🎲 Zufall</button>' : '') +
           (!state.isSearchMode ? '<button class="btn ' + (isFranchiseActive ? 'blue' : '') + '" onclick="toggleWorldsTray()" title="Filmuniversen & Filmreihen Portal-Dock ein- oder ausklappen">🌌 Welten & Reihen ' + (state.worldsTrayOpen ? '▴' : '▾') + '</button>' : '') +
           ((state.isSearchMode || isColView || isUniView || isPerView || state.currentCompanyId) ? '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' : '');
 
@@ -42743,6 +43413,10 @@
       let worldsTraySearchTimer = null;
       function onWorldsTraySearchInput(val) {
         state.worldsTrayQuery = String(val || "");
+        const clearBtn = document.getElementById("worldsSearchClearBtn");
+        if (clearBtn) {
+          clearBtn.style.display = state.worldsTrayQuery.trim().length > 0 ? "inline-flex" : "none";
+        }
         const gridEl = document.getElementById("worldsPortalGridMount");
         if (gridEl) gridEl.innerHTML = buildWorldsPortalCardsOnlyHtml();
         if (worldsTraySearchTimer) clearTimeout(worldsTraySearchTimer);
@@ -42761,6 +43435,21 @@
         } else {
           state.worldsTrayRemoteCols = [];
         }
+      }
+
+      function clearWorldsTraySearchClient() {
+        triggerTmaHapticClient("selection");
+        state.worldsTrayQuery = "";
+        state.worldsTrayRemoteCols = [];
+        const inp = document.getElementById("worldsTraySearchInputEl");
+        if (inp) {
+          inp.value = "";
+          try { inp.focus(); } catch (e) {}
+        }
+        const clearBtn = document.getElementById("worldsSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = "none";
+        const gridEl = document.getElementById("worldsPortalGridMount");
+        if (gridEl) gridEl.innerHTML = buildWorldsPortalCardsOnlyHtml();
       }
 
       function buildWorldsPortalCardsOnlyHtml() {
@@ -42838,14 +43527,21 @@
 
       function buildWorldsPortalTrayHtml() {
         const isColsTab = state.worldsTrayTab === "collections";
+        const hasQuery = String(state.worldsTrayQuery || "").trim().length > 0;
         return '<div class="worlds-portal-tray">' +
           '<div class="worlds-portal-header">' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
               '<button type="button" class="btn ' + (!isColsTab ? 'blue' : '') + '" onclick="switchWorldsTrayTab(\\'universes\\')">🌌 Universen (' + (CINEMATIC_UNIVERSES_CLIENT ? CINEMATIC_UNIVERSES_CLIENT.length : 0) + ')</button>' +
               '<button type="button" class="btn ' + (isColsTab ? 'blue' : '') + '" onclick="switchWorldsTrayTab(\\'collections\\')">🍿 Filmreihen (' + (FEATURED_COLLECTIONS_CLIENT ? FEATURED_COLLECTIONS_CLIENT.length : 0) + '+)</button>' +
             '</div>' +
-            '<input type="text" class="worlds-search-input" value="' + esc(state.worldsTrayQuery || '') + '" oninput="onWorldsTraySearchInput(this.value)" placeholder="🔍 Welt oder Filmreihe suchen (z.B. Marvel, Star Wars, Saw, Dune)..." />' +
-            '<button type="button" class="btn" onclick="state.worldsTrayOpen=false;loadFranchisesHub(\\'' + (isColsTab ? 'collections' : 'universes') + '\\')" title="Große Vollbild-Übersicht öffnen">🗂️ Vollbild-Hub</button>' +
+            '<div style="position:relative;flex:1 1 180px;min-width:150px;display:flex;align-items:center">' +
+              '<input id="worldsTraySearchInputEl" type="text" class="worlds-search-input" style="width:100%;padding-right:28px" value="' + esc(state.worldsTrayQuery || '') + '" oninput="onWorldsTraySearchInput(this.value)" placeholder="🔍 Welt oder Filmreihe suchen (z.B. Marvel, Star Wars, Dune)..." />' +
+              '<button type="button" id="worldsSearchClearBtn" onclick="clearWorldsTraySearchClient()" title="Suche leeren" style="position:absolute;right:6px;display:' + (hasQuery ? 'inline-flex' : 'none') + ';align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;border:0;background:rgba(148,163,184,0.22);color:#f8fafc;font-size:11px;cursor:pointer">✕</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;align-items:center">' +
+              '<button type="button" class="btn" onclick="state.worldsTrayOpen=false;loadFranchisesHub(\\'' + (isColsTab ? 'collections' : 'universes') + '\\')" title="Große Vollbild-Übersicht öffnen">🗂️ Vollbild-Hub</button>' +
+              '<button type="button" class="btn" onclick="toggleWorldsTray(false)" title="Welten-Leiste einklappen">✕</button>' +
+            '</div>' +
           '</div>' +
           '<div id="worldsPortalGridMount" class="worlds-portal-grid">' +
             buildWorldsPortalCardsOnlyHtml() +
@@ -42864,18 +43560,31 @@
         const isColView = state.currentView === "collection" && state.currentCollectionId;
         const isUniView = state.currentView === "universe" && state.currentUniverseId;
         const isPerView = state.currentView === "person" && state.currentPersonId;
+        const isStudioView = Boolean(state.currentView === "discover" && state.currentCompanyId);
 
         const franchiseActionBannerHtml = (isColView || isUniView) ? (
-          '<div class="panel-box" style="margin-bottom:10px;border-color:' + (isColView ? 'rgba(91,70,245,0.5)' : 'rgba(16,185,129,0.5)') + '">' +
+          '<div class="panel-box" style="margin-bottom:10px;padding:10px 12px;border-color:' + (isColView ? 'rgba(91,70,245,0.5)' : 'rgba(16,185,129,0.5)') + '">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div>' +
-                '<div style="font-size:14px;font-weight:800;color:var(--text-main)">' + esc(customTitle || (isColView ? '🍿 Filmreihe' : '🌌 Filmuniversum')) + '</div>' +
-                '<div style="font-size:11.5px;color:var(--text-muted)">Direkt über Telegram teilen oder komplett in deiner Merkliste speichern:</div>' +
+                '<div style="font-size:13.5px;font-weight:800;color:var(--text-main)">' + esc(customTitle || (isColView ? '🍿 Filmreihe' : '🌌 Filmuniversum')) + '</div>' +
+                '<div style="font-size:11px;color:var(--text-muted)">Komplette ' + (isColView ? 'Filmreihe' : 'Welt') + ' speichern, teilen oder weitere Reihen entdecken:</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' sichtbaren speichern</button>' +
+                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
                 '<button class="btn purple" onclick="shareCollectionOrUniverseFromTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\',\\'' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '\\')">📤 Teilen</button>' +
-                '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🔙 Alle ' + (isColView ? 'Reihen' : 'Universen') + '</button>' +
+                '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🌌 Alle ' + (isColView ? 'Reihen' : 'Welten') + '</button>' +
+                '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>'
+        ) : (isPerView || isStudioView) ? (
+          '<div class="panel-box" style="margin-bottom:10px;padding:9px 12px;border-color:rgba(56,189,248,0.42)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div style="font-size:13px;font-weight:800;color:var(--text-main)">' +
+                (isPerView ? ('🌟 Filmografie: ' + esc(state.currentPersonName || 'Person')) : ('🏢 Studio-Katalog: ' + esc(state.currentCompanyName || 'Filmstudio'))) +
+              '</div>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button class="btn" onclick="goHome()">🏠 Zurück zum Hauptkatalog</button>' +
               '</div>' +
             '</div>' +
           '</div>'
@@ -42951,17 +43660,20 @@
         const hasNextPage = Boolean(state.hasMorePages && curPage < totPages && state.items.length > 0);
         const canPaginateView = Boolean((state.currentView === "discover" || state.isSearchMode) && !isColView && !isUniView && !isPerView && (hasNextPage || totPages > 1) && state.items.length > 0);
 
-        // Schlanker Auto-Load-Sentinel am Ende des Grids (ohne doppelte Seiten-Zahlenleiste unten!)
+        // Schlanker Auto-Load-Sentinel am Ende des Grids (mit 1-Klick-Nachladen & Seiten-Schnellwahl)
         let paginationBarHtml = "";
         if (canPaginateView) {
-          paginationBarHtml = '<div id="infiniteScrollSentinel" class="load-more-wrap" style="padding:14px 12px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap">' +
+          paginationBarHtml = '<div id="infiniteScrollSentinel" class="load-more-wrap" style="padding:14px 12px;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap">' +
             '<span id="infiniteScrollStatusLabel" style="font-size:12px;color:var(--text-muted);font-weight:700">' +
               (hasNextPage
-                ? ('📜 Scrolle weiter nach unten für Seite ' + (curPage + 1) + ' von ' + totPages)
-                : ('✓ Seite ' + curPage + ' von ' + totPages + ' geladen')) +
+                ? ('📄 Seite ' + curPage + ' von ' + totPages + ' geladen')
+                : ('✅ Alle ' + totPages + ' Seiten geladen')) +
             '</span>' +
+            (hasNextPage ? (
+              '<button type="button" id="manualLoadMoreBtn" class="page-counter-pill" style="background:rgba(14,165,233,0.18);border-color:rgba(56,189,248,0.52);color:#e0f2fe" onclick="loadMoreResults(false)" title="Nächste Katalogseite direkt laden">➕ Seite ' + (curPage + 1) + ' laden</button>'
+            ) : '') +
             (totPages > 1 ? (
-              '<button type="button" class="page-counter-pill" onclick="openPageJumpModalClient()" title="Gezielten Seitensprung öffnen (Touch & TV)">🎯 Seite wählen (' + visiblePage + ' / ' + totPages + ') ▾</button>'
+              '<button type="button" id="bottomPageCounterPill" class="page-counter-pill" onclick="openPageJumpModalClient()" title="Gezielten Seitensprung öffnen">🎯 Seite wählen (' + visiblePage + ' / ' + totPages + ') ▾</button>'
             ) : '') +
           '</div>';
         }
@@ -43018,23 +43730,25 @@
           const isUni = state.franchiseTab === "universes";
 
           root.innerHTML = '<div class="section">' +
-            '<div id="floatingFilterMount">' + buildFloatingFilterBarHtml() + '</div>' +
-            '<div class="section-title" style="margin-top:6px"><span>🍿 Filmreihen & 🌌 Filmuniversen</span><div style="display:flex;gap:6px"><button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button></div></div>' +
-            '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
-              '<button class="btn ' + (!isUni ? 'blue' : '') + '" onclick="loadFranchisesHub(\\'collections\\')">🍿 Beliebte Filmreihen (' + cols.length + ')</button>' +
-              '<button class="btn ' + (isUni ? 'blue' : '') + '" onclick="loadFranchisesHub(\\'universes\\')">🌌 Große Filmuniversen (' + unis.length + ')</button>' +
+            '<div class="section-title" style="margin-top:4px">' +
+              '<span>🌌 Welten & 🍿 Filmreihen entdecken</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button class="btn ' + (!isUni ? 'active' : '') + '" onclick="loadFranchisesHub(\\'collections\\')">🍿 Filmreihen (' + cols.length + ')</button>' +
+                '<button class="btn ' + (isUni ? 'active' : '') + '" onclick="loadFranchisesHub(\\'universes\\')">🌌 Filmuniversen (' + unis.length + ')</button>' +
+                '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
+              '</div>' +
             '</div>' +
             (!isUni ? (
-              '<div style="display:flex;gap:6px;margin-bottom:12px">' +
-                '<input id="colSearchInput" class="tma-input" style="flex:1;padding:8px 12px;border-radius:8px;font-size:13px" placeholder="🔍 Beliebige Filmreihe auf TMDB suchen (z.B. Saw, Matrix, John Wick)..." onkeydown="if(event.key===\\'Enter\\')searchCollectionsInHub()" />' +
-                '<button class="btn blue" onclick="searchCollectionsInHub()">Reihe suchen</button>' +
+              '<div class="floating-filter-bar" style="display:flex;gap:6px;margin-bottom:12px;padding:8px 10px;align-items:center">' +
+                '<input id="colSearchInput" class="tma-input" style="flex:1;padding:7px 12px;border-radius:8px;font-size:12.5px" placeholder="🔍 Beliebige Filmreihe suchen (z.B. Saw, Matrix, John Wick, Fast & Furious)..." onkeydown="if(event.key===\\'Enter\\')searchCollectionsInHub()" />' +
+                '<button class="btn blue" onclick="searchCollectionsInHub()">🔍 Suchen</button>' +
               '</div>' +
-              '<div id="colHubGrid" class="chip-grid">' +
-                cols.map(c => '<button class="btn" style="padding:9px 12px;font-size:12.5px" onclick="openCollectionView(' + c.id + ')">' + esc(c.icon || '🍿') + ' ' + esc(c.name) + '</button>').join("") +
+              '<div id="colHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;padding:4px">' +
+                cols.map(c => '<button class="btn" style="padding:10px 12px;font-size:12.5px;justify-content:flex-start;text-align:left" onclick="openCollectionView(' + c.id + ')">' + esc(c.icon || '🍿') + ' <span>' + esc(c.name) + '</span></button>').join("") +
               '</div>'
             ) : (
-              '<div id="uniHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">' +
-                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px" onclick="openUniverseView(\\''+esc(u.id)+'\\')"><div style="font-size:14px;font-weight:700;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted)">' + esc(u.description || '') + '</div></div>').join("") +
+              '<div id="uniHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:4px">' +
+                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px;padding:12px" onclick="openUniverseView(\\''+esc(u.id)+'\\')"><div style="font-size:14px;font-weight:800;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted);line-height:1.4">' + esc(u.description || '') + '</div></div>').join("") +
               '</div>'
             )) +
           '</div>';
@@ -44308,6 +45022,79 @@
         if (root) root.innerHTML = "";
       }
 
+      let activePersonSpotlightItemsCache = [];
+      let activePersonSpotlightFilter = "all";
+
+      function togglePersonSpotlightBioExpandClient() {
+        const bioEl = document.getElementById("personSpotlightBioEl");
+        const hintEl = document.getElementById("personSpotlightBioHintEl");
+        if (!bioEl) return;
+        const expanded = bioEl.classList.toggle("is-expanded");
+        if (hintEl) {
+          hintEl.textContent = expanded ? "▴ Weniger anzeigen" : "▾ Biografie ganz lesen";
+        }
+      }
+
+      function renderPersonSpotlightGridCardsClient(filterMode = "all") {
+        activePersonSpotlightFilter = filterMode || "all";
+        const gridEl = document.getElementById("personSpotlightGridEl");
+        const countEl = document.getElementById("personSpotlightCountLbl");
+        const filterBarEl = document.getElementById("personSpotlightFilterBarEl");
+        if (!gridEl) return;
+
+        const allItems = Array.isArray(activePersonSpotlightItemsCache) ? activePersonSpotlightItemsCache : [];
+        const movieItems = allItems.filter(it => (it.media_type === "tv" || it.type === "s") ? false : true);
+        const seriesItems = allItems.filter(it => (it.media_type === "tv" || it.type === "s") ? true : false);
+
+        if (filterBarEl) {
+          if (movieItems.length > 0 && seriesItems.length > 0) {
+            filterBarEl.style.display = "inline-flex";
+            filterBarEl.innerHTML =
+              '<button type="button" class="btn ' + (activePersonSpotlightFilter === 'all' ? 'blue' : '') + '" style="padding:3px 9px;font-size:11px" onclick="renderPersonSpotlightGridCardsClient(\\'all\\')">Alle (' + allItems.length + ')</button>' +
+              '<button type="button" class="btn ' + (activePersonSpotlightFilter === 'm' ? 'blue' : '') + '" style="padding:3px 9px;font-size:11px" onclick="renderPersonSpotlightGridCardsClient(\\'m\\')">🎬 Filme (' + movieItems.length + ')</button>' +
+              '<button type="button" class="btn ' + (activePersonSpotlightFilter === 's' ? 'blue' : '') + '" style="padding:3px 9px;font-size:11px" onclick="renderPersonSpotlightGridCardsClient(\\'s\\')">📺 Serien (' + seriesItems.length + ')</button>';
+          } else {
+            filterBarEl.style.display = "none";
+          }
+        }
+
+        const filtered = activePersonSpotlightFilter === "m"
+          ? movieItems
+          : activePersonSpotlightFilter === "s"
+            ? seriesItems
+            : allItems;
+
+        if (countEl) {
+          countEl.textContent = "(" + filtered.length + ")";
+        }
+
+        if (filtered.length === 0) {
+          gridEl.innerHTML = '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8;padding:10px 2px">Keine Titel in dieser Kategorie gefunden.</div>';
+          return;
+        }
+
+        gridEl.innerHTML = filtered.slice(0, 24).map(it => {
+          const tc = it.media_type === "tv" || it.type === "s" ? "s" : "m";
+          const itemTitle = String(it.title || it.name || "Titel").trim();
+          const isCur = state.activeDetails && String(state.activeDetails.id) === String(it.id);
+          const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
+          const pUrl = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+          const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
+          const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
+          const subLine = [yearStr, voteStr, tc === "s" ? "Serie" : "Film"].filter(Boolean).join(" · ");
+          return '<div class="detail-sim-card' + (isCur ? ' is-current-part' : '') + '" style="width:100%" tabindex="0" onclick="saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+            (isCur ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
+            '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(pUrl) + '" alt="' + esc(itemTitle) + '" draggable="false" />' +
+            '<div class="detail-sim-overlay">' +
+              '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
+              '<div class="detail-sim-sub">' + esc(subLine) + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join("");
+        unlockCatalogCoversLoadingClient(false);
+        observeLazyCoversInContainerClient(gridEl);
+      }
+
       async function openPersonSpotlightOverlayClient(personId, personName, roleLabel = "", photoUrl = "") {
         let root = document.getElementById("personSpotlightOverlayRoot");
         if (!root) {
@@ -44325,6 +45112,8 @@
         const fbAvatar = buildActorAvatarFallbackSvgClient(cleanName);
         const initialAvatar = photoUrl || fbAvatar;
         const subText = roleLabel ? String(roleLabel) : "Schauspiel & Regie";
+        activePersonSpotlightItemsCache = [];
+        activePersonSpotlightFilter = "all";
 
         root.innerHTML = '<div class="person-spotlight-backdrop" onclick="if(event.target===this)closePersonSpotlightOverlayClient(event)">' +
           '<div class="person-spotlight-card" role="dialog" aria-label="' + esc(cleanName) + '">' +
@@ -44341,8 +45130,14 @@
                 '<button type="button" class="detail-btn-glass" onclick="closePersonSpotlightOverlayClient(event)">✕ Schließen</button>' +
               '</div>' +
             '</div>' +
-            '<div id="personSpotlightBioEl" class="person-spotlight-bio" style="display:none"></div>' +
-            '<div class="detail-section-heading" style="font-size:calc(15px * var(--scale-text))">Verfügbare Filme & Serien mit ' + esc(cleanName) + '</div>' +
+            '<div id="personSpotlightBioWrapEl" style="display:none;flex-direction:column;gap:4px">' +
+              '<div id="personSpotlightBioEl" class="person-spotlight-bio" onclick="togglePersonSpotlightBioExpandClient()"></div>' +
+              '<span id="personSpotlightBioHintEl" style="display:none;font-size:11px;font-weight:800;color:#38bdf8;cursor:pointer;align-self:flex-start" onclick="togglePersonSpotlightBioExpandClient()">▾ Biografie ganz lesen</span>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div class="detail-section-heading" style="font-size:calc(15px * var(--scale-text))">Verfügbare Filme & Serien mit ' + esc(cleanName) + ' <span id="personSpotlightCountLbl" style="color:#38bdf8;font-size:13px"></span></div>' +
+              '<div id="personSpotlightFilterBarEl" style="display:none;gap:5px;flex-wrap:wrap"></div>' +
+            '</div>' +
             '<div id="personSpotlightGridEl" class="person-spotlight-grid">' +
               '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8;padding:12px 2px">⏳ Lade Filmografie aus dem Katalog...</div>' +
             '</div>' +
@@ -44364,41 +45159,23 @@
               if (avEl) avEl.src = resolvePosterUrlClient(pInfo.profile_path, "w185", "");
             }
             if (pInfo.biography) {
+              const bioWrap = document.getElementById("personSpotlightBioWrapEl");
               const bioEl = document.getElementById("personSpotlightBioEl");
-              if (bioEl) {
+              const bioHint = document.getElementById("personSpotlightBioHintEl");
+              if (bioWrap && bioEl) {
                 bioEl.textContent = pInfo.biography;
-                bioEl.style.display = "-webkit-box";
+                bioWrap.style.display = "flex";
+                if (bioHint && pInfo.biography.length > 180) {
+                  bioHint.style.display = "inline-block";
+                }
               }
             }
             const subParts = [roleLabel, pInfo.birthday ? ("* " + pInfo.birthday.slice(0, 4)) : "", pInfo.place_of_birth || ""].filter(Boolean);
             const subEl = document.getElementById("personSpotlightSubEl");
             if (subEl && subParts.length > 0) subEl.textContent = subParts.join(" · ");
           }
-          const items = Array.isArray(res?.items) ? res.items : [];
-          if (items.length === 0) {
-            gridEl.innerHTML = '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8;padding:10px 2px">Keine weiteren Titel im aktuellen Filter gefunden.</div>';
-            return;
-          }
-          gridEl.innerHTML = items.slice(0, 18).map(it => {
-            const tc = it.media_type === "tv" || it.type === "s" ? "s" : "m";
-            const itemTitle = String(it.title || it.name || "Titel").trim();
-            const isCur = state.activeDetails && String(state.activeDetails.id) === String(it.id);
-            const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
-            const pUrl = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
-            const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
-            const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
-            const subLine = [yearStr, voteStr, tc === "s" ? "Serie" : "Film"].filter(Boolean).join(" · ");
-            return '<div class="detail-sim-card' + (isCur ? ' is-current-part' : '') + '" style="width:100%" tabindex="0" onclick="saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
-              (isCur ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
-              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(pUrl) + '" alt="' + esc(itemTitle) + '" draggable="false" />' +
-              '<div class="detail-sim-overlay">' +
-                '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
-                '<div class="detail-sim-sub">' + esc(subLine) + '</div>' +
-              '</div>' +
-            '</div>';
-          }).join("");
-          unlockCatalogCoversLoadingClient(false);
-          observeLazyCoversInContainerClient(gridEl);
+          activePersonSpotlightItemsCache = Array.isArray(res?.items) ? res.items : [];
+          renderPersonSpotlightGridCardsClient("all");
         } catch (_err) {
           const gridEl = document.getElementById("personSpotlightGridEl");
           if (gridEl) gridEl.innerHTML = '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8">Titel konnten nicht geladen werden.</div>';
@@ -45235,6 +46012,7 @@
         const mutedActiveFiltersHtml = buildMutedActiveFiltersForDetailHtml();
         const kickerRowHtml = [
           '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "📺 SERIE" : "🎬 FILM") + '</span>',
+          state.openedFromRandom ? '<span class="hero-badge" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#ffffff;border:1px solid rgba(196,181,253,0.45)">🎲 ZUFALLS-TIPP</span>' : "",
           d.collection ? (
             '<button type="button" class="detail-kicker-link" onclick="scrollToDetailBelowFoldClient(event,\\'detailCollectionSectionWrap\\')" title="Zur Filmreihe springen: ' + esc(d.collection.name) + '">' +
               '<span>🍿</span><span>' + esc(d.collection.name) + '</span>' +
@@ -45245,8 +46023,7 @@
               '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
             '</button>'
           ) : "",
-          returnChipHtml,
-          mutedActiveFiltersHtml
+          returnChipHtml
         ].filter(Boolean).join("");
 
         const cleanStatusLabel = (type === "s" && d.statusText && d.statusText !== "Unbekannt")
@@ -45291,7 +46068,7 @@
           ) : [])
         ].filter(Boolean);
         const creditsGlassStripHtml = creditsPillsArr.length > 0
-          ? ('<div class="detail-credits-glass-strip">' + creditsPillsArr.join("") + '</div>')
+          ? ('<div class="detail-credits-glass-strip">' + creditsPillsArr.join('<span class="detail-credit-sep">·</span>') + '</div>')
           : "";
 
         const playableMovieFiles = type === "m" ? getPlayableMovieFilesForHeroClient(d) : [];
@@ -45432,15 +46209,18 @@
           '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
             (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +
           '</button>' +
-          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern">🖼️ Cover</button>' : '') +
-          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen">🔄 Zuordnen</button>' : '') +
-          (canReportMedia ? '<button type="button" class="detail-btn-glass" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Fehler melden">⚠️ Melden</button>' : '') +
-          '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Original-Poster & TMDb">⋯ Mehr ▾</button>';
+          (state.openedFromRandom ? (
+            '<button type="button" id="modalNextRandomBtn" class="detail-btn-glass" style="border-color:rgba(167,139,250,0.55);color:#ede9fe" onclick="triggerRandom()" title="Direkt den nächsten Zufalls-Tipp mit deinen aktiven Filtern ziehen">🎲 Weiterwürfeln</button>'
+          ) : '') +
+          '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Melden, Original-Poster, TMDb & weitere Werkzeuge">⋯ Mehr ▾</button>';
 
         const moreActionsInnerHtml =
           '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
           '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
           '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
+          (canReportMedia ? '<button class="btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Defekten Stream oder falsche Zuordnung melden">⚠️ Fehler melden</button>' : '') +
+          (isAdminUser ? '<button class="btn" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern (Admin)">🖼️ Cover ändern</button>' : '') +
+          (isAdminUser ? '<button class="btn" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen (Admin)">🔄 Neu zuordnen</button>' : '') +
           (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
           (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(posterOrig) + '\\',\\'' + esc(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
           (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(backdropOrig) + '\\',\\'' + esc(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
@@ -45508,7 +46288,7 @@
           const titleBoxEl = document.getElementById("detailTitleBoxEl");
           if (titleBoxEl && activeLogoPath && !titleBoxEl.querySelector("img")) {
             if (typeof clientClearLogoCache !== "undefined" && d.id) {
-              clientClearLogoCache.set(typeCode + "_" + Number(d.id), activeLogoPath);
+              clientClearLogoCache.set(type + "_" + Number(d.id), activeLogoPath);
               if (typeof schedulePersistClearLogoCacheClient === "function") {
                 schedulePersistClearLogoCacheClient();
               }
@@ -45610,7 +46390,9 @@
               '</div>' +
               '<div class="detail-sticky-mini-actions">' +
                 '<button type="button" id="detailStickyPrimaryPlayBtn" class="detail-btn-play-white" style="padding:6px 14px;font-size:12.5px" onclick="' + primaryClickJs + '">' + esc(primaryPlayBtnLabel) + '</button>' +
-                '<button type="button" class="detail-btn-glass" style="padding:6px 12px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
+                '<button type="button" id="modalStickyWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" style="padding:6px 12px;font-size:12px" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')" title="Auf die Merkliste setzen / entfernen">' + (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") + '</button>' +
+                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
+                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="closeDetailModal()" title="Detailansicht schließen (Esc)">✕</button>' +
               '</div>' +
             '</div>' +
 
@@ -45681,7 +46463,8 @@
                   '</div>' +
                 '</div>' +
                 '<div class="hero-bottom-bar">' +
-                  '<button type="button" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToDetailBelowFoldClient(event)" title="Nach unten zu Cast, Infos & Empfehlungen scrollen" aria-label="Nach unten zu Cast, Infos & Empfehlungen scrollen">' +
+                  '<button type="button" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToDetailBelowFoldClient(event)" title="Nach unten zu Streams, Cast & Empfehlungen scrollen" aria-label="Nach unten zu Streams, Cast & Empfehlungen scrollen">' +
+                    '<span class="hero-scroll-down-label">' + (type === "s" ? "📺 Staffeln, Cast & Infos" : "🎬 Streams, Cast & Infos") + '</span>' +
                     '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
                       '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
                     '</svg>' +
@@ -45732,6 +46515,8 @@
         if (typeof lastCardLongPressAt !== "undefined" && Date.now() - lastCardLongPressAt < 650) {
           return;
         }
+        state.openedFromRandom = Boolean(window._openingViaRandomDice);
+        window._openingViaRandomDice = false;
         if (typeof stopHeroBackgroundVideoTeaserClient === "function") {
           stopHeroBackgroundVideoTeaserClient();
         }
@@ -46135,7 +46920,12 @@
           box.style.display = "none";
           return;
         }
+        const remapBox = document.getElementById("modalRemapMediaBox");
+        if (remapBox) remapBox.style.display = "none";
+        const moreBox = document.getElementById("modalMoreActionsBox");
+        if (moreBox) moreBox.style.display = "none";
         box.style.display = "block";
+        setTimeout(() => { try { box.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_e) {} }, 40);
         box.innerHTML = '<div style="font-size:12px;color:#cbd5e1">⏳ Lade verfügbare Cover von TMDb (Original EN / DE / Textless), Apple iTunes DE & OMDb...</div>';
         try {
           const title = state.activeDetails?.title || "";
@@ -46235,7 +47025,12 @@
           box.style.display = "none";
           return;
         }
+        const posterBox = document.getElementById("modalPosterPickerBox");
+        if (posterBox) posterBox.style.display = "none";
+        const moreBox = document.getElementById("modalMoreActionsBox");
+        if (moreBox) moreBox.style.display = "none";
         box.style.display = "block";
+        setTimeout(() => { try { box.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_e) {} }, 40);
         const d = state.activeDetails || {};
         const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
           ? d.allStreamFiles
@@ -46536,14 +47331,18 @@
             : "Bot-Privatchat (DM)";
         return '<div id="modalDeliveryTargetMount" class="delivery-inline-wrap">' +
           '<div class="delivery-inline-pills" title="Aktives Versandziel: ' + activeModeSummary + '">' +
-            '<span class="delivery-inline-label">📤 Ziel:</span>' +
-            '<button type="button" class="delivery-pill-btn ' + (mode === 'dm' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'dm\\')" title="An privaten Bot-Chat senden">💬 Privat</button>' +
+            '<span class="delivery-inline-label">📤 Senden an:</span>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'dm' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'dm\\')" title="An privaten Bot-Chat senden">💬 Bot-Chat</button>' +
             '<button type="button" class="delivery-pill-btn ' + (mode === 'group' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'group\\')" title="In eigene Telegram-Gruppe senden">👥 Gruppe</button>' +
-            '<button type="button" class="delivery-pill-btn ' + (mode === 'custom_bot' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')" title="Über eigenen Bot senden">🤖 Bot</button>' +
-            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'custom_bot' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')" title="Über eigenen Bot senden">🤖 Eigener Bot</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID & Bot-Token ein-/ausklappen">⚙️' + (showConfigInputs ? ' ▴' : '') + '</button>' +
           '</div>' +
           (showConfigInputs ? (
             '<div class="delivery-config-drawer">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">' +
+                '<span style="font-size:11px;font-weight:800;color:#7dd3fc">⚙️ Ziel-Konfiguration (wird automatisch gespeichert)</span>' +
+                '<button type="button" class="btn close-slate" style="padding:2px 8px;font-size:10.5px" onclick="toggleModalDeliveryConfigBoxClient()">✓ Einklappen</button>' +
+              '</div>' +
               '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">' +
                 '<div>' +
                   '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (<code>/id</code>):</div>' +
@@ -46554,12 +47353,15 @@
                   '<input id="modalDelivTopicIdInp" class="tma-input" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
-                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (Auto-Copy):</div>' +
-                  '<input id="modalDelivSourceGroupInp" class="tma-input" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
+                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (optional):</div>' +
+                  '<input id="modalDelivSourceGroupInp" class="tma-input" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder leer lassen" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
                   '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">🤖 Eigenes Bot-Token (optional):</div>' +
-                  '<input id="modalDelivBotTokenInp" class="tma-input" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;font-size:11.5px" />' +
+                  '<div style="display:flex;gap:4px;align-items:center">' +
+                    '<input id="modalDelivBotTokenInp" class="tma-input" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;font-size:11.5px" />' +
+                    '<button type="button" class="btn" style="padding:4px 7px;font-size:11px" onclick="togglePasswordVisibilityClient(\\'modalDelivBotTokenInp\\',this)" title="Bot-Token ein-/ausblenden">👁️</button>' +
+                  '</div>' +
                 '</div>' +
               '</div>' +
             '</div>'
@@ -46567,13 +47369,24 @@
         '</div>';
       }
 
+      function syncDynamicDeliveryButtonLabelsClient() {
+        const lbl = getActiveDeliveryButtonLabelClient();
+        document.querySelectorAll('[data-dynamic-delivery-btn="1"]').forEach(btn => {
+          const hasUt = btn.getAttribute("data-has-ut") === "1";
+          btn.textContent = "▶ " + lbl + (hasUt ? " + UT" : "");
+        });
+      }
+
       function switchModalDeliveryModeClient(nextMode) {
         const prefs = saveDeliveryPreferencesClient({ targetMode: nextMode || "dm" });
         if ((nextMode === "group" && !prefs.targetGroupChatId) || (nextMode === "custom_bot" && !prefs.customBotToken)) {
           modalDeliveryConfigExpanded = true;
+        } else if (nextMode === "dm") {
+          modalDeliveryConfigExpanded = false;
         }
         const mount = document.getElementById("modalDeliveryTargetMount");
         if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+        syncDynamicDeliveryButtonLabelsClient();
       }
 
       function toggleModalDeliveryConfigBoxClient() {
@@ -46593,6 +47406,7 @@
           sourceBridgeChatId: sVal,
           customBotToken: bVal
         }, true);
+        syncDynamicDeliveryButtonLabelsClient();
       }
 
       async function verifyAndConnectCustomBotInSettingsClient() {
@@ -47310,12 +48124,6 @@
 
         if (totalReleaseCount === 0) {
           return '<div>' +
-            '<div class="season-toolbar-row">' +
-              '<div style="font-size:12.5px;font-weight:800;color:var(--text)">📦 Archiv-Downloads</div>' +
-              '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-                buildModalDeliveryTargetSelectorHtml() +
-              '</div>' +
-            '</div>' +
             archiveSectionHtml +
           '</div>';
         }
@@ -47323,9 +48131,6 @@
         return '<div>' +
           '<div class="season-toolbar-row">' +
             '<div style="font-size:12.5px;font-weight:800;color:var(--text)">🎬 Verfügbare Releases (' + totalReleaseCount + (rawFiles.length > totalReleaseCount ? ' · ' + rawFiles.length + ' Dateien' : '') + ')</div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-              buildModalDeliveryTargetSelectorHtml() +
-            '</div>' +
           '</div>' +
           '<div style="display:flex;flex-direction:column;gap:8px">' +
             finalBlocks.map(blk => {
@@ -47388,7 +48193,7 @@
                   (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399" title="Wird beim Video-Versand automatisch mitgesendet">💬 ' + subsList.length + ' UT</span>' : '') +
                 '</div>' +
                 '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                  '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
+                  '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" ' + (isRarFile ? '' : ('data-dynamic-delivery-btn="1" data-has-ut="' + (subsList.length > 0 ? '1' : '0') + '"')) + ' onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
                   (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title) + '\\',{seriesId:null})" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
                   (isAdminUser ? '<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(f.raw_filename || '') + '\\',messageLink:\\'' + esc(f.message_link || '') + '\\'})" title="Datei-Version ändern, Quellgruppe prüfen oder mit anderem TMDb-Titel verknüpfen">✏️</button>' : '') +
                   (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\'})" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
@@ -47699,7 +48504,9 @@
         const progressBannerHtml = prog ? (
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);font-size:11.5px">' +
             '<span>👁️ <b>Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
-            (Number(prog.season) !== Number(seasonNum) ? '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>' : '') +
+            (Number(prog.season) !== Number(seasonNum)
+              ? '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>'
+              : '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="scrollToActiveProgressEpisodeClient()">🎯 Zur Folge springen ▾</button>') +
           '</div>'
         ) : '';
 
@@ -47840,14 +48647,14 @@
             isEpAutoFilled ? "ep-autofilled" : ""
           ].filter(Boolean).join(" ");
 
-          return '<div class="' + rowCls + '">' +
+          return '<div class="' + rowCls + '" data-ep-num="' + Number(ep.episode_number) + '" data-ep-search="' + esc((epCode + ' ' + ep.name + ' ' + ep.episode_number).toLowerCase()) + '">' +
             '<div class="ep-row-top">' +
               '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')" title="' + esc(epCode + ' – ' + ep.name) + ' (Antippen für Beschreibung)">' +
                 '<span class="ep-code-badge">' + epCode + '</span>' +
                 '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(ep.name) + '</span></div>' +
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;flex-shrink:0">' +
-                topQualityBadgeHtml +
+                (filesBtns ? '' : topQualityBadgeHtml) +
                 topAutoFillBadgeHtml +
                 progBadgeHtml +
               '</div>' +
@@ -47884,11 +48691,19 @@
           '</div>'
         ) : '';
 
+        const episodeQuickFilterHtml = episodes.length >= 6 ? (
+          '<div style="display:inline-flex;align-items:center;gap:4px;background:rgba(15,23,42,0.72);border:1px solid rgba(148,163,184,0.25);border-radius:8px;padding:2px 7px">' +
+            '<span style="font-size:11px;opacity:0.75">🔍</span>' +
+            '<input id="seasonEpQuickSearchInp" type="text" placeholder="Folge / Titel (' + episodes.length + ')..." oninput="filterSeasonEpisodesInlineClient(this.value)" style="background:transparent;border:none;outline:none;color:var(--text);font-size:11.5px;width:130px;padding:3px 2px" />' +
+            '<button type="button" id="seasonEpQuickSearchClearBtn" style="display:none;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:11px;padding:0 3px" onclick="const inp=document.getElementById(\\'seasonEpQuickSearchInp\\');if(inp){inp.value=\\'\\';filterSeasonEpisodesInlineClient(\\'\\');inp.focus();}" title="Episoden-Filter zurücksetzen">✕</button>' +
+          '</div>'
+        ) : '';
+
         box.innerHTML =
           '<div class="season-toolbar-row">' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' + sBtns + '</div>' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-              (vipAllowed ? buildModalDeliveryTargetSelectorHtml() : '') +
+              episodeQuickFilterHtml +
               ((vipAllowed && seasonStreamableCount > 0) ? (
                 '<button type="button" class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(56,189,248,0.45);color:#7dd3fc" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' (inkl. automatisch ergänzter Folgen) nacheinander senden">' +
                   '📦 Staffel ' + seasonNum + ' komplett senden (' + seasonStreamableCount + ')' +
@@ -47898,7 +48713,7 @@
           '</div>' +
           seasonVersionFilterBarHtml +
           progressBannerHtml +
-          episodeCardsHtml;
+          '<div id="seasonEpisodesListWrap">' + episodeCardsHtml + '</div>';
 
         const seriesArchMount = document.getElementById("seriesArchiveDownloadsMount");
         if (seriesArchMount && vipAllowed) {
@@ -47932,6 +48747,8 @@
       // =========================================================================
       let activeEpisodeCorrectionState = null;
       let activeMediaReportState = null;
+      let activeEpisodeStoryState = null;
+      let lastSubModalTriggerEl = null;
 
       function ensureSubModalMountClient() {
         let el = document.getElementById("subModalOverlayRoot");
@@ -47939,6 +48756,12 @@
           el = document.createElement("div");
           el.id = "subModalOverlayRoot";
           document.body.appendChild(el);
+        }
+        if (!el.innerHTML.trim()) {
+          const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
+          if (curEl && curEl !== document.body && !el.contains(curEl)) {
+            lastSubModalTriggerEl = curEl;
+          }
         }
         return el;
       }
@@ -47948,6 +48771,21 @@
         if (el) el.innerHTML = "";
         activeEpisodeCorrectionState = null;
         activeMediaReportState = null;
+        activeEpisodeStoryState = null;
+        if (lastSubModalTriggerEl && document.body.contains(lastSubModalTriggerEl) && typeof jumpSpatialFocus === "function") {
+          const restoreEl = lastSubModalTriggerEl;
+          lastSubModalTriggerEl = null;
+          setTimeout(() => jumpSpatialFocus(restoreEl, false), 20);
+        }
+      }
+
+      function stepEpisodeCorrectionNumberClient(inputId, delta, minVal = 1, maxVal = 999) {
+        const inp = document.getElementById(inputId);
+        if (!inp) return;
+        const cur = Number(inp.value || minVal);
+        const nextVal = Math.min(maxVal, Math.max(minVal, cur + Number(delta || 0)));
+        inp.value = String(nextVal);
+        updateEpisodeCorrectionLivePreviewClient();
       }
 
       function switchEpisodeCorrectionTargetFileClient(fileIndexStr) {
@@ -48206,11 +49044,19 @@
                   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
                     '<div>' +
                       '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Staffel</label>' +
-                      '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
+                      '<div style="display:flex;gap:4px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',-1,1,99)" title="Staffel -1">−</button>' +
+                        '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',1,1,99)" title="Staffel +1">＋</button>' +
+                      '</div>' +
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Folge</label>' +
-                      '<input id="epCorrNewEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
+                      '<div style="display:flex;gap:4px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewEpisodeInp\\',-1,1,999)" title="Folge -1">−</button>' +
+                        '<input id="epCorrNewEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewEpisodeInp\\',1,1,999)" title="Folge +1">＋</button>' +
+                      '</div>' +
                     '</div>' +
                   '</div>' +
                 '</div>'
@@ -48243,7 +49089,7 @@
                     '<button type="button" class="btn blue" onclick="searchEpisodeCorrectionTmdbClient()">🔍 Suchen</button>' +
                   '</div>' +
 
-                  '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px">' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px">' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Typ</label>' +
                       '<select id="epCorrNewTypeSel" class="tma-select" onchange="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px">' +
@@ -48257,11 +49103,19 @@
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Staffel</label>' +
-                      '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
+                      '<div style="display:flex;gap:3px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',-1,1,99)">−</button>' +
+                        '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px 4px;font-size:12px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',1,1,99)">＋</button>' +
+                      '</div>' +
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Folge</label>' +
-                      '<input id="epCorrRelinkEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
+                      '<div style="display:flex;gap:3px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkEpisodeInp\\',-1,1,999)">−</button>' +
+                        '<input id="epCorrRelinkEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px 4px;font-size:12px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkEpisodeInp\\',1,1,999)">＋</button>' +
+                      '</div>' +
                     '</div>' +
                   '</div>' +
 
@@ -48443,9 +49297,20 @@
           episodeTitle,
           telegramFileId,
           versionLabel,
-          reasonCode: typeCode === "s" && season ? "wrong_episode" : "wrong_media"
+          reasonCode: typeCode === "s" && season ? "wrong_episode" : "wrong_media",
+          draftNote: ""
         };
 
+        renderMediaReportModalDomClient();
+      }
+
+      function selectMediaReportReasonClient(nextCode) {
+        if (!activeMediaReportState) return;
+        const noteEl = document.getElementById("mediaReportNoteInp");
+        if (noteEl) {
+          activeMediaReportState.draftNote = noteEl.value;
+        }
+        activeMediaReportState.reasonCode = nextCode;
         renderMediaReportModalDomClient();
       }
 
@@ -48461,6 +49326,7 @@
           { code: "wrong_media", label: "🎬 Falscher Film / Falsche Serie" },
           { code: "wrong_episode", label: "🔢 Falsche Staffel- oder Folgennummer" },
           { code: "broken_video", label: "❌ Video defekt / Lädt nicht" },
+          { code: "audio_sub", label: "🔇 Tonspur / Sprache fehlt oder asynchron" },
           { code: "other", label: "💬 Sonstiges" }
         ];
 
@@ -48481,7 +49347,7 @@
               '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">' +
                 REASONS.map(r => {
                   const isSel = st.reasonCode === r.code;
-                  return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;text-align:left;' + (isSel ? '' : 'background:var(--card);') + '" onclick="activeMediaReportState.reasonCode=\\'' + r.code + '\\';renderMediaReportModalDomClient()">' +
+                  return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;text-align:left;' + (isSel ? '' : 'background:var(--card);') + '" onclick="selectMediaReportReasonClient(\\'' + r.code + '\\')">' +
                     (isSel ? '🔘 ' : '⚪ ') + esc(r.label) +
                   '</button>';
                 }).join("") +
@@ -48489,7 +49355,7 @@
 
               '<div style="margin-bottom:12px">' +
                 '<label style="font-size:11.5px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Kurze Notiz (optional, z.B. „Ist eigentlich Staffel 2 Folge 5“):</label>' +
-                '<textarea id="mediaReportNoteInp" class="tma-textarea" rows="2" placeholder="Optionale Hinweise für den Admin..." style="width:100%;padding:8px 10px;border-radius:8px;font-size:12px;resize:vertical"></textarea>' +
+                '<textarea id="mediaReportNoteInp" class="tma-textarea" rows="2" placeholder="Optionale Hinweise für den Admin..." oninput="if(activeMediaReportState)activeMediaReportState.draftNote=this.value" style="width:100%;padding:8px 10px;border-radius:8px;font-size:12px;resize:vertical">' + esc(st.draftNote || '') + '</textarea>' +
               '</div>' +
 
               '<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">' +
@@ -48635,18 +49501,183 @@
         }
       }
 
+      function renderEpisodeStoryModalDomClient() {
+        const st = activeEpisodeStoryState;
+        if (!st) return;
+        const mount = ensureSubModalMountClient();
+        const epCode = 'S' + String(st.season).padStart(2, '0') + 'E' + String(st.episode).padStart(2, '0');
+        const cachedList = Array.isArray(activeSeasonCacheEpisodes) ? activeSeasonCacheEpisodes : [];
+        const curIdx = cachedList.findIndex(e => Number(e.episode_number) === Number(st.episode));
+        const prevEp = curIdx > 0 ? cachedList[curIdx - 1] : null;
+        const nextEp = (curIdx >= 0 && curIdx < cachedList.length - 1) ? cachedList[curIdx + 1] : null;
+        const cachedEpObj = curIdx >= 0 ? cachedList[curIdx] : null;
+
+        const stillUrl = st.stillPath
+          ? ("https://image.tmdb.org/t/p/w780" + st.stillPath)
+          : (state.activeDetails?.backdropUrl || state.activeDetails?.posterUrl || "");
+
+        const vipAllowed = isCurrentUserVip();
+        const activeFile = cachedEpObj?._resolvedActiveFile || (Array.isArray(cachedEpObj?.files) && cachedEpObj.files[0]) || null;
+        const activeFid = String(activeFile?.telegram_file_id || activeFile?.file_id || "");
+        const activeQual = String(activeFile?.quality || "1080p");
+        const activeSizeStr = activeFile ? formatFileSizeClient(activeFile.file_size) : "";
+        const activeVerLbl = activeFile ? (cleanUserVisibleStreamTagsClient(activeFile.versionLabel || activeFile.tags || "Originalfassung") || "Originalfassung") : "";
+        const isSavedEp = Boolean(cachedEpObj?.isSaved);
+
+        mount.innerHTML =
+          '<div class="submodal-backdrop" onclick="if(event.target===this)closeSubModalOverlayClient()">' +
+            '<div class="submodal-box" style="max-width:560px;padding:0;overflow:hidden">' +
+              (stillUrl ? (
+                '<div style="position:relative;width:100%;height:175px;background:#050814;overflow:hidden;border-bottom:1px solid rgba(56,189,248,0.22)">' +
+                  '<img src="' + esc(stillUrl) + '" alt="' + esc(st.epName) + '" style="width:100%;height:100%;object-fit:cover;opacity:0.86" />' +
+                  '<div style="position:absolute;inset:0;background:linear-gradient(to top, rgba(7,12,26,0.98) 4%, rgba(7,12,26,0.35) 55%, rgba(7,12,26,0.65) 100%)"></div>' +
+                  '<div style="position:absolute;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+                    '<span class="ep-code-badge" style="font-size:12px;padding:4px 10px;background:rgba(2,132,199,0.9);color:#fff">' + esc(epCode) + '</span>' +
+                    '<button type="button" id="epStoryCloseBtn" class="btn close-slate" onclick="closeSubModalOverlayClient()" style="padding:5px 10px">✖ Schließen</button>' +
+                  '</div>' +
+                  '<div style="position:absolute;bottom:10px;left:14px;right:14px">' +
+                    '<div style="font-size:11px;color:#7dd3fc;font-weight:700;margin-bottom:2px">' + esc(state.activeDetails?.title || "Serie") + ' · Staffel ' + Number(st.season) + '</div>' +
+                    '<div style="font-size:17px;font-weight:900;color:#fff;line-height:1.25">' + esc(st.epName || ("Folge " + st.episode)) + '</div>' +
+                  '</div>' +
+                '</div>'
+              ) : (
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:14px 16px 10px;border-bottom:1px solid rgba(56,189,248,0.18)">' +
+                  '<div style="display:flex;align-items:center;gap:8px;min-width:0">' +
+                    '<span class="ep-code-badge">' + esc(epCode) + '</span>' +
+                    '<div style="font-size:15px;font-weight:900;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(st.epName || ("Folge " + st.episode)) + '</div>' +
+                  '</div>' +
+                  '<button type="button" id="epStoryCloseBtn" class="btn close-slate" onclick="closeSubModalOverlayClient()">✖</button>' +
+                '</div>'
+              )) +
+
+              '<div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:#94a3b8">' +
+                  (st.airDate ? '<span class="stream-meta-pill">📅 ' + esc(st.airDate) + '</span>' : '') +
+                  (st.runtime > 0 ? '<span class="stream-meta-pill">⏱️ ' + Number(st.runtime) + ' Min.</span>' : '') +
+                  (st.voteAverage > 0 ? '<span class="stream-meta-pill" style="color:#fbbf24;border-color:rgba(251,191,36,0.35)">⭐ ' + Number(st.voteAverage).toFixed(1) + '</span>' : '') +
+                  '<span class="stream-meta-pill" style="color:#34d399;border-color:rgba(16,185,129,0.35)">👁️ Als gesehen markiert</span>' +
+                '</div>' +
+
+                '<div style="font-size:13px;line-height:1.6;color:#e2e8f0;background:rgba(15,23,42,0.68);border:1px solid rgba(148,163,184,0.18);border-radius:10px;padding:12px;max-height:220px;overflow-y:auto">' +
+                  (st.loading && !st.overview
+                    ? '<span style="color:#38bdf8">⏳ Lade deutsche Episoden-Beschreibung...</span>'
+                    : esc(st.overview || "Für diese Episode liegt aktuell noch keine ausführliche deutsche Inhaltsangabe vor.")) +
+                '</div>' +
+
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    ((vipAllowed && activeFid) ? (
+                      '<button type="button" id="epStoryPlayBtn" class="btn-stream-clean" onclick="closeSubModalOverlayClient();requestTelegramStream(\\'' + esc(activeFid) + '\\',\\'' + esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + st.epName) + '\\',\\'' + esc(activeQual) + '\\',{seriesId:' + Number(st.seriesId) + ',season:' + Number(st.season) + ',episode:' + Number(st.episode) + ',epName:\\'' + esc(st.epName) + '\\',fileSize:\\'' + esc(activeSizeStr) + '\\',tags:\\'' + esc(activeVerLbl) + '\\'})">' +
+                        '▶ Stream senden (' + esc(activeQual) + ')' +
+                      '</button>'
+                    ) : '') +
+                    '<button type="button" class="btn" onclick="toggleEpisodeSave(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(st.episode) + ');if(activeEpisodeStoryState){setTimeout(renderEpisodeStoryModalDomClient,220);}">' +
+                      (isSavedEp ? '✓ Gemerkt' : '🔖 Folge merken') +
+                    '</button>' +
+                    (st.telegraphUrl ? (
+                      '<a href="' + esc(st.telegraphUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Ausführlichen Telegraph-Guide im Browser/Telegram öffnen">📖 Telegraph ↗</a>'
+                    ) : '') +
+                  '</div>' +
+
+                  '<div style="display:flex;gap:6px;align-items:center">' +
+                    (prevEp ? (
+                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" onclick="openEpisodeStory(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(prevEp.episode_number) + ',\\'' + esc(prevEp.name || '') + '\\')" title="Vorherige Folge: ' + esc(prevEp.name || '') + '">◀ S' + String(st.season).padStart(2,'0') + 'E' + String(prevEp.episode_number).padStart(2,'0') + '</button>'
+                    ) : '') +
+                    (nextEp ? (
+                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" onclick="openEpisodeStory(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(nextEp.episode_number) + ',\\'' + esc(nextEp.name || '') + '\\')" title="Nächste Folge: ' + esc(nextEp.name || '') + '">S' + String(st.season).padStart(2,'0') + 'E' + String(nextEp.episode_number).padStart(2,'0') + ' ▶</button>'
+                    ) : '') +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+
+        const focusTarget = document.getElementById("epStoryPlayBtn") || document.getElementById("epStoryCloseBtn");
+        if (focusTarget && typeof jumpSpatialFocus === "function") {
+          setTimeout(() => jumpSpatialFocus(focusTarget, false), 25);
+        }
+      }
+
       async function openEpisodeStory(seriesId, season, episode, epName = "") {
         setSeriesProgress(seriesId, season, episode, epName);
-        setBusyState(true, "📖 Öffne Telegraph-Story...");
+        const cachedList = Array.isArray(activeSeasonCacheEpisodes) ? activeSeasonCacheEpisodes : [];
+        const cachedEp = cachedList.find(e => Number(e.episode_number) === Number(episode)) || null;
+        activeEpisodeStoryState = {
+          seriesId: Number(seriesId),
+          season: Number(season),
+          episode: Number(episode),
+          epName: String(epName || cachedEp?.name || ("Folge " + episode)),
+          overview: String(cachedEp?.overview || ""),
+          airDate: String(cachedEp?.air_date || ""),
+          stillPath: String(cachedEp?.still_path || ""),
+          voteAverage: Number(cachedEp?.vote_average || 0),
+          runtime: Number(cachedEp?.runtime || 0),
+          telegraphUrl: "",
+          loading: true
+        };
+        renderEpisodeStoryModalDomClient();
+        loadSeason(seriesId, season, false, true);
         try {
-          const r = await apiFetchJson(API_BASE + "/episode-story", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, seriesId, season, episode }) });
-          if (r.telegraphUrl) {
-            if (tg && tg.openLink) tg.openLink(r.telegraphUrl);
-            else window.open(r.telegraphUrl, "_blank");
+          const r = await apiFetchJson(API_BASE + "/episode-story", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chatId, seriesId, season, episode })
+          });
+          if (
+            activeEpisodeStoryState &&
+            Number(activeEpisodeStoryState.seriesId) === Number(seriesId) &&
+            Number(activeEpisodeStoryState.season) === Number(season) &&
+            Number(activeEpisodeStoryState.episode) === Number(episode)
+          ) {
+            activeEpisodeStoryState.loading = false;
+            if (r?.telegraphUrl) activeEpisodeStoryState.telegraphUrl = String(r.telegraphUrl);
+            if (r?.episode) {
+              if (r.episode.name) activeEpisodeStoryState.epName = String(r.episode.name);
+              if (r.episode.overview) activeEpisodeStoryState.overview = String(r.episode.overview);
+              if (r.episode.air_date) activeEpisodeStoryState.airDate = String(r.episode.air_date);
+              if (r.episode.still_path) activeEpisodeStoryState.stillPath = String(r.episode.still_path);
+              if (r.episode.vote_average) activeEpisodeStoryState.voteAverage = Number(r.episode.vote_average);
+              if (r.episode.runtime) activeEpisodeStoryState.runtime = Number(r.episode.runtime);
+            }
+            renderEpisodeStoryModalDomClient();
           }
-          loadSeason(seriesId, season, false, true);
-        } finally {
-          setBusyState(false);
+        } catch (e) {
+          if (activeEpisodeStoryState) {
+            activeEpisodeStoryState.loading = false;
+            renderEpisodeStoryModalDomClient();
+          }
+        }
+      }
+
+      function filterSeasonEpisodesInlineClient(rawQuery) {
+        const q = String(rawQuery || "").trim().toLowerCase();
+        const clearBtn = document.getElementById("seasonEpQuickSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = q ? "inline-block" : "none";
+        const wrap = document.getElementById("seasonEpisodesListWrap") || document.getElementById("seasonBox");
+        if (!wrap) return;
+        const rows = wrap.querySelectorAll(".ep-row[data-ep-search]");
+        rows.forEach(row => {
+          if (!q) {
+            row.style.display = "";
+            return;
+          }
+          const hay = String(row.getAttribute("data-ep-search") || "");
+          const epNumStr = String(row.getAttribute("data-ep-num") || "");
+          const isMatch = hay.includes(q) || epNumStr === q.replace(/^e0*/i, "");
+          row.style.display = isMatch ? "" : "none";
+        });
+      }
+
+      function scrollToActiveProgressEpisodeClient() {
+        const box = document.getElementById("seasonBox");
+        if (!box) return;
+        const targetRow = box.querySelector(".ep-row.ep-next-up, .ep-row.ep-watched");
+        if (targetRow) {
+          try { targetRow.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_e) {}
+          const focusEl = targetRow.querySelector(".btn-stream-clean, .ep-title");
+          if (focusEl && typeof jumpSpatialFocus === "function") {
+            setTimeout(() => jumpSpatialFocus(focusEl, false), 120);
+          }
         }
       }
 
@@ -48659,7 +49690,9 @@
       async function toggleWishlistItem(type, id) {
         if (!state.isAuthenticated) { openAccountModal(); return; }
         const btn = document.getElementById("modalWishlistBtn");
+        const stickyBtn = document.getElementById("modalStickyWishlistBtn");
         if (btn) btn.disabled = true;
+        if (stickyBtn) stickyBtn.disabled = true;
         try {
           const r = await apiFetchJson(API_BASE + "/wishlist", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "toggle_item", type, id }) });
           const isSaved = Boolean(r.saved);
@@ -48670,9 +49703,15 @@
             btn.className = "detail-btn-glass " + (isSaved ? "saved" : "");
             btn.textContent = isSaved ? "✓ Gespeichert" : "＋ Speichern";
           }
+          if (stickyBtn) {
+            stickyBtn.disabled = false;
+            stickyBtn.className = "detail-btn-glass " + (isSaved ? "saved" : "");
+            stickyBtn.textContent = isSaved ? "✓ Gespeichert" : "＋ Speichern";
+          }
           showHudToast(isSaved ? "✓ Gespeichert" : "🗑️ Aus Merkliste entfernt");
         } catch (e) {
           if (btn) btn.disabled = false;
+          if (stickyBtn) stickyBtn.disabled = false;
         }
       }
 
@@ -48689,12 +49728,94 @@
 
       function setWishlistLetter(nextLetter) {
         state.wlLetter = nextLetter || "ALL";
+        if (state.wlLetter !== "ALL") state.wlAzOpen = true;
         renderWishlistViewDomOnly();
+      }
+
+      function toggleWishlistAzBarClient() {
+        state.wlAzOpen = !state.wlAzOpen;
+        renderWishlistViewDomOnly();
+      }
+
+      function resetWishlistFiltersQuickClient() {
+        state.wlFilterType = "all";
+        state.wlLetter = "ALL";
+        state.wlSearchQuery = "";
+        state.wlSort = "added_desc";
+        renderWishlistViewDomOnly();
+        showHudToast("↺ Merklisten-Filter zurückgesetzt");
       }
 
       function onWishlistSearchInput(val) {
         state.wlSearchQuery = String(val || "");
+        const clearBtn = document.getElementById("wishlistSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = state.wlSearchQuery.trim() ? "inline-flex" : "none";
         renderWishlistListItemsMountOnly();
+      }
+
+      function clearWishlistSearchQuickClient() {
+        state.wlSearchQuery = "";
+        const inp = document.getElementById("wishlistSearchInp");
+        if (inp) {
+          inp.value = "";
+          inp.focus();
+        }
+        const clearBtn = document.getElementById("wishlistSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = "none";
+        renderWishlistListItemsMountOnly();
+      }
+
+      async function moveWishlistItemToFolderClient(uid, targetFolderId) {
+        if (!state.isAuthenticated || !uid) return;
+        const r = await apiFetchJson(API_BASE + "/wishlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId, action: "move_item_folder", uid, targetFolderId })
+        });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ Konnte Eintrag nicht verschieben.");
+          return;
+        }
+        const folders = state.cachedWishlistFolders || [];
+        const fObj = folders.find(f => f.id === r.folderId);
+        showHudToast("📁 Verschoben nach: " + (fObj ? fObj.name : "Standard-Merkliste"));
+        closeSubModalOverlayClient();
+        loadWishlist(state.wlFolder);
+      }
+
+      function openWishlistFolderAssignPopupClient(uid, title, currentFolderId, isSer) {
+        const folders = state.cachedWishlistFolders || [];
+        const mount = ensureSubModalMountClient();
+        const defaultCat = isSer ? "cat_series" : "cat_movies";
+        const curFolder = currentFolderId || defaultCat;
+        mount.innerHTML =
+          '<div class="submodal-backdrop" onclick="if(event.target===this)closeSubModalOverlayClient()">' +
+            '<div class="submodal-box" style="max-width:440px">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">' +
+                '<div style="font-size:14.5px;font-weight:900;color:#38bdf8">📁 Playlist / Ordner zuweisen</div>' +
+                '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">✖</button>' +
+              '</div>' +
+              '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Wähle den Ziel-Ordner für <b style="color:var(--text)">' + esc(title) + '</b>:</div>' +
+              '<div style="display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;margin-bottom:12px">' +
+                '<button type="button" class="btn ' + ((curFolder === "cat_movies" || curFolder === "cat_series" || !curFolder) ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + esc(uid) + '\\',\\'' + defaultCat + '\\')">' +
+                  '<span>' + (isSer ? '📺 Standard (Serien)' : '🎬 Standard (Filme)') + '</span>' +
+                  '<span>' + ((curFolder === "cat_movies" || curFolder === "cat_series" || !curFolder) ? "✓ Aktiv" : "Wählen") + '</span>' +
+                '</button>' +
+                folders.map(f => {
+                  const isAct = curFolder === f.id;
+                  const fIcon = (f.type === "playlist" || f.isJsonPlaylist) ? "🎵" : "📁";
+                  return '<button type="button" class="btn ' + (isAct ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + esc(uid) + '\\',\\'' + esc(f.id) + '\\')">' +
+                    '<span>' + fIcon + ' ' + esc(f.name) + '</span>' +
+                    '<span>' + (isAct ? "✓ Aktiv" : "Wählen") + '</span>' +
+                  '</button>';
+                }).join("") +
+              '</div>' +
+              '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+                '<button type="button" class="btn" onclick="closeSubModalOverlayClient();createNewFolderPrompt(true)">➕ Neue Playlist anlegen</button>' +
+                '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">Schließen</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
       }
 
       function getFilteredAndSortedWishlistItems() {
@@ -48761,7 +49882,15 @@
         const filteredItems = getFilteredAndSortedWishlistItems();
         if (countEl) countEl.textContent = String(filteredItems.length);
         if (filteredItems.length === 0) {
-          mount.innerHTML = '<div class="panel-box" style="color:var(--text-muted);font-size:12.5px">Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</div>';
+          const hasSubFilter = Boolean(
+            (state.wlSearchQuery && state.wlSearchQuery.trim()) ||
+            (state.wlLetter && state.wlLetter !== "ALL") ||
+            (state.wlFilterType && state.wlFilterType !== "all")
+          );
+          mount.innerHTML = '<div class="panel-box" style="color:var(--text-muted);font-size:12.5px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+            '<span>Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</span>' +
+            (hasSubFilter ? '<button type="button" class="btn danger" style="padding:4px 10px;font-size:11.5px" onclick="resetWishlistFiltersQuickClient()">↺ Filter zurücksetzen</button>' : '') +
+          '</div>';
           return;
         }
 
@@ -48782,7 +49911,9 @@
             const epCountBadgeHtml = (isSer && epsList.length > 0)
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
-            const subLeftTxt = plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film');
+            const subLeftHtml = folders.length > 0
+              ? ('<span style="cursor:pointer;color:#7dd3fc" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + (isSer ? 'Serie' : 'Film') + ' ▾')) + '</span>')
+              : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film')) + '</span>');
             const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
             return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
               '<div class="card-poster-wrap">' +
@@ -48796,7 +49927,7 @@
               '</div>' +
               '<div class="card-body">' +
                 '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
-                '<div class="card-sub"><span>' + subLeftTxt + '</span><span>' + yrStr + '</span></div>' +
+                '<div class="card-sub">' + subLeftHtml + '<span>' + yrStr + '</span></div>' +
               '</div>' +
             '</div>';
           }).join("") + '</div>';
@@ -48819,6 +49950,17 @@
           const epSummaryBtnHtml = (isSer && epsList.length > 0)
             ? ('<button type="button" class="btn" style="padding:3px 8px;font-size:11px;background:rgba(56,189,248,0.14);border-color:rgba(56,189,248,0.45);color:var(--blue)" onclick="toggleSeriesEpisodesDrawerClient(event,\\'' + drawerId + '\\')">📺 ' + epsList.length + ' Folge' + (epsList.length === 1 ? '' : 'n') + ' (' + esc(epPreviewCodes) + (epsList.length > 3 ? '…' : '') + ') <span id="epDrawerIcon_' + drawerId + '">▾</span></button>')
             : '';
+          const defaultFolderVal = isSer ? "cat_series" : "cat_movies";
+          const curFolderVal = (it.folderId && folders.some(f => f.id === it.folderId)) ? it.folderId : defaultFolderVal;
+          const folderSelectHtml = folders.length > 0 ? (
+            '<select class="mode-filter-select" style="padding:3px 7px;font-size:11px;max-width:155px" onchange="moveWishlistItemToFolderClient(\\'' + esc(it.uid) + '\\',this.value)" title="In Playlist oder Ordner verschieben">' +
+              '<option value="' + defaultFolderVal + '"' + (curFolderVal === defaultFolderVal ? ' selected' : '') + '>📁 Standard (' + (isSer ? 'Serien' : 'Filme') + ')</option>' +
+              folders.map(f => {
+                const fIcon = (f.type === 'playlist' || f.isJsonPlaylist) ? '🎵' : '📁';
+                return '<option value="' + esc(f.id) + '"' + (curFolderVal === f.id ? ' selected' : '') + '>' + fIcon + ' ' + esc(f.name) + '</option>';
+              }).join('') +
+            '</select>'
+          ) : '';
           const epDrawerHtml = (isSer && epsList.length > 0)
             ? ('<div id="epDrawer_' + drawerId + '" style="display:none;flex-direction:column;gap:4px;margin-top:6px;padding:8px;border-radius:8px;background:var(--surface);border:1px solid rgba(56,189,248,0.3)">' +
                 epsList.map(ep => {
@@ -48847,8 +49989,9 @@
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                folderSelectHtml +
                 epSummaryBtnHtml +
-                '<button class="btn danger" onclick="deleteSavedUid(\\''+esc(it.uid)+'\\')">🗑️</button>' +
+                '<button class="btn danger" onclick="deleteSavedUid(\\''+esc(it.uid)+'\\')" title="Aus Merkliste entfernen">🗑️</button>' +
               '</div>' +
             '</div>' +
             epDrawerHtml +
@@ -48876,10 +50019,13 @@
         const isGridMode = state.wlViewMode !== "list";
         const isManageOpen = Boolean(state.wlManageFoldersOpen);
 
+        const moviesCount = enabledItems.filter(i => i.contentType === "movie" || i.folderId === "cat_movies").length;
+        const seriesCount = enabledItems.filter(i => i.contentType === "series" || i.contentType === "episode").length;
+
         const folderBtns = [
-          '<button class="btn '+(cur==='root'?'active':'')+'" onclick="loadWishlist(\\'root\\')">📂 Alle Aktiven ('+enabledItems.length+')</button>',
-          '<button class="btn '+(cur==='cat_movies'?'active':'')+'" onclick="loadWishlist(\\'cat_movies\\')">🎬 Filme</button>',
-          '<button class="btn '+(cur==='cat_series'?'active':'')+'" onclick="loadWishlist(\\'cat_series\\')">📺 Serien & Folgen</button>',
+          '<button class="btn '+(cur==='root'?'active':'')+'" onclick="loadWishlist(\\'root\\')">📂 Alle ('+enabledItems.length+')</button>',
+          '<button class="btn '+(cur==='cat_movies'?'active':'')+'" onclick="loadWishlist(\\'cat_movies\\')">🎬 Filme ('+moviesCount+')</button>',
+          '<button class="btn '+(cur==='cat_series'?'active':'')+'" onclick="loadWishlist(\\'cat_series\\')">📺 Serien ('+seriesCount+')</button>',
           ...folders.map(f => {
             const isEn = f.enabled !== false;
             const fCount = allItems.filter(i => i.folderId === f.id).length;
@@ -48888,16 +50034,20 @@
           })
         ].join(" ");
 
-        const smartPlaylistsPanelHtml = (folders.length > 0 && isManageOpen) ? (
+        const smartPlaylistsPanelHtml = isManageOpen ? (
           '<div class="panel-box" style="margin-bottom:10px;border-color:rgba(14,165,233,0.35)">' +
             '<div class="section-title">' +
-              '<span>🎵 Smarte Playlisten & Ordner verwalten (' + folders.length + ')</span>' +
-              '<button type="button" class="btn close-slate" onclick="toggleWishlistFoldersManager()" title="Verwaltung einklappen">✖</button>' +
+              '<span>🎵 Playlisten & Ordner verwalten (' + folders.length + ')</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11.5px" onclick="createNewFolderPrompt(true)">➕ Neue Playlist</button>' +
+                '<button type="button" class="btn" style="padding:4px 9px;font-size:11.5px" onclick="createNewFolderPrompt(false)">📁 Neuer Ordner</button>' +
+                '<button type="button" class="btn close-slate" onclick="toggleWishlistFoldersManager()" title="Verwaltung einklappen">✖</button>' +
+              '</div>' +
             '</div>' +
-            folders.map(f => {
+            (folders.length > 0 ? folders.map(f => {
               const isEn = f.enabled !== false;
               const count = allItems.filter(i => i.folderId === f.id).length;
-              const badgeType = (f.type === 'playlist' || f.isJsonPlaylist) ? '📦 JSON-Playlist' : '📁 Ordner';
+              const badgeType = (f.type === 'playlist' || f.isJsonPlaylist) ? '📦 Playlist' : '📁 Ordner';
               return '<div class="ep-row" style="' + (isEn ? '' : 'opacity:0.68;') + '">' +
                 '<div class="ep-title" tabindex="0" onclick="loadWishlist(\\'' + esc(f.id) + '\\')">' +
                   '<span style="font-size:11px;padding:2px 7px;border-radius:999px;margin-right:6px;background:' + (isEn ? 'rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4)' : 'rgba(148,163,184,0.18);color:var(--text-muted);border:1px solid rgba(148,163,184,0.3)') + '">' +
@@ -48912,7 +50062,7 @@
                   '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">🗑️</button>' +
                 '</div>' +
               '</div>';
-            }).join("") +
+            }).join("") : '<div style="font-size:12px;color:var(--text-muted)">Noch keine eigenen Playlisten oder Ordner angelegt.</div>') +
           '</div>'
         ) : '';
 
@@ -48920,18 +50070,18 @@
           '<div class="panel-box" style="margin-bottom:10px;border-color:' + (activeFolderObj.enabled !== false ? 'rgba(16,185,129,0.4)' : 'rgba(148,163,184,0.35)') + '">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div>' +
-                '<div style="font-size:13.5px;font-weight:800;color:var(--text)">' + ((activeFolderObj.type === 'playlist' || activeFolderObj.isJsonPlaylist) ? '🎵 Custom Playlist: ' : '📁 Ordner: ') + esc(activeFolderObj.name) + '</div>' +
+                '<div style="font-size:13.5px;font-weight:800;color:var(--text)">' + ((activeFolderObj.type === 'playlist' || activeFolderObj.isJsonPlaylist) ? '🎵 Playlist: ' : '📁 Ordner: ') + esc(activeFolderObj.name) + '</div>' +
                 '<div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">' +
-                  'Status: <b style="color:' + (activeFolderObj.enabled !== false ? '#10b981' : 'var(--text-muted)') + '">' + (activeFolderObj.enabled !== false ? '🟢 In Haupt-Merkliste sichtbar' : '⚪ In Haupt-Merkliste ausgeblendet') + '</b>' +
+                  'Status: <b style="color:' + (activeFolderObj.enabled !== false ? '#10b981' : 'var(--text-muted)') + '">' + (activeFolderObj.enabled !== false ? '🟢 In Haupt-Merkliste sichtbar' : '⚪ Ausgeblendet') + '</b>' +
                   (activeFolderObj.sourceLabel ? ' • Quelle: ' + esc(activeFolderObj.sourceLabel) : '') +
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 (activeFolderObj.linked && activeFolderObj.tmdbRefId && activeFolderObj.type === 'collection'
-                  ? '<button class="btn purple" onclick="openCollectionView(' + Number(activeFolderObj.tmdbRefId) + ')">🍿 Komplette Filmreihe öffnen</button>'
+                  ? '<button class="btn purple" onclick="openCollectionView(' + Number(activeFolderObj.tmdbRefId) + ')">🍿 Komplette Filmreihe</button>'
                   : '') +
                 (activeFolderObj.linked && activeFolderObj.tmdbRefId && activeFolderObj.type === 'universe'
-                  ? '<button class="btn purple" onclick="openUniverseView(\\'' + esc(activeFolderObj.tmdbRefId) + '\\')">🌌 Komplettes Universum öffnen</button>'
+                  ? '<button class="btn purple" onclick="openUniverseView(\\'' + esc(activeFolderObj.tmdbRefId) + '\\')">🌌 Komplettes Universum</button>'
                   : '') +
                 '<button class="btn ' + (activeFolderObj.enabled !== false ? 'green' : 'blue') + '" onclick="togglePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\')">' + (activeFolderObj.enabled !== false ? '🟢 Ausschalten' : '⚪ Einschalten') + '</button>' +
                 '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">✏️ Umbenennen</button>' +
@@ -48943,44 +50093,57 @@
 
         const azLetters = ["ALL", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "#"];
         const curWlLetter = String(state.wlLetter || "ALL").toUpperCase();
-        const azBarHtml = '<div class="wl-az-bar" style="margin-bottom:10px">' +
-          azLetters.map(ltr =>
-            '<button type="button" class="wl-az-btn ' + (curWlLetter === ltr ? 'active' : '') + '" onclick="setWishlistLetter(\\'' + ltr + '\\')">' + (ltr === "ALL" ? "Alle" : ltr) + '</button>'
-          ).join("") +
-        '</div>';
+        const isAzVisible = Boolean(state.wlAzOpen || curWlLetter !== "ALL");
+        const hasActiveWlFilters = Boolean(
+          curWlLetter !== "ALL" ||
+          (state.wlFilterType && state.wlFilterType !== "all") ||
+          (state.wlSearchQuery && state.wlSearchQuery.trim())
+        );
+        const azBarHtml = isAzVisible ? (
+          '<div class="wl-az-bar" style="margin-bottom:10px">' +
+            azLetters.map(ltr =>
+              '<button type="button" class="wl-az-btn ' + (curWlLetter === ltr ? 'active' : '') + '" onclick="setWishlistLetter(\\'' + ltr + '\\')">' + (ltr === "ALL" ? "Alle" : ltr) + '</button>'
+            ).join("") +
+          '</div>'
+        ) : '';
 
-        const quickFilterBarHtml = '<div class="floating-filter-bar" style="margin-bottom:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
-          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Typ:</span>' +
-            '<button class="btn ' + (state.wlFilterType === 'all' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'all\\')">📂 Alle</button>' +
-            '<button class="btn ' + (state.wlFilterType === 'm' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'m\\')">🎬 Nur Filme</button>' +
-            '<button class="btn ' + (state.wlFilterType === 's' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'s\\')">📺 Nur Serien</button>' +
+        const showSubTypeSelect = (cur !== "cat_movies" && cur !== "cat_series");
+        const hasSearchTxt = Boolean(state.wlSearchQuery && state.wlSearchQuery.trim());
+        const quickFilterBarHtml = '<div class="floating-filter-bar" style="margin-bottom:10px;padding:8px 10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
+          '<div style="position:relative;display:flex;align-items:center;min-width:160px;flex:1 1 190px">' +
+            '<input id="wishlistSearchInp" class="tma-input" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste suchen..." style="width:100%;padding:6px 28px 6px 10px;border-radius:8px;font-size:12px" />' +
+            '<button type="button" id="wishlistSearchClearBtn" style="position:absolute;right:6px;display:' + (hasSearchTxt ? 'inline-flex' : 'none') + ';align-items:center;justify-content:center;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:12px;padding:2px 4px" onclick="clearWishlistSearchQuickClient()" title="Suchtext löschen">✕</button>' +
           '</div>' +
-          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Sortierung:</span>' +
-            '<button class="btn ' + (state.wlSort === 'added_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'added_desc\\')">🆕 Zuletzt</button>' +
-            '<button class="btn ' + (state.wlSort === 'title_asc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'title_asc\\')">🔤 A–Z</button>' +
-            '<button class="btn ' + (state.wlSort === 'year_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'year_desc\\')">📅 Jahr</button>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+            (showSubTypeSelect ? (
+              '<select class="mode-filter-select" onchange="setWishlistQuickFilter(this.value)" title="Medientyp in diesem Ordner filtern">' +
+                '<option value="all"' + (state.wlFilterType === "all" || !state.wlFilterType ? " selected" : "") + '>🎞️ Alle Typen</option>' +
+                '<option value="m"' + (state.wlFilterType === "m" ? " selected" : "") + '>🎬 Nur Filme</option>' +
+                '<option value="s"' + (state.wlFilterType === "s" ? " selected" : "") + '>📺 Nur Serien</option>' +
+              '</select>'
+            ) : '') +
+            '<select class="sort-select" onchange="setWishlistQuickSort(this.value)" title="Merkliste sortieren">' +
+              '<option value="added_desc"' + (state.wlSort === "added_desc" || !state.wlSort ? " selected" : "") + '>↕️ Zuletzt gespeichert</option>' +
+              '<option value="title_asc"' + (state.wlSort === "title_asc" ? " selected" : "") + '>🔤 Titel A–Z</option>' +
+              '<option value="year_desc"' + (state.wlSort === "year_desc" ? " selected" : "") + '>📅 Erscheinungsjahr</option>' +
+            '</select>' +
+            '<button type="button" class="btn ' + (isAzVisible ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="toggleWishlistAzBarClient()" title="Alphabetischen A–Z Schnellfilter ein-/ausblenden">🔤 A–Z' + (curWlLetter !== "ALL" ? ' (' + curWlLetter + ')' : ' ▾') + '</button>' +
+            '<button type="button" class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster</button>' +
+            '<button type="button" class="btn ' + (!isGridMode ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'list\\')" title="Als kompakte Liste mit Episoden-Auswahl anzeigen">📋 Liste</button>' +
+            (hasActiveWlFilters ? '<button type="button" class="btn danger" style="padding:5px 9px;font-size:11.5px" onclick="resetWishlistFiltersQuickClient()" title="Suchtext & Filter zurücksetzen">↺ Reset</button>' : '') +
           '</div>' +
-          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Ansicht:</span>' +
-            '<button class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster-Grid</button>' +
-            '<button class="btn ' + (!isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'list\\')" title="Als kompakte Liste mit Episoden-Auswahl anzeigen">📋 Liste</button>' +
-          '</div>' +
-          '<input id="wishlistSearchInp" class="tma-input" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:160px;flex:1;padding:6px 10px;border-radius:8px;font-size:12px" />' +
         '</div>';
 
         root.innerHTML = '<div class="section">' +
           '<div class="section-title">' +
-            '<span>💾 Synchronisierte Bot-Merkliste (<span id="wishlistCountSpan">' + filteredItems.length + '</span> Einträge)</span>' +
+            '<span>💾 Merkliste & Playlisten (<span id="wishlistCountSpan">' + filteredItems.length + '</span> Einträge)</span>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
               '<button class="btn blue" onclick="createNewFolderPrompt(true)">➕ Neue Playlist</button>' +
-              '<button class="btn" onclick="createNewFolderPrompt(false)">📁 Neuer Ordner</button>' +
-              (folders.length > 0 ? '<button class="btn ' + (isManageOpen ? 'active' : '') + '" onclick="toggleWishlistFoldersManager()">🗂️ Verwalten (' + folders.length + ') ' + (isManageOpen ? '▴' : '▾') + '</button>' : '') +
-              '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' +
+              '<button class="btn ' + (isManageOpen ? 'active' : '') + '" onclick="toggleWishlistFoldersManager()">🗂️ Ordner & Playlisten (' + folders.length + ') ' + (isManageOpen ? '▴' : '▾') + '</button>' +
+              '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
             '</div>' +
           '</div>' +
-          '<div class="chip-grid" style="margin-bottom:10px">' + folderBtns + '</div>' +
+          '<div class="chip-grid" style="margin-bottom:8px">' + folderBtns + '</div>' +
           smartPlaylistsPanelHtml +
           activeFolderBannerHtml +
           quickFilterBarHtml +
@@ -49090,10 +50253,24 @@
         loadWishlist(state.wlFolder);
       }
 
+      let activeSettingsSectionTab = "general";
+
+      function switchSettingsSectionTabClient(tabId) {
+        triggerTmaHapticClient("selection");
+        activeSettingsSectionTab = tabId || "general";
+        document.querySelectorAll("[data-settings-tab-btn]").forEach(btn => {
+          btn.classList.toggle("blue", btn.getAttribute("data-settings-tab-btn") === activeSettingsSectionTab);
+        });
+        document.querySelectorAll("[data-settings-sec]").forEach(sec => {
+          const secKey = sec.getAttribute("data-settings-sec");
+          sec.style.display = (activeSettingsSectionTab === "all" || secKey === activeSettingsSectionTab) ? "block" : "none";
+        });
+      }
+
       async function loadSettingsView() {
         state.currentView = "settings";
         updateMediaModeIndicatorDom();
-        setBusyState(true, "⚙️ Lade Filter-Cockpit & Account-Einstellungen...");
+        setBusyState(true, "⚙️ Lade Einstellungen...");
         try {
           const r = await apiFetchJson(API_BASE + "/settings?chatId=" + encodeURIComponent(chatId));
           const s = r.settings || {};
@@ -49113,46 +50290,57 @@
           const prevSettingsFocusDfId = (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.getAttribute)
             ? currentSpatialEl.getAttribute("data-df-id")
             : null;
+          const curTab = activeSettingsSectionTab || "general";
+          const showSec = (key) => (curTab === "all" || curTab === key) ? "block" : "none";
 
           root.innerHTML = '<div class="section">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">' +
-              '<button class="btn" onclick="goHome()" style="padding:7px 14px;font-size:12.5px">⬅️ Zurück zur Übersicht (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
-              '<span style="font-size:12px;font-weight:700;color:var(--text-muted)">⚙️ Einstellungen & Filter-Cockpit</span>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+              '<button class="btn" onclick="goHome()" style="padding:7px 14px;font-size:12.5px">⬅️ Zurück zum Katalog (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button type="button" class="btn ' + (curTab === 'general' ? 'blue' : '') + '" data-settings-tab-btn="general" onclick="switchSettingsSectionTabClient(\\'general\\')">🎛️ Allgemein & Account</button>' +
+                '<button type="button" class="btn ' + (curTab === 'delivery' ? 'blue' : '') + '" data-settings-tab-btn="delivery" onclick="switchSettingsSectionTabClient(\\'delivery\\')">📤 Telegram-Versand</button>' +
+                '<button type="button" class="btn ' + (curTab === 'shortcuts' ? 'blue' : '') + '" data-settings-tab-btn="shortcuts" onclick="switchSettingsSectionTabClient(\\'shortcuts\\')">⚡ Bot-Befehle</button>' +
+                '<button type="button" class="btn ' + (curTab === 'filters' ? 'blue' : '') + '" data-settings-tab-btn="filters" onclick="switchSettingsSectionTabClient(\\'filters\\')">🛡️ Filter-Matrix</button>' +
+                '<button type="button" class="btn ' + (curTab === 'all' ? 'blue' : '') + '" data-settings-tab-btn="all" onclick="switchSettingsSectionTabClient(\\'all\\')">📋 Alle zeigen</button>' +
+              '</div>' +
             '</div>' +
+
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
-                '<span>🔐 Account & Sicherheit (' + (isAuth ? ('Verbunden: ID ' + esc(u.telegramId)) : '👤 Gast-Modus ohne Speicher') + ')</span>' +
+                '<span>🔐 Account & Sicherheit (' + (isAuth ? ('Verbunden: ID ' + esc(u.telegramId)) : '👤 Gast-Modus') + ')</span>' +
                 '<div style="display:flex;gap:6px">' +
                   (u.isAdmin ? '<button class="btn blue" onclick="loadAdminPanelView()">👑 Admin-Panel</button>' : '') +
-                  '<button class="btn purple" onclick="openAccountModal()">🔑 ' + (isAuth ? (u.hasPasswordAccount ? 'Zugangsdaten verwalten' : 'Account mit Passwort absichern') : 'Jetzt einloggen') + '</button>' +
+                  '<button class="btn purple" onclick="openAccountModal()">🔑 ' + (isAuth ? (u.hasPasswordAccount ? 'Zugangsdaten verwalten' : 'Passwort festlegen') : 'Jetzt einloggen') + '</button>' +
                 '</div>' +
               '</div>' +
               '<p style="font-size:12px;color:var(--muted);line-height:1.5">' +
                 (isAuth
                   ? (u.hasPasswordAccount
-                      ? '✅ Dein Account ist als <b>' + esc(u.customUsername) + '</b> mit Passwort abgesichert. Du kannst dich von jedem Gerät und Browser (auch ohne Telegram <code>initData</code>) einloggen.'
-                      : '💡 Du bist über Telegram <code>initData</code> eingeloggt. Lege jetzt einen <b>Username & Passwort</b> fest, damit du dich künftig auch außerhalb von Telegram von überall einloggen kannst!')
-                  : '⚠️ Ohne Telegram <code>initData</code> und ohne Account-Login bist du im Gast-Modus (kein Merklisten-Speicher, kein Zugriff auf fremde IDs).') +
+                      ? '✅ Dein Account ist als <b>' + esc(u.customUsername) + '</b> mit Passwort geschützt. Du kannst dich von jedem Gerät und Browser einloggen.'
+                      : '💡 Du bist über Telegram angemeldet. Lege optional einen <b>Benutzernamen & Passwort</b> fest, um dich auch im normalen Webbrowser einzuloggen.')
+                  : '⚠️ Im Gast-Modus wird keine persönliche Merkliste synchronisiert. Melde dich an, um deine Favoriten und Einstellungen dauerhaft zu speichern.') +
               '</p>' +
             '</div>' +
+            '</div>' +
 
+            '<div data-settings-sec="delivery" style="display:' + showSec('delivery') + '">' +
             (function() {
               const deliv = getDeliveryPreferencesClient();
               const dMode = deliv.targetMode || "dm";
               const customHookUrl = window.location.origin + "/api/telegram/custom-webhook" + (deliv.customBotToken ? ("?botToken=" + encodeURIComponent(deliv.customBotToken)) : "");
               return '<div class="panel-box">' +
                 '<div class="section-title">' +
-                  '<span>📤 Standard-Versandziel, Gruppen-Delivery & Eigener Bot</span>' +
+                  '<span>📤 Standard-Versandziel & Gruppen-Zustellung</span>' +
                   '<span style="font-size:11px;color:#0284c7;font-weight:700">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
                 '</div>' +
                 '<p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">' +
-                  'Bestimme, wohin Filme & Serien standardmäßig gesendet werden: in deinen <b>💬 Bot-Privatchat</b>, in eine <b>👥 eigene Ziel-Gruppe</b> oder über deinen <b>🤖 eigenen Telegram-Bot-Token</b>. ' +
-                  'Wenn der Bot Mitglied deiner Quellgruppe (aus <code>result.json</code>) ist, löst er Dateien automatisch per <code>copyMessage</code> auf und speichert die File-ID in D1.' +
+                  'Bestimme, wohin Filme & Serien standardmäßig gesendet werden: in deinen <b>💬 Bot-Privatchat</b>, in eine <b>👥 eigene Ziel-Gruppe</b> oder über deinen <b>🤖 eigenen Telegram-Bot</b>.' +
                 '</p>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-                  '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
-                  '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
-                  '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
+                  '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Bot-Privatchat</button>' +
+                  '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Eigene Ziel-Gruppe</button>' +
+                  '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Eigener Bot</button>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
@@ -49164,17 +50352,20 @@
                     '<input id="settingsTargetTopicIdInp" class="tma-input" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
-                    '<input id="settingsSourceBridgeIdInp" class="tma-input" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%" />' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (optional):</div>' +
+                    '<input id="settingsSourceBridgeIdInp" class="tma-input" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Automatisch oder ID eintragen" style="width:100%" />' +
                   '</div>' +
                   '<div>' +
                     '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
-                    '<input id="settingsCustomBotTokenInp" class="tma-input" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%" />' +
+                    '<div style="display:flex;gap:4px;align-items:center">' +
+                      '<input id="settingsCustomBotTokenInp" class="tma-input" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%" />' +
+                      '<button type="button" class="btn" style="padding:7px 9px;font-size:12px" onclick="togglePasswordVisibilityClient(\\'settingsCustomBotTokenInp\\',this)" title="Bot-Token ein-/ausblenden">👁️</button>' +
+                    '</div>' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
-                  '<button class="btn green" onclick="verifyAndConnectCustomBotInSettingsClient()">💾 Speichern & optionalen Bot-Webhook verbinden</button>' +
-                  '<span style="font-size:11px;color:var(--muted)">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
+                  '<button class="btn green" onclick="verifyAndConnectCustomBotInSettingsClient()">💾 Einstellungen speichern & Bot verbinden</button>' +
+                  '<span style="font-size:11px;color:var(--muted)">Webhook: <code>' + esc(customHookUrl) + '</code></span>' +
                 '</div>' +
                 '<div id="customBotVerifyStatus" style="font-size:12px;color:#0284c7;margin-top:6px">' +
                   (deliv.customBotUsername ? ('✅ Aktiver eigener Bot: @' + esc(deliv.customBotUsername)) : '') +
@@ -49182,23 +50373,24 @@
                 '<div class="sidebar-sub-divider" style="margin-top:12px;padding-top:10px">' +
                   '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
                     '<div>' +
-                      '<div style="font-size:12px;font-weight:700;color:var(--text)">🧹 Retention Policy (KV-Performance & Log-Aufbewahrung)</div>' +
-                      '<div style="font-size:11px;color:var(--muted)">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
+                      '<div style="font-size:12px;font-weight:700;color:var(--text)">🧹 Aufbewahrungsdauer für Zustell-Protokolle</div>' +
+                      '<div style="font-size:11px;color:var(--muted)">Ältere Zustell-Einträge werden nach Ablauf automatisch bereinigt.</div>' +
                     '</div>' +
                     '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                       '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
                       '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
                       '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
-                      '<button type="button" class="btn danger" style="padding:4px 8px;font-size:11px" onclick="clearTmaActivityLogClient()" title="Alle gespeicherten Telegram-Zustelllogs in KV sofort löschen">🗑️ Log leeren</button>' +
+                      '<button type="button" class="btn danger" style="padding:4px 8px;font-size:11px" onclick="clearTmaActivityLogClient()" title="Zustellprotokoll sofort leeren">🗑️ Protokoll leeren</button>' +
                     '</div>' +
                   '</div>' +
-                  '<div style="font-size:10.5px;color:#0284c7;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MY_KV</code>)</div>' +
                   '<div id="tmaActivityLogMount"><div style="font-size:11px;color:var(--muted)">Lade letzte Zustell-Aktivitäten...</div></div>' +
                 '</div>' +
               '</div>' +
               buildAntiSpamCockpitBoxHtmlClient();
             })() +
+            '</div>' +
 
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🧭 Steuerung, Maus-Hover & Slider-Einstellungen</span>' +
@@ -49222,7 +50414,9 @@
                 '</button>' +
               '</div>' +
             '</div>' +
+            '</div>' +
 
+            '<div data-settings-sec="shortcuts" style="display:' + showSec('shortcuts') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>⚡ Telegram-Bot Schnellbefehls-Übersicht</span>' +
@@ -49236,7 +50430,9 @@
                 '<div class="shortcut-cheat-card"><b>🎲 Zufalls-Tipp (mit Genre optional)</b><code>/r f   • /rand f   • /random f  • /r f Action</code><br><code>/r s   • /rand s   • /random s  • /r s Sci-Fi</code></div>' +
               '</div>' +
             '</div>' +
+            '</div>' +
 
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🎬 Instant-Trailer Provider (Direktwiedergabe aus der Übersicht)</span>' +
@@ -49249,6 +50445,8 @@
                 ).join("") +
               '</div>' +
             '</div>' +
+            '</div>' +
+            '<div data-settings-sec="filters" style="display:' + showSec('filters') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title"><span>🛡️ Bot-Filter Cockpit (Steuerung über ✓ Positiv & ✕ Negativ)</span>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
@@ -49256,7 +50454,7 @@
                   '<button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button>' +
                 '</div>' +
               '</div>' +
-              '<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Filter lassen sich gezielt über <b>✓ (Positiv)</b> und <b>✕ (Negativ)</b> schalten (der Text selbst ist nicht auswählbar). Ist ein Filter aktiv, gibt dessen Auswahl direkt <b>○ Neutral</b> vor, während daneben die Gegenoption wählbar bleibt.</p>' +
+              '<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Schalte Filter gezielt über <b>✓ (Einschließen)</b> und <b>✕ (Ausschließen)</b>. Ein erneuter Klick setzt den Filter wieder auf Neutral.</p>' +
               (isCurrentUserVip() ? (
                 '<div style="font-size:12.5px;font-weight:700;margin:8px 0 6px;color:#0284c7">🌟 Exklusiver VIP-Stream Filter (#13):</div>' +
                 '<div class="direct-filter-grid" style="margin-bottom:10px">' +
@@ -49296,6 +50494,8 @@
               renderDirectFilterOptionCard("unreleased", "unreleased", "🗓️ Unveröffentlicht", Boolean(s.showUnreleased), false) +
               '</div>' +
             '</div>' +
+            '</div>' +
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             (isAuth ? (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>🌐 Optionale TMDB-Konto Synchronisierung</span>' +
@@ -49316,6 +50516,7 @@
                 '<div id="tmdbSyncStatus" style="font-size:12px;color:#fbbf24;margin-top:8px"></div>' +
               '</div>'
             ) : '') +
+            '</div>' +
           '</div>';
           if (typeof loadTmaActivityLogPreviewClient === "function") {
             loadTmaActivityLogPreviewClient();
@@ -57099,7 +58300,10 @@
 
           root.innerHTML = '<div class="section">' +
             '<div class="section-title">' +
-              '<span>👑 Admin-Cockpit & Bot-Zentrale</span>' +
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                '<button type="button" class="btn" onclick="goHome()" title="Zurück zum Katalog">⬅️ Katalog</button>' +
+                '<span>👑 Admin-Cockpit & Bot-Zentrale</span>' +
+              '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button class="btn ' + (state.adminTab === 'bot' ? 'active' : 'blue') + '" onclick="state.adminTab=\\'bot\\';loadAdminPanelView()">🤖 Bot & Einstellungen</button>' +
                 '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 JSON-Import</button>' +
@@ -57636,11 +58840,12 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .world-portal-card, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .page-counter-pill, #smartPageIndicatorBtn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
       let userScrolledRecently = false;
+      let lastElevatorReturnEl = null;
 
       window.addEventListener("wheel", () => { userScrolledRecently = true; }, { passive: true });
       window.addEventListener("touchmove", () => { userScrolledRecently = true; }, { passive: true });
@@ -57702,8 +58907,10 @@
         const isStickyOrFixed = Boolean(
           el && (
             el.id === "smartPageIndicatorBtn" ||
+            el.id === "catalogBackToTopFab" ||
             (el.closest && (
               el.closest("header") ||
+              el.closest("#tvQuickJumpElevator") ||
               el.closest(".modal-backdrop") ||
               el.closest(".page-jump-modal-backdrop") ||
               el.closest(".sidebar-drawer") ||
@@ -57879,6 +59086,14 @@
               return;
             }
 
+            if (
+              el.id === "smartPageIndicatorBtn" ||
+              el.id === "catalogBackToTopFab" ||
+              (el.closest && el.closest("#tvQuickJumpElevator"))
+            ) {
+              return;
+            }
+
             // Hauptseite: Wenn Fokus auf Header, Suchleiste oder Hero-Slider liegt -> komplett nach oben (top: 0) scrollen
             const inTopZone = Boolean(
               el.closest && (
@@ -57930,12 +59145,33 @@
         if (!el) return;
         if (currentSpatialEl && currentSpatialEl !== el) {
           currentSpatialEl.classList.remove("spatial-focus");
+          currentSpatialEl.classList.remove("ac-kb-active");
         }
-        if (document.activeElement && document.activeElement !== el && document.activeElement !== document.body && typeof document.activeElement.blur === "function") {
+        const isTargetInSearchDropdown = Boolean(
+          el.closest && (el.closest("#searchAutocompleteBox") || el.closest("#searchGenreDropdownOverlay"))
+        );
+        if (
+          document.activeElement &&
+          document.activeElement !== el &&
+          document.activeElement !== document.body &&
+          !(document.activeElement.id === "searchInput" && isTargetInSearchDropdown) &&
+          typeof document.activeElement.blur === "function"
+        ) {
           try { document.activeElement.blur(); } catch (e) {}
         }
         currentSpatialEl = el;
         currentSpatialEl.classList.add("spatial-focus");
+        if (el.classList && el.classList.contains("ac-item")) {
+          const acBoxEl = document.getElementById("searchAutocompleteBox");
+          if (acBoxEl) {
+            const allAc = Array.from(acBoxEl.querySelectorAll(".ac-item"));
+            const idx = allAc.indexOf(el);
+            if (typeof activeAutocompleteIndex !== "undefined") {
+              activeAutocompleteIndex = idx;
+            }
+            allAc.forEach((item, i) => item.classList.toggle("ac-kb-active", i === idx));
+          }
+        }
         const parentCard = isCardSubElement(el) ? el.closest(".card") : null;
         clearCardSubnavState(parentCard);
         if (parentCard) parentCard.classList.add("card-subnav-active");
@@ -58076,7 +59312,7 @@
         currentSpatialEl.click();
       }
 
-      function moveSpatialFocus(dir) {
+      function moveSpatialFocus(dir, suppressScroll = false) {
         engageKeyboardNavMode();
         lastSpatialNavDir = dir || "down";
         const list = getVisibleFocusables();
@@ -58351,6 +59587,40 @@
           if (focusSearchOrHeaderUp()) return;
         }
 
+        // Deterministische Hoch/Runter-Navigation innerhalb der Such-Vorschlagsliste (#searchAutocompleteBox)
+        const inAutocompleteBox = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#searchAutocompleteBox"));
+        if (inAutocompleteBox) {
+          const acItems = Array.from(document.querySelectorAll("#searchAutocompleteBox.open .ac-item")).filter(el => list.includes(el));
+          const acIdx = acItems.indexOf(currentSpatialEl);
+          if (dir === "down") {
+            if (acIdx !== -1 && acIdx + 1 < acItems.length) {
+              setSpatialFocus(acItems[acIdx + 1], true, "down");
+              return;
+            }
+            const firstBelowCard = document.querySelector("#resultsGridContainer .card, .floating-filter-bar .f-pill, #appRoot .card");
+            if (firstBelowCard && list.includes(firstBelowCard)) {
+              closeAutocomplete();
+              setSpatialFocus(firstBelowCard, true, "down");
+            }
+            return;
+          }
+          if (dir === "up") {
+            if (acIdx > 0) {
+              setSpatialFocus(acItems[acIdx - 1], true, "up");
+              return;
+            }
+            if (sInp && list.includes(sInp)) {
+              if (typeof setAutocompleteHighlightIndexClient === "function") setAutocompleteHighlightIndexClient(-1);
+              setSpatialFocus(sInp, true, "up");
+              try { sInp.focus(); } catch (e) {}
+              return;
+            }
+          }
+          if (dir === "left" || dir === "right") {
+            return;
+          }
+        }
+
         // Einzeilige Top-Leiste (<header id="topUnifiedBar" class="search-bar-outer">):
         // Deterministische Links/Rechts-Reihenfolge über alle 38px-Elemente (☰ Menü / ← Zurück -> Logo -> Filme -> Serien -> Genre -> Suche -> ✕ -> 🔍 -> 💾 Merkliste -> ▴ Einklappen / ◀ ▶)
         const topHideBtn = document.getElementById("heroHideBtn");
@@ -58359,7 +59629,8 @@
         const topPrevAdjBtn = document.getElementById("modalAdjPrevBtn");
         const topNextAdjBtn = document.getElementById("modalAdjNextBtn");
         const mobCollapseBtn = document.getElementById("mobileSearchCollapseBtn");
-        const inHeader = Boolean(
+        const inGenreOverlay = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#searchGenreDropdownOverlay"));
+        const inHeader = !inAutocompleteBox && !inGenreOverlay && Boolean(
           (currentSpatialEl.closest && (currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))) ||
           currentSpatialEl === topBackBtn ||
           currentSpatialEl === topPrevAdjBtn ||
@@ -58402,20 +59673,23 @@
             const modalBackdropEl = document.querySelector("#modalRoot .modal-backdrop");
             if (modalBackdropEl && modalBackdropEl.scrollTop > 10) {
               modalBackdropEl.scrollTo({ top: 0, behavior: "smooth" });
-            } else if ((window.scrollY || window.pageYOffset || 0) > 10) {
+            } else if ((window.scrollY || window.pageYOffset || 0) > 15) {
               window.scrollTo({ top: 0, behavior: "smooth" });
+            } else if (!suppressScroll && !modalBackdropEl && typeof tvElevatorJumpClient === "function") {
+              // Vertikales Rand-Wrap-Around (Oben -> Unten zur Seitenwahl / Katalog-Ende)
+              tvElevatorJumpClient("bottom", true);
             }
             return;
           }
           if (dir === "down") {
             const firstGenreChip = document.querySelector("#searchGenreDropdownOverlay.open .genre-overlay-chip.active, #searchGenreDropdownOverlay.open .genre-overlay-chip");
             if (firstGenreChip && list.includes(firstGenreChip)) {
-              setSpatialFocus(firstGenreChip, true);
+              setSpatialFocus(firstGenreChip, !suppressScroll);
               return;
             }
             const firstAc = document.querySelector("#searchAutocompleteBox.open .ac-item");
             if (firstAc && list.includes(firstAc)) {
-              setSpatialFocus(firstAc, true);
+              setSpatialFocus(firstAc, !suppressScroll);
               return;
             }
             const isScrolledPastHero = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
@@ -58423,19 +59697,55 @@
               const heroTr = document.getElementById("heroBtnTrailer");
               const heroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
               if (heroTr && list.includes(heroTr)) {
-                setSpatialFocus(heroTr, true);
+                setSpatialFocus(heroTr, !suppressScroll);
                 return;
               }
               if (heroDot && list.includes(heroDot)) {
-                setSpatialFocus(heroDot, true);
+                setSpatialFocus(heroDot, !suppressScroll);
                 return;
               }
               const restoreBtn = document.getElementById("heroRestoreBtn");
               if (restoreBtn && list.includes(restoreBtn)) {
-                setSpatialFocus(restoreBtn, true);
+                setSpatialFocus(restoreBtn, !suppressScroll);
                 return;
               }
             }
+          }
+        }
+
+        // Deterministische Navigation innerhalb des seitlichen TV-Schnellsprung-Fahrstuhls (#tvQuickJumpElevator)
+        const inTvElevator = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"));
+        if (inTvElevator) {
+          const elevBtns = Array.from(document.querySelectorAll("#tvQuickJumpElevator .tv-elevator-btn")).filter(el => !el.disabled);
+          const eIdx = elevBtns.indexOf(currentSpatialEl);
+          if (dir === "up" || dir === "down") {
+            if (elevBtns.length > 0) {
+              const nextEIdx = dir === "down"
+                ? ((eIdx + 1) % elevBtns.length)
+                : ((eIdx - 1 + elevBtns.length) % elevBtns.length);
+              setSpatialFocus(elevBtns[nextEIdx], false, dir);
+            }
+            return;
+          }
+          if (dir === "left") {
+            if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
+              setSpatialFocus(lastElevatorReturnEl, true, "left");
+              return;
+            }
+            const visibleCards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => {
+              if (!list.includes(el)) return false;
+              const r = el.getBoundingClientRect();
+              return r.top >= 48 && r.bottom <= window.innerHeight + 40;
+            });
+            if (visibleCards.length > 0) {
+              // Wähle die am weitesten rechts liegende sichtbare Karte
+              visibleCards.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+              setSpatialFocus(visibleCards[0], false, "left");
+              return;
+            }
+          }
+          if (dir === "right") {
+            return;
           }
         }
 
@@ -58448,7 +59758,7 @@
           if (shIdx !== -1) {
             const nextShIdx = dir === "right" ? shIdx + 1 : shIdx - 1;
             if (nextShIdx >= 0 && nextShIdx < sbHeaderItems.length) {
-              setSpatialFocus(sbHeaderItems[nextShIdx], true, dir);
+              setSpatialFocus(sbHeaderItems[nextShIdx], !suppressScroll, dir);
             }
             return;
           }
@@ -58468,15 +59778,15 @@
             const heroTr = document.getElementById("heroBtnTrailer");
             const restoreBtn = document.getElementById("heroRestoreBtn");
             if (actHeroDot && list.includes(actHeroDot)) {
-              setSpatialFocus(actHeroDot, true);
+              setSpatialFocus(actHeroDot, !suppressScroll);
               return;
             }
             if (heroTr && list.includes(heroTr)) {
-              setSpatialFocus(heroTr, true);
+              setSpatialFocus(heroTr, !suppressScroll);
               return;
             }
             if (restoreBtn && list.includes(restoreBtn)) {
-              setSpatialFocus(restoreBtn, true);
+              setSpatialFocus(restoreBtn, !suppressScroll);
               return;
             }
             if (focusSearchOrHeaderUp()) return;
@@ -58494,7 +59804,7 @@
           if (tIdx !== -1) {
             const nextTIdx = dir === "right" ? tIdx + 1 : tIdx - 1;
             if (nextTIdx >= 0 && nextTIdx < trackCards.length) {
-              setSpatialFocus(trackCards[nextTIdx], true, dir);
+              setSpatialFocus(trackCards[nextTIdx], !suppressScroll, dir);
             }
             return;
           }
@@ -58504,11 +59814,64 @@
         const cx = curRect.left + curRect.width / 2;
         const cy = curRect.top + curRect.height / 2;
 
+        // Rechts-Rand-Ausbruch (1-Click Escape auf den seitlichen TV-Schnellsprung-Fahrstuhl):
+        // Wenn man sich im Hauptkatalog / in der Merkliste am rechten Rand einer Zeile befindet und Pfeil Rechts (▶) drückt,
+        // wechselt der Fokus direkt auf den TV-Fahrstuhl (#tvQuickJumpElevator) – und mit Pfeil Links (◀) exakt zur selben Karte zurück!
+        const hasOverlayBlockingElevator = Boolean(
+          document.getElementById("modalRoot")?.innerHTML.trim() ||
+          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
+          document.getElementById("lightboxRoot")?.innerHTML.trim() ||
+          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
+          state.sidebarOpen
+        );
+        if (
+          dir === "right" &&
+          !hasOverlayBlockingElevator &&
+          !inHeader &&
+          !curHero &&
+          !inTvElevator &&
+          !curHorizTrack &&
+          currentSpatialEl.closest &&
+          currentSpatialEl.closest("#appRoot")
+        ) {
+          const hasRightNeighborInSameRow = list.some(cand => {
+            if (cand === currentSpatialEl) return false;
+            if (cand.id === "smartPageIndicatorBtn" || cand.id === "catalogBackToTopFab") return false;
+            if (cand.closest && (cand.closest("#tvQuickJumpElevator") || cand.closest("header"))) return false;
+            const r = getSpatialLayoutBox(cand);
+            const cTx = r.left + r.width / 2;
+            const cTy = r.top + r.height / 2;
+            if (cTx <= cx + 6) return false;
+            const vOverlap = Math.min(curRect.bottom, r.bottom) - Math.max(curRect.top, r.top);
+            return vOverlap > 4 || Math.abs(cTy - cy) < Math.max(curRect.height, r.height) * 0.62;
+          });
+          if (!hasRightNeighborInSameRow) {
+            const elevContainer = document.getElementById("tvQuickJumpElevator");
+            if (elevContainer) {
+              elevContainer.classList.add("is-visible");
+              lastElevatorReturnEl = currentSpatialEl;
+              const targetElevBtn = document.getElementById("tvElevBtnMid") || document.getElementById("tvElevBtnTop") || elevContainer.querySelector(".tv-elevator-btn");
+              if (targetElevBtn) {
+                setSpatialFocus(targetElevBtn, false, "right");
+                return;
+              }
+            }
+          }
+        }
+
         let bestEl = null;
         let bestScore = Infinity;
 
         for (const cand of list) {
           if (cand === currentSpatialEl) continue;
+          // Schwebende Rand-Widgets (#tvQuickJumpElevator, #smartPageIndicatorBtn, #catalogBackToTopFab) bei normaler Raster-Suche überspringen
+          if (
+            cand.id === "smartPageIndicatorBtn" ||
+            cand.id === "catalogBackToTopFab" ||
+            (cand.closest && cand.closest("#tvQuickJumpElevator"))
+          ) {
+            continue;
+          }
           const candHero = cand.closest ? cand.closest(".hero") : null;
           if (curHero && candHero) {
             // Beim Verlassen des Hero-Banners nach Oben/Unten alle anderen internen Hero-Elemente überspringen
@@ -58582,10 +59945,17 @@
         }
 
         if (bestEl) {
-          setSpatialFocus(bestEl, true, dir);
+          setSpatialFocus(bestEl, !suppressScroll, dir);
         } else {
+          // Vertikales Rand-Wrap-Around am unteren Ende (Unten -> Oben zur Suche / Kopfleiste)
+          if (!suppressScroll && dir === "down" && !hasOverlayBlockingElevator && typeof tvElevatorJumpClient === "function") {
+            tvElevatorJumpClient("top", true);
+            return;
+          }
           // Kein weiteres Element in dieser Richtung vorhanden -> Fokus bleibt sauber im Sichtfeld auf dem aktuellen Element
-          useSpatialScrollIntoView(currentSpatialEl, dir);
+          if (!suppressScroll) {
+            useSpatialScrollIntoView(currentSpatialEl, dir);
+          }
         }
       }
 
@@ -58740,6 +60110,243 @@
         }, TOP_BAR_HOLD_DURATION_MS);
       }
 
+      // =========================================================================
+      // TV- & KONSOLEN-TURBO-SPRUNG, SCHNELLSPRUNG-FAHRSTUHL & TRIGGER-SEITENWAHL
+      // =========================================================================
+      let verticalTurboDir = "";
+      let verticalTurboStreak = 0;
+      let verticalTurboLastStepAt = 0;
+      let verticalTurboExpressDone = false;
+      let controllerL2R2Mode = "page"; // "page" (Standard: 5-Zeilen / Seiten-Blättern) oder "zoom" (UI-Zoom)
+
+      function resetVerticalTurboStreakClient() {
+        verticalTurboDir = "";
+        verticalTurboStreak = 0;
+        verticalTurboLastStepAt = 0;
+        verticalTurboExpressDone = false;
+        cancelTopBarUpHold();
+      }
+
+      function moveSpatialFocusMultiRowClient(dir, steps = 3) {
+        const count = Math.max(1, Number(steps) || 3);
+        let prevEl = currentSpatialEl;
+        for (let i = 0; i < count; i++) {
+          const isLast = i === count - 1;
+          moveSpatialFocus(dir, !isLast);
+          if (currentSpatialEl === prevEl) break;
+          prevEl = currentSpatialEl;
+        }
+        if (currentSpatialEl) {
+          useSpatialScrollIntoView(currentSpatialEl, dir);
+        }
+      }
+
+      function tvElevatorJumpClient(targetZone, isWrapAround = false) {
+        if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+        closeAutocomplete();
+        const list = getVisibleFocusables();
+        const isWishlist = state.currentView === "wishlist";
+
+        if (targetZone === "top") {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          const wlInp = isWishlist ? document.getElementById("wishlistSearchInp") : null;
+          const topTarget = (wlInp && list.includes(wlInp))
+            ? wlInp
+            : (document.getElementById("searchInput") || document.getElementById("sidebarToggleBtn"));
+          if (topTarget) {
+            jumpSpatialFocus(topTarget, false, "up");
+          }
+          if (typeof showHudToast === "function") {
+            showHudToast(isWrapAround ? "🔄 Oben: Such- & Navigationsleiste" : "⬆️ Oben: Such- & Navigationsleiste");
+          }
+          return;
+        }
+
+        if (targetZone === "filter") {
+          const filterTarget = isWishlist
+            ? (document.getElementById("wishlistSearchInp") || document.querySelector("#appRoot .sort-select, #appRoot .f-pill, #appRoot .btn"))
+            : document.querySelector(".floating-filter-bar .mode-filter-select, .floating-filter-bar .sort-select, .floating-filter-bar .f-pill, #sectionPageCounterPill");
+          if (filterTarget && list.includes(filterTarget)) {
+            jumpSpatialFocus(filterTarget, true, "up");
+            if (typeof showHudToast === "function") {
+              showHudToast("🎛️ Fokus auf Filter- & Sortierleiste");
+            }
+          } else {
+            tvElevatorJumpClient("top", false);
+          }
+          return;
+        }
+
+        if (targetZone === "middle") {
+          const cards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => list.includes(el));
+          if (cards.length > 0) {
+            const midIdx = Math.floor(cards.length / 2);
+            const midCard = cards[midIdx];
+            lastElevatorReturnEl = midCard;
+            jumpSpatialFocus(midCard, true, "down");
+            if (typeof showHudToast === "function") {
+              showHudToast("🎯 Mitte des Rasters (Titel " + (midIdx + 1) + " von " + cards.length + ")");
+            }
+          }
+          return;
+        }
+
+        if (targetZone === "bottom") {
+          const botPageBtn = document.getElementById("bottomPageCounterPill");
+          const loadMoreBtn = document.getElementById("manualLoadMoreBtn");
+          const topPagePill = document.getElementById("sectionPageCounterPill");
+          const cards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => list.includes(el));
+          const lastCard = cards.length > 0 ? cards[cards.length - 1] : null;
+
+          // Wenn man bereits unten auf dem Seitenwahl-Button steht und nochmals "Seiten / Unten" klickt -> direkt Seitenwahl-Dialog öffnen!
+          if (!isWrapAround && currentSpatialEl && (currentSpatialEl === botPageBtn || currentSpatialEl.id === "tvElevBtnBot") && Number(state.totalPages) > 1) {
+            const docH = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+            const atBottomAlready = (window.innerHeight + (window.scrollY || window.pageYOffset || 0)) >= docH - 180;
+            if (atBottomAlready && typeof openPageJumpModalClient === "function") {
+              openPageJumpModalClient();
+              return;
+            }
+          }
+
+          const targetBotEl = (botPageBtn && list.includes(botPageBtn))
+            ? botPageBtn
+            : (loadMoreBtn && list.includes(loadMoreBtn))
+              ? loadMoreBtn
+              : lastCard || topPagePill;
+
+          if (targetBotEl) {
+            if (lastCard) lastElevatorReturnEl = lastCard;
+            jumpSpatialFocus(targetBotEl, true, "down");
+            if (typeof showHudToast === "function") {
+              showHudToast(isWrapAround ? "⏬ Unten: Seitenwahl & Katalog-Ende" : "📄 Unten: Seitenwahl & Katalog-Ende");
+            }
+          }
+          return;
+        }
+      }
+
+      function handleVerticalDirectionStepWithTurboClient(dir, isRepeatEvent = false) {
+        const now = Date.now();
+        const isSameDir = verticalTurboDir === dir && (now - verticalTurboLastStepAt < 420);
+        if (!isSameDir) {
+          verticalTurboDir = dir;
+          verticalTurboStreak = 1;
+          verticalTurboExpressDone = false;
+        } else {
+          verticalTurboStreak++;
+        }
+        verticalTurboLastStepAt = now;
+
+        const inTvElevator = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"));
+        const inAutocomplete = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchAutocompleteBox"));
+        if (inTvElevator || inAutocomplete || state.sidebarOpen) {
+          moveSpatialFocus(dir, false);
+          return;
+        }
+
+        // Stufe 1 (Schritte 1–2): Präziser 1-Zeilen-Schritt
+        if (verticalTurboStreak <= 2) {
+          cancelTopBarUpHold();
+          moveSpatialFocus(dir, false);
+          return;
+        }
+
+        // Stufe 2 (Schritte 3–7): Beschleunigter 3-Zeilen-Turbo-Sprung
+        if (verticalTurboStreak <= 7) {
+          topBarUpHoldActive = true;
+          const ind = document.getElementById("modalHoldNavIndicator");
+          const txt = document.getElementById("modalHoldNavText");
+          const bar = document.getElementById("modalHoldNavBar");
+          if (ind && txt && bar) {
+            ind.classList.remove("left", "right");
+            txt.textContent = dir === "up"
+              ? "⚡ Turbo-Sprung ▲ (3× Zeilen) • Weiter halten für Anfang/Suche…"
+              : "⚡ Turbo-Sprung ▼ (3× Zeilen) • Weiter halten für Seitenwahl/Ende…";
+            ind.style.display = "flex";
+            const pct = Math.min(100, Math.round(((verticalTurboStreak - 2) / 5) * 100));
+            bar.style.transition = "width 90ms linear";
+            bar.style.width = pct + "%";
+          }
+          moveSpatialFocusMultiRowClient(dir, 3);
+          return;
+        }
+
+        // Stufe 3 (Ab Schritt 8): Direkt-Sprung ganz an den Anfang (Oben) oder ans Ende (Unten)
+        if (!verticalTurboExpressDone) {
+          verticalTurboExpressDone = true;
+          cancelTopBarUpHold();
+          const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+          if (modalBackdrop && document.getElementById("modalRoot")?.innerHTML.trim()) {
+            const list = getVisibleFocusables();
+            if (dir === "up") {
+              modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+              const topModalBtn = document.querySelector("#detailHeroStageEl .detail-btn-play-white, #detailHeroStageEl .detail-btn-glass") || list[0];
+              if (topModalBtn) jumpSpatialFocus(topModalBtn, false, "up");
+              if (typeof showHudToast === "function") showHudToast("⬆️ Anfang der Detailansicht");
+            } else {
+              const modalItems = list.filter(el => modalBackdrop.contains(el));
+              const lastModalEl = modalItems.length > 0 ? modalItems[modalItems.length - 1] : null;
+              if (lastModalEl) jumpSpatialFocus(lastModalEl, true, "down");
+              if (typeof showHudToast === "function") showHudToast("⏬ Ende der Detailansicht");
+            }
+          } else {
+            tvElevatorJumpClient(dir === "up" ? "top" : "bottom", false);
+          }
+        }
+      }
+
+      function toggleControllerTriggerModeClient() {
+        controllerL2R2Mode = controllerL2R2Mode === "zoom" ? "page" : "zoom";
+        activeControllerBrand = ""; // Erzwingt HUD-Refresh
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gp = pads && (pads[0] || pads[1] || pads[2] || pads[3]);
+        syncControllerHudBarClient(gp);
+        if (typeof showHudToast === "function") {
+          showHudToast(
+            controllerL2R2Mode === "page"
+              ? "🎮 L2 / R2 Modus: 📄 Schnelles Zeilen- & Seiten-Blättern"
+              : "🎮 L2 / R2 Modus: 🔍 Live UI-Zoom (-5% / +5%)"
+          );
+        }
+      }
+
+      async function handleTvQuickPageOrBlockStepClient(stepDir) {
+        const dir = stepDir < 0 ? "up" : "down";
+        if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+
+        // 1. Falls das Seitenwahl-Popup offen ist: -5 / +5 Seiten blättern
+        if (document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop") && typeof adjustPageJumpModalValueClient === "function") {
+          adjustPageJumpModalValueClient(stepDir * 5);
+          return;
+        }
+
+        // 2. Falls Detail-Modal offen ist: 5 Zeilen / Episoden auf einmal springen
+        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        if (modalBackdrop && document.getElementById("modalRoot")?.innerHTML.trim()) {
+          moveSpatialFocusMultiRowClient(dir, 5);
+          if (typeof showHudToast === "function") {
+            showHudToast(stepDir < 0 ? "⏫ 5 Zeilen nach oben" : "⏬ 5 Zeilen nach unten");
+          }
+          return;
+        }
+
+        // 3. Hauptkatalog / Merkliste: 5 Rasterzeilen springen – oder am unteren Rand direkt nächste Seite laden!
+        const prevEl = currentSpatialEl;
+        moveSpatialFocusMultiRowClient(dir, 5);
+        if (stepDir > 0 && (currentSpatialEl === prevEl || (currentSpatialEl && currentSpatialEl.id === "manualLoadMoreBtn"))) {
+          if (state.hasMorePages && typeof loadMoreResults === "function") {
+            await loadMoreResults(false);
+            if (typeof showHudToast === "function") {
+              showHudToast("📄 Nächste Katalog-Seite geladen");
+            }
+            return;
+          }
+        }
+        if (typeof showHudToast === "function") {
+          showHudToast(stepDir < 0 ? "⏫ Schnellsprung nach oben (5 Zeilen)" : "⏬ Schnellsprung nach unten (5 Zeilen)");
+        }
+      }
+
       window.addEventListener("keyup", (ev) => {
         if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
           const wasHoldingThisKey = modalHoldActiveKey === ev.key;
@@ -58748,8 +60355,8 @@
           if (wasHoldingThisKey && !didTriggerHold) {
             moveSpatialFocus(ev.key === "ArrowRight" ? "right" : "left");
           }
-        } else if (ev.key === "ArrowUp") {
-          cancelTopBarUpHold();
+        } else if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
+          resetVerticalTurboStreakClient();
         } else if (ev.key === "Enter") {
           const targetCard = cardEnterHoldTarget;
           const didTriggerLong = cardEnterHoldTriggered;
@@ -58763,7 +60370,7 @@
       });
       window.addEventListener("blur", () => {
         cancelModalArrowHold();
-        cancelTopBarUpHold();
+        resetVerticalTurboStreakClient();
         cancelCardEnterHold();
       });
 
@@ -58777,7 +60384,7 @@
         const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || (ev.key === "Backspace" && !isTypingInInput);
         if (isBackKey) {
           cancelModalArrowHold();
-          cancelTopBarUpHold();
+          resetVerticalTurboStreakClient();
           if (state.sidebarOpen && state.sidebarSubPanelOpen && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
             if (typeof closeSidebarSubPanelToMain === "function") closeSidebarSubPanelToMain();
             ev.preventDefault();
@@ -58803,6 +60410,13 @@
             if (parentCard) setSpatialFocus(parentCard, false);
             ev.preventDefault();
             return;
+          }
+          if (currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator")) {
+            if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl)) {
+              setSpatialFocus(lastElevatorReturnEl, true, "left");
+              ev.preventDefault();
+              return;
+            }
           }
           const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
           if (spotlightRoot && spotlightRoot.innerHTML.trim() && typeof closePersonSpotlightOverlayClient === "function") {
@@ -58837,6 +60451,30 @@
           return;
         }
 
+        // Smart-TV Fernbedienung & Tastatur Schnell-Tasten: PageUp / PageDown / ChannelUp / ChannelDown / Home / End
+        if (!isTypingInInput) {
+          if (ev.key === "PageDown" || ev.key === "ChannelDown") {
+            ev.preventDefault();
+            handleTvQuickPageOrBlockStepClient(1);
+            return;
+          }
+          if (ev.key === "PageUp" || ev.key === "ChannelUp") {
+            ev.preventDefault();
+            handleTvQuickPageOrBlockStepClient(-1);
+            return;
+          }
+          if (ev.key === "Home") {
+            ev.preventDefault();
+            tvElevatorJumpClient("top", false);
+            return;
+          }
+          if (ev.key === "End") {
+            ev.preventDefault();
+            tvElevatorJumpClient("bottom", false);
+            return;
+          }
+        }
+
         // Größenanpassung per + und - auf der Tastatur (sofern man nicht in einem Textfeld tippt)
         if (!isTypingInInput && (ev.key === "+" || ev.key === "=" || ev.code === "NumpadAdd")) {
           ev.preventDefault();
@@ -58851,7 +60489,7 @@
 
         // Nahtlose Pfeiltasten-Navigation auch aus dem Suchfeld heraus (inkl. ruhigem 450ms Gedrückthalten im Detail-Modal ohne Fokus-Herumspringen)
         if (ev.key === "ArrowRight") {
-          cancelTopBarUpHold();
+          resetVerticalTurboStreakClient();
           if (currentSpatialEl && currentSpatialEl.id === "pageJumpRangeSlider" && typeof adjustPageJumpModalValueClient === "function") {
             ev.preventDefault();
             adjustPageJumpModalValueClient(ev.shiftKey ? 5 : 1);
@@ -58887,7 +60525,7 @@
           return;
         }
         if (ev.key === "ArrowLeft") {
-          cancelTopBarUpHold();
+          resetVerticalTurboStreakClient();
           if (currentSpatialEl && currentSpatialEl.id === "pageJumpRangeSlider" && typeof adjustPageJumpModalValueClient === "function") {
             ev.preventDefault();
             adjustPageJumpModalValueClient(ev.shiftKey ? -5 : -1);
@@ -58924,46 +60562,33 @@
         }
         if (ev.key === "ArrowDown") {
           cancelModalArrowHold();
-          cancelTopBarUpHold();
+          const acOpen = Boolean(document.getElementById("searchAutocompleteBox")?.classList.contains("open"));
+          if (isSearchInpFocused && acOpen && typeof onSearchInputKeyDownClient === "function") {
+            onSearchInputKeyDownClient(ev, activeEl);
+            return;
+          }
           ev.preventDefault();
-          if (isSearchInpFocused || activeTag === "SELECT") activeEl.blur();
-          moveSpatialFocus("down");
+          if ((isSearchInpFocused && !acOpen) || activeTag === "SELECT") activeEl.blur();
+          handleVerticalDirectionStepWithTurboClient("down", Boolean(ev.repeat));
           return;
         }
         if (ev.key === "ArrowUp") {
           cancelModalArrowHold();
-          ev.preventDefault();
-          if (isSearchInpFocused || activeTag === "SELECT") activeEl.blur();
-          const hasOverlayOpen = Boolean(
-            document.getElementById("modalRoot")?.innerHTML.trim() ||
-            document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
-            document.getElementById("lightboxRoot")?.innerHTML.trim() ||
-            document.getElementById("customDialogRoot")?.innerHTML.trim() ||
-            state.sidebarOpen
-          );
-          if (!hasOverlayOpen) {
-            if (ev.repeat && topBarUpHoldActive) {
-              return;
-            }
-            const alreadyInHeaderAtTop = Boolean(
-              currentSpatialEl &&
-              currentSpatialEl.closest &&
-              currentSpatialEl.closest("header") &&
-              (window.scrollY || window.pageYOffset || 0) <= 10
-            );
-            moveSpatialFocus("up");
-            if (!ev.repeat && !alreadyInHeaderAtTop) {
-              startTopBarUpHold();
-            }
+          const acOpen = Boolean(document.getElementById("searchAutocompleteBox")?.classList.contains("open"));
+          if (isSearchInpFocused && acOpen && typeof onSearchInputKeyDownClient === "function") {
+            onSearchInputKeyDownClient(ev, activeEl);
             return;
           }
-          moveSpatialFocus("up");
+          ev.preventDefault();
+          if ((isSearchInpFocused && !acOpen) || activeTag === "SELECT") activeEl.blur();
+          handleVerticalDirectionStepWithTurboClient("up", Boolean(ev.repeat));
           return;
         }
 
         // Enter-Taste: Auf einem Film-Cover öffnet kurzes Drücken die Schnellwahl (Trailer/Merkliste/Details) und Gedrückthalten (>= 350ms) direkt die Infos!
         if (ev.key === "Enter" && !isTypingInInput && currentSpatialEl) {
           cancelModalArrowHold();
+          resetVerticalTurboStreakClient();
           ev.preventDefault();
           if (currentSpatialEl.id === "pageJumpNumberInput") {
             currentSpatialEl.focus();
@@ -59029,7 +60654,7 @@
       });
 
       // Gamepad / Controller Polling (Auto-Erkennung PlayStation DualSense/DualShock vs. Xbox / Android TV Gamepad)
-      // Inkl. L2/R2 Live-Zoom, R3 100%-Zoom-Reset, Rechtem Stick 60fps Freies Scrollen, X/□ Speichern, Y/△ Suche & dynamischer HUD-Leiste!
+      // Inkl. L2/R2 Seiten-/Block-Sprung (umschaltbar auf Zoom), Turbo-D-Pad, R3 100%-Zoom-Reset, Rechtem Stick 60fps Scrollen, X/□ Speichern, Y/△ Suche!
       let lastGamepadStepAt = 0;
       let lastGamepadZoomAt = 0;
       let lastGamepadActivityAt = 0;
@@ -59044,7 +60669,8 @@
         const hud = document.getElementById("controllerHudBar");
         if (!hud) return;
         const isPs = isPlayStationControllerClient(gp?.id || "");
-        const brandKey = isPs ? "ps" : "xbox";
+        const modeLabel = controllerL2R2Mode === "zoom" ? "Zoom" : "Seite/Sprung";
+        const brandKey = (isPs ? "ps_" : "xbox_") + controllerL2R2Mode;
         if (activeControllerBrand !== brandKey || !hud.innerHTML) {
           activeControllerBrand = brandKey;
           if (isPs) {
@@ -59054,7 +60680,7 @@
               '<span class="hud-item"><kbd>□</kbd> Speichern</span>' +
               '<span class="hud-item"><kbd>△</kbd> Suche</span>' +
               '<span class="hud-item"><kbd>L1</kbd><kbd>R1</kbd> ◀/▶</span>' +
-              '<span class="hud-item"><kbd>L2</kbd><kbd>R2</kbd> Zoom</span>' +
+              '<span class="hud-item" style="cursor:pointer;pointer-events:auto" onclick="toggleControllerTriggerModeClient()" title="Klicken zum Umschalten zwischen Seiten-Sprung und Live-Zoom"><kbd>L2</kbd><kbd>R2</kbd> ' + modeLabel + '</span>' +
               '<span class="hud-item"><kbd>R3</kbd> 100%</span>';
           } else {
             hud.innerHTML =
@@ -59063,7 +60689,7 @@
               '<span class="hud-item"><kbd>X</kbd> Speichern</span>' +
               '<span class="hud-item"><kbd>Y</kbd> Suche</span>' +
               '<span class="hud-item"><kbd>LB</kbd><kbd>RB</kbd> ◀/▶</span>' +
-              '<span class="hud-item"><kbd>LT</kbd><kbd>RT</kbd> Zoom</span>' +
+              '<span class="hud-item" style="cursor:pointer;pointer-events:auto" onclick="toggleControllerTriggerModeClient()" title="Klicken zum Umschalten zwischen Seiten-Sprung und Live-Zoom"><kbd>LT</kbd><kbd>RT</kbd> ' + modeLabel + '</span>' +
               '<span class="hud-item"><kbd>R3</kbd> 100%</span>';
           }
         }
@@ -59107,21 +60733,34 @@
               }
             }
 
-            // L2 / LT (buttons[6]) & R2 / RT (buttons[7]): Live-Zoom (Skalierung -5% / +5%)
+            // L2 / LT (buttons[6]) & R2 / RT (buttons[7]): Standardmäßig 5-Zeilen-/Seiten-Blättern (optional umschaltbar auf Live-Zoom)
             const btnL2 = Boolean(gp.buttons?.[6]?.pressed || (gp.buttons?.[6]?.value || 0) > 0.45);
             const btnR2 = Boolean(gp.buttons?.[7]?.pressed || (gp.buttons?.[7]?.value || 0) > 0.45);
-            if ((btnL2 || btnR2) && now - lastGamepadZoomAt > 175) {
+            const triggerCooldown = controllerL2R2Mode === "zoom" ? 175 : 260;
+            if ((btnL2 || btnR2) && now - lastGamepadZoomAt > triggerCooldown) {
               lastGamepadZoomAt = now;
               lastGamepadActivityAt = now;
               engageKeyboardNavMode();
               syncControllerHudBarClient(gp);
-              if (btnR2) adjustOverallScaleStep(5);
-              else if (btnL2) adjustOverallScaleStep(-5);
+              if (controllerL2R2Mode === "zoom") {
+                if (btnR2) adjustOverallScaleStep(5);
+                else if (btnL2) adjustOverallScaleStep(-5);
+              } else {
+                if (btnR2) handleTvQuickPageOrBlockStepClient(1);
+                else if (btnL2) handleTvQuickPageOrBlockStepClient(-1);
+              }
             }
 
-            if (now - lastGamepadStepAt > 185) {
-              const up = gp.buttons?.[12]?.pressed || axY < -0.55;
-              const down = gp.buttons?.[13]?.pressed || axY > 0.55;
+            const upHeld = Boolean(gp.buttons?.[12]?.pressed || axY < -0.55);
+            const downHeld = Boolean(gp.buttons?.[13]?.pressed || axY > 0.55);
+            if (!upHeld && !downHeld && verticalTurboStreak > 0 && (now - verticalTurboLastStepAt > 210)) {
+              resetVerticalTurboStreakClient();
+            }
+
+            const dynamicGamepadInterval = (verticalTurboStreak >= 3) ? 125 : 180;
+            if (now - lastGamepadStepAt > dynamicGamepadInterval) {
+              const up = upHeld;
+              const down = downHeld;
               const left = gp.buttons?.[14]?.pressed || axX < -0.55;
               const right = gp.buttons?.[15]?.pressed || axX > 0.55;
               const btnA = gp.buttons?.[0]?.pressed;
@@ -59138,21 +60777,25 @@
                 syncControllerHudBarClient(gp);
               }
 
-              if (up) { moveSpatialFocus("up"); lastGamepadStepAt = now; }
-              else if (down) { moveSpatialFocus("down"); lastGamepadStepAt = now; }
-              else if (left) { moveSpatialFocus("left"); lastGamepadStepAt = now; }
-              else if (right) { moveSpatialFocus("right"); lastGamepadStepAt = now; }
+              if (up) { handleVerticalDirectionStepWithTurboClient("up", true); lastGamepadStepAt = now; }
+              else if (down) { handleVerticalDirectionStepWithTurboClient("down", true); lastGamepadStepAt = now; }
+              else if (left) { resetVerticalTurboStreakClient(); moveSpatialFocus("left"); lastGamepadStepAt = now; }
+              else if (right) { resetVerticalTurboStreakClient(); moveSpatialFocus("right"); lastGamepadStepAt = now; }
               else if (btnA && currentSpatialEl) {
+                resetVerticalTurboStreakClient();
                 handleSpatialConfirmAction();
                 lastGamepadStepAt = now + 120;
               }
               else if (btnB) {
+                resetVerticalTurboStreakClient();
                 if (state.sidebarOpen && state.sidebarSubPanelOpen && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
                   if (typeof closeSidebarSubPanelToMain === "function") closeSidebarSubPanelToMain();
                 } else if (currentSpatialEl && isCardSubElement(currentSpatialEl)) {
                   const parentCard = currentSpatialEl.closest(".card");
                   clearCardSubnavState(null);
                   if (parentCard) setSpatialFocus(parentCard, false);
+                } else if (currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator") && lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl)) {
+                  setSpatialFocus(lastElevatorReturnEl, true, "left");
                 } else {
                   goBack();
                 }
@@ -62924,7 +64567,20 @@
           name: `Folge ${episode}`
         };
         const telegraphUrl = await ensureEpisodeTelegraphUrl(env, seriesId, sDetails, season, epObj);
-        return new Response(JSON.stringify({ ok: true, telegraphUrl }), { status: 200, headers: corsHeaders });
+        return new Response(JSON.stringify({
+          ok: true,
+          telegraphUrl,
+          episode: {
+            episode_number: Number(epObj.episode_number || episode),
+            season_number: Number(epObj.season_number || season),
+            name: epObj.name || `Folge ${episode}`,
+            overview: epObj.overview || "",
+            air_date: epObj.air_date || "",
+            still_path: epObj.still_path || "",
+            vote_average: Number(epObj.vote_average || 0),
+            runtime: Number(epObj.runtime || 0)
+          }
+        }), { status: 200, headers: corsHeaders });
       }
 
       if (path === "/api/tma/wishlist") {
@@ -63007,6 +64663,35 @@
             const res = await saveCollectionOrUniverseToFolders(env, targetChatId, `${uni.icon} ${uni.name}`, visibleItems, "universe", uni.id);
             await flushUserSession(env, targetChatId);
             return new Response(JSON.stringify({ ok: true, ...res }), { status: 200, headers: corsHeaders });
+          }
+          if (body.action === "move_item_folder") {
+            const list = await getSavedList(env, targetChatId);
+            const targetIdx = list.findIndex(i => String(i.uid) === String(body.uid));
+            if (targetIdx === -1) {
+              return new Response(JSON.stringify({ ok: false, error: "Eintrag nicht gefunden." }), { status: 404, headers: corsHeaders });
+            }
+            const item = list[targetIdx];
+            const oldUid = item.uid;
+            const oldFolderId = item.folderId || null;
+            const defaultCat = (item.contentType === "series" || item.contentType === "episode") ? "cat_series" : "cat_movies";
+            const nextFolderId = (body.targetFolderId && body.targetFolderId !== "root") ? String(body.targetFolderId) : defaultCat;
+            const prefix = (item.contentType === "series" || item.contentType === "episode") ? "s" : "m";
+            const baseId = item.tmdbId || item.seriesId || Date.now();
+            const nextUid = (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series")
+              ? `${prefix}_${baseId}_${nextFolderId}`
+              : `${prefix}_${baseId}`;
+            if (oldFolderId && oldFolderId !== nextFolderId) {
+              await deletePlaylistItemFromD1(env, targetChatId, oldUid, oldFolderId);
+            }
+            item.folderId = nextFolderId;
+            item.uid = nextUid;
+            list[targetIdx] = item;
+            if (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series") {
+              await batchUpsertPlaylistItemsInD1(env, targetChatId, nextFolderId, [item]);
+            }
+            await saveRawList(env, targetChatId, list);
+            await flushUserSession(env, targetChatId);
+            return new Response(JSON.stringify({ ok: true, uid: nextUid, folderId: nextFolderId }), { status: 200, headers: corsHeaders });
           }
           if (body.action === "delete_uid") {
             const list = await getSavedList(env, targetChatId);
