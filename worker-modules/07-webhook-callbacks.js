@@ -3692,13 +3692,13 @@
           const cleanCode = `${sixDigitMatch[1]}${sixDigitMatch[2]}`;
           let mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
           if (!mappedChallengeId) {
-            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MY_KV").catch(() => null);
+            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED").catch(() => null);
           }
           if (mappedChallengeId) {
             const cId = String(mappedChallengeId).replace(/^"|"$/g, "").trim();
             let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
@@ -3711,7 +3711,7 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
               } catch (e) {}
               await deleteMessage(chatId, message.message_id);
               await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
@@ -3738,7 +3738,7 @@
             const cId = startParam.replace(/^webauth_/i, "").trim();
             let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
@@ -3751,7 +3751,7 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
               } catch (e) {}
               await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
             } else {

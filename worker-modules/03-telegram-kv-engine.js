@@ -209,7 +209,7 @@
     };
     memoryFallback.set("TG_ANTI_SPAM_STATE_JSON", snapshot);
     await kvStageWrite(env, "TG_ANTI_SPAM_STATE_JSON", snapshot, {
-      bindingName: "MY_KV",
+      bindingName: "MOVIE_SAVED",
       expirationTtl: 7 * 86400,
       periodicOnly: true
     });
@@ -219,7 +219,7 @@
     if (antiSpamState.hydratedFromStorage) return;
     antiSpamState.hydratedFromStorage = true;
     try {
-      const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MY_KV");
+      const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MOVIE_SAVED");
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object") {
@@ -454,7 +454,7 @@
       return normalizeWorkerRetentionDays(memoryFallback.get("TG_LOG_RETENTION_DAYS"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MY_KV");
+      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED");
       if (raw) {
         const norm = normalizeWorkerRetentionDays(raw);
         memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
@@ -478,7 +478,7 @@
       rawList = memList;
     } else {
       try {
-        const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MY_KV");
+        const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MOVIE_SAVED");
         if (str) {
           const parsed = JSON.parse(str);
           if (Array.isArray(parsed)) rawList = parsed;
@@ -508,13 +508,13 @@
 
     if (newEntry || retentionDaysOverride !== null || prunedCount > 0) {
       await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", finalEntries, {
-        bindingName: "MY_KV",
+        bindingName: "MOVIE_SAVED",
         expirationTtl: ttlSeconds,
         periodicOnly: retentionDaysOverride === null
       });
       if (retentionDaysOverride !== null) {
         await kvStageWrite(env, "TG_LOG_RETENTION_DAYS", String(retentionDays), {
-          bindingName: "MY_KV",
+          bindingName: "MOVIE_SAVED",
           periodicOnly: false
         });
       }
@@ -681,7 +681,7 @@
       return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MY_KV");
+      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED");
       if (raw) {
         const mode = normalizeVideoCoverMode(raw);
         memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
@@ -697,7 +697,7 @@
     memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
     try {
       await kvStageWrite(env, "TG_VIDEO_COVER_MODE", mode, {
-        bindingName: "MY_KV",
+        bindingName: "MOVIE_SAVED",
         periodicOnly: false
       });
     } catch (e) {}

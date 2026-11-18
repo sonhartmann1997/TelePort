@@ -3827,7 +3827,7 @@
     };
     memoryFallback.set("TG_ANTI_SPAM_STATE_JSON", snapshot);
     await kvStageWrite(env, "TG_ANTI_SPAM_STATE_JSON", snapshot, {
-      bindingName: "MY_KV",
+      bindingName: "MOVIE_SAVED",
       expirationTtl: 7 * 86400,
       periodicOnly: true
     });
@@ -3837,7 +3837,7 @@
     if (antiSpamState.hydratedFromStorage) return;
     antiSpamState.hydratedFromStorage = true;
     try {
-      const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MY_KV");
+      const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MOVIE_SAVED");
       if (raw) {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object") {
@@ -4072,7 +4072,7 @@
       return normalizeWorkerRetentionDays(memoryFallback.get("TG_LOG_RETENTION_DAYS"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MY_KV");
+      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED");
       if (raw) {
         const norm = normalizeWorkerRetentionDays(raw);
         memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
@@ -4096,7 +4096,7 @@
       rawList = memList;
     } else {
       try {
-        const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MY_KV");
+        const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MOVIE_SAVED");
         if (str) {
           const parsed = JSON.parse(str);
           if (Array.isArray(parsed)) rawList = parsed;
@@ -4126,13 +4126,13 @@
 
     if (newEntry || retentionDaysOverride !== null || prunedCount > 0) {
       await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", finalEntries, {
-        bindingName: "MY_KV",
+        bindingName: "MOVIE_SAVED",
         expirationTtl: ttlSeconds,
         periodicOnly: retentionDaysOverride === null
       });
       if (retentionDaysOverride !== null) {
         await kvStageWrite(env, "TG_LOG_RETENTION_DAYS", String(retentionDays), {
-          bindingName: "MY_KV",
+          bindingName: "MOVIE_SAVED",
           periodicOnly: false
         });
       }
@@ -4299,7 +4299,7 @@
       return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MY_KV");
+      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED");
       if (raw) {
         const mode = normalizeVideoCoverMode(raw);
         memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
@@ -4315,7 +4315,7 @@
     memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
     try {
       await kvStageWrite(env, "TG_VIDEO_COVER_MODE", mode, {
-        bindingName: "MY_KV",
+        bindingName: "MOVIE_SAVED",
         periodicOnly: false
       });
     } catch (e) {}
@@ -25735,13 +25735,13 @@
           const cleanCode = `${sixDigitMatch[1]}${sixDigitMatch[2]}`;
           let mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
           if (!mappedChallengeId) {
-            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MY_KV").catch(() => null);
+            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED").catch(() => null);
           }
           if (mappedChallengeId) {
             const cId = String(mappedChallengeId).replace(/^"|"$/g, "").trim();
             let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
@@ -25754,7 +25754,7 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
               } catch (e) {}
               await deleteMessage(chatId, message.message_id);
               await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
@@ -25781,7 +25781,7 @@
             const cId = startParam.replace(/^webauth_/i, "").trim();
             let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MY_KV").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
@@ -25794,7 +25794,7 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
               } catch (e) {}
               await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
             } else {
@@ -49224,7 +49224,7 @@
                       '<button type="button" class="btn danger" style="padding:4px 8px;font-size:11px" onclick="clearTmaActivityLogClient()" title="Alle gespeicherten Telegram-Zustelllogs in KV sofort löschen">🗑️ Log leeren</button>' +
                     '</div>' +
                   '</div>' +
-                  '<div style="font-size:10.5px;color:#0284c7;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MY_KV</code>)</div>' +
+                  '<div style="font-size:10.5px;color:#0284c7;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MOVIE_SAVED</code>)</div>' +
                   '<div id="tmaActivityLogMount"><div style="font-size:11px;color:var(--muted)">Lade letzte Zustell-Aktivitäten...</div></div>' +
                 '</div>' +
               '</div>' +
@@ -59471,8 +59471,8 @@
           memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
           memoryFallback.set(`webauth_code_${code}`, challengeId);
           try {
-            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
-            await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
           } catch (e) {}
           const deepLink = botUsername
             ? `https://t.me/${botUsername.replace(/^@/, "")}?start=webauth_${challengeId}`
@@ -59491,7 +59491,7 @@
           const challengeId = String(body.challengeId || "").trim();
           let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
           if (!challengeObj) {
-            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => null);
             if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
           }
           if (!challengeObj) {
@@ -59505,7 +59505,7 @@
           };
           memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
           try {
-            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
           } catch (e) {}
           return new Response(JSON.stringify({ ok: true, status: "confirmed" }), { status: 200, headers: corsHeaders });
         }
@@ -59517,7 +59517,7 @@
           }
           let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
           if (!challengeObj) {
-            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => null);
             if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
           }
           if (!challengeObj || Date.now() > Number(challengeObj.expiresAt || 0)) {
@@ -62400,8 +62400,8 @@
       if (path === "/api/tma/stream" && request.method === "POST") {
         const reqStartMs = Date.now();
         const body = await request.json();
-        const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MY_KV")) || "").trim();
-        const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MY_KV")) || "").trim();
+        const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED")) || "").trim();
+        const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")) || "").trim();
         const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
         // Erlaube Versand wenn entweder eingeloggt + VIP ODER wenn ein eigenes Bot-Token vom Nutzer angegeben wurde
         if (!auth.isAuthenticated && !customBotToken && !kvDefaultChatId) {
@@ -62805,7 +62805,7 @@
             const retentionDays = await getWorkerRetentionDays(env, settings?.deliveryConfig?.retentionDays);
             memoryFallback.set("TG_ACTIVITY_LOG_JSON", []);
             await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", [], {
-              bindingName: "MY_KV",
+              bindingName: "MOVIE_SAVED",
               expirationTtl: retentionDays * 86400,
               flushNow: true
             });

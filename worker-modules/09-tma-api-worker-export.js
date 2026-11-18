@@ -208,8 +208,8 @@
           memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
           memoryFallback.set(`webauth_code_${code}`, challengeId);
           try {
-            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
-            await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
           } catch (e) {}
           const deepLink = botUsername
             ? `https://t.me/${botUsername.replace(/^@/, "")}?start=webauth_${challengeId}`
@@ -228,7 +228,7 @@
           const challengeId = String(body.challengeId || "").trim();
           let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
           if (!challengeObj) {
-            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => null);
             if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
           }
           if (!challengeObj) {
@@ -242,7 +242,7 @@
           };
           memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
           try {
-            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MY_KV", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
           } catch (e) {}
           return new Response(JSON.stringify({ ok: true, status: "confirmed" }), { status: 200, headers: corsHeaders });
         }
@@ -254,7 +254,7 @@
           }
           let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
           if (!challengeObj) {
-            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MY_KV").catch(() => null);
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => null);
             if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
           }
           if (!challengeObj || Date.now() > Number(challengeObj.expiresAt || 0)) {
@@ -3137,8 +3137,8 @@
       if (path === "/api/tma/stream" && request.method === "POST") {
         const reqStartMs = Date.now();
         const body = await request.json();
-        const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MY_KV")) || "").trim();
-        const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MY_KV")) || "").trim();
+        const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED")) || "").trim();
+        const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")) || "").trim();
         const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
         // Erlaube Versand wenn entweder eingeloggt + VIP ODER wenn ein eigenes Bot-Token vom Nutzer angegeben wurde
         if (!auth.isAuthenticated && !customBotToken && !kvDefaultChatId) {
@@ -3542,7 +3542,7 @@
             const retentionDays = await getWorkerRetentionDays(env, settings?.deliveryConfig?.retentionDays);
             memoryFallback.set("TG_ACTIVITY_LOG_JSON", []);
             await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", [], {
-              bindingName: "MY_KV",
+              bindingName: "MOVIE_SAVED",
               expirationTtl: retentionDays * 86400,
               flushNow: true
             });
