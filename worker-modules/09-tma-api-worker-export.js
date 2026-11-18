@@ -165,7 +165,7 @@
       if (path === "/api/tma/auth/telegram-widget" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const widgetData = (body && typeof body.user === "object" && body.user !== null) ? body.user : body;
-        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN);
+        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN, env);
         if (!verified.ok || !verified.user) {
           return new Response(JSON.stringify({ ok: false, error: verified.error || "Telegram Login-Widget Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
         }

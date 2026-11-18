@@ -28154,7 +28154,7 @@
   }
 
   // Offizielle Telegram Login Widget HMAC-SHA256 Validierung (secret_key = SHA256(bot_token))
-  async function verifyTelegramLoginWidgetHmac(widgetData, botToken) {
+  async function verifyTelegramLoginWidgetHmac(widgetData, botToken, env = null) {
     if (!widgetData || typeof widgetData !== "object") {
       return { ok: false, error: "Fehlende Telegram Login-Widget Daten" };
     }
@@ -28165,8 +28165,12 @@
         return { ok: false, error: "Ungültige Login-Widget Daten (id oder hash fehlt)" };
       }
 
-      // Simulator- / Sandbox-Unterstützung (wenn kein echtes Bot-Token gesetzt ist oder expliziter Simulator-Hash)
-      if (receivedHash === "sim_valid_widget_hmac" || !botToken) {
+      // Simulator- / Sandbox-Unterstützung nur bei explizitem Entwicklungs-Modus (ENVIRONMENT === "development" oder ENABLE_SIMULATOR === "true")
+      const isDevEnv = Boolean(env && (env.ENVIRONMENT === "development" || env.ENABLE_SIMULATOR === "true" || env.DEV_MODE === "true"));
+      if (receivedHash === "sim_valid_widget_hmac") {
+        if (!isDevEnv) {
+          return { ok: false, error: "Simulator-Login ist in der Produktivumgebung deaktiviert." };
+        }
         return {
           ok: true,
           isSimulator: true,
@@ -28178,6 +28182,10 @@
             photo_url: String(widgetData.photo_url || "")
           }
         };
+      }
+
+      if (!botToken) {
+        return { ok: false, error: "TELEGRAM_BOT_TOKEN ist nicht konfiguriert." };
       }
 
       const authDate = Number(widgetData.auth_date || 0);
@@ -36260,11 +36268,6 @@
                     'Direktes Browser-Login über <code>telegram-widget.js</code> (Hinweis: Bei @BotFather muss einmalig <code>/setdomain</code> auf deine Worker-Domain gesetzt sein):' +
                   '</div>' +
                   '<div id="tgLoginWidgetContainer" style="min-height:38px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>' +
-                  '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
-                    '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px" onclick="onTelegramWidgetAuthClient({id:100998877,first_name:\\'Admin\\',username:\\'teleport_admin\\',auth_date:Math.floor(Date.now()/1000),hash:\\'sim_valid_widget_hmac\\'})">' +
-                      '⚡ Telegram-Widget Login direkt ausführen (Demo / Admin)' +
-                    '</button>' +
-                  '</div>' +
                 '</div>' +
                 '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
               '</div>'
@@ -59396,7 +59399,7 @@
       if (path === "/api/tma/auth/telegram-widget" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const widgetData = (body && typeof body.user === "object" && body.user !== null) ? body.user : body;
-        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN);
+        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN, env);
         if (!verified.ok || !verified.user) {
           return new Response(JSON.stringify({ ok: false, error: verified.error || "Telegram Login-Widget Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
         }
