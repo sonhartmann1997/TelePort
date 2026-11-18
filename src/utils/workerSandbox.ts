@@ -53,11 +53,18 @@ export function subscribeSimulatedTelegramOutbox(
 function recordSimulatedTelegramCall(method: string, payload: any): any {
   const chatId = payload?.chat_id ?? '100998877';
   const text = String(payload?.text ?? payload?.caption ?? '');
-  const replyMarkup = payload?.reply_markup
-    ? typeof payload.reply_markup === 'string'
-      ? JSON.parse(payload.reply_markup)
-      : payload.reply_markup
-    : undefined;
+  let replyMarkup = undefined;
+  if (payload?.reply_markup) {
+    if (typeof payload.reply_markup === 'string') {
+      try {
+        replyMarkup = JSON.parse(payload.reply_markup);
+      } catch {
+        replyMarkup = undefined;
+      }
+    } else {
+      replyMarkup = payload.reply_markup;
+    }
+  }
 
   if (method === 'editMessageText' || method === 'editMessageCaption') {
     const targetMsgId = Number(payload?.message_id || 0);
