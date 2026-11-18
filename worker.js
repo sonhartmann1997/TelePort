@@ -59266,22 +59266,22 @@
       return new Response(svgContent, {
         status: 200,
         headers: {
+          ...corsHeaders,
           "Content-Type": "image/svg+xml; charset=utf-8",
           "Content-Disposition": "attachment; filename=\"bot-splashscreen-512x512.svg\"",
-          "Cache-Control": "public, max-age=86400",
-          ...corsHeaders
+          "Cache-Control": "public, max-age=86400"
         }
       });
     }
 
     if (path === "/favicon.ico" || path === "/favicon.svg") {
-      const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" fill="none"><defs><linearGradient id="g" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#00e5ff"/><stop offset="50%" stop-color="#38bdf8"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="14" cy="14" r="11.5" stroke="url(#g)" stroke-width="2.6" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#00e5ff" stroke-width="1.5" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#g)"/></svg>`;
+      const faviconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" fill="none"><defs><linearGradient id="tpGrad" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#38bdf8"/><stop offset="50%" stop-color="#a855f7"/><stop offset="100%" stop-color="#e50914"/></linearGradient></defs><circle cx="14" cy="14" r="11.5" stroke="url(#tpGrad)" stroke-width="2.6" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#38bdf8" stroke-width="1.5" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="url(#tpGrad)"/></svg>`;
       return new Response(faviconSvg, {
         status: 200,
         headers: {
+          ...corsHeaders,
           "Content-Type": "image/svg+xml; charset=utf-8",
-          "Cache-Control": "public, max-age=86400",
-          ...corsHeaders
+          "Cache-Control": "public, max-age=86400"
         }
       });
     }
