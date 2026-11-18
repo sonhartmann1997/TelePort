@@ -9727,7 +9727,7 @@
           if (heroDetailsOverviewBackfillSet.has(key)) continue;
           heroDetailsOverviewBackfillSet.add(key);
           try {
-            const det = await api("/api/tma/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
+            const det = await apiFetchJson(API_BASE + "/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
             const fetchedOv = String(det?.overview || "").trim();
             if (fetchedOv && !isGenericPlaceholderOverviewClient(fetchedOv)) {
               sl.overview = fetchedOv;
@@ -9809,7 +9809,7 @@
         btnEl.disabled = true;
         btnEl.innerHTML = "⏳ Übersetze…";
         try {
-          const res = await api("/api/tma/translate?text=" + encodeURIComponent(origText) + "&sl=en&tl=de");
+          const res = await apiFetchJson(API_BASE + "/translate?text=" + encodeURIComponent(origText) + "&sl=en&tl=de");
           const translated = String(res?.translatedText || "").trim();
           if (translated) {
             overviewTranslationCacheClient.set(origText, translated);

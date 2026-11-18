@@ -524,6 +524,14 @@
         return p;
       }
 
+      window.apiFetchJson = apiFetchJson;
+      window.api = function(endpoint, opts) {
+        const target = String(endpoint || "").startsWith("http")
+          ? endpoint
+          : (API_BASE + (String(endpoint || "").startsWith("/api/tma") ? String(endpoint || "").slice(8) : endpoint));
+        return apiFetchJson(target, opts);
+      };
+
       // =========================================================================
       // 5. DIREKTE 1-KLICK INCLUDE / EXCLUDE FILTER-AKTION (MEHRFACHAUSWAHL-SICHER & OHNE DOUBLE-TOGGLE!)
       // =========================================================================

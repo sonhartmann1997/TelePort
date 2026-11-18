@@ -37808,7 +37808,7 @@
           if (heroDetailsOverviewBackfillSet.has(key)) continue;
           heroDetailsOverviewBackfillSet.add(key);
           try {
-            const det = await api("/api/tma/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
+            const det = await apiFetchJson(API_BASE + "/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
             const fetchedOv = String(det?.overview || "").trim();
             if (fetchedOv && !isGenericPlaceholderOverviewClient(fetchedOv)) {
               sl.overview = fetchedOv;
@@ -37890,7 +37890,7 @@
         btnEl.disabled = true;
         btnEl.innerHTML = "⏳ Übersetze…";
         try {
-          const res = await api("/api/tma/translate?text=" + encodeURIComponent(origText) + "&sl=en&tl=de");
+          const res = await apiFetchJson(API_BASE + "/translate?text=" + encodeURIComponent(origText) + "&sl=en&tl=de");
           const translated = String(res?.translatedText || "").trim();
           if (translated) {
             overviewTranslationCacheClient.set(origText, translated);
@@ -42547,6 +42547,14 @@
         }
         return p;
       }
+
+      window.apiFetchJson = apiFetchJson;
+      window.api = function(endpoint, opts) {
+        const target = String(endpoint || "").startsWith("http")
+          ? endpoint
+          : (API_BASE + (String(endpoint || "").startsWith("/api/tma") ? String(endpoint || "").slice(8) : endpoint));
+        return apiFetchJson(target, opts);
+      };
 
       // =========================================================================
       // 5. DIREKTE 1-KLICK INCLUDE / EXCLUDE FILTER-AKTION (MEHRFACHAUSWAHL-SICHER & OHNE DOUBLE-TOGGLE!)
@@ -63332,19 +63340,43 @@
         }
         let translatedText = "";
         try {
-          const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clippedText)}`;
-          const gRes = await fetch(gUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
-          if (gRes.ok) {
-            const gData = await gRes.json();
-            if (Array.isArray(gData) && Array.isArray(gData[0])) {
-              translatedText = gData[0].map(part => (Array.isArray(part) && part[0] ? String(part[0]) : "")).join("").trim();
+          if (typeof translator === "function") {
+            const trRes = await translator(clippedText, targetLang);
+            if (trRes && trRes !== "Keine Beschreibung verfügbar." && trRes.toLowerCase() !== clippedText.toLowerCase()) {
+              translatedText = trRes;
             }
           }
-        } catch (_err) {}
+        } catch (_tErr) {}
+        if (!translatedText) {
+          try {
+            const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clippedText)}`;
+            const gRes = typeof fetchWithTimeout === "function"
+              ? await fetchWithTimeout(gUrl, {
+                  headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "application/json, text/plain, */*"
+                  }
+                }, 3800)
+              : await fetch(gUrl, {
+                  headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "application/json, text/plain, */*"
+                  }
+                });
+            if (gRes.ok) {
+              const gData = await gRes.json();
+              if (Array.isArray(gData) && Array.isArray(gData[0])) {
+                translatedText = gData[0].map(part => (Array.isArray(part) && part[0] ? String(part[0]) : "")).join("").trim();
+              }
+            }
+          } catch (_err) {}
+        }
         if (!translatedText) {
           try {
             const mUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clippedText.slice(0, 490))}&langpair=en|${encodeURIComponent(targetLang)}`;
-            const mRes = await fetch(mUrl);
+            const mRes = typeof fetchWithTimeout === "function"
+              ? await fetchWithTimeout(mUrl, {}, 3800)
+              : await fetch(mUrl);
             if (mRes.ok) {
               const mData = await mRes.json();
               if (mData?.responseData?.translatedText) {
