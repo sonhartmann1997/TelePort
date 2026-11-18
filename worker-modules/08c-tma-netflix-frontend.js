@@ -9073,6 +9073,15 @@
       requestAnimationFrame(pollGamepadNavigation);
 
       window.__TELEPORT_BOOTED__ = true;
+      try {
+        const mRoot = document.getElementById("modalRoot");
+        if (mRoot && typeof MutationObserver !== "undefined") {
+          const backBtnObs = new MutationObserver(() => {
+            if (typeof syncTelegramBackButtonClient === "function") syncTelegramBackButtonClient();
+          });
+          backBtnObs.observe(mRoot, { childList: true, subtree: false });
+        }
+      } catch (_e) {}
       initAuthSession();
       setTimeout(() => {
         if (typeof pollAntiSpamQueueClient === "function") pollAntiSpamQueueClient(true);

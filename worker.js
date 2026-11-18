@@ -28666,7 +28666,14 @@
   <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#060a14" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="STREAMFLIX" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='28' y2='28' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0%25' stop-color='%2338bdf8'/%3E%3Cstop offset='50%25' stop-color='%23a855f7'/%3E%3Cstop offset='100%25' stop-color='%236366f1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='11.5' stroke='url(%23g)' stroke-width='2.6' stroke-dasharray='18 5'/%3E%3Ccircle cx='14' cy='14' r='7.5' stroke='%2338bdf8' stroke-width='1.5' stroke-opacity='0.8'/%3E%3Cpath d='M11.8 9.8L18.5 14L11.8 18.2V9.8Z' fill='url(%23g)'/%3E%3C/svg%3E" />
     <link rel="alternate icon" type="image/svg+xml" href="/favicon.svg" />
     <title>TelePort – Film & Serien Mini-App</title>
@@ -29588,26 +29595,26 @@
       html {
         font-size: calc(16px * var(--scale-all));
         scroll-padding-top: var(--sticky-header-offset, 74px);
-        scroll-padding-bottom: 28px;
+        scroll-padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 20px));
         overscroll-behavior-y: none;
       }
       body {
         background: var(--bg);
         color: var(--text);
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        padding-bottom: 28px;
+        padding-bottom: max(32px, calc(env(safe-area-inset-bottom, 0px) + 24px));
         overflow-x: hidden;
         overscroll-behavior-y: none;
         font-size: calc(14px * var(--scale-text));
         transition: background-color 0.2s ease, color 0.2s ease;
         scroll-padding-top: var(--sticky-header-offset, 74px);
-        scroll-padding-bottom: 28px;
+        scroll-padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 20px));
       }
       #appRoot,
       #resultsGridContainer,
       .carousel {
         scroll-padding-top: var(--sticky-header-offset, 74px);
-        scroll-padding-bottom: 28px;
+        scroll-padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 20px));
       }
       .card,
       .btn,
@@ -35336,7 +35343,76 @@
     <script>
       const API_BASE = "${workerOrigin}/api/tma";
       const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-      if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+      if (tg) {
+        try {
+          tg.ready();
+          tg.expand();
+          if (typeof tg.disableVerticalSwipes === "function") {
+            tg.disableVerticalSwipes();
+          }
+        } catch (e) {}
+      }
+
+      function syncTelegramBackButtonClient() {
+        try {
+          const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+          if (!liveTg || !liveTg.BackButton) return;
+          const modalRoot = document.getElementById("modalRoot");
+          const hasModal = Boolean(modalRoot && modalRoot.innerHTML.trim().length > 0);
+          const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
+          const hasSpotlight = Boolean(spotlightRoot && spotlightRoot.innerHTML.trim().length > 0);
+          const pageJumpRoot = document.getElementById("pageJumpModalRoot");
+          const hasPageJump = Boolean(pageJumpRoot && pageJumpRoot.innerHTML.trim().length > 0);
+          const isSidebarOpen = Boolean(typeof state !== "undefined" && state.sidebarOpen);
+          const isNonDiscoverView = Boolean(typeof state !== "undefined" && state.currentView && state.currentView !== "discover");
+
+          if (hasModal || hasSpotlight || hasPageJump || isSidebarOpen || isNonDiscoverView) {
+            liveTg.BackButton.show();
+            if (typeof liveTg.BackButton.offClick === "function") {
+              liveTg.BackButton.offClick(handleTelegramBackButtonClickClient);
+            }
+            liveTg.BackButton.onClick(handleTelegramBackButtonClickClient);
+          } else {
+            liveTg.BackButton.hide();
+            if (typeof liveTg.BackButton.offClick === "function") {
+              liveTg.BackButton.offClick(handleTelegramBackButtonClickClient);
+            }
+          }
+        } catch (e) {}
+      }
+
+      function handleTelegramBackButtonClickClient() {
+        try {
+          const modalRoot = document.getElementById("modalRoot");
+          if (modalRoot && modalRoot.innerHTML.trim().length > 0) {
+            if (typeof closeDetailModal === "function") closeDetailModal();
+            syncTelegramBackButtonClient();
+            return;
+          }
+          const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
+          if (spotlightRoot && spotlightRoot.innerHTML.trim().length > 0 && typeof closePersonSpotlightOverlayClient === "function") {
+            closePersonSpotlightOverlayClient();
+            syncTelegramBackButtonClient();
+            return;
+          }
+          const pageJumpRoot = document.getElementById("pageJumpModalRoot");
+          if (pageJumpRoot && pageJumpRoot.innerHTML.trim().length > 0 && typeof closePageJumpModalClient === "function") {
+            closePageJumpModalClient();
+            syncTelegramBackButtonClient();
+            return;
+          }
+          if (typeof state !== "undefined" && state.sidebarOpen && typeof closeSidebarMenuClient === "function") {
+            closeSidebarMenuClient();
+            syncTelegramBackButtonClient();
+            return;
+          }
+          if (typeof state !== "undefined" && state.currentView && state.currentView !== "discover" && typeof switchMainViewClient === "function") {
+            switchMainViewClient("discover");
+            syncTelegramBackButtonClient();
+            return;
+          }
+        } catch (e) {}
+      }
       function extractClientTelegramInitData() {
         try {
           const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
@@ -37037,6 +37113,9 @@
         }
         if (document.body) document.body.classList.remove("modal-open-pause-hero");
         if (m) m.innerHTML = "";
+        if (typeof syncTelegramBackButtonClient === "function") {
+          syncTelegramBackButtonClient();
+        }
         if (typeof scheduleHeroBackgroundVideoTeaserClient === "function") {
           scheduleHeroBackgroundVideoTeaserClient(false);
         }
@@ -60901,6 +60980,15 @@
       requestAnimationFrame(pollGamepadNavigation);
 
       window.__TELEPORT_BOOTED__ = true;
+      try {
+        const mRoot = document.getElementById("modalRoot");
+        if (mRoot && typeof MutationObserver !== "undefined") {
+          const backBtnObs = new MutationObserver(() => {
+            if (typeof syncTelegramBackButtonClient === "function") syncTelegramBackButtonClient();
+          });
+          backBtnObs.observe(mRoot, { childList: true, subtree: false });
+        }
+      } catch (_e) {}
       initAuthSession();
       setTimeout(() => {
         if (typeof pollAntiSpamQueueClient === "function") pollAntiSpamQueueClient(true);
@@ -60952,6 +61040,36 @@
         headers: {
           ...corsHeaders,
           "Content-Type": "image/svg+xml; charset=utf-8",
+          "Cache-Control": "public, max-age=86400"
+        }
+      });
+    }
+
+    if (path === "/manifest.json" || path === "/manifest.webmanifest") {
+      const pwaManifest = {
+        name: "STREAMFLIX – TelePort",
+        short_name: "STREAMFLIX",
+        description: "Exklusive Filme, Serien & Trailer direkt im Stream.",
+        start_url: "/app",
+        scope: "/",
+        display: "standalone",
+        orientation: "any",
+        background_color: "#060a14",
+        theme_color: "#060a14",
+        icons: [
+          {
+            src: "/favicon.svg",
+            sizes: "any",
+            type: "image/svg+xml",
+            purpose: "any maskable"
+          }
+        ]
+      };
+      return new Response(JSON.stringify(pwaManifest, null, 2), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/manifest+json; charset=utf-8",
           "Cache-Control": "public, max-age=86400"
         }
       });
@@ -65097,6 +65215,8 @@
           if (
             url.pathname.startsWith("/assets/") ||
             url.pathname === "/favicon.svg" ||
+            url.pathname === "/manifest.json" ||
+            url.pathname === "/manifest.webmanifest" ||
             url.pathname === "/worker.js"
           ) {
             return await env.ASSETS.fetch(request);
@@ -65150,6 +65270,8 @@
           url.pathname === "/app" ||
           url.pathname === "/miniapp" ||
           url.pathname === "/botfather-splash.svg" ||
+          url.pathname === "/manifest.json" ||
+          url.pathname === "/manifest.webmanifest" ||
           url.pathname === "/api/import-json" ||
           url.pathname.startsWith("/api/tma/") ||
           (request.method === "GET" && url.pathname === "/" && url.searchParams.get("status") !== "1")

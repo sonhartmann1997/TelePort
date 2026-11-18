@@ -42,6 +42,36 @@
       });
     }
 
+    if (path === "/manifest.json" || path === "/manifest.webmanifest") {
+      const pwaManifest = {
+        name: "STREAMFLIX – TelePort",
+        short_name: "STREAMFLIX",
+        description: "Exklusive Filme, Serien & Trailer direkt im Stream.",
+        start_url: "/app",
+        scope: "/",
+        display: "standalone",
+        orientation: "any",
+        background_color: "#060a14",
+        theme_color: "#060a14",
+        icons: [
+          {
+            src: "/favicon.svg",
+            sizes: "any",
+            type: "image/svg+xml",
+            purpose: "any maskable"
+          }
+        ]
+      };
+      return new Response(JSON.stringify(pwaManifest, null, 2), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/manifest+json; charset=utf-8",
+          "Cache-Control": "public, max-age=86400"
+        }
+      });
+    }
+
     if (path === "/" || path === "/app" || path === "/miniapp") {
       return new Response(renderNetflixMiniAppHtml(url.origin), {
         status: 200,
@@ -4182,6 +4212,8 @@
           if (
             url.pathname.startsWith("/assets/") ||
             url.pathname === "/favicon.svg" ||
+            url.pathname === "/manifest.json" ||
+            url.pathname === "/manifest.webmanifest" ||
             url.pathname === "/worker.js"
           ) {
             return await env.ASSETS.fetch(request);
@@ -4235,6 +4267,8 @@
           url.pathname === "/app" ||
           url.pathname === "/miniapp" ||
           url.pathname === "/botfather-splash.svg" ||
+          url.pathname === "/manifest.json" ||
+          url.pathname === "/manifest.webmanifest" ||
           url.pathname === "/api/import-json" ||
           url.pathname.startsWith("/api/tma/") ||
           (request.method === "GET" && url.pathname === "/" && url.searchParams.get("status") !== "1")
