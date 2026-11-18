@@ -601,6 +601,22 @@
           else if (mode === "exclude" || mode === "neutral") s.onlyVipStreams = false;
           else s.onlyVipStreams = !Boolean(s.onlyVipStreams);
         }
+        else if (category === "reset_category") {
+          if (effectiveVal === "genres") {
+            s.includedGenres = []; s.excludedGenres = [];
+            state.genreId = "all";
+            syncSearchGenreSelectDom();
+          } else if (effectiveVal === "platforms") {
+            s.includedPlatforms = []; s.excludedPlatforms = [];
+          } else if (effectiveVal === "eras") {
+            s.includedEras = []; s.excludedEras = [];
+          } else if (effectiveVal === "studios") {
+            s.includedStudios = []; s.excludedStudios = [];
+          } else if (effectiveVal === "fsk") {
+            s.includedFsk = []; s.excludedFsk = [];
+            s.showUnreleased = false;
+          }
+        }
         else if (category === "reset_all") {
           s.includedGenres = []; s.excludedGenres = [];
           s.includedPlatforms = []; s.excludedPlatforms = [];
@@ -722,6 +738,11 @@
         toggleFilterSidebar(tabKey || "genres");
       }
 
+      async function resetSidebarCategoryFiltersQuickClient(catKey) {
+        triggerTmaHapticClient("selection");
+        await setDirectFilter("reset_category", String(catKey || ""), "neutral");
+      }
+
       function toggleSearchFilterCollapse() {
         state.filtersCollapsedInSearch = !state.filtersCollapsedInSearch;
         const filterMount = document.getElementById("floatingFilterMount");
@@ -730,11 +751,21 @@
 
       async function triggerRandom() {
         const isMovie = state.type !== "s";
+        triggerTmaHapticClient("medium");
         setBusyState(true, "🎲 Ziehe zufälligen " + (isMovie ? "Film" : "Serien-Tipp") + " mit deinen aktiven Filtern...");
         try {
-          const r = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + state.type + "&genreId=" + state.genreId + "&mode=random");
-          if (r.items && r.items[0]) {
-            await openDetails(state.type, r.items[0].id);
+          const r = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + state.type + "&genreId=" + state.genreId + "&mode=random&bypass=1");
+          if (r.items && r.items.length > 0) {
+            if (!Array.isArray(state.recentRandomKeys)) state.recentRandomKeys = [];
+            const recentSet = new Set(state.recentRandomKeys);
+            const pick = r.items.find(it => it && it.id && !recentSet.has(state.type + "_" + it.id)) || r.items[0];
+            const pickKey = state.type + "_" + pick.id;
+            state.recentRandomKeys.push(pickKey);
+            if (state.recentRandomKeys.length > 16) {
+              state.recentRandomKeys.shift();
+            }
+            window._openingViaRandomDice = true;
+            await openDetails(state.type, pick.id, false, pick.title || pick.name || "", pick.poster_path || "");
           } else {
             showHudToast("⚠️ Kein Zufallstreffer mit den aktuellen Filtern gefunden.");
           }
@@ -847,6 +878,10 @@
         if (!q) return;
         if (inp && document.activeElement === inp) {
           inp.blur();
+        }
+        const topHdr = document.getElementById("topUnifiedBar");
+        if (topHdr && topHdr.classList.contains("mobile-search-expanded")) {
+          topHdr.classList.remove("mobile-search-expanded");
         }
         closeAutocomplete();
         if (document.getElementById("modalRoot")?.innerHTML) {
@@ -1079,10 +1114,23 @@
             const nextStatusLbl = document.getElementById("infiniteScrollStatusLabel");
             if (nextStatusLbl) {
               if (state.hasMorePages) {
-                nextStatusLbl.innerHTML = '📜 Scrolle weiter nach unten für Seite ' + (state.page + 1) + ' von ' + state.totalPages;
+                nextStatusLbl.innerHTML = '📜 Seite ' + state.page + ' von ' + state.totalPages + ' geladen';
               } else {
-                nextStatusLbl.innerHTML = '✓ Alle verfügbaren Treffer bis Seite ' + state.page + ' geladen';
+                nextStatusLbl.innerHTML = '✅ Alle verfügbaren Treffer bis Seite ' + state.page + ' geladen';
               }
+            }
+            const manualMoreBtn = document.getElementById("manualLoadMoreBtn");
+            if (manualMoreBtn) {
+              if (state.hasMorePages && state.page < state.totalPages) {
+                manualMoreBtn.style.display = "inline-flex";
+                manualMoreBtn.innerHTML = "➕ Seite " + (state.page + 1) + " laden";
+              } else {
+                manualMoreBtn.style.display = "none";
+              }
+            }
+            const bottomPill = document.getElementById("bottomPageCounterPill");
+            if (bottomPill) {
+              bottomPill.innerHTML = "🎯 Seite wählen (" + (state.visibleCatalogPage || state.page) + " / " + state.totalPages + ") ▾";
             }
 
             observeLazyCoversInContainerClient(liveGridEl);
@@ -1326,6 +1374,7 @@
           providerSelectHtml +
           sortGroupHtml +
           quickResetBtnHtml +
+          (!state.isSearchMode ? '<button type="button" class="btn" onclick="triggerRandom()" title="Zufälligen Titel mit deinen aktiven Filtern ziehen">🎲 Zufall</button>' : '') +
           (!state.isSearchMode ? '<button class="btn ' + (isFranchiseActive ? 'blue' : '') + '" onclick="toggleWorldsTray()" title="Filmuniversen & Filmreihen Portal-Dock ein- oder ausklappen">🌌 Welten & Reihen ' + (state.worldsTrayOpen ? '▴' : '▾') + '</button>' : '') +
           ((state.isSearchMode || isColView || isUniView || isPerView || state.currentCompanyId) ? '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' : '');
 
@@ -1372,6 +1421,10 @@
       let worldsTraySearchTimer = null;
       function onWorldsTraySearchInput(val) {
         state.worldsTrayQuery = String(val || "");
+        const clearBtn = document.getElementById("worldsSearchClearBtn");
+        if (clearBtn) {
+          clearBtn.style.display = state.worldsTrayQuery.trim().length > 0 ? "inline-flex" : "none";
+        }
         const gridEl = document.getElementById("worldsPortalGridMount");
         if (gridEl) gridEl.innerHTML = buildWorldsPortalCardsOnlyHtml();
         if (worldsTraySearchTimer) clearTimeout(worldsTraySearchTimer);
@@ -1390,6 +1443,21 @@
         } else {
           state.worldsTrayRemoteCols = [];
         }
+      }
+
+      function clearWorldsTraySearchClient() {
+        triggerTmaHapticClient("selection");
+        state.worldsTrayQuery = "";
+        state.worldsTrayRemoteCols = [];
+        const inp = document.getElementById("worldsTraySearchInputEl");
+        if (inp) {
+          inp.value = "";
+          try { inp.focus(); } catch (e) {}
+        }
+        const clearBtn = document.getElementById("worldsSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = "none";
+        const gridEl = document.getElementById("worldsPortalGridMount");
+        if (gridEl) gridEl.innerHTML = buildWorldsPortalCardsOnlyHtml();
       }
 
       function buildWorldsPortalCardsOnlyHtml() {
@@ -1467,14 +1535,21 @@
 
       function buildWorldsPortalTrayHtml() {
         const isColsTab = state.worldsTrayTab === "collections";
+        const hasQuery = String(state.worldsTrayQuery || "").trim().length > 0;
         return '<div class="worlds-portal-tray">' +
           '<div class="worlds-portal-header">' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
               '<button type="button" class="btn ' + (!isColsTab ? 'blue' : '') + '" onclick="switchWorldsTrayTab(\\'universes\\')">🌌 Universen (' + (CINEMATIC_UNIVERSES_CLIENT ? CINEMATIC_UNIVERSES_CLIENT.length : 0) + ')</button>' +
               '<button type="button" class="btn ' + (isColsTab ? 'blue' : '') + '" onclick="switchWorldsTrayTab(\\'collections\\')">🍿 Filmreihen (' + (FEATURED_COLLECTIONS_CLIENT ? FEATURED_COLLECTIONS_CLIENT.length : 0) + '+)</button>' +
             '</div>' +
-            '<input type="text" class="worlds-search-input" value="' + esc(state.worldsTrayQuery || '') + '" oninput="onWorldsTraySearchInput(this.value)" placeholder="🔍 Welt oder Filmreihe suchen (z.B. Marvel, Star Wars, Saw, Dune)..." />' +
-            '<button type="button" class="btn" onclick="state.worldsTrayOpen=false;loadFranchisesHub(\\'' + (isColsTab ? 'collections' : 'universes') + '\\')" title="Große Vollbild-Übersicht öffnen">🗂️ Vollbild-Hub</button>' +
+            '<div style="position:relative;flex:1 1 180px;min-width:150px;display:flex;align-items:center">' +
+              '<input id="worldsTraySearchInputEl" type="text" class="worlds-search-input" style="width:100%;padding-right:28px" value="' + esc(state.worldsTrayQuery || '') + '" oninput="onWorldsTraySearchInput(this.value)" placeholder="🔍 Welt oder Filmreihe suchen (z.B. Marvel, Star Wars, Dune)..." />' +
+              '<button type="button" id="worldsSearchClearBtn" onclick="clearWorldsTraySearchClient()" title="Suche leeren" style="position:absolute;right:6px;display:' + (hasQuery ? 'inline-flex' : 'none') + ';align-items:center;justify-content:center;width:20px;height:20px;border-radius:999px;border:0;background:rgba(148,163,184,0.22);color:#f8fafc;font-size:11px;cursor:pointer">✕</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;align-items:center">' +
+              '<button type="button" class="btn" onclick="state.worldsTrayOpen=false;loadFranchisesHub(\\'' + (isColsTab ? 'collections' : 'universes') + '\\')" title="Große Vollbild-Übersicht öffnen">🗂️ Vollbild-Hub</button>' +
+              '<button type="button" class="btn" onclick="toggleWorldsTray(false)" title="Welten-Leiste einklappen">✕</button>' +
+            '</div>' +
           '</div>' +
           '<div id="worldsPortalGridMount" class="worlds-portal-grid">' +
             buildWorldsPortalCardsOnlyHtml() +
@@ -1493,18 +1568,31 @@
         const isColView = state.currentView === "collection" && state.currentCollectionId;
         const isUniView = state.currentView === "universe" && state.currentUniverseId;
         const isPerView = state.currentView === "person" && state.currentPersonId;
+        const isStudioView = Boolean(state.currentView === "discover" && state.currentCompanyId);
 
         const franchiseActionBannerHtml = (isColView || isUniView) ? (
-          '<div class="panel-box" style="margin-bottom:10px;border-color:' + (isColView ? 'rgba(91,70,245,0.5)' : 'rgba(16,185,129,0.5)') + '">' +
+          '<div class="panel-box" style="margin-bottom:10px;padding:10px 12px;border-color:' + (isColView ? 'rgba(91,70,245,0.5)' : 'rgba(16,185,129,0.5)') + '">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div>' +
-                '<div style="font-size:14px;font-weight:800;color:var(--text-main)">' + esc(customTitle || (isColView ? '🍿 Filmreihe' : '🌌 Filmuniversum')) + '</div>' +
-                '<div style="font-size:11.5px;color:var(--text-muted)">Direkt über Telegram teilen oder komplett in deiner Merkliste speichern:</div>' +
+                '<div style="font-size:13.5px;font-weight:800;color:var(--text-main)">' + esc(customTitle || (isColView ? '🍿 Filmreihe' : '🌌 Filmuniversum')) + '</div>' +
+                '<div style="font-size:11px;color:var(--text-muted)">Komplette ' + (isColView ? 'Filmreihe' : 'Welt') + ' speichern, teilen oder weitere Reihen entdecken:</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' sichtbaren speichern</button>' +
+                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
                 '<button class="btn purple" onclick="shareCollectionOrUniverseFromTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\',\\'' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '\\')">📤 Teilen</button>' +
-                '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🔙 Alle ' + (isColView ? 'Reihen' : 'Universen') + '</button>' +
+                '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🌌 Alle ' + (isColView ? 'Reihen' : 'Welten') + '</button>' +
+                '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>'
+        ) : (isPerView || isStudioView) ? (
+          '<div class="panel-box" style="margin-bottom:10px;padding:9px 12px;border-color:rgba(56,189,248,0.42)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div style="font-size:13px;font-weight:800;color:var(--text-main)">' +
+                (isPerView ? ('🌟 Filmografie: ' + esc(state.currentPersonName || 'Person')) : ('🏢 Studio-Katalog: ' + esc(state.currentCompanyName || 'Filmstudio'))) +
+              '</div>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button class="btn" onclick="goHome()">🏠 Zurück zum Hauptkatalog</button>' +
               '</div>' +
             '</div>' +
           '</div>'
@@ -1580,17 +1668,20 @@
         const hasNextPage = Boolean(state.hasMorePages && curPage < totPages && state.items.length > 0);
         const canPaginateView = Boolean((state.currentView === "discover" || state.isSearchMode) && !isColView && !isUniView && !isPerView && (hasNextPage || totPages > 1) && state.items.length > 0);
 
-        // Schlanker Auto-Load-Sentinel am Ende des Grids (ohne doppelte Seiten-Zahlenleiste unten!)
+        // Schlanker Auto-Load-Sentinel am Ende des Grids (mit 1-Klick-Nachladen & Seiten-Schnellwahl)
         let paginationBarHtml = "";
         if (canPaginateView) {
-          paginationBarHtml = '<div id="infiniteScrollSentinel" class="load-more-wrap" style="padding:14px 12px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap">' +
+          paginationBarHtml = '<div id="infiniteScrollSentinel" class="load-more-wrap" style="padding:14px 12px;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap">' +
             '<span id="infiniteScrollStatusLabel" style="font-size:12px;color:var(--text-muted);font-weight:700">' +
               (hasNextPage
-                ? ('📜 Scrolle weiter nach unten für Seite ' + (curPage + 1) + ' von ' + totPages)
-                : ('✓ Seite ' + curPage + ' von ' + totPages + ' geladen')) +
+                ? ('📄 Seite ' + curPage + ' von ' + totPages + ' geladen')
+                : ('✅ Alle ' + totPages + ' Seiten geladen')) +
             '</span>' +
+            (hasNextPage ? (
+              '<button type="button" id="manualLoadMoreBtn" class="page-counter-pill" style="background:rgba(14,165,233,0.18);border-color:rgba(56,189,248,0.52);color:#e0f2fe" onclick="loadMoreResults(false)" title="Nächste Katalogseite direkt laden">➕ Seite ' + (curPage + 1) + ' laden</button>'
+            ) : '') +
             (totPages > 1 ? (
-              '<button type="button" class="page-counter-pill" onclick="openPageJumpModalClient()" title="Gezielten Seitensprung öffnen (Touch & TV)">🎯 Seite wählen (' + visiblePage + ' / ' + totPages + ') ▾</button>'
+              '<button type="button" id="bottomPageCounterPill" class="page-counter-pill" onclick="openPageJumpModalClient()" title="Gezielten Seitensprung öffnen">🎯 Seite wählen (' + visiblePage + ' / ' + totPages + ') ▾</button>'
             ) : '') +
           '</div>';
         }
@@ -1647,23 +1738,25 @@
           const isUni = state.franchiseTab === "universes";
 
           root.innerHTML = '<div class="section">' +
-            '<div id="floatingFilterMount">' + buildFloatingFilterBarHtml() + '</div>' +
-            '<div class="section-title" style="margin-top:6px"><span>🍿 Filmreihen & 🌌 Filmuniversen</span><div style="display:flex;gap:6px"><button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button></div></div>' +
-            '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
-              '<button class="btn ' + (!isUni ? 'blue' : '') + '" onclick="loadFranchisesHub(\\'collections\\')">🍿 Beliebte Filmreihen (' + cols.length + ')</button>' +
-              '<button class="btn ' + (isUni ? 'blue' : '') + '" onclick="loadFranchisesHub(\\'universes\\')">🌌 Große Filmuniversen (' + unis.length + ')</button>' +
+            '<div class="section-title" style="margin-top:4px">' +
+              '<span>🌌 Welten & 🍿 Filmreihen entdecken</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button class="btn ' + (!isUni ? 'active' : '') + '" onclick="loadFranchisesHub(\\'collections\\')">🍿 Filmreihen (' + cols.length + ')</button>' +
+                '<button class="btn ' + (isUni ? 'active' : '') + '" onclick="loadFranchisesHub(\\'universes\\')">🌌 Filmuniversen (' + unis.length + ')</button>' +
+                '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
+              '</div>' +
             '</div>' +
             (!isUni ? (
-              '<div style="display:flex;gap:6px;margin-bottom:12px">' +
-                '<input id="colSearchInput" class="tma-input" style="flex:1;padding:8px 12px;border-radius:8px;font-size:13px" placeholder="🔍 Beliebige Filmreihe auf TMDB suchen (z.B. Saw, Matrix, John Wick)..." onkeydown="if(event.key===\\'Enter\\')searchCollectionsInHub()" />' +
-                '<button class="btn blue" onclick="searchCollectionsInHub()">Reihe suchen</button>' +
+              '<div class="floating-filter-bar" style="display:flex;gap:6px;margin-bottom:12px;padding:8px 10px;align-items:center">' +
+                '<input id="colSearchInput" class="tma-input" style="flex:1;padding:7px 12px;border-radius:8px;font-size:12.5px" placeholder="🔍 Beliebige Filmreihe suchen (z.B. Saw, Matrix, John Wick, Fast & Furious)..." onkeydown="if(event.key===\\'Enter\\')searchCollectionsInHub()" />' +
+                '<button class="btn blue" onclick="searchCollectionsInHub()">🔍 Suchen</button>' +
               '</div>' +
-              '<div id="colHubGrid" class="chip-grid">' +
-                cols.map(c => '<button class="btn" style="padding:9px 12px;font-size:12.5px" onclick="openCollectionView(' + c.id + ')">' + esc(c.icon || '🍿') + ' ' + esc(c.name) + '</button>').join("") +
+              '<div id="colHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;padding:4px">' +
+                cols.map(c => '<button class="btn" style="padding:10px 12px;font-size:12.5px;justify-content:flex-start;text-align:left" onclick="openCollectionView(' + c.id + ')">' + esc(c.icon || '🍿') + ' <span>' + esc(c.name) + '</span></button>').join("") +
               '</div>'
             ) : (
-              '<div id="uniHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">' +
-                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px" onclick="openUniverseView(\\''+esc(u.id)+'\\')"><div style="font-size:14px;font-weight:700;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted)">' + esc(u.description || '') + '</div></div>').join("") +
+              '<div id="uniHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:4px">' +
+                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px;padding:12px" onclick="openUniverseView(\\''+esc(u.id)+'\\')"><div style="font-size:14px;font-weight:800;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted);line-height:1.4">' + esc(u.description || '') + '</div></div>').join("") +
               '</div>'
             )) +
           '</div>';
@@ -2937,6 +3030,79 @@
         if (root) root.innerHTML = "";
       }
 
+      let activePersonSpotlightItemsCache = [];
+      let activePersonSpotlightFilter = "all";
+
+      function togglePersonSpotlightBioExpandClient() {
+        const bioEl = document.getElementById("personSpotlightBioEl");
+        const hintEl = document.getElementById("personSpotlightBioHintEl");
+        if (!bioEl) return;
+        const expanded = bioEl.classList.toggle("is-expanded");
+        if (hintEl) {
+          hintEl.textContent = expanded ? "▴ Weniger anzeigen" : "▾ Biografie ganz lesen";
+        }
+      }
+
+      function renderPersonSpotlightGridCardsClient(filterMode = "all") {
+        activePersonSpotlightFilter = filterMode || "all";
+        const gridEl = document.getElementById("personSpotlightGridEl");
+        const countEl = document.getElementById("personSpotlightCountLbl");
+        const filterBarEl = document.getElementById("personSpotlightFilterBarEl");
+        if (!gridEl) return;
+
+        const allItems = Array.isArray(activePersonSpotlightItemsCache) ? activePersonSpotlightItemsCache : [];
+        const movieItems = allItems.filter(it => (it.media_type === "tv" || it.type === "s") ? false : true);
+        const seriesItems = allItems.filter(it => (it.media_type === "tv" || it.type === "s") ? true : false);
+
+        if (filterBarEl) {
+          if (movieItems.length > 0 && seriesItems.length > 0) {
+            filterBarEl.style.display = "inline-flex";
+            filterBarEl.innerHTML =
+              '<button type="button" class="btn ' + (activePersonSpotlightFilter === 'all' ? 'blue' : '') + '" style="padding:3px 9px;font-size:11px" onclick="renderPersonSpotlightGridCardsClient(\\'all\\')">Alle (' + allItems.length + ')</button>' +
+              '<button type="button" class="btn ' + (activePersonSpotlightFilter === 'm' ? 'blue' : '') + '" style="padding:3px 9px;font-size:11px" onclick="renderPersonSpotlightGridCardsClient(\\'m\\')">🎬 Filme (' + movieItems.length + ')</button>' +
+              '<button type="button" class="btn ' + (activePersonSpotlightFilter === 's' ? 'blue' : '') + '" style="padding:3px 9px;font-size:11px" onclick="renderPersonSpotlightGridCardsClient(\\'s\\')">📺 Serien (' + seriesItems.length + ')</button>';
+          } else {
+            filterBarEl.style.display = "none";
+          }
+        }
+
+        const filtered = activePersonSpotlightFilter === "m"
+          ? movieItems
+          : activePersonSpotlightFilter === "s"
+            ? seriesItems
+            : allItems;
+
+        if (countEl) {
+          countEl.textContent = "(" + filtered.length + ")";
+        }
+
+        if (filtered.length === 0) {
+          gridEl.innerHTML = '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8;padding:10px 2px">Keine Titel in dieser Kategorie gefunden.</div>';
+          return;
+        }
+
+        gridEl.innerHTML = filtered.slice(0, 24).map(it => {
+          const tc = it.media_type === "tv" || it.type === "s" ? "s" : "m";
+          const itemTitle = String(it.title || it.name || "Titel").trim();
+          const isCur = state.activeDetails && String(state.activeDetails.id) === String(it.id);
+          const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
+          const pUrl = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
+          const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
+          const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
+          const subLine = [yearStr, voteStr, tc === "s" ? "Serie" : "Film"].filter(Boolean).join(" · ");
+          return '<div class="detail-sim-card' + (isCur ? ' is-current-part' : '') + '" style="width:100%" tabindex="0" onclick="saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+            (isCur ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
+            '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(pUrl) + '" alt="' + esc(itemTitle) + '" draggable="false" />' +
+            '<div class="detail-sim-overlay">' +
+              '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
+              '<div class="detail-sim-sub">' + esc(subLine) + '</div>' +
+            '</div>' +
+          '</div>';
+        }).join("");
+        unlockCatalogCoversLoadingClient(false);
+        observeLazyCoversInContainerClient(gridEl);
+      }
+
       async function openPersonSpotlightOverlayClient(personId, personName, roleLabel = "", photoUrl = "") {
         let root = document.getElementById("personSpotlightOverlayRoot");
         if (!root) {
@@ -2954,6 +3120,8 @@
         const fbAvatar = buildActorAvatarFallbackSvgClient(cleanName);
         const initialAvatar = photoUrl || fbAvatar;
         const subText = roleLabel ? String(roleLabel) : "Schauspiel & Regie";
+        activePersonSpotlightItemsCache = [];
+        activePersonSpotlightFilter = "all";
 
         root.innerHTML = '<div class="person-spotlight-backdrop" onclick="if(event.target===this)closePersonSpotlightOverlayClient(event)">' +
           '<div class="person-spotlight-card" role="dialog" aria-label="' + esc(cleanName) + '">' +
@@ -2970,8 +3138,14 @@
                 '<button type="button" class="detail-btn-glass" onclick="closePersonSpotlightOverlayClient(event)">✕ Schließen</button>' +
               '</div>' +
             '</div>' +
-            '<div id="personSpotlightBioEl" class="person-spotlight-bio" style="display:none"></div>' +
-            '<div class="detail-section-heading" style="font-size:calc(15px * var(--scale-text))">Verfügbare Filme & Serien mit ' + esc(cleanName) + '</div>' +
+            '<div id="personSpotlightBioWrapEl" style="display:none;flex-direction:column;gap:4px">' +
+              '<div id="personSpotlightBioEl" class="person-spotlight-bio" onclick="togglePersonSpotlightBioExpandClient()"></div>' +
+              '<span id="personSpotlightBioHintEl" style="display:none;font-size:11px;font-weight:800;color:#38bdf8;cursor:pointer;align-self:flex-start" onclick="togglePersonSpotlightBioExpandClient()">▾ Biografie ganz lesen</span>' +
+            '</div>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<div class="detail-section-heading" style="font-size:calc(15px * var(--scale-text))">Verfügbare Filme & Serien mit ' + esc(cleanName) + ' <span id="personSpotlightCountLbl" style="color:#38bdf8;font-size:13px"></span></div>' +
+              '<div id="personSpotlightFilterBarEl" style="display:none;gap:5px;flex-wrap:wrap"></div>' +
+            '</div>' +
             '<div id="personSpotlightGridEl" class="person-spotlight-grid">' +
               '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8;padding:12px 2px">⏳ Lade Filmografie aus dem Katalog...</div>' +
             '</div>' +
@@ -2993,41 +3167,23 @@
               if (avEl) avEl.src = resolvePosterUrlClient(pInfo.profile_path, "w185", "");
             }
             if (pInfo.biography) {
+              const bioWrap = document.getElementById("personSpotlightBioWrapEl");
               const bioEl = document.getElementById("personSpotlightBioEl");
-              if (bioEl) {
+              const bioHint = document.getElementById("personSpotlightBioHintEl");
+              if (bioWrap && bioEl) {
                 bioEl.textContent = pInfo.biography;
-                bioEl.style.display = "-webkit-box";
+                bioWrap.style.display = "flex";
+                if (bioHint && pInfo.biography.length > 180) {
+                  bioHint.style.display = "inline-block";
+                }
               }
             }
             const subParts = [roleLabel, pInfo.birthday ? ("* " + pInfo.birthday.slice(0, 4)) : "", pInfo.place_of_birth || ""].filter(Boolean);
             const subEl = document.getElementById("personSpotlightSubEl");
             if (subEl && subParts.length > 0) subEl.textContent = subParts.join(" · ");
           }
-          const items = Array.isArray(res?.items) ? res.items : [];
-          if (items.length === 0) {
-            gridEl.innerHTML = '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8;padding:10px 2px">Keine weiteren Titel im aktuellen Filter gefunden.</div>';
-            return;
-          }
-          gridEl.innerHTML = items.slice(0, 18).map(it => {
-            const tc = it.media_type === "tv" || it.type === "s" ? "s" : "m";
-            const itemTitle = String(it.title || it.name || "Titel").trim();
-            const isCur = state.activeDetails && String(state.activeDetails.id) === String(it.id);
-            const fbSvg = buildPosterFallbackSvg(itemTitle, tc === "s");
-            const pUrl = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "") || fbSvg;
-            const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
-            const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
-            const subLine = [yearStr, voteStr, tc === "s" ? "Serie" : "Film"].filter(Boolean).join(" · ");
-            return '<div class="detail-sim-card' + (isCur ? ' is-current-part' : '') + '" style="width:100%" tabindex="0" onclick="saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
-              (isCur ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
-              '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(pUrl) + '" alt="' + esc(itemTitle) + '" draggable="false" />' +
-              '<div class="detail-sim-overlay">' +
-                '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
-                '<div class="detail-sim-sub">' + esc(subLine) + '</div>' +
-              '</div>' +
-            '</div>';
-          }).join("");
-          unlockCatalogCoversLoadingClient(false);
-          observeLazyCoversInContainerClient(gridEl);
+          activePersonSpotlightItemsCache = Array.isArray(res?.items) ? res.items : [];
+          renderPersonSpotlightGridCardsClient("all");
         } catch (_err) {
           const gridEl = document.getElementById("personSpotlightGridEl");
           if (gridEl) gridEl.innerHTML = '<div style="grid-column:1 / -1;font-size:13px;color:#94a3b8">Titel konnten nicht geladen werden.</div>';
@@ -3864,6 +4020,7 @@
         const mutedActiveFiltersHtml = buildMutedActiveFiltersForDetailHtml();
         const kickerRowHtml = [
           '<span class="hero-badge ' + (type === "s" ? "series" : "movie") + '">' + (type === "s" ? "📺 SERIE" : "🎬 FILM") + '</span>',
+          state.openedFromRandom ? '<span class="hero-badge" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#ffffff;border:1px solid rgba(196,181,253,0.45)">🎲 ZUFALLS-TIPP</span>' : "",
           d.collection ? (
             '<button type="button" class="detail-kicker-link" onclick="scrollToDetailBelowFoldClient(event,\\'detailCollectionSectionWrap\\')" title="Zur Filmreihe springen: ' + esc(d.collection.name) + '">' +
               '<span>🍿</span><span>' + esc(d.collection.name) + '</span>' +
@@ -3874,8 +4031,7 @@
               '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
             '</button>'
           ) : "",
-          returnChipHtml,
-          mutedActiveFiltersHtml
+          returnChipHtml
         ].filter(Boolean).join("");
 
         const cleanStatusLabel = (type === "s" && d.statusText && d.statusText !== "Unbekannt")
@@ -3920,7 +4076,7 @@
           ) : [])
         ].filter(Boolean);
         const creditsGlassStripHtml = creditsPillsArr.length > 0
-          ? ('<div class="detail-credits-glass-strip">' + creditsPillsArr.join("") + '</div>')
+          ? ('<div class="detail-credits-glass-strip">' + creditsPillsArr.join('<span class="detail-credit-sep">·</span>') + '</div>')
           : "";
 
         const playableMovieFiles = type === "m" ? getPlayableMovieFilesForHeroClient(d) : [];
@@ -4061,15 +4217,18 @@
           '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
             (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +
           '</button>' +
-          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern">🖼️ Cover</button>' : '') +
-          (isAdminUser ? '<button type="button" class="detail-btn-glass" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen">🔄 Zuordnen</button>' : '') +
-          (canReportMedia ? '<button type="button" class="detail-btn-glass" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Fehler melden">⚠️ Melden</button>' : '') +
-          '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Original-Poster & TMDb">⋯ Mehr ▾</button>';
+          (state.openedFromRandom ? (
+            '<button type="button" id="modalNextRandomBtn" class="detail-btn-glass" style="border-color:rgba(167,139,250,0.55);color:#ede9fe" onclick="triggerRandom()" title="Direkt den nächsten Zufalls-Tipp mit deinen aktiven Filtern ziehen">🎲 Weiterwürfeln</button>'
+          ) : '') +
+          '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Melden, Original-Poster, TMDb & weitere Werkzeuge">⋯ Mehr ▾</button>';
 
         const moreActionsInnerHtml =
           '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
           '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
           '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
+          (canReportMedia ? '<button class="btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Defekten Stream oder falsche Zuordnung melden">⚠️ Fehler melden</button>' : '') +
+          (isAdminUser ? '<button class="btn" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern (Admin)">🖼️ Cover ändern</button>' : '') +
+          (isAdminUser ? '<button class="btn" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen (Admin)">🔄 Neu zuordnen</button>' : '') +
           (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
           (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(posterOrig) + '\\',\\'' + esc(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
           (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(backdropOrig) + '\\',\\'' + esc(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
@@ -4137,7 +4296,7 @@
           const titleBoxEl = document.getElementById("detailTitleBoxEl");
           if (titleBoxEl && activeLogoPath && !titleBoxEl.querySelector("img")) {
             if (typeof clientClearLogoCache !== "undefined" && d.id) {
-              clientClearLogoCache.set(typeCode + "_" + Number(d.id), activeLogoPath);
+              clientClearLogoCache.set(type + "_" + Number(d.id), activeLogoPath);
               if (typeof schedulePersistClearLogoCacheClient === "function") {
                 schedulePersistClearLogoCacheClient();
               }
@@ -4239,7 +4398,9 @@
               '</div>' +
               '<div class="detail-sticky-mini-actions">' +
                 '<button type="button" id="detailStickyPrimaryPlayBtn" class="detail-btn-play-white" style="padding:6px 14px;font-size:12.5px" onclick="' + primaryClickJs + '">' + esc(primaryPlayBtnLabel) + '</button>' +
-                '<button type="button" class="detail-btn-glass" style="padding:6px 12px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
+                '<button type="button" id="modalStickyWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" style="padding:6px 12px;font-size:12px" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')" title="Auf die Merkliste setzen / entfernen">' + (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") + '</button>' +
+                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
+                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="closeDetailModal()" title="Detailansicht schließen (Esc)">✕</button>' +
               '</div>' +
             '</div>' +
 
@@ -4310,7 +4471,8 @@
                   '</div>' +
                 '</div>' +
                 '<div class="hero-bottom-bar">' +
-                  '<button type="button" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToDetailBelowFoldClient(event)" title="Nach unten zu Cast, Infos & Empfehlungen scrollen" aria-label="Nach unten zu Cast, Infos & Empfehlungen scrollen">' +
+                  '<button type="button" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToDetailBelowFoldClient(event)" title="Nach unten zu Streams, Cast & Empfehlungen scrollen" aria-label="Nach unten zu Streams, Cast & Empfehlungen scrollen">' +
+                    '<span class="hero-scroll-down-label">' + (type === "s" ? "📺 Staffeln, Cast & Infos" : "🎬 Streams, Cast & Infos") + '</span>' +
                     '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
                       '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
                     '</svg>' +
@@ -4361,6 +4523,8 @@
         if (typeof lastCardLongPressAt !== "undefined" && Date.now() - lastCardLongPressAt < 650) {
           return;
         }
+        state.openedFromRandom = Boolean(window._openingViaRandomDice);
+        window._openingViaRandomDice = false;
         if (typeof stopHeroBackgroundVideoTeaserClient === "function") {
           stopHeroBackgroundVideoTeaserClient();
         }
@@ -4764,7 +4928,12 @@
           box.style.display = "none";
           return;
         }
+        const remapBox = document.getElementById("modalRemapMediaBox");
+        if (remapBox) remapBox.style.display = "none";
+        const moreBox = document.getElementById("modalMoreActionsBox");
+        if (moreBox) moreBox.style.display = "none";
         box.style.display = "block";
+        setTimeout(() => { try { box.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_e) {} }, 40);
         box.innerHTML = '<div style="font-size:12px;color:#cbd5e1">⏳ Lade verfügbare Cover von TMDb (Original EN / DE / Textless), Apple iTunes DE & OMDb...</div>';
         try {
           const title = state.activeDetails?.title || "";
@@ -4864,7 +5033,12 @@
           box.style.display = "none";
           return;
         }
+        const posterBox = document.getElementById("modalPosterPickerBox");
+        if (posterBox) posterBox.style.display = "none";
+        const moreBox = document.getElementById("modalMoreActionsBox");
+        if (moreBox) moreBox.style.display = "none";
         box.style.display = "block";
+        setTimeout(() => { try { box.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (_e) {} }, 40);
         const d = state.activeDetails || {};
         const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
           ? d.allStreamFiles
@@ -5165,14 +5339,18 @@
             : "Bot-Privatchat (DM)";
         return '<div id="modalDeliveryTargetMount" class="delivery-inline-wrap">' +
           '<div class="delivery-inline-pills" title="Aktives Versandziel: ' + activeModeSummary + '">' +
-            '<span class="delivery-inline-label">📤 Ziel:</span>' +
-            '<button type="button" class="delivery-pill-btn ' + (mode === 'dm' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'dm\\')" title="An privaten Bot-Chat senden">💬 Privat</button>' +
+            '<span class="delivery-inline-label">📤 Senden an:</span>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'dm' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'dm\\')" title="An privaten Bot-Chat senden">💬 Bot-Chat</button>' +
             '<button type="button" class="delivery-pill-btn ' + (mode === 'group' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'group\\')" title="In eigene Telegram-Gruppe senden">👥 Gruppe</button>' +
-            '<button type="button" class="delivery-pill-btn ' + (mode === 'custom_bot' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')" title="Über eigenen Bot senden">🤖 Bot</button>' +
-            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID, Quellgruppe & eigenen Bot konfigurieren">⚙️</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (mode === 'custom_bot' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')" title="Über eigenen Bot senden">🤖 Eigener Bot</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID & Bot-Token ein-/ausklappen">⚙️' + (showConfigInputs ? ' ▴' : '') + '</button>' +
           '</div>' +
           (showConfigInputs ? (
             '<div class="delivery-config-drawer">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">' +
+                '<span style="font-size:11px;font-weight:800;color:#7dd3fc">⚙️ Ziel-Konfiguration (wird automatisch gespeichert)</span>' +
+                '<button type="button" class="btn close-slate" style="padding:2px 8px;font-size:10.5px" onclick="toggleModalDeliveryConfigBoxClient()">✓ Einklappen</button>' +
+              '</div>' +
               '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">' +
                 '<div>' +
                   '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (<code>/id</code>):</div>' +
@@ -5183,12 +5361,15 @@
                   '<input id="modalDelivTopicIdInp" class="tma-input" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
-                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (Auto-Copy):</div>' +
-                  '<input id="modalDelivSourceGroupInp" class="tma-input" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder überschreiben" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
+                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (optional):</div>' +
+                  '<input id="modalDelivSourceGroupInp" class="tma-input" value="' + esc(prefs.sourceBridgeChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Auto (-100...) oder leer lassen" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
                   '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">🤖 Eigenes Bot-Token (optional):</div>' +
-                  '<input id="modalDelivBotTokenInp" class="tma-input" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;font-size:11.5px" />' +
+                  '<div style="display:flex;gap:4px;align-items:center">' +
+                    '<input id="modalDelivBotTokenInp" class="tma-input" type="password" value="' + esc(prefs.customBotToken || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="123456:ABC-DEF..." style="width:100%;padding:5px 8px;font-size:11.5px" />' +
+                    '<button type="button" class="btn" style="padding:4px 7px;font-size:11px" onclick="togglePasswordVisibilityClient(\\'modalDelivBotTokenInp\\',this)" title="Bot-Token ein-/ausblenden">👁️</button>' +
+                  '</div>' +
                 '</div>' +
               '</div>' +
             '</div>'
@@ -5196,13 +5377,24 @@
         '</div>';
       }
 
+      function syncDynamicDeliveryButtonLabelsClient() {
+        const lbl = getActiveDeliveryButtonLabelClient();
+        document.querySelectorAll('[data-dynamic-delivery-btn="1"]').forEach(btn => {
+          const hasUt = btn.getAttribute("data-has-ut") === "1";
+          btn.textContent = "▶ " + lbl + (hasUt ? " + UT" : "");
+        });
+      }
+
       function switchModalDeliveryModeClient(nextMode) {
         const prefs = saveDeliveryPreferencesClient({ targetMode: nextMode || "dm" });
         if ((nextMode === "group" && !prefs.targetGroupChatId) || (nextMode === "custom_bot" && !prefs.customBotToken)) {
           modalDeliveryConfigExpanded = true;
+        } else if (nextMode === "dm") {
+          modalDeliveryConfigExpanded = false;
         }
         const mount = document.getElementById("modalDeliveryTargetMount");
         if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+        syncDynamicDeliveryButtonLabelsClient();
       }
 
       function toggleModalDeliveryConfigBoxClient() {
@@ -5222,6 +5414,7 @@
           sourceBridgeChatId: sVal,
           customBotToken: bVal
         }, true);
+        syncDynamicDeliveryButtonLabelsClient();
       }
 
       async function verifyAndConnectCustomBotInSettingsClient() {
@@ -5939,12 +6132,6 @@
 
         if (totalReleaseCount === 0) {
           return '<div>' +
-            '<div class="season-toolbar-row">' +
-              '<div style="font-size:12.5px;font-weight:800;color:var(--text)">📦 Archiv-Downloads</div>' +
-              '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-                buildModalDeliveryTargetSelectorHtml() +
-              '</div>' +
-            '</div>' +
             archiveSectionHtml +
           '</div>';
         }
@@ -5952,9 +6139,6 @@
         return '<div>' +
           '<div class="season-toolbar-row">' +
             '<div style="font-size:12.5px;font-weight:800;color:var(--text)">🎬 Verfügbare Releases (' + totalReleaseCount + (rawFiles.length > totalReleaseCount ? ' · ' + rawFiles.length + ' Dateien' : '') + ')</div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-              buildModalDeliveryTargetSelectorHtml() +
-            '</div>' +
           '</div>' +
           '<div style="display:flex;flex-direction:column;gap:8px">' +
             finalBlocks.map(blk => {
@@ -6017,7 +6201,7 @@
                   (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399" title="Wird beim Video-Versand automatisch mitgesendet">💬 ' + subsList.length + ' UT</span>' : '') +
                 '</div>' +
                 '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                  '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
+                  '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" ' + (isRarFile ? '' : ('data-dynamic-delivery-btn="1" data-has-ut="' + (subsList.length > 0 ? '1' : '0') + '"')) + ' onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
                   (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title) + '\\',{seriesId:null})" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
                   (isAdminUser ? '<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(f.raw_filename || '') + '\\',messageLink:\\'' + esc(f.message_link || '') + '\\'})" title="Datei-Version ändern, Quellgruppe prüfen oder mit anderem TMDb-Titel verknüpfen">✏️</button>' : '') +
                   (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\'})" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
@@ -6328,7 +6512,9 @@
         const progressBannerHtml = prog ? (
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);font-size:11.5px">' +
             '<span>👁️ <b>Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
-            (Number(prog.season) !== Number(seasonNum) ? '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>' : '') +
+            (Number(prog.season) !== Number(seasonNum)
+              ? '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>'
+              : '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="scrollToActiveProgressEpisodeClient()">🎯 Zur Folge springen ▾</button>') +
           '</div>'
         ) : '';
 
@@ -6469,14 +6655,14 @@
             isEpAutoFilled ? "ep-autofilled" : ""
           ].filter(Boolean).join(" ");
 
-          return '<div class="' + rowCls + '">' +
+          return '<div class="' + rowCls + '" data-ep-num="' + Number(ep.episode_number) + '" data-ep-search="' + esc((epCode + ' ' + ep.name + ' ' + ep.episode_number).toLowerCase()) + '">' +
             '<div class="ep-row-top">' +
               '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')" title="' + esc(epCode + ' – ' + ep.name) + ' (Antippen für Beschreibung)">' +
                 '<span class="ep-code-badge">' + epCode + '</span>' +
                 '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(ep.name) + '</span></div>' +
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;flex-shrink:0">' +
-                topQualityBadgeHtml +
+                (filesBtns ? '' : topQualityBadgeHtml) +
                 topAutoFillBadgeHtml +
                 progBadgeHtml +
               '</div>' +
@@ -6513,11 +6699,19 @@
           '</div>'
         ) : '';
 
+        const episodeQuickFilterHtml = episodes.length >= 6 ? (
+          '<div style="display:inline-flex;align-items:center;gap:4px;background:rgba(15,23,42,0.72);border:1px solid rgba(148,163,184,0.25);border-radius:8px;padding:2px 7px">' +
+            '<span style="font-size:11px;opacity:0.75">🔍</span>' +
+            '<input id="seasonEpQuickSearchInp" type="text" placeholder="Folge / Titel (' + episodes.length + ')..." oninput="filterSeasonEpisodesInlineClient(this.value)" style="background:transparent;border:none;outline:none;color:var(--text);font-size:11.5px;width:130px;padding:3px 2px" />' +
+            '<button type="button" id="seasonEpQuickSearchClearBtn" style="display:none;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:11px;padding:0 3px" onclick="const inp=document.getElementById(\\'seasonEpQuickSearchInp\\');if(inp){inp.value=\\'\\';filterSeasonEpisodesInlineClient(\\'\\');inp.focus();}" title="Episoden-Filter zurücksetzen">✕</button>' +
+          '</div>'
+        ) : '';
+
         box.innerHTML =
           '<div class="season-toolbar-row">' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' + sBtns + '</div>' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-              (vipAllowed ? buildModalDeliveryTargetSelectorHtml() : '') +
+              episodeQuickFilterHtml +
               ((vipAllowed && seasonStreamableCount > 0) ? (
                 '<button type="button" class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(56,189,248,0.45);color:#7dd3fc" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' (inkl. automatisch ergänzter Folgen) nacheinander senden">' +
                   '📦 Staffel ' + seasonNum + ' komplett senden (' + seasonStreamableCount + ')' +
@@ -6527,7 +6721,7 @@
           '</div>' +
           seasonVersionFilterBarHtml +
           progressBannerHtml +
-          episodeCardsHtml;
+          '<div id="seasonEpisodesListWrap">' + episodeCardsHtml + '</div>';
 
         const seriesArchMount = document.getElementById("seriesArchiveDownloadsMount");
         if (seriesArchMount && vipAllowed) {
@@ -6561,6 +6755,8 @@
       // =========================================================================
       let activeEpisodeCorrectionState = null;
       let activeMediaReportState = null;
+      let activeEpisodeStoryState = null;
+      let lastSubModalTriggerEl = null;
 
       function ensureSubModalMountClient() {
         let el = document.getElementById("subModalOverlayRoot");
@@ -6568,6 +6764,12 @@
           el = document.createElement("div");
           el.id = "subModalOverlayRoot";
           document.body.appendChild(el);
+        }
+        if (!el.innerHTML.trim()) {
+          const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
+          if (curEl && curEl !== document.body && !el.contains(curEl)) {
+            lastSubModalTriggerEl = curEl;
+          }
         }
         return el;
       }
@@ -6577,6 +6779,21 @@
         if (el) el.innerHTML = "";
         activeEpisodeCorrectionState = null;
         activeMediaReportState = null;
+        activeEpisodeStoryState = null;
+        if (lastSubModalTriggerEl && document.body.contains(lastSubModalTriggerEl) && typeof jumpSpatialFocus === "function") {
+          const restoreEl = lastSubModalTriggerEl;
+          lastSubModalTriggerEl = null;
+          setTimeout(() => jumpSpatialFocus(restoreEl, false), 20);
+        }
+      }
+
+      function stepEpisodeCorrectionNumberClient(inputId, delta, minVal = 1, maxVal = 999) {
+        const inp = document.getElementById(inputId);
+        if (!inp) return;
+        const cur = Number(inp.value || minVal);
+        const nextVal = Math.min(maxVal, Math.max(minVal, cur + Number(delta || 0)));
+        inp.value = String(nextVal);
+        updateEpisodeCorrectionLivePreviewClient();
       }
 
       function switchEpisodeCorrectionTargetFileClient(fileIndexStr) {
@@ -6835,11 +7052,19 @@
                   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
                     '<div>' +
                       '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Staffel</label>' +
-                      '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
+                      '<div style="display:flex;gap:4px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',-1,1,99)" title="Staffel -1">−</button>' +
+                        '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',1,1,99)" title="Staffel +1">＋</button>' +
+                      '</div>' +
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Folge</label>' +
-                      '<input id="epCorrNewEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800" />' +
+                      '<div style="display:flex;gap:4px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewEpisodeInp\\',-1,1,999)" title="Folge -1">−</button>' +
+                        '<input id="epCorrNewEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewEpisodeInp\\',1,1,999)" title="Folge +1">＋</button>' +
+                      '</div>' +
                     '</div>' +
                   '</div>' +
                 '</div>'
@@ -6872,7 +7097,7 @@
                     '<button type="button" class="btn blue" onclick="searchEpisodeCorrectionTmdbClient()">🔍 Suchen</button>' +
                   '</div>' +
 
-                  '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px">' +
+                  '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:8px">' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Typ</label>' +
                       '<select id="epCorrNewTypeSel" class="tma-select" onchange="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px">' +
@@ -6886,11 +7111,19 @@
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Staffel</label>' +
-                      '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
+                      '<div style="display:flex;gap:3px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',-1,1,99)">−</button>' +
+                        '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px 4px;font-size:12px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',1,1,99)">＋</button>' +
+                      '</div>' +
                     '</div>' +
                     '<div>' +
                       '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Folge</label>' +
-                      '<input id="epCorrRelinkEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
+                      '<div style="display:flex;gap:3px;align-items:center">' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkEpisodeInp\\',-1,1,999)">−</button>' +
+                        '<input id="epCorrRelinkEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + Number(st.targetEpisode || st.episode) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px 4px;font-size:12px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkEpisodeInp\\',1,1,999)">＋</button>' +
+                      '</div>' +
                     '</div>' +
                   '</div>' +
 
@@ -7072,9 +7305,20 @@
           episodeTitle,
           telegramFileId,
           versionLabel,
-          reasonCode: typeCode === "s" && season ? "wrong_episode" : "wrong_media"
+          reasonCode: typeCode === "s" && season ? "wrong_episode" : "wrong_media",
+          draftNote: ""
         };
 
+        renderMediaReportModalDomClient();
+      }
+
+      function selectMediaReportReasonClient(nextCode) {
+        if (!activeMediaReportState) return;
+        const noteEl = document.getElementById("mediaReportNoteInp");
+        if (noteEl) {
+          activeMediaReportState.draftNote = noteEl.value;
+        }
+        activeMediaReportState.reasonCode = nextCode;
         renderMediaReportModalDomClient();
       }
 
@@ -7090,6 +7334,7 @@
           { code: "wrong_media", label: "🎬 Falscher Film / Falsche Serie" },
           { code: "wrong_episode", label: "🔢 Falsche Staffel- oder Folgennummer" },
           { code: "broken_video", label: "❌ Video defekt / Lädt nicht" },
+          { code: "audio_sub", label: "🔇 Tonspur / Sprache fehlt oder asynchron" },
           { code: "other", label: "💬 Sonstiges" }
         ];
 
@@ -7110,7 +7355,7 @@
               '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">' +
                 REASONS.map(r => {
                   const isSel = st.reasonCode === r.code;
-                  return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;text-align:left;' + (isSel ? '' : 'background:var(--card);') + '" onclick="activeMediaReportState.reasonCode=\\'' + r.code + '\\';renderMediaReportModalDomClient()">' +
+                  return '<button type="button" class="btn ' + (isSel ? 'red' : '') + '" style="justify-content:flex-start;padding:9px 12px;font-size:12.5px;text-align:left;' + (isSel ? '' : 'background:var(--card);') + '" onclick="selectMediaReportReasonClient(\\'' + r.code + '\\')">' +
                     (isSel ? '🔘 ' : '⚪ ') + esc(r.label) +
                   '</button>';
                 }).join("") +
@@ -7118,7 +7363,7 @@
 
               '<div style="margin-bottom:12px">' +
                 '<label style="font-size:11.5px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Kurze Notiz (optional, z.B. „Ist eigentlich Staffel 2 Folge 5“):</label>' +
-                '<textarea id="mediaReportNoteInp" class="tma-textarea" rows="2" placeholder="Optionale Hinweise für den Admin..." style="width:100%;padding:8px 10px;border-radius:8px;font-size:12px;resize:vertical"></textarea>' +
+                '<textarea id="mediaReportNoteInp" class="tma-textarea" rows="2" placeholder="Optionale Hinweise für den Admin..." oninput="if(activeMediaReportState)activeMediaReportState.draftNote=this.value" style="width:100%;padding:8px 10px;border-radius:8px;font-size:12px;resize:vertical">' + esc(st.draftNote || '') + '</textarea>' +
               '</div>' +
 
               '<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">' +
@@ -7264,18 +7509,183 @@
         }
       }
 
+      function renderEpisodeStoryModalDomClient() {
+        const st = activeEpisodeStoryState;
+        if (!st) return;
+        const mount = ensureSubModalMountClient();
+        const epCode = 'S' + String(st.season).padStart(2, '0') + 'E' + String(st.episode).padStart(2, '0');
+        const cachedList = Array.isArray(activeSeasonCacheEpisodes) ? activeSeasonCacheEpisodes : [];
+        const curIdx = cachedList.findIndex(e => Number(e.episode_number) === Number(st.episode));
+        const prevEp = curIdx > 0 ? cachedList[curIdx - 1] : null;
+        const nextEp = (curIdx >= 0 && curIdx < cachedList.length - 1) ? cachedList[curIdx + 1] : null;
+        const cachedEpObj = curIdx >= 0 ? cachedList[curIdx] : null;
+
+        const stillUrl = st.stillPath
+          ? ("https://image.tmdb.org/t/p/w780" + st.stillPath)
+          : (state.activeDetails?.backdropUrl || state.activeDetails?.posterUrl || "");
+
+        const vipAllowed = isCurrentUserVip();
+        const activeFile = cachedEpObj?._resolvedActiveFile || (Array.isArray(cachedEpObj?.files) && cachedEpObj.files[0]) || null;
+        const activeFid = String(activeFile?.telegram_file_id || activeFile?.file_id || "");
+        const activeQual = String(activeFile?.quality || "1080p");
+        const activeSizeStr = activeFile ? formatFileSizeClient(activeFile.file_size) : "";
+        const activeVerLbl = activeFile ? (cleanUserVisibleStreamTagsClient(activeFile.versionLabel || activeFile.tags || "Originalfassung") || "Originalfassung") : "";
+        const isSavedEp = Boolean(cachedEpObj?.isSaved);
+
+        mount.innerHTML =
+          '<div class="submodal-backdrop" onclick="if(event.target===this)closeSubModalOverlayClient()">' +
+            '<div class="submodal-box" style="max-width:560px;padding:0;overflow:hidden">' +
+              (stillUrl ? (
+                '<div style="position:relative;width:100%;height:175px;background:#050814;overflow:hidden;border-bottom:1px solid rgba(56,189,248,0.22)">' +
+                  '<img src="' + esc(stillUrl) + '" alt="' + esc(st.epName) + '" style="width:100%;height:100%;object-fit:cover;opacity:0.86" />' +
+                  '<div style="position:absolute;inset:0;background:linear-gradient(to top, rgba(7,12,26,0.98) 4%, rgba(7,12,26,0.35) 55%, rgba(7,12,26,0.65) 100%)"></div>' +
+                  '<div style="position:absolute;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+                    '<span class="ep-code-badge" style="font-size:12px;padding:4px 10px;background:rgba(2,132,199,0.9);color:#fff">' + esc(epCode) + '</span>' +
+                    '<button type="button" id="epStoryCloseBtn" class="btn close-slate" onclick="closeSubModalOverlayClient()" style="padding:5px 10px">✖ Schließen</button>' +
+                  '</div>' +
+                  '<div style="position:absolute;bottom:10px;left:14px;right:14px">' +
+                    '<div style="font-size:11px;color:#7dd3fc;font-weight:700;margin-bottom:2px">' + esc(state.activeDetails?.title || "Serie") + ' · Staffel ' + Number(st.season) + '</div>' +
+                    '<div style="font-size:17px;font-weight:900;color:#fff;line-height:1.25">' + esc(st.epName || ("Folge " + st.episode)) + '</div>' +
+                  '</div>' +
+                '</div>'
+              ) : (
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:14px 16px 10px;border-bottom:1px solid rgba(56,189,248,0.18)">' +
+                  '<div style="display:flex;align-items:center;gap:8px;min-width:0">' +
+                    '<span class="ep-code-badge">' + esc(epCode) + '</span>' +
+                    '<div style="font-size:15px;font-weight:900;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(st.epName || ("Folge " + st.episode)) + '</div>' +
+                  '</div>' +
+                  '<button type="button" id="epStoryCloseBtn" class="btn close-slate" onclick="closeSubModalOverlayClient()">✖</button>' +
+                '</div>'
+              )) +
+
+              '<div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">' +
+                '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:#94a3b8">' +
+                  (st.airDate ? '<span class="stream-meta-pill">📅 ' + esc(st.airDate) + '</span>' : '') +
+                  (st.runtime > 0 ? '<span class="stream-meta-pill">⏱️ ' + Number(st.runtime) + ' Min.</span>' : '') +
+                  (st.voteAverage > 0 ? '<span class="stream-meta-pill" style="color:#fbbf24;border-color:rgba(251,191,36,0.35)">⭐ ' + Number(st.voteAverage).toFixed(1) + '</span>' : '') +
+                  '<span class="stream-meta-pill" style="color:#34d399;border-color:rgba(16,185,129,0.35)">👁️ Als gesehen markiert</span>' +
+                '</div>' +
+
+                '<div style="font-size:13px;line-height:1.6;color:#e2e8f0;background:rgba(15,23,42,0.68);border:1px solid rgba(148,163,184,0.18);border-radius:10px;padding:12px;max-height:220px;overflow-y:auto">' +
+                  (st.loading && !st.overview
+                    ? '<span style="color:#38bdf8">⏳ Lade deutsche Episoden-Beschreibung...</span>'
+                    : esc(st.overview || "Für diese Episode liegt aktuell noch keine ausführliche deutsche Inhaltsangabe vor.")) +
+                '</div>' +
+
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+                    ((vipAllowed && activeFid) ? (
+                      '<button type="button" id="epStoryPlayBtn" class="btn-stream-clean" onclick="closeSubModalOverlayClient();requestTelegramStream(\\'' + esc(activeFid) + '\\',\\'' + esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + st.epName) + '\\',\\'' + esc(activeQual) + '\\',{seriesId:' + Number(st.seriesId) + ',season:' + Number(st.season) + ',episode:' + Number(st.episode) + ',epName:\\'' + esc(st.epName) + '\\',fileSize:\\'' + esc(activeSizeStr) + '\\',tags:\\'' + esc(activeVerLbl) + '\\'})">' +
+                        '▶ Stream senden (' + esc(activeQual) + ')' +
+                      '</button>'
+                    ) : '') +
+                    '<button type="button" class="btn" onclick="toggleEpisodeSave(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(st.episode) + ');if(activeEpisodeStoryState){setTimeout(renderEpisodeStoryModalDomClient,220);}">' +
+                      (isSavedEp ? '✓ Gemerkt' : '🔖 Folge merken') +
+                    '</button>' +
+                    (st.telegraphUrl ? (
+                      '<a href="' + esc(st.telegraphUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Ausführlichen Telegraph-Guide im Browser/Telegram öffnen">📖 Telegraph ↗</a>'
+                    ) : '') +
+                  '</div>' +
+
+                  '<div style="display:flex;gap:6px;align-items:center">' +
+                    (prevEp ? (
+                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" onclick="openEpisodeStory(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(prevEp.episode_number) + ',\\'' + esc(prevEp.name || '') + '\\')" title="Vorherige Folge: ' + esc(prevEp.name || '') + '">◀ S' + String(st.season).padStart(2,'0') + 'E' + String(prevEp.episode_number).padStart(2,'0') + '</button>'
+                    ) : '') +
+                    (nextEp ? (
+                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" onclick="openEpisodeStory(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(nextEp.episode_number) + ',\\'' + esc(nextEp.name || '') + '\\')" title="Nächste Folge: ' + esc(nextEp.name || '') + '">S' + String(st.season).padStart(2,'0') + 'E' + String(nextEp.episode_number).padStart(2,'0') + ' ▶</button>'
+                    ) : '') +
+                  '</div>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
+
+        const focusTarget = document.getElementById("epStoryPlayBtn") || document.getElementById("epStoryCloseBtn");
+        if (focusTarget && typeof jumpSpatialFocus === "function") {
+          setTimeout(() => jumpSpatialFocus(focusTarget, false), 25);
+        }
+      }
+
       async function openEpisodeStory(seriesId, season, episode, epName = "") {
         setSeriesProgress(seriesId, season, episode, epName);
-        setBusyState(true, "📖 Öffne Telegraph-Story...");
+        const cachedList = Array.isArray(activeSeasonCacheEpisodes) ? activeSeasonCacheEpisodes : [];
+        const cachedEp = cachedList.find(e => Number(e.episode_number) === Number(episode)) || null;
+        activeEpisodeStoryState = {
+          seriesId: Number(seriesId),
+          season: Number(season),
+          episode: Number(episode),
+          epName: String(epName || cachedEp?.name || ("Folge " + episode)),
+          overview: String(cachedEp?.overview || ""),
+          airDate: String(cachedEp?.air_date || ""),
+          stillPath: String(cachedEp?.still_path || ""),
+          voteAverage: Number(cachedEp?.vote_average || 0),
+          runtime: Number(cachedEp?.runtime || 0),
+          telegraphUrl: "",
+          loading: true
+        };
+        renderEpisodeStoryModalDomClient();
+        loadSeason(seriesId, season, false, true);
         try {
-          const r = await apiFetchJson(API_BASE + "/episode-story", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, seriesId, season, episode }) });
-          if (r.telegraphUrl) {
-            if (tg && tg.openLink) tg.openLink(r.telegraphUrl);
-            else window.open(r.telegraphUrl, "_blank");
+          const r = await apiFetchJson(API_BASE + "/episode-story", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chatId, seriesId, season, episode })
+          });
+          if (
+            activeEpisodeStoryState &&
+            Number(activeEpisodeStoryState.seriesId) === Number(seriesId) &&
+            Number(activeEpisodeStoryState.season) === Number(season) &&
+            Number(activeEpisodeStoryState.episode) === Number(episode)
+          ) {
+            activeEpisodeStoryState.loading = false;
+            if (r?.telegraphUrl) activeEpisodeStoryState.telegraphUrl = String(r.telegraphUrl);
+            if (r?.episode) {
+              if (r.episode.name) activeEpisodeStoryState.epName = String(r.episode.name);
+              if (r.episode.overview) activeEpisodeStoryState.overview = String(r.episode.overview);
+              if (r.episode.air_date) activeEpisodeStoryState.airDate = String(r.episode.air_date);
+              if (r.episode.still_path) activeEpisodeStoryState.stillPath = String(r.episode.still_path);
+              if (r.episode.vote_average) activeEpisodeStoryState.voteAverage = Number(r.episode.vote_average);
+              if (r.episode.runtime) activeEpisodeStoryState.runtime = Number(r.episode.runtime);
+            }
+            renderEpisodeStoryModalDomClient();
           }
-          loadSeason(seriesId, season, false, true);
-        } finally {
-          setBusyState(false);
+        } catch (e) {
+          if (activeEpisodeStoryState) {
+            activeEpisodeStoryState.loading = false;
+            renderEpisodeStoryModalDomClient();
+          }
+        }
+      }
+
+      function filterSeasonEpisodesInlineClient(rawQuery) {
+        const q = String(rawQuery || "").trim().toLowerCase();
+        const clearBtn = document.getElementById("seasonEpQuickSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = q ? "inline-block" : "none";
+        const wrap = document.getElementById("seasonEpisodesListWrap") || document.getElementById("seasonBox");
+        if (!wrap) return;
+        const rows = wrap.querySelectorAll(".ep-row[data-ep-search]");
+        rows.forEach(row => {
+          if (!q) {
+            row.style.display = "";
+            return;
+          }
+          const hay = String(row.getAttribute("data-ep-search") || "");
+          const epNumStr = String(row.getAttribute("data-ep-num") || "");
+          const isMatch = hay.includes(q) || epNumStr === q.replace(/^e0*/i, "");
+          row.style.display = isMatch ? "" : "none";
+        });
+      }
+
+      function scrollToActiveProgressEpisodeClient() {
+        const box = document.getElementById("seasonBox");
+        if (!box) return;
+        const targetRow = box.querySelector(".ep-row.ep-next-up, .ep-row.ep-watched");
+        if (targetRow) {
+          try { targetRow.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_e) {}
+          const focusEl = targetRow.querySelector(".btn-stream-clean, .ep-title");
+          if (focusEl && typeof jumpSpatialFocus === "function") {
+            setTimeout(() => jumpSpatialFocus(focusEl, false), 120);
+          }
         }
       }
 
@@ -7288,7 +7698,9 @@
       async function toggleWishlistItem(type, id) {
         if (!state.isAuthenticated) { openAccountModal(); return; }
         const btn = document.getElementById("modalWishlistBtn");
+        const stickyBtn = document.getElementById("modalStickyWishlistBtn");
         if (btn) btn.disabled = true;
+        if (stickyBtn) stickyBtn.disabled = true;
         try {
           const r = await apiFetchJson(API_BASE + "/wishlist", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "toggle_item", type, id }) });
           const isSaved = Boolean(r.saved);
@@ -7299,9 +7711,15 @@
             btn.className = "detail-btn-glass " + (isSaved ? "saved" : "");
             btn.textContent = isSaved ? "✓ Gespeichert" : "＋ Speichern";
           }
+          if (stickyBtn) {
+            stickyBtn.disabled = false;
+            stickyBtn.className = "detail-btn-glass " + (isSaved ? "saved" : "");
+            stickyBtn.textContent = isSaved ? "✓ Gespeichert" : "＋ Speichern";
+          }
           showHudToast(isSaved ? "✓ Gespeichert" : "🗑️ Aus Merkliste entfernt");
         } catch (e) {
           if (btn) btn.disabled = false;
+          if (stickyBtn) stickyBtn.disabled = false;
         }
       }
 
@@ -7318,12 +7736,94 @@
 
       function setWishlistLetter(nextLetter) {
         state.wlLetter = nextLetter || "ALL";
+        if (state.wlLetter !== "ALL") state.wlAzOpen = true;
         renderWishlistViewDomOnly();
+      }
+
+      function toggleWishlistAzBarClient() {
+        state.wlAzOpen = !state.wlAzOpen;
+        renderWishlistViewDomOnly();
+      }
+
+      function resetWishlistFiltersQuickClient() {
+        state.wlFilterType = "all";
+        state.wlLetter = "ALL";
+        state.wlSearchQuery = "";
+        state.wlSort = "added_desc";
+        renderWishlistViewDomOnly();
+        showHudToast("↺ Merklisten-Filter zurückgesetzt");
       }
 
       function onWishlistSearchInput(val) {
         state.wlSearchQuery = String(val || "");
+        const clearBtn = document.getElementById("wishlistSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = state.wlSearchQuery.trim() ? "inline-flex" : "none";
         renderWishlistListItemsMountOnly();
+      }
+
+      function clearWishlistSearchQuickClient() {
+        state.wlSearchQuery = "";
+        const inp = document.getElementById("wishlistSearchInp");
+        if (inp) {
+          inp.value = "";
+          inp.focus();
+        }
+        const clearBtn = document.getElementById("wishlistSearchClearBtn");
+        if (clearBtn) clearBtn.style.display = "none";
+        renderWishlistListItemsMountOnly();
+      }
+
+      async function moveWishlistItemToFolderClient(uid, targetFolderId) {
+        if (!state.isAuthenticated || !uid) return;
+        const r = await apiFetchJson(API_BASE + "/wishlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId, action: "move_item_folder", uid, targetFolderId })
+        });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ Konnte Eintrag nicht verschieben.");
+          return;
+        }
+        const folders = state.cachedWishlistFolders || [];
+        const fObj = folders.find(f => f.id === r.folderId);
+        showHudToast("📁 Verschoben nach: " + (fObj ? fObj.name : "Standard-Merkliste"));
+        closeSubModalOverlayClient();
+        loadWishlist(state.wlFolder);
+      }
+
+      function openWishlistFolderAssignPopupClient(uid, title, currentFolderId, isSer) {
+        const folders = state.cachedWishlistFolders || [];
+        const mount = ensureSubModalMountClient();
+        const defaultCat = isSer ? "cat_series" : "cat_movies";
+        const curFolder = currentFolderId || defaultCat;
+        mount.innerHTML =
+          '<div class="submodal-backdrop" onclick="if(event.target===this)closeSubModalOverlayClient()">' +
+            '<div class="submodal-box" style="max-width:440px">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px">' +
+                '<div style="font-size:14.5px;font-weight:900;color:#38bdf8">📁 Playlist / Ordner zuweisen</div>' +
+                '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">✖</button>' +
+              '</div>' +
+              '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Wähle den Ziel-Ordner für <b style="color:var(--text)">' + esc(title) + '</b>:</div>' +
+              '<div style="display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;margin-bottom:12px">' +
+                '<button type="button" class="btn ' + ((curFolder === "cat_movies" || curFolder === "cat_series" || !curFolder) ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + esc(uid) + '\\',\\'' + defaultCat + '\\')">' +
+                  '<span>' + (isSer ? '📺 Standard (Serien)' : '🎬 Standard (Filme)') + '</span>' +
+                  '<span>' + ((curFolder === "cat_movies" || curFolder === "cat_series" || !curFolder) ? "✓ Aktiv" : "Wählen") + '</span>' +
+                '</button>' +
+                folders.map(f => {
+                  const isAct = curFolder === f.id;
+                  const fIcon = (f.type === "playlist" || f.isJsonPlaylist) ? "🎵" : "📁";
+                  return '<button type="button" class="btn ' + (isAct ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + esc(uid) + '\\',\\'' + esc(f.id) + '\\')">' +
+                    '<span>' + fIcon + ' ' + esc(f.name) + '</span>' +
+                    '<span>' + (isAct ? "✓ Aktiv" : "Wählen") + '</span>' +
+                  '</button>';
+                }).join("") +
+              '</div>' +
+              '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+                '<button type="button" class="btn" onclick="closeSubModalOverlayClient();createNewFolderPrompt(true)">➕ Neue Playlist anlegen</button>' +
+                '<button type="button" class="btn close-slate" onclick="closeSubModalOverlayClient()">Schließen</button>' +
+              '</div>' +
+            '</div>' +
+          '</div>';
       }
 
       function getFilteredAndSortedWishlistItems() {
@@ -7390,7 +7890,15 @@
         const filteredItems = getFilteredAndSortedWishlistItems();
         if (countEl) countEl.textContent = String(filteredItems.length);
         if (filteredItems.length === 0) {
-          mount.innerHTML = '<div class="panel-box" style="color:var(--text-muted);font-size:12.5px">Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</div>';
+          const hasSubFilter = Boolean(
+            (state.wlSearchQuery && state.wlSearchQuery.trim()) ||
+            (state.wlLetter && state.wlLetter !== "ALL") ||
+            (state.wlFilterType && state.wlFilterType !== "all")
+          );
+          mount.innerHTML = '<div class="panel-box" style="color:var(--text-muted);font-size:12.5px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+            '<span>Keine passenden Einträge in dieser Merklisten-Ansicht gefunden.</span>' +
+            (hasSubFilter ? '<button type="button" class="btn danger" style="padding:4px 10px;font-size:11.5px" onclick="resetWishlistFiltersQuickClient()">↺ Filter zurücksetzen</button>' : '') +
+          '</div>';
           return;
         }
 
@@ -7411,7 +7919,9 @@
             const epCountBadgeHtml = (isSer && epsList.length > 0)
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
-            const subLeftTxt = plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film');
+            const subLeftHtml = folders.length > 0
+              ? ('<span style="cursor:pointer;color:#7dd3fc" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + (isSer ? 'Serie' : 'Film') + ' ▾')) + '</span>')
+              : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film')) + '</span>');
             const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
             return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
               '<div class="card-poster-wrap">' +
@@ -7425,7 +7935,7 @@
               '</div>' +
               '<div class="card-body">' +
                 '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
-                '<div class="card-sub"><span>' + subLeftTxt + '</span><span>' + yrStr + '</span></div>' +
+                '<div class="card-sub">' + subLeftHtml + '<span>' + yrStr + '</span></div>' +
               '</div>' +
             '</div>';
           }).join("") + '</div>';
@@ -7448,6 +7958,17 @@
           const epSummaryBtnHtml = (isSer && epsList.length > 0)
             ? ('<button type="button" class="btn" style="padding:3px 8px;font-size:11px;background:rgba(56,189,248,0.14);border-color:rgba(56,189,248,0.45);color:var(--blue)" onclick="toggleSeriesEpisodesDrawerClient(event,\\'' + drawerId + '\\')">📺 ' + epsList.length + ' Folge' + (epsList.length === 1 ? '' : 'n') + ' (' + esc(epPreviewCodes) + (epsList.length > 3 ? '…' : '') + ') <span id="epDrawerIcon_' + drawerId + '">▾</span></button>')
             : '';
+          const defaultFolderVal = isSer ? "cat_series" : "cat_movies";
+          const curFolderVal = (it.folderId && folders.some(f => f.id === it.folderId)) ? it.folderId : defaultFolderVal;
+          const folderSelectHtml = folders.length > 0 ? (
+            '<select class="mode-filter-select" style="padding:3px 7px;font-size:11px;max-width:155px" onchange="moveWishlistItemToFolderClient(\\'' + esc(it.uid) + '\\',this.value)" title="In Playlist oder Ordner verschieben">' +
+              '<option value="' + defaultFolderVal + '"' + (curFolderVal === defaultFolderVal ? ' selected' : '') + '>📁 Standard (' + (isSer ? 'Serien' : 'Filme') + ')</option>' +
+              folders.map(f => {
+                const fIcon = (f.type === 'playlist' || f.isJsonPlaylist) ? '🎵' : '📁';
+                return '<option value="' + esc(f.id) + '"' + (curFolderVal === f.id ? ' selected' : '') + '>' + fIcon + ' ' + esc(f.name) + '</option>';
+              }).join('') +
+            '</select>'
+          ) : '';
           const epDrawerHtml = (isSer && epsList.length > 0)
             ? ('<div id="epDrawer_' + drawerId + '" style="display:none;flex-direction:column;gap:4px;margin-top:6px;padding:8px;border-radius:8px;background:var(--surface);border:1px solid rgba(56,189,248,0.3)">' +
                 epsList.map(ep => {
@@ -7476,8 +7997,9 @@
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
+                folderSelectHtml +
                 epSummaryBtnHtml +
-                '<button class="btn danger" onclick="deleteSavedUid(\\''+esc(it.uid)+'\\')">🗑️</button>' +
+                '<button class="btn danger" onclick="deleteSavedUid(\\''+esc(it.uid)+'\\')" title="Aus Merkliste entfernen">🗑️</button>' +
               '</div>' +
             '</div>' +
             epDrawerHtml +
@@ -7505,10 +8027,13 @@
         const isGridMode = state.wlViewMode !== "list";
         const isManageOpen = Boolean(state.wlManageFoldersOpen);
 
+        const moviesCount = enabledItems.filter(i => i.contentType === "movie" || i.folderId === "cat_movies").length;
+        const seriesCount = enabledItems.filter(i => i.contentType === "series" || i.contentType === "episode").length;
+
         const folderBtns = [
-          '<button class="btn '+(cur==='root'?'active':'')+'" onclick="loadWishlist(\\'root\\')">📂 Alle Aktiven ('+enabledItems.length+')</button>',
-          '<button class="btn '+(cur==='cat_movies'?'active':'')+'" onclick="loadWishlist(\\'cat_movies\\')">🎬 Filme</button>',
-          '<button class="btn '+(cur==='cat_series'?'active':'')+'" onclick="loadWishlist(\\'cat_series\\')">📺 Serien & Folgen</button>',
+          '<button class="btn '+(cur==='root'?'active':'')+'" onclick="loadWishlist(\\'root\\')">📂 Alle ('+enabledItems.length+')</button>',
+          '<button class="btn '+(cur==='cat_movies'?'active':'')+'" onclick="loadWishlist(\\'cat_movies\\')">🎬 Filme ('+moviesCount+')</button>',
+          '<button class="btn '+(cur==='cat_series'?'active':'')+'" onclick="loadWishlist(\\'cat_series\\')">📺 Serien ('+seriesCount+')</button>',
           ...folders.map(f => {
             const isEn = f.enabled !== false;
             const fCount = allItems.filter(i => i.folderId === f.id).length;
@@ -7517,16 +8042,20 @@
           })
         ].join(" ");
 
-        const smartPlaylistsPanelHtml = (folders.length > 0 && isManageOpen) ? (
+        const smartPlaylistsPanelHtml = isManageOpen ? (
           '<div class="panel-box" style="margin-bottom:10px;border-color:rgba(14,165,233,0.35)">' +
             '<div class="section-title">' +
-              '<span>🎵 Smarte Playlisten & Ordner verwalten (' + folders.length + ')</span>' +
-              '<button type="button" class="btn close-slate" onclick="toggleWishlistFoldersManager()" title="Verwaltung einklappen">✖</button>' +
+              '<span>🎵 Playlisten & Ordner verwalten (' + folders.length + ')</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11.5px" onclick="createNewFolderPrompt(true)">➕ Neue Playlist</button>' +
+                '<button type="button" class="btn" style="padding:4px 9px;font-size:11.5px" onclick="createNewFolderPrompt(false)">📁 Neuer Ordner</button>' +
+                '<button type="button" class="btn close-slate" onclick="toggleWishlistFoldersManager()" title="Verwaltung einklappen">✖</button>' +
+              '</div>' +
             '</div>' +
-            folders.map(f => {
+            (folders.length > 0 ? folders.map(f => {
               const isEn = f.enabled !== false;
               const count = allItems.filter(i => i.folderId === f.id).length;
-              const badgeType = (f.type === 'playlist' || f.isJsonPlaylist) ? '📦 JSON-Playlist' : '📁 Ordner';
+              const badgeType = (f.type === 'playlist' || f.isJsonPlaylist) ? '📦 Playlist' : '📁 Ordner';
               return '<div class="ep-row" style="' + (isEn ? '' : 'opacity:0.68;') + '">' +
                 '<div class="ep-title" tabindex="0" onclick="loadWishlist(\\'' + esc(f.id) + '\\')">' +
                   '<span style="font-size:11px;padding:2px 7px;border-radius:999px;margin-right:6px;background:' + (isEn ? 'rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4)' : 'rgba(148,163,184,0.18);color:var(--text-muted);border:1px solid rgba(148,163,184,0.3)') + '">' +
@@ -7541,7 +8070,7 @@
                   '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">🗑️</button>' +
                 '</div>' +
               '</div>';
-            }).join("") +
+            }).join("") : '<div style="font-size:12px;color:var(--text-muted)">Noch keine eigenen Playlisten oder Ordner angelegt.</div>') +
           '</div>'
         ) : '';
 
@@ -7549,18 +8078,18 @@
           '<div class="panel-box" style="margin-bottom:10px;border-color:' + (activeFolderObj.enabled !== false ? 'rgba(16,185,129,0.4)' : 'rgba(148,163,184,0.35)') + '">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div>' +
-                '<div style="font-size:13.5px;font-weight:800;color:var(--text)">' + ((activeFolderObj.type === 'playlist' || activeFolderObj.isJsonPlaylist) ? '🎵 Custom Playlist: ' : '📁 Ordner: ') + esc(activeFolderObj.name) + '</div>' +
+                '<div style="font-size:13.5px;font-weight:800;color:var(--text)">' + ((activeFolderObj.type === 'playlist' || activeFolderObj.isJsonPlaylist) ? '🎵 Playlist: ' : '📁 Ordner: ') + esc(activeFolderObj.name) + '</div>' +
                 '<div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">' +
-                  'Status: <b style="color:' + (activeFolderObj.enabled !== false ? '#10b981' : 'var(--text-muted)') + '">' + (activeFolderObj.enabled !== false ? '🟢 In Haupt-Merkliste sichtbar' : '⚪ In Haupt-Merkliste ausgeblendet') + '</b>' +
+                  'Status: <b style="color:' + (activeFolderObj.enabled !== false ? '#10b981' : 'var(--text-muted)') + '">' + (activeFolderObj.enabled !== false ? '🟢 In Haupt-Merkliste sichtbar' : '⚪ Ausgeblendet') + '</b>' +
                   (activeFolderObj.sourceLabel ? ' • Quelle: ' + esc(activeFolderObj.sourceLabel) : '') +
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 (activeFolderObj.linked && activeFolderObj.tmdbRefId && activeFolderObj.type === 'collection'
-                  ? '<button class="btn purple" onclick="openCollectionView(' + Number(activeFolderObj.tmdbRefId) + ')">🍿 Komplette Filmreihe öffnen</button>'
+                  ? '<button class="btn purple" onclick="openCollectionView(' + Number(activeFolderObj.tmdbRefId) + ')">🍿 Komplette Filmreihe</button>'
                   : '') +
                 (activeFolderObj.linked && activeFolderObj.tmdbRefId && activeFolderObj.type === 'universe'
-                  ? '<button class="btn purple" onclick="openUniverseView(\\'' + esc(activeFolderObj.tmdbRefId) + '\\')">🌌 Komplettes Universum öffnen</button>'
+                  ? '<button class="btn purple" onclick="openUniverseView(\\'' + esc(activeFolderObj.tmdbRefId) + '\\')">🌌 Komplettes Universum</button>'
                   : '') +
                 '<button class="btn ' + (activeFolderObj.enabled !== false ? 'green' : 'blue') + '" onclick="togglePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\')">' + (activeFolderObj.enabled !== false ? '🟢 Ausschalten' : '⚪ Einschalten') + '</button>' +
                 '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">✏️ Umbenennen</button>' +
@@ -7572,44 +8101,57 @@
 
         const azLetters = ["ALL", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "#"];
         const curWlLetter = String(state.wlLetter || "ALL").toUpperCase();
-        const azBarHtml = '<div class="wl-az-bar" style="margin-bottom:10px">' +
-          azLetters.map(ltr =>
-            '<button type="button" class="wl-az-btn ' + (curWlLetter === ltr ? 'active' : '') + '" onclick="setWishlistLetter(\\'' + ltr + '\\')">' + (ltr === "ALL" ? "Alle" : ltr) + '</button>'
-          ).join("") +
-        '</div>';
+        const isAzVisible = Boolean(state.wlAzOpen || curWlLetter !== "ALL");
+        const hasActiveWlFilters = Boolean(
+          curWlLetter !== "ALL" ||
+          (state.wlFilterType && state.wlFilterType !== "all") ||
+          (state.wlSearchQuery && state.wlSearchQuery.trim())
+        );
+        const azBarHtml = isAzVisible ? (
+          '<div class="wl-az-bar" style="margin-bottom:10px">' +
+            azLetters.map(ltr =>
+              '<button type="button" class="wl-az-btn ' + (curWlLetter === ltr ? 'active' : '') + '" onclick="setWishlistLetter(\\'' + ltr + '\\')">' + (ltr === "ALL" ? "Alle" : ltr) + '</button>'
+            ).join("") +
+          '</div>'
+        ) : '';
 
-        const quickFilterBarHtml = '<div class="floating-filter-bar" style="margin-bottom:10px;padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
-          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Typ:</span>' +
-            '<button class="btn ' + (state.wlFilterType === 'all' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'all\\')">📂 Alle</button>' +
-            '<button class="btn ' + (state.wlFilterType === 'm' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'m\\')">🎬 Nur Filme</button>' +
-            '<button class="btn ' + (state.wlFilterType === 's' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickFilter(\\'s\\')">📺 Nur Serien</button>' +
+        const showSubTypeSelect = (cur !== "cat_movies" && cur !== "cat_series");
+        const hasSearchTxt = Boolean(state.wlSearchQuery && state.wlSearchQuery.trim());
+        const quickFilterBarHtml = '<div class="floating-filter-bar" style="margin-bottom:10px;padding:8px 10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between">' +
+          '<div style="position:relative;display:flex;align-items:center;min-width:160px;flex:1 1 190px">' +
+            '<input id="wishlistSearchInp" class="tma-input" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste suchen..." style="width:100%;padding:6px 28px 6px 10px;border-radius:8px;font-size:12px" />' +
+            '<button type="button" id="wishlistSearchClearBtn" style="position:absolute;right:6px;display:' + (hasSearchTxt ? 'inline-flex' : 'none') + ';align-items:center;justify-content:center;background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:12px;padding:2px 4px" onclick="clearWishlistSearchQuickClient()" title="Suchtext löschen">✕</button>' +
           '</div>' +
-          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Sortierung:</span>' +
-            '<button class="btn ' + (state.wlSort === 'added_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'added_desc\\')">🆕 Zuletzt</button>' +
-            '<button class="btn ' + (state.wlSort === 'title_asc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'title_asc\\')">🔤 A–Z</button>' +
-            '<button class="btn ' + (state.wlSort === 'year_desc' ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistQuickSort(\\'year_desc\\')">📅 Jahr</button>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+            (showSubTypeSelect ? (
+              '<select class="mode-filter-select" onchange="setWishlistQuickFilter(this.value)" title="Medientyp in diesem Ordner filtern">' +
+                '<option value="all"' + (state.wlFilterType === "all" || !state.wlFilterType ? " selected" : "") + '>🎞️ Alle Typen</option>' +
+                '<option value="m"' + (state.wlFilterType === "m" ? " selected" : "") + '>🎬 Nur Filme</option>' +
+                '<option value="s"' + (state.wlFilterType === "s" ? " selected" : "") + '>📺 Nur Serien</option>' +
+              '</select>'
+            ) : '') +
+            '<select class="sort-select" onchange="setWishlistQuickSort(this.value)" title="Merkliste sortieren">' +
+              '<option value="added_desc"' + (state.wlSort === "added_desc" || !state.wlSort ? " selected" : "") + '>↕️ Zuletzt gespeichert</option>' +
+              '<option value="title_asc"' + (state.wlSort === "title_asc" ? " selected" : "") + '>🔤 Titel A–Z</option>' +
+              '<option value="year_desc"' + (state.wlSort === "year_desc" ? " selected" : "") + '>📅 Erscheinungsjahr</option>' +
+            '</select>' +
+            '<button type="button" class="btn ' + (isAzVisible ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="toggleWishlistAzBarClient()" title="Alphabetischen A–Z Schnellfilter ein-/ausblenden">🔤 A–Z' + (curWlLetter !== "ALL" ? ' (' + curWlLetter + ')' : ' ▾') + '</button>' +
+            '<button type="button" class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster</button>' +
+            '<button type="button" class="btn ' + (!isGridMode ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'list\\')" title="Als kompakte Liste mit Episoden-Auswahl anzeigen">📋 Liste</button>' +
+            (hasActiveWlFilters ? '<button type="button" class="btn danger" style="padding:5px 9px;font-size:11.5px" onclick="resetWishlistFiltersQuickClient()" title="Suchtext & Filter zurücksetzen">↺ Reset</button>' : '') +
           '</div>' +
-          '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">' +
-            '<span style="font-size:11px;font-weight:700;color:var(--text-muted)">Ansicht:</span>' +
-            '<button class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster-Grid</button>' +
-            '<button class="btn ' + (!isGridMode ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'list\\')" title="Als kompakte Liste mit Episoden-Auswahl anzeigen">📋 Liste</button>' +
-          '</div>' +
-          '<input id="wishlistSearchInp" class="tma-input" value="' + esc(state.wlSearchQuery || '') + '" oninput="onWishlistSearchInput(this.value)" placeholder="🔍 In Merkliste filtern..." style="min-width:160px;flex:1;padding:6px 10px;border-radius:8px;font-size:12px" />' +
         '</div>';
 
         root.innerHTML = '<div class="section">' +
           '<div class="section-title">' +
-            '<span>💾 Synchronisierte Bot-Merkliste (<span id="wishlistCountSpan">' + filteredItems.length + '</span> Einträge)</span>' +
+            '<span>💾 Merkliste & Playlisten (<span id="wishlistCountSpan">' + filteredItems.length + '</span> Einträge)</span>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
               '<button class="btn blue" onclick="createNewFolderPrompt(true)">➕ Neue Playlist</button>' +
-              '<button class="btn" onclick="createNewFolderPrompt(false)">📁 Neuer Ordner</button>' +
-              (folders.length > 0 ? '<button class="btn ' + (isManageOpen ? 'active' : '') + '" onclick="toggleWishlistFoldersManager()">🗂️ Verwalten (' + folders.length + ') ' + (isManageOpen ? '▴' : '▾') + '</button>' : '') +
-              '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' +
+              '<button class="btn ' + (isManageOpen ? 'active' : '') + '" onclick="toggleWishlistFoldersManager()">🗂️ Ordner & Playlisten (' + folders.length + ') ' + (isManageOpen ? '▴' : '▾') + '</button>' +
+              '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
             '</div>' +
           '</div>' +
-          '<div class="chip-grid" style="margin-bottom:10px">' + folderBtns + '</div>' +
+          '<div class="chip-grid" style="margin-bottom:8px">' + folderBtns + '</div>' +
           smartPlaylistsPanelHtml +
           activeFolderBannerHtml +
           quickFilterBarHtml +
@@ -7719,10 +8261,24 @@
         loadWishlist(state.wlFolder);
       }
 
+      let activeSettingsSectionTab = "general";
+
+      function switchSettingsSectionTabClient(tabId) {
+        triggerTmaHapticClient("selection");
+        activeSettingsSectionTab = tabId || "general";
+        document.querySelectorAll("[data-settings-tab-btn]").forEach(btn => {
+          btn.classList.toggle("blue", btn.getAttribute("data-settings-tab-btn") === activeSettingsSectionTab);
+        });
+        document.querySelectorAll("[data-settings-sec]").forEach(sec => {
+          const secKey = sec.getAttribute("data-settings-sec");
+          sec.style.display = (activeSettingsSectionTab === "all" || secKey === activeSettingsSectionTab) ? "block" : "none";
+        });
+      }
+
       async function loadSettingsView() {
         state.currentView = "settings";
         updateMediaModeIndicatorDom();
-        setBusyState(true, "⚙️ Lade Filter-Cockpit & Account-Einstellungen...");
+        setBusyState(true, "⚙️ Lade Einstellungen...");
         try {
           const r = await apiFetchJson(API_BASE + "/settings?chatId=" + encodeURIComponent(chatId));
           const s = r.settings || {};
@@ -7742,46 +8298,57 @@
           const prevSettingsFocusDfId = (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.getAttribute)
             ? currentSpatialEl.getAttribute("data-df-id")
             : null;
+          const curTab = activeSettingsSectionTab || "general";
+          const showSec = (key) => (curTab === "all" || curTab === key) ? "block" : "none";
 
           root.innerHTML = '<div class="section">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">' +
-              '<button class="btn" onclick="goHome()" style="padding:7px 14px;font-size:12.5px">⬅️ Zurück zur Übersicht (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
-              '<span style="font-size:12px;font-weight:700;color:var(--text-muted)">⚙️ Einstellungen & Filter-Cockpit</span>' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+              '<button class="btn" onclick="goHome()" style="padding:7px 14px;font-size:12.5px">⬅️ Zurück zum Katalog (' + (state.type === 's' ? '📺 Serien' : '🎬 Filme') + ')</button>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button type="button" class="btn ' + (curTab === 'general' ? 'blue' : '') + '" data-settings-tab-btn="general" onclick="switchSettingsSectionTabClient(\\'general\\')">🎛️ Allgemein & Account</button>' +
+                '<button type="button" class="btn ' + (curTab === 'delivery' ? 'blue' : '') + '" data-settings-tab-btn="delivery" onclick="switchSettingsSectionTabClient(\\'delivery\\')">📤 Telegram-Versand</button>' +
+                '<button type="button" class="btn ' + (curTab === 'shortcuts' ? 'blue' : '') + '" data-settings-tab-btn="shortcuts" onclick="switchSettingsSectionTabClient(\\'shortcuts\\')">⚡ Bot-Befehle</button>' +
+                '<button type="button" class="btn ' + (curTab === 'filters' ? 'blue' : '') + '" data-settings-tab-btn="filters" onclick="switchSettingsSectionTabClient(\\'filters\\')">🛡️ Filter-Matrix</button>' +
+                '<button type="button" class="btn ' + (curTab === 'all' ? 'blue' : '') + '" data-settings-tab-btn="all" onclick="switchSettingsSectionTabClient(\\'all\\')">📋 Alle zeigen</button>' +
+              '</div>' +
             '</div>' +
+
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
-                '<span>🔐 Account & Sicherheit (' + (isAuth ? ('Verbunden: ID ' + esc(u.telegramId)) : '👤 Gast-Modus ohne Speicher') + ')</span>' +
+                '<span>🔐 Account & Sicherheit (' + (isAuth ? ('Verbunden: ID ' + esc(u.telegramId)) : '👤 Gast-Modus') + ')</span>' +
                 '<div style="display:flex;gap:6px">' +
                   (u.isAdmin ? '<button class="btn blue" onclick="loadAdminPanelView()">👑 Admin-Panel</button>' : '') +
-                  '<button class="btn purple" onclick="openAccountModal()">🔑 ' + (isAuth ? (u.hasPasswordAccount ? 'Zugangsdaten verwalten' : 'Account mit Passwort absichern') : 'Jetzt einloggen') + '</button>' +
+                  '<button class="btn purple" onclick="openAccountModal()">🔑 ' + (isAuth ? (u.hasPasswordAccount ? 'Zugangsdaten verwalten' : 'Passwort festlegen') : 'Jetzt einloggen') + '</button>' +
                 '</div>' +
               '</div>' +
               '<p style="font-size:12px;color:var(--muted);line-height:1.5">' +
                 (isAuth
                   ? (u.hasPasswordAccount
-                      ? '✅ Dein Account ist als <b>' + esc(u.customUsername) + '</b> mit Passwort abgesichert. Du kannst dich von jedem Gerät und Browser (auch ohne Telegram <code>initData</code>) einloggen.'
-                      : '💡 Du bist über Telegram <code>initData</code> eingeloggt. Lege jetzt einen <b>Username & Passwort</b> fest, damit du dich künftig auch außerhalb von Telegram von überall einloggen kannst!')
-                  : '⚠️ Ohne Telegram <code>initData</code> und ohne Account-Login bist du im Gast-Modus (kein Merklisten-Speicher, kein Zugriff auf fremde IDs).') +
+                      ? '✅ Dein Account ist als <b>' + esc(u.customUsername) + '</b> mit Passwort geschützt. Du kannst dich von jedem Gerät und Browser einloggen.'
+                      : '💡 Du bist über Telegram angemeldet. Lege optional einen <b>Benutzernamen & Passwort</b> fest, um dich auch im normalen Webbrowser einzuloggen.')
+                  : '⚠️ Im Gast-Modus wird keine persönliche Merkliste synchronisiert. Melde dich an, um deine Favoriten und Einstellungen dauerhaft zu speichern.') +
               '</p>' +
             '</div>' +
+            '</div>' +
 
+            '<div data-settings-sec="delivery" style="display:' + showSec('delivery') + '">' +
             (function() {
               const deliv = getDeliveryPreferencesClient();
               const dMode = deliv.targetMode || "dm";
               const customHookUrl = window.location.origin + "/api/telegram/custom-webhook" + (deliv.customBotToken ? ("?botToken=" + encodeURIComponent(deliv.customBotToken)) : "");
               return '<div class="panel-box">' +
                 '<div class="section-title">' +
-                  '<span>📤 Standard-Versandziel, Gruppen-Delivery & Eigener Bot</span>' +
+                  '<span>📤 Standard-Versandziel & Gruppen-Zustellung</span>' +
                   '<span style="font-size:11px;color:#0284c7;font-weight:700">Tipp: /id in Gruppe zeigt Chat-ID</span>' +
                 '</div>' +
                 '<p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">' +
-                  'Bestimme, wohin Filme & Serien standardmäßig gesendet werden: in deinen <b>💬 Bot-Privatchat</b>, in eine <b>👥 eigene Ziel-Gruppe</b> oder über deinen <b>🤖 eigenen Telegram-Bot-Token</b>. ' +
-                  'Wenn der Bot Mitglied deiner Quellgruppe (aus <code>result.json</code>) ist, löst er Dateien automatisch per <code>copyMessage</code> auf und speichert die File-ID in D1.' +
+                  'Bestimme, wohin Filme & Serien standardmäßig gesendet werden: in deinen <b>💬 Bot-Privatchat</b>, in eine <b>👥 eigene Ziel-Gruppe</b> oder über deinen <b>🤖 eigenen Telegram-Bot</b>.' +
                 '</p>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
-                  '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Standard: Bot-Privatchat</button>' +
-                  '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Standard: Eigene Ziel-Gruppe</button>' +
-                  '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Standard: Eigener Bot-Token</button>' +
+                  '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Bot-Privatchat</button>' +
+                  '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Eigene Ziel-Gruppe</button>' +
+                  '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Eigener Bot</button>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
@@ -7793,17 +8360,20 @@
                     '<input id="settingsTargetTopicIdInp" class="tma-input" value="' + esc(deliv.targetTopicId || '') + '" placeholder="z.B. 42" style="width:100%" />' +
                   '</div>' +
                   '<div>' +
-                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (Bridge für result.json):</div>' +
-                    '<input id="settingsSourceBridgeIdInp" class="tma-input" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Auto (-100...) oder überschreiben" style="width:100%" />' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (optional):</div>' +
+                    '<input id="settingsSourceBridgeIdInp" class="tma-input" value="' + esc(deliv.sourceBridgeChatId || '') + '" placeholder="Automatisch oder ID eintragen" style="width:100%" />' +
                   '</div>' +
                   '<div>' +
                     '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">🤖 Eigenes Bot-Token (@BotFather, optional):</div>' +
-                    '<input id="settingsCustomBotTokenInp" class="tma-input" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%" />' +
+                    '<div style="display:flex;gap:4px;align-items:center">' +
+                      '<input id="settingsCustomBotTokenInp" class="tma-input" type="password" value="' + esc(deliv.customBotToken || '') + '" placeholder="123456789:ABCdef..." style="width:100%" />' +
+                      '<button type="button" class="btn" style="padding:7px 9px;font-size:12px" onclick="togglePasswordVisibilityClient(\\'settingsCustomBotTokenInp\\',this)" title="Bot-Token ein-/ausblenden">👁️</button>' +
+                    '</div>' +
                   '</div>' +
                 '</div>' +
                 '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
-                  '<button class="btn green" onclick="verifyAndConnectCustomBotInSettingsClient()">💾 Speichern & optionalen Bot-Webhook verbinden</button>' +
-                  '<span style="font-size:11px;color:var(--muted)">Webhook-Endpunkt: <code>' + esc(customHookUrl) + '</code></span>' +
+                  '<button class="btn green" onclick="verifyAndConnectCustomBotInSettingsClient()">💾 Einstellungen speichern & Bot verbinden</button>' +
+                  '<span style="font-size:11px;color:var(--muted)">Webhook: <code>' + esc(customHookUrl) + '</code></span>' +
                 '</div>' +
                 '<div id="customBotVerifyStatus" style="font-size:12px;color:#0284c7;margin-top:6px">' +
                   (deliv.customBotUsername ? ('✅ Aktiver eigener Bot: @' + esc(deliv.customBotUsername)) : '') +
@@ -7811,14 +8381,14 @@
                 '<div class="sidebar-sub-divider" style="margin-top:12px;padding-top:10px">' +
                   '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
                     '<div>' +
-                      '<div style="font-size:12px;font-weight:700;color:var(--text)">🧹 Retention Policy (KV-Performance & Log-Aufbewahrung)</div>' +
-                      '<div style="font-size:11px;color:var(--muted)">Bereinigt Zustell- & Fehler-Logs älter als 7, 30 oder 90 Tage automatisch via KV <code>expirationTtl</code>.</div>' +
+                      '<div style="font-size:12px;font-weight:700;color:var(--text)">🧹 Aufbewahrungsdauer für Zustell-Protokolle</div>' +
+                      '<div style="font-size:11px;color:var(--muted)">Ältere Zustell-Einträge werden nach Ablauf automatisch bereinigt.</div>' +
                     '</div>' +
                     '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                       '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 7 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(7)">7 Tage</button>' +
                       '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 30 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(30)">30 Tage</button>' +
                       '<button type="button" class="btn ' + (Number(deliv.retentionDays || 30) === 90 ? 'blue' : '') + '" style="padding:4px 9px;font-size:11px" onclick="setTmaRetentionPolicyClient(90)">90 Tage</button>' +
-                      '<button type="button" class="btn danger" style="padding:4px 8px;font-size:11px" onclick="clearTmaActivityLogClient()" title="Alle gespeicherten Telegram-Zustelllogs in KV sofort löschen">🗑️ Log leeren</button>' +
+                      '<button type="button" class="btn danger" style="padding:4px 8px;font-size:11px" onclick="clearTmaActivityLogClient()" title="Zustellprotokoll sofort leeren">🗑️ Protokoll leeren</button>' +
                     '</div>' +
                   '</div>' +
                   '<div style="font-size:10.5px;color:#0284c7;margin-bottom:6px">⚡ Aktive KV-TTL: <code>' + (Number(deliv.retentionDays || 30) * 86400) + 's</code> (' + Number(deliv.retentionDays || 30) + ' Tage Auto-Prune in <code>env.MOVIE_SAVED</code>)</div>' +
@@ -7827,7 +8397,9 @@
               '</div>' +
               buildAntiSpamCockpitBoxHtmlClient();
             })() +
+            '</div>' +
 
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🧭 Steuerung, Maus-Hover & Slider-Einstellungen</span>' +
@@ -7851,7 +8423,9 @@
                 '</button>' +
               '</div>' +
             '</div>' +
+            '</div>' +
 
+            '<div data-settings-sec="shortcuts" style="display:' + showSec('shortcuts') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>⚡ Telegram-Bot Schnellbefehls-Übersicht</span>' +
@@ -7865,7 +8439,9 @@
                 '<div class="shortcut-cheat-card"><b>🎲 Zufalls-Tipp (mit Genre optional)</b><code>/r f   • /rand f   • /random f  • /r f Action</code><br><code>/r s   • /rand s   • /random s  • /r s Sci-Fi</code></div>' +
               '</div>' +
             '</div>' +
+            '</div>' +
 
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
                 '<span>🎬 Instant-Trailer Provider (Direktwiedergabe aus der Übersicht)</span>' +
@@ -7878,6 +8454,8 @@
                 ).join("") +
               '</div>' +
             '</div>' +
+            '</div>' +
+            '<div data-settings-sec="filters" style="display:' + showSec('filters') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title"><span>🛡️ Bot-Filter Cockpit (Steuerung über ✓ Positiv & ✕ Negativ)</span>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
@@ -7885,7 +8463,7 @@
                   '<button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button>' +
                 '</div>' +
               '</div>' +
-              '<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Filter lassen sich gezielt über <b>✓ (Positiv)</b> und <b>✕ (Negativ)</b> schalten (der Text selbst ist nicht auswählbar). Ist ein Filter aktiv, gibt dessen Auswahl direkt <b>○ Neutral</b> vor, während daneben die Gegenoption wählbar bleibt.</p>' +
+              '<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Schalte Filter gezielt über <b>✓ (Einschließen)</b> und <b>✕ (Ausschließen)</b>. Ein erneuter Klick setzt den Filter wieder auf Neutral.</p>' +
               (isCurrentUserVip() ? (
                 '<div style="font-size:12.5px;font-weight:700;margin:8px 0 6px;color:#0284c7">🌟 Exklusiver VIP-Stream Filter (#13):</div>' +
                 '<div class="direct-filter-grid" style="margin-bottom:10px">' +
@@ -7925,6 +8503,8 @@
               renderDirectFilterOptionCard("unreleased", "unreleased", "🗓️ Unveröffentlicht", Boolean(s.showUnreleased), false) +
               '</div>' +
             '</div>' +
+            '</div>' +
+            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
             (isAuth ? (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>🌐 Optionale TMDB-Konto Synchronisierung</span>' +
@@ -7945,6 +8525,7 @@
                 '<div id="tmdbSyncStatus" style="font-size:12px;color:#fbbf24;margin-top:8px"></div>' +
               '</div>'
             ) : '') +
+            '</div>' +
           '</div>';
           if (typeof loadTmaActivityLogPreviewClient === "function") {
             loadTmaActivityLogPreviewClient();
