@@ -28095,7 +28095,7 @@
   }
 
   // Offizielle Telegram Mini App HMAC-SHA256 Validierung von initData (Web Crypto API)
-  async function verifyTelegramInitDataHmac(rawInitData, botToken) {
+  async function verifyTelegramInitDataHmac(rawInitData, botToken, env = null) {
     if (!rawInitData) return { ok: false, error: "Fehlende initData" };
     try {
       const params = new URLSearchParams(String(rawInitData));
@@ -28105,12 +28105,22 @@
       const userRaw = params.get("user");
       const userObj = userRaw ? JSON.parse(userRaw) : null;
 
-      // Simulator-Sandbox-Unterstützung für lokale Vorschau (Personas 100998877 & 55443322)
+      // Simulator-Sandbox-Unterstützung für lokale Vorschau nur im Entwicklungs-Modus
+      const isDevEnv = Boolean(env && (env.ENVIRONMENT === "development" || env.ENABLE_SIMULATOR === "true" || env.DEV_MODE === "true"));
       if (receivedHash === "sim_valid_hmac" && userObj && (String(userObj.id) === "100998877" || String(userObj.id) === "55443322")) {
+        if (!isDevEnv) {
+          return { ok: false, error: "Simulator-initData ist in der Produktivumgebung deaktiviert." };
+        }
         return { ok: true, user: userObj, isSimulator: true };
       }
 
       if (!botToken) return { ok: false, error: "Fehlendes Bot-Token" };
+
+      // Replay-Schutz: auth_date Validierung (maximal 24 Stunden = 86400 Sekunden alt)
+      const authDate = Number(params.get("auth_date") || 0);
+      if (!authDate || Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
+        return { ok: false, error: "Telegram initData ist abgelaufen (> 24h)." };
+      }
 
       const pairs = [];
       for (const [k, v] of params.entries()) {
@@ -28440,7 +28450,7 @@
 
     const rawInitData = request.headers.get("X-Telegram-Init-Data") || "";
     if (rawInitData && env?.TELEGRAM_BOT_TOKEN) {
-      const verifiedInit = await verifyTelegramInitDataHmac(rawInitData, env.TELEGRAM_BOT_TOKEN);
+      const verifiedInit = await verifyTelegramInitDataHmac(rawInitData, env.TELEGRAM_BOT_TOKEN, env);
       if (verifiedInit.ok && verifiedInit.user) {
         const userProfile = await upsertTelegramUserInD1(env, verifiedInit.user);
         return {
@@ -59326,7 +59336,7 @@
         }
 
         if (rawInit) {
-          const verified = await verifyTelegramInitDataHmac(rawInit, env.TELEGRAM_BOT_TOKEN);
+          const verified = await verifyTelegramInitDataHmac(rawInit, env.TELEGRAM_BOT_TOKEN, env);
           if (verified.ok && verified.user) {
             const userProfile = await upsertTelegramUserInD1(env, verified.user);
             const sessionToken = await signTmaSessionToken({

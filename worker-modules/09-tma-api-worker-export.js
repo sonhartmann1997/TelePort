@@ -92,7 +92,7 @@
         }
 
         if (rawInit) {
-          const verified = await verifyTelegramInitDataHmac(rawInit, env.TELEGRAM_BOT_TOKEN);
+          const verified = await verifyTelegramInitDataHmac(rawInit, env.TELEGRAM_BOT_TOKEN, env);
           if (verified.ok && verified.user) {
             const userProfile = await upsertTelegramUserInD1(env, verified.user);
             const sessionToken = await signTmaSessionToken({
