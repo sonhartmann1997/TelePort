@@ -4144,10 +4144,20 @@
             });
           }
           if (request.method === "POST") {
-            const update = await request.json();
+            const update = await request.json().catch(() => null);
+            if (!update || typeof update !== "object") {
+              return new Response(JSON.stringify({ ok: false, error: "Ungültiges oder leeres JSON im Request-Body." }), {
+                status: 400,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
             const scopedEnv = customToken ? { ...env, TELEGRAM_BOT_TOKEN: customToken } : env;
             const runCustomHook = async () => {
-              await handleUpdate(scopedEnv, update);
+              try {
+                await handleUpdate(scopedEnv, update);
+              } catch (err) {
+                console.error("[custom-webhook] handleUpdate Fehler:", err);
+              }
             };
             if (ctx && ctx.waitUntil) ctx.waitUntil(runCustomHook());
             else await runCustomHook();
