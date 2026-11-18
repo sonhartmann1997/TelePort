@@ -2430,6 +2430,18 @@
           }
         } else if (rawToken && rawToken !== "undefined" && rawToken !== "null") {
           hdrs.Authorization = `Bearer ${rawToken}`;
+        } else {
+          // Weder Bearer-Token noch 32-stelliger Key vorhanden: Ungültige Header entfernen
+          delete hdrs.Authorization;
+          delete hdrs.authorization;
+          // Wenn in der URL auch kein api_key= existiert, bricht der Aufruf direkt ab, um Cloudflare-Subrequests zu schonen
+          if (!targetUrl.includes("api_key=")) {
+            clearTimeout(id);
+            return new Response(JSON.stringify({ status_code: 7, status_message: "Kein TMDb API-Key / Bearer-Token konfiguriert." }), {
+              status: 401,
+              headers: { "Content-Type": "application/json; charset=utf-8" }
+            });
+          }
         }
         effectiveOptions.headers = hdrs;
       }
