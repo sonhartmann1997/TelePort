@@ -5778,16 +5778,15 @@
         width: 100% !important;
         height: 100% !important;
         transform-origin: 50% 50%;
-        transform: translate3d(0, 0, 0) scale(1.24) !important;
+        transform: translate3d(0, 0, 0) !important;
         clip-path: none !important;
         -webkit-clip-path: none !important;
         border: 0;
         pointer-events: none;
-        transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
       }
       .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
       .hero.is-cc-safe-framing .detail-bg-video-frame {
-        transform: translate3d(0, -8.5%, 0) scale(1.10) !important;
+        transform: translate3d(0, 0, 0) !important;
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -5891,16 +5890,16 @@
         position: absolute;
         right: 0;
         bottom: 0;
-        width: 280px;
-        height: 98px;
+        width: 230px;
+        height: 82px;
         z-index: 2;
         pointer-events: none;
         opacity: 0;
-        background: radial-gradient(ellipse at 100% 100%, rgba(4, 7, 15, 0.97) 0%, rgba(4, 7, 15, 0.78) 46%, transparent 78%);
+        background: radial-gradient(ellipse at 100% 100%, rgba(4, 7, 15, 0.995) 0%, rgba(4, 7, 15, 0.95) 46%, rgba(4, 7, 15, 0.68) 66%, transparent 86%);
         transition: opacity 0.24s ease;
       }
-      .detail-hero-stage.is-cc-safe-framing .detail-bg-video-layer::before,
-      .hero.is-cc-safe-framing .detail-bg-video-layer::before {
+      .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode .detail-bg-video-layer::before {
         opacity: 1;
       }
       .detail-bg-video-layer::after {
@@ -5909,7 +5908,7 @@
         inset: 0;
         z-index: 1;
         pointer-events: none;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0.56) 0%, rgba(4, 7, 15, 0) 11%, rgba(4, 7, 15, 0) 88%, rgba(4, 7, 15, 0.54) 100%);
+        background: linear-gradient(180deg, rgba(4, 7, 15, 0.72) 0%, rgba(4, 7, 15, 0) 9%, rgba(4, 7, 15, 0) 90%, rgba(4, 7, 15, 0.62) 100%);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame,
       .hero.is-trailer-foreground-mode .detail-bg-video-frame {
@@ -5974,7 +5973,7 @@
         position: absolute;
         left: 50%;
         right: auto;
-        bottom: 20px;
+        bottom: 14px;
         z-index: 16;
         width: min(670px, calc(100% - 24px));
         display: flex;
@@ -6047,7 +6046,10 @@
       .hero.is-trailer-foreground-mode.is-cinema-paused .cinema-top-hud,
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-starting .cinema-top-hud,
       .hero.is-trailer-foreground-mode.is-cinema-starting .cinema-top-hud {
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0.99) 0%, rgba(4, 7, 15, 0.88) 66%, transparent 100%);
+        padding: 14px 20px 54px;
+        background: linear-gradient(180deg, rgba(4, 7, 15, 0.998) 0%, rgba(4, 7, 15, 0.985) 66%, rgba(4, 7, 15, 0.76) 85%, transparent 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
       }
       .cinema-top-hud.is-idle-hidden {
         opacity: 0 !important;
@@ -6117,14 +6119,14 @@
         top: 50%;
         left: 50%;
         z-index: 14;
-        width: 102px;
-        height: 102px;
+        width: 108px;
+        height: 108px;
         border-radius: 50%;
         border: 1.5px solid rgba(255, 255, 255, 0.22);
-        background: radial-gradient(circle at 32% 28%, rgba(18, 28, 48, 0.96) 0%, rgba(4, 7, 15, 0.98) 100%);
+        background: radial-gradient(circle at 32% 28%, rgba(18, 28, 48, 0.97) 0%, rgba(4, 7, 15, 0.99) 100%);
         backdrop-filter: blur(22px) saturate(160%);
         -webkit-backdrop-filter: blur(22px) saturate(160%);
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.82), 0 0 0 14px rgba(4, 7, 15, 0.42), 0 0 30px rgba(var(--ambi-1, 14, 165, 233), 0.24);
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.84), 0 0 0 16px rgba(4, 7, 15, 0.48), 0 0 30px rgba(var(--ambi-1, 14, 165, 233), 0.24);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -6155,12 +6157,12 @@
         left: 0;
         right: 0;
         bottom: 0;
-        height: clamp(112px, 16vh, 152px);
+        height: clamp(122px, 18vh, 170px);
         z-index: 13;
         pointer-events: none;
-        background: linear-gradient(0deg, rgba(4, 7, 15, 0.995) 0%, rgba(4, 7, 15, 0.94) 52%, rgba(4, 7, 15, 0.65) 78%, transparent 100%);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
+        background: linear-gradient(0deg, rgba(4, 7, 15, 0.998) 0%, rgba(4, 7, 15, 0.97) 56%, rgba(4, 7, 15, 0.72) 80%, transparent 100%);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         opacity: 0;
         transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1);
       }
@@ -6174,14 +6176,14 @@
         top: 50%;
         left: 50%;
         z-index: 15;
-        width: 96px;
-        height: 96px;
+        width: 98px;
+        height: 98px;
         border-radius: 50%;
         border: 1.5px solid rgba(255, 255, 255, 0.28);
-        background: radial-gradient(circle at 32% 28%, rgba(30, 41, 59, 0.96) 0%, rgba(5, 9, 18, 0.98) 100%);
+        background: radial-gradient(circle at 32% 28%, rgba(30, 41, 59, 0.97) 0%, rgba(5, 9, 18, 0.99) 100%);
         backdrop-filter: blur(22px) saturate(160%);
         -webkit-backdrop-filter: blur(22px) saturate(160%);
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.82), 0 0 0 12px rgba(4, 7, 15, 0.44), 0 0 32px rgba(var(--ambi-1, 14, 165, 233), 0.28);
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.84), 0 0 0 14px rgba(4, 7, 15, 0.48), 0 0 32px rgba(var(--ambi-1, 14, 165, 233), 0.28);
         color: #ffffff;
         font-size: 32px;
         padding-left: 5px;
@@ -6213,7 +6215,7 @@
         left: 0;
         right: 0;
         bottom: 0;
-        height: clamp(256px, 36vh, 344px);
+        height: clamp(278px, 40vh, 384px);
         z-index: 14;
         display: flex;
         flex-direction: column;
@@ -6221,9 +6223,9 @@
         align-items: center;
         padding: 0 16px 84px;
         box-sizing: border-box;
-        background: linear-gradient(0deg, rgba(4, 7, 15, 0.998) 0%, rgba(4, 7, 15, 0.985) 68%, rgba(4, 7, 15, 0.86) 85%, transparent 100%);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
+        background: linear-gradient(0deg, rgba(4, 7, 15, 0.998) 0%, rgba(4, 7, 15, 0.992) 72%, rgba(4, 7, 15, 0.88) 86%, transparent 100%);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
         opacity: 0;
         pointer-events: none;
         transform: translate3d(0, 14px, 0);
@@ -13429,7 +13431,7 @@
         }
         if (isFgMount) {
           setHeroTrailerLoadingBadgeClient(false);
-          scheduleHeroRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 1500, true);
+          scheduleHeroRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 2100, true);
         }
 
         heroBgTeaserWatchdogTimer = setTimeout(() => {
@@ -13542,7 +13544,7 @@
               }
               if (heroBgTeaserChromeShieldRequired || !isFg) {
                 const elapsedPlaying = Date.now() - (heroBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(360, 1450 - elapsedPlaying);
+                const holdRemainingMs = Math.max(420, 2100 - elapsedPlaying);
                 scheduleHeroRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
               } else if (layer && isFg && !heroBgTeaserStoppedByUser && !heroBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");

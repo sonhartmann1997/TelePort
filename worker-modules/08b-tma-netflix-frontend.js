@@ -2785,7 +2785,7 @@
         }
         if (isFgMount) {
           setDetailTrailerLoadingBadgeClient(false);
-          scheduleDetailRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 1500, true);
+          scheduleDetailRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 2100, true);
         }
 
         // Watchdog: Falls YouTube das Video blockiert oder nach 5,2s noch nicht im Playing-State (1) ist -> nächsten Trailer testen!
@@ -2904,7 +2904,7 @@
               }
               if (detailBgTeaserChromeShieldRequired || !isFg) {
                 const elapsedPlaying = Date.now() - (detailBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(360, 1450 - elapsedPlaying);
+                const holdRemainingMs = Math.max(420, 2100 - elapsedPlaying);
                 scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
               } else if (layer && isFg && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll && !detailBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
