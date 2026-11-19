@@ -6119,19 +6119,22 @@
         color: #f8fafc;
         box-sizing: border-box;
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: translate3d(0, 14px, 0);
-        transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1), transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, background 0.2s ease;
+        transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1), transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.24s linear, border-color 0.2s ease, background 0.2s ease;
       }
       .hero:not(.is-trailer-foreground-mode) .hero-cinema-player-dock,
       .detail-hero-stage:not(.is-trailer-foreground-mode) .detail-cinema-player-dock {
         opacity: 0 !important;
+        visibility: hidden !important;
         pointer-events: none !important;
         transform: translate3d(0, 14px, 0) !important;
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-cinema-player-dock,
       .hero.is-trailer-foreground-mode .detail-cinema-player-dock {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: translate3d(0, 0, 0);
       }
@@ -6181,12 +6184,14 @@
         background: linear-gradient(180deg, #000000 0px, #000000 68px, rgba(0, 0, 0, 0.75) 86%, transparent 100%);
         pointer-events: none;
         opacity: 0;
+        visibility: hidden;
         transform: translate3d(0, -10px, 0);
-        transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.24s linear;
       }
       .detail-hero-stage.is-trailer-foreground-mode .cinema-top-hud,
       .hero.is-trailer-foreground-mode .cinema-top-hud {
         opacity: 1;
+        visibility: visible;
         transform: translate3d(0, 0, 0);
       }
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused .cinema-top-hud,
@@ -6340,9 +6345,10 @@
         justify-content: center;
         cursor: pointer;
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: translate3d(-50%, -50%, 0) scale(0.86) !important;
-        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease, background 0.18s ease;
+        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.2s linear, border-color 0.18s ease, background 0.18s ease;
       }
       .cinema-pause-center-btn svg {
         width: 40px;
@@ -6353,6 +6359,7 @@
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn,
       .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: translate3d(-50%, -50%, 0) scale(1) !important;
       }
@@ -6381,13 +6388,15 @@
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: translate3d(0, 14px, 0);
-        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s linear;
       }
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-bottom-curtain,
       .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-bottom-curtain {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: translate3d(0, 0, 0);
       }
@@ -6478,13 +6487,15 @@
         -webkit-backdrop-filter: blur(18px);
         text-align: center;
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: scale(0.98);
-        transition: opacity 0.26s cubic-bezier(0.16, 1, 0.3, 1), transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.26s cubic-bezier(0.16, 1, 0.3, 1), transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.26s linear;
       }
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-ended .cinema-end-overlay,
       .hero.is-trailer-foreground-mode.is-cinema-ended .cinema-end-overlay {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: scale(1);
       }
@@ -12968,6 +12979,10 @@
       let heroBgTeaserCurTime = 0;
       let heroBgTeaserDuration = 0;
       let heroBgTeaserScrubbing = false;
+      let heroBgTeaserLastInfoAt = 0;
+      let heroCinemaLiveClockTimer = null;
+      let heroCinemaLiveClockLastTickAt = 0;
+      let heroCinemaLiveClockPingCount = 0;
 
       function clearHeroUnmuteRetryTimersClient() {
         if (Array.isArray(heroBgTeaserUnmuteRetryTimers) && heroBgTeaserUnmuteRetryTimers.length) {
@@ -13116,15 +13131,23 @@
         return "🎬 Trailer startet…";
       }
 
-      function buildTrailerEmbedUrlClient(cleanKey, startSeconds = 0, ccMode = "off") {
+      function buildTrailerEmbedUrlClient(cleanKey, startSeconds = 0, ccMode = "off", widgetId = 1) {
         const ccEnabled = ccMode === "de" || ccMode === "en";
         const hlParam = ccMode === "en" ? "en" : "de";
         const ccParams = ccEnabled
           ? ("&cc_load_policy=1&cc_lang_pref=" + encodeURIComponent(ccMode))
           : "&cc_load_policy=0";
+        let originParam = "";
+        try {
+          const orig = (typeof window !== "undefined" && window.location && window.location.origin) ? String(window.location.origin) : "";
+          if (orig && (orig.startsWith("https://") || orig.startsWith("http://"))) {
+            originParam = "&origin=" + encodeURIComponent(orig);
+          }
+        } catch (_oe) {}
+        const safeWidgetId = Math.max(1, Number(widgetId) || 1);
         return "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
           "?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
-          "&modestbranding=1&iv_load_policy=3" + ccParams + "&autohide=1&playsinline=1&enablejsapi=1&hl=" + hlParam +
+          "&modestbranding=1&iv_load_policy=3" + ccParams + "&autohide=1&playsinline=1&enablejsapi=1" + originParam + "&widgetid=" + safeWidgetId + "&hl=" + hlParam +
           "&start=" + Math.max(0, Math.floor(Number(startSeconds || 0)));
       }
 
@@ -13260,7 +13283,52 @@
           clearTimeout(heroBgTeaserDeferTimer);
           heroBgTeaserDeferTimer = null;
         }
+        stopHeroCinemaLiveClockClient();
         clearHeroUnmuteRetryTimersClient();
+      }
+
+      function stopHeroCinemaLiveClockClient() {
+        if (heroCinemaLiveClockTimer) {
+          clearInterval(heroCinemaLiveClockTimer);
+          heroCinemaLiveClockTimer = null;
+        }
+        heroCinemaLiveClockLastTickAt = 0;
+        heroCinemaLiveClockPingCount = 0;
+      }
+
+      function ensureHeroCinemaLiveClockClient() {
+        if (heroCinemaLiveClockTimer) return;
+        heroCinemaLiveClockLastTickAt = Date.now();
+        heroCinemaLiveClockPingCount = 0;
+        heroCinemaLiveClockTimer = setInterval(() => {
+          const liveStage = document.getElementById("heroStageEl");
+          const isFgLive = Boolean(liveStage && liveStage.classList.contains("is-trailer-foreground-mode"));
+          if (!isFgLive || !heroBgTeaserActiveKey || heroBgTeaserPaused || heroBgTeaserEnded) {
+            stopHeroCinemaLiveClockClient();
+            return;
+          }
+          const now = Date.now();
+          const dtSec = Math.max(0, Math.min(2.5, (now - (heroCinemaLiveClockLastTickAt || now)) / 1000));
+          heroCinemaLiveClockLastTickAt = now;
+          if (heroBgTeaserScrubbing) return;
+          const infoStale = !heroBgTeaserLastInfoAt || (now - heroBgTeaserLastInfoAt) >= 1100;
+          if (infoStale && (heroBgTeaserIsPlayingConfirmed || (heroBgTeaserStageOpenedAt && (now - heroBgTeaserStageOpenedAt) >= 1400))) {
+            const spd = Number(heroBgTeaserSpeed || 1) > 0 ? Number(heroBgTeaserSpeed || 1) : 1;
+            const nextSec = (Number(heroBgTeaserCurTime) || 0) + (dtSec * spd);
+            heroBgTeaserCurTime = heroBgTeaserDuration > 0 ? Math.min(heroBgTeaserDuration, nextSec) : nextSec;
+            heroBgTeaserIsPlayingConfirmed = true;
+            syncHeroCinemaDockUiClient();
+          }
+          heroCinemaLiveClockPingCount += 1;
+          if ((heroBgTeaserDuration <= 0 || infoStale) && (heroCinemaLiveClockPingCount % 4 === 1)) {
+            const frame = document.getElementById("heroBgVideoIframe");
+            if (frame && frame.contentWindow) {
+              try {
+                frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*");
+              } catch (_pe) {}
+            }
+          }
+        }, 500);
       }
 
       function sendYoutubeHeroTeaserCommandClient(funcName, args = []) {
@@ -13270,7 +13338,9 @@
           frame.contentWindow.postMessage(JSON.stringify({
             event: "command",
             func: funcName,
-            args: args
+            args: args,
+            id: 1,
+            channel: "widget"
           }), "*");
         } catch (_e) {}
       }
@@ -13591,6 +13661,7 @@
               if (heroBgTeaserSpeed !== 1) {
                 sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
               }
+              ensureHeroCinemaLiveClockClient();
               wakeHeroCinemaDockClient();
             } else {
               sendYoutubeHeroTeaserCommandClient("playVideo");
@@ -13615,6 +13686,7 @@
           clearTimeout(heroBgTeaserDelayedPauseTimer);
           heroBgTeaserDelayedPauseTimer = null;
         }
+        stopHeroCinemaLiveClockClient();
         setHeroTrailerLoadingBadgeClient(false);
         heroBgTeaserPaused = true;
         heroBgTeaserChromeShieldRequired = true;
@@ -13680,6 +13752,7 @@
             sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
           }
           applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+          ensureHeroCinemaLiveClockClient();
           wakeHeroCinemaDockClient();
           syncHeroCinemaDockUiClient();
           return;
@@ -13696,6 +13769,7 @@
             sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
           }
           applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+          ensureHeroCinemaLiveClockClient();
           wakeHeroCinemaDockClient();
           syncHeroCinemaDockUiClient();
           return;
@@ -13718,6 +13792,7 @@
         }
         applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
         scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, true);
+        if (isFgResume) ensureHeroCinemaLiveClockClient();
         syncHeroCinemaDockUiClient();
       }
 
@@ -13743,6 +13818,7 @@
         heroBgTeaserEnded = false;
         heroBgTeaserCurTime = 0;
         heroBgTeaserDuration = 0;
+        heroBgTeaserLastInfoAt = 0;
         const stageEl = document.getElementById("heroStageEl");
         if (stageEl) {
           stageEl.classList.remove("is-trailer-foreground-mode", "is-cinema-starting", "is-cinema-paused", "is-cinema-ended", "is-cc-safe-framing");
@@ -13774,17 +13850,17 @@
             return;
           }
           try {
-            frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "heroBgVideoIframe" }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"] }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onApiChange"] }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"] }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"], id: 1, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onApiChange"], id: 1, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"], id: 1, channel: "widget" }), "*");
             if (!heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserStoppedByUser) {
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [], id: 1, channel: "widget" }), "*");
             }
             if (heroBgTeaserPendingUnmute || !heroBgTeaserMuted) {
               const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [] }), "*");
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [targetVol] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [], id: 1, channel: "widget" }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [targetVol], id: 1, channel: "widget" }), "*");
             }
             if (ticks === 0 || ticks === 3) {
               applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
@@ -13831,6 +13907,7 @@
         heroBgTeaserEnded = false;
         const safeStartSec = Math.max(0, Number(startSeconds || 0));
         heroBgTeaserCurTime = safeStartSec;
+        heroBgTeaserLastInfoAt = 0;
         if (!(opts && opts.keepDuration)) {
           heroBgTeaserDuration = 0;
         }
@@ -13848,7 +13925,7 @@
         if (isFgMount) layer.classList.add("is-playing");
         else layer.classList.remove("is-playing");
 
-        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, safeStartSec, heroBgTeaserCcMode);
+        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, safeStartSec, heroBgTeaserCcMode, 1);
         const lazyAttr = isFgMount ? "" : ' loading="lazy"';
         layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" data-slide-key="' + esc(heroBgTeaserActiveSlideKey || "") + '" src="' + esc(embedSrc) + '"' + lazyAttr + ' onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
 
@@ -13860,6 +13937,7 @@
         if (isFgMount) {
           setHeroTrailerLoadingBadgeClient(false);
           scheduleHeroRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 2100, true);
+          ensureHeroCinemaLiveClockClient();
         }
 
         heroBgTeaserWatchdogTimer = setTimeout(() => {
@@ -13925,11 +14003,20 @@
             if (typeof msg.info.playerState === "number") {
               pState = msg.info.playerState;
             }
-            if (typeof msg.info.currentTime === "number") {
-              heroBgTeaserCurTime = msg.info.currentTime;
+            const rawCurTime = typeof msg.info.currentTime === "number"
+              ? msg.info.currentTime
+              : (msg.info.progressState && typeof msg.info.progressState.current === "number" ? msg.info.progressState.current : null);
+            if (rawCurTime !== null && Number.isFinite(rawCurTime) && rawCurTime >= 0) {
+              heroBgTeaserCurTime = rawCurTime;
+              heroBgTeaserLastInfoAt = Date.now();
             }
-            if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
-              heroBgTeaserDuration = msg.info.duration;
+            const rawDur = (typeof msg.info.duration === "number" && msg.info.duration > 0)
+              ? msg.info.duration
+              : ((msg.info.progressState && typeof msg.info.progressState.duration === "number" && msg.info.progressState.duration > 0)
+                ? msg.info.progressState.duration
+                : (msg.info.videoData && Number(msg.info.videoData.lengthSeconds) > 0 ? Number(msg.info.videoData.lengthSeconds) : 0));
+            if (rawDur > 0 && Number.isFinite(rawDur)) {
+              heroBgTeaserDuration = rawDur;
             }
             const curStageEl = document.getElementById("heroStageEl");
             const isFgLive = Boolean(curStageEl && curStageEl.classList.contains("is-trailer-foreground-mode"));
@@ -13977,7 +14064,10 @@
                 heroBgTeaserPlayingStartedAt = Date.now();
               }
               if (heroBgTeaserDuration <= 0 && heroFrame && heroFrame.contentWindow) {
-                try { heroFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "heroBgVideoIframe" }), "*"); } catch (_le) {}
+                try { heroFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*"); } catch (_le) {}
+              }
+              if (isFg) {
+                ensureHeroCinemaLiveClockClient();
               }
               if (heroBgTeaserPendingUnmute || (isFg && !heroBgTeaserUserMuted)) {
                 heroBgTeaserPendingUnmute = false;
@@ -14001,6 +14091,7 @@
               syncHeroCinemaDockUiClient();
             } else if (pState === 2) {
               heroBgTeaserPaused = true;
+              stopHeroCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               setHeroTrailerLoadingBadgeClient(false);
               // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte STREAMFLIX-Ersatzoverlays überdecken nur die YouTube-Controls!
@@ -14019,10 +14110,12 @@
               wakeHeroCinemaDockClient();
               syncHeroCinemaDockUiClient();
             } else if (pState === 0) {
+              stopHeroCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               if (isFg) {
                 heroBgTeaserEnded = true;
                 heroBgTeaserPaused = true;
+                if (heroBgTeaserDuration > 0) heroBgTeaserCurTime = heroBgTeaserDuration;
                 setHeroTrailerLoadingBadgeClient(false);
                 wakeHeroCinemaDockClient();
                 syncHeroCinemaDockUiClient();
@@ -14366,8 +14459,9 @@
             sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
           }
           if (heroBgTeaserDuration <= 0 && existingFrame.contentWindow) {
-            try { existingFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "heroBgVideoIframe" }), "*"); } catch (_le2) {}
+            try { existingFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*"); } catch (_le2) {}
           }
+          ensureHeroCinemaLiveClockClient();
           const layer = document.getElementById("heroBgVideoLayer");
           if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired) {
             stageEl.classList.remove("is-cinema-starting");
@@ -14399,6 +14493,7 @@
       function exitHeroForegroundTrailerModeClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         cancelHeroCinemaEndcardCountdownClient(true);
+        stopHeroCinemaLiveClockClient();
         heroBgTeaserRequestSeq += 1;
         const stageEl = document.getElementById("heroStageEl");
         if (!stageEl) return;

@@ -7383,6 +7383,9 @@
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
           if (el.closest && el.closest(".hero-curtain-shell.is-collapsed")) return false;
           if (el.closest && el.closest(".detail-sticky-mini-header:not(.is-visible)")) return false;
+          // Player-Controls, Top-HUD, Pause- & Endcard-Overlays dürfen NUR fokussierbar sein, wenn der Trailer-Player im Vordergrund aktiv ist!
+          if (el.closest && el.closest(".detail-cinema-player-dock, .hero-cinema-player-dock, .cinema-top-hud, .cinema-pause-bottom-curtain, .cinema-end-overlay")) return false;
+          if (el.classList && (el.classList.contains("cinema-dock-btn") || el.classList.contains("cinema-dock-scrubber") || el.classList.contains("cinema-dock-vol-slider") || el.classList.contains("cinema-top-hud-close") || el.classList.contains("cinema-pause-center-btn") || el.classList.contains("cinema-overlay-btn"))) return false;
           if (el.classList && el.classList.contains("tv-elevator-btn")) {
             return !(document.body && document.body.classList.contains("in-hero-slider")) && !isModalActive;
           }
@@ -7913,19 +7916,21 @@
         }
 
         // Smarte 2-Spalten-Navigation im Ambilight-Glas-Menü (#filterSidebarDrawer):
-        // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen inkl. der untersten 2 Elemente!
-        //   Klick nach Rechts (ArrowRight) öffnet sofort die Optionen rechts im Sub-Panel (#sidebarRightSubPanel).
-        //   Klick nach Links (ArrowLeft) schließt die Menü-Übersicht und kehrt direkt zur Karte zurück!
-        // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Klick nach Links (ArrowLeft) vom linken Rand führt sofort zurück in die Menü-Übersicht!
+        // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen; Enter öffnet die ausgewählte Kategorie.
+        //   Pfeil Rechts (entgegengesetzte Richtung zum Öffnen nach Links) schließt das linke Menü sofort wieder!
+        // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Pfeil Links vom linken Rand führt zurück in die Menü-Übersicht; Pfeil Rechts vom rechten Rand schließt das Menü.
         if (state.sidebarOpen) {
           const inLeftMenuCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarDrawerBody"));
           const inRightSubCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel"));
           if (inLeftMenuCol) {
-            if (dir === "left") {
+            if (dir === "right") {
               if (typeof closeFilterSidebar === "function") {
                 closeFilterSidebar();
-                return;
               }
+              return;
+            }
+            if (dir === "left") {
+              return;
             }
             const leftRows = Array.from(document.querySelectorAll("#sidebarDrawerBody .sidebar-menu-row")).filter(el => list.includes(el));
             const rowIdx = leftRows.indexOf(currentSpatialEl);
@@ -7944,17 +7949,6 @@
                   if (sbHeaderBtn && list.includes(sbHeaderBtn)) setSpatialFocus(sbHeaderBtn, true, "up");
                 }
                 return;
-              }
-              if (dir === "right") {
-                const catAttr = currentSpatialEl.getAttribute("data-sb-cat");
-                if (catAttr) {
-                  switchSidebarCategoryTab(catAttr, true);
-                  return;
-                }
-                if (typeof closeFilterSidebar === "function") {
-                  closeFilterSidebar();
-                  return;
-                }
               }
             }
           } else if (inRightSubCol && (dir === "left" || dir === "right")) {
@@ -8237,9 +8231,15 @@
               modalBackdropEl.scrollTo({ top: 0, behavior: "smooth" });
             } else if ((window.scrollY || window.pageYOffset || 0) > 15) {
               window.scrollTo({ top: 0, behavior: "smooth" });
-            } else if (!suppressScroll && !modalBackdropEl && typeof tvElevatorJumpClient === "function") {
-              // Vertikales Rand-Wrap-Around (Oben -> Unten zur Seitenwahl / Katalog-Ende)
-              tvElevatorJumpClient("bottom", true);
+            } else if (!modalBackdropEl && typeof expandHeroSliderAndFocusClient === "function") {
+              const isHeroCollapsedNow = Boolean(
+                (typeof heroCurtainScrolledToCatalog !== "undefined" && heroCurtainScrolledToCatalog) ||
+                (document.body && document.body.classList.contains("hero-scrolled-past")) ||
+                state.heroHidden
+              );
+              if (isHeroCollapsedNow) {
+                expandHeroSliderAndFocusClient("hero");
+              }
             }
             return;
           }
@@ -8298,20 +8298,13 @@
               return;
             }
             if (dir === "left") {
-              const rmTabAttr = currentSpatialEl.getAttribute && currentSpatialEl.getAttribute("data-rm-tab");
-              if (rmTabAttr && typeof toggleRightMenuSubPanelClient === "function") {
-                toggleRightMenuSubPanelClient(rmTabAttr, true);
-                return;
+              // Entgegengesetzte Richtung zum Öffnen nach Rechts -> schließt das rechte Seitenmenü sofort wieder (Enter öffnet den ausgewählten Eintrag)
+              if (typeof closeRightMenuOverlayClient === "function") {
+                closeRightMenuOverlayClient(null, true);
+              } else {
+                if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+                if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
               }
-              if (elevContainer && elevContainer.classList.contains("has-subpanel")) {
-                const subFirst = document.querySelector("#rightMenuSubPanel .rm-entry-card, #rightMenuSubPanel .rm-ctrl-select, #rightMenuSubPanel .rm-az-chip");
-                if (subFirst) {
-                  setSpatialFocus(subFirst, false, "left");
-                  return;
-                }
-              }
-              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
-              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
               if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
                 setSpatialFocus(lastElevatorReturnEl, true, "left");
                 return;
@@ -8329,12 +8322,6 @@
               return;
             }
             if (dir === "right") {
-              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
-              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
-              if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
-                setSpatialFocus(lastElevatorReturnEl, true, "left");
-                return;
-              }
               return;
             }
           } else if (dir === "right" || dir === "left") {
@@ -8385,12 +8372,14 @@
             const nextShIdx = dir === "right" ? shIdx + 1 : shIdx - 1;
             if (nextShIdx >= 0 && nextShIdx < sbHeaderItems.length) {
               setSpatialFocus(sbHeaderItems[nextShIdx], !suppressScroll, dir);
+            } else if (dir === "right" && typeof closeFilterSidebar === "function") {
+              closeFilterSidebar();
             }
             return;
           }
         }
 
-        // Von der obersten Zeile der Filterleiste (.floating-filter-bar) führt Pfeil hoch (⬆) direkt in den Hero-Slider / Spotlight-Strip / Suchleiste
+        // Von der obersten Zeile der Filterleiste (.floating-filter-bar) führt Pfeil hoch (⬆) direkt in den Hero-Slider (fährt ihn ggf. wieder aus) / Suchleiste
         const curFF = currentSpatialEl.closest ? currentSpatialEl.closest(".floating-filter-bar") : null;
         if (curFF && dir === "up") {
           const curBoxFF = getSpatialLayoutBox(currentSpatialEl);
@@ -8400,6 +8389,9 @@
             getSpatialLayoutBox(cand).bottom <= curBoxFF.top + 6
           );
           if (!hasHigherInFF) {
+            if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
+              return;
+            }
             const actHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
             const heroTr = document.getElementById("heroBtnTrailer");
             const restoreBtn = document.getElementById("heroRestoreBtn");
@@ -8675,8 +8667,8 @@
           }
           setSpatialFocus(bestEl, !suppressScroll, dir);
         } else {
-          // Vertikales Rand-Wrap-Around am unteren Ende (Unten -> Oben zur Suche / Kopfleiste)
-          if (!suppressScroll && dir === "down" && !hasOverlayBlockingElevator && typeof tvElevatorJumpClient === "function") {
+          // Vertikales Rand-Wrap-Around am unteren Ende nur bei bewusstem Einzeltipp (nicht beim Gedrückthalten!)
+          if (!suppressScroll && !isRepeatEvent && verticalTurboStreak <= 1 && dir === "down" && !hasOverlayBlockingElevator && typeof tvElevatorJumpClient === "function") {
             tvElevatorJumpClient("top", true);
             return;
           }
@@ -9046,6 +9038,11 @@
           verticalTurboStreak = 1;
           verticalTurboExpressDone = false;
         } else {
+          verticalTurboLastStepAt = now;
+          if (verticalTurboExpressDone) {
+            // Nach abgeschlossenem Direkt-Sprung (Oben/Unten/Grid) bis zum Loslassen der Taste ruhig am Ziel bleiben
+            return;
+          }
           verticalTurboStreak++;
         }
         verticalTurboLastStepAt = now;
