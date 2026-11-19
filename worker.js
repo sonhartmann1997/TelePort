@@ -31384,11 +31384,14 @@
         margin-bottom: 2px;
       }
       .cinema-clear-logo-fallback-title {
-        display: none;
+        display: none !important;
         width: 100%;
       }
       .cinema-clear-logo-wrap.is-logo-loading .cinema-clear-logo-fallback-title {
-        display: block;
+        display: flex !important;
+      }
+      .cinema-clear-logo-wrap.is-logo-ready .cinema-clear-logo-fallback-title {
+        display: none !important;
       }
       .cinema-clear-logo {
         display: block;
@@ -40950,6 +40953,8 @@
         if (wrap) {
           wrap.classList.remove("is-logo-loading");
           wrap.classList.add("is-logo-ready");
+          const fb = wrap.querySelector(".cinema-clear-logo-fallback-title");
+          if (fb) fb.style.setProperty("display", "none", "important");
         }
       }
 
@@ -40972,7 +40977,7 @@
         if (logoUrl) {
           const isReady = clientDecodedClearLogoUrls.has(logoUrl);
           return '<div class="cinema-clear-logo-wrap ' + (isReady ? 'is-logo-ready' : 'is-logo-loading') + '"' + clickProp + '>' +
-            '<div class="cinema-clear-logo-fallback-title inline-marquee-wrap" data-marquee-always="1">' +
+            '<div class="cinema-clear-logo-fallback-title inline-marquee-wrap" data-marquee-always="1"' + (isReady ? ' style="display:none !important"' : '') + '>' +
               '<span class="inline-marquee-text hero-title-text">' + safeTitle + '</span>' +
             '</div>' +
             '<img class="cinema-clear-logo" src="' + esc(logoUrl) + '" alt="' + safeTitle + '" draggable="false" onload="onClearLogoImgLoadSuccessClient(this)" onerror="onClearLogoImgErrorClient(this)" />' +
