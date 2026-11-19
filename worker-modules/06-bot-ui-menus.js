@@ -3941,6 +3941,9 @@
       title: details.title,
       year: releaseYear,
       fsk: details.fsk,
+      rating: Number(details.rating || details.vote_average || 0),
+      vote_average: Number(details.rating || details.vote_average || 0),
+      poster: details.poster || details.poster_path || "",
       genres: details.genres
     };
 

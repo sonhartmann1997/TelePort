@@ -2352,17 +2352,27 @@
             trackStat("d1Reads");
             if (typeof countD1Subrequest === "function") countD1Subrequest();
             const [mRows, sRows, mfRows] = await rawDb.batch([
-              rawDb.prepare("SELECT tmdb_id, poster_path FROM movies WHERE poster_path IS NOT NULL AND poster_path != '' LIMIT 1500"),
-              rawDb.prepare("SELECT tmdb_id, poster_path FROM series WHERE poster_path IS NOT NULL AND poster_path != '' LIMIT 1500"),
+              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM movies LIMIT 1500"),
+              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM series LIMIT 1500"),
               rawDb.prepare("SELECT DISTINCT movie_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'")
             ]);
             for (const r of (mRows?.results || [])) {
-              const p = resolvePosterUrl(r.poster_path, "w185", "");
-              if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
+              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+              posterLookup.set(`m_${Number(r.tmdb_id)}`, {
+                poster: p,
+                vote_average: Number(r.vote_average || 0),
+                release_year: r.release_year ? String(r.release_year) : "",
+                fsk: r.fsk || ""
+              });
             }
             for (const r of (sRows?.results || [])) {
-              const p = resolvePosterUrl(r.poster_path, "w185", "");
-              if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
+              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+              posterLookup.set(`s_${Number(r.tmdb_id)}`, {
+                poster: p,
+                vote_average: Number(r.vote_average || 0),
+                release_year: r.release_year ? String(r.release_year) : "",
+                fsk: r.fsk || ""
+              });
             }
             for (const mf of (mfRows?.results || [])) {
               if (mf && mf.movie_id) {
@@ -2391,10 +2401,13 @@
         if (!tid) continue;
         const mapKey = `${isSer ? "s" : "m"}_${tid}`;
 
+        const d1Meta = posterLookup.get(mapKey);
+        const d1Poster = typeof d1Meta === "string" ? d1Meta : (d1Meta?.poster || "");
+        const memObj = getCachedTmdb(isSer ? `tv_${tid}` : `movie_${tid}`) ||
+                       memoryFallback.get(isSer ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
+
         if (!item.poster) {
-          const memObj = getCachedTmdb(isSer ? `tv_${tid}` : `movie_${tid}`) ||
-                         memoryFallback.get(isSer ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
-          const foundPoster = posterLookup.get(mapKey) ||
+          const foundPoster = d1Poster ||
                               (memObj ? resolvePosterUrl(memObj.poster_path, "w185", memObj.external_poster_url || memObj.poster || "") : "");
           if (foundPoster) {
             item.poster = foundPoster;
@@ -2403,6 +2416,21 @@
         } else if (String(item.poster).startsWith("/")) {
           item.poster = resolvePosterUrl(item.poster, "w185");
           changed = true;
+        }
+
+        if (!item.rating && !item.vote_average) {
+          const foundRating = Number((typeof d1Meta === "object" && d1Meta?.vote_average) || memObj?.vote_average || memObj?.rating || 0);
+          if (foundRating > 0) {
+            item.rating = foundRating;
+            item.vote_average = foundRating;
+          }
+        }
+        if ((!item.year || item.year === "K. A.") && ((typeof d1Meta === "object" && d1Meta?.release_year) || memObj?.release_date || memObj?.first_air_date)) {
+          const foundYear = (typeof d1Meta === "object" && d1Meta?.release_year) || String(memObj?.release_date || memObj?.first_air_date || "").slice(0, 4);
+          if (foundYear) item.year = String(foundYear);
+        }
+        if ((!item.fsk || item.fsk === "K. A.") && ((typeof d1Meta === "object" && d1Meta?.fsk) || memObj?.fsk)) {
+          item.fsk = (typeof d1Meta === "object" && d1Meta?.fsk) || memObj?.fsk;
         }
 
         if (item.contentType === "series") {

@@ -7088,7 +7088,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -7473,6 +7473,8 @@
         if (isKeyboardNavActive) {
           isKeyboardNavActive = false;
           if (document.body) document.body.classList.remove("kb-nav-active");
+          const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
+          if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
           if (ev && mouseHoverNavEnabled && Date.now() - lastSelectJumpAt >= 450) {
             const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
             if (subTarget) {
@@ -7515,6 +7517,8 @@
       // sodass man nahtlos mit Pfeiltasten / Controller weitermachen kann!
       document.addEventListener("mouseover", (ev) => {
         if (!mouseHoverNavEnabled || isKeyboardNavActive) return;
+        const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
+        if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
         if (window.matchMedia && !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
         if (Date.now() - lastSelectJumpAt < 450) return;
         const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
@@ -8024,39 +8028,98 @@
           }
         }
 
-        // Deterministische Navigation innerhalb des seitlichen TV-Schnellsprung-Fahrstuhls (#tvQuickJumpElevator)
+        // Deterministische 2-Spalten-Navigation innerhalb des rechten Menüs (#tvQuickJumpElevator + #rightMenuSubPanel)
         const inTvElevator = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"));
+        const inRightMenuSubPanel = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#rightMenuSubPanel"));
         if (inTvElevator) {
-          const elevBtns = Array.from(document.querySelectorAll("#tvQuickJumpElevator .tv-elevator-btn")).filter(el => !el.disabled);
-          const eIdx = elevBtns.indexOf(currentSpatialEl);
-          if (dir === "up" || dir === "down") {
-            if (elevBtns.length > 0) {
-              const nextEIdx = dir === "down"
-                ? ((eIdx + 1) % elevBtns.length)
-                : ((eIdx - 1 + elevBtns.length) % elevBtns.length);
-              setSpatialFocus(elevBtns[nextEIdx], false, dir);
-            }
-            return;
-          }
-          if (dir === "left" || dir === "right") {
-            const elevContainer = document.getElementById("tvQuickJumpElevator");
-            if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
-            if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
-              setSpatialFocus(lastElevatorReturnEl, true, "left");
+          const elevContainer = document.getElementById("tvQuickJumpElevator");
+          if (!inRightMenuSubPanel) {
+            const elevBtns = Array.from(document.querySelectorAll("#tvQuickJumpElevator .tv-elevator-main-col .tv-elevator-btn")).filter(el => !el.disabled);
+            const eIdx = elevBtns.indexOf(currentSpatialEl);
+            if (dir === "up" || dir === "down") {
+              if (elevBtns.length > 0) {
+                const nextEIdx = dir === "down"
+                  ? ((eIdx + 1) % elevBtns.length)
+                  : ((eIdx - 1 + elevBtns.length) % elevBtns.length);
+                setSpatialFocus(elevBtns[nextEIdx], false, dir);
+              }
               return;
             }
-            const visibleCards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => {
-              if (!list.includes(el)) return false;
-              const r = el.getBoundingClientRect();
-              return r.top >= 48 && r.bottom <= window.innerHeight + 40;
-            });
-            if (visibleCards.length > 0) {
-              // Wähle die am weitesten rechts liegende sichtbare Karte
-              visibleCards.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
-              setSpatialFocus(visibleCards[0], false, "left");
+            if (dir === "left") {
+              const rmTabAttr = currentSpatialEl.getAttribute && currentSpatialEl.getAttribute("data-rm-tab");
+              if (rmTabAttr && typeof toggleRightMenuSubPanelClient === "function") {
+                toggleRightMenuSubPanelClient(rmTabAttr, true);
+                return;
+              }
+              if (elevContainer && elevContainer.classList.contains("has-subpanel")) {
+                const subFirst = document.querySelector("#rightMenuSubPanel .rm-entry-card, #rightMenuSubPanel .rm-ctrl-select, #rightMenuSubPanel .rm-az-chip");
+                if (subFirst) {
+                  setSpatialFocus(subFirst, false, "left");
+                  return;
+                }
+              }
+              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+              if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
+                setSpatialFocus(lastElevatorReturnEl, true, "left");
+                return;
+              }
+              const visibleCards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => {
+                if (!list.includes(el)) return false;
+                const r = el.getBoundingClientRect();
+                return r.top >= 48 && r.bottom <= window.innerHeight + 40;
+              });
+              if (visibleCards.length > 0) {
+                visibleCards.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+                setSpatialFocus(visibleCards[0], false, "left");
+                return;
+              }
               return;
             }
-            return;
+            if (dir === "right") {
+              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+              if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
+                setSpatialFocus(lastElevatorReturnEl, true, "left");
+                return;
+              }
+              return;
+            }
+          } else if (dir === "right" || dir === "left") {
+            const curSubBox = getSpatialLayoutBox(currentSpatialEl);
+            const subItems = Array.from(document.querySelectorAll("#rightMenuSubPanel " + FOCUSABLE_SELECTOR)).filter(el => list.includes(el));
+            if (dir === "right") {
+              const hasRightInSub = subItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) > (curSubBox.left + curSubBox.width / 2) + 6;
+              });
+              if (!hasRightInSub) {
+                const activeTabBtn = document.getElementById(state.rightMenuTab === "recent" ? "tvElevBtnRecent" : "tvElevBtnWishlist") || document.getElementById("tvElevBtnSearch");
+                if (activeTabBtn) {
+                  setSpatialFocus(activeTabBtn, false, "right");
+                  return;
+                }
+              }
+            } else if (dir === "left") {
+              const hasLeftInSub = subItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
+              });
+              if (!hasLeftInSub) {
+                if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+                if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+                if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
+                  setSpatialFocus(lastElevatorReturnEl, true, "left");
+                  return;
+                }
+              }
+            }
           }
         }
 
@@ -8214,7 +8277,8 @@
           if (
             cand.id === "smartPageIndicatorBtn" ||
             cand.id === "catalogBackToTopFab" ||
-            (cand.closest && cand.closest("#tvQuickJumpElevator"))
+            (!inRightMenuSubPanel && cand.closest && cand.closest("#tvQuickJumpElevator")) ||
+            (inRightMenuSubPanel && !(cand.closest && cand.closest("#rightMenuSubPanel")))
           ) {
             continue;
           }
@@ -8798,6 +8862,14 @@
             return;
           }
           if (currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator")) {
+            if (currentSpatialEl.closest("#rightMenuSubPanel") && typeof closeRightMenuSubPanelClient === "function") {
+              closeRightMenuSubPanelClient(true);
+              ev.preventDefault();
+              return;
+            }
+            const elevContainer = document.getElementById("tvQuickJumpElevator");
+            if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+            if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
             if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl)) {
               setSpatialFocus(lastElevatorReturnEl, true, "left");
               ev.preventDefault();
@@ -9005,30 +9077,12 @@
           return;
         }
 
-        // Tastatur-Shortcut 'M' oder 'W' auf einer fokussierten Film-/Serien-Karte schaltet direkt die Merkliste um!
-        if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey && (ev.key === "m" || ev.key === "M" || ev.key === "w" || ev.key === "W")) {
-          const focusedCard = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card[data-card-key]") : null;
-          if (focusedCard) {
-            const rawKey = focusedCard.getAttribute("data-card-key") || "";
-            const parts = rawKey.split("_");
-            if (parts.length >= 2) {
-              ev.preventDefault();
-              const tc = parts[0] === "s" ? "s" : "m";
-              const idNum = Number(parts[1]);
-              const titleTxt = focusedCard.getAttribute("data-card-title") || "Titel";
-              if (idNum > 0) {
-                quickToggleCardWishlist(ev, tc, idNum, titleTxt);
-                return;
-              }
-            }
-          }
-        }
-
         // Type-to-Search: Sobald auf der Tastatur ein Buchstabe/Zahl getippt wird, startet automatisch die Suche!
         if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.length === 1 && /[a-zA-Z0-9äöüÄÖÜß]/.test(ev.key)) {
           const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
           const dialogOpen = Boolean(document.getElementById("customDialogRoot")?.innerHTML.trim());
-          if (!modalOpen && !dialogOpen) {
+          const rmOpen = Boolean(document.getElementById("tvQuickJumpElevator")?.classList.contains("has-subpanel"));
+          if (!modalOpen && !dialogOpen && !rmOpen) {
             const sInp = document.getElementById("searchInput");
             if (sInp) {
               setSpatialFocus(sInp, false);

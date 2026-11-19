@@ -5970,17 +5970,27 @@
             trackStat("d1Reads");
             if (typeof countD1Subrequest === "function") countD1Subrequest();
             const [mRows, sRows, mfRows] = await rawDb.batch([
-              rawDb.prepare("SELECT tmdb_id, poster_path FROM movies WHERE poster_path IS NOT NULL AND poster_path != '' LIMIT 1500"),
-              rawDb.prepare("SELECT tmdb_id, poster_path FROM series WHERE poster_path IS NOT NULL AND poster_path != '' LIMIT 1500"),
+              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM movies LIMIT 1500"),
+              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM series LIMIT 1500"),
               rawDb.prepare("SELECT DISTINCT movie_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'")
             ]);
             for (const r of (mRows?.results || [])) {
-              const p = resolvePosterUrl(r.poster_path, "w185", "");
-              if (p) posterLookup.set(`m_${Number(r.tmdb_id)}`, p);
+              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+              posterLookup.set(`m_${Number(r.tmdb_id)}`, {
+                poster: p,
+                vote_average: Number(r.vote_average || 0),
+                release_year: r.release_year ? String(r.release_year) : "",
+                fsk: r.fsk || ""
+              });
             }
             for (const r of (sRows?.results || [])) {
-              const p = resolvePosterUrl(r.poster_path, "w185", "");
-              if (p) posterLookup.set(`s_${Number(r.tmdb_id)}`, p);
+              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+              posterLookup.set(`s_${Number(r.tmdb_id)}`, {
+                poster: p,
+                vote_average: Number(r.vote_average || 0),
+                release_year: r.release_year ? String(r.release_year) : "",
+                fsk: r.fsk || ""
+              });
             }
             for (const mf of (mfRows?.results || [])) {
               if (mf && mf.movie_id) {
@@ -6009,10 +6019,13 @@
         if (!tid) continue;
         const mapKey = `${isSer ? "s" : "m"}_${tid}`;
 
+        const d1Meta = posterLookup.get(mapKey);
+        const d1Poster = typeof d1Meta === "string" ? d1Meta : (d1Meta?.poster || "");
+        const memObj = getCachedTmdb(isSer ? `tv_${tid}` : `movie_${tid}`) ||
+                       memoryFallback.get(isSer ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
+
         if (!item.poster) {
-          const memObj = getCachedTmdb(isSer ? `tv_${tid}` : `movie_${tid}`) ||
-                         memoryFallback.get(isSer ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
-          const foundPoster = posterLookup.get(mapKey) ||
+          const foundPoster = d1Poster ||
                               (memObj ? resolvePosterUrl(memObj.poster_path, "w185", memObj.external_poster_url || memObj.poster || "") : "");
           if (foundPoster) {
             item.poster = foundPoster;
@@ -6021,6 +6034,21 @@
         } else if (String(item.poster).startsWith("/")) {
           item.poster = resolvePosterUrl(item.poster, "w185");
           changed = true;
+        }
+
+        if (!item.rating && !item.vote_average) {
+          const foundRating = Number((typeof d1Meta === "object" && d1Meta?.vote_average) || memObj?.vote_average || memObj?.rating || 0);
+          if (foundRating > 0) {
+            item.rating = foundRating;
+            item.vote_average = foundRating;
+          }
+        }
+        if ((!item.year || item.year === "K. A.") && ((typeof d1Meta === "object" && d1Meta?.release_year) || memObj?.release_date || memObj?.first_air_date)) {
+          const foundYear = (typeof d1Meta === "object" && d1Meta?.release_year) || String(memObj?.release_date || memObj?.first_air_date || "").slice(0, 4);
+          if (foundYear) item.year = String(foundYear);
+        }
+        if ((!item.fsk || item.fsk === "K. A.") && ((typeof d1Meta === "object" && d1Meta?.fsk) || memObj?.fsk)) {
+          item.fsk = (typeof d1Meta === "object" && d1Meta?.fsk) || memObj?.fsk;
         }
 
         if (item.contentType === "series") {
@@ -21364,6 +21392,9 @@
       title: details.title,
       year: releaseYear,
       fsk: details.fsk,
+      rating: Number(details.rating || details.vote_average || 0),
+      vote_average: Number(details.rating || details.vote_average || 0),
+      poster: details.poster || details.poster_path || "",
       genres: details.genres
     };
 
@@ -30670,14 +30701,16 @@
         transform: translate3d(calc(100% + 2px), -50%, 0);
         z-index: 76;
         display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding: 9px 9px 9px 8px;
-        border-radius: 14px 0 0 14px;
+        flex-direction: row;
+        align-items: stretch;
+        gap: 0;
+        padding: 0;
+        max-height: min(86vh, 760px);
+        border-radius: 16px 0 0 16px;
         background: linear-gradient(
           155deg,
-          rgba(8, 13, 26, 0.58) 0%,
-          rgba(12, 19, 36, 0.52) 52%,
+          rgba(8, 13, 26, 0.64) 0%,
+          rgba(12, 19, 36, 0.58) 52%,
           rgba(var(--ambi-1), 0.22) 100%
         );
         backdrop-filter: blur(28px) saturate(185%);
@@ -30687,7 +30720,145 @@
         box-shadow: -12px 14px 38px rgba(0, 0, 0, 0.82), inset 1px 0 22px rgba(var(--ambi-2), 0.12);
         opacity: 1;
         pointer-events: auto;
-        transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, box-shadow 0.2s ease;
+        overflow: hidden;
+        transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), width 0.24s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      .tv-quick-jump-elevator.has-subpanel {
+        width: min(calc(720px * var(--scale-menu)), 96vw);
+        height: min(84vh, 720px);
+      }
+      .tv-elevator-main-col {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 6px;
+        padding: 10px 9px 10px 9px;
+        min-width: 146px;
+        flex-shrink: 0;
+      }
+      .tv-quick-jump-elevator.has-subpanel .tv-elevator-main-col {
+        border-left: 1px solid rgba(var(--ambi-2), 0.24);
+        background: rgba(6, 10, 22, 0.38);
+        justify-content: flex-start;
+        padding-top: 14px;
+      }
+      .tv-elevator-subpanel {
+        display: none;
+        flex: 1 1 auto;
+        min-width: 0;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 13px 14px;
+        overflow: hidden;
+        background: linear-gradient(180deg, rgba(6, 10, 22, 0.42) 0%, rgba(var(--ambi-1), 0.10) 100%);
+      }
+      .tv-quick-jump-elevator.has-subpanel .tv-elevator-subpanel {
+        display: flex;
+      }
+      .rm-filter-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px 9px;
+        border-radius: 11px;
+        background: rgba(15, 23, 42, 0.48);
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        flex-shrink: 0;
+      }
+      .rm-filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+      }
+      .rm-ctrl-select,
+      .rm-ctrl-input {
+        background: rgba(8, 13, 26, 0.72);
+        color: #f1f5f9;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 7px;
+        padding: 4px 7px;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 700;
+        outline: none;
+      }
+      .rm-ctrl-select:focus,
+      .rm-ctrl-input:focus,
+      .rm-ctrl-select.spatial-focus,
+      .rm-ctrl-input.spatial-focus {
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+      }
+      .rm-az-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+        align-items: center;
+      }
+      .rm-az-chip {
+        min-width: 22px;
+        height: 22px;
+        padding: 0 5px;
+        border-radius: 5px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.55);
+        color: #cbd5e1;
+        font-size: 10px;
+        font-weight: 800;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .rm-az-chip.active,
+      .rm-az-chip:hover,
+      .rm-az-chip.spatial-focus {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        border-color: #7dd3fc;
+        color: #ffffff;
+      }
+      .rm-entries-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding-right: 3px;
+      }
+      .rm-entry-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 9px;
+        padding: 6px 8px;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.52);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        cursor: pointer;
+        transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+      }
+      .rm-entry-card:hover,
+      .rm-entry-card.spatial-focus {
+        background: linear-gradient(135deg, rgba(2, 132, 199, 0.34), rgba(37, 99, 235, 0.38));
+        border-color: #7dd3fc;
+        transform: translate3d(-2px, 0, 0);
+      }
+      .tv-elev-count-badge {
+        margin-left: auto;
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: rgba(56, 189, 248, 0.22);
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        color: #e0f2fe;
+        font-size: 10px;
+        font-weight: 900;
+      }
+      .tv-elevator-btn.active-tab {
+        background: linear-gradient(135deg, rgba(14, 165, 233, 0.35), rgba(37, 99, 235, 0.42));
+        border-color: #38bdf8;
+        color: #ffffff;
       }
       .elevator-backdrop {
         position: fixed;
@@ -30699,6 +30870,10 @@
         opacity: 0;
         pointer-events: none;
         transition: opacity 0.24s ease;
+      }
+      .tv-quick-jump-elevator.has-subpanel + .elevator-backdrop {
+        opacity: 1;
+        pointer-events: auto;
       }
       body.in-hero-slider .tv-quick-jump-elevator,
       body.in-hero-slider .elevator-backdrop,
@@ -35335,13 +35510,18 @@
       <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
     <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="if(!state.sidebarOpen)toggleFilterSidebar()" onmouseenter="if(!state.sidebarOpen&&!document.body.classList.contains('in-hero-slider')){toggleFilterSidebar();}" title="Menü-Übersicht direkt öffnen"></div>
-    <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onmouseenter="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.add('is-hover-expanded')" onmouseleave="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.remove('is-hover-expanded')" aria-hidden="true"></div>
-    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" onmouseleave="this.classList.remove('is-hover-expanded')" aria-label="Katalog-Navigation">
-      <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient()" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
-      <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient()" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
-      <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="scrollToTopFromElevatorClient()" title="Ganz nach oben scrollen"><span>⬆️</span><span class="tv-elev-label">Nach oben</span></button>
+    <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onmouseenter="const el=document.getElementById('tvQuickJumpElevator');if(el){el.classList.add('is-hover-expanded');if(typeof syncRightMenuBadgesClient==='function')syncRightMenuBadgesClient();}" onmouseleave="const el=document.getElementById('tvQuickJumpElevator');if(el&&!el.classList.contains('has-subpanel'))el.classList.remove('is-hover-expanded')" aria-hidden="true"></div>
+    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" onmouseenter="if(typeof syncRightMenuBadgesClient==='function')syncRightMenuBadgesClient()" onmouseleave="if(!this.classList.contains('has-subpanel'))this.classList.remove('is-hover-expanded')" aria-label="Katalog-Navigation">
+      <div id="rightMenuSubPanel" class="tv-elevator-subpanel" aria-live="polite"></div>
+      <div class="tv-elevator-main-col">
+        <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient()" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
+        <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient()" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
+        <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="scrollToTopFromElevatorClient()" title="Ganz nach oben scrollen"><span>⬆️</span><span class="tv-elev-label">Nach oben</span></button>
+        <button type="button" id="tvElevBtnWishlist" class="tv-elevator-btn" data-rm-tab="wishlist" onclick="toggleRightMenuSubPanelClient('wishlist')" title="Merkliste direkt im rechten Menü öffnen, filtern & sortieren"><span>💾</span><span class="tv-elev-label">Merkliste</span><span id="tvElevBadgeWishlist" class="tv-elev-count-badge" style="display:none">0</span></button>
+        <button type="button" id="tvElevBtnRecent" class="tv-elevator-btn" data-rm-tab="recent" onclick="toggleRightMenuSubPanelClient('recent')" title="Zuletzt gesehen direkt im rechten Menü öffnen, filtern & sortieren"><span>🕒</span><span class="tv-elev-label">Zuletzt</span><span id="tvElevBadgeRecent" class="tv-elev-count-badge" style="display:none">0</span></button>
+      </div>
     </nav>
-    <div id="elevatorBackdrop" class="elevator-backdrop" aria-hidden="true"></div>
+    <div id="elevatorBackdrop" class="elevator-backdrop" onclick="closeRightMenuSubPanelClient()" aria-hidden="true"></div>
 
     <!-- Linke 2-Spalten Ambilight-Glas Sidebar (Links: Einzeilige Kategorien | Rechts: Dynamisches Optionen-Panel) -->
     <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="closeFilterSidebar()"></div>
@@ -37259,7 +37439,7 @@
       let recentViewedList = (function() {
         try {
           const r = JSON.parse(localStorage.getItem("tma_recent_viewed") || "[]");
-          return Array.isArray(r) ? r.slice(0, 12) : [];
+          return Array.isArray(r) ? r.slice(0, 40) : [];
         } catch (e) { return []; }
       })();
       let savedKeysSet = new Set();
@@ -37274,15 +37454,29 @@
         } else if (d.poster) {
           posterUrl = d.poster;
         }
+        const rawYear = String(d.year || d.releaseDate || d.release_date || d.first_air_date || "").slice(0, 4);
+        const cleanYear = /^[0-9]{4}$/.test(rawYear) ? rawYear : "";
+        const cleanRating = Number(d.vote_average || d.rating || 0);
+        const cleanFsk = String(d.fsk || "").trim();
         const entry = {
           id: Number(d.id),
+          tmdbId: Number(d.id),
           type: typeCode === "s" ? "s" : "m",
-          title: String(d.title || d.name || "Titel").slice(0, 60),
-          poster: posterUrl
+          contentType: typeCode === "s" ? "series" : "movie",
+          title: String(d.title || d.name || "Titel").slice(0, 80),
+          poster: posterUrl,
+          year: cleanYear || "K. A.",
+          rating: cleanRating > 0 ? cleanRating : 0,
+          fsk: cleanFsk || "K. A.",
+          addedAt: Date.now()
         };
-        recentViewedList = [entry, ...recentViewedList.filter(x => !(x.id === entry.id && x.type === entry.type))].slice(0, 10);
+        recentViewedList = [entry, ...recentViewedList.filter(x => !(x.id === entry.id && x.type === entry.type))].slice(0, 40);
         try { localStorage.setItem("tma_recent_viewed", JSON.stringify(recentViewedList)); } catch (e) {}
         refreshRecentViewedStripDom();
+        syncRightMenuBadgesClient();
+        if (state.rightMenuTab === "recent") {
+          renderRightMenuSubPanelEntriesOnlyClient();
+        }
       }
 
       function removeRecentViewedItem(ev, typeCode, id) {
@@ -37292,14 +37486,409 @@
         recentViewedList = recentViewedList.filter(x => !(x.type === tc && Number(x.id) === numId));
         try { localStorage.setItem("tma_recent_viewed", JSON.stringify(recentViewedList)); } catch (e) {}
         refreshRecentViewedStripDom();
-        showHudToast("🗑️ Aus „Zuletzt angesehen“ entfernt");
+        syncRightMenuBadgesClient();
+        if (state.rightMenuTab === "recent") {
+          renderRightMenuSubPanelContentClient(false);
+        }
+        showHudToast("🗑️ Aus „Zuletzt gesehen“ entfernt");
       }
 
       function clearAllRecentViewed() {
         recentViewedList = [];
         try { localStorage.removeItem("tma_recent_viewed"); } catch (e) {}
         refreshRecentViewedStripDom();
-        showHudToast("🗑️ Verlauf „Zuletzt angesehen“ geleert");
+        syncRightMenuBadgesClient();
+        if (state.rightMenuTab === "recent") {
+          renderRightMenuSubPanelContentClient(false);
+        }
+        showHudToast("🗑️ Verlauf „Zuletzt gesehen“ geleert");
+      }
+
+      function syncRightMenuBadgesClient() {
+        const wlBadge = document.getElementById("tvElevBadgeWishlist");
+        const recBadge = document.getElementById("tvElevBadgeRecent");
+        const wlCount = (Array.isArray(state.cachedWishlistItems) && state.cachedWishlistItems.length > 0)
+          ? state.cachedWishlistItems.length
+          : savedKeysSet.size;
+        const recCount = Array.isArray(recentViewedList) ? recentViewedList.length : 0;
+        if (wlBadge) {
+          wlBadge.textContent = String(wlCount);
+          wlBadge.style.display = wlCount > 0 ? "inline-flex" : "none";
+        }
+        if (recBadge) {
+          recBadge.textContent = String(recCount);
+          recBadge.style.display = recCount > 0 ? "inline-flex" : "none";
+        }
+        const wlBtn = document.getElementById("tvElevBtnWishlist");
+        const recBtn = document.getElementById("tvElevBtnRecent");
+        if (wlBtn) wlBtn.classList.toggle("active-tab", state.rightMenuTab === "wishlist");
+        if (recBtn) recBtn.classList.toggle("active-tab", state.rightMenuTab === "recent");
+      }
+
+      function ensureRightMenuFilterStateClient() {
+        if (!state.rmSort) state.rmSort = "added_desc";
+        if (state.rmYear === undefined) state.rmYear = "";
+        if (state.rmMinRating === undefined) state.rmMinRating = "";
+        if (state.rmMaxRating === undefined) state.rmMaxRating = "";
+        if (!state.rmFsk) state.rmFsk = "ALL";
+        if (!state.rmLetter) state.rmLetter = "ALL";
+        if (!state.rmType) state.rmType = "all";
+        if (state.rmQuery === undefined) state.rmQuery = "";
+      }
+
+      function resetRightMenuFiltersClient() {
+        state.rmSort = "added_desc";
+        state.rmYear = "";
+        state.rmMinRating = "";
+        state.rmMaxRating = "";
+        state.rmFsk = "ALL";
+        state.rmLetter = "ALL";
+        state.rmType = "all";
+        state.rmQuery = "";
+        renderRightMenuSubPanelContentClient(false);
+      }
+
+      function normalizeItemFskNumberClient(rawFsk) {
+        const s = String(rawFsk || "").trim();
+        if (!s || s === "K. A.") return null;
+        const m = s.match(/(?:^|[^0-9])(0|6|12|16|18)(?:$|[^0-9])/);
+        return m ? m[1] : null;
+      }
+
+      function getRightMenuFilteredAndSortedItemsClient(tabMode) {
+        ensureRightMenuFilterStateClient();
+        const isWishlist = tabMode === "wishlist";
+        let rawList = [];
+        if (isWishlist) {
+          const allItems = Array.isArray(state.cachedWishlistItems) ? state.cachedWishlistItems : [];
+          const folders = Array.isArray(state.cachedWishlistFolders) ? state.cachedWishlistFolders : [];
+          const disabledFolderIds = new Set(folders.filter(f => f.enabled === false).map(f => f.id));
+          rawList = allItems.filter(i => i && (!i.folderId || !disabledFolderIds.has(i.folderId)));
+        } else {
+          rawList = Array.isArray(recentViewedList) ? recentViewedList.slice() : [];
+        }
+
+        let list = rawList.map((it, idx) => {
+          const isEp = it.contentType === "episode";
+          const isSer = it.contentType === "series" || isEp || it.type === "s";
+          const tc = isSer ? "s" : "m";
+          const targetId = Number(isEp ? it.seriesId : (it.tmdbId || it.id)) || 0;
+          const yrMatch = String(it.year || "").match(/(19[0-9]{2}|20[0-9]{2})/);
+          const yearNum = yrMatch ? Number(yrMatch[1]) : 0;
+          const ratingNum = Number(it.rating || it.vote_average || 0);
+          const fskCode = normalizeItemFskNumberClient(it.fsk);
+          const addedTs = Number(it.addedAt || 0) || (rawList.length - idx);
+          return {
+            _raw: it,
+            uid: it.uid || (tc + "_" + targetId),
+            tc,
+            targetId,
+            title: String(it.title || "Titel"),
+            poster: it.poster || "",
+            yearNum,
+            yearStr: yearNum > 0 ? String(yearNum) : "",
+            ratingNum,
+            fskCode,
+            fskLabel: fskCode !== null ? ("FSK " + fskCode) : "",
+            addedTs,
+            epCount: Array.isArray(it.episodes) ? it.episodes.length : 0
+          };
+        });
+
+        if (state.rmType === "m") {
+          list = list.filter(x => x.tc === "m");
+        } else if (state.rmType === "s") {
+          list = list.filter(x => x.tc === "s");
+        }
+
+        const yrFilter = String(state.rmYear || "").trim();
+        if (yrFilter) {
+          const exactYr = Number(yrFilter);
+          if (exactYr > 0) {
+            list = list.filter(x => x.yearNum === exactYr);
+          }
+        }
+
+        const minR = state.rmMinRating !== "" && state.rmMinRating !== null ? Number(state.rmMinRating) : null;
+        const maxR = state.rmMaxRating !== "" && state.rmMaxRating !== null ? Number(state.rmMaxRating) : null;
+        if (minR !== null && !Number.isNaN(minR) && minR > 0) {
+          list = list.filter(x => x.ratingNum >= minR);
+        }
+        if (maxR !== null && !Number.isNaN(maxR) && maxR < 10) {
+          list = list.filter(x => x.ratingNum <= maxR);
+        }
+
+        if (state.rmFsk && state.rmFsk !== "ALL") {
+          const wantedFsk = String(state.rmFsk).replace(/[^0-9]/g, "");
+          list = list.filter(x => x.fskCode === wantedFsk);
+        }
+
+        const activeLetter = String(state.rmLetter || "ALL").toUpperCase();
+        if (activeLetter && activeLetter !== "ALL") {
+          list = list.filter(x => {
+            const cleanTitle = x.title.trim().replace(/^[^a-zA-Z0-9äöüÄÖÜ]+/, "");
+            const firstChar = (cleanTitle[0] || "").toUpperCase();
+            if (activeLetter === "#") return !/^[A-ZÄÖÜ]$/.test(firstChar);
+            if (activeLetter === "A" && firstChar === "Ä") return true;
+            if (activeLetter === "O" && firstChar === "Ö") return true;
+            if (activeLetter === "U" && firstChar === "Ü") return true;
+            return firstChar === activeLetter;
+          });
+        }
+
+        const q = String(state.rmQuery || "").trim().toLowerCase();
+        if (q) {
+          list = list.filter(x => x.title.toLowerCase().includes(q) || x.yearStr.includes(q));
+        }
+
+        const sortKey = state.rmSort || "added_desc";
+        list.sort((a, b) => {
+          if (sortKey === "added_asc") return a.addedTs - b.addedTs;
+          if (sortKey === "added_desc") return b.addedTs - a.addedTs;
+          if (sortKey === "rating_desc") return (b.ratingNum - a.ratingNum) || a.title.localeCompare(b.title, "de");
+          if (sortKey === "rating_asc") return (a.ratingNum - b.ratingNum) || a.title.localeCompare(b.title, "de");
+          if (sortKey === "year_desc") return (b.yearNum - a.yearNum) || a.title.localeCompare(b.title, "de");
+          if (sortKey === "year_asc") return ((a.yearNum || 9999) - (b.yearNum || 9999)) || a.title.localeCompare(b.title, "de");
+          if (sortKey === "title_asc") return a.title.localeCompare(b.title, "de");
+          if (sortKey === "title_desc") return b.title.localeCompare(a.title, "de");
+          return b.addedTs - a.addedTs;
+        });
+
+        return { items: list, totalRaw: rawList.length, rawList };
+      }
+
+      async function toggleRightMenuSubPanelClient(tabName, jumpFocusIntoPanel = false) {
+        const elev = document.getElementById("tvQuickJumpElevator");
+        if (!elev) return;
+        if (state.rightMenuTab === tabName && elev.classList.contains("has-subpanel") && !jumpFocusIntoPanel) {
+          closeRightMenuSubPanelClient();
+          return;
+        }
+        state.rightMenuTab = tabName;
+        ensureRightMenuFilterStateClient();
+        elev.classList.add("has-subpanel", "is-visible", "is-hover-expanded");
+        syncRightMenuBadgesClient();
+        renderRightMenuSubPanelContentClient(jumpFocusIntoPanel);
+
+        if (tabName === "wishlist" && state.isAuthenticated) {
+          try {
+            const r = await apiFetchJson(API_BASE + "/wishlist?chatId=" + encodeURIComponent(chatId));
+            if (r && Array.isArray(r.items)) {
+              state.cachedWishlistItems = r.items;
+              state.cachedWishlistFolders = r.folders || [];
+              savedKeysSet.clear();
+              r.items.forEach(it => {
+                if (it.contentType === "movie" && it.tmdbId) savedKeysSet.add("m_" + it.tmdbId);
+                else if (it.contentType === "series" && it.tmdbId) savedKeysSet.add("s_" + it.tmdbId);
+              });
+              syncRightMenuBadgesClient();
+              if (state.rightMenuTab === "wishlist") {
+                renderRightMenuSubPanelContentClient(false);
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      function closeRightMenuSubPanelClient(returnFocusToTabBtn = false) {
+        const prevTab = state.rightMenuTab;
+        state.rightMenuTab = null;
+        const elev = document.getElementById("tvQuickJumpElevator");
+        if (elev) {
+          elev.classList.remove("has-subpanel");
+        }
+        syncRightMenuBadgesClient();
+        if (returnFocusToTabBtn && prevTab) {
+          const btnId = prevTab === "wishlist" ? "tvElevBtnWishlist" : "tvElevBtnRecent";
+          const btn = document.getElementById(btnId);
+          if (btn && typeof setSpatialFocus === "function") {
+            setSpatialFocus(btn, false, "right");
+          }
+        }
+      }
+
+      function setRightMenuFilterFieldClient(field, val, onlyRefreshEntries = false) {
+        ensureRightMenuFilterStateClient();
+        state[field] = val;
+        if (onlyRefreshEntries) {
+          renderRightMenuSubPanelEntriesOnlyClient();
+        } else {
+          renderRightMenuSubPanelContentClient(false);
+        }
+      }
+
+      async function deleteWishlistItemFromRightMenuClient(ev, uid) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (!uid) return;
+        if (typeof deleteSavedUid === "function") {
+          await deleteSavedUid(uid);
+          syncRightMenuBadgesClient();
+          if (state.rightMenuTab === "wishlist") {
+            renderRightMenuSubPanelContentClient(false);
+          }
+        }
+      }
+
+      function openItemFromRightMenuClient(tc, id) {
+        const elev = document.getElementById("tvQuickJumpElevator");
+        if (elev) elev.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
+        state.rightMenuTab = null;
+        syncRightMenuBadgesClient();
+        openDetails(tc, Number(id), false);
+      }
+
+      function buildRightMenuEntriesHtmlClient(items, tabMode) {
+        if (!items.length) {
+          return '<div style="padding:18px 12px;text-align:center;color:var(--text-muted);font-size:12px;background:rgba(15,23,42,0.38);border-radius:10px;border:1px dashed rgba(148,163,184,0.25)">' +
+            (tabMode === "wishlist"
+              ? (state.isAuthenticated ? 'Keine passenden Einträge in deiner Merkliste gefunden.' : '🔒 Bitte logge dich ein oder nutze die Mini-App in Telegram, um deine Merkliste zu nutzen.')
+              : 'Keine passenden Einträge unter „Zuletzt gesehen“ gefunden.') +
+          '</div>';
+        }
+        return items.map(it => {
+          const thumbUrl = resolvePosterUrlClient(it.poster, "w185", "");
+          const typeBadge = it.tc === "s" ? "📺 Serie" : "🎬 Film";
+          const ratingBadge = it.ratingNum > 0 ? ('<span style="color:#fbbf24;font-weight:800">★ ' + it.ratingNum.toFixed(1) + '</span>') : '';
+          const fskBadge = it.fskLabel ? ('<span style="padding:1px 5px;border-radius:4px;background:rgba(148,163,184,0.18);border:1px solid rgba(148,163,184,0.3);font-size:10px">' + esc(it.fskLabel) + '</span>') : '';
+          const epBadge = it.epCount > 0 ? ('<span style="color:#38bdf8;font-size:10.5px;font-weight:700">• ' + it.epCount + ' Flg.</span>') : '';
+          const delActionHtml = tabMode === "wishlist"
+            ? ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="deleteWishlistItemFromRightMenuClient(event,\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>')
+            : ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="removeRecentViewedItem(event,\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')" title="Aus Verlauf entfernen">✕</button>');
+          return '<div class="rm-entry-card" tabindex="0" onclick="openItemFromRightMenuClient(\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')">' +
+            '<div style="display:flex;align-items:center;gap:9px;min-width:0;flex:1">' +
+              (thumbUrl
+                ? '<img src="' + esc(thumbUrl) + '" alt="" loading="lazy" style="width:36px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#0f172a" />'
+                : '<div style="width:36px;height:52px;border-radius:6px;background:rgba(30,41,59,0.8);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">' + (it.tc === "s" ? "📺" : "🎬") + '</div>') +
+              '<div style="min-width:0;flex:1">' +
+                '<div style="font-size:12.5px;font-weight:800;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(it.title) + '</div>' +
+                '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:3px;font-size:11px;color:#94a3b8">' +
+                  '<span>' + typeBadge + '</span>' +
+                  (it.yearStr ? '<span>• ' + esc(it.yearStr) + '</span>' : '') +
+                  ratingBadge +
+                  fskBadge +
+                  epBadge +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0">' +
+              '<button type="button" class="btn" style="padding:4px 7px;font-size:11px" onclick="event.stopPropagation();playInstantTrailerFromCard(event,\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')" title="Trailer direkt abspielen">▶</button>' +
+              delActionHtml +
+            '</div>' +
+          '</div>';
+        }).join("");
+      }
+
+      function renderRightMenuSubPanelEntriesOnlyClient() {
+        const tabMode = state.rightMenuTab || "wishlist";
+        const { items, totalRaw } = getRightMenuFilteredAndSortedItemsClient(tabMode);
+        const listEl = document.getElementById("rmEntriesScrollMount");
+        const countEl = document.getElementById("rmHeaderCountBadge");
+        if (listEl) {
+          listEl.innerHTML = buildRightMenuEntriesHtmlClient(items, tabMode);
+        }
+        if (countEl) {
+          countEl.textContent = items.length + " / " + totalRaw;
+        }
+      }
+
+      function renderRightMenuSubPanelContentClient(jumpToFirstEntry = false) {
+        const subPanel = document.getElementById("rightMenuSubPanel");
+        if (!subPanel) return;
+        const tabMode = state.rightMenuTab || "wishlist";
+        const isWishlist = tabMode === "wishlist";
+        const { items, totalRaw, rawList } = getRightMenuFilteredAndSortedItemsClient(tabMode);
+
+        const availableYears = Array.from(new Set(
+          rawList.map(it => {
+            const m = String(it?.year || "").match(/(19[0-9]{2}|20[0-9]{2})/);
+            return m ? Number(m[1]) : 0;
+          }).filter(y => y > 0)
+        )).sort((a, b) => b - a);
+
+        const hasActiveFilter = Boolean(
+          state.rmYear ||
+          state.rmMinRating !== "" ||
+          state.rmMaxRating !== "" ||
+          (state.rmFsk && state.rmFsk !== "ALL") ||
+          (state.rmLetter && state.rmLetter !== "ALL") ||
+          (state.rmType && state.rmType !== "all") ||
+          (state.rmQuery && state.rmQuery.trim()) ||
+          (state.rmSort && state.rmSort !== "added_desc")
+        );
+
+        const azLetters = ["ALL", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "#"];
+        const curLetter = String(state.rmLetter || "ALL").toUpperCase();
+
+        subPanel.innerHTML =
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding-bottom:6px;border-bottom:1px solid rgba(56,189,248,0.22);flex-shrink:0">' +
+            '<div style="display:flex;align-items:center;gap:7px">' +
+              '<span style="font-size:14px;font-weight:900;color:#f8fafc">' + (isWishlist ? '💾 Merkliste' : '🕒 Zuletzt gesehen') + '</span>' +
+              '<span id="rmHeaderCountBadge" class="tv-elev-count-badge">' + items.length + ' / ' + totalRaw + '</span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">' +
+              (isWishlist
+                ? '<button type="button" class="btn blue" style="padding:3px 8px;font-size:11px" onclick="closeRightMenuSubPanelClient();loadWishlist(\\'root\\')" title="Komplette Merkliste & Playlisten-Verwaltung im Hauptfenster öffnen">📂 Vollansicht</button>'
+                : (totalRaw > 0 ? '<button type="button" class="btn danger" style="padding:3px 8px;font-size:11px" onclick="clearAllRecentViewed()" title="Gesamten Verlauf leeren">🗑️ Leeren</button>' : '')) +
+              (hasActiveFilter
+                ? '<button type="button" class="btn danger" style="padding:3px 8px;font-size:11px" onclick="resetRightMenuFiltersClient()" title="Alle Sortierungen & Filter zurücksetzen">↺ Reset</button>'
+                : '') +
+              '<button type="button" class="btn close-slate" style="padding:3px 8px;font-size:11px" onclick="closeRightMenuSubPanelClient(true)" title="Panel schließen (Pfeil rechts)">Übersicht →</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="rm-filter-panel">' +
+            '<div class="rm-filter-row">' +
+              '<select class="rm-ctrl-select" style="flex:1 1 175px" onchange="setRightMenuFilterFieldClient(\\'rmSort\\',this.value)" title="Sortierung wählen">' +
+                '<option value="added_desc"' + (state.rmSort === "added_desc" ? " selected" : "") + '>🕒 Hinzugefügt: Neueste zuerst</option>' +
+                '<option value="added_asc"' + (state.rmSort === "added_asc" ? " selected" : "") + '>🕰️ Hinzugefügt: Älteste zuerst</option>' +
+                '<option value="rating_desc"' + (state.rmSort === "rating_desc" ? " selected" : "") + '>⭐ TMDb-Bewertung (Höchste)</option>' +
+                '<option value="rating_asc"' + (state.rmSort === "rating_asc" ? " selected" : "") + '>⭐ TMDb-Bewertung (Niedrigste)</option>' +
+                '<option value="year_desc"' + (state.rmSort === "year_desc" ? " selected" : "") + '>📅 Erscheinungsjahr (Neueste)</option>' +
+                '<option value="year_asc"' + (state.rmSort === "year_asc" ? " selected" : "") + '>📅 Erscheinungsjahr (Älteste)</option>' +
+                '<option value="title_asc"' + (state.rmSort === "title_asc" ? " selected" : "") + '>🔤 Alphabetisch (A–Z)</option>' +
+                '<option value="title_desc"' + (state.rmSort === "title_desc" ? " selected" : "") + '>🔤 Alphabetisch (Z–A)</option>' +
+              '</select>' +
+              '<select class="rm-ctrl-select" onchange="setRightMenuFilterFieldClient(\\'rmType\\',this.value)" title="Nach Film oder Serie filtern">' +
+                '<option value="all"' + (state.rmType === "all" ? " selected" : "") + '>🎞️ Alle Typen</option>' +
+                '<option value="m"' + (state.rmType === "m" ? " selected" : "") + '>🎬 Filme</option>' +
+                '<option value="s"' + (state.rmType === "s" ? " selected" : "") + '>📺 Serien</option>' +
+              '</select>' +
+              '<select class="rm-ctrl-select" onchange="setRightMenuFilterFieldClient(\\'rmFsk\\',this.value)" title="Nach FSK-Altersfreigabe filtern">' +
+                '<option value="ALL"' + (state.rmFsk === "ALL" ? " selected" : "") + '>🔞 Alle FSK</option>' +
+                '<option value="0"' + (state.rmFsk === "0" ? " selected" : "") + '>FSK 0</option>' +
+                '<option value="6"' + (state.rmFsk === "6" ? " selected" : "") + '>FSK 6</option>' +
+                '<option value="12"' + (state.rmFsk === "12" ? " selected" : "") + '>FSK 12</option>' +
+                '<option value="16"' + (state.rmFsk === "16" ? " selected" : "") + '>FSK 16</option>' +
+                '<option value="18"' + (state.rmFsk === "18" ? " selected" : "") + '>FSK 18</option>' +
+              '</select>' +
+            '</div>' +
+            '<div class="rm-filter-row">' +
+              '<select class="rm-ctrl-select" onchange="setRightMenuFilterFieldClient(\\'rmYear\\',this.value)" title="Genaues Erscheinungsjahr aus vorhandenen Jahren wählen">' +
+                '<option value=""' + (!state.rmYear ? " selected" : "") + '>📅 Jahr (Alle)</option>' +
+                availableYears.map(y => '<option value="' + y + '"' + (String(state.rmYear) === String(y) ? ' selected' : '') + '>📅 ' + y + '</option>').join("") +
+              '</select>' +
+              '<input type="number" class="rm-ctrl-input" style="width:74px" min="1900" max="2035" placeholder="Jahr..." value="' + esc(state.rmYear || "") + '" oninput="setRightMenuFilterFieldClient(\\'rmYear\\',this.value,true)" title="Genaues Erscheinungsjahr als Zahl eingeben (z. B. 2024)" />' +
+              '<div style="display:inline-flex;align-items:center;gap:4px;background:rgba(8,13,26,0.55);padding:2px 6px;border-radius:7px;border:1px solid rgba(148,163,184,0.22)">' +
+                '<span style="font-size:10.5px;color:#fbbf24;font-weight:800">★</span>' +
+                '<input type="number" class="rm-ctrl-input" style="width:48px;padding:2px 4px;border:none;background:transparent" min="0" max="10" step="0.5" placeholder="Min" value="' + esc(state.rmMinRating !== undefined && state.rmMinRating !== null ? String(state.rmMinRating) : "") + '" oninput="setRightMenuFilterFieldClient(\\'rmMinRating\\',this.value,true)" title="Mindest-Bewertung (0.0 – 10.0)" />' +
+                '<span style="font-size:10px;color:#64748b">–</span>' +
+                '<input type="number" class="rm-ctrl-input" style="width:48px;padding:2px 4px;border:none;background:transparent" min="0" max="10" step="0.5" placeholder="Max" value="' + esc(state.rmMaxRating !== undefined && state.rmMaxRating !== null ? String(state.rmMaxRating) : "") + '" oninput="setRightMenuFilterFieldClient(\\'rmMaxRating\\',this.value,true)" title="Maximal-Bewertung (0.0 – 10.0)" />' +
+              '</div>' +
+              '<input type="text" class="rm-ctrl-input" style="flex:1 1 110px;min-width:95px" placeholder="🔍 Titel filtern..." value="' + esc(state.rmQuery || "") + '" oninput="setRightMenuFilterFieldClient(\\'rmQuery\\',this.value,true)" title="Einträge nach Titel durchsuchen" />' +
+            '</div>' +
+            '<div class="rm-az-strip">' +
+              azLetters.map(ltr =>
+                '<button type="button" class="rm-az-chip ' + (curLetter === ltr ? 'active' : '') + '" onclick="setRightMenuFilterFieldClient(\\'rmLetter\\',\\'' + ltr + '\\')">' + (ltr === "ALL" ? "Alle" : ltr) + '</button>'
+              ).join("") +
+            '</div>' +
+          '</div>' +
+          '<div id="rmEntriesScrollMount" class="rm-entries-scroll">' +
+            buildRightMenuEntriesHtmlClient(items, tabMode) +
+          '</div>';
+
+        if (jumpToFirstEntry && typeof setSpatialFocus === "function") {
+          const firstTarget = subPanel.querySelector(".rm-entry-card, .rm-ctrl-select, .rm-az-chip");
+          if (firstTarget) setSpatialFocus(firstTarget, false, "left");
+        }
       }
 
       function toggleRecentViewedCollapsedClient() {
@@ -37459,6 +38048,9 @@
           if (cKey.startsWith(key + "_") && cVal && cVal.data) {
             cVal.data.isSaved = Boolean(isSaved);
           }
+        }
+        if (typeof syncRightMenuBadgesClient === "function") {
+          syncRightMenuBadgesClient();
         }
       }
 
@@ -38954,6 +39546,9 @@
         }
 
         if (goingToCatalog) {
+          if (typeof stopHeroBackgroundVideoTeaserClient === "function") {
+            stopHeroBackgroundVideoTeaserClient();
+          }
           if (document.body) {
             document.body.classList.add("hero-scrolled-past", "page-scrolled");
           }
@@ -38991,6 +39586,9 @@
           }
           syncSmartPageIndicatorDomClient(false);
           requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient());
+          if (typeof scheduleHeroBackgroundVideoTeaserClient === "function") {
+            scheduleHeroBackgroundVideoTeaserClient(false);
+          }
         }
         syncHeroScrollFadeAndTopBarStateClient();
         syncHeroSearchPlaceholderAndToggleBtnClient();
@@ -39225,8 +39823,13 @@
 
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
-        if (typeof isUserInHeroSliderFront === "function") {
-          document.body.classList.toggle("in-hero-slider", isUserInHeroSliderFront());
+        const inFrontHero = typeof isUserInHeroSliderFront === "function" ? isUserInHeroSliderFront() : false;
+        document.body.classList.toggle("in-hero-slider", inFrontHero);
+        if (!inFrontHero && typeof stopHeroBackgroundVideoTeaserClient === "function") {
+          const bgLayer = document.getElementById("heroBgVideoLayer");
+          if (heroBgTeaserActiveKey || (bgLayer && bgLayer.innerHTML)) {
+            stopHeroBackgroundVideoTeaserClient();
+          }
         }
         const y = window.scrollY || window.pageYOffset || 0;
         document.body.classList.toggle("catalog-deep-scrolled", y > 420);
@@ -43613,16 +44216,11 @@
           syncTopBarFilterIndicatorsClient();
         }
 
-        const spotlightReturnBtnHtml = isDiscoverView
-          ? '<button type="button" class="btn ff-spotlight-return-btn" onclick="returnToHeroSpotlightFromCatalogClient(event)" title="Zurück nach oben zum Kino-Spotlight gleiten">🎬 Spotlight ▴</button>'
-          : '';
-
         const quickResetBtnHtml = showQuickResetBtn
           ? ('<button type="button" class="btn ff-quick-reset-btn" onclick="resetAllCatalogFiltersAndSortQuickClient(event)" title="Alle aktiven Filter, Anbieter & Sortierung mit 1 Klick auf Standard zurücksetzen">↺ ' + (totalActiveFilters > 0 ? ('Reset (' + totalActiveFilters + ')') : 'Standard') + '</button>')
           : '';
 
         const controlsHtml =
-          spotlightReturnBtnHtml +
           modeOrScopeHtml +
           providerSelectHtml +
           sortGroupHtml +
@@ -50210,10 +50808,22 @@
         }
 
         const sorted = [...list];
-        if (state.wlSort === "title_asc") {
+        if (state.wlSort === "added_asc") {
+          sorted.sort((a, b) => (Number(a.addedAt) || 0) - (Number(b.addedAt) || 0));
+        } else if (state.wlSort === "rating_desc") {
+          sorted.sort((a, b) => (Number(b.rating || b.vote_average) || 0) - (Number(a.rating || a.vote_average) || 0));
+        } else if (state.wlSort === "rating_asc") {
+          sorted.sort((a, b) => (Number(a.rating || a.vote_average) || 0) - (Number(b.rating || b.vote_average) || 0));
+        } else if (state.wlSort === "title_asc") {
           sorted.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "de"));
+        } else if (state.wlSort === "title_desc") {
+          sorted.sort((a, b) => String(b.title || "").localeCompare(String(a.title || ""), "de"));
         } else if (state.wlSort === "year_desc") {
           sorted.sort((a, b) => (parseInt(b.year, 10) || 0) - (parseInt(a.year, 10) || 0));
+        } else if (state.wlSort === "year_asc") {
+          sorted.sort((a, b) => (parseInt(a.year, 10) || 9999) - (parseInt(b.year, 10) || 9999));
+        } else {
+          sorted.sort((a, b) => (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0));
         }
         return sorted;
       }
@@ -50474,9 +51084,14 @@
               '</select>'
             ) : '') +
             '<select class="sort-select" onchange="setWishlistQuickSort(this.value)" title="Merkliste sortieren">' +
-              '<option value="added_desc"' + (state.wlSort === "added_desc" || !state.wlSort ? " selected" : "") + '>↕️ Zuletzt gespeichert</option>' +
-              '<option value="title_asc"' + (state.wlSort === "title_asc" ? " selected" : "") + '>🔤 Titel A–Z</option>' +
-              '<option value="year_desc"' + (state.wlSort === "year_desc" ? " selected" : "") + '>📅 Erscheinungsjahr</option>' +
+              '<option value="added_desc"' + (state.wlSort === "added_desc" || !state.wlSort ? " selected" : "") + '>🕒 Hinzugefügt: Neueste</option>' +
+              '<option value="added_asc"' + (state.wlSort === "added_asc" ? " selected" : "") + '>🕰️ Hinzugefügt: Älteste</option>' +
+              '<option value="rating_desc"' + (state.wlSort === "rating_desc" ? " selected" : "") + '>⭐ TMDb-Bewertung (Höchste)</option>' +
+              '<option value="rating_asc"' + (state.wlSort === "rating_asc" ? " selected" : "") + '>⭐ TMDb-Bewertung (Niedrigste)</option>' +
+              '<option value="year_desc"' + (state.wlSort === "year_desc" ? " selected" : "") + '>📅 Erscheinungsjahr (Neueste)</option>' +
+              '<option value="year_asc"' + (state.wlSort === "year_asc" ? " selected" : "") + '>📅 Erscheinungsjahr (Älteste)</option>' +
+              '<option value="title_asc"' + (state.wlSort === "title_asc" ? " selected" : "") + '>🔤 Alphabetisch (A–Z)</option>' +
+              '<option value="title_desc"' + (state.wlSort === "title_desc" ? " selected" : "") + '>🔤 Alphabetisch (Z–A)</option>' +
             '</select>' +
             '<button type="button" class="btn ' + (isAzVisible ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="toggleWishlistAzBarClient()" title="Alphabetischen A–Z Schnellfilter ein-/ausblenden">🔤 A–Z' + (curWlLetter !== "ALL" ? ' (' + curWlLetter + ')' : ' ▾') + '</button>' +
             '<button type="button" class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster</button>' +
@@ -59227,7 +59842,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -59612,6 +60227,8 @@
         if (isKeyboardNavActive) {
           isKeyboardNavActive = false;
           if (document.body) document.body.classList.remove("kb-nav-active");
+          const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
+          if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
           if (ev && mouseHoverNavEnabled && Date.now() - lastSelectJumpAt >= 450) {
             const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
             if (subTarget) {
@@ -59654,6 +60271,8 @@
       // sodass man nahtlos mit Pfeiltasten / Controller weitermachen kann!
       document.addEventListener("mouseover", (ev) => {
         if (!mouseHoverNavEnabled || isKeyboardNavActive) return;
+        const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
+        if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
         if (window.matchMedia && !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
         if (Date.now() - lastSelectJumpAt < 450) return;
         const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
@@ -60163,39 +60782,98 @@
           }
         }
 
-        // Deterministische Navigation innerhalb des seitlichen TV-Schnellsprung-Fahrstuhls (#tvQuickJumpElevator)
+        // Deterministische 2-Spalten-Navigation innerhalb des rechten Menüs (#tvQuickJumpElevator + #rightMenuSubPanel)
         const inTvElevator = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"));
+        const inRightMenuSubPanel = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#rightMenuSubPanel"));
         if (inTvElevator) {
-          const elevBtns = Array.from(document.querySelectorAll("#tvQuickJumpElevator .tv-elevator-btn")).filter(el => !el.disabled);
-          const eIdx = elevBtns.indexOf(currentSpatialEl);
-          if (dir === "up" || dir === "down") {
-            if (elevBtns.length > 0) {
-              const nextEIdx = dir === "down"
-                ? ((eIdx + 1) % elevBtns.length)
-                : ((eIdx - 1 + elevBtns.length) % elevBtns.length);
-              setSpatialFocus(elevBtns[nextEIdx], false, dir);
-            }
-            return;
-          }
-          if (dir === "left" || dir === "right") {
-            const elevContainer = document.getElementById("tvQuickJumpElevator");
-            if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
-            if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
-              setSpatialFocus(lastElevatorReturnEl, true, "left");
+          const elevContainer = document.getElementById("tvQuickJumpElevator");
+          if (!inRightMenuSubPanel) {
+            const elevBtns = Array.from(document.querySelectorAll("#tvQuickJumpElevator .tv-elevator-main-col .tv-elevator-btn")).filter(el => !el.disabled);
+            const eIdx = elevBtns.indexOf(currentSpatialEl);
+            if (dir === "up" || dir === "down") {
+              if (elevBtns.length > 0) {
+                const nextEIdx = dir === "down"
+                  ? ((eIdx + 1) % elevBtns.length)
+                  : ((eIdx - 1 + elevBtns.length) % elevBtns.length);
+                setSpatialFocus(elevBtns[nextEIdx], false, dir);
+              }
               return;
             }
-            const visibleCards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => {
-              if (!list.includes(el)) return false;
-              const r = el.getBoundingClientRect();
-              return r.top >= 48 && r.bottom <= window.innerHeight + 40;
-            });
-            if (visibleCards.length > 0) {
-              // Wähle die am weitesten rechts liegende sichtbare Karte
-              visibleCards.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
-              setSpatialFocus(visibleCards[0], false, "left");
+            if (dir === "left") {
+              const rmTabAttr = currentSpatialEl.getAttribute && currentSpatialEl.getAttribute("data-rm-tab");
+              if (rmTabAttr && typeof toggleRightMenuSubPanelClient === "function") {
+                toggleRightMenuSubPanelClient(rmTabAttr, true);
+                return;
+              }
+              if (elevContainer && elevContainer.classList.contains("has-subpanel")) {
+                const subFirst = document.querySelector("#rightMenuSubPanel .rm-entry-card, #rightMenuSubPanel .rm-ctrl-select, #rightMenuSubPanel .rm-az-chip");
+                if (subFirst) {
+                  setSpatialFocus(subFirst, false, "left");
+                  return;
+                }
+              }
+              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+              if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
+                setSpatialFocus(lastElevatorReturnEl, true, "left");
+                return;
+              }
+              const visibleCards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => {
+                if (!list.includes(el)) return false;
+                const r = el.getBoundingClientRect();
+                return r.top >= 48 && r.bottom <= window.innerHeight + 40;
+              });
+              if (visibleCards.length > 0) {
+                visibleCards.sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+                setSpatialFocus(visibleCards[0], false, "left");
+                return;
+              }
               return;
             }
-            return;
+            if (dir === "right") {
+              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+              if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
+                setSpatialFocus(lastElevatorReturnEl, true, "left");
+                return;
+              }
+              return;
+            }
+          } else if (dir === "right" || dir === "left") {
+            const curSubBox = getSpatialLayoutBox(currentSpatialEl);
+            const subItems = Array.from(document.querySelectorAll("#rightMenuSubPanel " + FOCUSABLE_SELECTOR)).filter(el => list.includes(el));
+            if (dir === "right") {
+              const hasRightInSub = subItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) > (curSubBox.left + curSubBox.width / 2) + 6;
+              });
+              if (!hasRightInSub) {
+                const activeTabBtn = document.getElementById(state.rightMenuTab === "recent" ? "tvElevBtnRecent" : "tvElevBtnWishlist") || document.getElementById("tvElevBtnSearch");
+                if (activeTabBtn) {
+                  setSpatialFocus(activeTabBtn, false, "right");
+                  return;
+                }
+              }
+            } else if (dir === "left") {
+              const hasLeftInSub = subItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
+              });
+              if (!hasLeftInSub) {
+                if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+                if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+                if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
+                  setSpatialFocus(lastElevatorReturnEl, true, "left");
+                  return;
+                }
+              }
+            }
           }
         }
 
@@ -60353,7 +61031,8 @@
           if (
             cand.id === "smartPageIndicatorBtn" ||
             cand.id === "catalogBackToTopFab" ||
-            (cand.closest && cand.closest("#tvQuickJumpElevator"))
+            (!inRightMenuSubPanel && cand.closest && cand.closest("#tvQuickJumpElevator")) ||
+            (inRightMenuSubPanel && !(cand.closest && cand.closest("#rightMenuSubPanel")))
           ) {
             continue;
           }
@@ -60937,6 +61616,14 @@
             return;
           }
           if (currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator")) {
+            if (currentSpatialEl.closest("#rightMenuSubPanel") && typeof closeRightMenuSubPanelClient === "function") {
+              closeRightMenuSubPanelClient(true);
+              ev.preventDefault();
+              return;
+            }
+            const elevContainer = document.getElementById("tvQuickJumpElevator");
+            if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+            if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
             if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl)) {
               setSpatialFocus(lastElevatorReturnEl, true, "left");
               ev.preventDefault();
@@ -61144,30 +61831,12 @@
           return;
         }
 
-        // Tastatur-Shortcut 'M' oder 'W' auf einer fokussierten Film-/Serien-Karte schaltet direkt die Merkliste um!
-        if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey && (ev.key === "m" || ev.key === "M" || ev.key === "w" || ev.key === "W")) {
-          const focusedCard = currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card[data-card-key]") : null;
-          if (focusedCard) {
-            const rawKey = focusedCard.getAttribute("data-card-key") || "";
-            const parts = rawKey.split("_");
-            if (parts.length >= 2) {
-              ev.preventDefault();
-              const tc = parts[0] === "s" ? "s" : "m";
-              const idNum = Number(parts[1]);
-              const titleTxt = focusedCard.getAttribute("data-card-title") || "Titel";
-              if (idNum > 0) {
-                quickToggleCardWishlist(ev, tc, idNum, titleTxt);
-                return;
-              }
-            }
-          }
-        }
-
         // Type-to-Search: Sobald auf der Tastatur ein Buchstabe/Zahl getippt wird, startet automatisch die Suche!
         if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.length === 1 && /[a-zA-Z0-9äöüÄÖÜß]/.test(ev.key)) {
           const modalOpen = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
           const dialogOpen = Boolean(document.getElementById("customDialogRoot")?.innerHTML.trim());
-          if (!modalOpen && !dialogOpen) {
+          const rmOpen = Boolean(document.getElementById("tvQuickJumpElevator")?.classList.contains("has-subpanel"));
+          if (!modalOpen && !dialogOpen && !rmOpen) {
             const sInp = document.getElementById("searchInput");
             if (sInp) {
               setSpatialFocus(sInp, false);

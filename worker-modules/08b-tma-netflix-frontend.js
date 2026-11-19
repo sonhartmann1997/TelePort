@@ -1368,16 +1368,11 @@
           syncTopBarFilterIndicatorsClient();
         }
 
-        const spotlightReturnBtnHtml = isDiscoverView
-          ? '<button type="button" class="btn ff-spotlight-return-btn" onclick="returnToHeroSpotlightFromCatalogClient(event)" title="Zurück nach oben zum Kino-Spotlight gleiten">🎬 Spotlight ▴</button>'
-          : '';
-
         const quickResetBtnHtml = showQuickResetBtn
           ? ('<button type="button" class="btn ff-quick-reset-btn" onclick="resetAllCatalogFiltersAndSortQuickClient(event)" title="Alle aktiven Filter, Anbieter & Sortierung mit 1 Klick auf Standard zurücksetzen">↺ ' + (totalActiveFilters > 0 ? ('Reset (' + totalActiveFilters + ')') : 'Standard') + '</button>')
           : '';
 
         const controlsHtml =
-          spotlightReturnBtnHtml +
           modeOrScopeHtml +
           providerSelectHtml +
           sortGroupHtml +
@@ -7965,10 +7960,22 @@
         }
 
         const sorted = [...list];
-        if (state.wlSort === "title_asc") {
+        if (state.wlSort === "added_asc") {
+          sorted.sort((a, b) => (Number(a.addedAt) || 0) - (Number(b.addedAt) || 0));
+        } else if (state.wlSort === "rating_desc") {
+          sorted.sort((a, b) => (Number(b.rating || b.vote_average) || 0) - (Number(a.rating || a.vote_average) || 0));
+        } else if (state.wlSort === "rating_asc") {
+          sorted.sort((a, b) => (Number(a.rating || a.vote_average) || 0) - (Number(b.rating || b.vote_average) || 0));
+        } else if (state.wlSort === "title_asc") {
           sorted.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "de"));
+        } else if (state.wlSort === "title_desc") {
+          sorted.sort((a, b) => String(b.title || "").localeCompare(String(a.title || ""), "de"));
         } else if (state.wlSort === "year_desc") {
           sorted.sort((a, b) => (parseInt(b.year, 10) || 0) - (parseInt(a.year, 10) || 0));
+        } else if (state.wlSort === "year_asc") {
+          sorted.sort((a, b) => (parseInt(a.year, 10) || 9999) - (parseInt(b.year, 10) || 9999));
+        } else {
+          sorted.sort((a, b) => (Number(b.addedAt) || 0) - (Number(a.addedAt) || 0));
         }
         return sorted;
       }
@@ -8229,9 +8236,14 @@
               '</select>'
             ) : '') +
             '<select class="sort-select" onchange="setWishlistQuickSort(this.value)" title="Merkliste sortieren">' +
-              '<option value="added_desc"' + (state.wlSort === "added_desc" || !state.wlSort ? " selected" : "") + '>↕️ Zuletzt gespeichert</option>' +
-              '<option value="title_asc"' + (state.wlSort === "title_asc" ? " selected" : "") + '>🔤 Titel A–Z</option>' +
-              '<option value="year_desc"' + (state.wlSort === "year_desc" ? " selected" : "") + '>📅 Erscheinungsjahr</option>' +
+              '<option value="added_desc"' + (state.wlSort === "added_desc" || !state.wlSort ? " selected" : "") + '>🕒 Hinzugefügt: Neueste</option>' +
+              '<option value="added_asc"' + (state.wlSort === "added_asc" ? " selected" : "") + '>🕰️ Hinzugefügt: Älteste</option>' +
+              '<option value="rating_desc"' + (state.wlSort === "rating_desc" ? " selected" : "") + '>⭐ TMDb-Bewertung (Höchste)</option>' +
+              '<option value="rating_asc"' + (state.wlSort === "rating_asc" ? " selected" : "") + '>⭐ TMDb-Bewertung (Niedrigste)</option>' +
+              '<option value="year_desc"' + (state.wlSort === "year_desc" ? " selected" : "") + '>📅 Erscheinungsjahr (Neueste)</option>' +
+              '<option value="year_asc"' + (state.wlSort === "year_asc" ? " selected" : "") + '>📅 Erscheinungsjahr (Älteste)</option>' +
+              '<option value="title_asc"' + (state.wlSort === "title_asc" ? " selected" : "") + '>🔤 Alphabetisch (A–Z)</option>' +
+              '<option value="title_desc"' + (state.wlSort === "title_desc" ? " selected" : "") + '>🔤 Alphabetisch (Z–A)</option>' +
             '</select>' +
             '<button type="button" class="btn ' + (isAzVisible ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="toggleWishlistAzBarClient()" title="Alphabetischen A–Z Schnellfilter ein-/ausblenden">🔤 A–Z' + (curWlLetter !== "ALL" ? ' (' + curWlLetter + ')' : ' ▾') + '</button>' +
             '<button type="button" class="btn ' + (isGridMode ? 'active' : '') + '" style="padding:5px 9px;font-size:11.5px" onclick="setWishlistViewMode(\\'grid\\')" title="Als Poster-Raster anzeigen">🖼️ Poster</button>' +
