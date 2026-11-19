@@ -1004,15 +1004,15 @@
         const subRightTxt = isMixedMediaView ? ((tc === "s" ? "📺 " : "🎬 ") + yrStr) : yrStr;
         const effectivePosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : LAZY_POSTER_FALLBACK_SVG;
 
-        return '<div class="card' + (isCardSaved ? " card-saved" : "") + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" data-page-num="' + itemPageNum + '" onclick="openDetails(\\'' + tc + '\\',' + it.id + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
+        return '<div class="card' + (isCardSaved ? " card-saved" : "") + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" data-page-num="' + itemPageNum + '" onclick="openDetails(\\'' + tc + '\\',' + it.id + ')">' +
           '<div class="card-poster-wrap">' +
             '<div class="card-top-left-stack">' +
               rankHtml +
               vipQualityHtml +
             '</div>' +
-            '<button type="button" class="card-quick-save ' + (isCardSaved ? "saved" : "") + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\')" title="' + (isCardSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)") + '">' + (isCardSaved ? "✓" : "🔖") + '</button>' +
-            '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + it.id + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Details öffnen">ℹ️ Details</button>' +
-            '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
+            '<button type="button" class="card-quick-save ' + (isCardSaved ? "saved" : "") + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ')" title="' + (isCardSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)") + '">' + (isCardSaved ? "✓" : "🔖") + '</button>' +
+            '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + it.id + ')" title="Details öffnen">ℹ️ Details</button>' +
+            '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
             '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
           '</div>' +
           '<div class="card-body">' +
@@ -3098,7 +3098,7 @@
           const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
           const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
           const subLine = [yearStr, voteStr, tc === "s" ? "Serie" : "Film"].filter(Boolean).join(" · ");
-          return '<div class="detail-sim-card' + (isCur ? ' is-current-part' : '') + '" style="width:100%" tabindex="0" onclick="saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+          return '<div class="detail-sim-card' + (isCur ? ' is-current-part' : '') + '" style="width:100%" tabindex="0" onclick="saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();saveLastClosedDetailItemClient();closePersonSpotlightOverlayClient();openDetails(\\'' + tc + '\\',' + Number(it.id) + ');}">' +
             (isCur ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
             '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(pUrl) + '" alt="' + esc(itemTitle) + '" draggable="false" />' +
             '<div class="detail-sim-overlay">' +
@@ -3229,7 +3229,7 @@
             const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
             const typeWord = tc === "s" ? "Serie" : "Film";
             const subParts = [voteStr, yearStr, typeWord].filter(Boolean).join(" · ");
-            return '<div class="detail-sim-card" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+            return '<div class="detail-sim-card" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ');}">' +
               '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(simPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
               '<div class="detail-sim-overlay">' +
                 '<div class="detail-sim-title">' + esc(itemTitle) + '</div>' +
@@ -3272,7 +3272,7 @@
             const voteStr = it.vote_average ? ("★ " + Number(it.vote_average).toFixed(1)) : "";
             const yearStr = String(it.release_date || it.first_air_date || "").slice(0, 4);
             const subParts = [yearStr, voteStr].filter(Boolean).join(" · ");
-            return '<div class="detail-sim-card' + (isCurPart ? ' is-current-part' : '') + '" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ',false,\\'' + esc(itemTitle) + '\\',\\'' + esc(it.poster_path || '') + '\\');}">' +
+            return '<div class="detail-sim-card' + (isCurPart ? ' is-current-part' : '') + '" tabindex="0" data-card-title="' + esc(itemTitle) + '" onclick="openDetails(\\'' + tc + '\\',' + Number(it.id) + ')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();openDetails(\\'' + tc + '\\',' + Number(it.id) + ');}">' +
               (isCurPart ? '<span class="detail-sim-current-badge">Aktuell</span>' : '') +
               '<img class="detail-sim-poster lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(colPoster) + '" alt="' + esc(itemTitle) + '" draggable="false" oncontextmenu="return false;" />' +
               '<div class="detail-sim-overlay">' +
@@ -6910,7 +6910,7 @@
         const typeCode = opts?.typeCode === "m" ? "m" : "s";
         const tmdbId = Number(opts?.tmdbId || state.activeDetails?.id || 0);
         const title = String(opts?.title || state.activeDetails?.title || "Titel");
-        const season = Math.max(1, Number(opts?.season || 1));
+        const season = Math.max(0, Number(opts?.season !== undefined && opts?.season !== null ? opts.season : 1));
         const episode = Math.max(1, Number(opts?.episode || 1));
         const telegramFileId = String(opts?.telegramFileId || "");
         const versionLabel = String(opts?.versionLabel || "Originalfassung");
@@ -7931,14 +7931,14 @@
               ? ('<span style="cursor:pointer;color:#7dd3fc" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + (isSer ? 'Serie' : 'Film') + ' ▾')) + '</span>')
               : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film')) + '</span>');
             const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
-            return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')">' +
+            return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ')">' +
               '<div class="card-poster-wrap">' +
                 '<div class="card-top-left-stack">' +
                   epCountBadgeHtml +
                 '</div>' +
                 '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
-                '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + targetId + ',false,\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Details öffnen">ℹ️ Details</button>' +
-                '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ',\\'' + itemTitleSafe + '\\',\\'' + itemPosterSafe + '\\')" title="Instant-Trailer abspielen">▶ Trailer</button>' +
+                '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + targetId + ')" title="Details öffnen">ℹ️ Details</button>' +
+                '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ')" title="Instant-Trailer abspielen">▶ Trailer</button>' +
                 '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + wlPosterSrc + '" draggable="false" alt="' + itemTitleSafe + '" />' +
               '</div>' +
               '<div class="card-body">' +
@@ -7962,7 +7962,7 @@
           const thumbUrl = resolvePosterUrlClient(it.poster, 'w185', '');
           const epsList = Array.isArray(it.episodes) ? it.episodes : [];
           const drawerId = 'wl_' + esc(it.uid || (targetId + '_' + idx));
-          const epPreviewCodes = epsList.slice(0, 3).map(e => e.code || ('S' + String(e.season || 1).padStart(2, '0') + 'E' + String(e.episode || 1).padStart(2, '0'))).join(', ');
+          const epPreviewCodes = epsList.slice(0, 3).map(e => e.code || ('S' + String(e.season !== undefined && e.season !== null ? e.season : 1).padStart(2, '0') + 'E' + String(e.episode || 1).padStart(2, '0'))).join(', ');
           const epSummaryBtnHtml = (isSer && epsList.length > 0)
             ? ('<button type="button" class="btn" style="padding:3px 8px;font-size:11px;background:rgba(56,189,248,0.14);border-color:rgba(56,189,248,0.45);color:var(--blue)" onclick="toggleSeriesEpisodesDrawerClient(event,\\'' + drawerId + '\\')">📺 ' + epsList.length + ' Folge' + (epsList.length === 1 ? '' : 'n') + ' (' + esc(epPreviewCodes) + (epsList.length > 3 ? '…' : '') + ') <span id="epDrawerIcon_' + drawerId + '">▾</span></button>')
             : '';
@@ -7980,15 +7980,16 @@
           const epDrawerHtml = (isSer && epsList.length > 0)
             ? ('<div id="epDrawer_' + drawerId + '" style="display:none;flex-direction:column;gap:4px;margin-top:6px;padding:8px;border-radius:8px;background:var(--surface);border:1px solid rgba(56,189,248,0.3)">' +
                 epsList.map(ep => {
-                  const epCode = ep.code || ('S' + String(ep.season || 1).padStart(2, '0') + 'E' + String(ep.episode || 1).padStart(2, '0'));
+                  const sVal = (ep.season !== undefined && ep.season !== null) ? Number(ep.season) : 1;
+                  const epCode = ep.code || ('S' + String(sVal).padStart(2, '0') + 'E' + String(ep.episode || 1).padStart(2, '0'));
                   const epTitle = ep.title || ('Folge ' + (ep.episode || 1));
                   const qStr = [ep.quality || '1080p', ep.codec || ''].filter(Boolean).join(' • ');
                   return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;background:var(--card);border:1px solid rgba(148,163,184,0.12);font-size:11.5px">' +
-                    '<div style="cursor:pointer;flex:1" onclick="openDetails(\\'s\\',' + Number(targetId) + ',false,\\'\\',\\'\\',' + Number(ep.season || 1) + ')">' +
+                    '<div style="cursor:pointer;flex:1" onclick="openDetails(\\'s\\',' + Number(targetId) + ',false,\\'\\',\\'\\',' + sVal + ')">' +
                       '<b style="color:var(--blue)">' + esc(epCode) + '</b> – <span style="color:var(--text)">' + esc(epTitle) + '</span>' +
                       (qStr ? ' <span style="color:var(--text-muted);font-size:10.5px">[' + esc(qStr) + ']</span>' : '') +
                     '</div>' +
-                    '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="openDetails(\\'s\\',' + Number(targetId) + ',false,\\'\\',\\'\\',' + Number(ep.season || 1) + ')">Staffel ' + Number(ep.season || 1) + ' öffnen</button>' +
+                    '<button type="button" class="btn" style="padding:2px 7px;font-size:10.5px" onclick="openDetails(\\'s\\',' + Number(targetId) + ',false,\\'\\',\\'\\',' + sVal + ')">' + (sVal === 0 ? 'Specials' : ('Staffel ' + sVal)) + ' öffnen</button>' +
                   '</div>';
                 }).join('') +
               '</div>')

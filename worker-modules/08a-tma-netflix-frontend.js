@@ -9183,7 +9183,8 @@
             return;
           }
         }
-        await openDetails(tc, id, true, titleText, posterPath);
+        const resolvedTitle = titleText || (ev?.target?.closest?.(".card")?.getAttribute("data-card-title")) || "";
+        await openDetails(tc, id, true, resolvedTitle, posterPath);
       }
 
       function switchInstantTrailerModalProvider(sourceKey) {
@@ -9291,18 +9292,24 @@
         }
       }
 
+      const wishlistTogglesInFlight = new Set();
+
       async function quickToggleCardWishlist(ev, typeCode, id, titleText) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
         if (!state.isAuthenticated) { openAccountModal(); return; }
 
         const cardKey = (typeCode === "s" ? "s" : "m") + "_" + id;
+        if (wishlistTogglesInFlight.has(cardKey)) return;
+        wishlistTogglesInFlight.add(cardKey);
+
+        const resolvedTitle = titleText || (ev?.target?.closest?.(".card")?.getAttribute("data-card-title")) || "";
         const prevSaved = savedKeysSet.has(cardKey);
         const nextSaved = !prevSaved;
 
         // 1. Sofortiges optimistisches UI-Update und Pop-Animation auf dem Cover
         syncCardWishlistBadgeInDom(typeCode, id, nextSaved, true);
-        showHudToast((nextSaved ? "💾 Gespeichert: " : "🗑️ Entfernt: ") + (titleText || "Titel"));
+        showHudToast((nextSaved ? "💾 Gespeichert: " : "🗑️ Entfernt: ") + (resolvedTitle || "Titel"));
 
         // 2. Sofortiges Haptik-Feedback
         try {
@@ -9327,6 +9334,8 @@
         } catch (e) {
           syncCardWishlistBadgeInDom(typeCode, id, prevSaved, false);
           showHudToast("⚠️ Fehler beim Aktualisieren der Merkliste");
+        } finally {
+          setTimeout(() => wishlistTogglesInFlight.delete(cardKey), 400);
         }
       }
 
@@ -13052,8 +13061,8 @@
                       })() +
                       '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
                         '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="Trailer direkt im Hauptslider einblenden">▶ Trailer</button>' +
-                        '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ',false,\\'' + heroTitleSafe + '\\',\\'' + heroPosterSafe + '\\')">ⓘ Details</button>' +
-                        '<button type="button" id="heroBtnWishlist" class="hero-btn-wishlist hero-action-btn ' + (isHeroSaved ? 'saved' : '') + '" data-hero-wl-key="' + heroCardKey + '" onclick="quickToggleCardWishlist(event,\\'' + heroType + '\\',' + hero.id + ',\\'' + heroTitleSafe + '\\')" title="' + (isHeroSaved ? 'Aus deiner Merkliste entfernen' : 'Direkt in deiner Merkliste speichern') + '">' + (isHeroSaved ? '✓ Gespeichert' : '＋ Speichern') + '</button>' +
+                        '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ')">ⓘ Details</button>' +
+                        '<button type="button" id="heroBtnWishlist" class="hero-btn-wishlist hero-action-btn ' + (isHeroSaved ? 'saved' : '') + '" data-hero-wl-key="' + heroCardKey + '" onclick="quickToggleCardWishlist(event,\\'' + heroType + '\\',' + hero.id + ')" title="' + (isHeroSaved ? 'Aus deiner Merkliste entfernen' : 'Direkt in deiner Merkliste speichern') + '">' + (isHeroSaved ? '✓ Gespeichert' : '＋ Speichern') + '</button>' +
                       '</div>' +
                     '</div>' +
                   '</div>' +
@@ -13199,12 +13208,12 @@
             }
             const detBtn = document.getElementById("heroBtnDetails");
             if (detBtn) {
-              detBtn.setAttribute("onclick", "openDetails('" + heroType + "'," + hero.id + ",false,'" + heroTitleSafe + "','" + heroPosterSafe + "')");
+              detBtn.setAttribute("onclick", "openDetails('" + heroType + "'," + hero.id + ")");
             }
             const wlBtn = document.getElementById("heroBtnWishlist");
             if (wlBtn) {
               wlBtn.setAttribute("data-hero-wl-key", heroCardKey);
-              wlBtn.setAttribute("onclick", "quickToggleCardWishlist(event,'" + heroType + "'," + hero.id + ",'" + heroTitleSafe + "')");
+              wlBtn.setAttribute("onclick", "quickToggleCardWishlist(event,'" + heroType + "'," + hero.id + ")");
               wlBtn.setAttribute("title", isHeroSaved ? "Aus deiner Merkliste entfernen" : "Direkt in deiner Merkliste speichern");
               wlBtn.classList.toggle("saved", Boolean(isHeroSaved));
               wlBtn.innerHTML = isHeroSaved ? "✓ Gespeichert" : "＋ Speichern";
