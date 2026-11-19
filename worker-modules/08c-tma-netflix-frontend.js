@@ -7088,7 +7088,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .cinema-top-hud-close, .cinema-pause-center-btn, .cinema-overlay-btn, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-vol-slider, .cinema-dock-scrubber, .cinema-top-hud-close, .cinema-pause-center-btn, .cinema-overlay-btn, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -7108,7 +7108,232 @@
         return Boolean(el && el.matches && el.matches(CARD_SUB_SELECTOR));
       }
 
+      function getActiveForegroundCinemaContextClient() {
+        const elev = document.getElementById("tvQuickJumpElevator");
+        const isRightOverlayOpen = Boolean(
+          elev && (elev.classList.contains("has-subpanel") || elev.classList.contains("is-hover-expanded"))
+        );
+        const isBlockedByOverlay = Boolean(
+          (state && state.sidebarOpen) ||
+          isRightOverlayOpen ||
+          document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
+          document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
+          document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
+          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
+          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
+          document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
+          document.getElementById("lightboxRoot")?.innerHTML.trim()
+        );
+        if (isBlockedByOverlay) return null;
+        const modalHasContent = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+        if (modalHasContent) {
+          const detailStage = document.getElementById("detailHeroStageEl");
+          if (detailStage && detailStage.classList.contains("is-trailer-foreground-mode")) {
+            return {
+              mode: "detail",
+              prefix: "detail",
+              stageEl: detailStage,
+              isPaused: detailStage.classList.contains("is-cinema-paused"),
+              isEnded: detailStage.classList.contains("is-cinema-ended"),
+              isStarting: detailStage.classList.contains("is-cinema-starting")
+            };
+          }
+          return null;
+        }
+        const heroStage = document.getElementById("heroStageEl");
+        if (heroStage && heroStage.classList.contains("is-trailer-foreground-mode")) {
+          return {
+            mode: "hero",
+            prefix: "hero",
+            stageEl: heroStage,
+            isPaused: heroStage.classList.contains("is-cinema-paused"),
+            isEnded: heroStage.classList.contains("is-cinema-ended"),
+            isStarting: heroStage.classList.contains("is-cinema-starting")
+          };
+        }
+        return null;
+      }
+
+      function wakeActiveCinemaDockClient(ctx) {
+        if (!ctx) return;
+        if (ctx.mode === "detail" && typeof wakeDetailCinemaDockClient === "function") {
+          wakeDetailCinemaDockClient();
+        } else if (ctx.mode === "hero" && typeof wakeHeroCinemaDockClient === "function") {
+          wakeHeroCinemaDockClient();
+        }
+      }
+
+      function isCinemaControlElementInteractiveClient(el) {
+        if (!el || el.disabled) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 2 && r.height > 2;
+      }
+
+      function getCinemaControlRowsClient(ctx) {
+        if (!ctx) return [];
+        const p = ctx.prefix;
+        const rows = [];
+
+        const topClose = document.getElementById(p + "CinemaTopCloseBtn");
+        if (isCinemaControlElementInteractiveClient(topClose)) {
+          rows.push([topClose]);
+        }
+
+        if (ctx.isEnded) {
+          const endOverlay = document.getElementById(p + "CinemaEndOverlay");
+          if (endOverlay) {
+            const endBtns = Array.from(endOverlay.querySelectorAll("button.cinema-overlay-btn")).filter(isCinemaControlElementInteractiveClient);
+            if (endBtns.length) rows.push(endBtns);
+          }
+        } else if (ctx.isPaused) {
+          const centerPlay = document.getElementById(p + "CinemaCenterPlayBtn");
+          if (isCinemaControlElementInteractiveClient(centerPlay)) {
+            rows.push([centerPlay]);
+          }
+          const pauseCurtain = document.getElementById(p + "CinemaPauseCurtain");
+          if (pauseCurtain) {
+            const pauseBtns = Array.from(pauseCurtain.querySelectorAll("button.cinema-overlay-btn")).filter(isCinemaControlElementInteractiveClient);
+            if (pauseBtns.length) rows.push(pauseBtns);
+          }
+        }
+
+        const dock = document.getElementById(p + "CinemaPlayerDock");
+        if (dock) {
+          const dockControls = Array.from(dock.querySelectorAll("button.cinema-dock-btn, input.cinema-dock-vol-slider, input.cinema-dock-scrubber")).filter(isCinemaControlElementInteractiveClient);
+          if (dockControls.length) rows.push(dockControls);
+        }
+        return rows;
+      }
+
+      function getCinemaFocusableElementsClient(ctx) {
+        return getCinemaControlRowsClient(ctx).flat();
+      }
+
+      function navigateCinemaPlayerFocusClient(dir, ctx) {
+        if (!ctx) return false;
+        wakeActiveCinemaDockClient(ctx);
+        const p = ctx.prefix;
+
+        // Auf Scrubber oder Lautstärkeregler passen Links/Rechts direkt Zeit (±10s) bzw. Lautstärke (±10%) an!
+        if (currentSpatialEl && (dir === "left" || dir === "right")) {
+          const stepSign = dir === "right" ? 1 : -1;
+          if (currentSpatialEl.id === p + "CinemaScrubber") {
+            if (ctx.mode === "detail" && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(stepSign * 10);
+            else if (ctx.mode === "hero" && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(stepSign * 10);
+            return true;
+          }
+          if (currentSpatialEl.id === p + "CinemaVolSlider") {
+            if (ctx.mode === "detail" && typeof adjustDetailCinemaVolumeStepClient === "function") adjustDetailCinemaVolumeStepClient(stepSign * 10);
+            else if (ctx.mode === "hero" && typeof adjustHeroCinemaVolumeStepClient === "function") adjustHeroCinemaVolumeStepClient(stepSign * 10);
+            return true;
+          }
+        }
+
+        const rows = getCinemaControlRowsClient(ctx);
+        if (!rows.length) return false;
+
+        let curRowIdx = -1;
+        let curColIdx = -1;
+        for (let r = 0; r < rows.length; r++) {
+          const c = rows[r].indexOf(currentSpatialEl);
+          if (c !== -1) {
+            curRowIdx = r;
+            curColIdx = c;
+            break;
+          }
+        }
+
+        if (curRowIdx === -1) {
+          const defaultTarget = ctx.isEnded
+            ? (document.getElementById(p + "CinemaEndPrimaryBtn") || rows[0][0])
+            : ctx.isPaused
+              ? (document.getElementById(p + "CinemaPauseResumeBtn") || document.getElementById(p + "CinemaCenterPlayBtn") || rows[rows.length - 1][0])
+              : (document.getElementById(p + "CinemaPlayBtn") || rows[rows.length - 1][0]);
+          if (defaultTarget && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(defaultTarget, false);
+          }
+          return true;
+        }
+
+        let targetEl = null;
+        if (dir === "left" || dir === "right") {
+          const curRow = rows[curRowIdx];
+          if (curRow.length === 1) {
+            targetEl = curRow[0];
+          } else {
+            const nextCol = dir === "right"
+              ? Math.min(curRow.length - 1, curColIdx + 1)
+              : Math.max(0, curColIdx - 1);
+            targetEl = curRow[nextCol];
+          }
+        } else if (dir === "up" || dir === "down") {
+          const nextRowIdx = dir === "up"
+            ? Math.max(0, curRowIdx - 1)
+            : Math.min(rows.length - 1, curRowIdx + 1);
+          const targetRow = rows[nextRowIdx];
+          if (targetRow.length === 1) {
+            targetEl = targetRow[0];
+          } else {
+            const curRect = currentSpatialEl.getBoundingClientRect();
+            const curCx = curRect.left + curRect.width / 2;
+            let bestEl = targetRow[0];
+            let bestDist = Infinity;
+            for (const cand of targetRow) {
+              const cr = cand.getBoundingClientRect();
+              const dist = Math.abs((cr.left + cr.width / 2) - curCx);
+              if (dist < bestDist) {
+                bestDist = dist;
+                bestEl = cand;
+              }
+            }
+            targetEl = bestEl;
+          }
+        }
+
+        if (targetEl && typeof jumpSpatialFocus === "function") {
+          jumpSpatialFocus(targetEl, false);
+        }
+        return true;
+      }
+
+      function confirmCinemaPlayerFocusClient(ctx) {
+        if (!ctx) return false;
+        wakeActiveCinemaDockClient(ctx);
+        const p = ctx.prefix;
+        const activeNodes = getCinemaFocusableElementsClient(ctx);
+        if (currentSpatialEl && activeNodes.includes(currentSpatialEl)) {
+          if (currentSpatialEl.id === p + "CinemaScrubber") {
+            if (ctx.mode === "detail" && typeof toggleDetailCinemaPlayPauseClient === "function") toggleDetailCinemaPlayPauseClient();
+            else if (ctx.mode === "hero" && typeof toggleHeroCinemaPlayPauseClient === "function") toggleHeroCinemaPlayPauseClient();
+            return true;
+          }
+          if (currentSpatialEl.id === p + "CinemaVolSlider") {
+            if (ctx.mode === "detail" && typeof toggleDetailBackgroundTeaserAudioClient === "function") toggleDetailBackgroundTeaserAudioClient();
+            else if (ctx.mode === "hero" && typeof toggleHeroBackgroundTeaserAudioClient === "function") toggleHeroBackgroundTeaserAudioClient();
+            return true;
+          }
+          currentSpatialEl.click();
+          return true;
+        }
+        if (ctx.isEnded) {
+          const primaryEnd = document.getElementById(p + "CinemaEndPrimaryBtn");
+          if (primaryEnd) {
+            primaryEnd.click();
+            return true;
+          }
+        }
+        if (ctx.mode === "detail" && typeof toggleDetailCinemaPlayPauseClient === "function") toggleDetailCinemaPlayPauseClient();
+        else if (ctx.mode === "hero" && typeof toggleHeroCinemaPlayPauseClient === "function") toggleHeroCinemaPlayPauseClient();
+        return true;
+      }
+
       function getVisibleFocusables() {
+        const activeCinemaCtx = getActiveForegroundCinemaContextClient();
+        if (activeCinemaCtx) {
+          return getCinemaFocusableElementsClient(activeCinemaCtx);
+        }
         const dialogEl = document.getElementById("customDialogRoot");
         const pageJumpEl = document.getElementById("pageJumpModalRoot");
         const spotlightEl = document.getElementById("personSpotlightOverlayRoot");
@@ -8864,12 +9089,26 @@
         const activeEl = document.activeElement;
         const activeTag = (activeEl && activeEl.tagName || "").toUpperCase();
         const isSearchInpFocused = activeEl && activeEl.id === "searchInput";
-        const isTypingInInput = activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT" || Boolean(activeEl && activeEl.isContentEditable);
+        const activeInputType = activeTag === "INPUT" ? String(activeEl.type || "text").toLowerCase() : "";
+        const isRangeOrNonTextInput = activeTag === "INPUT" && (activeInputType === "range" || activeInputType === "button" || activeInputType === "checkbox" || activeInputType === "radio" || activeInputType === "submit" || activeInputType === "reset");
+        const isTypingInInput = (activeTag === "INPUT" && !isRangeOrNonTextInput) || activeTag === "TEXTAREA" || activeTag === "SELECT" || Boolean(activeEl && activeEl.isContentEditable);
 
         const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || (ev.key === "Backspace" && !isTypingInInput);
         if (isBackKey) {
           cancelModalArrowHold();
           resetVerticalTurboStreakClient();
+          const cinemaCtxForBack = getActiveForegroundCinemaContextClient();
+          if (cinemaCtxForBack) {
+            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+            if (cinemaCtxForBack.mode === "detail" && typeof exitDetailForegroundTrailerModeClient === "function") {
+              exitDetailForegroundTrailerModeClient(ev);
+            } else if (cinemaCtxForBack.mode === "hero" && typeof exitHeroForegroundTrailerModeClient === "function") {
+              exitHeroForegroundTrailerModeClient(ev);
+            }
+            ev.preventDefault();
+            ev.stopPropagation();
+            return;
+          }
           if (state.sidebarOpen && state.sidebarSubPanelOpen && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel")) {
             if (typeof closeSidebarSubPanelToMain === "function") closeSidebarSubPanelToMain();
             ev.preventDefault();
@@ -8978,12 +9217,33 @@
           document.getElementById("lightboxRoot")?.innerHTML.trim()
         );
         if (!isTypingInInput && !isOverlayBlockingTrailerKeys && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
-          const modalHasContent = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
-          const detailFgActive = modalHasContent && Boolean(document.getElementById("detailHeroStageEl")?.classList.contains("is-trailer-foreground-mode"));
-          const heroFgActive = !modalHasContent && Boolean(document.getElementById("heroStageEl")?.classList.contains("is-trailer-foreground-mode"));
-          if (detailFgActive || heroFgActive) {
+          const activeCinemaCtx = getActiveForegroundCinemaContextClient();
+          if (activeCinemaCtx) {
+            const detailFgActive = activeCinemaCtx.mode === "detail";
+            const heroFgActive = activeCinemaCtx.mode === "hero";
             const lk = String(ev.key || "").toLowerCase();
             const isSpace = ev.code === "Space" || ev.key === " ";
+
+            if (ev.key === "ArrowLeft" || ev.key === "ArrowRight" || ev.key === "ArrowUp" || ev.key === "ArrowDown") {
+              cancelModalArrowHold();
+              resetVerticalTurboStreakClient();
+              ev.preventDefault();
+              ev.stopPropagation();
+              engageKeyboardNavMode();
+              const dirMap = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
+              navigateCinemaPlayerFocusClient(dirMap[ev.key], activeCinemaCtx);
+              return;
+            }
+            if (ev.key === "Enter") {
+              cancelModalArrowHold();
+              resetVerticalTurboStreakClient();
+              ev.preventDefault();
+              ev.stopPropagation();
+              if (!ev.repeat) {
+                confirmCinemaPlayerFocusClient(activeCinemaCtx);
+              }
+              return;
+            }
             if (lk === "k" || isSpace) {
               ev.preventDefault();
               ev.stopPropagation();
@@ -9015,10 +9275,16 @@
               else if (heroFgActive && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(10, ev);
               return;
             }
-            if (lk === "n") {
+            if (lk === "n" || ev.key === "PageDown" || ev.key === "ChannelDown") {
               ev.preventDefault();
+              ev.stopPropagation();
               if (detailFgActive && typeof switchNextDetailTrailerCandidateManualClient === "function") switchNextDetailTrailerCandidateManualClient(ev);
               else if (heroFgActive && typeof switchNextHeroTrailerCandidateManualClient === "function") switchNextHeroTrailerCandidateManualClient(ev);
+              return;
+            }
+            if (ev.key === "PageUp" || ev.key === "ChannelUp") {
+              ev.preventDefault();
+              ev.stopPropagation();
               return;
             }
             if (lk === "s") {
@@ -9027,10 +9293,16 @@
               else if (heroFgActive && typeof cycleHeroCinemaSpeedClient === "function") cycleHeroCinemaSpeedClient(ev);
               return;
             }
-            if (lk === "r") {
+            if (lk === "r" || lk === "0" || ev.key === "Home") {
               ev.preventDefault();
+              ev.stopPropagation();
               if (detailFgActive && typeof restartDetailCinemaTrailerClient === "function") restartDetailCinemaTrailerClient(ev);
               else if (heroFgActive && typeof restartHeroCinemaTrailerClient === "function") restartHeroCinemaTrailerClient(ev);
+              return;
+            }
+            if (ev.key === "End") {
+              ev.preventDefault();
+              ev.stopPropagation();
               return;
             }
             if (ev.key === "+" || ev.key === "=" || ev.code === "NumpadAdd") {
@@ -9043,6 +9315,10 @@
               ev.preventDefault();
               if (detailFgActive && typeof adjustDetailCinemaVolumeStepClient === "function") adjustDetailCinemaVolumeStepClient(-10);
               else if (heroFgActive && typeof adjustHeroCinemaVolumeStepClient === "function") adjustHeroCinemaVolumeStepClient(-10);
+              return;
+            }
+            // Im aktiven Trailer-Modus verhindert dieser Schutz versehentliches Type-to-Search oder Hintergrund-Shortcuts!
+            if (ev.key && ev.key.length === 1) {
               return;
             }
           }
@@ -9248,6 +9524,34 @@
         const hud = document.getElementById("controllerHudBar");
         if (!hud) return;
         const isPs = isPlayStationControllerClient(gp?.id || "");
+        const activeCinemaCtx = getActiveForegroundCinemaContextClient();
+        if (activeCinemaCtx) {
+          const brandKey = (isPs ? "ps_cinema_" : "xbox_cinema_") + (activeCinemaCtx.isEnded ? "end" : "play");
+          if (activeControllerBrand !== brandKey || !hud.innerHTML) {
+            activeControllerBrand = brandKey;
+            if (isPs) {
+              hud.innerHTML =
+                '<span class="hud-item"><kbd>✕</kbd> ' + (activeCinemaCtx.isEnded ? 'Auswahl' : 'Auswahl/Pause') + '</span>' +
+                '<span class="hud-item"><kbd>○</kbd> Schließen</span>' +
+                '<span class="hud-item"><kbd>□</kbd> Untertitel</span>' +
+                '<span class="hud-item"><kbd>△</kbd> Ton</span>' +
+                '<span class="hud-item"><kbd>L1</kbd><kbd>R1</kbd> ' + (activeCinemaCtx.isEnded ? '◀/▶' : '±10s') + '</span>' +
+                '<span class="hud-item"><kbd>L2</kbd><kbd>R2</kbd> Lautstärke</span>' +
+                '<span class="hud-item"><kbd>R3</kbd> 0:00</span>';
+            } else {
+              hud.innerHTML =
+                '<span class="hud-item"><kbd>A</kbd> ' + (activeCinemaCtx.isEnded ? 'Auswahl' : 'Auswahl/Pause') + '</span>' +
+                '<span class="hud-item"><kbd>B</kbd> Schließen</span>' +
+                '<span class="hud-item"><kbd>X</kbd> Untertitel</span>' +
+                '<span class="hud-item"><kbd>Y</kbd> Ton</span>' +
+                '<span class="hud-item"><kbd>LB</kbd><kbd>RB</kbd> ' + (activeCinemaCtx.isEnded ? '◀/▶' : '±10s') + '</span>' +
+                '<span class="hud-item"><kbd>LT</kbd><kbd>RT</kbd> Lautstärke</span>' +
+                '<span class="hud-item"><kbd>R3</kbd> 0:00</span>';
+            }
+          }
+          hud.classList.add("visible");
+          return;
+        }
         const modeLabel = controllerL2R2Mode === "zoom" ? "Zoom" : "Seite/Sprung";
         const brandKey = (isPs ? "ps_" : "xbox_") + controllerL2R2Mode;
         if (activeControllerBrand !== brandKey || !hud.innerHTML) {
@@ -9285,6 +9589,93 @@
             const axY = gp.axes?.[1] || 0;
             const rightStickX = gp.axes?.[2] || 0;
             const rightStickY = gp.axes?.[3] || 0;
+            const activeCinemaCtx = getActiveForegroundCinemaContextClient();
+
+            // Isolierte Trailer-Player Controller-Steuerung (inkl. Pause-Menü & Endcard) ohne jegliche Überschneidung mit dem Hintergrund!
+            if (activeCinemaCtx) {
+              const btnL2 = Boolean(gp.buttons?.[6]?.pressed || (gp.buttons?.[6]?.value || 0) > 0.45);
+              const btnR2 = Boolean(gp.buttons?.[7]?.pressed || (gp.buttons?.[7]?.value || 0) > 0.45);
+              if ((btnL2 || btnR2) && now - lastGamepadZoomAt > 175) {
+                lastGamepadZoomAt = now;
+                lastGamepadActivityAt = now;
+                engageKeyboardNavMode();
+                syncControllerHudBarClient(gp);
+                wakeActiveCinemaDockClient(activeCinemaCtx);
+                const volDelta = btnR2 ? 10 : -10;
+                if (activeCinemaCtx.mode === "detail" && typeof adjustDetailCinemaVolumeStepClient === "function") adjustDetailCinemaVolumeStepClient(volDelta);
+                else if (activeCinemaCtx.mode === "hero" && typeof adjustHeroCinemaVolumeStepClient === "function") adjustHeroCinemaVolumeStepClient(volDelta);
+              }
+
+              if (now - lastGamepadStepAt > 180) {
+                const up = Boolean(gp.buttons?.[12]?.pressed || axY < -0.55);
+                const down = Boolean(gp.buttons?.[13]?.pressed || axY > 0.55);
+                const left = Boolean(gp.buttons?.[14]?.pressed || axX < -0.55);
+                const right = Boolean(gp.buttons?.[15]?.pressed || axX > 0.55);
+                const btnA = gp.buttons?.[0]?.pressed;
+                const btnB = gp.buttons?.[1]?.pressed;
+                const btnX = gp.buttons?.[2]?.pressed;
+                const btnY = gp.buttons?.[3]?.pressed;
+                const btnLB = gp.buttons?.[4]?.pressed;
+                const btnRB = gp.buttons?.[5]?.pressed;
+                const btnR3 = gp.buttons?.[11]?.pressed;
+
+                if (up || down || left || right || btnA || btnB || btnX || btnY || btnLB || btnRB || btnR3) {
+                  lastGamepadActivityAt = now;
+                  engageKeyboardNavMode();
+                  syncControllerHudBarClient(gp);
+                }
+
+                if (up) { navigateCinemaPlayerFocusClient("up", activeCinemaCtx); lastGamepadStepAt = now; }
+                else if (down) { navigateCinemaPlayerFocusClient("down", activeCinemaCtx); lastGamepadStepAt = now; }
+                else if (left) { navigateCinemaPlayerFocusClient("left", activeCinemaCtx); lastGamepadStepAt = now; }
+                else if (right) { navigateCinemaPlayerFocusClient("right", activeCinemaCtx); lastGamepadStepAt = now; }
+                else if (btnA) {
+                  confirmCinemaPlayerFocusClient(activeCinemaCtx);
+                  lastGamepadStepAt = now + 130;
+                }
+                else if (btnB) {
+                  if (activeCinemaCtx.mode === "detail" && typeof exitDetailForegroundTrailerModeClient === "function") exitDetailForegroundTrailerModeClient();
+                  else if (activeCinemaCtx.mode === "hero" && typeof exitHeroForegroundTrailerModeClient === "function") exitHeroForegroundTrailerModeClient();
+                  lastGamepadStepAt = now + 180;
+                }
+                else if (btnX) {
+                  wakeActiveCinemaDockClient(activeCinemaCtx);
+                  if (activeCinemaCtx.mode === "detail" && typeof toggleDetailCinemaSubtitlesClient === "function") toggleDetailCinemaSubtitlesClient();
+                  else if (activeCinemaCtx.mode === "hero" && typeof toggleHeroCinemaSubtitlesClient === "function") toggleHeroCinemaSubtitlesClient();
+                  lastGamepadStepAt = now + 180;
+                }
+                else if (btnY) {
+                  wakeActiveCinemaDockClient(activeCinemaCtx);
+                  if (activeCinemaCtx.mode === "detail" && typeof toggleDetailBackgroundTeaserAudioClient === "function") toggleDetailBackgroundTeaserAudioClient();
+                  else if (activeCinemaCtx.mode === "hero" && typeof toggleHeroBackgroundTeaserAudioClient === "function") toggleHeroBackgroundTeaserAudioClient();
+                  lastGamepadStepAt = now + 180;
+                }
+                else if (btnLB || btnRB) {
+                  wakeActiveCinemaDockClient(activeCinemaCtx);
+                  if (activeCinemaCtx.isEnded) {
+                    navigateCinemaPlayerFocusClient(btnRB ? "right" : "left", activeCinemaCtx);
+                  } else {
+                    const seekSec = btnRB ? 10 : -10;
+                    if (activeCinemaCtx.mode === "detail" && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(seekSec);
+                    else if (activeCinemaCtx.mode === "hero" && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(seekSec);
+                  }
+                  lastGamepadStepAt = now + 160;
+                }
+                else if (btnR3) {
+                  wakeActiveCinemaDockClient(activeCinemaCtx);
+                  if (activeCinemaCtx.mode === "detail" && typeof restartDetailCinemaTrailerClient === "function") restartDetailCinemaTrailerClient();
+                  else if (activeCinemaCtx.mode === "hero" && typeof restartHeroCinemaTrailerClient === "function") restartHeroCinemaTrailerClient();
+                  lastGamepadStepAt = now + 220;
+                }
+              }
+
+              if (lastGamepadActivityAt && now - lastGamepadActivityAt > 8500) {
+                const hud = document.getElementById("controllerHudBar");
+                if (hud) hud.classList.remove("visible");
+              }
+              requestAnimationFrame(pollGamepadNavigation);
+              return;
+            }
 
             // Rechter Analog-Stick (axes[2], axes[3]): Butterweiches 60fps Scrollen ohne Fokus-Sprung!
             if (Math.abs(rightStickY) > 0.18 || Math.abs(rightStickX) > 0.22) {

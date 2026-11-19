@@ -3853,6 +3853,18 @@
         transform: translateY(-1px) scale(1.03);
         box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.55), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
       }
+      .hero-btn-play.is-trailer-unavailable {
+        background: rgba(30, 41, 59, 0.72) !important;
+        color: rgba(226, 232, 240, 0.88) !important;
+        border: 1px solid rgba(148, 163, 184, 0.34) !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+      }
+      .hero-btn-play.is-trailer-unavailable:hover,
+      .hero-btn-play.is-trailer-unavailable.spatial-focus {
+        background: rgba(51, 65, 85, 0.9) !important;
+        color: #ffffff !important;
+        border-color: rgba(148, 163, 184, 0.65) !important;
+      }
       .hero-btn-info,
       .hero-btn-wishlist {
         background: rgba(30, 41, 59, 0.68) !important;
@@ -6797,6 +6809,21 @@
         border-color: rgba(56, 189, 248, 0.68);
         color: #e0f2fe;
       }
+      .detail-btn-glass.is-trailer-unavailable,
+      .detail-btn-play-white.is-trailer-unavailable {
+        background: rgba(30, 41, 59, 0.66) !important;
+        color: rgba(203, 213, 225, 0.9) !important;
+        border: 1px solid rgba(148, 163, 184, 0.34) !important;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.42);
+      }
+      .detail-btn-glass.is-trailer-unavailable:hover,
+      .detail-btn-glass.is-trailer-unavailable.spatial-focus,
+      .detail-btn-play-white.is-trailer-unavailable:hover,
+      .detail-btn-play-white.is-trailer-unavailable.spatial-focus {
+        background: rgba(51, 65, 85, 0.88) !important;
+        color: #ffffff !important;
+        border-color: rgba(148, 163, 184, 0.65) !important;
+      }
       .detail-overview-wrap {
         max-width: min(68ch, 100%);
         margin-bottom: 10px;
@@ -8059,8 +8086,8 @@
       <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen" onmousedown="event.preventDefault()"></div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
-    <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="if(!state.sidebarOpen)toggleFilterSidebar()" onmouseenter="if(!state.sidebarOpen&&!document.body.classList.contains('in-hero-slider')){toggleFilterSidebar();}" title="Menü-Übersicht direkt öffnen"></div>
-    <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onclick="openRightMenuOverlayClient(true)" onmouseenter="openRightMenuOverlayClient(false)" title="Schnellmenü öffnen" aria-hidden="true"></div>
+    <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="cancelSideMenuHoverTimersClient();if(!state.sidebarOpen)toggleFilterSidebar()" onmouseenter="scheduleLeftEdgeHoverOpenClient()" onmouseleave="cancelLeftEdgeHoverOpenClient()" title="Menü-Übersicht öffnen"></div>
+    <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onclick="cancelSideMenuHoverTimersClient();openRightMenuOverlayClient(true)" onmouseenter="scheduleRightEdgeHoverOpenClient()" onmouseleave="cancelRightEdgeHoverOpenClient()" title="Schnellmenü öffnen" aria-hidden="true"></div>
     <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" aria-label="Katalog-Navigation">
       <div id="rightMenuSubPanel" class="tv-elevator-subpanel" aria-live="polite"></div>
       <div class="tv-elevator-main-col">
@@ -10290,7 +10317,80 @@
         }
       }
 
+      const SIDE_MENU_HOVER_OPEN_DELAY_MS = 280;
+      let leftEdgeHoverOpenTimer = null;
+      let rightEdgeHoverOpenTimer = null;
+
+      function canTriggerSideMenuEdgeHoverClient() {
+        if (document.hidden || (typeof document.hasFocus === "function" && !document.hasFocus())) return false;
+        if (document.body && document.body.classList.contains("in-hero-slider")) return false;
+        if (document.getElementById("heroStageEl")?.classList.contains("is-trailer-foreground-mode")) return false;
+        if (document.getElementById("detailHeroStageEl")?.classList.contains("is-trailer-foreground-mode")) return false;
+        if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("customDialogRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) return false;
+        if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
+        return true;
+      }
+
+      function cancelLeftEdgeHoverOpenClient() {
+        if (leftEdgeHoverOpenTimer) {
+          clearTimeout(leftEdgeHoverOpenTimer);
+          leftEdgeHoverOpenTimer = null;
+        }
+      }
+
+      function cancelRightEdgeHoverOpenClient() {
+        if (rightEdgeHoverOpenTimer) {
+          clearTimeout(rightEdgeHoverOpenTimer);
+          rightEdgeHoverOpenTimer = null;
+        }
+      }
+
+      function cancelSideMenuHoverTimersClient() {
+        cancelLeftEdgeHoverOpenClient();
+        cancelRightEdgeHoverOpenClient();
+      }
+
+      function scheduleLeftEdgeHoverOpenClient() {
+        cancelLeftEdgeHoverOpenClient();
+        if (state.sidebarOpen || !canTriggerSideMenuEdgeHoverClient()) return;
+        leftEdgeHoverOpenTimer = setTimeout(() => {
+          leftEdgeHoverOpenTimer = null;
+          if (state.sidebarOpen || !canTriggerSideMenuEdgeHoverClient()) return;
+          const edgeEl = document.getElementById("catalogEdgeTriggerLeft");
+          if (edgeEl && !edgeEl.matches(":hover")) return;
+          toggleFilterSidebar();
+        }, SIDE_MENU_HOVER_OPEN_DELAY_MS);
+      }
+
+      function scheduleRightEdgeHoverOpenClient() {
+        cancelRightEdgeHoverOpenClient();
+        if (Date.now() < (window.__rmDismissedUntil || 0)) return;
+        if (!canTriggerSideMenuEdgeHoverClient()) return;
+        const elev = document.getElementById("tvQuickJumpElevator");
+        if (elev && (elev.classList.contains("is-hover-expanded") || elev.classList.contains("has-subpanel"))) return;
+        rightEdgeHoverOpenTimer = setTimeout(() => {
+          rightEdgeHoverOpenTimer = null;
+          if (Date.now() < (window.__rmDismissedUntil || 0)) return;
+          if (!canTriggerSideMenuEdgeHoverClient()) return;
+          const edgeEl = document.getElementById("catalogEdgeTriggerRight");
+          if (edgeEl && !edgeEl.matches(":hover")) return;
+          openRightMenuOverlayClient(false);
+        }, SIDE_MENU_HOVER_OPEN_DELAY_MS);
+      }
+
+      if (typeof window !== "undefined" && !window._sideMenuHoverGuardsBound) {
+        window._sideMenuHoverGuardsBound = true;
+        window.addEventListener("blur", cancelSideMenuHoverTimersClient);
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) cancelSideMenuHoverTimersClient();
+        });
+        document.documentElement.addEventListener("mouseleave", cancelSideMenuHoverTimersClient);
+      }
+
       function openRightMenuOverlayClient(forceImmediate = false) {
+        cancelRightEdgeHoverOpenClient();
         if (!forceImmediate && Date.now() < (window.__rmDismissedUntil || 0)) return;
         if (document.body.classList.contains("in-hero-slider")) return;
         const elev = document.getElementById("tvQuickJumpElevator");
@@ -13476,6 +13576,15 @@
             if (nextIdx < heroBgTeaserCandidates.length) {
               mountHeroTrailerCandidateAtIndexClient(nextIdx, heroBgTeaserPendingUnmute || !heroBgTeaserMuted, 2);
             } else {
+              const failedHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+              if (failedHero) {
+                failedHero._trailerChecked = true;
+                failedHero._hasEmbeddableTrailer = false;
+                failedHero._trailerCount = 0;
+              }
+              if (typeof syncHeroTrailerAvailabilityButtonClient === "function") {
+                syncHeroTrailerAvailabilityButtonClient("none", 0);
+              }
               stopHeroBackgroundVideoTeaserClient();
             }
             return;
@@ -13596,6 +13705,21 @@
         });
       }
 
+      function syncHeroTrailerAvailabilityButtonClient(status = "checking", count = 0) {
+        const btn = document.getElementById("heroBtnTrailer");
+        if (!btn) return;
+        btn.setAttribute("data-trailer-status", status);
+        if (status === "none") {
+          btn.classList.add("is-trailer-unavailable");
+          btn.innerHTML = "🔎 Trailer suchen";
+          btn.setAttribute("title", "Kein direkt abspielbarer Trailer verfügbar – YouTube-Suche öffnen");
+        } else {
+          btn.classList.remove("is-trailer-unavailable");
+          btn.innerHTML = "▶ Trailer";
+          btn.setAttribute("title", count > 1 ? ("Trailer direkt im Hauptslider abspielen (" + count + " Clips verfügbar)") : "Trailer direkt im Hauptslider einblenden");
+        }
+      }
+
       async function resolveHeroSlideTrailerCandidatesClient(hero, heroType) {
         if (!hero || !hero.id) return [];
         const extractFn = typeof extractCandidateKeysFromTrailersClient === "function"
@@ -13607,25 +13731,44 @@
               const arr = Array.isArray(tr.candidates) && tr.candidates.length ? tr.candidates : (tr.key ? [tr.key] : []);
               return arr.map(x => String(x || "").trim()).filter(Boolean);
             };
+        const applyAvailability = (list) => {
+          const cleanList = Array.isArray(list) ? list : [];
+          hero._trailerChecked = true;
+          hero._hasEmbeddableTrailer = cleanList.length > 0;
+          hero._trailerCount = cleanList.length;
+          const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+          if (activeHero && String(activeHero.id) === String(hero.id)) {
+            syncHeroTrailerAvailabilityButtonClient(cleanList.length > 0 ? "available" : "none", cleanList.length);
+          }
+          return cleanList;
+        };
         if (hero.trailers) {
           registerTrailerMetaMapClient(hero.trailers);
           const direct = extractFn(hero.trailers);
-          if (direct.length > 0) return direct;
+          if (direct.length > 0) return applyAvailability(direct);
         }
         if (hero._cachedTrailers) {
           registerTrailerMetaMapClient(hero._cachedTrailers);
           const cached = extractFn(hero._cachedTrailers);
-          if (cached.length > 0) return cached;
+          if (cached.length > 0) return applyAvailability(cached);
+        }
+        if (hero._trailerChecked && hero._hasEmbeddableTrailer === false) {
+          return applyAvailability([]);
         }
         const tc = heroType === "s" ? "s" : "m";
         const vipAllowed = typeof isCurrentUserVip === "function" ? isCurrentUserVip() : false;
         const cacheKey = tc + "_" + hero.id + "_" + (vipAllowed ? "vip" : "std");
         if (typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
           const hit = clientDetailsCache.get(cacheKey);
-          if (hit && hit.data && hit.data.trailers) {
-            hero._cachedTrailers = hit.data.trailers;
-            registerTrailerMetaMapClient(hit.data.trailers);
-            return extractFn(hit.data.trailers);
+          if (hit && hit.data) {
+            if (hit.data.trailers) {
+              hero._cachedTrailers = hit.data.trailers;
+              registerTrailerMetaMapClient(hit.data.trailers);
+              return applyAvailability(extractFn(hit.data.trailers));
+            }
+            if (hit.data.hasTrailer === false || hit.data.trailers === null) {
+              return applyAvailability([]);
+            }
           }
         }
         try {
@@ -13637,8 +13780,9 @@
             if (d.trailers) {
               hero._cachedTrailers = d.trailers;
               registerTrailerMetaMapClient(d.trailers);
-              return extractFn(d.trailers);
+              return applyAvailability(extractFn(d.trailers));
             }
+            return applyAvailability([]);
           }
         } catch (_e) {}
         return [];
@@ -13660,8 +13804,13 @@
           stopHeroBackgroundVideoTeaserClient();
           heroBgTeaserActiveSlideKey = slideKey;
         }
+        if (hero._trailerChecked) {
+          syncHeroTrailerAvailabilityButtonClient(hero._hasEmbeddableTrailer ? "available" : "none", hero._trailerCount || 0);
+        } else {
+          syncHeroTrailerAvailabilityButtonClient("checking", 0);
+        }
+        const previewDisabled = !immediateForeground && typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled;
         if (!immediateForeground) {
-          if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) return;
           if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
           if (heroCurtainScrolledToCatalog || (document.body && document.body.classList.contains("hero-scrolled-past"))) return;
         }
@@ -13669,13 +13818,12 @@
           clearTimeout(heroBgTeaserTimer);
           heroBgTeaserTimer = null;
         }
-        const delayMs = immediateForeground ? 0 : 420;
+        const delayMs = immediateForeground ? 0 : (previewDisabled ? 550 : 420);
         heroBgTeaserTimer = setTimeout(async () => {
           heroBgTeaserTimer = null;
           const curHero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
           if (!curHero || String(curHero.id) !== String(hero.id)) return;
           if (!immediateForeground) {
-            if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) return;
             if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
             if (heroCurtainScrolledToCatalog || state.heroHidden || state.isSearchMode) return;
           }
@@ -13684,7 +13832,7 @@
           if (!latestHero || String(latestHero.id) !== String(hero.id)) return;
           heroBgTeaserCandidates = cands;
           heroBgTeaserCandidateIdx = 0;
-          if (cands.length === 0) return;
+          if (cands.length === 0 || previewDisabled) return;
           const existingFrame = document.getElementById("heroBgVideoIframe");
           if (existingFrame && heroBgTeaserActiveKey === cands[0]) return;
           mountHeroTrailerCandidateAtIndexClient(0, immediateForeground, immediateForeground ? 0 : 2);
@@ -15138,7 +15286,7 @@
                         '</div>';
                       })() +
                       '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
-                        '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="Trailer direkt im Hauptslider einblenden">▶ Trailer</button>' +
+                        '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? ' is-trailer-unavailable' : '') + '" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? 'Kein direkt abspielbarer Trailer verfügbar – YouTube-Suche öffnen' : 'Trailer direkt im Hauptslider einblenden') + '">' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? '🔎 Trailer suchen' : '▶ Trailer') + '</button>' +
                         '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ')">ⓘ Details</button>' +
                         '<button type="button" id="heroBtnWishlist" class="hero-btn-wishlist hero-action-btn ' + (isHeroSaved ? 'saved' : '') + '" data-hero-wl-key="' + heroCardKey + '" onclick="quickToggleCardWishlist(event,\\'' + heroType + '\\',' + hero.id + ')" title="' + (isHeroSaved ? 'Aus deiner Merkliste entfernen' : 'Direkt in deiner Merkliste speichern') + '">' + (isHeroSaved ? '✓ Gespeichert' : '＋ Speichern') + '</button>' +
                       '</div>' +
@@ -15317,6 +15465,10 @@
             const trBtn = document.getElementById("heroBtnTrailer");
             if (trBtn) {
               trBtn.setAttribute("onclick", "enterHeroForegroundTrailerModeClient(event,false)");
+              syncHeroTrailerAvailabilityButtonClient(
+                hero._trailerChecked ? (hero._hasEmbeddableTrailer ? "available" : "none") : "checking",
+                hero._trailerCount || 0
+              );
             }
             const detBtn = document.getElementById("heroBtnDetails");
             if (detBtn) {

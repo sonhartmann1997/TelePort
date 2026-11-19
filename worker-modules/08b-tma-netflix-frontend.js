@@ -2338,12 +2338,53 @@
         syncDetailCinemaDockUiClient();
       }
 
+      function syncDetailTrailerAvailabilityUiClient(hasTrailer, isSeedOnly = false, count = 0) {
+        const trBtn = document.getElementById("detailTrailerBtn");
+        const primaryBtn = document.getElementById("detailPrimaryPlayBtn");
+        const isPrimaryTrailerBtn = Boolean(primaryBtn && String(primaryBtn.getAttribute("onclick") || "").includes("enterDetailForegroundTrailerModeClient"));
+        if (isSeedOnly) {
+          if (trBtn) {
+            trBtn.classList.remove("is-trailer-unavailable");
+            trBtn.innerHTML = "🎬 Trailer";
+          }
+          if (isPrimaryTrailerBtn && primaryBtn) {
+            primaryBtn.classList.remove("is-trailer-unavailable");
+            primaryBtn.innerHTML = "▶ Trailer";
+          }
+          return;
+        }
+        if (trBtn) {
+          trBtn.classList.toggle("is-trailer-unavailable", !hasTrailer);
+          trBtn.innerHTML = hasTrailer ? "🎬 Trailer" : "🔎 Trailer suchen";
+          trBtn.setAttribute(
+            "title",
+            hasTrailer
+              ? (count > 1 ? ("Trailer im Vordergrund abspielen (" + count + " Clips verfügbar)") : "Alle Elemente ausblenden & Trailer im Vordergrund abspielen")
+              : "Kein direkt abspielbarer Trailer gefunden – YouTube-Suche öffnen"
+          );
+        }
+        if (isPrimaryTrailerBtn && primaryBtn) {
+          primaryBtn.classList.toggle("is-trailer-unavailable", !hasTrailer);
+          primaryBtn.innerHTML = hasTrailer ? "▶ Trailer" : "🔎 Trailer auf YouTube";
+          primaryBtn.setAttribute(
+            "title",
+            hasTrailer
+              ? "Trailer direkt im Vordergrund abspielen"
+              : "Kein direkt abspielbarer Trailer gefunden – YouTube-Suche öffnen"
+          );
+        }
+      }
+
       function activateDetailKenBurnsFallbackClient() {
         clearDetailBgTeaserTimersClient();
         setDetailTrailerLoadingBadgeClient(false);
         detailBgTeaserActiveKey = "";
         detailBgTeaserIsPlayingConfirmed = false;
         detailBgTeaserEnded = false;
+        if (state.activeDetails) {
+          state.activeDetails.hasTrailer = false;
+        }
+        syncDetailTrailerAvailabilityUiClient(false, false, 0);
         const stageEl = document.getElementById("detailHeroStageEl");
         if (stageEl) {
           stageEl.classList.remove("is-trailer-foreground-mode", "is-cinema-starting", "is-cinema-paused", "is-cinema-ended", "is-cc-safe-framing");
@@ -4479,13 +4520,18 @@
           state.activeDetails._activeLoadedSeason = initialSeason;
         }
 
+        const detailTrailerCandCount = tr
+          ? (Array.isArray(tr.candidates) && tr.candidates.length ? tr.candidates.length : (tr.key ? 1 : 0))
+          : 0;
+        const hasVerifiedDetailTrailer = isSeedOnly ? true : Boolean((d.hasTrailer !== false) && detailTrailerCandCount > 0);
+
         const primaryPlayBtnLabel = hasVipStreams
           ? (type === "s"
               ? (savedProg && savedProg.season !== undefined && savedProg.season !== null && savedProg.episode
                   ? ("▶ Weiter: S" + String(savedProg.season).padStart(2, "0") + " · E" + String(savedProg.episode).padStart(2, "0"))
                   : "▶ Abspielen")
               : "▶ Abspielen")
-          : "▶ Trailer";
+          : (hasVerifiedDetailTrailer ? "▶ Trailer" : "🔎 Trailer auf YouTube");
 
         const primaryVersionBadgeText = String(d.primaryVersionLabel || (Array.isArray(d.availableVersions) && d.availableVersions[0]) || "").trim();
         const canReportMedia = Boolean(vipAllowed || state.authUser?.isAdmin);
@@ -4556,13 +4602,13 @@
           : 'enterDetailForegroundTrailerModeClient(event)';
 
         const primaryActionButtonsHtml =
-          '<button type="button" id="detailPrimaryPlayBtn" class="detail-btn-play-white" onclick="' + primaryClickJs + '">' +
+          '<button type="button" id="detailPrimaryPlayBtn" class="detail-btn-play-white' + (!hasVipStreams && !isSeedOnly && !hasVerifiedDetailTrailer ? ' is-trailer-unavailable' : '') + '" onclick="' + primaryClickJs + '" title="' + (!hasVipStreams && !isSeedOnly && !hasVerifiedDetailTrailer ? 'Kein direkt abspielbarer Trailer gefunden – YouTube-Suche öffnen' : '') + '">' +
             esc(primaryPlayBtnLabel) +
           '</button>' +
           versionSelectHtml +
           (hasVipStreams ? buildModalDeliveryTargetSelectorHtml() : '') +
           (hasVipStreams ? (
-            '<button type="button" id="detailTrailerBtn" class="detail-btn-glass" onclick="enterDetailForegroundTrailerModeClient(event)" title="Alle Elemente ausblenden & Trailer im Vordergrund abspielen (ohne Neuladen)">🎬 Trailer</button>'
+            '<button type="button" id="detailTrailerBtn" class="detail-btn-glass' + (!isSeedOnly && !hasVerifiedDetailTrailer ? ' is-trailer-unavailable' : '') + '" onclick="enterDetailForegroundTrailerModeClient(event)" title="' + (!isSeedOnly && !hasVerifiedDetailTrailer ? 'Kein direkt abspielbarer Trailer gefunden – YouTube-Suche öffnen' : (detailTrailerCandCount > 1 ? ('Trailer im Vordergrund abspielen (' + detailTrailerCandCount + ' Clips verfügbar)') : 'Alle Elemente ausblenden & Trailer im Vordergrund abspielen (ohne Neuladen)')) + '">' + (!isSeedOnly && !hasVerifiedDetailTrailer ? '🔎 Trailer suchen' : '🎬 Trailer') + '</button>'
           ) : '') +
           '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
             (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +

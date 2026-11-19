@@ -2224,6 +2224,189 @@
     return uniqueKeys.filter(key => memoryFallback.get(`yt_oembed_${key}`) !== false);
   }
 
+  function extractYoutubeVideoIdFromAny(rawVal) {
+    const str = String(rawVal || "").trim();
+    if (!str) return "";
+    if (/^[a-zA-Z0-9_-]{11}$/.test(str)) return str;
+    const match = str.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+    return match ? match[1] : "";
+  }
+
+  async function fetchKinoCheckTrailerCandidates(env, typeCode, tmdbId) {
+    const cleanId = Number(tmdbId);
+    if (!cleanId || cleanId >= 8000000) return { keys: [], meta: {} };
+    const tc = typeCode === "s" ? "s" : "m";
+    const memKey = `kinocheck_tr_${tc}_${cleanId}`;
+    if (memoryFallback.has(memKey)) {
+      return memoryFallback.get(memKey) || { keys: [], meta: {} };
+    }
+    if (!hasSubrequestBudget(28)) {
+      return { keys: [], meta: {} };
+    }
+    const endpoint = tc === "s" ? "shows" : "movies";
+    const apiKey = String(env?.KINOCHECK_API_KEY || "").trim();
+    const headers = { "Accept": "application/json" };
+    if (apiKey) headers["X-Api-Key"] = apiKey;
+
+    const collectFromPayload = (data, fallbackLang) => {
+      const keys = [];
+      const meta = {};
+      if (!data || typeof data !== "object") return { keys, meta };
+      const addEntry = (item, defaultType) => {
+        if (!item || typeof item !== "object") return;
+        const ytId = extractYoutubeVideoIdFromAny(item.youtube_video_id || item.youtube_id || item.video_id || item.url);
+        if (!ytId || keys.includes(ytId)) return;
+        keys.push(ytId);
+        const rawLang = String(item.language || fallbackLang || "").toLowerCase().slice(0, 2);
+        meta[ytId] = {
+          lang: rawLang === "de" || rawLang === "en" ? rawLang : (fallbackLang || ""),
+          name: String(item.title || item.name || "").trim().slice(0, 120),
+          type: String(defaultType || item.categories?.[0] || "Trailer").trim(),
+          source: "kinocheck"
+        };
+      };
+      if (data.trailer) addEntry(data.trailer, "Trailer");
+      if (Array.isArray(data.videos)) {
+        const sortedVids = [...data.videos].sort((a, b) => {
+          const aCats = Array.isArray(a?.categories) ? a.categories.join(" ").toLowerCase() : "";
+          const bCats = Array.isArray(b?.categories) ? b.categories.join(" ").toLowerCase() : "";
+          const score = (c) => c.includes("trailer") ? 3 : (c.includes("teaser") ? 2 : 1);
+          return score(bCats) - score(aCats);
+        });
+        for (const v of sortedVids) {
+          addEntry(v, "Trailer");
+          if (keys.length >= 4) break;
+        }
+      }
+      return { keys, meta };
+    };
+
+    const combinedKeys = [];
+    const combinedMeta = {};
+    for (const lang of ["de", "en"]) {
+      if (combinedKeys.length > 0 && lang === "en") break;
+      if (!hasSubrequestBudget(26)) break;
+      try {
+        const kcUrl = `https://api.kinocheck.com/${endpoint}?tmdb_id=${cleanId}&language=${lang}`;
+        const res = await fetchWithTimeout(kcUrl, { method: "GET", headers }, 2000);
+        if (!res.ok) continue;
+        const payload = await res.json().catch(() => null);
+        const extracted = collectFromPayload(payload, lang);
+        for (const k of extracted.keys) {
+          if (!combinedKeys.includes(k)) {
+            combinedKeys.push(k);
+            combinedMeta[k] = extracted.meta[k];
+          }
+        }
+      } catch (_e) {}
+    }
+
+    const result = { keys: combinedKeys.slice(0, 5), meta: combinedMeta };
+    memoryFallback.set(memKey, result);
+    return result;
+  }
+
+  async function fetchRapidApiTrailerCandidates(env, title, year = "") {
+    const rapidKey = String(env?.RAPIDAPI_TRAILERS_KEY || "").trim();
+    if (!rapidKey || !title || !hasSubrequestBudget(24)) {
+      return { keys: [], meta: {} };
+    }
+    const cleanTitle = String(title || "").trim();
+    const cleanYear = String(year || "").replace(/[^0-9]/g, "").slice(0, 4);
+    const memKey = `rapid_tr_${cleanTitle.toLowerCase()}_${cleanYear}`;
+    if (memoryFallback.has(memKey)) {
+      return memoryFallback.get(memKey) || { keys: [], meta: {} };
+    }
+    const rapidHost = String(env?.RAPIDAPI_TRAILERS_HOST || "movie-trailers-now.p.rapidapi.com").trim();
+    const queryStr = [cleanTitle, cleanYear].filter(Boolean).join(" ");
+    const keys = [];
+    const meta = {};
+    try {
+      const apiUrl = `https://${rapidHost}/search?q=${encodeURIComponent(queryStr)}`;
+      const res = await fetchWithTimeout(apiUrl, {
+        method: "GET",
+        headers: {
+          "Accept": "application/json",
+          "X-RapidAPI-Key": rapidKey,
+          "X-RapidAPI-Host": rapidHost
+        }
+      }, 2000);
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const list = Array.isArray(data)
+          ? data
+          : (Array.isArray(data?.results) ? data.results : (Array.isArray(data?.trailers) ? data.trailers : (Array.isArray(data?.data) ? data.data : [])));
+        for (const item of list) {
+          if (!item || typeof item !== "object") continue;
+          const ytId = extractYoutubeVideoIdFromAny(item.youtube_video_id || item.youtube_id || item.videoId || item.video_id || item.key || item.trailer_url || item.url || item.link);
+          if (!ytId || keys.includes(ytId)) continue;
+          keys.push(ytId);
+          meta[ytId] = {
+            lang: String(item.language || item.lang || "").toLowerCase().slice(0, 2),
+            name: String(item.title || item.name || cleanTitle).trim().slice(0, 120),
+            type: "Trailer",
+            source: "rapidapi"
+          };
+          if (keys.length >= 3) break;
+        }
+      }
+    } catch (_e) {}
+    const result = { keys, meta };
+    memoryFallback.set(memKey, result);
+    return result;
+  }
+
+  async function resolveTrailerCandidatesWithFallbacks(env, typeCode, details, rawTmdbKeys, rawTmdbMeta = {}) {
+    const mergedMeta = { ...(rawTmdbMeta && typeof rawTmdbMeta === "object" ? rawTmdbMeta : {}) };
+    const tmdbVerified = await verifyEmbeddableYoutubeCandidates(rawTmdbKeys).catch(() => []);
+    if (tmdbVerified.length > 0) {
+      for (const k of tmdbVerified) {
+        mergedMeta[k] = {
+          ...(mergedMeta[k] || {}),
+          source: mergedMeta[k]?.source || "tmdb"
+        };
+      }
+      return { keys: tmdbVerified, meta: mergedMeta, source: "tmdb" };
+    }
+
+    // Fallback 1: KinoCheck API (kein API-Key erforderlich; optional KINOCHECK_API_KEY für höheres Limit)
+    const kcRes = await fetchKinoCheckTrailerCandidates(env, typeCode, details?.id).catch(() => ({ keys: [], meta: {} }));
+    if (kcRes && Array.isArray(kcRes.keys) && kcRes.keys.length > 0) {
+      const kcVerified = await verifyEmbeddableYoutubeCandidates(kcRes.keys).catch(() => []);
+      if (kcVerified.length > 0) {
+        for (const k of kcVerified) {
+          mergedMeta[k] = {
+            ...(kcRes.meta?.[k] || {}),
+            source: "kinocheck"
+          };
+        }
+        return { keys: kcVerified, meta: mergedMeta, source: "kinocheck" };
+      }
+    }
+
+    // Fallback 2: Movie Trailers Now via RapidAPI (nur aktiv, wenn RAPIDAPI_TRAILERS_KEY gesetzt ist)
+    if (String(env?.RAPIDAPI_TRAILERS_KEY || "").trim()) {
+      const titleForSearch = details?.title || details?.name || details?.original_title || details?.original_name || "";
+      const rawDate = details?.releaseDate || details?.release_date || details?.first_air_date || "";
+      const yearForSearch = String(rawDate).split("-")[0] || "";
+      const rapidRes = await fetchRapidApiTrailerCandidates(env, titleForSearch, yearForSearch).catch(() => ({ keys: [], meta: {} }));
+      if (rapidRes && Array.isArray(rapidRes.keys) && rapidRes.keys.length > 0) {
+        const rapidVerified = await verifyEmbeddableYoutubeCandidates(rapidRes.keys).catch(() => []);
+        if (rapidVerified.length > 0) {
+          for (const k of rapidVerified) {
+            mergedMeta[k] = {
+              ...(rapidRes.meta?.[k] || {}),
+              source: "rapidapi"
+            };
+          }
+          return { keys: rapidVerified, meta: mergedMeta, source: "rapidapi" };
+        }
+      }
+    }
+
+    return { keys: [], meta: mergedMeta, source: "none" };
+  }
+
   function extractBestTmdbClearLogoPath(imagesObj) {
     const logos = Array.isArray(imagesObj?.logos)
       ? imagesObj.logos.filter(l => l && l.file_path && !String(l.file_path).toLowerCase().endsWith(".svg"))

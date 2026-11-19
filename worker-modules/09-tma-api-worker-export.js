@@ -2811,7 +2811,7 @@
         const rawCandidateKeys = Array.isArray(details.trailerCandidates) && details.trailerCandidates.length > 0
           ? details.trailerCandidates
           : (details.trailerKey ? [details.trailerKey] : []);
-        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads, resolvedLogoPath, verifiedTrailerCandidates] = await Promise.all([
+        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads, resolvedLogoPath, resolvedTrailersPack] = await Promise.all([
           Promise.race([
             ensureMovieOrSeriesTelegraphUrl(env, typeCode, details).catch(() => ""),
             new Promise(resolve => setTimeout(() => resolve(details.telegraphUrl || ""), 2200))
@@ -2822,9 +2822,11 @@
           (!isMovie && hasVipStreamAccess) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
           (hasVipStreamAccess || auth.isAdmin) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
           resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || ""),
-          typeof verifyEmbeddableYoutubeCandidates === "function"
-            ? verifyEmbeddableYoutubeCandidates(rawCandidateKeys).catch(() => rawCandidateKeys)
-            : Promise.resolve(rawCandidateKeys)
+          typeof resolveTrailerCandidatesWithFallbacks === "function"
+            ? resolveTrailerCandidatesWithFallbacks(env, typeCode, details, rawCandidateKeys, details.trailerCandidatesMeta).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
+            : (typeof verifyEmbeddableYoutubeCandidates === "function"
+                ? verifyEmbeddableYoutubeCandidates(rawCandidateKeys).then(keys => ({ keys, meta: details.trailerCandidatesMeta || {}, source: keys.length ? "tmdb" : "none" })).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
+                : Promise.resolve({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
         ]);
         // Falls Details ein Poster gefunden haben, sofort in D1, Bot-VIP-Playlist und User-Merkliste zurückschreiben!
         if (details.poster_path || details.external_poster_url) {
@@ -2834,18 +2836,25 @@
         const vipSeasonsSorted = Object.keys(seasonCounts).map(Number).filter(n => n > 0).sort((a, b) => a - b);
         const firstVipSeason = vipSeasonsSorted[0] || 1;
         const isSaved = (savedList || []).some(i => String(i.tmdbId) === String(details.id) && i.contentType !== "episode");
-        const candidateKeys = Array.isArray(verifiedTrailerCandidates) && verifiedTrailerCandidates.length > 0
-          ? verifiedTrailerCandidates
+        const candidateKeys = Array.isArray(resolvedTrailersPack?.keys) && resolvedTrailersPack.keys.length > 0
+          ? resolvedTrailersPack.keys
           : [];
+        const trailerSource = String(resolvedTrailersPack?.source || (candidateKeys.length > 0 ? "tmdb" : "none"));
         const ytKey = candidateKeys[0] || "";
+        const rawMergedMeta = resolvedTrailersPack?.meta || details.trailerCandidatesMeta;
         const trailerMetaMap = typeof resolveYoutubeTrailerCandidatesMeta === "function"
-          ? resolveYoutubeTrailerCandidatesMeta(candidateKeys, details.trailerCandidatesMeta)
+          ? resolveYoutubeTrailerCandidatesMeta(candidateKeys, rawMergedMeta)
           : {};
+        if (ytKey && rawMergedMeta && rawMergedMeta[ytKey]?.source && trailerMetaMap[ytKey]) {
+          trailerMetaMap[ytKey].source = rawMergedMeta[ytKey].source;
+        }
         const primaryTrailerLang = String(trailerMetaMap[ytKey]?.lang || "").toLowerCase();
         const autoEnableSubtitles = primaryTrailerLang === "en";
+        const hasTrailer = Boolean(ytKey);
         const trailers = ytKey ? {
           key: ytKey,
           lang: primaryTrailerLang,
+          source: trailerSource,
           candidates: candidateKeys,
           meta: trailerMetaMap,
           youtube: `https://www.youtube.com/watch?v=${ytKey}`,
@@ -2952,6 +2961,8 @@
           telegraphUrl,
           tmdbDeUrl: `https://www.themoviedb.org/${isMovie ? "movie" : "tv"}/${details.id}?language=de-DE`,
           isSaved,
+          hasTrailer,
+          trailerSource,
           trailers,
           files: movieFiles,
           downloads: mediaDownloads,
