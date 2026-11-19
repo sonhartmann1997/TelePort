@@ -7412,6 +7412,14 @@
         }
         currentSpatialEl = el;
         currentSpatialEl.classList.add("spatial-focus");
+        const elevBox = document.getElementById("tvQuickJumpElevator");
+        if (elevBox) {
+          const goingIntoElev = Boolean(el.closest && el.closest("#tvQuickJumpElevator"));
+          elevBox.classList.toggle("is-visible", goingIntoElev);
+          if (!goingIntoElev) {
+            elevBox.classList.remove("is-hover-expanded");
+          }
+        }
         if (el.classList && el.classList.contains("ac-item")) {
           const acBoxEl = document.getElementById("searchAutocompleteBox");
           if (acBoxEl) {
@@ -7594,10 +7602,37 @@
           }
         }
 
+        const elevElForHoverCheck = document.getElementById("tvQuickJumpElevator");
+        if (
+          elevElForHoverCheck &&
+          elevElForHoverCheck.classList.contains("is-hover-expanded") &&
+          (!currentSpatialEl || !(currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator")))
+        ) {
+          if (currentSpatialEl && !(currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"))) {
+            lastElevatorReturnEl = currentSpatialEl;
+          }
+          const firstElevBtn = document.getElementById("tvElevBtnSearch") || document.getElementById("tvElevBtnBot") || document.getElementById("tvElevBtnTop") || elevElForHoverCheck.querySelector(".tv-elevator-btn");
+          if (firstElevBtn) {
+            setSpatialFocus(firstElevBtn, false, dir);
+            return;
+          }
+        }
+
         if (!currentSpatialEl || !list.includes(currentSpatialEl)) {
           userScrolledRecently = false;
-          const activeHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active") || document.getElementById("heroBtnTrailer");
-          setSpatialFocus(activeHeroDot || list[0], true, dir);
+          const rawHeroTarget = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active") || document.getElementById("heroBtnTrailer");
+          const activeHeroDot = (rawHeroTarget && list.includes(rawHeroTarget)) ? rawHeroTarget : null;
+          if (activeHeroDot) {
+            setSpatialFocus(activeHeroDot, true, dir);
+            return;
+          }
+          const visibleCards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => {
+            if (!list.includes(el)) return false;
+            const r = el.getBoundingClientRect();
+            return r.bottom > 64 && r.top < window.innerHeight - 24;
+          });
+          const fallbackTarget = visibleCards[0] || list.find(el => !(el.closest && (el.closest("#tvQuickJumpElevator") || el.closest("header")))) || list[0];
+          setSpatialFocus(fallbackTarget, true, dir);
           return;
         }
 
@@ -7609,7 +7644,7 @@
           const isOffscreen = curR.bottom < 64 || curR.top > window.innerHeight - 24;
           if (isOffscreen) {
             const visibleInViewport = list.filter(cand => {
-              if (cand.closest && cand.closest("header")) return false;
+              if (cand.closest && (cand.closest("header") || cand.closest("#tvQuickJumpElevator"))) return false;
               const r = cand.getBoundingClientRect();
               return r.top >= 58 && r.bottom <= window.innerHeight - 16;
             });
@@ -7623,11 +7658,18 @@
         // Smarte 2-Spalten-Navigation im Ambilight-Glas-Menü (#filterSidebarDrawer):
         // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen inkl. der untersten 2 Elemente!
         //   Klick nach Rechts (ArrowRight) öffnet sofort die Optionen rechts im Sub-Panel (#sidebarRightSubPanel).
+        //   Klick nach Links (ArrowLeft) schließt die Menü-Übersicht und kehrt direkt zur Karte zurück!
         // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Klick nach Links (ArrowLeft) vom linken Rand führt sofort zurück in die Menü-Übersicht!
         if (state.sidebarOpen) {
           const inLeftMenuCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarDrawerBody"));
           const inRightSubCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel"));
           if (inLeftMenuCol) {
+            if (dir === "left") {
+              if (typeof closeFilterSidebar === "function") {
+                closeFilterSidebar();
+                return;
+              }
+            }
             const leftRows = Array.from(document.querySelectorAll("#sidebarDrawerBody .sidebar-menu-row")).filter(el => list.includes(el));
             const rowIdx = leftRows.indexOf(currentSpatialEl);
             if (rowIdx !== -1) {
@@ -7652,21 +7694,39 @@
                   switchSidebarCategoryTab(catAttr, true);
                   return;
                 }
+                if (typeof closeFilterSidebar === "function") {
+                  closeFilterSidebar();
+                  return;
+                }
               }
             }
-          } else if (inRightSubCol && dir === "left") {
+          } else if (inRightSubCol && (dir === "left" || dir === "right")) {
             const curSubBox = getSpatialLayoutBox(currentSpatialEl);
             const rightPanelItems = Array.from(document.querySelectorAll("#sidebarRightSubPanel " + FOCUSABLE_SELECTOR)).filter(el => list.includes(el));
-            const hasLeftNeighborInSubPanel = rightPanelItems.some(cand => {
-              if (cand === currentSpatialEl) return false;
-              const r = getSpatialLayoutBox(cand);
-              const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
-              const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
-              return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
-            });
-            if (!hasLeftNeighborInSubPanel) {
-              if (typeof closeSidebarSubPanelToMain === "function") {
-                closeSidebarSubPanelToMain();
+            if (dir === "left") {
+              const hasLeftNeighborInSubPanel = rightPanelItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
+              });
+              if (!hasLeftNeighborInSubPanel) {
+                if (typeof closeSidebarSubPanelToMain === "function") {
+                  closeSidebarSubPanelToMain();
+                  return;
+                }
+              }
+            } else if (dir === "right") {
+              const hasRightNeighborInSubPanel = rightPanelItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) > (curSubBox.left + curSubBox.width / 2) + 6;
+              });
+              if (!hasRightNeighborInSubPanel && typeof closeFilterSidebar === "function") {
+                closeFilterSidebar();
                 return;
               }
             }
@@ -7978,7 +8038,9 @@
             }
             return;
           }
-          if (dir === "left") {
+          if (dir === "left" || dir === "right") {
+            const elevContainer = document.getElementById("tvQuickJumpElevator");
+            if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
             if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
               setSpatialFocus(lastElevatorReturnEl, true, "left");
               return;
@@ -7994,8 +8056,6 @@
               setSpatialFocus(visibleCards[0], false, "left");
               return;
             }
-          }
-          if (dir === "right") {
             return;
           }
         }
@@ -8075,6 +8135,7 @@
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           state.sidebarOpen
         );
+        const isCurrentCatalogCard = Boolean(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"));
         if (
           dir === "right" &&
           !hasOverlayBlockingElevator &&
@@ -8089,6 +8150,7 @@
             if (cand === currentSpatialEl) return false;
             if (cand.id === "smartPageIndicatorBtn" || cand.id === "catalogBackToTopFab") return false;
             if (cand.closest && (cand.closest("#tvQuickJumpElevator") || cand.closest("header"))) return false;
+            if (isCurrentCatalogCard && !(cand.classList && cand.classList.contains("card"))) return false;
             const r = getSpatialLayoutBox(cand);
             const cTx = r.left + r.width / 2;
             const cTy = r.top + r.height / 2;
@@ -8126,6 +8188,7 @@
             if (cand === currentSpatialEl) return false;
             if (cand.id === "smartPageIndicatorBtn" || cand.id === "catalogBackToTopFab") return false;
             if (cand.closest && (cand.closest("#tvQuickJumpElevator") || cand.closest("header"))) return false;
+            if (isCurrentCatalogCard && !(cand.classList && cand.classList.contains("card"))) return false;
             const r = getSpatialLayoutBox(cand);
             const cTx = r.left + r.width / 2;
             const cTy = r.top + r.height / 2;
@@ -8510,12 +8573,15 @@
 
       function focusSearchWithoutScrollClient() {
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("light");
+        const elevContainer = document.getElementById("tvQuickJumpElevator");
+        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
         const hdr = document.getElementById("topUnifiedBar");
         if (hdr && typeof expandMobileSearchBarClient === "function") {
           expandMobileSearchBarClient(true);
         }
         const inp = document.getElementById("searchInput");
         if (inp) {
+          setSpatialFocus(inp, false);
           try { inp.focus({ preventScroll: true }); } catch (e) { try { inp.focus(); } catch (e2) {} }
         }
         if (typeof showHudToast === "function") showHudToast("🔍 Suchfeld aktiv");
@@ -8523,6 +8589,8 @@
 
       function openPageJumpFromElevatorClient() {
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+        const elevContainer = document.getElementById("tvQuickJumpElevator");
+        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
         const totPages = Math.max(1, Number(state.totalPages) || 1);
         if (totPages > 1 && typeof openPageJumpModalClient === "function") {
           openPageJumpModalClient();
@@ -8533,7 +8601,13 @@
 
       function scrollToTopFromElevatorClient() {
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+        const elevContainer = document.getElementById("tvQuickJumpElevator");
+        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
         window.scrollTo({ top: 0, behavior: "smooth" });
+        const firstTopCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
+        if (firstTopCard) {
+          setSpatialFocus(firstTopCard, false, "up");
+        }
         if (typeof showHudToast === "function") showHudToast("⬆️ Nach oben");
       }
 

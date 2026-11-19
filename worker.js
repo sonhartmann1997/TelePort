@@ -30667,30 +30667,51 @@
         position: fixed;
         right: 0;
         top: 50%;
-        transform: translate3d(calc(100% - 6px), -50%, 0);
+        transform: translate3d(calc(100% + 2px), -50%, 0);
         z-index: 76;
         display: flex;
         flex-direction: column;
         gap: 6px;
-        padding: 8px 8px 8px 7px;
+        padding: 9px 9px 9px 8px;
         border-radius: 14px 0 0 14px;
-        background: linear-gradient(165deg, rgba(8, 13, 24, 0.88), rgba(15, 23, 42, 0.92));
-        backdrop-filter: blur(24px) saturate(180%);
-        -webkit-backdrop-filter: blur(24px) saturate(180%);
-        border: 1px solid rgba(56, 189, 248, 0.38);
+        background: linear-gradient(
+          155deg,
+          rgba(8, 13, 26, 0.58) 0%,
+          rgba(12, 19, 36, 0.52) 52%,
+          rgba(var(--ambi-1), 0.22) 100%
+        );
+        backdrop-filter: blur(28px) saturate(185%);
+        -webkit-backdrop-filter: blur(28px) saturate(185%);
+        border: 1px solid rgba(var(--ambi-2), 0.42);
         border-right: none;
-        box-shadow: -8px 12px 32px rgba(0, 0, 0, 0.78), 0 0 18px rgba(14, 165, 233, 0.16);
-        opacity: 0.25;
+        box-shadow: -12px 14px 38px rgba(0, 0, 0, 0.82), inset 1px 0 22px rgba(var(--ambi-2), 0.12);
+        opacity: 1;
         pointer-events: auto;
-        transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      .elevator-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 74;
+        background: radial-gradient(circle at 86% 50%, rgba(var(--ambi-1), 0.16) 0%, rgba(2, 6, 18, 0.56) 72%);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.24s ease;
       }
       body.in-hero-slider .tv-quick-jump-elevator,
+      body.in-hero-slider .elevator-backdrop,
       body.in-hero-slider .catalog-edge-trigger-left,
       body.in-hero-slider .catalog-edge-trigger-right,
       body:has(#modalRoot .modal-backdrop) .tv-quick-jump-elevator,
+      body:has(#modalRoot .modal-backdrop) .elevator-backdrop,
       body:has(#filterSidebarDrawer.open) .tv-quick-jump-elevator,
+      body:has(#filterSidebarDrawer.open) .elevator-backdrop,
       body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator,
-      body:has(#personSpotlightOverlayRoot .person-spotlight-overlay) .tv-quick-jump-elevator {
+      body:has(#customDialogRoot .page-jump-modal-backdrop) .elevator-backdrop,
+      body:has(#personSpotlightOverlayRoot .person-spotlight-overlay) .tv-quick-jump-elevator,
+      body:has(#personSpotlightOverlayRoot .person-spotlight-overlay) .elevator-backdrop {
         display: none !important;
         opacity: 0 !important;
         pointer-events: none !important;
@@ -30704,8 +30725,16 @@
         opacity: 1 !important;
         pointer-events: auto !important;
         transform: translate3d(0, -50%, 0) !important;
-        border-color: rgba(56, 189, 248, 0.75);
-        box-shadow: -12px 16px 36px rgba(0, 0, 0, 0.85), 0 0 24px rgba(14, 165, 233, 0.28);
+        border-color: rgba(56, 189, 248, 0.78);
+        box-shadow: -16px 16px 44px rgba(0, 0, 0, 0.86), 0 0 26px rgba(14, 165, 233, 0.28);
+      }
+      .tv-quick-jump-elevator:hover + .elevator-backdrop,
+      .tv-quick-jump-elevator:focus-within + .elevator-backdrop,
+      .tv-quick-jump-elevator.is-hover-expanded + .elevator-backdrop,
+      .tv-quick-jump-elevator.is-visible + .elevator-backdrop,
+      .tv-quick-jump-elevator:has(.spatial-focus) + .elevator-backdrop,
+      .catalog-edge-trigger-right:hover ~ .elevator-backdrop {
+        opacity: 1;
       }
       .tv-elevator-btn {
         min-height: 36px;
@@ -30713,10 +30742,8 @@
         box-sizing: border-box;
         padding: 0 10px;
         border-radius: 9px;
-        border: 1px solid rgba(148, 163, 184, 0.22);
-        background: rgba(30, 41, 59, 0.68);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(15, 23, 42, 0.46);
         color: #e2e8f0;
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 800;
@@ -35307,13 +35334,14 @@
       <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen" onmousedown="event.preventDefault()"></div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
-    <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="toggleFilterSidebar()" onmouseenter="if(!document.body.classList.contains('in-hero-slider')){toggleFilterSidebar();}" title="Menü-Übersicht direkt öffnen"></div>
+    <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="if(!state.sidebarOpen)toggleFilterSidebar()" onmouseenter="if(!state.sidebarOpen&&!document.body.classList.contains('in-hero-slider')){toggleFilterSidebar();}" title="Menü-Übersicht direkt öffnen"></div>
     <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onmouseenter="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.add('is-hover-expanded')" onmouseleave="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.remove('is-hover-expanded')" aria-hidden="true"></div>
     <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" onmouseleave="this.classList.remove('is-hover-expanded')" aria-label="Katalog-Navigation">
       <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient()" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
       <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient()" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
       <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="scrollToTopFromElevatorClient()" title="Ganz nach oben scrollen"><span>⬆️</span><span class="tv-elev-label">Nach oben</span></button>
     </nav>
+    <div id="elevatorBackdrop" class="elevator-backdrop" aria-hidden="true"></div>
 
     <!-- Linke 2-Spalten Ambilight-Glas Sidebar (Links: Einzeilige Kategorien | Rechts: Dynamisches Optionen-Panel) -->
     <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="closeFilterSidebar()"></div>
@@ -38937,6 +38965,12 @@
           }
           unlockCatalogCoversLoadingClient(true);
           syncSmartPageIndicatorDomClient(true);
+          if (typeof focusFirstResultCard === "function") {
+            const curEl = typeof currentSpatialEl !== "undefined" ? currentSpatialEl : null;
+            if (!curEl || (curEl.closest && (curEl.closest(".hero") || curEl.closest("#heroBannerSlot")))) {
+              focusFirstResultCard(false);
+            }
+          }
           // Sobald der Nutzer vom Slider nach unten zu den Covern scrollt, direkt die nächste Seite im Hintergrund vorladen!
           if (state.hasMorePages && !state.loadingMore && Number(state.page || 1) === Number(state.startPage || 1) && typeof loadMoreResults === "function") {
             setTimeout(() => {
@@ -59517,6 +59551,14 @@
         }
         currentSpatialEl = el;
         currentSpatialEl.classList.add("spatial-focus");
+        const elevBox = document.getElementById("tvQuickJumpElevator");
+        if (elevBox) {
+          const goingIntoElev = Boolean(el.closest && el.closest("#tvQuickJumpElevator"));
+          elevBox.classList.toggle("is-visible", goingIntoElev);
+          if (!goingIntoElev) {
+            elevBox.classList.remove("is-hover-expanded");
+          }
+        }
         if (el.classList && el.classList.contains("ac-item")) {
           const acBoxEl = document.getElementById("searchAutocompleteBox");
           if (acBoxEl) {
@@ -59699,10 +59741,37 @@
           }
         }
 
+        const elevElForHoverCheck = document.getElementById("tvQuickJumpElevator");
+        if (
+          elevElForHoverCheck &&
+          elevElForHoverCheck.classList.contains("is-hover-expanded") &&
+          (!currentSpatialEl || !(currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator")))
+        ) {
+          if (currentSpatialEl && !(currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"))) {
+            lastElevatorReturnEl = currentSpatialEl;
+          }
+          const firstElevBtn = document.getElementById("tvElevBtnSearch") || document.getElementById("tvElevBtnBot") || document.getElementById("tvElevBtnTop") || elevElForHoverCheck.querySelector(".tv-elevator-btn");
+          if (firstElevBtn) {
+            setSpatialFocus(firstElevBtn, false, dir);
+            return;
+          }
+        }
+
         if (!currentSpatialEl || !list.includes(currentSpatialEl)) {
           userScrolledRecently = false;
-          const activeHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active") || document.getElementById("heroBtnTrailer");
-          setSpatialFocus(activeHeroDot || list[0], true, dir);
+          const rawHeroTarget = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active") || document.getElementById("heroBtnTrailer");
+          const activeHeroDot = (rawHeroTarget && list.includes(rawHeroTarget)) ? rawHeroTarget : null;
+          if (activeHeroDot) {
+            setSpatialFocus(activeHeroDot, true, dir);
+            return;
+          }
+          const visibleCards = Array.from(document.querySelectorAll("#resultsGridContainer .card, #appRoot .card")).filter(el => {
+            if (!list.includes(el)) return false;
+            const r = el.getBoundingClientRect();
+            return r.bottom > 64 && r.top < window.innerHeight - 24;
+          });
+          const fallbackTarget = visibleCards[0] || list.find(el => !(el.closest && (el.closest("#tvQuickJumpElevator") || el.closest("header")))) || list[0];
+          setSpatialFocus(fallbackTarget, true, dir);
           return;
         }
 
@@ -59714,7 +59783,7 @@
           const isOffscreen = curR.bottom < 64 || curR.top > window.innerHeight - 24;
           if (isOffscreen) {
             const visibleInViewport = list.filter(cand => {
-              if (cand.closest && cand.closest("header")) return false;
+              if (cand.closest && (cand.closest("header") || cand.closest("#tvQuickJumpElevator"))) return false;
               const r = cand.getBoundingClientRect();
               return r.top >= 58 && r.bottom <= window.innerHeight - 16;
             });
@@ -59728,11 +59797,18 @@
         // Smarte 2-Spalten-Navigation im Ambilight-Glas-Menü (#filterSidebarDrawer):
         // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen inkl. der untersten 2 Elemente!
         //   Klick nach Rechts (ArrowRight) öffnet sofort die Optionen rechts im Sub-Panel (#sidebarRightSubPanel).
+        //   Klick nach Links (ArrowLeft) schließt die Menü-Übersicht und kehrt direkt zur Karte zurück!
         // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Klick nach Links (ArrowLeft) vom linken Rand führt sofort zurück in die Menü-Übersicht!
         if (state.sidebarOpen) {
           const inLeftMenuCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarDrawerBody"));
           const inRightSubCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel"));
           if (inLeftMenuCol) {
+            if (dir === "left") {
+              if (typeof closeFilterSidebar === "function") {
+                closeFilterSidebar();
+                return;
+              }
+            }
             const leftRows = Array.from(document.querySelectorAll("#sidebarDrawerBody .sidebar-menu-row")).filter(el => list.includes(el));
             const rowIdx = leftRows.indexOf(currentSpatialEl);
             if (rowIdx !== -1) {
@@ -59757,21 +59833,39 @@
                   switchSidebarCategoryTab(catAttr, true);
                   return;
                 }
+                if (typeof closeFilterSidebar === "function") {
+                  closeFilterSidebar();
+                  return;
+                }
               }
             }
-          } else if (inRightSubCol && dir === "left") {
+          } else if (inRightSubCol && (dir === "left" || dir === "right")) {
             const curSubBox = getSpatialLayoutBox(currentSpatialEl);
             const rightPanelItems = Array.from(document.querySelectorAll("#sidebarRightSubPanel " + FOCUSABLE_SELECTOR)).filter(el => list.includes(el));
-            const hasLeftNeighborInSubPanel = rightPanelItems.some(cand => {
-              if (cand === currentSpatialEl) return false;
-              const r = getSpatialLayoutBox(cand);
-              const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
-              const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
-              return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
-            });
-            if (!hasLeftNeighborInSubPanel) {
-              if (typeof closeSidebarSubPanelToMain === "function") {
-                closeSidebarSubPanelToMain();
+            if (dir === "left") {
+              const hasLeftNeighborInSubPanel = rightPanelItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) < (curSubBox.left + curSubBox.width / 2) - 6;
+              });
+              if (!hasLeftNeighborInSubPanel) {
+                if (typeof closeSidebarSubPanelToMain === "function") {
+                  closeSidebarSubPanelToMain();
+                  return;
+                }
+              }
+            } else if (dir === "right") {
+              const hasRightNeighborInSubPanel = rightPanelItems.some(cand => {
+                if (cand === currentSpatialEl) return false;
+                const r = getSpatialLayoutBox(cand);
+                const vOverlap = Math.min(curSubBox.bottom, r.bottom) - Math.max(curSubBox.top, r.top);
+                const isSameRow = vOverlap > 4 || Math.abs((r.top + r.height / 2) - (curSubBox.top + curSubBox.height / 2)) < Math.max(curSubBox.height, r.height) * 0.65;
+                return isSameRow && (r.left + r.width / 2) > (curSubBox.left + curSubBox.width / 2) + 6;
+              });
+              if (!hasRightNeighborInSubPanel && typeof closeFilterSidebar === "function") {
+                closeFilterSidebar();
                 return;
               }
             }
@@ -60083,7 +60177,9 @@
             }
             return;
           }
-          if (dir === "left") {
+          if (dir === "left" || dir === "right") {
+            const elevContainer = document.getElementById("tvQuickJumpElevator");
+            if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
             if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
               setSpatialFocus(lastElevatorReturnEl, true, "left");
               return;
@@ -60099,8 +60195,6 @@
               setSpatialFocus(visibleCards[0], false, "left");
               return;
             }
-          }
-          if (dir === "right") {
             return;
           }
         }
@@ -60180,6 +60274,7 @@
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           state.sidebarOpen
         );
+        const isCurrentCatalogCard = Boolean(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"));
         if (
           dir === "right" &&
           !hasOverlayBlockingElevator &&
@@ -60194,6 +60289,7 @@
             if (cand === currentSpatialEl) return false;
             if (cand.id === "smartPageIndicatorBtn" || cand.id === "catalogBackToTopFab") return false;
             if (cand.closest && (cand.closest("#tvQuickJumpElevator") || cand.closest("header"))) return false;
+            if (isCurrentCatalogCard && !(cand.classList && cand.classList.contains("card"))) return false;
             const r = getSpatialLayoutBox(cand);
             const cTx = r.left + r.width / 2;
             const cTy = r.top + r.height / 2;
@@ -60231,6 +60327,7 @@
             if (cand === currentSpatialEl) return false;
             if (cand.id === "smartPageIndicatorBtn" || cand.id === "catalogBackToTopFab") return false;
             if (cand.closest && (cand.closest("#tvQuickJumpElevator") || cand.closest("header"))) return false;
+            if (isCurrentCatalogCard && !(cand.classList && cand.classList.contains("card"))) return false;
             const r = getSpatialLayoutBox(cand);
             const cTx = r.left + r.width / 2;
             const cTy = r.top + r.height / 2;
@@ -60615,12 +60712,15 @@
 
       function focusSearchWithoutScrollClient() {
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("light");
+        const elevContainer = document.getElementById("tvQuickJumpElevator");
+        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
         const hdr = document.getElementById("topUnifiedBar");
         if (hdr && typeof expandMobileSearchBarClient === "function") {
           expandMobileSearchBarClient(true);
         }
         const inp = document.getElementById("searchInput");
         if (inp) {
+          setSpatialFocus(inp, false);
           try { inp.focus({ preventScroll: true }); } catch (e) { try { inp.focus(); } catch (e2) {} }
         }
         if (typeof showHudToast === "function") showHudToast("🔍 Suchfeld aktiv");
@@ -60628,6 +60728,8 @@
 
       function openPageJumpFromElevatorClient() {
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+        const elevContainer = document.getElementById("tvQuickJumpElevator");
+        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
         const totPages = Math.max(1, Number(state.totalPages) || 1);
         if (totPages > 1 && typeof openPageJumpModalClient === "function") {
           openPageJumpModalClient();
@@ -60638,7 +60740,13 @@
 
       function scrollToTopFromElevatorClient() {
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+        const elevContainer = document.getElementById("tvQuickJumpElevator");
+        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
         window.scrollTo({ top: 0, behavior: "smooth" });
+        const firstTopCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
+        if (firstTopCard) {
+          setSpatialFocus(firstTopCard, false, "up");
+        }
         if (typeof showHudToast === "function") showHudToast("⬆️ Nach oben");
       }
 
