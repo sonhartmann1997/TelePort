@@ -45666,7 +45666,7 @@
         const type = d.typeCode || "m";
         state.activeDetails._selectedHeroVersionValue = val;
         if (type === "s") {
-          const curSeason = Number(state.activeDetails._activeLoadedSeason || d.firstVipSeason || 1);
+          const curSeason = Number(state.activeDetails._activeLoadedSeason ?? d.firstVipSeason ?? 1);
           selectSeasonPreferredProfileClient(d.id, curSeason, val || "auto");
         }
       }
@@ -45725,7 +45725,7 @@
             });
             if (matched) chosenFile = matched;
           }
-          const curSeason = Number(targetEp.season_number || prog?.season || d.firstVipSeason || 1);
+          const curSeason = Number(targetEp.season_number ?? prog?.season ?? d.firstVipSeason ?? 1);
           const epCode = "S" + String(curSeason).padStart(2, "0") + "E" + String(targetEp.episode_number).padStart(2, "0");
           const sizeLabel = formatFileSizeClient(chosenFile.file_size);
           const tagsLabel = cleanUserVisibleStreamTagsClient(chosenFile.tags || chosenFile.versionLabel || chosenFile.version_label || "");
@@ -46262,19 +46262,20 @@
         }
 
         const savedProg = type === "s" ? getSeriesProgress(d.id) : null;
-        const initialSeason = (forceSeasonNum && Number(forceSeasonNum) > 0)
+        const hasForcedSeason = forceSeasonNum !== undefined && forceSeasonNum !== null && !isNaN(Number(forceSeasonNum));
+        const initialSeason = hasForcedSeason
           ? Number(forceSeasonNum)
-          : (savedProg && savedProg.season > 0)
-            ? savedProg.season
-            : (Number(d.firstVipSeason || 0) > 0 ? Number(d.firstVipSeason) : 1);
+          : (savedProg && savedProg.season !== undefined && savedProg.season !== null && !isNaN(Number(savedProg.season)))
+            ? Number(savedProg.season)
+            : (d.firstVipSeason !== undefined && d.firstVipSeason !== null && !isNaN(Number(d.firstVipSeason)) ? Number(d.firstVipSeason) : 1);
         if (state.activeDetails) {
           state.activeDetails._activeLoadedSeason = initialSeason;
         }
 
         const primaryPlayBtnLabel = hasVipStreams
           ? (type === "s"
-              ? (savedProg && savedProg.season && savedProg.episode
-                  ? ("▶ Weiter: S" + Number(savedProg.season) + " · E" + Number(savedProg.episode))
+              ? (savedProg && savedProg.season !== undefined && savedProg.season !== null && savedProg.episode
+                  ? ("▶ Weiter: S" + String(savedProg.season).padStart(2, "0") + " · E" + String(savedProg.episode).padStart(2, "0"))
                   : "▶ Abspielen")
               : "▶ Abspielen")
           : "▶ Trailer";
@@ -48169,7 +48170,7 @@
               const codecLabel = dl.codec || (/\\.(?:zip|z\\d{2}|zip\\.\\d{3})$/i.test(fnLabel) ? "ZIP" : /\\.7z(?:\\.\\d{3})?$/i.test(fnLabel) ? "7Z" : /\\.iso$/i.test(fnLabel) ? "ISO" : /\\.(?:tar|gz)$/i.test(fnLabel) ? "TAR" : "RAR");
               const partLabel = normalizeClientPartLabel(dl.part, fnLabel);
               const partNum = Number(dl.part_number || extractClientPartNumber(partLabel) || 0);
-              const hasSeEp = Number(dl.season_number || 0) > 0 && Number(dl.episode_number || 0) > 0;
+              const hasSeEp = Number.isFinite(Number(dl.season_number)) && Number.isFinite(Number(dl.episode_number)) && Number(dl.episode_number) > 0;
               const seEpCode = hasSeEp ? ('S' + String(dl.season_number).padStart(2, '0') + 'E' + String(dl.episode_number).padStart(2, '0')) : '';
               const btnCaption = (rawDownloads.length > 1 && partNum > 0)
                 ? ('📦 Teil ' + partNum + ' senden')
@@ -48216,7 +48217,7 @@
           const fnLabel = dl.file_name || dl.raw_filename || "Archiv-Download";
           const codecLabel = dl.codec || (/\\.(?:zip|z\\d{2}|zip\\.\\d{3})$/i.test(fnLabel) ? "ZIP" : /\\.7z(?:\\.\\d{3})?$/i.test(fnLabel) ? "7Z" : "RAR");
           const partLabel = normalizeClientPartLabel(dl.part, fnLabel) || ("Teil " + (i + 1));
-          const hasSeEp = Number(dl.season_number || 0) > 0 && Number(dl.episode_number || 0) > 0;
+          const hasSeEp = Number.isFinite(Number(dl.season_number)) && Number.isFinite(Number(dl.episode_number)) && Number(dl.episode_number) > 0;
           const seEpCode = hasSeEp ? (' S' + String(dl.season_number).padStart(2, '0') + 'E' + String(dl.episode_number).padStart(2, '0')) : '';
           const sizeLabel = formatFileSizeClient(dl.file_size);
           const itemTitle = (d.title || "Archiv") + seEpCode + " (" + partLabel + ")";
@@ -48531,7 +48532,8 @@
           if (!bestFile || !targetFileId) continue;
           const epCode = "S" + String(seasonNum).padStart(2, "0") + "E" + String(ep.episode_number).padStart(2, "0");
           const sizeLabel = formatFileSizeClient(bestFile.file_size);
-          setBusyState(true, "📦 Staffel " + seasonNum + " (" + (i + 1) + "/" + episodesWithStreams.length + "): " + epCode + "...");
+          const sTitlePrefix = Number(seasonNum) === 0 ? "Specials" : ("Staffel " + seasonNum);
+          setBusyState(true, "📦 " + sTitlePrefix + " (" + (i + 1) + "/" + episodesWithStreams.length + "): " + epCode + "...");
           try {
             const r = await apiFetchJson(API_BASE + "/stream", {
               method: "POST",
@@ -48567,25 +48569,33 @@
         }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
+        const sSummaryPrefix = Number(seasonNum) === 0 ? "Specials" : ("Staffel " + seasonNum);
         if (queuedCount > 0) {
-          showHudToast("⏳ Staffel " + seasonNum + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Anti-Spam Warteschleife!");
+          showHudToast("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Anti-Spam Warteschleife!");
         } else {
-          showHudToast("✅ Staffel " + seasonNum + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!");
+          showHudToast("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!");
         }
         loadSeason(seriesId, seasonNum, false, false);
       }
 
       async function loadSeason(seriesId, seasonNum, jumpToFirstEpisode = false, forceRefresh = false) {
+        const parsedSeasonNum = (seasonNum !== undefined && seasonNum !== null && !isNaN(Number(seasonNum))) ? Number(seasonNum) : 1;
         if (state.activeDetails && String(state.activeDetails.id) === String(seriesId)) {
-          state.activeDetails._activeLoadedSeason = Number(seasonNum) || 1;
+          state.activeDetails._activeLoadedSeason = parsedSeasonNum;
         }
         // 0ms Optimistisches UI-Feedback beim Staffel-Tab-Wechsel
         const existingBox = document.getElementById("seasonBox");
         if (existingBox) {
           existingBox.querySelectorAll(".season-tab-btn").forEach(btn => {
-            const m = String(btn.textContent || "").match(/Staffel\\s+(\\d+)/i);
-            if (m) {
-              btn.classList.toggle("active", Number(m[1]) === Number(seasonNum));
+            const dataS = btn.getAttribute("data-season-num");
+            if (dataS !== null) {
+              btn.classList.toggle("active", Number(dataS) === parsedSeasonNum);
+            } else {
+              const m = String(btn.textContent || "").match(/(?:Staffel\\s+(\\d+)|Specials)/i);
+              if (m) {
+                const sVal = m[1] !== undefined ? Number(m[1]) : 0;
+                btn.classList.toggle("active", sVal === parsedSeasonNum);
+              }
             }
           });
         }
@@ -48704,14 +48714,15 @@
           const rawCnt = vipAllowed ? Number(sCounts[n] || sCounts[String(n)] || 0) : 0;
           const vipEpCnt = (n === seasonNum && maxAllowedEpisodes > 0) ? Math.min(rawCnt, maxAllowedEpisodes) : rawCnt;
           const vipBadgeTxt = vipEpCnt > 0 ? (' · ' + vipEpCnt) : '';
-          return '<button type="button" class="season-tab-btn ' + (n === seasonNum ? 'active' : '') + '" onclick="loadSeason(' + seriesId + ',' + n + ',true)">Staffel ' + n + vipBadgeTxt + (isProgSeason ? ' 👁️' : '') + '</button>';
+          const sLabel = n === 0 ? 'Specials' : ('Staffel ' + n);
+          return '<button type="button" class="season-tab-btn ' + (n === seasonNum ? 'active' : '') + '" data-season-num="' + n + '" onclick="loadSeason(' + seriesId + ',' + n + ',true)">' + esc(sLabel) + vipBadgeTxt + (isProgSeason ? ' 👁️' : '') + '</button>';
         }).join("");
 
         const progressBannerHtml = prog ? (
           '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;margin-bottom:8px;border-radius:8px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);font-size:11.5px">' +
             '<span>👁️ <b>Fortschritt:</b> Zuletzt bei <b>S' + String(prog.season).padStart(2,'0') + 'E' + String(prog.episode).padStart(2,'0') + '</b>' + (prog.epName ? ' (' + esc(prog.epName) + ')' : '') + '</span>' +
             (Number(prog.season) !== Number(seasonNum)
-              ? '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu Staffel ' + Number(prog.season) + '</button>'
+              ? '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="loadSeason(' + seriesId + ',' + Number(prog.season) + ',true)">↪️ Zu ' + (Number(prog.season) === 0 ? 'Specials' : ('Staffel ' + Number(prog.season))) + '</button>'
               : '<button type="button" class="season-tab-btn" style="padding:3px 9px;font-size:11px" onclick="scrollToActiveProgressEpisodeClient()">🎯 Zur Folge springen ▾</button>') +
           '</div>'
         ) : '';
@@ -48911,8 +48922,8 @@
             '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
               episodeQuickFilterHtml +
               ((vipAllowed && seasonStreamableCount > 0) ? (
-                '<button type="button" class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(56,189,248,0.45);color:#7dd3fc" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von Staffel ' + seasonNum + ' (inkl. automatisch ergänzter Folgen) nacheinander senden">' +
-                  '📦 Staffel ' + seasonNum + ' komplett senden (' + seasonStreamableCount + ')' +
+                '<button type="button" class="btn-action-glass" style="padding:5px 10px;font-size:11.5px;border-color:rgba(56,189,248,0.45);color:#7dd3fc" onclick="sendWholeSeasonToTelegram(' + seriesId + ',' + seasonNum + ')" title="Alle ' + seasonStreamableCount + ' verfügbaren Folgen von ' + (Number(seasonNum) === 0 ? 'Specials' : ('Staffel ' + seasonNum)) + ' (inkl. automatisch ergänzter Folgen) nacheinander senden">' +
+                  '📦 ' + (Number(seasonNum) === 0 ? 'Specials' : ('Staffel ' + seasonNum)) + ' komplett senden (' + seasonStreamableCount + ')' +
                 '</button>'
               ) : '') +
             '</div>' +
