@@ -2838,9 +2838,16 @@
           ? verifiedTrailerCandidates
           : [];
         const ytKey = candidateKeys[0] || "";
+        const trailerMetaMap = typeof resolveYoutubeTrailerCandidatesMeta === "function"
+          ? resolveYoutubeTrailerCandidatesMeta(candidateKeys, details.trailerCandidatesMeta)
+          : {};
+        const primaryTrailerLang = String(trailerMetaMap[ytKey]?.lang || "").toLowerCase();
+        const autoEnableSubtitles = primaryTrailerLang === "en";
         const trailers = ytKey ? {
           key: ytKey,
+          lang: primaryTrailerLang,
           candidates: candidateKeys,
+          meta: trailerMetaMap,
           youtube: `https://www.youtube.com/watch?v=${ytKey}`,
           piped: `https://piped.video/watch?v=${ytKey}`,
           invidious1: `https://yewtu.be/watch?v=${ytKey}`,
@@ -2848,7 +2855,7 @@
           invidiousDe: `https://invidious.nerdvpn.de/watch?v=${ytKey}`,
           poketube: `https://poketube.fun/watch?v=${ytKey}`,
           embeds: {
-            youtube: `https://www.youtube-nocookie.com/embed/${ytKey}?autoplay=1&mute=0&controls=0&disablekb=1&fs=0&showinfo=0&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&autohide=1&playsinline=1&enablejsapi=1&hl=de`,
+            youtube: `https://www.youtube-nocookie.com/embed/${ytKey}?autoplay=1&mute=0&controls=0&disablekb=1&fs=0&showinfo=0&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=${autoEnableSubtitles ? 1 : 0}${autoEnableSubtitles ? "&cc_lang_pref=de" : ""}&autohide=1&playsinline=1&enablejsapi=1&hl=de`,
             piped: `https://piped.video/embed/${ytKey}?autoplay=1`,
             invidious1: `https://yewtu.be/embed/${ytKey}?autoplay=1`,
             invidious2: `https://inv.nadeko.net/embed/${ytKey}?autoplay=1`,

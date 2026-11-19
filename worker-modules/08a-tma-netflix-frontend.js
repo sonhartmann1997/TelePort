@@ -2341,11 +2341,40 @@
           rgba(15, 23, 42, 0.88) 100%
         );
       }
-      .search-bar:focus-within {
-        border-color: rgba(var(--ambi-2), 0.76);
+      header:has(.search-bar:focus-within),
+      header.mobile-search-expanded {
+        z-index: 82;
+      }
+      .search-bar:focus-within,
+      .search-bar.is-search-focused {
+        border-color: #38bdf8 !important;
+        background: linear-gradient(
+          135deg,
+          rgba(10, 18, 34, 0.96) 0%,
+          rgba(14, 165, 233, 0.24) 52%,
+          rgba(10, 18, 34, 0.96) 100%
+        );
         box-shadow:
-          0 8px 26px rgba(0, 0, 0, 0.62),
-          0 0 24px rgba(var(--ambi-2), 0.28);
+          0 0 0 3px rgba(56, 189, 248, 0.36),
+          0 8px 28px rgba(0, 0, 0, 0.68),
+          0 0 26px rgba(56, 189, 248, 0.26) !important;
+      }
+      @keyframes searchFocusAttentionPulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.72), 0 8px 28px rgba(0, 0, 0, 0.68);
+        }
+        60% {
+          box-shadow: 0 0 0 7px rgba(56, 189, 248, 0.22), 0 8px 30px rgba(14, 165, 233, 0.38);
+        }
+        100% {
+          box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.36), 0 8px 28px rgba(0, 0, 0, 0.68);
+        }
+      }
+      .search-bar.search-focus-pulse {
+        animation: searchFocusAttentionPulse 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #searchInput {
+        caret-color: #38bdf8;
       }
       #searchInput:focus,
       .search-scope-select:focus,
@@ -2361,8 +2390,8 @@
         transform: none !important;
       }
       .search-bar:has(#searchInput.spatial-focus) {
-        border-color: var(--accent-primary) !important;
-        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.35), 0 4px 16px rgba(0, 0, 0, 0.55) !important;
+        border-color: #38bdf8 !important;
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.42), 0 6px 22px rgba(0, 0, 0, 0.6) !important;
       }
       .search-scope-select.spatial-focus,
       .search-genre-trigger-btn.spatial-focus,
@@ -2574,10 +2603,9 @@
       }
       /* Hintergrund-Scroll-Sperre sobald ein Seitenmenü (Links oder Rechts) aktiv/geöffnet ist */
       body:has(#filterSidebarDrawer.open),
-      body:has(#tvQuickJumpElevator.has-subpanel),
-      body:has(#tvQuickJumpElevator.is-visible),
-      body:has(#tvQuickJumpElevator.is-hover-expanded),
-      body:has(#tvQuickJumpElevator:hover) {
+      body:has(#tvQuickJumpElevator:not(.is-dismissed).has-subpanel),
+      body:has(#tvQuickJumpElevator:not(.is-dismissed).is-visible),
+      body:has(#tvQuickJumpElevator:not(.is-dismissed).is-hover-expanded) {
         overflow: hidden !important;
         overscroll-behavior: none !important;
       }
@@ -2589,12 +2617,16 @@
       .catalog-edge-trigger-right {
         position: fixed;
         right: 0;
-        top: 15%;
-        bottom: 15%;
-        width: 32px;
+        top: 20%;
+        bottom: 20%;
+        width: 18px;
         z-index: 75;
         cursor: pointer;
         background: transparent;
+        transition: background 0.2s ease;
+      }
+      .catalog-edge-trigger-right:hover {
+        background: linear-gradient(270deg, rgba(56, 189, 248, 0.35) 0%, transparent 100%);
       }
       .tv-quick-jump-elevator {
         position: fixed;
@@ -2691,6 +2723,52 @@
         border-color: #38bdf8;
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
       }
+      .rm-time-filter-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 4px;
+        border-radius: 9px;
+        background: rgba(8, 13, 26, 0.52);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+      }
+      .rm-ctrl-select.rm-ctrl-active,
+      .rm-ctrl-input.rm-ctrl-active {
+        border-color: rgba(56, 189, 248, 0.85);
+        background: rgba(14, 165, 233, 0.16);
+        color: #f8fafc;
+      }
+      .rm-ctrl-select.rm-ctrl-superseded,
+      .rm-ctrl-input.rm-ctrl-superseded {
+        opacity: 0.56;
+        border-style: dashed;
+      }
+      .rm-year-input-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+      .rm-year-clear-btn {
+        position: absolute;
+        right: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: none;
+        background: rgba(148, 163, 184, 0.28);
+        color: #f8fafc;
+        font-size: 9.5px;
+        font-weight: 900;
+        line-height: 1;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .rm-year-clear-btn:hover {
+        background: rgba(239, 68, 68, 0.72);
+      }
       .rm-az-strip {
         display: flex;
         flex-wrap: wrap;
@@ -2773,7 +2851,10 @@
         pointer-events: none;
         transition: opacity 0.24s ease;
       }
-      .tv-quick-jump-elevator.has-subpanel + .elevator-backdrop {
+      .tv-quick-jump-elevator:not(.is-dismissed).has-subpanel + .elevator-backdrop,
+      .tv-quick-jump-elevator:not(.is-dismissed).is-visible + .elevator-backdrop,
+      .tv-quick-jump-elevator:not(.is-dismissed).is-hover-expanded + .elevator-backdrop,
+      .tv-quick-jump-elevator:not(.is-dismissed):has(.spatial-focus) + .elevator-backdrop {
         opacity: 1;
         pointer-events: auto;
       }
@@ -2793,25 +2874,23 @@
         opacity: 0 !important;
         pointer-events: none !important;
       }
-      .tv-quick-jump-elevator:hover,
-      .tv-quick-jump-elevator:focus-within,
-      .tv-quick-jump-elevator.is-hover-expanded,
-      .tv-quick-jump-elevator.is-visible,
-      .tv-quick-jump-elevator:has(.spatial-focus),
-      .catalog-edge-trigger-right:hover + .tv-quick-jump-elevator {
+      .tv-quick-jump-elevator:not(.is-dismissed).has-subpanel,
+      .tv-quick-jump-elevator:not(.is-dismissed).is-hover-expanded,
+      .tv-quick-jump-elevator:not(.is-dismissed).is-visible,
+      .tv-quick-jump-elevator:not(.is-dismissed):has(.spatial-focus) {
         opacity: 1 !important;
         pointer-events: auto !important;
         transform: translate3d(0, -50%, 0) !important;
         border-color: rgba(56, 189, 248, 0.78);
         box-shadow: -16px 16px 44px rgba(0, 0, 0, 0.86), 0 0 26px rgba(14, 165, 233, 0.28);
       }
-      .tv-quick-jump-elevator:hover + .elevator-backdrop,
-      .tv-quick-jump-elevator:focus-within + .elevator-backdrop,
-      .tv-quick-jump-elevator.is-hover-expanded + .elevator-backdrop,
-      .tv-quick-jump-elevator.is-visible + .elevator-backdrop,
-      .tv-quick-jump-elevator:has(.spatial-focus) + .elevator-backdrop,
-      .catalog-edge-trigger-right:hover ~ .elevator-backdrop {
-        opacity: 1;
+      .tv-quick-jump-elevator.is-dismissed {
+        transform: translate3d(calc(100% + 2px), -50%, 0) !important;
+        pointer-events: none !important;
+      }
+      .tv-quick-jump-elevator.is-dismissed + .elevator-backdrop {
+        opacity: 0 !important;
+        pointer-events: none !important;
       }
       .tv-elevator-btn {
         min-height: 36px;
@@ -2849,10 +2928,10 @@
         }
       }
       @media (max-width: 720px) {
-        .tv-quick-jump-elevator:not(:focus-within):not(:hover):not(.is-hover-expanded) .tv-elev-label {
+        .tv-quick-jump-elevator:not(:focus-within):not(.is-visible):not(.is-hover-expanded):not(.has-subpanel) .tv-elev-label {
           display: none;
         }
-        .tv-quick-jump-elevator:not(:focus-within):not(:hover):not(.is-hover-expanded) .tv-elevator-btn {
+        .tv-quick-jump-elevator:not(:focus-within):not(.is-visible):not(.is-hover-expanded):not(.has-subpanel) .tv-elevator-btn {
           width: 36px;
           height: 36px;
           min-height: 36px;
@@ -5698,11 +5777,17 @@
         inset: 0;
         width: 100% !important;
         height: 100% !important;
-        transform: none !important;
+        transform-origin: 50% 50%;
+        transform: translate3d(0, 0, 0) scale(1.24) !important;
         clip-path: none !important;
         -webkit-clip-path: none !important;
         border: 0;
         pointer-events: none;
+        transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
+      .hero.is-cc-safe-framing .detail-bg-video-frame {
+        transform: translate3d(0, -8.5%, 0) scale(1.10) !important;
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -5801,16 +5886,33 @@
         z-index: 3;
         filter: brightness(1.03) contrast(1.03);
       }
+      .detail-bg-video-layer::before {
+        content: "";
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        width: 280px;
+        height: 98px;
+        z-index: 2;
+        pointer-events: none;
+        opacity: 0;
+        background: radial-gradient(ellipse at 100% 100%, rgba(4, 7, 15, 0.97) 0%, rgba(4, 7, 15, 0.78) 46%, transparent 78%);
+        transition: opacity 0.24s ease;
+      }
+      .detail-hero-stage.is-cc-safe-framing .detail-bg-video-layer::before,
+      .hero.is-cc-safe-framing .detail-bg-video-layer::before {
+        opacity: 1;
+      }
       .detail-bg-video-layer::after {
         content: "";
         position: absolute;
         inset: 0;
+        z-index: 1;
         pointer-events: none;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0.54) 0%, rgba(4, 7, 15, 0) 11%, rgba(4, 7, 15, 0) 88%, rgba(4, 7, 15, 0.58) 100%);
+        background: linear-gradient(180deg, rgba(4, 7, 15, 0.56) 0%, rgba(4, 7, 15, 0) 11%, rgba(4, 7, 15, 0) 88%, rgba(4, 7, 15, 0.54) 100%);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame,
       .hero.is-trailer-foreground-mode .detail-bg-video-frame {
-        transform: none !important;
         clip-path: none !important;
         -webkit-clip-path: none !important;
       }
@@ -5874,13 +5976,13 @@
         right: auto;
         bottom: 20px;
         z-index: 16;
-        width: min(580px, calc(100% - 28px));
+        width: min(670px, calc(100% - 24px));
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 9px 14px;
+        gap: 8px;
+        padding: 9px 13px;
         border-radius: 18px;
-        background: linear-gradient(135deg, rgba(8, 13, 24, 0.84) 0%, rgba(15, 23, 42, 0.78) 100%);
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(15, 23, 42, 0.80) 100%);
         backdrop-filter: blur(28px) saturate(185%);
         -webkit-backdrop-filter: blur(28px) saturate(185%);
         border: 1px solid rgba(255, 255, 255, 0.18);
@@ -5914,15 +6016,370 @@
         background: linear-gradient(135deg, rgba(8, 13, 24, 0.92) 0%, rgba(15, 23, 42, 0.88) 100%);
         border-color: rgba(56, 189, 248, 0.48);
       }
+      .detail-hero-stage.is-cc-safe-framing .detail-cinema-player-dock,
+      .hero.is-cc-safe-framing .detail-cinema-player-dock {
+        bottom: 12px;
+      }
+      /* Auto-ausblendende STREAMFLIX Kino-Kopfzeile oben (verdeckt YouTube-Titelzeile) */
+      .cinema-top-hud {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 16;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 14px 20px 26px;
+        background: linear-gradient(180deg, rgba(4, 7, 15, 0.92) 0%, rgba(4, 7, 15, 0.56) 58%, transparent 100%);
+        pointer-events: none;
+        opacity: 0;
+        transform: translate3d(0, -10px, 0);
+        transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .detail-hero-stage.is-trailer-foreground-mode .cinema-top-hud,
+      .hero.is-trailer-foreground-mode .cinema-top-hud {
+        opacity: 1;
+        transform: translate3d(0, 0, 0);
+      }
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused .cinema-top-hud,
+      .hero.is-trailer-foreground-mode.is-cinema-paused .cinema-top-hud,
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-starting .cinema-top-hud,
+      .hero.is-trailer-foreground-mode.is-cinema-starting .cinema-top-hud {
+        background: linear-gradient(180deg, rgba(4, 7, 15, 0.99) 0%, rgba(4, 7, 15, 0.88) 66%, transparent 100%);
+      }
+      .cinema-top-hud.is-idle-hidden {
+        opacity: 0 !important;
+        transform: translate3d(0, -10px, 0) !important;
+        pointer-events: none !important;
+      }
+      .cinema-top-hud-info {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        pointer-events: none;
+      }
+      .cinema-top-hud-title {
+        font-size: calc(16px * var(--scale-text));
+        font-weight: 800;
+        color: #f8fafc;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.72);
+      }
+      .cinema-top-hud-meta {
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 600;
+        color: rgba(226, 232, 240, 0.84);
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-variant-numeric: tabular-nums;
+      }
+      .cinema-top-hud-close {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(8, 13, 24, 0.76);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        color: #f8fafc;
+        font-size: calc(14px * var(--scale-text));
+        font-weight: 800;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        cursor: pointer;
+        pointer-events: auto;
+        white-space: nowrap;
+        flex-shrink: 0;
+        transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+      }
+      .cinema-top-hud-close:hover,
+      .cinema-top-hud-close:focus-visible,
+      .cinema-top-hud-close.spatial-focus {
+        background: rgba(56, 189, 248, 0.24);
+        border-color: rgba(56, 189, 248, 0.72);
+        transform: scale(1.04);
+        outline: none;
+      }
+      /* Dezentes Start-/Seek-Ersatzoverlay: Video bleibt sichtbar, nur YouTubes Center-Play/Spinner & untere Startleiste werden überdeckt */
+      .cinema-start-center-shield {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        z-index: 14;
+        width: 102px;
+        height: 102px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(255, 255, 255, 0.22);
+        background: radial-gradient(circle at 32% 28%, rgba(18, 28, 48, 0.96) 0%, rgba(4, 7, 15, 0.98) 100%);
+        backdrop-filter: blur(22px) saturate(160%);
+        -webkit-backdrop-filter: blur(22px) saturate(160%);
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.82), 0 0 0 14px rgba(4, 7, 15, 0.42), 0 0 30px rgba(var(--ambi-1, 14, 165, 233), 0.24);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        opacity: 0;
+        transform: translate3d(-50%, -50%, 0) scale(0.88);
+        transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .cinema-start-center-shield::after {
+        content: "";
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.16);
+        border-top-color: #38bdf8;
+        animation: cinemaStartShieldSpin 0.82s linear infinite;
+      }
+      @keyframes cinemaStartShieldSpin {
+        to { transform: rotate(360deg); }
+      }
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-starting:not(.is-cinema-paused):not(.is-cinema-ended) .cinema-start-center-shield,
+      .hero.is-trailer-foreground-mode.is-cinema-starting:not(.is-cinema-paused):not(.is-cinema-ended) .cinema-start-center-shield {
+        opacity: 1;
+        transform: translate3d(-50%, -50%, 0) scale(1);
+      }
+      .cinema-start-bottom-shield {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: clamp(112px, 16vh, 152px);
+        z-index: 13;
+        pointer-events: none;
+        background: linear-gradient(0deg, rgba(4, 7, 15, 0.995) 0%, rgba(4, 7, 15, 0.94) 52%, rgba(4, 7, 15, 0.65) 78%, transparent 100%);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        opacity: 0;
+        transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-starting:not(.is-cinema-paused):not(.is-cinema-ended) .cinema-start-bottom-shield,
+      .hero.is-trailer-foreground-mode.is-cinema-starting:not(.is-cinema-paused):not(.is-cinema-ended) .cinema-start-bottom-shield {
+        opacity: 1;
+      }
+      /* Gezieltes Pause-Ersatzoverlay: Video bleibt sichtbar! Nur YT-Center-Play & YT-Weitere-Videos-Leiste werden überdeckt */
+      .cinema-pause-center-btn {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        z-index: 15;
+        width: 96px;
+        height: 96px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(255, 255, 255, 0.28);
+        background: radial-gradient(circle at 32% 28%, rgba(30, 41, 59, 0.96) 0%, rgba(5, 9, 18, 0.98) 100%);
+        backdrop-filter: blur(22px) saturate(160%);
+        -webkit-backdrop-filter: blur(22px) saturate(160%);
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.82), 0 0 0 12px rgba(4, 7, 15, 0.44), 0 0 32px rgba(var(--ambi-1, 14, 165, 233), 0.28);
+        color: #ffffff;
+        font-size: 32px;
+        padding-left: 5px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        opacity: 0;
+        pointer-events: none;
+        transform: translate3d(-50%, -50%, 0) scale(0.86);
+        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease, background 0.18s ease;
+      }
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn,
+      .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translate3d(-50%, -50%, 0) scale(1);
+      }
+      .cinema-pause-center-btn:hover,
+      .cinema-pause-center-btn:focus-visible,
+      .cinema-pause-center-btn.spatial-focus {
+        border-color: rgba(56, 189, 248, 0.92);
+        background: radial-gradient(circle at 32% 28%, rgba(56, 189, 248, 0.38) 0%, rgba(8, 15, 30, 0.96) 100%);
+        transform: translate3d(-50%, -50%, 0) scale(1.07);
+        outline: none;
+      }
+      .cinema-pause-bottom-curtain {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: clamp(256px, 36vh, 344px);
+        z-index: 14;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        align-items: center;
+        padding: 0 16px 84px;
+        box-sizing: border-box;
+        background: linear-gradient(0deg, rgba(4, 7, 15, 0.998) 0%, rgba(4, 7, 15, 0.985) 68%, rgba(4, 7, 15, 0.86) 85%, transparent 100%);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        opacity: 0;
+        pointer-events: none;
+        transform: translate3d(0, 14px, 0);
+        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-bottom-curtain,
+      .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-bottom-curtain {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translate3d(0, 0, 0);
+      }
+      .cinema-pause-quick-bar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        max-width: 100%;
+      }
+      .cinema-overlay-btn {
+        min-height: 44px;
+        padding: 0 18px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        color: #f8fafc;
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 800;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        cursor: pointer;
+        white-space: nowrap;
+        flex-shrink: 0;
+        transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease, color 0.18s ease;
+      }
+      .cinema-overlay-btn:hover,
+      .cinema-overlay-btn:focus-visible,
+      .cinema-overlay-btn.spatial-focus {
+        background: rgba(56, 189, 248, 0.24);
+        border-color: rgba(56, 189, 248, 0.78);
+        color: #ffffff;
+        transform: translateY(-1px);
+        outline: none;
+      }
+      .cinema-overlay-btn.is-primary {
+        background: #ffffff;
+        border-color: #ffffff;
+        color: #060a14;
+      }
+      .cinema-overlay-btn.is-primary:hover,
+      .cinema-overlay-btn.is-primary:focus-visible,
+      .cinema-overlay-btn.is-primary.spatial-focus {
+        background: #e0f2fe;
+        border-color: #38bdf8;
+        color: #060a14;
+      }
+      /* Dezentes Ende-Overlay (erst bei echtem Video-Ende pState === 0) */
+      .cinema-end-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 15;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 24px 20px 84px;
+        box-sizing: border-box;
+        background: radial-gradient(circle at 50% 44%, rgba(8, 13, 24, 0.80) 0%, rgba(4, 7, 15, 0.94) 100%);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        text-align: center;
+        opacity: 0;
+        pointer-events: none;
+        transform: scale(0.98);
+        transition: opacity 0.26s cubic-bezier(0.16, 1, 0.3, 1), transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-ended .cinema-end-overlay,
+      .hero.is-trailer-foreground-mode.is-cinema-ended .cinema-end-overlay {
+        opacity: 1;
+        pointer-events: auto;
+        transform: scale(1);
+      }
+      .cinema-end-kicker {
+        font-size: calc(12px * var(--scale-text));
+        font-weight: 700;
+        color: rgba(148, 163, 184, 0.92);
+        letter-spacing: 0.04em;
+      }
+      .cinema-end-title {
+        font-size: clamp(20px, 2.6vw, 30px);
+        font-weight: 900;
+        color: #f8fafc;
+        max-width: min(560px, 92%);
+        text-wrap: balance;
+        line-height: 1.2;
+      }
+      .cinema-end-actions {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 4px;
+      }
+      @media (max-width: 640px) {
+        .cinema-top-hud {
+          padding: 10px 12px 18px;
+          gap: 10px;
+        }
+        .cinema-top-hud-title {
+          font-size: 14px;
+        }
+        .cinema-start-center-shield {
+          width: 78px;
+          height: 78px;
+        }
+        .cinema-pause-center-btn {
+          width: 74px;
+          height: 74px;
+          font-size: 26px;
+        }
+        .cinema-pause-bottom-curtain {
+          height: 186px;
+          padding: 0 10px 72px;
+        }
+        .cinema-overlay-btn {
+          min-height: 44px;
+          padding: 0 13px;
+          font-size: 12.5px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .detail-bg-video-frame,
+        .cinema-top-hud,
+        .cinema-start-center-shield,
+        .cinema-start-bottom-shield,
+        .cinema-pause-center-btn,
+        .cinema-pause-bottom-curtain,
+        .cinema-end-overlay {
+          transition-duration: 0.01ms !important;
+        }
+      }
       .cinema-dock-btn {
         height: 36px;
         min-width: 36px;
-        padding: 0 12px;
+        padding: 0 11px;
         border-radius: 12px;
         border: 1px solid rgba(255, 255, 255, 0.14);
         background: rgba(255, 255, 255, 0.08);
         color: #f8fafc;
-        font-size: calc(12.5px * var(--scale-text));
+        font-size: calc(12px * var(--scale-text));
         font-weight: 800;
         display: inline-flex;
         align-items: center;
@@ -5935,8 +6392,10 @@
         transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
       }
       #heroCinemaPlayBtn,
+      #heroCinemaRestartBtn,
       #heroCinemaMuteBtn,
       #detailCinemaPlayBtn,
+      #detailCinemaRestartBtn,
       #detailCinemaMuteBtn {
         width: 36px;
         padding: 0;
@@ -5948,6 +6407,77 @@
         background: rgba(56, 189, 248, 0.18);
         border-color: rgba(56, 189, 248, 0.42);
         color: #ffffff;
+      }
+      .cinema-dock-vol-group {
+        display: inline-flex;
+        align-items: center;
+        gap: 0;
+        flex-shrink: 0;
+        border-radius: 999px;
+        transition: gap 0.2s ease, padding 0.2s ease, background 0.2s ease;
+      }
+      .cinema-dock-vol-group:hover,
+      .cinema-dock-vol-group:focus-within {
+        gap: 6px;
+        padding-right: 8px;
+        background: rgba(255, 255, 255, 0.07);
+      }
+      .cinema-dock-vol-slider {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 0;
+        opacity: 0;
+        pointer-events: none;
+        height: 4px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #38bdf8 0%, #38bdf8 var(--vol-pct, 85%), rgba(255, 255, 255, 0.22) var(--vol-pct, 85%), rgba(255, 255, 255, 0.22) 100%);
+        outline: none;
+        cursor: pointer;
+        margin: 0;
+        transition: width 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+      }
+      .cinema-dock-vol-group:hover .cinema-dock-vol-slider,
+      .cinema-dock-vol-group:focus-within .cinema-dock-vol-slider {
+        width: 62px;
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .cinema-dock-vol-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #38bdf8;
+        cursor: pointer;
+      }
+      .cinema-dock-vol-slider::-moz-range-thumb {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #38bdf8;
+        cursor: pointer;
+      }
+      .cinema-dock-cc-btn {
+        min-width: 40px;
+        padding: 0 9px;
+        letter-spacing: 0.03em;
+        font-size: calc(11px * var(--scale-text));
+      }
+      .cinema-dock-cc-btn.is-cc-active,
+      .cinema-dock-speed-btn.is-speed-active {
+        background: rgba(14, 165, 233, 0.26);
+        border-color: rgba(56, 189, 248, 0.72);
+        color: #e0f2fe;
+        box-shadow: 0 0 12px rgba(56, 189, 248, 0.24);
+      }
+      .cinema-dock-speed-btn {
+        min-width: 38px;
+        padding: 0 8px;
+        font-size: calc(11px * var(--scale-text));
+        font-variant-numeric: tabular-nums;
       }
       .cinema-dock-btn:hover,
       .cinema-dock-btn.spatial-focus {
@@ -5964,11 +6494,11 @@
       }
       .cinema-dock-timeline-wrap {
         flex: 1;
-        min-width: 96px;
+        min-width: 82px;
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 0 4px;
+        gap: 8px;
+        padding: 0 3px;
       }
       .cinema-dock-scrubber {
         -webkit-appearance: none;
@@ -6021,23 +6551,23 @@
         color: #e2e8f0;
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
-        min-width: 68px;
+        min-width: 64px;
         text-align: right;
         letter-spacing: 0.02em;
       }
       @media (min-width: 1400px) {
         .detail-cinema-player-dock {
-          width: min(680px, calc(100% - 64px));
+          width: min(760px, calc(100% - 64px));
           bottom: 28px;
           padding: 11px 18px;
-          gap: 12px;
+          gap: 11px;
           border-radius: 20px;
         }
         .cinema-dock-btn {
           height: 42px;
           min-width: 42px;
-          padding: 0 15px;
-          font-size: calc(13.5px * var(--scale-text));
+          padding: 0 13px;
+          font-size: calc(13px * var(--scale-text));
         }
         #heroCinemaPlayBtn,
         #heroCinemaMuteBtn,
@@ -6052,30 +6582,40 @@
       }
       @media (max-width: 640px) {
         .detail-cinema-player-dock {
-          width: calc(100% - 20px);
+          width: calc(100% - 16px);
           bottom: 12px;
-          padding: 7px 11px;
-          gap: 7px;
+          padding: 7px 9px;
+          gap: 5px;
           border-radius: 15px;
         }
         .cinema-dock-btn {
-          height: 34px;
-          min-width: 34px;
-          padding: 0 10px;
-          font-size: calc(11.5px * var(--scale-text));
+          height: 33px;
+          min-width: 33px;
+          padding: 0 8px;
+          font-size: calc(11px * var(--scale-text));
         }
         #heroCinemaPlayBtn,
         #heroCinemaMuteBtn,
         #detailCinemaPlayBtn,
         #detailCinemaMuteBtn {
-          width: 34px;
+          width: 33px;
+        }
+        .cinema-dock-vol-slider,
+        .cinema-dock-speed-btn {
+          display: none !important;
+        }
+        .cinema-dock-vol-group:hover,
+        .cinema-dock-vol-group:focus-within {
+          gap: 0;
+          padding-right: 0;
+          background: transparent;
         }
         .cinema-dock-timeline-wrap {
-          gap: 7px;
+          gap: 6px;
         }
         .cinema-dock-time {
-          min-width: 58px;
-          font-size: calc(10.5px * var(--scale-text));
+          min-width: 52px;
+          font-size: calc(10px * var(--scale-text));
         }
       }
       .detail-kicker-link {
@@ -7518,18 +8058,18 @@
       <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
     <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="if(!state.sidebarOpen)toggleFilterSidebar()" onmouseenter="if(!state.sidebarOpen&&!document.body.classList.contains('in-hero-slider')){toggleFilterSidebar();}" title="Menü-Übersicht direkt öffnen"></div>
-    <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onmouseenter="const el=document.getElementById('tvQuickJumpElevator');if(el){el.classList.add('is-hover-expanded');if(typeof syncRightMenuBadgesClient==='function')syncRightMenuBadgesClient();}" onmouseleave="const el=document.getElementById('tvQuickJumpElevator');if(el&&!el.classList.contains('has-subpanel'))el.classList.remove('is-hover-expanded')" aria-hidden="true"></div>
-    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" onmouseenter="if(typeof syncRightMenuBadgesClient==='function')syncRightMenuBadgesClient()" onmouseleave="if(!this.classList.contains('has-subpanel'))this.classList.remove('is-hover-expanded')" aria-label="Katalog-Navigation">
+    <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onclick="openRightMenuOverlayClient(true)" onmouseenter="openRightMenuOverlayClient(false)" title="Schnellmenü öffnen" aria-hidden="true"></div>
+    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" aria-label="Katalog-Navigation">
       <div id="rightMenuSubPanel" class="tv-elevator-subpanel" aria-live="polite"></div>
       <div class="tv-elevator-main-col">
-        <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient()" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
-        <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient()" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
-        <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="scrollToTopFromElevatorClient()" title="Ganz nach oben scrollen"><span>⬆️</span><span class="tv-elev-label">Nach oben</span></button>
+        <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient(event)" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
+        <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient(event)" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
+        <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="scrollToTopFromElevatorClient(event)" title="Ganz nach oben scrollen"><span>⬆️</span><span class="tv-elev-label">Nach oben</span></button>
         <button type="button" id="tvElevBtnWishlist" class="tv-elevator-btn" data-rm-tab="wishlist" onclick="toggleRightMenuSubPanelClient('wishlist')" title="Merkliste direkt im rechten Menü öffnen, filtern & sortieren"><span>💾</span><span class="tv-elev-label">Merkliste</span><span id="tvElevBadgeWishlist" class="tv-elev-count-badge" style="display:none">0</span></button>
         <button type="button" id="tvElevBtnRecent" class="tv-elevator-btn" data-rm-tab="recent" onclick="toggleRightMenuSubPanelClient('recent')" title="Zuletzt gesehen direkt im rechten Menü öffnen, filtern & sortieren"><span>🕒</span><span class="tv-elev-label">Zuletzt</span><span id="tvElevBadgeRecent" class="tv-elev-count-badge" style="display:none">0</span></button>
       </div>
     </nav>
-    <div id="elevatorBackdrop" class="elevator-backdrop" onclick="closeRightMenuSubPanelClient()" aria-hidden="true"></div>
+    <div id="elevatorBackdrop" class="elevator-backdrop" onclick="closeRightMenuOverlayClient(event, true)" aria-hidden="true"></div>
 
     <!-- Linke 2-Spalten Ambilight-Glas Sidebar (Links: Einzeilige Kategorien | Rechts: Dynamisches Optionen-Panel) -->
     <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="closeFilterSidebar()"></div>
@@ -8375,6 +8915,9 @@
         if (drawer) drawer.classList.toggle("open", Boolean(state.sidebarOpen));
         if (backdrop) backdrop.classList.toggle("open", Boolean(state.sidebarOpen));
         if (state.sidebarOpen) {
+          if (typeof closeRightMenuOverlayClient === "function") {
+            closeRightMenuOverlayClient(null, false);
+          }
           renderFilterSidebarContent(Boolean(state.sidebarTab));
           if (!state.sidebarTab) {
             const firstCatTab = document.getElementById("sidebarCatTab_genres") || document.querySelector("#sidebarDrawerBody .sidebar-menu-row");
@@ -9533,8 +10076,22 @@
         if (recBtn) recBtn.classList.toggle("active-tab", state.rightMenuTab === "recent");
       }
 
+      function getRightMenuEraCatalogClient() {
+        if (typeof ERA_OPTIONS_CLIENT !== "undefined" && Array.isArray(ERA_OPTIONS_CLIENT) && ERA_OPTIONS_CLIENT.length > 0) {
+          return ERA_OPTIONS_CLIENT;
+        }
+        return [
+          { id: "2020_plus", label: "2020+", min: 2020, max: 9999 },
+          { id: "2010_2019", label: "2010 – 2019", min: 2010, max: 2019 },
+          { id: "2000_2009", label: "2000 – 2009", min: 2000, max: 2009 },
+          { id: "1990_1999", label: "1990 – 1999", min: 1990, max: 1999 },
+          { id: "pre_1990", label: "Vor 1990", min: 0, max: 1989 }
+        ];
+      }
+
       function ensureRightMenuFilterStateClient() {
         if (!state.rmSort) state.rmSort = "added_desc";
+        if (state.rmEra === undefined) state.rmEra = "";
         if (state.rmYear === undefined) state.rmYear = "";
         if (state.rmMinRating === undefined) state.rmMinRating = "";
         if (state.rmMaxRating === undefined) state.rmMaxRating = "";
@@ -9546,6 +10103,7 @@
 
       function resetRightMenuFiltersClient() {
         state.rmSort = "added_desc";
+        state.rmEra = "";
         state.rmYear = "";
         state.rmMinRating = "";
         state.rmMaxRating = "";
@@ -9561,6 +10119,12 @@
         if (!s || s === "K. A.") return null;
         const m = s.match(/(?:^|[^0-9])(0|6|12|16|18)(?:$|[^0-9])/);
         return m ? m[1] : null;
+      }
+
+      function extractRightMenuItemYearClient(it) {
+        const raw = String((it && (it.year || it.release_date || it.first_air_date || it.releaseDate)) || "");
+        const m = raw.match(/(19[0-9]{2}|20[0-9]{2})/);
+        return m ? Number(m[1]) : 0;
       }
 
       function getRightMenuFilteredAndSortedItemsClient(tabMode) {
@@ -9581,8 +10145,7 @@
           const isSer = it.contentType === "series" || isEp || it.type === "s";
           const tc = isSer ? "s" : "m";
           const targetId = Number(isEp ? it.seriesId : (it.tmdbId || it.id)) || 0;
-          const yrMatch = String(it.year || "").match(/(19[0-9]{2}|20[0-9]{2})/);
-          const yearNum = yrMatch ? Number(yrMatch[1]) : 0;
+          const yearNum = extractRightMenuItemYearClient(it);
           const ratingNum = Number(it.rating || it.vote_average || 0);
           const fskCode = normalizeItemFskNumberClient(it.fsk);
           const addedTs = Number(it.addedAt || 0) || (rawList.length - idx);
@@ -9609,11 +10172,20 @@
           list = list.filter(x => x.tc === "s");
         }
 
-        const yrFilter = String(state.rmYear || "").trim();
+        const yrFilter = String(state.rmYear || "").replace(/[^0-9]/g, "").slice(0, 4);
         if (yrFilter) {
-          const exactYr = Number(yrFilter);
-          if (exactYr > 0) {
-            list = list.filter(x => x.yearNum === exactYr);
+          if (yrFilter.length === 4) {
+            const exactYr = Number(yrFilter);
+            if (exactYr > 0) {
+              list = list.filter(x => x.yearNum === exactYr);
+            }
+          } else {
+            list = list.filter(x => x.yearStr && x.yearStr.startsWith(yrFilter));
+          }
+        } else if (state.rmEra) {
+          const eraObj = getRightMenuEraCatalogClient().find(e => e.id === state.rmEra);
+          if (eraObj) {
+            list = list.filter(x => x.yearNum > 0 && x.yearNum >= eraObj.min && x.yearNum <= eraObj.max);
           }
         }
 
@@ -9668,6 +10240,7 @@
       async function toggleRightMenuSubPanelClient(tabName, jumpFocusIntoPanel = false) {
         const elev = document.getElementById("tvQuickJumpElevator");
         if (!elev) return;
+        elev.classList.remove("is-dismissed");
         if (state.rightMenuTab === tabName && elev.classList.contains("has-subpanel") && !jumpFocusIntoPanel) {
           closeRightMenuSubPanelClient();
           return;
@@ -9715,10 +10288,130 @@
         }
       }
 
+      function openRightMenuOverlayClient(forceImmediate = false) {
+        if (!forceImmediate && Date.now() < (window.__rmDismissedUntil || 0)) return;
+        if (document.body.classList.contains("in-hero-slider")) return;
+        const elev = document.getElementById("tvQuickJumpElevator");
+        if (!elev) return;
+        if (state.sidebarOpen && typeof closeFilterSidebar === "function") {
+          closeFilterSidebar();
+        }
+        window.__rmDismissedUntil = 0;
+        elev.classList.remove("is-dismissed");
+        elev.classList.add("is-visible", "is-hover-expanded");
+        if (typeof syncRightMenuBadgesClient === "function") {
+          syncRightMenuBadgesClient();
+        }
+      }
+
+      function closeRightMenuOverlayClient(ev = null, suppressHoverUntilLeave = true) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        state.rightMenuTab = null;
+        const elev = document.getElementById("tvQuickJumpElevator");
+        if (elev) {
+          elev.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
+          if (suppressHoverUntilLeave) {
+            window.__rmDismissedUntil = Date.now() + 650;
+            elev.classList.add("is-dismissed");
+            clearTimeout(window.__rmDismissFallbackTimer);
+            window.__rmDismissFallbackTimer = setTimeout(() => {
+              const curElev = document.getElementById("tvQuickJumpElevator");
+              const edgeEl = document.getElementById("catalogEdgeTriggerRight");
+              if (curElev && !curElev.matches(":hover") && !(edgeEl && edgeEl.matches(":hover"))) {
+                curElev.classList.remove("is-dismissed");
+              }
+            }, 680);
+          }
+          if (document.activeElement && elev.contains(document.activeElement) && typeof document.activeElement.blur === "function") {
+            try { document.activeElement.blur(); } catch (e) {}
+          }
+          elev.querySelectorAll(".spatial-focus").forEach(el => el.classList.remove("spatial-focus"));
+          if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && elev.contains(currentSpatialEl)) {
+            currentSpatialEl = null;
+          }
+        }
+        syncRightMenuBadgesClient();
+      }
+
+      function hasActiveRightMenuFiltersClient() {
+        return Boolean(
+          state.rmEra ||
+          (state.rmYear && String(state.rmYear).trim()) ||
+          state.rmMinRating !== "" ||
+          state.rmMaxRating !== "" ||
+          (state.rmFsk && state.rmFsk !== "ALL") ||
+          (state.rmLetter && state.rmLetter !== "ALL") ||
+          (state.rmType && state.rmType !== "all") ||
+          (state.rmQuery && state.rmQuery.trim()) ||
+          (state.rmSort && state.rmSort !== "added_desc")
+        );
+      }
+
+      function syncRightMenuTimeFilterDomClient() {
+        const eraSel = document.getElementById("rmEraSelect");
+        const yrInp = document.getElementById("rmYearInput");
+        const yrClr = document.getElementById("rmYearClearBtn");
+        const resetBtn = document.getElementById("rmHeaderResetBtn");
+        const hasManualYear = Boolean(state.rmYear && String(state.rmYear).trim().length > 0);
+        const hasEra = Boolean(state.rmEra && !hasManualYear);
+        if (eraSel) {
+          if (eraSel.value !== (hasEra ? state.rmEra : "")) {
+            eraSel.value = hasEra ? state.rmEra : "";
+          }
+          eraSel.classList.toggle("rm-ctrl-active", hasEra);
+          eraSel.classList.toggle("rm-ctrl-superseded", hasManualYear);
+          eraSel.title = hasManualYear
+            ? "Epoche automatisch deaktiviert (manuelles Jahr aktiv) – Epoche wählen zum Umschalten"
+            : "Epoche / Jahrzehnt auswählen (deaktiviert manuelles Jahr automatisch)";
+        }
+        if (yrInp) {
+          yrInp.classList.toggle("rm-ctrl-active", hasManualYear);
+          yrInp.classList.toggle("rm-ctrl-superseded", hasEra);
+        }
+        if (yrClr) {
+          yrClr.style.display = hasManualYear ? "inline-flex" : "none";
+        }
+        if (resetBtn) {
+          resetBtn.style.display = hasActiveRightMenuFiltersClient() ? "inline-flex" : "none";
+        }
+      }
+
+      function clearRightMenuManualYearClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        state.rmYear = "";
+        const yrInp = document.getElementById("rmYearInput");
+        if (yrInp) yrInp.value = "";
+        syncRightMenuTimeFilterDomClient();
+        renderRightMenuSubPanelEntriesOnlyClient();
+      }
+
       function setRightMenuFilterFieldClient(field, val, onlyRefreshEntries = false) {
         ensureRightMenuFilterStateClient();
+        if (field === "rmEra") {
+          state.rmEra = String(val || "");
+          if (state.rmEra) {
+            state.rmYear = "";
+          }
+          renderRightMenuSubPanelContentClient(false);
+          return;
+        }
+        if (field === "rmYear") {
+          const cleaned = String(val || "").replace(/[^0-9]/g, "").slice(0, 4);
+          state.rmYear = cleaned;
+          if (cleaned.length > 0 && state.rmEra) {
+            state.rmEra = "";
+          }
+          const yrInp = document.getElementById("rmYearInput");
+          if (yrInp && yrInp.value !== cleaned) {
+            yrInp.value = cleaned;
+          }
+          syncRightMenuTimeFilterDomClient();
+          renderRightMenuSubPanelEntriesOnlyClient();
+          return;
+        }
         state[field] = val;
         if (onlyRefreshEntries) {
+          syncRightMenuTimeFilterDomClient();
           renderRightMenuSubPanelEntriesOnlyClient();
         } else {
           renderRightMenuSubPanelContentClient(false);
@@ -9738,10 +10431,7 @@
       }
 
       function openItemFromRightMenuClient(tc, id) {
-        const elev = document.getElementById("tvQuickJumpElevator");
-        if (elev) elev.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
-        state.rightMenuTab = null;
-        syncRightMenuBadgesClient();
+        closeRightMenuOverlayClient(null, true);
         openDetails(tc, Number(id), false);
       }
 
@@ -9806,23 +10496,19 @@
         const isWishlist = tabMode === "wishlist";
         const { items, totalRaw, rawList } = getRightMenuFilteredAndSortedItemsClient(tabMode);
 
-        const availableYears = Array.from(new Set(
-          rawList.map(it => {
-            const m = String(it?.year || "").match(/(19[0-9]{2}|20[0-9]{2})/);
-            return m ? Number(m[1]) : 0;
-          }).filter(y => y > 0)
-        )).sort((a, b) => b - a);
-
-        const hasActiveFilter = Boolean(
-          state.rmYear ||
-          state.rmMinRating !== "" ||
-          state.rmMaxRating !== "" ||
-          (state.rmFsk && state.rmFsk !== "ALL") ||
-          (state.rmLetter && state.rmLetter !== "ALL") ||
-          (state.rmType && state.rmType !== "all") ||
-          (state.rmQuery && state.rmQuery.trim()) ||
-          (state.rmSort && state.rmSort !== "added_desc")
-        );
+        const rawYears = rawList.map(it => extractRightMenuItemYearClient(it)).filter(y => y > 0);
+        const availableYears = Array.from(new Set(rawYears)).sort((a, b) => b - a);
+        const eraCatalog = getRightMenuEraCatalogClient().slice().reverse();
+        const eraIcons = {
+          "2020_plus": "🚀",
+          "2010_2019": "✨",
+          "2000_2009": "📀",
+          "1990_1999": "📼",
+          "pre_1990": "🎞️"
+        };
+        const hasManualYear = Boolean(state.rmYear && String(state.rmYear).trim().length > 0);
+        const hasActiveEra = Boolean(state.rmEra && !hasManualYear);
+        const hasActiveFilter = hasActiveRightMenuFiltersClient();
 
         const azLetters = ["ALL", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""), "#"];
         const curLetter = String(state.rmLetter || "ALL").toUpperCase();
@@ -9835,11 +10521,9 @@
             '</div>' +
             '<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">' +
               (isWishlist
-                ? '<button type="button" class="btn blue" style="padding:3px 8px;font-size:11px" onclick="closeRightMenuSubPanelClient();loadWishlist(\\'root\\')" title="Komplette Merkliste & Playlisten-Verwaltung im Hauptfenster öffnen">📂 Vollansicht</button>'
+                ? '<button type="button" class="btn blue" style="padding:3px 8px;font-size:11px" onclick="closeRightMenuOverlayClient(event,true);loadWishlist(\\'root\\')" title="Komplette Merkliste & Playlisten-Verwaltung im Hauptfenster öffnen">📂 Vollansicht</button>'
                 : (totalRaw > 0 ? '<button type="button" class="btn danger" style="padding:3px 8px;font-size:11px" onclick="clearAllRecentViewed()" title="Gesamten Verlauf leeren">🗑️ Leeren</button>' : '')) +
-              (hasActiveFilter
-                ? '<button type="button" class="btn danger" style="padding:3px 8px;font-size:11px" onclick="resetRightMenuFiltersClient()" title="Alle Sortierungen & Filter zurücksetzen">↺ Reset</button>'
-                : '') +
+              '<button type="button" id="rmHeaderResetBtn" class="btn danger" style="padding:3px 8px;font-size:11px;display:' + (hasActiveFilter ? 'inline-flex' : 'none') + '" onclick="resetRightMenuFiltersClient()" title="Alle Sortierungen & Filter zurücksetzen">↺ Reset</button>' +
               '<button type="button" class="btn close-slate" style="padding:3px 8px;font-size:11px" onclick="closeRightMenuSubPanelClient(true)" title="Panel schließen (Pfeil rechts)">Übersicht →</button>' +
             '</div>' +
           '</div>' +
@@ -9870,11 +10554,24 @@
               '</select>' +
             '</div>' +
             '<div class="rm-filter-row">' +
-              '<select class="rm-ctrl-select" onchange="setRightMenuFilterFieldClient(\\'rmYear\\',this.value)" title="Genaues Erscheinungsjahr aus vorhandenen Jahren wählen">' +
-                '<option value=""' + (!state.rmYear ? " selected" : "") + '>📅 Jahr (Alle)</option>' +
-                availableYears.map(y => '<option value="' + y + '"' + (String(state.rmYear) === String(y) ? ' selected' : '') + '>📅 ' + y + '</option>').join("") +
-              '</select>' +
-              '<input type="number" class="rm-ctrl-input" style="width:74px" min="1900" max="2035" placeholder="Jahr..." value="' + esc(state.rmYear || "") + '" oninput="setRightMenuFilterFieldClient(\\'rmYear\\',this.value,true)" title="Genaues Erscheinungsjahr als Zahl eingeben (z. B. 2024)" />' +
+              '<div class="rm-time-filter-group">' +
+                '<select id="rmEraSelect" class="rm-ctrl-select ' + (hasActiveEra ? 'rm-ctrl-active' : (hasManualYear ? 'rm-ctrl-superseded' : '')) + '" onchange="setRightMenuFilterFieldClient(\\'rmEra\\',this.value)" title="' + (hasManualYear ? 'Epoche automatisch deaktiviert (manuelles Jahr aktiv) – Epoche wählen zum Umschalten' : 'Epoche / Jahrzehnt auswählen (deaktiviert manuelles Jahr automatisch)') + '">' +
+                  '<option value=""' + (!hasActiveEra ? " selected" : "") + '>📅 Epoche (Alle)</option>' +
+                  eraCatalog.map(er => {
+                    const cnt = rawYears.filter(y => y >= er.min && y <= er.max).length;
+                    const ico = eraIcons[er.id] || "📅";
+                    const suffix = cnt > 0 ? (" (" + cnt + ")") : "";
+                    return '<option value="' + esc(er.id) + '"' + (hasActiveEra && state.rmEra === er.id ? ' selected' : '') + '>' + ico + ' ' + esc(er.label) + suffix + '</option>';
+                  }).join("") +
+                '</select>' +
+                '<div class="rm-year-input-wrap">' +
+                  '<input id="rmYearInput" type="text" inputmode="numeric" maxlength="4" list="rmAvailableYearsList" class="rm-ctrl-input ' + (hasManualYear ? 'rm-ctrl-active' : (hasActiveEra ? 'rm-ctrl-superseded' : '')) + '" style="width:82px;padding-right:22px" placeholder="od. Jahr..." value="' + esc(state.rmYear || "") + '" oninput="setRightMenuFilterFieldClient(\\'rmYear\\',this.value,true)" title="Exaktes Erscheinungsjahr eingeben (z. B. 2024 – deaktiviert Epoche automatisch)" />' +
+                  '<button type="button" id="rmYearClearBtn" class="rm-year-clear-btn" style="display:' + (hasManualYear ? 'inline-flex' : 'none') + '" onclick="clearRightMenuManualYearClient(event)" title="Manuelles Jahr löschen" aria-label="Manuelles Jahr löschen">✕</button>' +
+                '</div>' +
+                '<datalist id="rmAvailableYearsList">' +
+                  availableYears.map(y => '<option value="' + y + '"></option>').join("") +
+                '</datalist>' +
+              '</div>' +
               '<div style="display:inline-flex;align-items:center;gap:4px;background:rgba(8,13,26,0.55);padding:2px 6px;border-radius:7px;border:1px solid rgba(148,163,184,0.22)">' +
                 '<span style="font-size:10.5px;color:#fbbf24;font-weight:800">★</span>' +
                 '<input type="number" class="rm-ctrl-input" style="width:48px;padding:2px 4px;border:none;background:transparent" min="0" max="10" step="0.5" placeholder="Min" value="' + esc(state.rmMinRating !== undefined && state.rmMinRating !== null ? String(state.rmMinRating) : "") + '" oninput="setRightMenuFilterFieldClient(\\'rmMinRating\\',this.value,true)" title="Mindest-Bewertung (0.0 – 10.0)" />' +
@@ -11966,11 +12663,192 @@
       let heroBgTeaserCurTime = 0;
       let heroBgTeaserDuration = 0;
       let heroBgTeaserScrubbing = false;
+      let heroBgTeaserCcMode = "off";
+      let heroBgTeaserSpeed = 1;
       let heroCinemaZoomMode = "fill";
       let heroFgTapTimer = null;
       let heroFgLastTapAt = 0;
       let heroSeekRippleTimer = null;
       let lastHeroStageTapHandledAt = 0;
+
+      const trailerCandidateMetaCache = new Map();
+      let sharedTrailerVolumePref = (function() {
+        try {
+          const saved = Number(localStorage.getItem("tma_trailer_volume"));
+          if (!Number.isNaN(saved) && saved >= 0 && saved <= 100) return Math.round(saved);
+        } catch (_e) {}
+        return 85;
+      })();
+
+      function getSavedTrailerVolumeClient() {
+        const parsed = Number(sharedTrailerVolumePref);
+        return Math.max(0, Math.min(100, Math.round(Number.isFinite(parsed) ? parsed : 85)));
+      }
+
+      function saveTrailerVolumeClient(val) {
+        const clamped = Math.max(0, Math.min(100, Math.round(Number(val))));
+        sharedTrailerVolumePref = clamped;
+        try { localStorage.setItem("tma_trailer_volume", String(clamped)); } catch (_e) {}
+        return clamped;
+      }
+
+      function registerTrailerMetaMapClient(trailersInput) {
+        if (!trailersInput || typeof trailersInput !== "object") return;
+        const metaObj = trailersInput.meta && typeof trailersInput.meta === "object" ? trailersInput.meta : null;
+        if (metaObj) {
+          Object.keys(metaObj).forEach(k => {
+            const m = metaObj[k];
+            if (k && m && typeof m === "object") {
+              trailerCandidateMetaCache.set(String(k).trim(), {
+                lang: String(m.lang || "").trim().toLowerCase(),
+                name: String(m.name || "").trim(),
+                type: String(m.type || "Trailer").trim()
+              });
+            }
+          });
+        } else if (trailersInput.key && trailersInput.lang) {
+          trailerCandidateMetaCache.set(String(trailersInput.key).trim(), {
+            lang: String(trailersInput.lang || "").trim().toLowerCase(),
+            name: "",
+            type: "Trailer"
+          });
+        }
+      }
+
+      function getTrailerCandidateMetaClient(ytKey) {
+        const k = String(ytKey || "").trim();
+        if (!k) return { lang: "", name: "", type: "Trailer" };
+        return trailerCandidateMetaCache.get(k) || { lang: "", name: "", type: "Trailer" };
+      }
+
+      function shouldAutoEnableSubtitlesForKeyClient(ytKey) {
+        const meta = getTrailerCandidateMetaClient(ytKey);
+        return meta.lang === "en";
+      }
+
+      function getNextTrailerCcModeClient(curMode) {
+        if (curMode === "off") return "de";
+        if (curMode === "de") return "en";
+        return "off";
+      }
+
+      function formatTrailerCcButtonMetaClient(ccMode) {
+        if (ccMode === "de") {
+          return {
+            label: "CC DE",
+            active: true,
+            toast: "💬 Untertitel: Deutsch",
+            title: "Untertitel: Deutsch aktiv – Klicken für Englisch (Taste C)"
+          };
+        }
+        if (ccMode === "en") {
+          return {
+            label: "CC EN",
+            active: true,
+            toast: "💬 Untertitel: Englisch",
+            title: "Untertitel: Englisch aktiv – Klicken zum Ausschalten (Taste C)"
+          };
+        }
+        return {
+          label: "CC",
+          active: false,
+          toast: "💬 Untertitel: Aus",
+          title: "Untertitel: Aus – Klicken für Deutsch (Taste C)"
+        };
+      }
+
+      function getNextTrailerSpeedClient(curRate) {
+        const steps = [1, 1.25, 1.5, 0.75];
+        const idx = steps.findIndex(r => Math.abs(r - Number(curRate || 1)) < 0.05);
+        return steps[(idx + 1) % steps.length];
+      }
+
+      function buildTrailerLoadingLabelClient(ytKey, ccMode) {
+        const meta = getTrailerCandidateMetaClient(ytKey);
+        const langTag = meta.lang === "en" ? "EN" : (meta.lang === "de" ? "DE" : "");
+        const subTag = ccMode === "de" ? "UT DE" : (ccMode === "en" ? "UT EN" : "");
+        if (langTag && subTag) return "🎬 Trailer startet (" + langTag + " · " + subTag + ")…";
+        if (langTag) return "🎬 Trailer startet (" + langTag + ")…";
+        return "🎬 Trailer startet…";
+      }
+
+      function buildTrailerEmbedUrlClient(cleanKey, startSeconds = 0, ccMode = "off") {
+        const ccEnabled = ccMode === "de" || ccMode === "en";
+        const hlParam = ccMode === "en" ? "en" : "de";
+        const ccParams = ccEnabled
+          ? ("&cc_load_policy=1&cc_lang_pref=" + encodeURIComponent(ccMode))
+          : "&cc_load_policy=0";
+        return "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
+          "?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
+          "&modestbranding=1&iv_load_policy=3" + ccParams + "&autohide=1&playsinline=1&enablejsapi=1&hl=" + hlParam +
+          "&start=" + Math.max(0, Math.floor(Number(startSeconds || 0)));
+      }
+
+      const youtubeSubtitleRetryTimers = new WeakMap();
+      let youtubeSubtitleApplySeq = 0;
+
+      function applyYoutubeSubtitlesStateClient(sendCmdFn, ccMode, ytKey = "") {
+        if (typeof sendCmdFn !== "function") return;
+        const prevTimers = youtubeSubtitleRetryTimers.get(sendCmdFn);
+        if (Array.isArray(prevTimers)) {
+          prevTimers.forEach(t => clearTimeout(t));
+          youtubeSubtitleRetryTimers.delete(sendCmdFn);
+        }
+        const applySeq = ++youtubeSubtitleApplySeq;
+        if (ccMode === "de" || ccMode === "en") {
+          const meta = getTrailerCandidateMetaClient(ytKey);
+          const isDeTrailer = Boolean(meta && meta.lang === "de");
+          const isEnTrailer = Boolean(meta && meta.lang === "en");
+          const triggerCaptions = () => {
+            if (applySeq !== youtubeSubtitleApplySeq) return;
+            sendCmdFn("loadModule", ["captions"]);
+            sendCmdFn("setOption", ["captions", "fontSize", 1]);
+            if (ccMode === "en") {
+              sendCmdFn("setOption", ["captions", "track", { languageCode: "en" }]);
+            } else if (isDeTrailer) {
+              sendCmdFn("setOption", ["captions", "track", { languageCode: "de" }]);
+            } else if (isEnTrailer) {
+              sendCmdFn("setOption", ["captions", "track", { languageCode: "en", translationLanguage: { languageCode: "de" } }]);
+            } else {
+              sendCmdFn("setOption", ["captions", "track", { languageCode: "de" }]);
+            }
+          };
+          triggerCaptions();
+          const timers = [
+            setTimeout(() => {
+              if (applySeq !== youtubeSubtitleApplySeq) return;
+              triggerCaptions();
+            }, 480),
+            setTimeout(() => {
+              if (applySeq !== youtubeSubtitleApplySeq) return;
+              if (ccMode === "de" && !isDeTrailer && !isEnTrailer) {
+                sendCmdFn("loadModule", ["captions"]);
+                sendCmdFn("setOption", ["captions", "track", { languageCode: "en", translationLanguage: { languageCode: "de" } }]);
+              } else {
+                triggerCaptions();
+              }
+            }, 1180)
+          ];
+          youtubeSubtitleRetryTimers.set(sendCmdFn, timers);
+        } else {
+          sendCmdFn("setOption", ["captions", "track", {}]);
+          sendCmdFn("setOption", ["cc", "track", {}]);
+          sendCmdFn("unloadModule", ["captions"]);
+          sendCmdFn("unloadModule", ["cc"]);
+        }
+      }
+
+      function buildCinemaTopHudMetaTextClient(yearStr, ytKey, ccMode) {
+        const parts = [];
+        const cleanYear = String(yearStr || "").trim();
+        if (cleanYear && cleanYear !== "K.A.") parts.push(cleanYear);
+        const meta = getTrailerCandidateMetaClient(ytKey);
+        if (meta && meta.lang === "de") parts.push("DE");
+        else if (meta && meta.lang === "en") parts.push("EN");
+        if (ccMode === "de") parts.push("UT DE");
+        else if (ccMode === "en") parts.push("UT EN");
+        return parts.join(" · ");
+      }
 
       function formatHeroTrailerDockTimeClient(secInput) {
         const s = Math.max(0, Math.floor(Number(secInput) || 0));
@@ -12052,8 +12930,10 @@
 
       function wakeHeroCinemaDockClient() {
         const dock = document.getElementById("heroCinemaPlayerDock");
+        const topHud = document.getElementById("heroCinemaTopHud");
         const catcher = document.getElementById("heroForegroundStageCatcher");
         if (dock) dock.classList.remove("is-idle-hidden");
+        if (topHud) topHud.classList.remove("is-idle-hidden");
         if (catcher) catcher.classList.remove("is-cursor-idle");
         if (heroCinemaDockIdleTimer) {
           clearTimeout(heroCinemaDockIdleTimer);
@@ -12067,18 +12947,23 @@
         heroCinemaDockIdleTimer = setTimeout(() => {
           heroCinemaDockIdleTimer = null;
           const liveDock = document.getElementById("heroCinemaPlayerDock");
+          const liveTopHud = document.getElementById("heroCinemaTopHud");
           const liveStage = document.getElementById("heroStageEl");
           const liveCatcher = document.getElementById("heroForegroundStageCatcher");
           if (!liveDock || !liveStage || !liveStage.classList.contains("is-trailer-foreground-mode")) return;
           if (heroBgTeaserPaused || heroBgTeaserEnded || heroBgTeaserScrubbing) return;
-          if (liveDock.matches && (liveDock.matches(":hover") || liveDock.matches(":focus-within"))) {
+          if (
+            (liveDock.matches && (liveDock.matches(":hover") || liveDock.matches(":focus-within"))) ||
+            (liveTopHud && liveTopHud.matches && (liveTopHud.matches(":hover") || liveTopHud.matches(":focus-within")))
+          ) {
             wakeHeroCinemaDockClient();
             return;
           }
-          if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && liveDock.contains(currentSpatialEl)) {
+          if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && (liveDock.contains(currentSpatialEl) || (liveTopHud && liveTopHud.contains(currentSpatialEl)))) {
             return;
           }
           liveDock.classList.add("is-idle-hidden");
+          if (liveTopHud) liveTopHud.classList.add("is-idle-hidden");
           if (liveCatcher) liveCatcher.classList.add("is-cursor-idle");
         }, 2600);
       }
@@ -12086,15 +12971,35 @@
       function syncHeroCinemaDockUiClient() {
         const dock = document.getElementById("heroCinemaPlayerDock");
         if (!dock) return;
+        const topHud = document.getElementById("heroCinemaTopHud");
         const stageEl = document.getElementById("heroStageEl");
         const isForeground = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
         const hasVideoControls = Boolean(heroBgTeaserActiveKey || heroBgTeaserIsPlayingConfirmed);
+        const ccActive = heroBgTeaserCcMode === "de" || heroBgTeaserCcMode === "en";
+        if (stageEl) {
+          stageEl.classList.toggle("is-cc-safe-framing", ccActive);
+          stageEl.classList.toggle("is-cinema-paused", Boolean(isForeground && heroBgTeaserPaused && !heroBgTeaserEnded && hasVideoControls));
+          stageEl.classList.toggle("is-cinema-ended", Boolean(isForeground && heroBgTeaserEnded && hasVideoControls));
+        }
         dock.classList.toggle("is-ready", Boolean(isForeground));
         if (!isForeground || heroBgTeaserPaused || heroBgTeaserEnded) {
           dock.classList.remove("is-idle-hidden");
+          if (topHud) topHud.classList.remove("is-idle-hidden");
           const catcher = document.getElementById("heroForegroundStageCatcher");
           if (catcher) catcher.classList.remove("is-cursor-idle");
         }
+
+        const curHero = (state && Array.isArray(state.heroSlides)) ? (state.heroSlides[state.heroIndex] || state.heroSlides[0]) : null;
+        const heroTitle = curHero ? String(curHero.title || curHero.name || "").trim() : "";
+        const heroYear = curHero ? String(curHero.release_date || curHero.first_air_date || "").slice(0, 4) : "";
+        const topTitleEl = document.getElementById("heroCinemaTopTitle");
+        if (topTitleEl && heroTitle) topTitleEl.textContent = heroTitle;
+        const topMetaEl = document.getElementById("heroCinemaTopMeta");
+        if (topMetaEl) {
+          topMetaEl.textContent = buildCinemaTopHudMetaTextClient(heroYear, heroBgTeaserActiveKey, heroBgTeaserCcMode);
+        }
+        const endTitleEl = document.getElementById("heroCinemaEndTitle");
+        if (endTitleEl && heroTitle) endTitleEl.textContent = heroTitle;
 
         const playBtn = document.getElementById("heroCinemaPlayBtn");
         if (playBtn) {
@@ -12107,27 +13012,65 @@
             playBtn.title = heroBgTeaserPaused ? "Trailer fortsetzen" : "Trailer pausieren";
           }
         }
+        const restartBtn = document.getElementById("heroCinemaRestartBtn");
+        if (restartBtn) {
+          restartBtn.style.display = hasVideoControls ? "inline-flex" : "none";
+        }
         const muteBtn = document.getElementById("heroCinemaMuteBtn");
         if (muteBtn) {
           muteBtn.style.display = hasVideoControls ? "inline-flex" : "none";
-          muteBtn.textContent = heroBgTeaserMuted ? "🔇" : "🔊";
-          muteBtn.title = heroBgTeaserMuted ? "Ton einschalten" : "Ton stummschalten";
+          const curVol = getSavedTrailerVolumeClient();
+          muteBtn.textContent = (heroBgTeaserMuted || curVol <= 0) ? "🔇" : (curVol < 45 ? "🔉" : "🔊");
+          muteBtn.title = heroBgTeaserMuted ? "Ton einschalten (Taste M)" : "Ton stummschalten (Taste M)";
+        }
+        const volGroup = document.getElementById("heroCinemaVolGroup");
+        if (volGroup) {
+          volGroup.style.display = hasVideoControls ? "inline-flex" : "none";
+        }
+        const volSlider = document.getElementById("heroCinemaVolSlider");
+        if (volSlider) {
+          const dispVol = heroBgTeaserMuted ? 0 : getSavedTrailerVolumeClient();
+          if (document.activeElement !== volSlider) volSlider.value = String(dispVol);
+          volSlider.style.setProperty("--vol-pct", dispVol + "%");
         }
         const timelineWrap = document.getElementById("heroCinemaTimelineWrap");
         if (timelineWrap) {
           timelineWrap.style.display = hasVideoControls ? "flex" : "none";
         }
+        const ccBtn = document.getElementById("heroCinemaCcBtn");
+        if (ccBtn) {
+          ccBtn.style.display = hasVideoControls ? "inline-flex" : "none";
+          const ccMeta = formatTrailerCcButtonMetaClient(heroBgTeaserCcMode);
+          ccBtn.textContent = ccMeta.label;
+          ccBtn.classList.toggle("is-cc-active", ccMeta.active);
+          ccBtn.title = ccMeta.title;
+        }
+        const speedBtn = document.getElementById("heroCinemaSpeedBtn");
+        if (speedBtn) {
+          speedBtn.style.display = hasVideoControls ? "inline-flex" : "none";
+          const spd = Number(heroBgTeaserSpeed || 1);
+          speedBtn.textContent = spd + "×";
+          speedBtn.classList.toggle("is-speed-active", Math.abs(spd - 1) > 0.05);
+          speedBtn.title = "Wiedergabegeschwindigkeit (" + spd + "×) ändern (Taste S)";
+        }
+        const totalClips = Array.isArray(heroBgTeaserCandidates) ? heroBgTeaserCandidates.length : 0;
         const nextClipBtn = document.getElementById("heroCinemaNextClipBtn");
         if (nextClipBtn) {
-          const totalClips = Array.isArray(heroBgTeaserCandidates) ? heroBgTeaserCandidates.length : 0;
           if (totalClips > 1 && hasVideoControls) {
             nextClipBtn.style.display = "inline-flex";
             nextClipBtn.textContent = "⏭ " + ((heroBgTeaserCandidateIdx % totalClips) + 1) + "/" + totalClips;
-            nextClipBtn.title = "Nächsten verfügbaren Trailer / Clip abspielen";
+            const curMeta = getTrailerCandidateMetaClient(heroBgTeaserActiveKey);
+            const metaNote = (curMeta.lang ? curMeta.lang.toUpperCase() : "") + (curMeta.name ? (" · " + curMeta.name) : "");
+            nextClipBtn.title = "Nächsten Trailer / Clip abspielen (Taste N)" + (metaNote ? (" – Aktuell: " + metaNote) : "");
           } else {
             nextClipBtn.style.display = "none";
           }
         }
+        const pauseNextBtn = document.getElementById("heroCinemaPauseNextBtn");
+        if (pauseNextBtn) pauseNextBtn.style.display = (totalClips > 1 && hasVideoControls) ? "inline-flex" : "none";
+        const endNextBtn = document.getElementById("heroCinemaEndNextBtn");
+        if (endNextBtn) endNextBtn.style.display = (totalClips > 1 && hasVideoControls) ? "inline-flex" : "none";
+
         const modeBtn = document.getElementById("heroCinemaModeBtn");
         if (modeBtn) {
           modeBtn.classList.toggle("is-active-mode", isForeground);
@@ -12154,20 +13097,21 @@
         }
       }
 
-      function scheduleHeroRevealAfterYoutubeChromeHidesClient(holdMs = 2200, forceReset = false) {
+      function scheduleHeroRevealAfterYoutubeChromeHidesClient(holdMs = 1550, forceReset = false) {
         if (heroBgTeaserDelayedPauseTimer) {
           clearTimeout(heroBgTeaserDelayedPauseTimer);
           heroBgTeaserDelayedPauseTimer = null;
         }
-        const safeHoldMs = Math.max(350, Number(holdMs) || 2200);
+        const safeHoldMs = Math.max(350, Number(holdMs) || 1550);
         const now = Date.now();
         const proposedTargetAt = now + safeHoldMs;
+        const stageEl = document.getElementById("heroStageEl");
+        const isFgNow = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
 
         if (heroBgTeaserRevealTimer && !forceReset && heroBgTeaserRevealTargetAt > now) {
           if (proposedTargetAt >= heroBgTeaserRevealTargetAt - 80) {
-            const stageEl = document.getElementById("heroStageEl");
-            if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")) {
-              setHeroTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
+            if (isFgNow && stageEl) {
+              stageEl.classList.add("is-cinema-starting");
             }
             return;
           }
@@ -12181,12 +13125,16 @@
         heroBgTeaserChromeShieldRequired = true;
         heroBgTeaserRevealTargetAt = proposedTargetAt;
         const layer = document.getElementById("heroBgVideoLayer");
-        if (layer) {
+        if (isFgNow) {
+          // Kein Vollbild-Backcover im Vordergrund: Video sofort zeigen, nur gezielte Start-Ersatzoverlays über YouTube-Center/Leisten!
+          if (layer) {
+            layer.classList.remove("is-concealing");
+            layer.classList.add("is-playing");
+          }
+          if (stageEl) stageEl.classList.add("is-cinema-starting");
+          setHeroTrailerLoadingBadgeClient(false);
+        } else if (layer) {
           layer.classList.remove("is-playing");
-        }
-        const stageEl = document.getElementById("heroStageEl");
-        if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")) {
-          setHeroTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
         }
 
         heroBgTeaserRevealTimer = setTimeout(() => {
@@ -12202,7 +13150,7 @@
             !heroBgTeaserStoppedByUser
           ) {
             const elapsedSinceMount = Date.now() - (heroBgTeaserStageOpenedAt || Date.now());
-            if (heroBgTeaserIsPlayingConfirmed || (isFg && elapsedSinceMount >= 2100)) {
+            if (heroBgTeaserIsPlayingConfirmed || (isFg && elapsedSinceMount >= 1500)) {
               heroBgTeaserIsPlayingConfirmed = true;
               // Im Hintergrund vorladen, aber erst beim Tippen einblenden:
               if (!isFg) {
@@ -12210,6 +13158,7 @@
                 heroBgTeaserPaused = true;
                 heroBgTeaserChromeShieldRequired = true;
                 liveLayer.classList.remove("is-playing", "is-concealing");
+                if (liveStage) liveStage.classList.remove("is-cinema-starting");
                 setHeroTrailerLoadingBadgeClient(false);
                 sendYoutubeHeroTeaserCommandClient("pauseVideo");
                 syncHeroCinemaDockUiClient();
@@ -12219,12 +13168,17 @@
               heroBgTeaserChromeShieldRequired = false;
               liveLayer.classList.remove("is-concealing");
               liveLayer.classList.add("is-playing");
+              if (liveStage) liveStage.classList.remove("is-cinema-starting");
               setHeroTrailerLoadingBadgeClient(false);
               if (heroBgTeaserPendingUnmute || !heroBgTeaserMuted) {
                 heroBgTeaserPendingUnmute = false;
                 heroBgTeaserMuted = false;
                 sendYoutubeHeroTeaserCommandClient("unMute");
-                sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
+                sendYoutubeHeroTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
+              }
+              applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+              if (heroBgTeaserSpeed !== 1) {
+                sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
               }
               wakeHeroCinemaDockClient();
             } else {
@@ -12233,6 +13187,7 @@
               return;
             }
           } else {
+            if (liveStage) liveStage.classList.remove("is-cinema-starting");
             setHeroTrailerLoadingBadgeClient(false);
           }
           syncHeroCinemaDockUiClient();
@@ -12258,16 +13213,17 @@
         if (typeof opts.ended === "boolean") {
           heroBgTeaserEnded = opts.ended;
         }
+        const stageEl = document.getElementById("heroStageEl");
+        if (stageEl) {
+          stageEl.classList.remove("is-cinema-starting");
+          if (opts.exitForeground) {
+            stageEl.classList.remove("is-trailer-foreground-mode");
+          }
+        }
         const layer = document.getElementById("heroBgVideoLayer");
         if (layer) {
           layer.classList.add("is-concealing");
           layer.classList.remove("is-playing");
-        }
-        if (opts.exitForeground) {
-          const stageEl = document.getElementById("heroStageEl");
-          if (stageEl) {
-            stageEl.classList.remove("is-trailer-foreground-mode");
-          }
         }
         syncHeroCinemaDockUiClient();
         const pauseDelayMs = typeof opts.pauseDelayMs === "number" ? opts.pauseDelayMs : 380;
@@ -12300,37 +13256,54 @@
         if (heroBgTeaserEnded && opts.restartIfEnded !== false) {
           heroBgTeaserEnded = false;
           heroBgTeaserCurTime = 0;
-          heroBgTeaserChromeShieldRequired = true;
-          if (layer) layer.classList.remove("is-playing");
+          heroBgTeaserChromeShieldRequired = false;
+          if (layer) layer.classList.add("is-playing");
           sendYoutubeHeroTeaserCommandClient("seekTo", [0, true]);
           sendYoutubeHeroTeaserCommandClient("playVideo");
           if (heroBgTeaserPendingUnmute || !heroBgTeaserMuted) {
+            const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
             sendYoutubeHeroTeaserCommandClient("unMute");
-            sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
+            sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
           }
-          scheduleHeroRevealAfterYoutubeChromeHidesClient(1750, true);
+          applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+          wakeHeroCinemaDockClient();
           syncHeroCinemaDockUiClient();
           return;
         }
-        if (wasPendingPauseOnly && heroBgTeaserIsPlayingConfirmed) {
+        if ((wasPendingPauseOnly || (layer && layer.classList.contains("is-playing"))) && heroBgTeaserIsPlayingConfirmed && !wasPreloadedParked) {
           heroBgTeaserChromeShieldRequired = false;
           setHeroTrailerLoadingBadgeClient(false);
           if (layer) layer.classList.add("is-playing");
+          sendYoutubeHeroTeaserCommandClient("playVideo");
           if (heroBgTeaserPendingUnmute || !heroBgTeaserMuted) {
+            const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
             sendYoutubeHeroTeaserCommandClient("unMute");
-            sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
+            sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
           }
+          applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+          wakeHeroCinemaDockClient();
           syncHeroCinemaDockUiClient();
           return;
         }
         heroBgTeaserChromeShieldRequired = true;
-        if (layer) layer.classList.remove("is-playing");
+        const stageElForResume = document.getElementById("heroStageEl");
+        const isFgResume = Boolean(stageElForResume && stageElForResume.classList.contains("is-trailer-foreground-mode"));
+        if (layer) {
+          if (isFgResume) layer.classList.add("is-playing");
+          else layer.classList.remove("is-playing");
+        }
+        if (wasPreloadedParked && heroBgTeaserCurTime <= 6) {
+          heroBgTeaserCurTime = 0;
+          sendYoutubeHeroTeaserCommandClient("seekTo", [0, true]);
+        }
         sendYoutubeHeroTeaserCommandClient("playVideo");
         if (heroBgTeaserPendingUnmute || !heroBgTeaserMuted) {
+          const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
           sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
+          sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
         }
-        scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 880 : 1450, false);
+        applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, false);
         syncHeroCinemaDockUiClient();
       }
 
@@ -12354,7 +13327,7 @@
         heroBgTeaserDuration = 0;
         const stageEl = document.getElementById("heroStageEl");
         if (stageEl) {
-          stageEl.classList.remove("is-trailer-foreground-mode");
+          stageEl.classList.remove("is-trailer-foreground-mode", "is-cinema-starting", "is-cinema-paused", "is-cinema-ended", "is-cc-safe-framing");
         }
         const layer = document.getElementById("heroBgVideoLayer");
         if (layer) {
@@ -12385,13 +13358,18 @@
           try {
             frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "heroBgVideoIframe" }), "*");
             frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"] }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onApiChange"] }), "*");
             frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"] }), "*");
             if (!heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserStoppedByUser) {
               frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [] }), "*");
             }
             if (heroBgTeaserPendingUnmute || !heroBgTeaserMuted) {
+              const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
               frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [] }), "*");
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [90] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [targetVol] }), "*");
+            }
+            if (ticks === 0 || ticks === 3) {
+              applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
             }
           } catch (_e) {}
           ticks++;
@@ -12406,7 +13384,7 @@
         heroBgTeaserHandshakeTimer = setInterval(sendHandshake, 280);
       }
 
-      function mountHeroTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2) {
+      function mountHeroTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2, overrideCcMode = null, opts = {}) {
         clearHeroBgTeaserTimersClient();
         if (idx < 0 || idx >= heroBgTeaserCandidates.length) {
           stopHeroBackgroundVideoTeaserClient();
@@ -12417,6 +13395,10 @@
         heroBgTeaserCandidateIdx = idx;
         const cleanKey = heroBgTeaserCandidates[idx];
         heroBgTeaserActiveKey = cleanKey;
+        heroBgTeaserCcMode = (overrideCcMode === "off" || overrideCcMode === "de" || overrideCcMode === "en")
+          ? overrideCcMode
+          : (shouldAutoEnableSubtitlesForKeyClient(cleanKey) ? "de" : "off");
+        heroBgTeaserSpeed = Number(opts && opts.preserveSpeed) > 0 ? Number(opts.preserveSpeed) : 1;
         heroBgTeaserStageOpenedAt = Date.now();
         heroBgTeaserIsPlayingConfirmed = false;
         heroBgTeaserPreloadedParked = false;
@@ -12424,25 +13406,30 @@
         heroBgTeaserPlayingStartedAt = 0;
         heroBgTeaserPaused = false;
         heroBgTeaserEnded = false;
-        heroBgTeaserCurTime = 0;
-        heroBgTeaserDuration = 0;
+        heroBgTeaserCurTime = Math.max(0, Number(startSeconds || 0));
+        if (!(opts && opts.keepDuration)) {
+          heroBgTeaserDuration = 0;
+        }
         heroBgTeaserPendingUnmute = Boolean(startUnmuted);
         heroBgTeaserMuted = !startUnmuted;
-        layer.classList.remove("is-playing", "is-concealing");
-
-        const originVal = (typeof location !== "undefined" && location.origin) ? location.origin : "";
-        const originParam = originVal
-          ? ("&origin=" + encodeURIComponent(originVal) + "&widget_referrer=" + encodeURIComponent(originVal))
-          : "";
-        const embedSrc = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
-          "?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
-          "&modestbranding=1&iv_load_policy=3&cc_load_policy=0&autohide=1&playsinline=1&enablejsapi=1&hl=de" +
-          "&start=" + Math.max(0, Number(startSeconds || 0)) + originParam;
-        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
 
         const stageEl = document.getElementById("heroStageEl");
-        if (startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode"))) {
-          scheduleHeroRevealAfterYoutubeChromeHidesClient(2200, true);
+        const isFgMount = Boolean(startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")));
+        layer.classList.remove("is-concealing");
+        if (isFgMount) layer.classList.add("is-playing");
+        else layer.classList.remove("is-playing");
+
+        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, startSeconds, heroBgTeaserCcMode);
+        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
+
+        if (stageEl) {
+          stageEl.classList.remove("is-cinema-paused", "is-cinema-ended");
+          stageEl.classList.toggle("is-cc-safe-framing", heroBgTeaserCcMode === "de" || heroBgTeaserCcMode === "en");
+          stageEl.classList.toggle("is-cinema-starting", isFgMount);
+        }
+        if (isFgMount) {
+          setHeroTrailerLoadingBadgeClient(false);
+          scheduleHeroRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 1500, true);
         }
 
         heroBgTeaserWatchdogTimer = setTimeout(() => {
@@ -12474,6 +13461,13 @@
           }
           if (!msg || typeof msg !== "object") return;
 
+          if (msg.event === "onApiChange") {
+            if (heroBgTeaserCcMode === "de" || heroBgTeaserCcMode === "en") {
+              applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+            }
+            return;
+          }
+
           if (msg.event === "onError" || (msg.info && typeof msg.info === "number" && msg.event === "onError")) {
             if (typeof clientBlockedYoutubeKeys !== "undefined") clientBlockedYoutubeKeys.add(heroBgTeaserActiveKey);
             const nextIdx = heroBgTeaserCandidateIdx + 1;
@@ -12488,7 +13482,7 @@
           let pState = null;
           if (msg.event === "onStateChange" && typeof msg.info === "number") {
             pState = msg.info;
-          } else if (msg.event === "infoDelivery" && msg.info && typeof msg.info === "object") {
+          } else if ((msg.event === "infoDelivery" || msg.event === "initialDelivery") && msg.info && typeof msg.info === "object") {
             if (typeof msg.info.playerState === "number") {
               pState = msg.info.playerState;
             }
@@ -12498,10 +13492,14 @@
             if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
               heroBgTeaserDuration = msg.info.duration;
             }
-            if (typeof msg.info.muted === "boolean" && !heroBgTeaserPendingUnmute) {
+            if (typeof msg.info.muted === "boolean" && !heroBgTeaserPendingUnmute && Date.now() > (window._heroUnmuteGraceUntil || 0)) {
               heroBgTeaserMuted = msg.info.muted;
             }
+            const curStageEl = document.getElementById("heroStageEl");
+            const isFgLive = Boolean(curStageEl && curStageEl.classList.contains("is-trailer-foreground-mode"));
+            // Im stillen Hintergrund-Preview 3,2s vor Ende sanft ausblenden; im aktiven Kino-Vordergrund bis zum echten Ende durchspielen!
             if (
+              !isFgLive &&
               heroBgTeaserDuration > 6 &&
               heroBgTeaserCurTime > 2 &&
               (heroBgTeaserDuration - heroBgTeaserCurTime) <= 3.2 &&
@@ -12533,31 +13531,61 @@
               if (heroBgTeaserPendingUnmute || (isFg && !heroBgTeaserMuted)) {
                 heroBgTeaserPendingUnmute = false;
                 heroBgTeaserMuted = false;
+                window._heroUnmuteGraceUntil = Date.now() + 900;
+                const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
                 sendYoutubeHeroTeaserCommandClient("unMute");
-                sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
+                sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
+              }
+              applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+              if (heroBgTeaserSpeed !== 1) {
+                sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
               }
               if (heroBgTeaserChromeShieldRequired || !isFg) {
                 const elapsedPlaying = Date.now() - (heroBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(480, 2200 - elapsedPlaying);
+                const holdRemainingMs = Math.max(360, 1450 - elapsedPlaying);
                 scheduleHeroRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
               } else if (layer && isFg && !heroBgTeaserStoppedByUser && !heroBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
+                if (stageEl) stageEl.classList.remove("is-cinema-starting");
                 setHeroTrailerLoadingBadgeClient(false);
                 wakeHeroCinemaDockClient();
               }
               syncHeroCinemaDockUiClient();
             } else if (pState === 2) {
               heroBgTeaserPaused = true;
-              heroBgTeaserChromeShieldRequired = true;
+              if (stageEl) stageEl.classList.remove("is-cinema-starting");
               setHeroTrailerLoadingBadgeClient(false);
-              if (layer) {
-                layer.classList.remove("is-playing");
+              // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte STREAMFLIX-Ersatzoverlays überdecken nur die YouTube-Controls!
+              if (!isFg || heroBgTeaserPreloadedParked || heroBgTeaserEnded) {
+                heroBgTeaserChromeShieldRequired = true;
+                if (layer) {
+                  layer.classList.remove("is-playing");
+                }
+              } else {
+                heroBgTeaserChromeShieldRequired = false;
+                if (layer) {
+                  layer.classList.remove("is-concealing");
+                  layer.classList.add("is-playing");
+                }
               }
               wakeHeroCinemaDockClient();
               syncHeroCinemaDockUiClient();
             } else if (pState === 0) {
-              concealAndPauseHeroTrailerClient({ ended: true, exitForeground: true, pauseDelayMs: 430 });
+              if (stageEl) stageEl.classList.remove("is-cinema-starting");
+              if (isFg) {
+                heroBgTeaserEnded = true;
+                heroBgTeaserPaused = true;
+                setHeroTrailerLoadingBadgeClient(false);
+                wakeHeroCinemaDockClient();
+                syncHeroCinemaDockUiClient();
+                const endPrimaryBtn = document.getElementById("heroCinemaEndPrimaryBtn");
+                if (endPrimaryBtn && typeof jumpSpatialFocus === "function") {
+                  jumpSpatialFocus(endPrimaryBtn, false);
+                }
+              } else {
+                concealAndPauseHeroTrailerClient({ ended: true, exitForeground: true, pauseDelayMs: 430 });
+              }
             } else if ((pState === -1 || pState === 5) && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserStoppedByUser) {
               sendYoutubeHeroTeaserCommandClient("playVideo");
               syncHeroCinemaDockUiClient();
@@ -12573,14 +13601,17 @@
           : (tr) => {
               if (!tr) return [];
               if (typeof tr === "string") return [tr.trim()].filter(Boolean);
+              registerTrailerMetaMapClient(tr);
               const arr = Array.isArray(tr.candidates) && tr.candidates.length ? tr.candidates : (tr.key ? [tr.key] : []);
               return arr.map(x => String(x || "").trim()).filter(Boolean);
             };
         if (hero.trailers) {
+          registerTrailerMetaMapClient(hero.trailers);
           const direct = extractFn(hero.trailers);
           if (direct.length > 0) return direct;
         }
         if (hero._cachedTrailers) {
+          registerTrailerMetaMapClient(hero._cachedTrailers);
           const cached = extractFn(hero._cachedTrailers);
           if (cached.length > 0) return cached;
         }
@@ -12591,6 +13622,7 @@
           const hit = clientDetailsCache.get(cacheKey);
           if (hit && hit.data && hit.data.trailers) {
             hero._cachedTrailers = hit.data.trailers;
+            registerTrailerMetaMapClient(hit.data.trailers);
             return extractFn(hit.data.trailers);
           }
         }
@@ -12602,6 +13634,7 @@
             }
             if (d.trailers) {
               hero._cachedTrailers = d.trailers;
+              registerTrailerMetaMapClient(d.trailers);
               return extractFn(d.trailers);
             }
           }
@@ -12663,13 +13696,13 @@
         if (!stageEl) return;
         if (stageEl.classList.contains("is-trailer-foreground-mode")) {
           const layer = document.getElementById("heroBgVideoLayer");
-          if (layer && !layer.classList.contains("is-playing") && heroBgTeaserActiveKey && !heroBgTeaserPaused && !heroBgTeaserEnded) {
+          if ((stageEl.classList.contains("is-cinema-starting") || (layer && !layer.classList.contains("is-playing"))) && heroBgTeaserActiveKey && !heroBgTeaserPaused && !heroBgTeaserEnded) {
             heroBgTeaserPendingUnmute = true;
             heroBgTeaserMuted = false;
             sendYoutubeHeroTeaserCommandClient("playVideo");
             sendYoutubeHeroTeaserCommandClient("unMute");
-            sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
-            setHeroTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
+            sendYoutubeHeroTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
+            applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
             syncHeroCinemaDockUiClient();
             return;
           }
@@ -12684,8 +13717,8 @@
           stopHeroBackgroundVideoTeaserClient();
           heroBgTeaserActiveSlideKey = slideKey;
         }
-        stageEl.classList.add("is-trailer-foreground-mode");
-        setHeroTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
+        stageEl.classList.add("is-trailer-foreground-mode", "is-cinema-starting");
+        setHeroTrailerLoadingBadgeClient(false);
         syncHeroCinemaDockUiClient();
 
         const candidates = heroBgTeaserCandidates.length > 0
@@ -12695,6 +13728,7 @@
         if (!curHero || String(curHero.id) !== String(hero.id)) return;
 
         if (candidates.length === 0) {
+          stageEl.classList.remove("is-cinema-starting");
           setHeroTrailerLoadingBadgeClient(false);
           if (fromStageTap) {
             syncHeroCinemaDockUiClient();
@@ -12720,9 +13754,14 @@
         const existingFrame = document.getElementById("heroBgVideoIframe");
         if (existingFrame && heroBgTeaserActiveKey) {
           sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
+          sendYoutubeHeroTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
+          applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+          if (heroBgTeaserSpeed && heroBgTeaserSpeed !== 1) {
+            sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
+          }
           const layer = document.getElementById("heroBgVideoLayer");
           if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired) {
+            stageEl.classList.remove("is-cinema-starting");
             setHeroTrailerLoadingBadgeClient(false);
             if (layer) {
               layer.classList.remove("is-concealing");
@@ -12733,7 +13772,7 @@
             const elapsed = heroBgTeaserPlayingStartedAt > 0
               ? (Date.now() - heroBgTeaserPlayingStartedAt)
               : (Date.now() - (heroBgTeaserStageOpenedAt || Date.now()));
-            const remainingMs = Math.max(400, 1750 - elapsed);
+            const remainingMs = Math.max(400, 1500 - elapsed);
             scheduleHeroRevealAfterYoutubeChromeHidesClient(remainingMs, false);
           } else {
             resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
@@ -12742,9 +13781,9 @@
           mountHeroTrailerCandidateAtIndexClient(0, true, 0);
         }
         syncHeroCinemaDockUiClient();
-        const modeBtn = document.getElementById("heroCinemaModeBtn");
-        if (modeBtn && typeof jumpSpatialFocus === "function") {
-          jumpSpatialFocus(modeBtn, false);
+        const focusBtn = document.getElementById("heroCinemaPlayBtn") || document.getElementById("heroCinemaModeBtn");
+        if (focusBtn && typeof jumpSpatialFocus === "function") {
+          jumpSpatialFocus(focusBtn, false);
         }
       }
 
@@ -12752,6 +13791,7 @@
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const stageEl = document.getElementById("heroStageEl");
         if (!stageEl) return;
+        stageEl.classList.remove("is-cinema-starting");
         if (heroBgTeaserActiveKey && !heroBgTeaserPaused && !heroBgTeaserEnded) {
           concealAndPauseHeroTrailerClient({
             exitForeground: true,
@@ -12795,8 +13835,37 @@
           resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
           showHeroSeekRippleBadgeClient("▶ Fortsetzen", "center");
         } else {
-          concealAndPauseHeroTrailerClient({ stoppedByUser: true });
-          showHeroSeekRippleBadgeClient("⏸ Pausiert", "center");
+          // Video-Frame sichtbar lassen – gezielte STREAMFLIX-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
+          if (heroBgTeaserRevealTimer) {
+            clearTimeout(heroBgTeaserRevealTimer);
+            heroBgTeaserRevealTimer = null;
+          }
+          if (stageEl) stageEl.classList.remove("is-cinema-starting");
+          heroBgTeaserPaused = true;
+          heroBgTeaserStoppedByUser = true;
+          heroBgTeaserChromeShieldRequired = false;
+          const layer = document.getElementById("heroBgVideoLayer");
+          if (layer) {
+            layer.classList.remove("is-concealing");
+            layer.classList.add("is-playing");
+          }
+          sendYoutubeHeroTeaserCommandClient("pauseVideo");
+          wakeHeroCinemaDockClient();
+          syncHeroCinemaDockUiClient();
+          const centerPlayBtn = document.getElementById("heroCinemaCenterPlayBtn");
+          if (centerPlayBtn && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(centerPlayBtn, false);
+          }
+        }
+      }
+
+      function openHeroDetailsFromCinemaOverlayClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        const curHero = (state && Array.isArray(state.heroSlides)) ? (state.heroSlides[state.heroIndex] || state.heroSlides[0]) : null;
+        exitHeroForegroundTrailerModeClient(ev);
+        if (curHero && curHero.id && typeof openDetails === "function") {
+          const heroType = curHero.media_type === "tv" || state.type === "s" ? "s" : "m";
+          openDetails(heroType, curHero.id);
         }
       }
 
@@ -12811,8 +13880,10 @@
         if (heroBgTeaserMuted) {
           heroBgTeaserPendingUnmute = true;
           heroBgTeaserMuted = false;
+          const vol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : saveTrailerVolumeClient(85);
           sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
+          sendYoutubeHeroTeaserCommandClient("setVolume", [vol]);
+          showHeroSeekRippleBadgeClient("🔊 " + vol + "%", "center");
           if (heroBgTeaserEnded || heroBgTeaserPaused) {
             resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
             return;
@@ -12821,7 +13892,79 @@
           heroBgTeaserPendingUnmute = false;
           heroBgTeaserMuted = true;
           sendYoutubeHeroTeaserCommandClient("mute");
+          showHeroSeekRippleBadgeClient("🔇 Stumm", "center");
         }
+        syncHeroCinemaDockUiClient();
+      }
+
+      function onHeroCinemaVolumeInputClient(inpEl, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (!inpEl) return;
+        wakeHeroCinemaDockClient();
+        const vol = saveTrailerVolumeClient(inpEl.value);
+        inpEl.style.setProperty("--vol-pct", vol + "%");
+        if (vol <= 0) {
+          heroBgTeaserMuted = true;
+          heroBgTeaserPendingUnmute = false;
+          sendYoutubeHeroTeaserCommandClient("mute");
+        } else {
+          heroBgTeaserMuted = false;
+          heroBgTeaserPendingUnmute = false;
+          sendYoutubeHeroTeaserCommandClient("unMute");
+          sendYoutubeHeroTeaserCommandClient("setVolume", [vol]);
+        }
+        syncHeroCinemaDockUiClient();
+      }
+
+      function adjustHeroCinemaVolumeStepClient(delta, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
+        const baseVol = heroBgTeaserMuted ? 0 : getSavedTrailerVolumeClient();
+        const nextVol = saveTrailerVolumeClient(baseVol + Number(delta || 0));
+        if (nextVol <= 0) {
+          heroBgTeaserMuted = true;
+          sendYoutubeHeroTeaserCommandClient("mute");
+          showHeroSeekRippleBadgeClient("🔇 Stumm", "center");
+        } else {
+          heroBgTeaserMuted = false;
+          sendYoutubeHeroTeaserCommandClient("unMute");
+          sendYoutubeHeroTeaserCommandClient("setVolume", [nextVol]);
+          showHeroSeekRippleBadgeClient("🔊 " + nextVol + "%", "center");
+        }
+        syncHeroCinemaDockUiClient();
+      }
+
+      function toggleHeroCinemaSubtitlesClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
+        const nextMode = getNextTrailerCcModeClient(heroBgTeaserCcMode);
+        heroBgTeaserCcMode = nextMode;
+        const ccMeta = formatTrailerCcButtonMetaClient(nextMode);
+        const frame = document.getElementById("heroBgVideoIframe");
+        if (frame && heroBgTeaserActiveKey && Array.isArray(heroBgTeaserCandidates) && heroBgTeaserCandidates.length > 0) {
+          const resumeSec = Math.max(0, Math.floor(heroBgTeaserCurTime || 0));
+          const keepUnmuted = !heroBgTeaserMuted || Boolean(document.getElementById("heroStageEl")?.classList.contains("is-trailer-foreground-mode"));
+          const keepSpeed = heroBgTeaserSpeed || 1;
+          heroBgTeaserStoppedByUser = false;
+          mountHeroTrailerCandidateAtIndexClient(heroBgTeaserCandidateIdx || 0, keepUnmuted, resumeSec, nextMode, {
+            preserveSpeed: keepSpeed,
+            keepDuration: true,
+            fastRevealMs: 1150,
+            loadingLabel: ccMeta.toast + "…"
+          });
+        } else {
+          applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, nextMode, heroBgTeaserActiveKey);
+          showHeroSeekRippleBadgeClient(ccMeta.toast, "center");
+        }
+        syncHeroCinemaDockUiClient();
+      }
+
+      function cycleHeroCinemaSpeedClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
+        heroBgTeaserSpeed = getNextTrailerSpeedClient(heroBgTeaserSpeed);
+        sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
+        showHeroSeekRippleBadgeClient("⚡ " + heroBgTeaserSpeed + "×", "center");
         syncHeroCinemaDockUiClient();
       }
 
@@ -12844,12 +13987,33 @@
           heroBgTeaserStoppedByUser = false;
           sendYoutubeHeroTeaserCommandClient("playVideo");
         }
-        scheduleHeroRevealAfterYoutubeChromeHidesClient(2150, true);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(1150, true);
         syncHeroCinemaDockUiClient();
         showHeroSeekRippleBadgeClient(
           deltaSec < 0 ? ("⏪ " + deltaSec + "s") : ("⏩ +" + deltaSec + "s"),
           deltaSec < 0 ? "left" : "right"
         );
+      }
+
+      function restartHeroCinemaTrailerClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
+        const frame = document.getElementById("heroBgVideoIframe");
+        if (!frame || !heroBgTeaserActiveKey) return;
+        heroBgTeaserCurTime = 0;
+        heroBgTeaserEnded = false;
+        heroBgTeaserPaused = false;
+        heroBgTeaserStoppedByUser = false;
+        if (heroBgTeaserDelayedPauseTimer) {
+          clearTimeout(heroBgTeaserDelayedPauseTimer);
+          heroBgTeaserDelayedPauseTimer = null;
+        }
+        sendYoutubeHeroTeaserCommandClient("seekTo", [0, true]);
+        sendYoutubeHeroTeaserCommandClient("playVideo");
+        applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(1150, true);
+        syncHeroCinemaDockUiClient();
+        showHeroSeekRippleBadgeClient("⏮ 0:00 Neustart", "center");
       }
 
       function switchNextHeroTrailerCandidateManualClient(ev) {
@@ -12861,7 +14025,10 @@
         heroBgTeaserStoppedByUser = false;
         mountHeroTrailerCandidateAtIndexClient(nextIdx, keepUnmuted, 0);
         syncHeroCinemaDockUiClient();
-        showHeroSeekRippleBadgeClient("⏭ Clip " + (nextIdx + 1) + "/" + heroBgTeaserCandidates.length, "center");
+        const nextMeta = getTrailerCandidateMetaClient(heroBgTeaserCandidates[nextIdx]);
+        const langSuffix = nextMeta.lang ? (" · " + nextMeta.lang.toUpperCase()) : "";
+        const subSuffix = heroBgTeaserCcMode !== "off" ? " · UT DE" : "";
+        showHeroSeekRippleBadgeClient("⏭ Clip " + (nextIdx + 1) + "/" + heroBgTeaserCandidates.length + langSuffix + subSuffix, "center");
       }
 
       function onHeroCinemaScrubInputClient(inpEl, ev) {
@@ -12870,8 +14037,13 @@
         heroBgTeaserScrubbing = true;
         wakeHeroCinemaDockClient();
         heroBgTeaserChromeShieldRequired = true;
-        const layer = document.getElementById("heroBgVideoLayer");
-        if (layer) layer.classList.remove("is-playing");
+        const stageEl = document.getElementById("heroStageEl");
+        if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")) {
+          stageEl.classList.add("is-cinema-starting");
+        } else {
+          const layer = document.getElementById("heroBgVideoLayer");
+          if (layer) layer.classList.remove("is-playing");
+        }
         const targetSec = Math.max(0, Number(inpEl.value || 0));
         heroBgTeaserCurTime = targetSec;
         const maxDur = Number(inpEl.max) || (heroBgTeaserDuration > 0 ? Math.floor(heroBgTeaserDuration) : 120);
@@ -12903,7 +14075,7 @@
           heroBgTeaserStoppedByUser = false;
           sendYoutubeHeroTeaserCommandClient("playVideo");
         }
-        scheduleHeroRevealAfterYoutubeChromeHidesClient(2150, true);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(1150, true);
         syncHeroCinemaDockUiClient();
         wakeHeroCinemaDockClient();
       }
@@ -12942,11 +14114,11 @@
         }
 
         const layer = document.getElementById("heroBgVideoLayer");
-        if (layer && !layer.classList.contains("is-playing") && heroBgTeaserActiveKey && !heroBgTeaserPaused && !heroBgTeaserEnded) {
+        if ((stageEl.classList.contains("is-cinema-starting") || (layer && !layer.classList.contains("is-playing"))) && heroBgTeaserActiveKey && !heroBgTeaserPaused && !heroBgTeaserEnded) {
           sendYoutubeHeroTeaserCommandClient("playVideo");
           sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
-          setHeroTrailerLoadingBadgeClient(true, "🎬 Trailer startet…");
+          sendYoutubeHeroTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
+          applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
           return;
         }
 
@@ -13982,14 +15154,47 @@
                 '</div>' +
                 '<div id="heroForegroundStageCatcher" class="detail-foreground-stage-catcher hero-foreground-stage-catcher" onmousemove="wakeHeroCinemaDockClient()" onclick="onHeroForegroundStageCatcherTapClient(event)" title="Einmal tippen: Steuerung / Infos · Doppeltippen links/rechts: ±10s"></div>' +
                 '<div id="heroSeekRippleBadge" class="detail-seek-ripple-badge" aria-hidden="true"></div>' +
+                '<div id="heroCinemaTopHud" class="cinema-top-hud" onmousemove="wakeHeroCinemaDockClient()" onclick="event.stopPropagation()">' +
+                  '<div class="cinema-top-hud-info">' +
+                    '<div id="heroCinemaTopTitle" class="cinema-top-hud-title">' + esc(heroTitleRaw) + '</div>' +
+                    '<div id="heroCinemaTopMeta" class="cinema-top-hud-meta">' + esc(yearStr) + '</div>' +
+                  '</div>' +
+                  '<button type="button" id="heroCinemaTopCloseBtn" class="cinema-top-hud-close" onclick="exitHeroForegroundTrailerModeClient(event)" title="Trailer schließen (Esc)" aria-label="Trailer schließen">✕</button>' +
+                '</div>' +
+                '<div id="heroCinemaStartShield" class="cinema-start-center-shield" aria-hidden="true"></div>' +
+                '<div id="heroCinemaStartBottomShield" class="cinema-start-bottom-shield" aria-hidden="true"></div>' +
+                '<button type="button" id="heroCinemaCenterPlayBtn" class="cinema-pause-center-btn" onclick="toggleHeroCinemaPlayPauseClient(event)" title="Trailer fortsetzen (Leertaste)" aria-label="Trailer fortsetzen">▶</button>' +
+                '<div id="heroCinemaPauseCurtain" class="cinema-pause-bottom-curtain" onmousemove="wakeHeroCinemaDockClient()" onclick="event.stopPropagation()">' +
+                  '<div class="cinema-pause-quick-bar">' +
+                    '<button type="button" id="heroCinemaPauseResumeBtn" class="cinema-overlay-btn is-primary" onclick="toggleHeroCinemaPlayPauseClient(event)">▶ Fortsetzen</button>' +
+                    '<button type="button" id="heroCinemaPauseDetailsBtn" class="cinema-overlay-btn" onclick="openHeroDetailsFromCinemaOverlayClient(event)">ⓘ Details & Stream</button>' +
+                    '<button type="button" id="heroCinemaPauseNextBtn" class="cinema-overlay-btn" style="display:none" onclick="switchNextHeroTrailerCandidateManualClient(event)">⏭ Nächster Clip</button>' +
+                  '</div>' +
+                '</div>' +
+                '<div id="heroCinemaEndOverlay" class="cinema-end-overlay" onclick="event.stopPropagation()">' +
+                  '<div class="cinema-end-kicker">Trailer beendet</div>' +
+                  '<div id="heroCinemaEndTitle" class="cinema-end-title">' + esc(heroTitleRaw) + '</div>' +
+                  '<div class="cinema-end-actions">' +
+                    '<button type="button" id="heroCinemaEndPrimaryBtn" class="cinema-overlay-btn is-primary" onclick="openHeroDetailsFromCinemaOverlayClient(event)">ⓘ Details & Stream</button>' +
+                    '<button type="button" id="heroCinemaEndReplayBtn" class="cinema-overlay-btn" onclick="restartHeroCinemaTrailerClient(event)">↺ Nochmal ansehen</button>' +
+                    '<button type="button" id="heroCinemaEndNextBtn" class="cinema-overlay-btn" style="display:none" onclick="switchNextHeroTrailerCandidateManualClient(event)">⏭ Nächster Clip</button>' +
+                    '<button type="button" id="heroCinemaEndCloseBtn" class="cinema-overlay-btn" onclick="exitHeroForegroundTrailerModeClient(event)">✕ Schließen</button>' +
+                  '</div>' +
+                '</div>' +
                 '<div id="heroCinemaPlayerDock" class="detail-cinema-player-dock hero-cinema-player-dock" onmousemove="wakeHeroCinemaDockClient()" ontouchstart="wakeHeroCinemaDockClient()" onclick="event.stopPropagation();wakeHeroCinemaDockClient()">' +
-                  '<button type="button" id="heroCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleHeroCinemaPlayPauseClient(event)" title="Trailer abspielen / pausieren">▶</button>' +
-                  '<button type="button" id="heroCinemaMuteBtn" class="cinema-dock-btn" onclick="toggleHeroBackgroundTeaserAudioClient(event)" title="Ton umschalten">🔊</button>' +
+                  '<button type="button" id="heroCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleHeroCinemaPlayPauseClient(event)" title="Trailer abspielen / pausieren (Leertaste)">▶</button>' +
+                  '<button type="button" id="heroCinemaRestartBtn" class="cinema-dock-btn" onclick="restartHeroCinemaTrailerClient(event)" title="Trailer von Anfang starten – 0:00 (Taste R)" aria-label="Trailer von Anfang starten">⏮</button>' +
+                  '<div id="heroCinemaVolGroup" class="cinema-dock-vol-group">' +
+                    '<button type="button" id="heroCinemaMuteBtn" class="cinema-dock-btn" onclick="toggleHeroBackgroundTeaserAudioClient(event)" title="Ton umschalten (Taste M)">🔊</button>' +
+                    '<input type="range" id="heroCinemaVolSlider" class="cinema-dock-vol-slider" min="0" max="100" step="5" value="' + getSavedTrailerVolumeClient() + '" oninput="onHeroCinemaVolumeInputClient(this, event)" onclick="event.stopPropagation()" title="Lautstärke regeln" aria-label="Lautstärke" />' +
+                  '</div>' +
                   '<div id="heroCinemaTimelineWrap" class="cinema-dock-timeline-wrap">' +
-                    '<input type="range" id="heroCinemaScrubber" class="cinema-dock-scrubber" min="0" max="120" step="1" value="0" oninput="onHeroCinemaScrubInputClient(this, event)" onchange="onHeroCinemaScrubChangeClient(this, event)" title="Im Trailer vor-/zurückspulen" />' +
+                    '<input type="range" id="heroCinemaScrubber" class="cinema-dock-scrubber" min="0" max="120" step="1" value="0" oninput="onHeroCinemaScrubInputClient(this, event)" onchange="onHeroCinemaScrubChangeClient(this, event)" title="Im Trailer vor-/zurückspulen (J / L)" />' +
                     '<span id="heroCinemaTimeLbl" class="cinema-dock-time">0:00</span>' +
                   '</div>' +
-                  '<button type="button" id="heroCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextHeroTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen">⏭ 1/2</button>' +
+                  '<button type="button" id="heroCinemaCcBtn" class="cinema-dock-btn cinema-dock-cc-btn" onclick="toggleHeroCinemaSubtitlesClient(event)" title="Untertitel umschalten: Aus / DE / EN (Taste C)">CC</button>' +
+                  '<button type="button" id="heroCinemaSpeedBtn" class="cinema-dock-btn cinema-dock-speed-btn" onclick="cycleHeroCinemaSpeedClient(event)" title="Wiedergabegeschwindigkeit ändern (Taste S)">1×</button>' +
+                  '<button type="button" id="heroCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextHeroTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen (Taste N)">⏭ 1/2</button>' +
                   '<button type="button" id="heroCinemaModeBtn" class="cinema-dock-btn" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="Trailer beenden & Slider-Infos wieder einblenden (Esc)">✕ Schließen</button>' +
                 '</div>' +
               '</div>' +
@@ -14416,7 +15621,7 @@
         const hdr = document.getElementById("topUnifiedBar") || document.querySelector("header");
         if (!hdr) return;
         const t = ev.target;
-        if (t && typeof t.closest === "function" && !t.closest("#topUnifiedBar")) {
+        if (t && typeof t.closest === "function" && !t.closest("#topUnifiedBar") && !t.closest("#tvElevBtnSearch")) {
           closeSearchGenreDropdownOverlay();
           const inp = document.getElementById("searchInput");
           const hasText = Boolean(inp && inp.value && inp.value.trim().length > 0);
@@ -14613,10 +15818,15 @@
       let activeAutocompleteIndex = -1;
 
       function onSearchInputFocus() {
+        if (typeof closeRightMenuOverlayClient === "function") {
+          closeRightMenuOverlayClient(null, true);
+        }
         closeSearchGenreDropdownOverlay();
         expandMobileSearchBarClient(false);
         updateSearchClearBtnVisibility();
         state.searchFocused = true;
+        const bar = document.querySelector("#topUnifiedBar .search-bar");
+        if (bar) bar.classList.add("is-search-focused");
         const inp = document.getElementById("searchInput");
         const val = (inp ? inp.value : "").trim();
         const box = document.getElementById("searchAutocompleteBox");
@@ -14636,6 +15846,10 @@
             (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchAutocompleteBox")) ||
             (box && typeof box.matches === "function" && box.matches(":hover"))
           );
+          if (activeEl !== inp) {
+            const bar = document.querySelector("#topUnifiedBar .search-bar");
+            if (bar) bar.classList.remove("is-search-focused", "search-focus-pulse");
+          }
           const val = (inp ? inp.value : "").trim();
           updateSearchClearBtnVisibility();
           const genreOverlayOpen = Boolean(document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open"));

@@ -2102,11 +2102,31 @@
     return null;
   }
 
-  function extractYoutubeTrailerCandidatesFromVideos(videosObj) {
+  function inferYoutubeTrailerLangFromText(titleStr = "", authorStr = "", explicitIso = "") {
+    const iso = String(explicitIso || "").trim().toLowerCase();
+    const combined = `${String(titleStr || "")} ${String(authorStr || "")}`.toLowerCase();
+    const hasBurnedDeSubs = /\b(ger\s*sub|german\s*sub|dt\.?\s*ut|deut\.?\s*ut|omu|mit\s+untertitel)/i.test(combined);
+    if (iso === "de") {
+      return "de";
+    }
+    if (iso === "en") {
+      return hasBurnedDeSubs ? "de" : "en";
+    }
+    if (hasBurnedDeSubs) return "de";
+    if (/\b(deutsch|german|offizieller|offizielle|kinocheck|filmstarts|im\s+kino|ab\s+\d|staffel\s*\d|folge\s*\d|synchron|deutsches?|komplett\s+deutsch)\b/i.test(combined)) {
+      return "de";
+    }
+    if (/\b(official\s+trailer|official\s+teaser|teaser\s+trailer|final\s+trailer|official\s+clip|in\s+theaters|coming\s+soon|season\s*\d|netflix\s+official|official\s+hd)\b/i.test(combined)) {
+      return "en";
+    }
+    return "";
+  }
+
+  function extractYoutubeTrailerCandidatesMetaFromVideos(videosObj) {
     const results = Array.isArray(videosObj?.results) ? videosObj.results : [];
-    if (results.length === 0) return [];
+    if (results.length === 0) return { keys: [], meta: {} };
     const ytList = results.filter(v => v && v.site === "YouTube" && typeof v.key === "string" && v.key.trim());
-    if (ytList.length === 0) return [];
+    if (ytList.length === 0) return { keys: [], meta: {} };
     const scoreVideo = (v) => {
       let s = 0;
       const lang = String(v.iso_639_1 || "").toLowerCase();
@@ -2121,20 +2141,51 @@
     };
     const sorted = [...ytList].sort((a, b) => scoreVideo(b) - scoreVideo(a));
     const seen = new Set();
-    const out = [];
+    const keys = [];
+    const meta = {};
     for (const v of sorted) {
       const k = v.key.trim();
       if (!k || seen.has(k)) continue;
       seen.add(k);
-      out.push(k);
-      if (out.length >= 6) break;
+      keys.push(k);
+      const explicitIso = String(v.iso_639_1 || "").trim().toLowerCase();
+      meta[k] = {
+        lang: inferYoutubeTrailerLangFromText(v.name || "", "", explicitIso) || explicitIso,
+        name: String(v.name || "").trim().slice(0, 90),
+        type: String(v.type || "Trailer").trim()
+      };
+      if (keys.length >= 6) break;
     }
-    return out;
+    return { keys, meta };
+  }
+
+  function extractYoutubeTrailerCandidatesFromVideos(videosObj) {
+    return extractYoutubeTrailerCandidatesMetaFromVideos(videosObj).keys;
   }
 
   function extractYoutubeTrailerFromVideos(videosObj) {
     const candidates = extractYoutubeTrailerCandidatesFromVideos(videosObj);
     return candidates.length > 0 ? candidates[0] : null;
+  }
+
+  function resolveYoutubeTrailerCandidatesMeta(candidateKeys, existingMetaMap = null) {
+    const out = {};
+    const list = Array.isArray(candidateKeys) ? candidateKeys : [];
+    const baseMeta = (existingMetaMap && typeof existingMetaMap === "object") ? existingMetaMap : {};
+    for (const rawK of list) {
+      const k = String(rawK || "").trim();
+      if (!k) continue;
+      const existing = baseMeta[k] && typeof baseMeta[k] === "object" ? baseMeta[k] : null;
+      const oembed = memoryFallback.get(`yt_oembed_meta_${k}`) || null;
+      const explicitLang = String(existing?.lang || "").trim().toLowerCase();
+      const inferredLang = explicitLang || inferYoutubeTrailerLangFromText(oembed?.title || existing?.name || "", oembed?.author || "", "");
+      out[k] = {
+        lang: inferredLang,
+        name: String(existing?.name || oembed?.title || "").trim().slice(0, 90),
+        type: String(existing?.type || "Trailer").trim()
+      };
+    }
+    return out;
   }
 
   async function verifyEmbeddableYoutubeCandidates(candidatesInput) {
@@ -2155,6 +2206,15 @@
             memoryFallback.set(memKey, false);
           } else if (res.ok) {
             memoryFallback.set(memKey, true);
+            try {
+              const j = await res.json();
+              if (j && (j.title || j.author_name)) {
+                memoryFallback.set(`yt_oembed_meta_${key}`, {
+                  title: String(j.title || "").trim().slice(0, 120),
+                  author: String(j.author_name || "").trim().slice(0, 80)
+                });
+              }
+            } catch (_parseErr) {}
           }
         } catch (_e) {
           // Bei Timeout Kandidaten nicht verwerfen; Client prüft per IFrame-API weiter
@@ -2296,8 +2356,9 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
-      const rawTrailerCandidates = extractYoutubeTrailerCandidatesFromVideos(data.videos);
-      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(rawTrailerCandidates);
+      const extractedTrailers = extractYoutubeTrailerCandidatesMetaFromVideos(data.videos);
+      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(extractedTrailers.keys);
+      const trailerCandidatesMeta = resolveYoutubeTrailerCandidatesMeta(trailerCandidates, extractedTrailers.meta);
       const trailerKey = trailerCandidates[0] || null;
 
       const result = {
@@ -2326,7 +2387,8 @@
         vote_average: data.vote_average,
         title: data.title || "Unbekannt",
         trailerKey,
-        trailerCandidates
+        trailerCandidates,
+        trailerCandidatesMeta
       };
       if (result.logo_path) {
         memoryFallback.set(`logo_m_${result.id}`, result.logo_path);
@@ -2610,8 +2672,9 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
-      const rawTrailerCandidates = extractYoutubeTrailerCandidatesFromVideos(data.videos);
-      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(rawTrailerCandidates);
+      const extractedTrailers = extractYoutubeTrailerCandidatesMetaFromVideos(data.videos);
+      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(extractedTrailers.keys);
+      const trailerCandidatesMeta = resolveYoutubeTrailerCandidatesMeta(trailerCandidates, extractedTrailers.meta);
       const trailerKey = trailerCandidates[0] || null;
 
       let seasons = (data.seasons || [])
@@ -2655,6 +2718,7 @@
         original_name: data.original_name || data.name || "",
         trailerKey,
         trailerCandidates,
+        trailerCandidatesMeta,
         numberOfSeasons: data.number_of_seasons || seasons.length || 1,
         numberOfEpisodes: data.number_of_episodes || tvMazeData?.episodes?.length || 0,
         seasons

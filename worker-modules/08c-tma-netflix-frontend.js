@@ -7088,7 +7088,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .cinema-top-hud-close, .cinema-pause-center-btn, .cinema-overlay-btn, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -7415,6 +7415,9 @@
         const elevBox = document.getElementById("tvQuickJumpElevator");
         if (elevBox) {
           const goingIntoElev = Boolean(el.closest && el.closest("#tvQuickJumpElevator"));
+          if (goingIntoElev) {
+            elevBox.classList.remove("is-dismissed");
+          }
           elevBox.classList.toggle("is-visible", goingIntoElev);
           if (!goingIntoElev) {
             elevBox.classList.remove("is-hover-expanded");
@@ -8635,10 +8638,18 @@
         }
       }
 
-      function focusSearchWithoutScrollClient() {
+      function focusSearchWithoutScrollClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("light");
-        const elevContainer = document.getElementById("tvQuickJumpElevator");
-        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
+        if (typeof closeRightMenuOverlayClient === "function") {
+          closeRightMenuOverlayClient(null, true);
+        } else {
+          const elevContainer = document.getElementById("tvQuickJumpElevator");
+          if (elevContainer) {
+            elevContainer.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
+            elevContainer.classList.add("is-dismissed");
+          }
+        }
         const hdr = document.getElementById("topUnifiedBar");
         if (hdr && typeof expandMobileSearchBarClient === "function") {
           expandMobileSearchBarClient(true);
@@ -8647,14 +8658,31 @@
         if (inp) {
           setSpatialFocus(inp, false);
           try { inp.focus({ preventScroll: true }); } catch (e) { try { inp.focus(); } catch (e2) {} }
+          try {
+            if (inp.value && typeof inp.setSelectionRange === "function") {
+              inp.setSelectionRange(inp.value.length, inp.value.length);
+            }
+          } catch (e) {}
         }
-        if (typeof showHudToast === "function") showHudToast("🔍 Suchfeld aktiv");
+        const bar = document.querySelector("#topUnifiedBar .search-bar");
+        if (bar) {
+          bar.classList.add("is-search-focused");
+          bar.classList.remove("search-focus-pulse");
+          void bar.offsetWidth;
+          bar.classList.add("search-focus-pulse");
+        }
+        if (typeof showHudToast === "function") showHudToast("🔍 Suche aktiv – einfach lostippen");
       }
 
-      function openPageJumpFromElevatorClient() {
+      function openPageJumpFromElevatorClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
-        const elevContainer = document.getElementById("tvQuickJumpElevator");
-        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
+        if (typeof closeRightMenuOverlayClient === "function") {
+          closeRightMenuOverlayClient(null, true);
+        } else {
+          const elevContainer = document.getElementById("tvQuickJumpElevator");
+          if (elevContainer) elevContainer.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
+        }
         const totPages = Math.max(1, Number(state.totalPages) || 1);
         if (totPages > 1 && typeof openPageJumpModalClient === "function") {
           openPageJumpModalClient();
@@ -8663,10 +8691,15 @@
         }
       }
 
-      function scrollToTopFromElevatorClient() {
+      function scrollToTopFromElevatorClient(ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
-        const elevContainer = document.getElementById("tvQuickJumpElevator");
-        if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded");
+        if (typeof closeRightMenuOverlayClient === "function") {
+          closeRightMenuOverlayClient(null, true);
+        } else {
+          const elevContainer = document.getElementById("tvQuickJumpElevator");
+          if (elevContainer) elevContainer.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
+        }
         window.scrollTo({ top: 0, behavior: "smooth" });
         const firstTopCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
         if (firstTopCard) {
@@ -8831,7 +8864,7 @@
         const activeEl = document.activeElement;
         const activeTag = (activeEl && activeEl.tagName || "").toUpperCase();
         const isSearchInpFocused = activeEl && activeEl.id === "searchInput";
-        const isTypingInInput = activeTag === "INPUT" || activeTag === "TEXTAREA";
+        const isTypingInInput = activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT" || Boolean(activeEl && activeEl.isContentEditable);
 
         const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || (ev.key === "Backspace" && !isTypingInInput);
         if (isBackKey) {
@@ -8863,20 +8896,32 @@
             ev.preventDefault();
             return;
           }
-          if (currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator")) {
-            if (currentSpatialEl.closest("#rightMenuSubPanel") && typeof closeRightMenuSubPanelClient === "function") {
+          const elevForEsc = document.getElementById("tvQuickJumpElevator");
+          const isElevOpenForEsc = Boolean(
+            elevForEsc && (
+              elevForEsc.classList.contains("has-subpanel") ||
+              elevForEsc.classList.contains("is-visible") ||
+              elevForEsc.classList.contains("is-hover-expanded") ||
+              (currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"))
+            )
+          );
+          if (isElevOpenForEsc) {
+            if (currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#rightMenuSubPanel") && typeof closeRightMenuSubPanelClient === "function") {
               closeRightMenuSubPanelClient(true);
               ev.preventDefault();
               return;
             }
-            const elevContainer = document.getElementById("tvQuickJumpElevator");
-            if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
-            if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+            if (typeof closeRightMenuOverlayClient === "function") {
+              closeRightMenuOverlayClient(null, true);
+            } else {
+              if (elevForEsc) elevForEsc.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
+              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+            }
             if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl)) {
               setSpatialFocus(lastElevatorReturnEl, true, "left");
-              ev.preventDefault();
-              return;
             }
+            ev.preventDefault();
+            return;
           }
           const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
           if (spotlightRoot && spotlightRoot.innerHTML.trim() && typeof closePersonSpotlightOverlayClient === "function") {
@@ -8909,6 +8954,98 @@
           goBack();
           ev.preventDefault();
           return;
+        }
+
+        // Kino-Trailer Tastatur- & Fernbedienungs-Shortcuts im aktiven Vordergrund-Modus (K/Space, M, C, J/L, N, S, R, +/-)
+        // Niemals aktiv, wenn ein Eingabefeld (Suche, Merklisten-Suche im rechten Overlay, Jahr etc.) oder ein Seiten-/Such-Overlay geöffnet ist!
+        const elevForTrailerGuard = document.getElementById("tvQuickJumpElevator");
+        const isRightOverlayOpen = Boolean(
+          elevForTrailerGuard && (
+            elevForTrailerGuard.classList.contains("is-visible") ||
+            elevForTrailerGuard.classList.contains("has-subpanel") ||
+            elevForTrailerGuard.classList.contains("is-hover-expanded")
+          )
+        );
+        const isOverlayBlockingTrailerKeys = Boolean(
+          (state && state.sidebarOpen) ||
+          isRightOverlayOpen ||
+          document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
+          document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
+          document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
+          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
+          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
+          document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
+          document.getElementById("lightboxRoot")?.innerHTML.trim()
+        );
+        if (!isTypingInInput && !isOverlayBlockingTrailerKeys && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+          const modalHasContent = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+          const detailFgActive = modalHasContent && Boolean(document.getElementById("detailHeroStageEl")?.classList.contains("is-trailer-foreground-mode"));
+          const heroFgActive = !modalHasContent && Boolean(document.getElementById("heroStageEl")?.classList.contains("is-trailer-foreground-mode"));
+          if (detailFgActive || heroFgActive) {
+            const lk = String(ev.key || "").toLowerCase();
+            const isSpace = ev.code === "Space" || ev.key === " ";
+            if (lk === "k" || isSpace) {
+              ev.preventDefault();
+              ev.stopPropagation();
+              if (detailFgActive && typeof toggleDetailCinemaPlayPauseClient === "function") toggleDetailCinemaPlayPauseClient(ev);
+              else if (heroFgActive && typeof toggleHeroCinemaPlayPauseClient === "function") toggleHeroCinemaPlayPauseClient(ev);
+              return;
+            }
+            if (lk === "m") {
+              ev.preventDefault();
+              if (detailFgActive && typeof toggleDetailBackgroundTeaserAudioClient === "function") toggleDetailBackgroundTeaserAudioClient(ev);
+              else if (heroFgActive && typeof toggleHeroBackgroundTeaserAudioClient === "function") toggleHeroBackgroundTeaserAudioClient(ev);
+              return;
+            }
+            if (lk === "c") {
+              ev.preventDefault();
+              if (detailFgActive && typeof toggleDetailCinemaSubtitlesClient === "function") toggleDetailCinemaSubtitlesClient(ev);
+              else if (heroFgActive && typeof toggleHeroCinemaSubtitlesClient === "function") toggleHeroCinemaSubtitlesClient(ev);
+              return;
+            }
+            if (lk === "j") {
+              ev.preventDefault();
+              if (detailFgActive && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(-10, ev);
+              else if (heroFgActive && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(-10, ev);
+              return;
+            }
+            if (lk === "l") {
+              ev.preventDefault();
+              if (detailFgActive && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(10, ev);
+              else if (heroFgActive && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(10, ev);
+              return;
+            }
+            if (lk === "n") {
+              ev.preventDefault();
+              if (detailFgActive && typeof switchNextDetailTrailerCandidateManualClient === "function") switchNextDetailTrailerCandidateManualClient(ev);
+              else if (heroFgActive && typeof switchNextHeroTrailerCandidateManualClient === "function") switchNextHeroTrailerCandidateManualClient(ev);
+              return;
+            }
+            if (lk === "s") {
+              ev.preventDefault();
+              if (detailFgActive && typeof cycleDetailCinemaSpeedClient === "function") cycleDetailCinemaSpeedClient(ev);
+              else if (heroFgActive && typeof cycleHeroCinemaSpeedClient === "function") cycleHeroCinemaSpeedClient(ev);
+              return;
+            }
+            if (lk === "r") {
+              ev.preventDefault();
+              if (detailFgActive && typeof restartDetailCinemaTrailerClient === "function") restartDetailCinemaTrailerClient(ev);
+              else if (heroFgActive && typeof restartHeroCinemaTrailerClient === "function") restartHeroCinemaTrailerClient(ev);
+              return;
+            }
+            if (ev.key === "+" || ev.key === "=" || ev.code === "NumpadAdd") {
+              ev.preventDefault();
+              if (detailFgActive && typeof adjustDetailCinemaVolumeStepClient === "function") adjustDetailCinemaVolumeStepClient(10);
+              else if (heroFgActive && typeof adjustHeroCinemaVolumeStepClient === "function") adjustHeroCinemaVolumeStepClient(10);
+              return;
+            }
+            if (ev.key === "-" || ev.key === "_" || ev.code === "NumpadSubtract") {
+              ev.preventDefault();
+              if (detailFgActive && typeof adjustDetailCinemaVolumeStepClient === "function") adjustDetailCinemaVolumeStepClient(-10);
+              else if (heroFgActive && typeof adjustHeroCinemaVolumeStepClient === "function") adjustHeroCinemaVolumeStepClient(-10);
+              return;
+            }
+          }
         }
 
         // Smart-TV Fernbedienung & Tastatur Schnell-Tasten: PageUp / PageDown / ChannelUp / ChannelDown / Home / End
