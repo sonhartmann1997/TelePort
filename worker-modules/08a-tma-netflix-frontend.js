@@ -2558,11 +2558,10 @@
         transform: translate3d(0, -2px, 0);
       }
       /* Seitlicher TV- & Konsolen-Schnellsprung-Fahrstuhl (Rechts: Suche/Seite/Oben | Links: Menü mit Genres) */
-      .tv-quick-jump-elevator {
+      .tv-quick-jump-elevator,
+      .tv-quick-jump-left {
         position: fixed;
-        right: 10px;
         top: 50%;
-        transform: translate3d(12px, -50%, 0);
         z-index: 76;
         display: flex;
         flex-direction: column;
@@ -2578,25 +2577,13 @@
         pointer-events: none;
         transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
       }
+      .tv-quick-jump-elevator {
+        right: 10px;
+        transform: translate3d(12px, -50%, 0);
+      }
       .tv-quick-jump-left {
-        position: fixed;
         left: 10px;
-        top: 50%;
         transform: translate3d(-12px, -50%, 0);
-        z-index: 76;
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding: 6px;
-        border-radius: 14px;
-        background: linear-gradient(165deg, rgba(8, 13, 24, 0.90), rgba(15, 23, 42, 0.94));
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(56, 189, 248, 0.38);
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.78), 0 0 18px rgba(14, 165, 233, 0.16);
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
       }
       body.catalog-deep-scrolled .tv-quick-jump-elevator,
       body.kb-nav-active .tv-quick-jump-elevator,
@@ -2628,31 +2615,47 @@
       }
       .tv-elevator-btn {
         min-height: 36px;
-        padding: 0 10px;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0 11px;
         border-radius: 9px;
         border: 1px solid rgba(148, 163, 184, 0.22);
         background: rgba(30, 41, 59, 0.68);
         color: #e2e8f0;
-        font-size: calc(11px * var(--scale-text));
+        font-size: calc(11.5px * var(--scale-text));
         font-weight: 800;
         display: inline-flex;
         align-items: center;
         justify-content: flex-start;
-        gap: 6px;
+        gap: 7px;
         cursor: pointer;
         white-space: nowrap;
         transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
       }
-      .tv-elevator-btn:hover,
-      .tv-elevator-btn.spatial-focus {
+      .tv-quick-jump-elevator .tv-elevator-btn:hover,
+      .tv-quick-jump-elevator .tv-elevator-btn.spatial-focus {
         background: linear-gradient(135deg, #0284c7, #2563eb);
         border-color: #7dd3fc;
         color: #ffffff;
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.48), 0 6px 16px rgba(2, 132, 199, 0.45);
         transform: translate3d(-2px, 0, 0);
       }
+      .tv-quick-jump-left .tv-elevator-btn:hover,
+      .tv-quick-jump-left .tv-elevator-btn.spatial-focus {
+        background: linear-gradient(135deg, #0284c7, #2563eb);
+        border-color: #7dd3fc;
+        color: #ffffff;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.48), 0 6px 16px rgba(2, 132, 199, 0.45);
+        transform: translate3d(2px, 0, 0);
+      }
       .catalog-back-to-top-fab {
         display: none !important;
+      }
+      @media (min-width: 721px) {
+        .tv-quick-jump-elevator,
+        .tv-quick-jump-left {
+          min-width: 110px;
+        }
       }
       @media (max-width: 720px) {
         .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elev-label,
@@ -2661,7 +2664,10 @@
         }
         .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elevator-btn,
         .tv-quick-jump-left:not(:focus-within):not(:hover) .tv-elevator-btn {
-          padding: 0 8px;
+          width: 36px;
+          height: 36px;
+          min-height: 36px;
+          padding: 0;
           justify-content: center;
         }
       }
