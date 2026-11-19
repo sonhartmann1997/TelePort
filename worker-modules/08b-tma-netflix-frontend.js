@@ -4849,6 +4849,10 @@
               '</div>' +
 
               /* EIGENES AMBILIGHT-GLASS CINEMA-PLAYER-OVERLAY MIT AUTO-HIDE */
+              '<div id="detailCinemaBrandWatermark" class="cinema-teleport-watermark" aria-hidden="true">' +
+                '<svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="11.5" stroke="#38bdf8" stroke-width="2.4" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#818cf8" stroke-width="1.4" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="#38bdf8"/></svg>' +
+                '<span>Tele<span class="tp-accent">Port</span></span>' +
+              '</div>' +
               '<div id="detailCinemaPlayerDock" class="detail-cinema-player-dock" onmousemove="wakeDetailCinemaDockClient()" ontouchstart="wakeDetailCinemaDockClient()" onclick="event.stopPropagation();wakeDetailCinemaDockClient()">' +
                 '<button type="button" id="detailCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleDetailCinemaPlayPauseClient(event)" title="Trailer pausieren / fortsetzen (Leertaste)">⏸</button>' +
                 '<button type="button" id="detailCinemaRestartBtn" class="cinema-dock-btn" onclick="restartDetailCinemaTrailerClient(event)" title="Trailer von Anfang starten – 0:00 (Taste R)" aria-label="Trailer von Anfang starten">⏮</button>' +
@@ -4864,6 +4868,10 @@
                 '<button type="button" id="detailCinemaSpeedBtn" class="cinema-dock-btn cinema-dock-speed-btn" onclick="cycleDetailCinemaSpeedClient(event)" title="Wiedergabegeschwindigkeit ändern (Taste S)">1×</button>' +
                 '<button type="button" id="detailCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextDetailTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen (Taste N)">⏭</button>' +
                 '<button type="button" id="detailCinemaModeBtn" class="cinema-dock-btn' + (autoOpenTrailer ? ' is-active-mode' : '') + '" onclick="enterDetailForegroundTrailerModeClient(event)" title="Trailer beenden & Filminfos wieder einblenden (Esc)">' + (autoOpenTrailer ? '✕ Schließen' : '⛶ Kino') + '</button>' +
+                '<div class="cinema-dock-brand" aria-hidden="true">' +
+                  '<svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="11.5" stroke="#38bdf8" stroke-width="2.4" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#818cf8" stroke-width="1.4" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="#38bdf8"/></svg>' +
+                  '<span class="cinema-brand-label">Tele<span class="tp-accent">Port</span></span>' +
+                '</div>' +
               '</div>' +
 
               '<div class="hero-inner">' +

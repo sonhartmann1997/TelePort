@@ -5905,21 +5905,25 @@
       .detail-bg-video-layer::before {
         content: "";
         position: absolute;
+        left: 0;
         right: 0;
         bottom: 0;
-        width: min(460px, 46vw);
-        height: 92px;
+        width: 100%;
+        height: 84px;
         z-index: 3;
         pointer-events: none;
         opacity: 0;
-        background: linear-gradient(0deg, #000000 0px, #000000 68px, rgba(0, 0, 0, 0.88) 80px, transparent 92px);
-        mask-image: linear-gradient(270deg, #000000 0%, #000000 84%, transparent 100%);
-        -webkit-mask-image: linear-gradient(270deg, #000000 0%, #000000 84%, transparent 100%);
-        transition: opacity 0.2s ease;
+        background: linear-gradient(0deg, #000000 0px, #000000 68px, rgba(0, 0, 0, 0.9) 76px, transparent 84px);
+        transition: opacity 0.2s ease, height 0.2s ease;
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer::before,
       .hero.is-trailer-foreground-mode .detail-bg-video-layer::before {
         opacity: 1;
+      }
+      .detail-hero-stage.is-trailer-foreground-mode.is-cc-safe-framing .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode.is-cc-safe-framing .detail-bg-video-layer::before {
+        height: 70px;
+        background: linear-gradient(0deg, #000000 0px, #000000 56px, rgba(0, 0, 0, 0.86) 64px, transparent 70px);
       }
       .detail-bg-video-layer::after {
         content: "";
@@ -5931,9 +5935,7 @@
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer::after,
       .hero.is-trailer-foreground-mode .detail-bg-video-layer::after {
-        background:
-          linear-gradient(180deg, #000000 0px, #000000 78px, rgba(0, 0, 0, 0.94) 88px, rgba(0, 0, 0, 0.45) 102px, transparent 118px),
-          radial-gradient(ellipse 168px 94px at 0% 100%, #000000 0%, #000000 68%, rgba(0, 0, 0, 0.78) 84%, transparent 100%);
+        background: linear-gradient(180deg, #000000 0px, #000000 78px, rgba(0, 0, 0, 0.94) 88px, rgba(0, 0, 0, 0.45) 102px, transparent 118px);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame,
       .hero.is-trailer-foreground-mode .detail-bg-video-frame {
@@ -5993,56 +5995,115 @@
         from { opacity: 0.72; transform: translate(-50%, -50%) scale(0.97); }
         to { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
       }
-      /* Eigenes Ambilight-Glass Cinema-Player-Overlay (TV, PC & Mobile) mit Auto-Hide */
+      /* Dauerhaftes TelePort-Logo unten rechts (überdeckt im Leerlauf exakt den Bereich des YouTube-Logos) */
+      .cinema-teleport-watermark {
+        position: absolute;
+        right: 22px;
+        bottom: 18px;
+        z-index: 15;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 5px 12px 5px 8px;
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.92);
+        border: 1px solid rgba(56, 189, 248, 0.22);
+        color: #f8fafc;
+        font-size: calc(13px * var(--scale-text));
+        font-weight: 900;
+        letter-spacing: 0.03em;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+        opacity: 0;
+        transition: opacity 0.24s ease;
+      }
+      .cinema-teleport-watermark svg,
+      .cinema-dock-brand svg {
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+      }
+      .cinema-teleport-watermark .tp-accent,
+      .cinema-dock-brand .tp-accent {
+        color: #38bdf8;
+      }
+      .detail-hero-stage.is-trailer-foreground-mode .cinema-teleport-watermark,
+      .hero.is-trailer-foreground-mode .cinema-teleport-watermark {
+        opacity: 0.86;
+      }
+      .detail-hero-stage.is-trailer-foreground-mode:has(.detail-cinema-player-dock:not(.is-idle-hidden)) .cinema-teleport-watermark,
+      .hero.is-trailer-foreground-mode:has(.hero-cinema-player-dock:not(.is-idle-hidden)) .cinema-teleport-watermark {
+        opacity: 0;
+      }
+      /* Vollbreites Cinema-Player-Overlay über die gesamte untere Breite (verdeckt alle YouTube-Elemente dauerhaft) */
       .detail-cinema-player-dock {
         position: absolute;
-        left: 50%;
-        right: auto;
-        bottom: 14px;
+        left: 0;
+        right: 0;
+        bottom: 0;
         z-index: 16;
-        width: min(670px, calc(100% - 24px));
+        width: 100%;
+        min-height: 70px;
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 9px 13px;
-        border-radius: 18px;
-        background: linear-gradient(135deg, rgba(8, 13, 24, 0.86) 0%, rgba(15, 23, 42, 0.80) 100%);
-        backdrop-filter: blur(28px) saturate(185%);
-        -webkit-backdrop-filter: blur(28px) saturate(185%);
-        border: 1px solid rgba(255, 255, 255, 0.18);
-        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.78), 0 0 28px rgba(var(--ambi-1, 14, 165, 233), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+        gap: 10px;
+        padding: 12px 22px 14px;
+        border-radius: 0;
+        background: linear-gradient(180deg, rgba(6, 10, 20, 0.96) 0%, #000000 34%, #000000 100%);
+        backdrop-filter: blur(22px) saturate(165%);
+        -webkit-backdrop-filter: blur(22px) saturate(165%);
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 -12px 36px rgba(0, 0, 0, 0.72);
         color: #f8fafc;
         box-sizing: border-box;
         opacity: 0;
         pointer-events: none;
-        transform: translate3d(-50%, 12px, 0);
-        transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1), transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s ease, border-color 0.2s ease, background 0.2s ease;
+        transform: translate3d(0, 14px, 0);
+        transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1), transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, background 0.2s ease;
       }
       .hero:not(.is-trailer-foreground-mode) .hero-cinema-player-dock,
       .detail-hero-stage:not(.is-trailer-foreground-mode) .detail-cinema-player-dock {
         opacity: 0 !important;
         pointer-events: none !important;
-        transform: translate3d(-50%, 12px, 0) !important;
+        transform: translate3d(0, 14px, 0) !important;
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-cinema-player-dock,
       .hero.is-trailer-foreground-mode .detail-cinema-player-dock {
         opacity: 1;
         pointer-events: auto;
-        transform: translate3d(-50%, 0, 0);
+        transform: translate3d(0, 0, 0);
       }
       .detail-cinema-player-dock.is-idle-hidden {
         opacity: 0 !important;
         pointer-events: none !important;
-        transform: translate3d(-50%, 10px, 0) !important;
+        transform: translate3d(0, 12px, 0) !important;
       }
       .detail-cinema-player-dock:hover,
       .detail-cinema-player-dock:focus-within {
-        background: linear-gradient(135deg, rgba(8, 13, 24, 0.92) 0%, rgba(15, 23, 42, 0.88) 100%);
-        border-color: rgba(56, 189, 248, 0.48);
+        background: linear-gradient(180deg, rgba(8, 13, 24, 0.98) 0%, #000000 30%, #000000 100%);
+        border-top-color: rgba(56, 189, 248, 0.36);
       }
       .detail-hero-stage.is-cc-safe-framing .detail-cinema-player-dock,
       .hero.is-cc-safe-framing .detail-cinema-player-dock {
-        bottom: 12px;
+        bottom: 0;
+      }
+      .cinema-dock-brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: 6px;
+        padding-left: 12px;
+        border-left: 1px solid rgba(255, 255, 255, 0.14);
+        color: #f8fafc;
+        font-size: calc(13.5px * var(--scale-text));
+        font-weight: 900;
+        letter-spacing: 0.03em;
+        white-space: nowrap;
+        flex-shrink: 0;
+        user-select: none;
+        -webkit-user-select: none;
+        pointer-events: none;
       }
       /* Auto-ausblendende STREAMFLIX Kino-Kopfzeile oben (verdeckt YouTube-Titelzeile) */
       .cinema-top-hud {
@@ -6593,11 +6654,12 @@
       }
       @media (min-width: 1400px) {
         .detail-cinema-player-dock {
-          width: min(760px, calc(100% - 64px));
-          bottom: 28px;
-          padding: 11px 18px;
-          gap: 11px;
-          border-radius: 20px;
+          width: 100%;
+          bottom: 0;
+          min-height: 74px;
+          padding: 13px 28px 15px;
+          gap: 12px;
+          border-radius: 0;
         }
         .cinema-dock-btn {
           height: 42px;
@@ -6606,8 +6668,10 @@
           font-size: calc(13px * var(--scale-text));
         }
         #heroCinemaPlayBtn,
+        #heroCinemaRestartBtn,
         #heroCinemaMuteBtn,
         #detailCinemaPlayBtn,
+        #detailCinemaRestartBtn,
         #detailCinemaMuteBtn {
           width: 42px;
           font-size: calc(15.5px * var(--scale-text));
@@ -6618,11 +6682,26 @@
       }
       @media (max-width: 640px) {
         .detail-cinema-player-dock {
-          width: calc(100% - 16px);
-          bottom: 12px;
-          padding: 7px 9px;
+          width: 100%;
+          bottom: 0;
+          min-height: 58px;
+          padding: 8px 10px 10px;
           gap: 5px;
-          border-radius: 15px;
+          border-radius: 0;
+        }
+        .cinema-dock-brand {
+          margin-left: 2px;
+          padding-left: 7px;
+          font-size: 11px;
+        }
+        .cinema-dock-brand .cinema-brand-label {
+          display: none;
+        }
+        .cinema-teleport-watermark {
+          right: 12px;
+          bottom: 12px;
+          padding: 4px 9px 4px 7px;
+          font-size: 11px;
         }
         .cinema-dock-btn {
           height: 33px;
@@ -6631,8 +6710,10 @@
           font-size: calc(11px * var(--scale-text));
         }
         #heroCinemaPlayBtn,
+        #heroCinemaRestartBtn,
         #heroCinemaMuteBtn,
         #detailCinemaPlayBtn,
+        #detailCinemaRestartBtn,
         #detailCinemaMuteBtn {
           width: 33px;
         }
@@ -15361,6 +15442,10 @@
                     '<button type="button" id="heroCinemaEndCloseBtn" class="cinema-overlay-btn" onclick="exitHeroForegroundTrailerModeClient(event)">✕ Schließen</button>' +
                   '</div>' +
                 '</div>' +
+                '<div id="heroCinemaBrandWatermark" class="cinema-teleport-watermark" aria-hidden="true">' +
+                  '<svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="11.5" stroke="#38bdf8" stroke-width="2.4" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#818cf8" stroke-width="1.4" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="#38bdf8"/></svg>' +
+                  '<span>Tele<span class="tp-accent">Port</span></span>' +
+                '</div>' +
                 '<div id="heroCinemaPlayerDock" class="detail-cinema-player-dock hero-cinema-player-dock" onmousemove="wakeHeroCinemaDockClient()" ontouchstart="wakeHeroCinemaDockClient()" onclick="event.stopPropagation();wakeHeroCinemaDockClient()">' +
                   '<button type="button" id="heroCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleHeroCinemaPlayPauseClient(event)" title="Trailer abspielen / pausieren (Leertaste)">▶</button>' +
                   '<button type="button" id="heroCinemaRestartBtn" class="cinema-dock-btn" onclick="restartHeroCinemaTrailerClient(event)" title="Trailer von Anfang starten – 0:00 (Taste R)" aria-label="Trailer von Anfang starten">⏮</button>' +
@@ -15376,6 +15461,10 @@
                   '<button type="button" id="heroCinemaSpeedBtn" class="cinema-dock-btn cinema-dock-speed-btn" onclick="cycleHeroCinemaSpeedClient(event)" title="Wiedergabegeschwindigkeit ändern (Taste S)">1×</button>' +
                   '<button type="button" id="heroCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextHeroTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen (Taste N)">⏭ 1/2</button>' +
                   '<button type="button" id="heroCinemaModeBtn" class="cinema-dock-btn" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="Trailer beenden & Slider-Infos wieder einblenden (Esc)">✕ Schließen</button>' +
+                  '<div class="cinema-dock-brand" aria-hidden="true">' +
+                    '<svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="11.5" stroke="#38bdf8" stroke-width="2.4" stroke-dasharray="18 5"/><circle cx="14" cy="14" r="7.5" stroke="#818cf8" stroke-width="1.4" stroke-opacity="0.8"/><path d="M11.8 9.8L18.5 14L11.8 18.2V9.8Z" fill="#38bdf8"/></svg>' +
+                    '<span class="cinema-brand-label">Tele<span class="tp-accent">Port</span></span>' +
+                  '</div>' +
                 '</div>' +
               '</div>' +
             '</div>' +
