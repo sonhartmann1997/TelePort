@@ -5801,6 +5801,13 @@
         z-index: 3;
         filter: brightness(1.03) contrast(1.03);
       }
+      .detail-bg-video-layer::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(180deg, rgba(4, 7, 15, 0.54) 0%, rgba(4, 7, 15, 0) 11%, rgba(4, 7, 15, 0) 88%, rgba(4, 7, 15, 0.58) 100%);
+      }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame,
       .hero.is-trailer-foreground-mode .detail-bg-video-frame {
         transform: none !important;
@@ -5816,23 +5823,26 @@
         user-select: none;
         -webkit-user-select: none;
       }
+      .detail-foreground-stage-catcher.is-cursor-idle {
+        cursor: none;
+      }
       .detail-hero-stage.is-trailer-foreground-mode .detail-foreground-stage-catcher,
       .hero.is-trailer-foreground-mode .detail-foreground-stage-catcher {
         display: block;
       }
-      /* Glas-Ripple-Feedback bei Doppel-Tipp ±10s Spulen & Format-Zoom */
+      /* Glas-Ripple-Feedback bei Doppel-Tipp ±10s Spulen & Play/Pause */
       .detail-seek-ripple-badge {
         position: absolute;
         top: 50%;
         z-index: 15;
         transform: translate(-50%, -50%) scale(0.86);
-        padding: 9px 18px;
+        padding: 10px 20px;
         border-radius: 999px;
-        background: rgba(8, 13, 24, 0.82);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(56, 189, 248, 0.48);
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.72);
+        background: rgba(8, 13, 24, 0.86);
+        backdrop-filter: blur(22px) saturate(180%);
+        -webkit-backdrop-filter: blur(22px) saturate(180%);
+        border: 1px solid rgba(56, 189, 248, 0.52);
+        box-shadow: 0 14px 36px rgba(0, 0, 0, 0.78), 0 0 22px rgba(var(--ambi-1, 14, 165, 233), 0.25);
         color: #ffffff;
         font-size: calc(14px * var(--scale-text));
         font-weight: 900;
@@ -5857,113 +5867,215 @@
         from { opacity: 0.72; transform: translate(-50%, -50%) scale(0.97); }
         to { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
       }
-      /* Edles Glas-Mini-Dock unten rechts für Play/Pause, Ton, Zeitleiste & Kino-Ansicht */
+      /* Eigenes Ambilight-Glass Cinema-Player-Overlay (TV, PC & Mobile) mit Auto-Hide */
       .detail-cinema-player-dock {
         position: absolute;
-        right: 24px;
-        bottom: 18px;
+        left: 50%;
+        right: auto;
+        bottom: 20px;
         z-index: 16;
-        display: inline-flex;
+        width: min(580px, calc(100% - 28px));
+        display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 5px 12px;
-        border-radius: 999px;
-        background: rgba(8, 13, 24, 0.72);
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+        gap: 10px;
+        padding: 9px 14px;
+        border-radius: 18px;
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.84) 0%, rgba(15, 23, 42, 0.78) 100%);
+        backdrop-filter: blur(28px) saturate(185%);
+        -webkit-backdrop-filter: blur(28px) saturate(185%);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.78), 0 0 28px rgba(var(--ambi-1, 14, 165, 233), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.14);
         color: #f8fafc;
+        box-sizing: border-box;
         opacity: 0;
         pointer-events: none;
-        transform: translateY(8px);
+        transform: translate3d(-50%, 12px, 0);
         transition: opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1), transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s ease, border-color 0.2s ease, background 0.2s ease;
       }
-      /* Wenn die untere Hinweis-/Thumbnail-Leiste sichtbar ist, schwebt das Player-Dock kollisionsfrei darüber */
       .hero:not(.is-trailer-foreground-mode) .hero-cinema-player-dock,
       .detail-hero-stage:not(.is-trailer-foreground-mode) .detail-cinema-player-dock {
-        bottom: 60px;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transform: translate3d(-50%, 12px, 0) !important;
       }
-      .detail-cinema-player-dock.is-ready,
       .detail-hero-stage.is-trailer-foreground-mode .detail-cinema-player-dock,
       .hero.is-trailer-foreground-mode .detail-cinema-player-dock {
         opacity: 1;
         pointer-events: auto;
-        transform: translateY(0);
+        transform: translate3d(-50%, 0, 0);
       }
-      .detail-cinema-player-dock:hover {
-        background: rgba(8, 13, 24, 0.88);
+      .detail-cinema-player-dock.is-idle-hidden {
+        opacity: 0 !important;
+        pointer-events: none !important;
+        transform: translate3d(-50%, 10px, 0) !important;
+      }
+      .detail-cinema-player-dock:hover,
+      .detail-cinema-player-dock:focus-within {
+        background: linear-gradient(135deg, rgba(8, 13, 24, 0.92) 0%, rgba(15, 23, 42, 0.88) 100%);
         border-color: rgba(56, 189, 248, 0.48);
       }
       .cinema-dock-btn {
-        height: 28px;
-        min-width: 28px;
-        padding: 0 8px;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        background: rgba(255, 255, 255, 0.07);
+        height: 36px;
+        min-width: 36px;
+        padding: 0 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.08);
         color: #f8fafc;
-        font-size: calc(11.5px * var(--scale-text));
+        font-size: calc(12.5px * var(--scale-text));
         font-weight: 800;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 4px;
+        gap: 5px;
         cursor: pointer;
         white-space: nowrap;
+        flex-shrink: 0;
         box-sizing: border-box;
-        transition: all 0.16s ease;
+        transition: all 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      #heroCinemaPlayBtn,
+      #heroCinemaMuteBtn,
+      #detailCinemaPlayBtn,
+      #detailCinemaMuteBtn {
+        width: 36px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: calc(14px * var(--scale-text));
+      }
+      #heroCinemaPlayBtn,
+      #detailCinemaPlayBtn {
+        background: rgba(56, 189, 248, 0.18);
+        border-color: rgba(56, 189, 248, 0.42);
+        color: #ffffff;
       }
       .cinema-dock-btn:hover,
       .cinema-dock-btn.spatial-focus {
-        background: rgba(56, 189, 248, 0.24);
-        border-color: #38bdf8;
-        color: #ffffff;
-        transform: none;
+        background: rgba(56, 189, 248, 0.28) !important;
+        border-color: #38bdf8 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.32), 0 6px 16px rgba(14, 165, 233, 0.35);
+        transform: translateY(-1px);
       }
       .cinema-dock-btn.is-active-mode {
-        background: rgba(225, 29, 72, 0.25);
-        border-color: rgba(244, 63, 94, 0.65);
+        background: rgba(255, 255, 255, 0.11);
+        border-color: rgba(255, 255, 255, 0.24);
         color: #ffffff;
       }
       .cinema-dock-timeline-wrap {
-        display: inline-flex;
+        flex: 1;
+        min-width: 96px;
+        display: flex;
         align-items: center;
-        gap: 7px;
-        padding: 0 2px;
+        gap: 10px;
+        padding: 0 4px;
       }
       .cinema-dock-scrubber {
-        width: 96px;
-        height: 4px;
-        accent-color: #38bdf8;
+        -webkit-appearance: none;
+        appearance: none;
+        flex: 1;
+        width: 100%;
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #38bdf8 0%, #38bdf8 var(--scrub-pct, 0%), rgba(255, 255, 255, 0.18) var(--scrub-pct, 0%), rgba(255, 255, 255, 0.18) 100%);
+        outline: none;
         cursor: pointer;
         margin: 0;
+        transition: height 0.15s ease, box-shadow 0.15s ease;
+      }
+      .cinema-dock-scrubber:hover,
+      .cinema-dock-scrubber:focus,
+      .cinema-dock-scrubber.spatial-focus {
+        height: 8px;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.35);
+      }
+      .cinema-dock-scrubber::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #38bdf8;
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.85);
+        cursor: pointer;
+        transition: transform 0.15s ease;
+      }
+      .cinema-dock-scrubber:hover::-webkit-slider-thumb,
+      .cinema-dock-scrubber:focus::-webkit-slider-thumb {
+        transform: scale(1.2);
+      }
+      .cinema-dock-scrubber::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #38bdf8;
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.85);
+        cursor: pointer;
+        transition: transform 0.15s ease;
       }
       .cinema-dock-time {
-        font-size: calc(10.5px * var(--scale-text));
-        font-weight: 700;
-        color: #cbd5e1;
+        font-size: calc(11.5px * var(--scale-text));
+        font-weight: 800;
+        color: #e2e8f0;
         font-variant-numeric: tabular-nums;
         white-space: nowrap;
-        min-width: 58px;
+        min-width: 68px;
         text-align: right;
+        letter-spacing: 0.02em;
+      }
+      @media (min-width: 1400px) {
+        .detail-cinema-player-dock {
+          width: min(680px, calc(100% - 64px));
+          bottom: 28px;
+          padding: 11px 18px;
+          gap: 12px;
+          border-radius: 20px;
+        }
+        .cinema-dock-btn {
+          height: 42px;
+          min-width: 42px;
+          padding: 0 15px;
+          font-size: calc(13.5px * var(--scale-text));
+        }
+        #heroCinemaPlayBtn,
+        #heroCinemaMuteBtn,
+        #detailCinemaPlayBtn,
+        #detailCinemaMuteBtn {
+          width: 42px;
+          font-size: calc(15.5px * var(--scale-text));
+        }
+        .cinema-dock-scrubber {
+          height: 7px;
+        }
       }
       @media (max-width: 640px) {
         .detail-cinema-player-dock {
-          right: 12px;
-          left: 12px;
+          width: calc(100% - 20px);
           bottom: 12px;
-          justify-content: space-between;
-          padding: 5px 10px;
+          padding: 7px 11px;
+          gap: 7px;
+          border-radius: 15px;
         }
-        .hero:not(.is-trailer-foreground-mode) .hero-cinema-player-dock,
-        .detail-hero-stage:not(.is-trailer-foreground-mode) .detail-cinema-player-dock {
-          bottom: 54px;
+        .cinema-dock-btn {
+          height: 34px;
+          min-width: 34px;
+          padding: 0 10px;
+          font-size: calc(11.5px * var(--scale-text));
         }
-        .cinema-dock-scrubber {
-          flex: 1;
-          width: auto;
-          min-width: 64px;
+        #heroCinemaPlayBtn,
+        #heroCinemaMuteBtn,
+        #detailCinemaPlayBtn,
+        #detailCinemaMuteBtn {
+          width: 34px;
+        }
+        .cinema-dock-timeline-wrap {
+          gap: 7px;
+        }
+        .cinema-dock-time {
+          min-width: 58px;
+          font-size: calc(10.5px * var(--scale-text));
         }
       }
       .detail-kicker-link {
@@ -11936,6 +12048,41 @@
         } catch (_e) {}
       }
 
+      let heroCinemaDockIdleTimer = null;
+
+      function wakeHeroCinemaDockClient() {
+        const dock = document.getElementById("heroCinemaPlayerDock");
+        const catcher = document.getElementById("heroForegroundStageCatcher");
+        if (dock) dock.classList.remove("is-idle-hidden");
+        if (catcher) catcher.classList.remove("is-cursor-idle");
+        if (heroCinemaDockIdleTimer) {
+          clearTimeout(heroCinemaDockIdleTimer);
+          heroCinemaDockIdleTimer = null;
+        }
+        const stageEl = document.getElementById("heroStageEl");
+        const isForeground = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
+        if (!isForeground || heroBgTeaserPaused || heroBgTeaserEnded || heroBgTeaserScrubbing) {
+          return;
+        }
+        heroCinemaDockIdleTimer = setTimeout(() => {
+          heroCinemaDockIdleTimer = null;
+          const liveDock = document.getElementById("heroCinemaPlayerDock");
+          const liveStage = document.getElementById("heroStageEl");
+          const liveCatcher = document.getElementById("heroForegroundStageCatcher");
+          if (!liveDock || !liveStage || !liveStage.classList.contains("is-trailer-foreground-mode")) return;
+          if (heroBgTeaserPaused || heroBgTeaserEnded || heroBgTeaserScrubbing) return;
+          if (liveDock.matches && (liveDock.matches(":hover") || liveDock.matches(":focus-within"))) {
+            wakeHeroCinemaDockClient();
+            return;
+          }
+          if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && liveDock.contains(currentSpatialEl)) {
+            return;
+          }
+          liveDock.classList.add("is-idle-hidden");
+          if (liveCatcher) liveCatcher.classList.add("is-cursor-idle");
+        }, 2600);
+      }
+
       function syncHeroCinemaDockUiClient() {
         const dock = document.getElementById("heroCinemaPlayerDock");
         if (!dock) return;
@@ -11943,6 +12090,11 @@
         const isForeground = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
         const hasVideoControls = Boolean(heroBgTeaserActiveKey || heroBgTeaserIsPlayingConfirmed);
         dock.classList.toggle("is-ready", Boolean(isForeground));
+        if (!isForeground || heroBgTeaserPaused || heroBgTeaserEnded) {
+          dock.classList.remove("is-idle-hidden");
+          const catcher = document.getElementById("heroForegroundStageCatcher");
+          if (catcher) catcher.classList.remove("is-cursor-idle");
+        }
 
         const playBtn = document.getElementById("heroCinemaPlayBtn");
         if (playBtn) {
@@ -11963,7 +12115,7 @@
         }
         const timelineWrap = document.getElementById("heroCinemaTimelineWrap");
         if (timelineWrap) {
-          timelineWrap.style.display = hasVideoControls ? "inline-flex" : "none";
+          timelineWrap.style.display = hasVideoControls ? "flex" : "none";
         }
         const nextClipBtn = document.getElementById("heroCinemaNextClipBtn");
         if (nextClipBtn) {
@@ -11976,17 +12128,11 @@
             nextClipBtn.style.display = "none";
           }
         }
-        const zoomBtn = document.getElementById("heroCinemaZoomBtn");
-        if (zoomBtn) {
-          zoomBtn.classList.toggle("is-active-mode", heroCinemaZoomMode === "fit");
-          zoomBtn.textContent = heroCinemaZoomMode === "fit" ? "▭ Fit" : "⤢ Fill";
-          zoomBtn.title = heroCinemaZoomMode === "fit" ? "Zu Randlos-Vollbild wechseln" : "Zu Original-Kinoformat ohne Beschnitt wechseln";
-        }
         const modeBtn = document.getElementById("heroCinemaModeBtn");
         if (modeBtn) {
           modeBtn.classList.toggle("is-active-mode", isForeground);
-          modeBtn.innerHTML = isForeground ? "✕ Infos" : "⛶ Kino";
-          modeBtn.title = isForeground ? "Slider-Infos wieder einblenden (Esc)" : "Alle Elemente ausblenden & Trailer in den Vordergrund holen";
+          modeBtn.innerHTML = isForeground ? "✕ Schließen" : "⛶ Kino";
+          modeBtn.title = isForeground ? "Trailer beenden & Slider-Infos wieder einblenden (Esc)" : "Alle Elemente ausblenden & Trailer in den Vordergrund holen";
         }
         const timeLbl = document.getElementById("heroCinemaTimeLbl");
         if (timeLbl) {
@@ -11997,19 +12143,23 @@
           }
         }
         const scrubber = document.getElementById("heroCinemaScrubber");
-        if (scrubber && !heroBgTeaserScrubbing) {
+        if (scrubber) {
           const maxDur = heroBgTeaserDuration > 0 ? Math.floor(heroBgTeaserDuration) : 120;
-          scrubber.max = String(maxDur);
-          scrubber.value = String(Math.min(maxDur, Math.floor(heroBgTeaserCurTime || 0)));
+          if (!heroBgTeaserScrubbing) {
+            scrubber.max = String(maxDur);
+            scrubber.value = String(Math.min(maxDur, Math.floor(heroBgTeaserCurTime || 0)));
+          }
+          const pct = maxDur > 0 ? Math.max(0, Math.min(100, ((Number(scrubber.value) || heroBgTeaserCurTime || 0) / maxDur) * 100)) : 0;
+          scrubber.style.setProperty("--scrub-pct", pct.toFixed(1) + "%");
         }
       }
 
-      function scheduleHeroRevealAfterYoutubeChromeHidesClient(holdMs = 1750, forceReset = false) {
+      function scheduleHeroRevealAfterYoutubeChromeHidesClient(holdMs = 2200, forceReset = false) {
         if (heroBgTeaserDelayedPauseTimer) {
           clearTimeout(heroBgTeaserDelayedPauseTimer);
           heroBgTeaserDelayedPauseTimer = null;
         }
-        const safeHoldMs = Math.max(250, Number(holdMs) || 1750);
+        const safeHoldMs = Math.max(350, Number(holdMs) || 2200);
         const now = Date.now();
         const proposedTargetAt = now + safeHoldMs;
 
@@ -12052,7 +12202,7 @@
             !heroBgTeaserStoppedByUser
           ) {
             const elapsedSinceMount = Date.now() - (heroBgTeaserStageOpenedAt || Date.now());
-            if (heroBgTeaserIsPlayingConfirmed || (isFg && elapsedSinceMount >= 1650)) {
+            if (heroBgTeaserIsPlayingConfirmed || (isFg && elapsedSinceMount >= 2100)) {
               heroBgTeaserIsPlayingConfirmed = true;
               // Im Hintergrund vorladen, aber erst beim Tippen einblenden:
               if (!isFg) {
@@ -12076,9 +12226,10 @@
                 sendYoutubeHeroTeaserCommandClient("unMute");
                 sendYoutubeHeroTeaserCommandClient("setVolume", [90]);
               }
+              wakeHeroCinemaDockClient();
             } else {
               sendYoutubeHeroTeaserCommandClient("playVideo");
-              scheduleHeroRevealAfterYoutubeChromeHidesClient(650, true);
+              scheduleHeroRevealAfterYoutubeChromeHidesClient(750, true);
               return;
             }
           } else {
@@ -12279,15 +12430,19 @@
         heroBgTeaserMuted = !startUnmuted;
         layer.classList.remove("is-playing", "is-concealing");
 
-        const originParam = (typeof location !== "undefined" && location.origin) ? ("&origin=" + encodeURIComponent(location.origin)) : "";
+        const originVal = (typeof location !== "undefined" && location.origin) ? location.origin : "";
+        const originParam = originVal
+          ? ("&origin=" + encodeURIComponent(originVal) + "&widget_referrer=" + encodeURIComponent(originVal))
+          : "";
         const embedSrc = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
           "?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
-          "&enablejsapi=1&playsinline=1&iv_load_policy=3&modestbranding=1&start=" + Math.max(0, Number(startSeconds || 0)) + originParam;
-        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onHeroBgYoutubeIframeLoadClient()" allow="autoplay; encrypted-media" tabindex="-1" aria-hidden="true"></iframe>';
+          "&modestbranding=1&iv_load_policy=3&cc_load_policy=0&autohide=1&playsinline=1&enablejsapi=1&hl=de" +
+          "&start=" + Math.max(0, Number(startSeconds || 0)) + originParam;
+        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
 
         const stageEl = document.getElementById("heroStageEl");
         if (startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode"))) {
-          scheduleHeroRevealAfterYoutubeChromeHidesClient(1750, true);
+          scheduleHeroRevealAfterYoutubeChromeHidesClient(2200, true);
         }
 
         heroBgTeaserWatchdogTimer = setTimeout(() => {
@@ -12349,7 +12504,7 @@
             if (
               heroBgTeaserDuration > 6 &&
               heroBgTeaserCurTime > 2 &&
-              (heroBgTeaserDuration - heroBgTeaserCurTime) <= 2.2 &&
+              (heroBgTeaserDuration - heroBgTeaserCurTime) <= 3.2 &&
               !heroBgTeaserEnded &&
               !heroBgTeaserScrubbing
             ) {
@@ -12383,12 +12538,13 @@
               }
               if (heroBgTeaserChromeShieldRequired || !isFg) {
                 const elapsedPlaying = Date.now() - (heroBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(380, 1780 - elapsedPlaying);
+                const holdRemainingMs = Math.max(480, 2200 - elapsedPlaying);
                 scheduleHeroRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
               } else if (layer && isFg && !heroBgTeaserStoppedByUser && !heroBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
                 setHeroTrailerLoadingBadgeClient(false);
+                wakeHeroCinemaDockClient();
               }
               syncHeroCinemaDockUiClient();
             } else if (pState === 2) {
@@ -12398,6 +12554,7 @@
               if (layer) {
                 layer.classList.remove("is-playing");
               }
+              wakeHeroCinemaDockClient();
               syncHeroCinemaDockUiClient();
             } else if (pState === 0) {
               concealAndPauseHeroTrailerClient({ ended: true, exitForeground: true, pauseDelayMs: 430 });
@@ -12619,6 +12776,7 @@
 
       function toggleHeroCinemaPlayPauseClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
         const stageEl = document.getElementById("heroStageEl");
         const isFg = Boolean(stageEl && stageEl.classList.contains("is-trailer-foreground-mode"));
         if (!isFg) {
@@ -12635,13 +12793,16 @@
         }
         if (heroBgTeaserEnded || heroBgTeaserPaused) {
           resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
+          showHeroSeekRippleBadgeClient("▶ Fortsetzen", "center");
         } else {
           concealAndPauseHeroTrailerClient({ stoppedByUser: true });
+          showHeroSeekRippleBadgeClient("⏸ Pausiert", "center");
         }
       }
 
       function toggleHeroBackgroundTeaserAudioClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
         const frame = document.getElementById("heroBgVideoIframe");
         if (!frame) {
           enterHeroForegroundTrailerModeClient(ev, false);
@@ -12664,25 +12825,12 @@
         syncHeroCinemaDockUiClient();
       }
 
-      function toggleHeroCinemaZoomModeClient(ev) {
-        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
-        heroCinemaZoomMode = heroCinemaZoomMode === "fit" ? "fill" : "fit";
-        const stageEl = document.getElementById("heroStageEl");
-        if (stageEl) {
-          stageEl.classList.toggle("is-cinema-zoom-fit", heroCinemaZoomMode === "fit");
-        }
-        syncHeroCinemaDockUiClient();
-        showHeroSeekRippleBadgeClient(
-          heroCinemaZoomMode === "fit" ? "▭ Original-Kinoformat" : "⤢ Randlos-Vollbild",
-          "center"
-        );
-      }
-
       function seekHeroCinemaRelativeClient(deltaSec, ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
         const frame = document.getElementById("heroBgVideoIframe");
         if (!frame || !heroBgTeaserActiveKey) return;
-        const maxDur = heroBgTeaserDuration > 2 ? Math.max(1, heroBgTeaserDuration - 2.2) : 9999;
+        const maxDur = heroBgTeaserDuration > 3.5 ? Math.max(1, heroBgTeaserDuration - 3.3) : 9999;
         const nextSec = Math.max(0, Math.min(maxDur, (heroBgTeaserCurTime || 0) + Number(deltaSec || 0)));
         heroBgTeaserCurTime = nextSec;
         heroBgTeaserEnded = false;
@@ -12696,7 +12844,7 @@
           heroBgTeaserStoppedByUser = false;
           sendYoutubeHeroTeaserCommandClient("playVideo");
         }
-        scheduleHeroRevealAfterYoutubeChromeHidesClient(1600, true);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(2150, true);
         syncHeroCinemaDockUiClient();
         showHeroSeekRippleBadgeClient(
           deltaSec < 0 ? ("⏪ " + deltaSec + "s") : ("⏩ +" + deltaSec + "s"),
@@ -12706,6 +12854,7 @@
 
       function switchNextHeroTrailerCandidateManualClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        wakeHeroCinemaDockClient();
         if (!Array.isArray(heroBgTeaserCandidates) || heroBgTeaserCandidates.length <= 1) return;
         const nextIdx = (heroBgTeaserCandidateIdx + 1) % heroBgTeaserCandidates.length;
         const keepUnmuted = !heroBgTeaserMuted || Boolean(document.getElementById("heroStageEl")?.classList.contains("is-trailer-foreground-mode"));
@@ -12719,8 +12868,15 @@
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         if (!inpEl) return;
         heroBgTeaserScrubbing = true;
+        wakeHeroCinemaDockClient();
+        heroBgTeaserChromeShieldRequired = true;
+        const layer = document.getElementById("heroBgVideoLayer");
+        if (layer) layer.classList.remove("is-playing");
         const targetSec = Math.max(0, Number(inpEl.value || 0));
         heroBgTeaserCurTime = targetSec;
+        const maxDur = Number(inpEl.max) || (heroBgTeaserDuration > 0 ? Math.floor(heroBgTeaserDuration) : 120);
+        const pct = maxDur > 0 ? Math.max(0, Math.min(100, (targetSec / maxDur) * 100)) : 0;
+        inpEl.style.setProperty("--scrub-pct", pct.toFixed(1) + "%");
         const timeLbl = document.getElementById("heroCinemaTimeLbl");
         if (timeLbl) {
           timeLbl.textContent = heroBgTeaserDuration > 0
@@ -12732,7 +12888,8 @@
       function onHeroCinemaScrubChangeClient(inpEl, ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         if (!inpEl) return;
-        const targetSec = Math.max(0, Number(inpEl.value || 0));
+        const maxDur = heroBgTeaserDuration > 3.5 ? Math.max(1, Math.floor(heroBgTeaserDuration - 3.3)) : 9999;
+        const targetSec = Math.max(0, Math.min(maxDur, Number(inpEl.value || 0)));
         heroBgTeaserCurTime = targetSec;
         heroBgTeaserScrubbing = false;
         heroBgTeaserEnded = false;
@@ -12746,14 +12903,18 @@
           heroBgTeaserStoppedByUser = false;
           sendYoutubeHeroTeaserCommandClient("playVideo");
         }
-        scheduleHeroRevealAfterYoutubeChromeHidesClient(1600, true);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(2150, true);
         syncHeroCinemaDockUiClient();
+        wakeHeroCinemaDockClient();
       }
 
       function onHeroForegroundStageCatcherTapClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         const stageEl = document.getElementById("heroStageEl");
         if (!stageEl) return;
+        const dock = document.getElementById("heroCinemaPlayerDock");
+        const wasDockIdleHidden = Boolean(dock && dock.classList.contains("is-idle-hidden"));
+        wakeHeroCinemaDockClient();
         const now = Date.now();
         let clientX = 0;
         if (ev && typeof ev.clientX === "number" && ev.clientX > 0) {
@@ -12774,8 +12935,8 @@
             seekHeroCinemaRelativeClient(-10, ev);
           } else if (relX > 0.62 && heroBgTeaserActiveKey) {
             seekHeroCinemaRelativeClient(10, ev);
-          } else {
-            toggleHeroCinemaZoomModeClient(ev);
+          } else if (heroBgTeaserActiveKey) {
+            toggleHeroCinemaPlayPauseClient(ev);
           }
           return;
         }
@@ -12796,6 +12957,10 @@
         heroFgTapTimer = setTimeout(() => {
           heroFgTapTimer = null;
           heroFgLastTapAt = 0;
+          if (wasDockIdleHidden && heroBgTeaserActiveKey && !heroBgTeaserPaused && !heroBgTeaserEnded) {
+            wakeHeroCinemaDockClient();
+            return;
+          }
           exitHeroForegroundTrailerModeClient(ev);
         }, 255);
       }
@@ -13815,9 +13980,9 @@
                     '</button>' +
                   '</div>' +
                 '</div>' +
-                '<div id="heroForegroundStageCatcher" class="detail-foreground-stage-catcher hero-foreground-stage-catcher" onclick="onHeroForegroundStageCatcherTapClient(event)" title="Einmal tippen: Slider-Infos einblenden"></div>' +
+                '<div id="heroForegroundStageCatcher" class="detail-foreground-stage-catcher hero-foreground-stage-catcher" onmousemove="wakeHeroCinemaDockClient()" onclick="onHeroForegroundStageCatcherTapClient(event)" title="Einmal tippen: Steuerung / Infos · Doppeltippen links/rechts: ±10s"></div>' +
                 '<div id="heroSeekRippleBadge" class="detail-seek-ripple-badge" aria-hidden="true"></div>' +
-                '<div id="heroCinemaPlayerDock" class="detail-cinema-player-dock hero-cinema-player-dock" onclick="event.stopPropagation()">' +
+                '<div id="heroCinemaPlayerDock" class="detail-cinema-player-dock hero-cinema-player-dock" onmousemove="wakeHeroCinemaDockClient()" ontouchstart="wakeHeroCinemaDockClient()" onclick="event.stopPropagation();wakeHeroCinemaDockClient()">' +
                   '<button type="button" id="heroCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleHeroCinemaPlayPauseClient(event)" title="Trailer abspielen / pausieren">▶</button>' +
                   '<button type="button" id="heroCinemaMuteBtn" class="cinema-dock-btn" onclick="toggleHeroBackgroundTeaserAudioClient(event)" title="Ton umschalten">🔊</button>' +
                   '<div id="heroCinemaTimelineWrap" class="cinema-dock-timeline-wrap">' +
@@ -13825,7 +13990,7 @@
                     '<span id="heroCinemaTimeLbl" class="cinema-dock-time">0:00</span>' +
                   '</div>' +
                   '<button type="button" id="heroCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextHeroTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen">⏭ 1/2</button>' +
-                  '<button type="button" id="heroCinemaModeBtn" class="cinema-dock-btn" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="Alle Elemente ausblenden & Trailer in den Vordergrund holen">⛶ Kino</button>' +
+                  '<button type="button" id="heroCinemaModeBtn" class="cinema-dock-btn" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="Trailer beenden & Slider-Infos wieder einblenden (Esc)">✕ Schließen</button>' +
                 '</div>' +
               '</div>' +
             '</div>' +

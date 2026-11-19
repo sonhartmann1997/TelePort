@@ -8826,6 +8826,8 @@
 
       document.addEventListener("keydown", (ev) => {
         engageKeyboardNavMode();
+        if (typeof wakeHeroCinemaDockClient === "function") wakeHeroCinemaDockClient();
+        if (typeof wakeDetailCinemaDockClient === "function") wakeDetailCinemaDockClient();
         const activeEl = document.activeElement;
         const activeTag = (activeEl && activeEl.tagName || "").toUpperCase();
         const isSearchInpFocused = activeEl && activeEl.id === "searchInput";

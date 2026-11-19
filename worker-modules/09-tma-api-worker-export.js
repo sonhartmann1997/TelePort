@@ -2848,7 +2848,7 @@
           invidiousDe: `https://invidious.nerdvpn.de/watch?v=${ytKey}`,
           poketube: `https://poketube.fun/watch?v=${ytKey}`,
           embeds: {
-            youtube: `https://www.youtube-nocookie.com/embed/${ytKey}?autoplay=1&rel=0`,
+            youtube: `https://www.youtube-nocookie.com/embed/${ytKey}?autoplay=1&mute=0&controls=0&disablekb=1&fs=0&showinfo=0&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=0&autohide=1&playsinline=1&enablejsapi=1&hl=de`,
             piped: `https://piped.video/embed/${ytKey}?autoplay=1`,
             invidious1: `https://yewtu.be/embed/${ytKey}?autoplay=1`,
             invidious2: `https://inv.nadeko.net/embed/${ytKey}?autoplay=1`,
