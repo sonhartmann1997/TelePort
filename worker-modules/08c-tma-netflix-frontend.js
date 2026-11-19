@@ -7163,6 +7163,15 @@
         }
       }
 
+      function cancelActiveCinemaEndcardCountdownClient(ctx) {
+        if (!ctx || !ctx.isEnded) return;
+        if (ctx.mode === "detail" && typeof cancelDetailCinemaEndcardCountdownClient === "function") {
+          cancelDetailCinemaEndcardCountdownClient(true);
+        } else if (ctx.mode === "hero" && typeof cancelHeroCinemaEndcardCountdownClient === "function") {
+          cancelHeroCinemaEndcardCountdownClient(true);
+        }
+      }
+
       function isCinemaControlElementInteractiveClient(el) {
         if (!el || el.disabled) return false;
         const style = window.getComputedStyle(el);
@@ -7214,6 +7223,7 @@
       function navigateCinemaPlayerFocusClient(dir, ctx) {
         if (!ctx) return false;
         wakeActiveCinemaDockClient(ctx);
+        cancelActiveCinemaEndcardCountdownClient(ctx);
         const p = ctx.prefix;
 
         // Auf Scrubber oder Lautstärkeregler passen Links/Rechts direkt Zeit (±10s) bzw. Lautstärke (±10%) an!
@@ -7306,6 +7316,7 @@
       function confirmCinemaPlayerFocusClient(ctx) {
         if (!ctx) return false;
         wakeActiveCinemaDockClient(ctx);
+        cancelActiveCinemaEndcardCountdownClient(ctx);
         const p = ctx.prefix;
         const activeNodes = getCinemaFocusableElementsClient(ctx);
         if (currentSpatialEl && activeNodes.includes(currentSpatialEl)) {
@@ -7813,7 +7824,11 @@
         currentSpatialEl.click();
       }
 
-      function moveSpatialFocus(dir, suppressScroll = false) {
+      let edgePushLastStepAt = 0;
+      let edgePushArrivedEl = null;
+      let edgePushArrivedAt = 0;
+
+      function moveSpatialFocus(dir, suppressScroll = false, isRepeatEvent = false) {
         engageKeyboardNavMode();
         lastSpatialNavDir = dir || "down";
         const list = getVisibleFocusables();
@@ -8031,11 +8046,13 @@
               scrollToCatalogBelowHeroClient();
             }
             setTimeout(() => {
-              const firstCatalogEl = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select, .floating-filter-bar .new-filter-select, #resultsGridContainer .card, #appRoot .card");
-              if (firstCatalogEl) {
-                jumpSpatialFocus(firstCatalogEl, true, "down");
+              const firstCatalogCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
+              const fallbackFilterEl = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select, .floating-filter-bar .new-filter-select");
+              const targetEl = firstCatalogCard || fallbackFilterEl;
+              if (targetEl) {
+                jumpSpatialFocus(targetEl, true, "down");
               }
-            }, 60);
+            }, 65);
           };
 
           if (currentSpatialEl.id === "heroDescEl") {
@@ -8064,12 +8081,10 @@
               return;
             }
             if (dir === "down") {
-              if (actDot) { setSpatialFocus(actDot, true); return; }
               scrollDownFromHeroToCatalog();
               return;
             }
             if (dir === "up") {
-              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnDetails") {
@@ -8084,12 +8099,10 @@
               return;
             }
             if (dir === "down") {
-              if (actDot) { setSpatialFocus(actDot, true); return; }
               scrollDownFromHeroToCatalog();
               return;
             }
             if (dir === "up") {
-              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnWishlist") {
@@ -8104,18 +8117,14 @@
               return;
             }
             if (dir === "down") {
-              if (actDot) { setSpatialFocus(actDot, true); return; }
               scrollDownFromHeroToCatalog();
               return;
             }
             if (dir === "up") {
-              if (descHeroEl && list.includes(descHeroEl)) { setSpatialFocus(descHeroEl, true); return; }
-              if (hideBtn && list.includes(hideBtn)) { setSpatialFocus(hideBtn, true); return; }
               if (focusSearchOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
-            // 2. Fokus auf der Punktleiste (< • • • • ━━ • >):
-            // Links / Rechts blättert sofort durch die Highlights; Hoch springt zu "▶ Trailer"; Runter scrollt direkt nach unten in den Katalog (ohne Umweg über den "∨"-Hinweisbutton)!
+            // Punktleiste (< • • • • ━━ • >): Links/Rechts blättert, Hoch zurück zu Trailer, Runter direkt ins Cover-Grid
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
@@ -8245,23 +8254,28 @@
               setSpatialFocus(firstAc, !suppressScroll);
               return;
             }
-            const isScrolledPastHero = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
+            const isScrolledPastHero = Boolean(
+              (typeof heroCurtainScrolledToCatalog !== "undefined" && heroCurtainScrolledToCatalog) ||
+              (document.body && document.body.classList.contains("hero-scrolled-past")) ||
+              state.heroHidden
+            );
             if (!isScrolledPastHero) {
-              const heroTr = document.getElementById("heroBtnTrailer");
-              const heroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
+              const heroTr = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
               if (heroTr && list.includes(heroTr)) {
                 setSpatialFocus(heroTr, !suppressScroll);
                 return;
               }
-              if (heroDot && list.includes(heroDot)) {
-                setSpatialFocus(heroDot, !suppressScroll);
-                return;
-              }
-              const restoreBtn = document.getElementById("heroRestoreBtn");
-              if (restoreBtn && list.includes(restoreBtn)) {
-                setSpatialFocus(restoreBtn, !suppressScroll);
-                return;
-              }
+            }
+            // Express-Sprung aus der Kopfzeile direkt auf das erste Cover (Filterleiste bleibt gezielt per 1× Hoch ab der obersten Cover-Reihe erreichbar!)
+            const firstDirectCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
+            if (firstDirectCard && list.includes(firstDirectCard)) {
+              setSpatialFocus(firstDirectCard, !suppressScroll, "down");
+              return;
+            }
+            const firstFilterFallback = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select");
+            if (firstFilterFallback && list.includes(firstFilterFallback)) {
+              setSpatialFocus(firstFilterFallback, !suppressScroll, "down");
+              return;
             }
           }
         }
@@ -8426,9 +8440,7 @@
         const cx = curRect.left + curRect.width / 2;
         const cy = curRect.top + curRect.height / 2;
 
-        // Rechts-Rand-Ausbruch (1-Click Escape auf den seitlichen TV-Schnellsprung-Fahrstuhl):
-        // Wenn man sich im Hauptkatalog / in der Merkliste am rechten Rand einer Zeile befindet und Pfeil Rechts (▶) drückt,
-        // wechselt der Fokus direkt auf den TV-Fahrstuhl (#tvQuickJumpElevator) – und mit Pfeil Links (◀) exakt zur selben Karte zurück!
+        // Rechts-Rand-Ausbruch & Links-Rand-Ausbruch + Intelligente Zonen-Übergänge (Filterleiste ↔ Hero-Slider ↔ Cover-Grid)
         const hasOverlayBlockingElevator = Boolean(
           document.getElementById("modalRoot")?.innerHTML.trim() ||
           document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
@@ -8437,6 +8449,46 @@
           state.sidebarOpen
         );
         const isCurrentCatalogCard = Boolean(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"));
+        const inFloatingFilterBar = Boolean(currentSpatialEl.closest && currentSpatialEl.closest(".floating-filter-bar"));
+
+        // 1) In der Filterleiste: Hoch fährt Hero-Slider wieder aus (oder geht zur Suche); Runter springt direkt auf das erste Cover
+        if (inFloatingFilterBar && !hasOverlayBlockingElevator) {
+          if (dir === "up") {
+            if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
+              return;
+            }
+            if (focusSearchOrHeaderUp()) return;
+          }
+          if (dir === "down") {
+            const firstCardBelowFilter = document.querySelector("#resultsGridContainer .card, #appRoot .card");
+            if (firstCardBelowFilter && list.includes(firstCardBelowFilter)) {
+              setSpatialFocus(firstCardBelowFilter, !suppressScroll, "down");
+              return;
+            }
+          }
+        }
+
+        // 2) Oberste Reihe im Cover-Grid + Hoch: gezielt in die Filterleiste (oder Hero-Slider wieder ausfahren)
+        if (isCurrentCatalogCard && dir === "up" && !hasOverlayBlockingElevator && currentSpatialEl.closest && currentSpatialEl.closest("#resultsGridContainer")) {
+          const hasCardAbove = list.some(cand => {
+            if (cand === currentSpatialEl || !(cand.classList && cand.classList.contains("card"))) return false;
+            if (!cand.closest || !cand.closest("#resultsGridContainer")) return false;
+            const r = getSpatialLayoutBox(cand);
+            return (r.top + r.height / 2) < cy - 24;
+          });
+          if (!hasCardAbove) {
+            const filterTarget = document.querySelector(".floating-filter-bar .mode-filter-select, .floating-filter-bar .sort-select, .floating-filter-bar .f-pill, .floating-filter-bar .new-filter-select");
+            if (filterTarget && list.includes(filterTarget)) {
+              setSpatialFocus(filterTarget, !suppressScroll, "up");
+              return;
+            }
+            if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
+              return;
+            }
+            if (focusSearchOrHeaderUp()) return;
+          }
+        }
+
         if (
           dir === "right" &&
           !hasOverlayBlockingElevator &&
@@ -8460,11 +8512,26 @@
             return vOverlap > 4 || Math.abs(cTy - cy) < Math.max(curRect.height, r.height) * 0.62;
           });
           if (!hasRightNeighborInSameRow) {
+            const nowEdge = Date.now();
+            if (isRepeatEvent && edgePushArrivedEl !== currentSpatialEl && (nowEdge - edgePushLastStepAt < 200)) {
+              edgePushArrivedEl = currentSpatialEl;
+              edgePushArrivedAt = nowEdge;
+              return;
+            }
+            if (isRepeatEvent && edgePushArrivedEl === currentSpatialEl && (nowEdge - edgePushArrivedAt < 180)) {
+              return;
+            }
+            edgePushArrivedEl = null;
             const elevContainer = document.getElementById("tvQuickJumpElevator");
             if (elevContainer) {
-              elevContainer.classList.add("is-visible");
               lastElevatorReturnEl = currentSpatialEl;
-              const targetElevBtn = document.getElementById("tvElevBtnSearch") || document.getElementById("tvElevBtnBot") || document.getElementById("tvElevBtnTop") || elevContainer.querySelector(".tv-elevator-btn");
+              if (typeof openRightMenuOverlayClient === "function") {
+                openRightMenuOverlayClient(true);
+              } else {
+                elevContainer.classList.remove("is-dismissed");
+                elevContainer.classList.add("is-visible");
+              }
+              const targetElevBtn = document.getElementById("tvElevBtnWishlist") || document.getElementById("tvElevBtnSearch") || elevContainer.querySelector(".tv-elevator-btn");
               if (targetElevBtn) {
                 setSpatialFocus(targetElevBtn, false, "right");
                 return;
@@ -8473,8 +8540,7 @@
           }
         }
 
-        // Links-Rand-Ausbruch: Wenn man sich im Hauptkatalog am linken Rand einer Zeile befindet und Pfeil Links (◀) drückt,
-        // öffnet sich direkt die Menü-Übersicht (#filterSidebarDrawer)!
+        // Links-Rand-Ausbruch: Am linken Rand einer Zeile öffnet Weiterdrücken nach Links sofort das linke Menü (#filterSidebarDrawer)!
         if (
           dir === "left" &&
           !hasOverlayBlockingElevator &&
@@ -8498,6 +8564,16 @@
             return vOverlap > 4 || Math.abs(cTy - cy) < Math.max(curRect.height, r.height) * 0.62;
           });
           if (!hasLeftNeighborInSameRow) {
+            const nowEdge = Date.now();
+            if (isRepeatEvent && edgePushArrivedEl !== currentSpatialEl && (nowEdge - edgePushLastStepAt < 200)) {
+              edgePushArrivedEl = currentSpatialEl;
+              edgePushArrivedAt = nowEdge;
+              return;
+            }
+            if (isRepeatEvent && edgePushArrivedEl === currentSpatialEl && (nowEdge - edgePushArrivedAt < 180)) {
+              return;
+            }
+            edgePushArrivedEl = null;
             if (typeof toggleFilterSidebar === "function") {
               lastElevatorReturnEl = currentSpatialEl;
               toggleFilterSidebar();
@@ -8593,6 +8669,10 @@
         }
 
         if (bestEl) {
+          if (dir === "left" || dir === "right") {
+            edgePushLastStepAt = Date.now();
+            edgePushArrivedEl = null;
+          }
           setSpatialFocus(bestEl, !suppressScroll, dir);
         } else {
           // Vertikales Rand-Wrap-Around am unteren Ende (Unten -> Oben zur Suche / Kopfleiste)
@@ -8616,8 +8696,8 @@
       let modalHoldActiveKey = "";
       let modalHoldTriggered = false;
 
-      // Enter-Taste auf Film-Cover: Kurz drücken = Schnellwahl (Trailer/Merkliste/Details), Gedrückthalten (>= 350ms) = Direkt Infos öffnen!
-      const CARD_ENTER_HOLD_MS = 350;
+      // Enter-Taste auf Film-Cover: Kurz drücken = Schnellwahl (Trailer/Merkliste/Details), Gedrückthalten (>= 380ms) = Direkt Trailer im Vollbild starten!
+      const CARD_ENTER_HOLD_MS = 380;
       let cardEnterHoldTimer = null;
       let cardEnterHoldTarget = null;
       let cardEnterHoldTriggered = false;
@@ -8626,6 +8706,9 @@
         if (cardEnterHoldTimer) {
           clearTimeout(cardEnterHoldTimer);
           cardEnterHoldTimer = null;
+        }
+        if (cardEnterHoldTarget && cardEnterHoldTarget.classList) {
+          cardEnterHoldTarget.classList.remove("is-enter-holding");
         }
         cardEnterHoldTarget = null;
         cardEnterHoldTriggered = false;
@@ -8796,6 +8879,18 @@
         const isWishlist = state.currentView === "wishlist";
 
         if (targetZone === "top") {
+          const isHeroCollapsedOrScrolled = Boolean(
+            (typeof heroCurtainScrolledToCatalog !== "undefined" && heroCurtainScrolledToCatalog) ||
+            (document.body && document.body.classList.contains("hero-scrolled-past")) ||
+            state.heroHidden ||
+            (window.scrollY || window.pageYOffset || 0) > 40
+          );
+          if (!isWrapAround && !isWishlist && isHeroCollapsedOrScrolled && typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
+            if (typeof showHudToast === "function") {
+              showHudToast("🎬 Hero-Slider eingeblendet");
+            }
+            return;
+          }
           window.scrollTo({ top: 0, behavior: "smooth" });
           const wlInp = isWishlist ? document.getElementById("wishlistSearchInp") : null;
           const topTarget = (wlInp && list.includes(wlInp))
@@ -8959,6 +9054,28 @@
         const inAutocomplete = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchAutocompleteBox"));
         if (inTvElevator || inAutocomplete || state.sidebarOpen) {
           moveSpatialFocus(dir, false);
+          return;
+        }
+
+        // Komfort-Shortcut: Runter gedrückt halten auf dem Hero-Slider (oder Header) springt unmittelbar ins Cover-Grid!
+        const isOnHeroOrHeader = Boolean(
+          currentSpatialEl &&
+          currentSpatialEl.closest &&
+          (currentSpatialEl.closest(".hero") || currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))
+        );
+        if (dir === "down" && isOnHeroOrHeader && (isRepeatEvent || verticalTurboStreak >= 2) && !verticalTurboExpressDone) {
+          verticalTurboExpressDone = true;
+          cancelTopBarUpHold();
+          if (typeof scrollToCatalogBelowHeroClient === "function" && currentSpatialEl.closest(".hero")) {
+            scrollToCatalogBelowHeroClient();
+          }
+          setTimeout(() => {
+            const firstGridCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
+            if (firstGridCard) {
+              jumpSpatialFocus(firstGridCard, true, "down");
+              if (typeof showHudToast === "function") showHudToast("🎬 Direkt im Cover-Grid");
+            }
+          }, 55);
           return;
         }
 
@@ -9398,7 +9515,7 @@
               return;
             }
           }
-          moveSpatialFocus("right");
+          moveSpatialFocus("right", false, Boolean(ev.repeat));
           return;
         }
         if (ev.key === "ArrowLeft") {
@@ -9434,7 +9551,7 @@
               return;
             }
           }
-          moveSpatialFocus("left");
+          moveSpatialFocus("left", false, Boolean(ev.repeat));
           return;
         }
         if (ev.key === "ArrowDown") {
@@ -9477,14 +9594,21 @@
               cancelCardEnterHold();
               cardEnterHoldTarget = currentSpatialEl;
               cardEnterHoldTriggered = false;
+              cardEnterHoldTarget.classList.add("is-enter-holding");
               cardEnterHoldTimer = setTimeout(() => {
                 cardEnterHoldTimer = null;
                 cardEnterHoldTriggered = true;
                 const target = cardEnterHoldTarget;
+                if (target && target.classList) target.classList.remove("is-enter-holding");
                 cardEnterHoldTarget = null;
                 if (target && currentSpatialEl === target) {
                   clearCardSubnavState(null);
-                  target.click();
+                  const trailerBtn = target.querySelector(".card-quick-trailer");
+                  if (trailerBtn) {
+                    trailerBtn.click();
+                  } else {
+                    target.click();
+                  }
                 }
               }, CARD_ENTER_HOLD_MS);
             }
@@ -9753,8 +9877,8 @@
 
               if (up) { handleVerticalDirectionStepWithTurboClient("up", true); lastGamepadStepAt = now; }
               else if (down) { handleVerticalDirectionStepWithTurboClient("down", true); lastGamepadStepAt = now; }
-              else if (left) { resetVerticalTurboStreakClient(); moveSpatialFocus("left"); lastGamepadStepAt = now; }
-              else if (right) { resetVerticalTurboStreakClient(); moveSpatialFocus("right"); lastGamepadStepAt = now; }
+              else if (left) { resetVerticalTurboStreakClient(); moveSpatialFocus("left", false, true); lastGamepadStepAt = now; }
+              else if (right) { resetVerticalTurboStreakClient(); moveSpatialFocus("right", false, true); lastGamepadStepAt = now; }
               else if (btnA && currentSpatialEl) {
                 resetVerticalTurboStreakClient();
                 handleSpatialConfirmAction();
