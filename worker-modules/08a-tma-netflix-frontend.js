@@ -2557,70 +2557,81 @@
         color: #ffffff;
         transform: translate3d(0, -2px, 0);
       }
-      /* Seitlicher TV- & Konsolen-Schnellsprung-Fahrstuhl (Rechts: Suche/Seite/Oben | Links: Menü mit Genres) */
-      .tv-quick-jump-elevator,
-      .tv-quick-jump-left {
+      /* Seitliche Rand-Steuerung: Links Menü-Übersicht direkt | Rechts Aktionen nur bei Annäherung an den rechten Rand */
+      .catalog-edge-trigger-left {
         position: fixed;
+        left: 0;
+        top: 20%;
+        bottom: 20%;
+        width: 14px;
+        z-index: 75;
+        cursor: pointer;
+        background: transparent;
+        transition: background 0.2s ease;
+      }
+      .catalog-edge-trigger-left:hover {
+        background: linear-gradient(90deg, rgba(56, 189, 248, 0.35) 0%, transparent 100%);
+      }
+      .catalog-edge-trigger-right {
+        position: fixed;
+        right: 0;
+        top: 25%;
+        bottom: 25%;
+        width: 24px;
+        z-index: 75;
+        cursor: pointer;
+        background: transparent;
+      }
+      .tv-quick-jump-elevator {
+        position: fixed;
+        right: 0;
         top: 50%;
+        transform: translate3d(calc(100% - 6px), -50%, 0);
         z-index: 76;
         display: flex;
         flex-direction: column;
         gap: 6px;
-        padding: 6px;
-        border-radius: 14px;
-        background: linear-gradient(165deg, rgba(8, 13, 24, 0.90), rgba(15, 23, 42, 0.94));
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
+        padding: 8px 8px 8px 7px;
+        border-radius: 14px 0 0 14px;
+        background: linear-gradient(165deg, rgba(8, 13, 24, 0.88), rgba(15, 23, 42, 0.92));
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
         border: 1px solid rgba(56, 189, 248, 0.38);
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.78), 0 0 18px rgba(14, 165, 233, 0.16);
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
-      }
-      .tv-quick-jump-elevator {
-        right: 10px;
-        transform: translate3d(12px, -50%, 0);
-      }
-      .tv-quick-jump-left {
-        left: 10px;
-        transform: translate3d(-12px, -50%, 0);
-      }
-      body.catalog-deep-scrolled .tv-quick-jump-elevator,
-      body.kb-nav-active .tv-quick-jump-elevator,
-      .tv-quick-jump-elevator.is-visible,
-      .tv-quick-jump-elevator:focus-within,
-      body.catalog-deep-scrolled .tv-quick-jump-left,
-      body.kb-nav-active .tv-quick-jump-left,
-      .tv-quick-jump-left.is-visible,
-      .tv-quick-jump-left:focus-within {
-        opacity: 0.94;
+        border-right: none;
+        box-shadow: -8px 12px 32px rgba(0, 0, 0, 0.78), 0 0 18px rgba(14, 165, 233, 0.16);
+        opacity: 0.35;
         pointer-events: auto;
-        transform: translate3d(0, -50%, 0);
+        transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+      body:not(.hero-scrolled-past):not(.hero-is-hidden) .tv-quick-jump-elevator,
+      body:not(.hero-scrolled-past):not(.hero-is-hidden) .catalog-edge-trigger-left,
+      body:not(.hero-scrolled-past):not(.hero-is-hidden) .catalog-edge-trigger-right,
+      body:has(#modalRoot .modal-backdrop) .tv-quick-jump-elevator,
+      body:has(#filterSidebarDrawer.open) .tv-quick-jump-elevator,
+      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
       }
       .tv-quick-jump-elevator:hover,
       .tv-quick-jump-elevator:focus-within,
-      .tv-quick-jump-left:hover,
-      .tv-quick-jump-left:focus-within {
+      .tv-quick-jump-elevator.is-hover-expanded,
+      .catalog-edge-trigger-right:hover + .tv-quick-jump-elevator {
         opacity: 1;
-        border-color: rgba(56, 189, 248, 0.72);
-      }
-      body:has(#modalRoot .modal-backdrop) .tv-quick-jump-elevator,
-      body:has(#filterSidebarDrawer.open) .tv-quick-jump-elevator,
-      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator,
-      body:has(#modalRoot .modal-backdrop) .tv-quick-jump-left,
-      body:has(#filterSidebarDrawer.open) .tv-quick-jump-left,
-      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-left {
-        opacity: 0 !important;
-        pointer-events: none !important;
+        transform: translate3d(0, -50%, 0);
+        border-color: rgba(56, 189, 248, 0.75);
+        box-shadow: -12px 16px 36px rgba(0, 0, 0, 0.85), 0 0 24px rgba(14, 165, 233, 0.28);
       }
       .tv-elevator-btn {
         min-height: 36px;
         width: 100%;
         box-sizing: border-box;
-        padding: 0 11px;
+        padding: 0 10px;
         border-radius: 9px;
         border: 1px solid rgba(148, 163, 184, 0.22);
         background: rgba(30, 41, 59, 0.68);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         color: #e2e8f0;
         font-size: calc(11.5px * var(--scale-text));
         font-weight: 800;
@@ -2640,30 +2651,19 @@
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.48), 0 6px 16px rgba(2, 132, 199, 0.45);
         transform: translate3d(-2px, 0, 0);
       }
-      .tv-quick-jump-left .tv-elevator-btn:hover,
-      .tv-quick-jump-left .tv-elevator-btn.spatial-focus {
-        background: linear-gradient(135deg, #0284c7, #2563eb);
-        border-color: #7dd3fc;
-        color: #ffffff;
-        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.48), 0 6px 16px rgba(2, 132, 199, 0.45);
-        transform: translate3d(2px, 0, 0);
-      }
       .catalog-back-to-top-fab {
         display: none !important;
       }
       @media (min-width: 721px) {
-        .tv-quick-jump-elevator,
-        .tv-quick-jump-left {
-          min-width: 110px;
+        .tv-quick-jump-elevator {
+          min-width: 108px;
         }
       }
       @media (max-width: 720px) {
-        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elev-label,
-        .tv-quick-jump-left:not(:focus-within):not(:hover) .tv-elev-label {
+        .tv-quick-jump-elevator:not(:focus-within):not(:hover):not(.is-hover-expanded) .tv-elev-label {
           display: none;
         }
-        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elevator-btn,
-        .tv-quick-jump-left:not(:focus-within):not(:hover) .tv-elevator-btn {
+        .tv-quick-jump-elevator:not(:focus-within):not(:hover):not(.is-hover-expanded) .tv-elevator-btn {
           width: 36px;
           height: 36px;
           min-height: 36px;
@@ -7222,9 +7222,8 @@
       <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen" onmousedown="event.preventDefault()"></div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
-    <nav id="tvQuickJumpLeft" class="tv-quick-jump-left" aria-label="Menü mit Genres direkt öffnen">
-      <button type="button" id="tvElevBtnMenu" class="tv-elevator-btn" onclick="toggleFilterSidebar('genres')" title="Menü mit Genres direkt öffnen"><span>🎞️</span><span class="tv-elev-label">Genres & Menü</span></button>
-    </nav>
+    <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="toggleFilterSidebar('genres')" onmouseenter="if(document.body.classList.contains('hero-scrolled-past')||state.heroHidden){toggleFilterSidebar('genres');}" title="Menü mit Genres direkt öffnen"></div>
+    <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onmouseenter="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.add('is-hover-expanded')" onmouseleave="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.remove('is-hover-expanded')" aria-hidden="true"></div>
     <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" aria-label="Katalog-Navigation">
       <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient()" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
       <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient()" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
