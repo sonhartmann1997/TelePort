@@ -7142,6 +7142,9 @@
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
           if (el.closest && el.closest(".hero-curtain-shell.is-collapsed")) return false;
           if (el.closest && el.closest(".detail-sticky-mini-header:not(.is-visible)")) return false;
+          if (el.classList && el.classList.contains("tv-elevator-btn")) {
+            return !(document.body && document.body.classList.contains("in-hero-slider")) && !isModalActive;
+          }
           const style = window.getComputedStyle(el);
           if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
           const r = el.getBoundingClientRect();
@@ -8098,11 +8101,43 @@
             if (elevContainer) {
               elevContainer.classList.add("is-visible");
               lastElevatorReturnEl = currentSpatialEl;
-              const targetElevBtn = document.getElementById("tvElevBtnMid") || document.getElementById("tvElevBtnTop") || elevContainer.querySelector(".tv-elevator-btn");
+              const targetElevBtn = document.getElementById("tvElevBtnSearch") || document.getElementById("tvElevBtnBot") || document.getElementById("tvElevBtnTop") || elevContainer.querySelector(".tv-elevator-btn");
               if (targetElevBtn) {
                 setSpatialFocus(targetElevBtn, false, "right");
                 return;
               }
+            }
+          }
+        }
+
+        // Links-Rand-Ausbruch: Wenn man sich im Hauptkatalog am linken Rand einer Zeile befindet und Pfeil Links (◀) drückt,
+        // öffnet sich direkt die Menü-Übersicht (#filterSidebarDrawer)!
+        if (
+          dir === "left" &&
+          !hasOverlayBlockingElevator &&
+          !inHeader &&
+          !curHero &&
+          !inTvElevator &&
+          !curHorizTrack &&
+          currentSpatialEl.closest &&
+          currentSpatialEl.closest("#appRoot")
+        ) {
+          const hasLeftNeighborInSameRow = list.some(cand => {
+            if (cand === currentSpatialEl) return false;
+            if (cand.id === "smartPageIndicatorBtn" || cand.id === "catalogBackToTopFab") return false;
+            if (cand.closest && (cand.closest("#tvQuickJumpElevator") || cand.closest("header"))) return false;
+            const r = getSpatialLayoutBox(cand);
+            const cTx = r.left + r.width / 2;
+            const cTy = r.top + r.height / 2;
+            if (cTx >= cx - 6) return false;
+            const vOverlap = Math.min(curRect.bottom, r.bottom) - Math.max(curRect.top, r.top);
+            return vOverlap > 4 || Math.abs(cTy - cy) < Math.max(curRect.height, r.height) * 0.62;
+          });
+          if (!hasLeftNeighborInSameRow) {
+            if (typeof toggleFilterSidebar === "function") {
+              lastElevatorReturnEl = currentSpatialEl;
+              toggleFilterSidebar();
+              return;
             }
           }
         }

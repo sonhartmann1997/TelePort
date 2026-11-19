@@ -2563,7 +2563,7 @@
         left: 0;
         top: 20%;
         bottom: 20%;
-        width: 14px;
+        width: 18px;
         z-index: 75;
         cursor: pointer;
         background: transparent;
@@ -2575,9 +2575,9 @@
       .catalog-edge-trigger-right {
         position: fixed;
         right: 0;
-        top: 25%;
-        bottom: 25%;
-        width: 24px;
+        top: 15%;
+        bottom: 15%;
+        width: 32px;
         z-index: 75;
         cursor: pointer;
         background: transparent;
@@ -2599,16 +2599,17 @@
         border: 1px solid rgba(56, 189, 248, 0.38);
         border-right: none;
         box-shadow: -8px 12px 32px rgba(0, 0, 0, 0.78), 0 0 18px rgba(14, 165, 233, 0.16);
-        opacity: 0.35;
+        opacity: 0.25;
         pointer-events: auto;
         transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
       }
-      body:not(.hero-scrolled-past):not(.hero-is-hidden) .tv-quick-jump-elevator,
-      body:not(.hero-scrolled-past):not(.hero-is-hidden) .catalog-edge-trigger-left,
-      body:not(.hero-scrolled-past):not(.hero-is-hidden) .catalog-edge-trigger-right,
+      body.in-hero-slider .tv-quick-jump-elevator,
+      body.in-hero-slider .catalog-edge-trigger-left,
+      body.in-hero-slider .catalog-edge-trigger-right,
       body:has(#modalRoot .modal-backdrop) .tv-quick-jump-elevator,
       body:has(#filterSidebarDrawer.open) .tv-quick-jump-elevator,
-      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator {
+      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator,
+      body:has(#personSpotlightOverlayRoot .person-spotlight-overlay) .tv-quick-jump-elevator {
         display: none !important;
         opacity: 0 !important;
         pointer-events: none !important;
@@ -2616,9 +2617,12 @@
       .tv-quick-jump-elevator:hover,
       .tv-quick-jump-elevator:focus-within,
       .tv-quick-jump-elevator.is-hover-expanded,
+      .tv-quick-jump-elevator.is-visible,
+      .tv-quick-jump-elevator:has(.spatial-focus),
       .catalog-edge-trigger-right:hover + .tv-quick-jump-elevator {
-        opacity: 1;
-        transform: translate3d(0, -50%, 0);
+        opacity: 1 !important;
+        pointer-events: auto !important;
+        transform: translate3d(0, -50%, 0) !important;
         border-color: rgba(56, 189, 248, 0.75);
         box-shadow: -12px 16px 36px rgba(0, 0, 0, 0.85), 0 0 24px rgba(14, 165, 233, 0.28);
       }
@@ -7222,9 +7226,9 @@
       <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen" onmousedown="event.preventDefault()"></div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
-    <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="toggleFilterSidebar('genres')" onmouseenter="if(document.body.classList.contains('hero-scrolled-past')||state.heroHidden){toggleFilterSidebar('genres');}" title="Menü mit Genres direkt öffnen"></div>
+    <div id="catalogEdgeTriggerLeft" class="catalog-edge-trigger-left" onclick="toggleFilterSidebar()" onmouseenter="if(!document.body.classList.contains('in-hero-slider')){toggleFilterSidebar();}" title="Menü-Übersicht direkt öffnen"></div>
     <div id="catalogEdgeTriggerRight" class="catalog-edge-trigger-right" onmouseenter="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.add('is-hover-expanded')" onmouseleave="const el=document.getElementById('tvQuickJumpElevator');if(el)el.classList.remove('is-hover-expanded')" aria-hidden="true"></div>
-    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" aria-label="Katalog-Navigation">
+    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" onmouseleave="this.classList.remove('is-hover-expanded')" aria-label="Katalog-Navigation">
       <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient()" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
       <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient()" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
       <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="scrollToTopFromElevatorClient()" title="Ganz nach oben scrollen"><span>⬆️</span><span class="tv-elev-label">Nach oben</span></button>
@@ -8084,7 +8088,10 @@
         } else {
           state.sidebarTab = null;
           if (drawer) drawer.classList.remove("has-subpanel");
-          if (typeof focusFirstResultCard === "function") {
+          if (typeof lastElevatorReturnEl !== "undefined" && lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(lastElevatorReturnEl, false);
+            lastElevatorReturnEl = null;
+          } else if (typeof focusFirstResultCard === "function") {
             focusFirstResultCard(false);
           }
         }
@@ -8101,7 +8108,10 @@
           drawer.classList.remove("open", "has-subpanel");
         }
         if (backdrop) backdrop.classList.remove("open");
-        if (typeof focusFirstResultCard === "function") {
+        if (typeof lastElevatorReturnEl !== "undefined" && lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && typeof jumpSpatialFocus === "function") {
+          jumpSpatialFocus(lastElevatorReturnEl, false);
+          lastElevatorReturnEl = null;
+        } else if (typeof focusFirstResultCard === "function") {
           focusFirstResultCard(false);
         }
       }
@@ -10575,7 +10585,20 @@
         return !(hdr && hdr.classList.contains("mobile-search-expanded"));
       }
 
+      function isUserInHeroSliderFront() {
+        if (!document.body) return false;
+        if (state.heroHidden || state.isSearchMode) return false;
+        if (state.currentView && state.currentView !== "discover") return false;
+        if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return false;
+        if (heroCurtainScrolledToCatalog || document.body.classList.contains("hero-scrolled-past")) return false;
+        const y = window.scrollY || window.pageYOffset || 0;
+        return y <= 20;
+      }
+
       function syncHeroSearchPlaceholderAndToggleBtnClient() {
+        if (document.body) {
+          document.body.classList.toggle("in-hero-slider", isUserInHeroSliderFront());
+        }
         const hideBtn = document.getElementById("heroHideBtn");
         const isCollapsed = Boolean(state.heroHidden);
         const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
@@ -11087,6 +11110,9 @@
 
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
+        if (typeof isUserInHeroSliderFront === "function") {
+          document.body.classList.toggle("in-hero-slider", isUserInHeroSliderFront());
+        }
         const y = window.scrollY || window.pageYOffset || 0;
         document.body.classList.toggle("catalog-deep-scrolled", y > 420);
         const stageWrap = document.getElementById("heroStageWrapEl");
@@ -12824,6 +12850,9 @@
         );
         if (document.body.classList.contains("hero-slider-expanded") !== isExp) {
           document.body.classList.toggle("hero-slider-expanded", isExp);
+        }
+        if (typeof isUserInHeroSliderFront === "function") {
+          document.body.classList.toggle("in-hero-slider", isUserInHeroSliderFront());
         }
       }
 
