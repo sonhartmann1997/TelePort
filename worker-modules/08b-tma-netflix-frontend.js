@@ -1013,7 +1013,7 @@
             '<button type="button" class="card-quick-save ' + (isCardSaved ? "saved" : "") + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ')" title="' + (isCardSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)") + '">' + (isCardSaved ? "✓" : "🔖") + '</button>' +
             '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + it.id + ')" title="Details öffnen">ℹ️ Details</button>' +
             '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
-            '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
+            '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '"' + (idx < 8 ? ' fetchpriority="high"' : '') + ' draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
           '</div>' +
           '<div class="card-body">' +
             '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
@@ -1992,7 +1992,10 @@
       let detailBgTeaserPlayingStartedAt = 0;
       let detailBgTeaserChromeShieldRequired = true;
       let detailBgTeaserMuted = true;
+      let detailBgTeaserUserMuted = false;
       let detailBgTeaserPendingUnmute = false;
+      let detailBgTeaserUnmuteRetries = 0;
+      let detailBgTeaserUnmuteRetryTimers = [];
       let detailBgTeaserPaused = false;
       let detailBgTeaserEnded = false;
       let detailBgTeaserPausedByScroll = false;
@@ -2007,6 +2010,32 @@
       let detailBgTeaserCcMode = "off";
       let detailBgTeaserSpeed = 1;
       const clientBlockedYoutubeKeys = new Set();
+
+      function clearDetailUnmuteRetryTimersClient() {
+        if (Array.isArray(detailBgTeaserUnmuteRetryTimers) && detailBgTeaserUnmuteRetryTimers.length) {
+          detailBgTeaserUnmuteRetryTimers.forEach(t => clearTimeout(t));
+          detailBgTeaserUnmuteRetryTimers = [];
+        }
+      }
+
+      function enforceDetailForegroundUnmuteClient() {
+        clearDetailUnmuteRetryTimersClient();
+        detailBgTeaserUserMuted = false;
+        detailBgTeaserMuted = false;
+        detailBgTeaserPendingUnmute = true;
+        detailBgTeaserUnmuteRetries = 0;
+        window._detailUnmuteGraceUntil = Date.now() + 3000;
+        const applyOnce = () => {
+          const st = document.getElementById("detailHeroStageEl");
+          if (!st || !st.classList.contains("is-trailer-foreground-mode") || detailBgTeaserUserMuted) return;
+          const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+          sendYoutubeBgTeaserCommandClient("unMute");
+          sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
+        };
+        applyOnce();
+        detailBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 240));
+        detailBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 680));
+      }
 
       function formatTrailerDockTimeClient(secInput) {
         const s = Math.max(0, Math.floor(Number(secInput) || 0));
@@ -2075,6 +2104,7 @@
           clearInterval(detailBgTeaserHandshakeTimer);
           detailBgTeaserHandshakeTimer = null;
         }
+        clearDetailUnmuteRetryTimersClient();
       }
 
       let detailBgTeaserPreloadedParked = false;
@@ -2734,7 +2764,8 @@
           if (detailBgTeaserDuration > 0) {
             timeLbl.textContent = formatTrailerDockTimeClient(detailBgTeaserCurTime) + " / " + formatTrailerDockTimeClient(detailBgTeaserDuration);
           } else {
-            timeLbl.textContent = formatTrailerDockTimeClient(detailBgTeaserCurTime);
+            const safeCur = detailBgTeaserIsPlayingConfirmed ? detailBgTeaserCurTime : 0;
+            timeLbl.textContent = formatTrailerDockTimeClient(safeCur);
           }
         }
         const scrubber = document.getElementById("detailCinemaScrubber");
@@ -2834,7 +2865,7 @@
             }
           } catch (_e) {}
           ticks++;
-          if (ticks >= 14 || detailBgTeaserIsPlayingConfirmed) {
+          if (ticks >= 32 || (detailBgTeaserIsPlayingConfirmed && detailBgTeaserDuration > 0)) {
             if (detailBgTeaserHandshakeTimer) {
               clearInterval(detailBgTeaserHandshakeTimer);
               detailBgTeaserHandshakeTimer = null;
@@ -2845,8 +2876,9 @@
         detailBgTeaserHandshakeTimer = setInterval(sendHandshake, 280);
       }
 
-      function mountDetailTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2, overrideCcMode = null, opts = {}) {
+      function mountDetailTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 0, overrideCcMode = null, opts = {}) {
         clearDetailBgTeaserTimersClient();
+        clearDetailUnmuteRetryTimersClient();
         if (idx < 0 || idx >= detailBgTeaserCandidates.length) {
           activateDetailKenBurnsFallbackClient();
           return;
@@ -2868,12 +2900,18 @@
         detailBgTeaserPaused = false;
         detailBgTeaserEnded = false;
         detailBgTeaserPausedByScroll = false;
-        detailBgTeaserCurTime = Math.max(0, Number(startSeconds || 0));
+        const safeStartSec = Math.max(0, Number(startSeconds || 0));
+        detailBgTeaserCurTime = safeStartSec;
         if (!(opts && opts.keepDuration)) {
           detailBgTeaserDuration = 0;
         }
         detailBgTeaserPendingUnmute = Boolean(startUnmuted);
         detailBgTeaserMuted = !startUnmuted;
+        if (startUnmuted) {
+          detailBgTeaserUserMuted = false;
+          detailBgTeaserUnmuteRetries = 0;
+          window._detailUnmuteGraceUntil = Date.now() + 3000;
+        }
 
         const stageEl = document.getElementById("detailHeroStageEl");
         const isFgMount = Boolean(startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")));
@@ -2882,7 +2920,7 @@
         else layer.classList.remove("is-playing");
 
         // WICHTIG: Immer mit autoplay=1&mute=1 starten (100% Autoplay-Erlaubnis auf iOS/Android/Telegram WebView) und Ton sofort per JS-API zuschalten!
-        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, startSeconds, detailBgTeaserCcMode);
+        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, safeStartSec, detailBgTeaserCcMode);
         layer.innerHTML = '<iframe id="detailBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onDetailBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
 
         if (stageEl) {
@@ -2909,7 +2947,7 @@
       function advanceToNextDetailTrailerCandidateClient(keepUnmuted = false) {
         const nextIdx = detailBgTeaserCandidateIdx + 1;
         if (nextIdx < detailBgTeaserCandidates.length) {
-          mountDetailTrailerCandidateAtIndexClient(nextIdx, keepUnmuted, 2);
+          mountDetailTrailerCandidateAtIndexClient(nextIdx, keepUnmuted, 0);
         } else {
           activateDetailKenBurnsFallbackClient();
         }
@@ -2957,11 +2995,20 @@
             if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
               detailBgTeaserDuration = msg.info.duration;
             }
-            if (typeof msg.info.muted === "boolean" && !detailBgTeaserPendingUnmute && Date.now() > (window._detailUnmuteGraceUntil || 0)) {
-              detailBgTeaserMuted = msg.info.muted;
-            }
             const curStageEl = document.getElementById("detailHeroStageEl");
             const isFgLive = Boolean(curStageEl && curStageEl.classList.contains("is-trailer-foreground-mode"));
+            if (typeof msg.info.muted === "boolean") {
+              if (isFgLive && !detailBgTeaserUserMuted && msg.info.muted === true && detailBgTeaserUnmuteRetries < 4) {
+                detailBgTeaserUnmuteRetries += 1;
+                window._detailUnmuteGraceUntil = Date.now() + 1800;
+                const retryVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+                sendYoutubeBgTeaserCommandClient("unMute");
+                sendYoutubeBgTeaserCommandClient("setVolume", [retryVol]);
+                detailBgTeaserMuted = false;
+              } else if (!detailBgTeaserPendingUnmute && (msg.info.muted === false || detailBgTeaserUserMuted || Date.now() > (window._detailUnmuteGraceUntil || 0))) {
+                detailBgTeaserMuted = msg.info.muted;
+              }
+            }
             // Im stillen Hintergrund-Preview 3,2s vor Ende sanft ausblenden; im aktiven Kino-Vordergrund bis zum echten Ende durchspielen!
             if (
               !isFgLive &&
@@ -2993,13 +3040,12 @@
               if (!wasConfirmedBefore || !detailBgTeaserPlayingStartedAt) {
                 detailBgTeaserPlayingStartedAt = Date.now();
               }
-              if (detailBgTeaserPendingUnmute || (isFg && !detailBgTeaserMuted)) {
+              if (detailBgTeaserDuration <= 0 && detailFrame && detailFrame.contentWindow) {
+                try { detailFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "detailBgVideoIframe" }), "*"); } catch (_dle) {}
+              }
+              if (detailBgTeaserPendingUnmute || (isFg && !detailBgTeaserUserMuted)) {
                 detailBgTeaserPendingUnmute = false;
-                detailBgTeaserMuted = false;
-                window._detailUnmuteGraceUntil = Date.now() + 900;
-                const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
-                sendYoutubeBgTeaserCommandClient("unMute");
-                sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
+                enforceDetailForegroundUnmuteClient();
               }
               applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
               if (detailBgTeaserSpeed !== 1) {
@@ -3109,7 +3155,7 @@
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
           if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML) return;
           if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) return;
-          mountDetailTrailerCandidateAtIndexClient(0, false, 2);
+          mountDetailTrailerCandidateAtIndexClient(0, false, 0);
         }, 320);
       }
 
@@ -3179,17 +3225,16 @@
           return;
         }
         if (detailBgTeaserMuted) {
-          detailBgTeaserPendingUnmute = true;
-          detailBgTeaserMuted = false;
           const vol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : saveTrailerVolumeClient(85);
-          sendYoutubeBgTeaserCommandClient("unMute");
-          sendYoutubeBgTeaserCommandClient("setVolume", [vol]);
+          enforceDetailForegroundUnmuteClient();
           showDetailSeekRippleBadgeClient("🔊 " + vol + "%", "center");
           if (detailBgTeaserEnded || detailBgTeaserPaused) {
             resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
             return;
           }
         } else {
+          clearDetailUnmuteRetryTimersClient();
+          detailBgTeaserUserMuted = true;
           detailBgTeaserPendingUnmute = false;
           detailBgTeaserMuted = true;
           sendYoutubeBgTeaserCommandClient("mute");
@@ -3205,12 +3250,16 @@
         const vol = saveTrailerVolumeClient(inpEl.value);
         inpEl.style.setProperty("--vol-pct", vol + "%");
         if (vol <= 0) {
+          clearDetailUnmuteRetryTimersClient();
+          detailBgTeaserUserMuted = true;
           detailBgTeaserMuted = true;
           detailBgTeaserPendingUnmute = false;
           sendYoutubeBgTeaserCommandClient("mute");
         } else {
+          detailBgTeaserUserMuted = false;
           detailBgTeaserMuted = false;
           detailBgTeaserPendingUnmute = false;
+          window._detailUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [vol]);
         }
@@ -3223,11 +3272,15 @@
         const baseVol = detailBgTeaserMuted ? 0 : getSavedTrailerVolumeClient();
         const nextVol = saveTrailerVolumeClient(baseVol + Number(delta || 0));
         if (nextVol <= 0) {
+          clearDetailUnmuteRetryTimersClient();
+          detailBgTeaserUserMuted = true;
           detailBgTeaserMuted = true;
           sendYoutubeBgTeaserCommandClient("mute");
           showDetailSeekRippleBadgeClient("🔇 Stumm", "center");
         } else {
+          detailBgTeaserUserMuted = false;
           detailBgTeaserMuted = false;
+          window._detailUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [nextVol]);
           showDetailSeekRippleBadgeClient("🔊 " + nextVol + "%", "center");
@@ -3366,18 +3419,18 @@
         detailBgTeaserCandidates = candidates;
         detailBgTeaserStoppedByUser = false;
         detailBgTeaserPausedByScroll = false;
-        detailBgTeaserPendingUnmute = true;
-        detailBgTeaserMuted = false;
         stageEl.classList.add("is-trailer-foreground-mode", "is-cinema-starting");
         setDetailTrailerLoadingBadgeClient(false);
+        enforceDetailForegroundUnmuteClient();
 
         const existingFrame = document.getElementById("detailBgVideoIframe");
         if (existingFrame && detailBgTeaserActiveKey) {
-          sendYoutubeBgTeaserCommandClient("unMute");
-          sendYoutubeBgTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
           applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
           if (detailBgTeaserSpeed && detailBgTeaserSpeed !== 1) {
             sendYoutubeBgTeaserCommandClient("setPlaybackRate", [detailBgTeaserSpeed]);
+          }
+          if (detailBgTeaserDuration <= 0 && existingFrame.contentWindow) {
+            try { existingFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "detailBgVideoIframe" }), "*"); } catch (_dle2) {}
           }
           const layer = document.getElementById("detailBgVideoLayer");
           // 1. Trailer läuft bereits sichtbar im Hintergrund -> 0ms sofort mit Ton weiterlaufen lassen!

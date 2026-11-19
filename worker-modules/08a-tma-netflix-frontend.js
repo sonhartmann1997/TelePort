@@ -5962,17 +5962,23 @@
         right: 0;
         bottom: 0;
         width: 100%;
-        height: 86px;
+        height: 0;
         z-index: 3;
         pointer-events: none;
-        opacity: 1;
-        background: linear-gradient(0deg, #000000 0px, #000000 70px, rgba(0, 0, 0, 0.92) 78px, transparent 86px);
-        transition: height 0.18s ease;
+        opacity: 0;
+        background: none;
+        transition: opacity 0.2s ease, height 0.18s ease;
       }
-      .detail-hero-stage.is-trailer-foreground-mode.is-cc-safe-framing .detail-bg-video-layer::before,
-      .hero.is-trailer-foreground-mode.is-cc-safe-framing .detail-bg-video-layer::before {
-        height: 70px;
-        background: linear-gradient(0deg, #000000 0px, #000000 56px, rgba(0, 0, 0, 0.86) 64px, transparent 70px);
+      /* Unterer Schwarzbalken nur beim Start, Pause oder Endcard – während laufender Wiedergabe komplett frei für Untertitel! */
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-starting .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode.is-cinema-starting .detail-bg-video-layer::before,
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode.is-cinema-paused .detail-bg-video-layer::before,
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-ended .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode.is-cinema-ended .detail-bg-video-layer::before {
+        height: 82px;
+        opacity: 1;
+        background: linear-gradient(0deg, #000000 0px, #000000 66px, rgba(0, 0, 0, 0.9) 74px, transparent 82px);
       }
       .detail-bg-video-layer::after {
         content: "";
@@ -6048,19 +6054,21 @@
         from { opacity: 0.72; transform: translate(-50%, -50%) scale(0.97); }
         to { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
       }
-      /* Dauerhaftes TelePort-Logo unten rechts (überdeckt im Leerlauf exakt den Bereich des YouTube-Logos) */
+      /* Kompaktes TelePort-Logo unten rechts (überdeckt im Leerlauf gezielt das kleine YouTube-Ecklogo, ohne Untertitel zu beschneiden) */
       .cinema-teleport-watermark {
         position: absolute;
-        right: 22px;
-        bottom: 18px;
+        right: 8px;
+        bottom: 8px;
+        min-width: 112px;
         z-index: 15;
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 7px;
-        padding: 5px 12px 5px 8px;
+        padding: 6px 14px 6px 10px;
         border-radius: 999px;
-        background: rgba(0, 0, 0, 0.92);
-        border: 1px solid rgba(56, 189, 248, 0.22);
+        background: #000000;
+        border: 1px solid rgba(56, 189, 248, 0.24);
         color: #f8fafc;
         font-size: calc(13px * var(--scale-text));
         font-weight: 900;
@@ -12942,7 +12950,11 @@
       let heroBgTeaserChromeShieldRequired = true;
       let heroBgTeaserPreloadedParked = false;
       let heroBgTeaserMuted = true;
+      let heroBgTeaserUserMuted = false;
       let heroBgTeaserPendingUnmute = false;
+      let heroBgTeaserUnmuteRetries = 0;
+      let heroBgTeaserUnmuteRetryTimers = [];
+      let heroBgTeaserDeferTimer = null;
       let heroBgTeaserPaused = false;
       let heroBgTeaserEnded = false;
       let heroBgTeaserStoppedByUser = false;
@@ -12956,6 +12968,32 @@
       let heroBgTeaserCurTime = 0;
       let heroBgTeaserDuration = 0;
       let heroBgTeaserScrubbing = false;
+
+      function clearHeroUnmuteRetryTimersClient() {
+        if (Array.isArray(heroBgTeaserUnmuteRetryTimers) && heroBgTeaserUnmuteRetryTimers.length) {
+          heroBgTeaserUnmuteRetryTimers.forEach(t => clearTimeout(t));
+          heroBgTeaserUnmuteRetryTimers = [];
+        }
+      }
+
+      function enforceHeroForegroundUnmuteClient() {
+        clearHeroUnmuteRetryTimersClient();
+        heroBgTeaserUserMuted = false;
+        heroBgTeaserMuted = false;
+        heroBgTeaserPendingUnmute = true;
+        heroBgTeaserUnmuteRetries = 0;
+        window._heroUnmuteGraceUntil = Date.now() + 3000;
+        const applyOnce = () => {
+          const st = document.getElementById("heroStageEl");
+          if (!st || !st.classList.contains("is-trailer-foreground-mode") || heroBgTeaserUserMuted) return;
+          const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+          sendYoutubeHeroTeaserCommandClient("unMute");
+          sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
+        };
+        applyOnce();
+        heroBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 240));
+        heroBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 680));
+      }
       const CINEMA_ICONS_CLIENT = {
         play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.2 5.14v13.72a1 1 0 0 0 1.53.85l10.8-6.86a1 1 0 0 0 0-1.7L9.73 4.29A1 1 0 0 0 8.2 5.14Z"/></svg>',
         pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4.5" width="4.2" height="15" rx="1.4"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.4"/></svg>',
@@ -13218,6 +13256,11 @@
           clearInterval(heroBgTeaserHandshakeTimer);
           heroBgTeaserHandshakeTimer = null;
         }
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
+        clearHeroUnmuteRetryTimersClient();
       }
 
       function sendYoutubeHeroTeaserCommandClient(funcName, args = []) {
@@ -13449,7 +13492,8 @@
           if (heroBgTeaserDuration > 0) {
             timeLbl.textContent = formatHeroTrailerDockTimeClient(heroBgTeaserCurTime) + " / " + formatHeroTrailerDockTimeClient(heroBgTeaserDuration);
           } else {
-            timeLbl.textContent = formatHeroTrailerDockTimeClient(heroBgTeaserCurTime);
+            const safeCur = heroBgTeaserIsPlayingConfirmed ? heroBgTeaserCurTime : 0;
+            timeLbl.textContent = formatHeroTrailerDockTimeClient(safeCur);
           }
         }
         const scrubber = document.getElementById("heroCinemaScrubber");
@@ -13747,7 +13791,7 @@
             }
           } catch (_e) {}
           ticks++;
-          if (ticks >= 14 || heroBgTeaserIsPlayingConfirmed) {
+          if (ticks >= 32 || (heroBgTeaserIsPlayingConfirmed && heroBgTeaserDuration > 0)) {
             if (heroBgTeaserHandshakeTimer) {
               clearInterval(heroBgTeaserHandshakeTimer);
               heroBgTeaserHandshakeTimer = null;
@@ -13758,8 +13802,13 @@
         heroBgTeaserHandshakeTimer = setInterval(sendHandshake, 280);
       }
 
-      function mountHeroTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2, overrideCcMode = null, opts = {}) {
+      function mountHeroTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 0, overrideCcMode = null, opts = {}) {
         clearHeroBgTeaserTimersClient();
+        clearHeroUnmuteRetryTimersClient();
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
         if (idx < 0 || idx >= heroBgTeaserCandidates.length) {
           stopHeroBackgroundVideoTeaserClient();
           return;
@@ -13780,12 +13829,18 @@
         heroBgTeaserPlayingStartedAt = 0;
         heroBgTeaserPaused = false;
         heroBgTeaserEnded = false;
-        heroBgTeaserCurTime = Math.max(0, Number(startSeconds || 0));
+        const safeStartSec = Math.max(0, Number(startSeconds || 0));
+        heroBgTeaserCurTime = safeStartSec;
         if (!(opts && opts.keepDuration)) {
           heroBgTeaserDuration = 0;
         }
         heroBgTeaserPendingUnmute = Boolean(startUnmuted);
         heroBgTeaserMuted = !startUnmuted;
+        if (startUnmuted) {
+          heroBgTeaserUserMuted = false;
+          heroBgTeaserUnmuteRetries = 0;
+          window._heroUnmuteGraceUntil = Date.now() + 3000;
+        }
 
         const stageEl = document.getElementById("heroStageEl");
         const isFgMount = Boolean(startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")));
@@ -13793,8 +13848,9 @@
         if (isFgMount) layer.classList.add("is-playing");
         else layer.classList.remove("is-playing");
 
-        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, startSeconds, heroBgTeaserCcMode);
-        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" data-slide-key="' + esc(heroBgTeaserActiveSlideKey || "") + '" src="' + esc(embedSrc) + '" onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
+        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, safeStartSec, heroBgTeaserCcMode);
+        const lazyAttr = isFgMount ? "" : ' loading="lazy"';
+        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" data-slide-key="' + esc(heroBgTeaserActiveSlideKey || "") + '" src="' + esc(embedSrc) + '"' + lazyAttr + ' onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
 
         if (stageEl) {
           stageEl.classList.remove("is-cinema-paused", "is-cinema-ended");
@@ -13812,7 +13868,7 @@
               if (typeof clientBlockedYoutubeKeys !== "undefined") clientBlockedYoutubeKeys.add(cleanKey);
               const nextIdx = heroBgTeaserCandidateIdx + 1;
               if (nextIdx < heroBgTeaserCandidates.length) {
-                mountHeroTrailerCandidateAtIndexClient(nextIdx, startUnmuted || !heroBgTeaserMuted, 2);
+                mountHeroTrailerCandidateAtIndexClient(nextIdx, startUnmuted || !heroBgTeaserMuted, 0);
               }
             }
           }
@@ -13846,7 +13902,7 @@
             if (typeof clientBlockedYoutubeKeys !== "undefined") clientBlockedYoutubeKeys.add(heroBgTeaserActiveKey);
             const nextIdx = heroBgTeaserCandidateIdx + 1;
             if (nextIdx < heroBgTeaserCandidates.length) {
-              mountHeroTrailerCandidateAtIndexClient(nextIdx, heroBgTeaserPendingUnmute || !heroBgTeaserMuted, 2);
+              mountHeroTrailerCandidateAtIndexClient(nextIdx, heroBgTeaserPendingUnmute || !heroBgTeaserMuted, 0);
             } else {
               const failedHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
               if (failedHero) {
@@ -13875,11 +13931,20 @@
             if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
               heroBgTeaserDuration = msg.info.duration;
             }
-            if (typeof msg.info.muted === "boolean" && !heroBgTeaserPendingUnmute && Date.now() > (window._heroUnmuteGraceUntil || 0)) {
-              heroBgTeaserMuted = msg.info.muted;
-            }
             const curStageEl = document.getElementById("heroStageEl");
             const isFgLive = Boolean(curStageEl && curStageEl.classList.contains("is-trailer-foreground-mode"));
+            if (typeof msg.info.muted === "boolean") {
+              if (isFgLive && !heroBgTeaserUserMuted && msg.info.muted === true && heroBgTeaserUnmuteRetries < 4) {
+                heroBgTeaserUnmuteRetries += 1;
+                window._heroUnmuteGraceUntil = Date.now() + 1800;
+                const retryVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+                sendYoutubeHeroTeaserCommandClient("unMute");
+                sendYoutubeHeroTeaserCommandClient("setVolume", [retryVol]);
+                heroBgTeaserMuted = false;
+              } else if (!heroBgTeaserPendingUnmute && (msg.info.muted === false || heroBgTeaserUserMuted || Date.now() > (window._heroUnmuteGraceUntil || 0))) {
+                heroBgTeaserMuted = msg.info.muted;
+              }
+            }
             // Im stillen Hintergrund-Preview 3,2s vor Ende sanft ausblenden; im aktiven Kino-Vordergrund bis zum echten Ende durchspielen!
             if (
               !isFgLive &&
@@ -13911,13 +13976,12 @@
               if (!wasConfirmedBefore || !heroBgTeaserPlayingStartedAt) {
                 heroBgTeaserPlayingStartedAt = Date.now();
               }
-              if (heroBgTeaserPendingUnmute || (isFg && !heroBgTeaserMuted)) {
+              if (heroBgTeaserDuration <= 0 && heroFrame && heroFrame.contentWindow) {
+                try { heroFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "heroBgVideoIframe" }), "*"); } catch (_le) {}
+              }
+              if (heroBgTeaserPendingUnmute || (isFg && !heroBgTeaserUserMuted)) {
                 heroBgTeaserPendingUnmute = false;
-                heroBgTeaserMuted = false;
-                window._heroUnmuteGraceUntil = Date.now() + 900;
-                const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
-                sendYoutubeHeroTeaserCommandClient("unMute");
-                sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
+                enforceHeroForegroundUnmuteClient();
               }
               applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
               if (heroBgTeaserSpeed !== 1) {
@@ -14069,6 +14133,80 @@
         return [];
       }
 
+      // Lädt den schweren YouTube-Iframe im Hero-Slider erst als Letztes – nachdem sichtbare Elemente & Cover Priorität hatten!
+      function scheduleDeferredHeroIframeMountClient(reqSeq, slideKey, mountFn) {
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
+        const runWhenIdle = () => {
+          if (reqSeq !== heroBgTeaserRequestSeq) return;
+          const finishMount = () => {
+            if (reqSeq !== heroBgTeaserRequestSeq) return;
+            const curHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            const curSlideKey = curHero ? ((curHero.media_type === "tv" || state.type === "s" ? "s" : "m") + "_" + curHero.id) : "";
+            if (!curHero || curSlideKey !== slideKey) return;
+            if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+            if (heroCurtainScrolledToCatalog || state.heroHidden || state.isSearchMode) return;
+            mountFn();
+          };
+          if (typeof window.requestIdleCallback === "function") {
+            window.requestIdleCallback(() => {
+              heroBgTeaserDeferTimer = setTimeout(finishMount, 450);
+            }, { timeout: 1400 });
+          } else {
+            heroBgTeaserDeferTimer = setTimeout(finishMount, 750);
+          }
+        };
+
+        const waitForVisibleImagesThenRun = () => {
+          if (reqSeq !== heroBgTeaserRequestSeq) return;
+          const visibleImgs = Array.from(document.querySelectorAll("#resultsGridContainer img.lazy-cover-img")).slice(0, 10);
+          const pendingImgs = visibleImgs.filter(img => {
+            const src = img.getAttribute("src") || "";
+            return src && !src.startsWith("data:") && !img.complete;
+          });
+          if (pendingImgs.length === 0) {
+            heroBgTeaserDeferTimer = setTimeout(runWhenIdle, 550);
+            return;
+          }
+          let done = false;
+          let remaining = pendingImgs.length;
+          const onOneDone = () => {
+            remaining -= 1;
+            if (!done && remaining <= 0) {
+              done = true;
+              if (heroBgTeaserDeferTimer) clearTimeout(heroBgTeaserDeferTimer);
+              heroBgTeaserDeferTimer = setTimeout(runWhenIdle, 450);
+            }
+          };
+          pendingImgs.forEach(img => {
+            img.addEventListener("load", onOneDone, { once: true });
+            img.addEventListener("error", onOneDone, { once: true });
+          });
+          heroBgTeaserDeferTimer = setTimeout(() => {
+            if (!done) {
+              done = true;
+              runWhenIdle();
+            }
+          }, 2200);
+        };
+
+        if (document.readyState === "complete") {
+          waitForVisibleImagesThenRun();
+        } else {
+          let loadFired = false;
+          const onDocLoad = () => {
+            if (loadFired) return;
+            loadFired = true;
+            if (heroBgTeaserDeferTimer) clearTimeout(heroBgTeaserDeferTimer);
+            waitForVisibleImagesThenRun();
+          };
+          window.addEventListener("load", onDocLoad, { once: true });
+          heroBgTeaserDeferTimer = setTimeout(onDocLoad, 2800);
+        }
+      }
+
       function scheduleHeroBackgroundVideoTeaserClient(immediateForeground = false) {
         if (state.isSearchMode || state.heroHidden || !Array.isArray(state.heroSlides) || !state.heroSlides.length) {
           stopHeroBackgroundVideoTeaserClient();
@@ -14099,7 +14237,11 @@
           clearTimeout(heroBgTeaserTimer);
           heroBgTeaserTimer = null;
         }
-        const delayMs = immediateForeground ? 0 : (previewDisabled ? 550 : 420);
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
+        const delayMs = immediateForeground ? 0 : 750;
         const reqSeq = ++heroBgTeaserRequestSeq;
         heroBgTeaserTimer = setTimeout(async () => {
           heroBgTeaserTimer = null;
@@ -14123,8 +14265,17 @@
           if (cands.length === 0 || previewDisabled) return;
           const existingFrame = document.getElementById("heroBgVideoIframe");
           if (existingFrame && existingFrame.getAttribute("data-slide-key") === slideKey && heroBgTeaserActiveKey === cands[0]) return;
-          mountHeroTrailerCandidateAtIndexClient(0, immediateForeground, immediateForeground ? 0 : 2);
-          syncHeroCinemaDockUiClient();
+          if (immediateForeground) {
+            mountHeroTrailerCandidateAtIndexClient(0, true, 0);
+            syncHeroCinemaDockUiClient();
+          } else {
+            scheduleDeferredHeroIframeMountClient(reqSeq, slideKey, () => {
+              const liveFrame = document.getElementById("heroBgVideoIframe");
+              if (liveFrame && liveFrame.getAttribute("data-slide-key") === slideKey && heroBgTeaserActiveKey === cands[0]) return;
+              mountHeroTrailerCandidateAtIndexClient(0, false, 0);
+              syncHeroCinemaDockUiClient();
+            });
+          }
         }, delayMs);
       }
 
@@ -14192,12 +14343,15 @@
           clearTimeout(heroBgTeaserTimer);
           heroBgTeaserTimer = null;
         }
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
         heroBgTeaserActiveSlideKey = slideKey;
         heroBgTeaserCandidates = candidates;
         heroBgTeaserCandidatesSlideKey = slideKey;
         heroBgTeaserStoppedByUser = false;
-        heroBgTeaserPendingUnmute = true;
-        heroBgTeaserMuted = false;
+        enforceHeroForegroundUnmuteClient();
 
         const existingFrame = document.getElementById("heroBgVideoIframe");
         const frameMatchesSlide = Boolean(
@@ -14207,11 +14361,12 @@
           candidates.includes(heroBgTeaserActiveKey)
         );
         if (frameMatchesSlide) {
-          sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
           applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
           if (heroBgTeaserSpeed && heroBgTeaserSpeed !== 1) {
             sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
+          }
+          if (heroBgTeaserDuration <= 0 && existingFrame.contentWindow) {
+            try { existingFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "heroBgVideoIframe" }), "*"); } catch (_le2) {}
           }
           const layer = document.getElementById("heroBgVideoLayer");
           if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired) {
@@ -14341,17 +14496,16 @@
           return;
         }
         if (heroBgTeaserMuted) {
-          heroBgTeaserPendingUnmute = true;
-          heroBgTeaserMuted = false;
           const vol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : saveTrailerVolumeClient(85);
-          sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [vol]);
+          enforceHeroForegroundUnmuteClient();
           showHeroSeekRippleBadgeClient("🔊 " + vol + "%", "center");
           if (heroBgTeaserEnded || heroBgTeaserPaused) {
             resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
             return;
           }
         } else {
+          clearHeroUnmuteRetryTimersClient();
+          heroBgTeaserUserMuted = true;
           heroBgTeaserPendingUnmute = false;
           heroBgTeaserMuted = true;
           sendYoutubeHeroTeaserCommandClient("mute");
@@ -14367,12 +14521,16 @@
         const vol = saveTrailerVolumeClient(inpEl.value);
         inpEl.style.setProperty("--vol-pct", vol + "%");
         if (vol <= 0) {
+          clearHeroUnmuteRetryTimersClient();
+          heroBgTeaserUserMuted = true;
           heroBgTeaserMuted = true;
           heroBgTeaserPendingUnmute = false;
           sendYoutubeHeroTeaserCommandClient("mute");
         } else {
+          heroBgTeaserUserMuted = false;
           heroBgTeaserMuted = false;
           heroBgTeaserPendingUnmute = false;
+          window._heroUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeHeroTeaserCommandClient("unMute");
           sendYoutubeHeroTeaserCommandClient("setVolume", [vol]);
         }
@@ -14385,11 +14543,15 @@
         const baseVol = heroBgTeaserMuted ? 0 : getSavedTrailerVolumeClient();
         const nextVol = saveTrailerVolumeClient(baseVol + Number(delta || 0));
         if (nextVol <= 0) {
+          clearHeroUnmuteRetryTimersClient();
+          heroBgTeaserUserMuted = true;
           heroBgTeaserMuted = true;
           sendYoutubeHeroTeaserCommandClient("mute");
           showHeroSeekRippleBadgeClient("🔇 Stumm", "center");
         } else {
+          heroBgTeaserUserMuted = false;
           heroBgTeaserMuted = false;
+          window._heroUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeHeroTeaserCommandClient("unMute");
           sendYoutubeHeroTeaserCommandClient("setVolume", [nextVol]);
           showHeroSeekRippleBadgeClient("🔊 " + nextVol + "%", "center");
