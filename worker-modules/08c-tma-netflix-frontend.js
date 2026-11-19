@@ -8473,6 +8473,35 @@
         }
       }
 
+      function focusSearchWithoutScrollClient() {
+        if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("light");
+        const hdr = document.getElementById("topUnifiedBar");
+        if (hdr && typeof expandMobileSearchBarClient === "function") {
+          expandMobileSearchBarClient(true);
+        }
+        const inp = document.getElementById("searchInput");
+        if (inp) {
+          try { inp.focus({ preventScroll: true }); } catch (e) { try { inp.focus(); } catch (e2) {} }
+        }
+        if (typeof showHudToast === "function") showHudToast("🔍 Suchfeld aktiv");
+      }
+
+      function openPageJumpFromElevatorClient() {
+        if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+        const totPages = Math.max(1, Number(state.totalPages) || 1);
+        if (totPages > 1 && typeof openPageJumpModalClient === "function") {
+          openPageJumpModalClient();
+        } else if (typeof tvElevatorJumpClient === "function") {
+          tvElevatorJumpClient("bottom");
+        }
+      }
+
+      function scrollToTopFromElevatorClient() {
+        if (typeof triggerTmaHapticClient === "function") triggerTmaHapticClient("selection");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        if (typeof showHudToast === "function") showHudToast("⬆️ Nach oben");
+      }
+
       function handleVerticalDirectionStepWithTurboClient(dir, isRepeatEvent = false) {
         const now = Date.now();
         const isSameDir = verticalTurboDir === dir && (now - verticalTurboLastStepAt < 420);

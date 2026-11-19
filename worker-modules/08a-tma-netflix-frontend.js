@@ -2557,7 +2557,7 @@
         color: #ffffff;
         transform: translate3d(0, -2px, 0);
       }
-      /* Seitlicher TV- & Konsolen-Schnellsprung-Fahrstuhl (Rechts-Rand-Ausbruch & 1-Klick Oben/Filter/Mitte/Unten) */
+      /* Seitlicher TV- & Konsolen-Schnellsprung-Fahrstuhl (Rechts: Suche/Seite/Oben | Links: Menü mit Genres) */
       .tv-quick-jump-elevator {
         position: fixed;
         right: 10px;
@@ -2578,22 +2578,51 @@
         pointer-events: none;
         transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
       }
+      .tv-quick-jump-left {
+        position: fixed;
+        left: 10px;
+        top: 50%;
+        transform: translate3d(-12px, -50%, 0);
+        z-index: 76;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 6px;
+        border-radius: 14px;
+        background: linear-gradient(165deg, rgba(8, 13, 24, 0.90), rgba(15, 23, 42, 0.94));
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid rgba(56, 189, 248, 0.38);
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.78), 0 0 18px rgba(14, 165, 233, 0.16);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+      }
       body.catalog-deep-scrolled .tv-quick-jump-elevator,
       body.kb-nav-active .tv-quick-jump-elevator,
       .tv-quick-jump-elevator.is-visible,
-      .tv-quick-jump-elevator:focus-within {
+      .tv-quick-jump-elevator:focus-within,
+      body.catalog-deep-scrolled .tv-quick-jump-left,
+      body.kb-nav-active .tv-quick-jump-left,
+      .tv-quick-jump-left.is-visible,
+      .tv-quick-jump-left:focus-within {
         opacity: 0.94;
         pointer-events: auto;
         transform: translate3d(0, -50%, 0);
       }
       .tv-quick-jump-elevator:hover,
-      .tv-quick-jump-elevator:focus-within {
+      .tv-quick-jump-elevator:focus-within,
+      .tv-quick-jump-left:hover,
+      .tv-quick-jump-left:focus-within {
         opacity: 1;
         border-color: rgba(56, 189, 248, 0.72);
       }
       body:has(#modalRoot .modal-backdrop) .tv-quick-jump-elevator,
       body:has(#filterSidebarDrawer.open) .tv-quick-jump-elevator,
-      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator {
+      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-elevator,
+      body:has(#modalRoot .modal-backdrop) .tv-quick-jump-left,
+      body:has(#filterSidebarDrawer.open) .tv-quick-jump-left,
+      body:has(#customDialogRoot .page-jump-modal-backdrop) .tv-quick-jump-left {
         opacity: 0 !important;
         pointer-events: none !important;
       }
@@ -2622,11 +2651,16 @@
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.48), 0 6px 16px rgba(2, 132, 199, 0.45);
         transform: translate3d(-2px, 0, 0);
       }
+      .catalog-back-to-top-fab {
+        display: none !important;
+      }
       @media (max-width: 720px) {
-        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elev-label {
+        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elev-label,
+        .tv-quick-jump-left:not(:focus-within):not(:hover) .tv-elev-label {
           display: none;
         }
-        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elevator-btn {
+        .tv-quick-jump-elevator:not(:focus-within):not(:hover) .tv-elevator-btn,
+        .tv-quick-jump-left:not(:focus-within):not(:hover) .tv-elevator-btn {
           padding: 0 8px;
           justify-content: center;
         }
@@ -7182,12 +7216,13 @@
       <div id="searchGenreDropdownOverlay" class="search-genre-dropdown-overlay" role="listbox" aria-label="Genre wählen" onmousedown="event.preventDefault()"></div>
       <div id="searchAutocompleteBox" class="search-autocomplete-box" role="listbox" aria-label="Suchvorschläge" onmousedown="event.preventDefault()"></div>
     </header>
-    <button type="button" id="catalogBackToTopFab" class="catalog-back-to-top-fab" onclick="scrollCatalogBackToTopOrSpotlightClient(event)" title="Nach oben zum Kataloganfang / Spotlight">▴ Nach oben</button>
-    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" aria-label="TV- & Konsolen-Schnellsprung">
-      <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="tvElevatorJumpClient('top')" title="Sofort ganz nach oben zur Suche & Kopfleiste (Pos1 / Home)"><span>⬆️</span><span class="tv-elev-label">Oben / Suche</span></button>
-      <button type="button" id="tvElevBtnFilter" class="tv-elevator-btn" onclick="tvElevatorJumpClient('filter')" title="Direkt zur Filter- & Sortierleiste springen"><span>🎛️</span><span class="tv-elev-label">Filter</span></button>
-      <button type="button" id="tvElevBtnMid" class="tv-elevator-btn" onclick="tvElevatorJumpClient('middle')" title="Direkt in die Mitte des aktuellen Rasters springen"><span>🎯</span><span class="tv-elev-label">Mitte</span></button>
-      <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="tvElevatorJumpClient('bottom')" title="Direkt nach unten zur Seitenwahl / Pagination springen (Ende)"><span>📄</span><span class="tv-elev-label">Seiten / Unten</span></button>
+    <nav id="tvQuickJumpLeft" class="tv-quick-jump-left" aria-label="Menü mit Genres direkt öffnen">
+      <button type="button" id="tvElevBtnMenu" class="tv-elevator-btn" onclick="toggleFilterSidebar('genres')" title="Menü mit Genres direkt öffnen"><span>🎞️</span><span class="tv-elev-label">Genres & Menü</span></button>
+    </nav>
+    <nav id="tvQuickJumpElevator" class="tv-quick-jump-elevator" aria-label="Katalog-Navigation">
+      <button type="button" id="tvElevBtnSearch" class="tv-elevator-btn" onclick="focusSearchWithoutScrollClient()" title="Suche aktivieren (ohne Hochscrollen)"><span>🔍</span><span class="tv-elev-label">Suche</span></button>
+      <button type="button" id="tvElevBtnBot" class="tv-elevator-btn" onclick="openPageJumpFromElevatorClient()" title="Seite direkt wählen"><span>📄</span><span class="tv-elev-label">Seite</span></button>
+      <button type="button" id="tvElevBtnTop" class="tv-elevator-btn" onclick="scrollToTopFromElevatorClient()" title="Ganz nach oben scrollen"><span>⬆️</span><span class="tv-elev-label">Nach oben</span></button>
     </nav>
 
     <!-- Linke 2-Spalten Ambilight-Glas Sidebar (Links: Einzeilige Kategorien | Rechts: Dynamisches Optionen-Panel) -->
