@@ -35619,6 +35619,14 @@
         window.open(shareUrl, "_blank");
       }
 
+      function shareCollectionOrUniverseFromBtn(btn) {
+        if (!btn) return;
+        const kind = btn.getAttribute("data-kind") || "col";
+        const id = btn.getAttribute("data-id") || "";
+        const title = btn.getAttribute("data-title") || "";
+        shareCollectionOrUniverseFromTma(kind, id, title);
+      }
+
       function updateSyncBadge() {
         const b = document.getElementById("syncBadge");
         const admBtn = document.getElementById("adminHeaderBtn");
@@ -43721,7 +43729,7 @@
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
-                '<button class="btn purple" onclick="shareCollectionOrUniverseFromTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\',\\'' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '\\')">📤 Teilen</button>' +
+                '<button class="btn purple" data-kind="' + (isColView ? 'col' : 'uni') + '" data-id="' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '" data-title="' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '" onclick="shareCollectionOrUniverseFromBtn(this)">📤 Teilen</button>' +
                 '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🌌 Alle ' + (isColView ? 'Reihen' : 'Welten') + '</button>' +
                 '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
               '</div>' +
@@ -43756,7 +43764,7 @@
             '</div>' +
             '<div id="searchDetectedEntitiesBody" style="display:' + (isEntitiesOpen ? 'flex' : 'none') + ';gap:6px;flex-wrap:wrap;margin-top:8px">' +
               (state.searchMatchedStudios || []).map(st =>
-                '<button class="btn" style="background:rgba(245,158,11,0.2);border-color:#f59e0b" onclick="openStudioView(\\'' + esc(st.companyIds || st.id) + '\\',\\'' + esc(st.name) + '\\')">' + esc(st.icon || '🏢') + ' Studio: ' + esc(st.name) + '</button>'
+                '<button class="btn" style="background:rgba(245,158,11,0.2);border-color:#f59e0b" data-cid="' + esc(st.companyIds || st.id) + '" data-cname="' + esc(st.name) + '" onclick="openStudioView(this.dataset.cid,this.dataset.cname)">' + esc(st.icon || '🏢') + ' Studio: ' + esc(st.name) + '</button>'
               ).join("") +
               (state.searchMatchedUniverses || []).map(u =>
                 '<button class="btn" style="background:rgba(16,185,129,0.2);border-color:#10b981" onclick="openUniverseView(\\'' + esc(u.id) + '\\')">' + esc(u.icon || '🌌') + ' Universum: ' + esc(u.name) + '</button>'
@@ -43765,7 +43773,7 @@
                 '<button class="btn" style="background:rgba(91,70,245,0.22);border-color:#7c69ff" onclick="openCollectionView(' + Number(c.id) + ')">🍿 Filmreihe: ' + esc(c.name) + '</button>'
               ).join("") +
               (state.searchMatchedPersons || []).map(p =>
-                '<button class="btn" style="background:rgba(2,132,199,0.22);border-color:#38bdf8" onclick="openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')">🌟 ' + esc(p.name) + (p.known_for ? ' (' + esc(p.known_for) + ')' : '') + '</button>'
+                '<button class="btn" style="background:rgba(2,132,199,0.22);border-color:#38bdf8" data-pid="' + Number(p.id) + '" data-pname="' + esc(p.name) + '" onclick="openPersonView(Number(this.dataset.pid),this.dataset.pname)">🌟 ' + esc(p.name) + (p.known_for ? ' (' + esc(p.known_for) + ')' : '') + '</button>'
               ).join("") +
             '</div>' +
           '</div>'
@@ -45245,6 +45253,19 @@
         observeLazyCoversInContainerClient(gridEl);
       }
 
+      function openPersonFromSpotlightBtn(btn) {
+        if (!btn) return;
+        const pid = Number(btn.getAttribute("data-pid") || 0);
+        const pname = btn.getAttribute("data-pname") || "";
+        saveLastClosedDetailItemClient();
+        closeDetailModal();
+        if (pid > 0) {
+          openPersonView(pid, pname);
+        } else {
+          runSearch(false, pname, "person");
+        }
+      }
+
       async function openPersonSpotlightOverlayClient(personId, personName, roleLabel = "", photoUrl = "") {
         let root = document.getElementById("personSpotlightOverlayRoot");
         if (!root) {
@@ -45276,7 +45297,7 @@
                 '</div>' +
               '</div>' +
               '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-                '<button type="button" class="detail-btn-glass" onclick="' + (personId ? ('saveLastClosedDetailItemClient();closeDetailModal();openPersonView(' + Number(personId) + ',\\'' + esc(cleanName) + '\\')') : ('saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(cleanName) + '\\',\\'person\\')')) + '">🔍 Im Hauptkatalog öffnen</button>' +
+                '<button type="button" class="detail-btn-glass" data-pid="' + Number(personId || 0) + '" data-pname="' + esc(cleanName) + '" onclick="openPersonFromSpotlightBtn(this)">🔍 Im Hauptkatalog öffnen</button>' +
                 '<button type="button" class="detail-btn-glass" onclick="closePersonSpotlightOverlayClient(event)">✕ Schließen</button>' +
               '</div>' +
             '</div>' +
@@ -48184,7 +48205,7 @@
                   (sizeLabel ? '<span class="stream-meta-pill size" title="Dateigröße">' + esc(sizeLabel) + '</span>' : '') +
                 '</div>' +
                 '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                  '<button class="btn-stream-clean prerelease" onclick="requestTelegramStream(\\'' + esc(fid) + '\\',\\'' + esc(streamTitle) + '\\',\\'' + esc(codecLabel) + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'📦 Archiv-Download\\'})">' + esc(btnCaption) + '</button>' +
+                  '<button class="btn-stream-clean prerelease" data-fid="' + esc(fid) + '" data-title="' + esc(streamTitle) + '" data-qual="' + esc(codecLabel) + '" data-size="' + esc(sizeLabel) + '" data-tags="📦 Archiv-Download" onclick="requestTelegramStreamFromBtn(this)">' + esc(btnCaption) + '</button>' +
                 '</div>' +
               '</div>';
             }).join("") +

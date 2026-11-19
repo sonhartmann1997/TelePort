@@ -7538,6 +7538,14 @@
         window.open(shareUrl, "_blank");
       }
 
+      function shareCollectionOrUniverseFromBtn(btn) {
+        if (!btn) return;
+        const kind = btn.getAttribute("data-kind") || "col";
+        const id = btn.getAttribute("data-id") || "";
+        const title = btn.getAttribute("data-title") || "";
+        shareCollectionOrUniverseFromTma(kind, id, title);
+      }
+
       function updateSyncBadge() {
         const b = document.getElementById("syncBadge");
         const admBtn = document.getElementById("adminHeaderBtn");
