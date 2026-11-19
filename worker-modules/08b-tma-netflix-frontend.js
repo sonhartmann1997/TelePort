@@ -3607,8 +3607,8 @@
         const allSeriesFiles = Array.isArray(d.allStreamFiles) ? d.allStreamFiles.filter(f => f && f.telegram_file_id && !f.is_download_only) : [];
         if (allSeriesFiles.length > 0) {
           const f0 = allSeriesFiles[0];
-          const sNum = Number(f0.season_number || 1);
-          const eNum = Number(f0.episode_number || 1);
+          const sNum = Number(f0.season_number ?? 1);
+          const eNum = Number(f0.episode_number ?? 1);
           const epCode = "S" + String(sNum).padStart(2, "0") + "E" + String(eNum).padStart(2, "0");
           requestTelegramStream(
             f0.telegram_file_id,
@@ -4628,14 +4628,14 @@
       }
 
       function resolveClientEpisodeTitle(seriesId, seasonNum, epNum, fileObj) {
-        const sNum = Number(seasonNum || fileObj?.season_number || 1);
-        const eNum = Number(epNum || fileObj?.episode_number || 1);
+        const sNum = Number(seasonNum !== undefined && seasonNum !== null ? seasonNum : (fileObj?.season_number ?? 1));
+        const eNum = Number(epNum !== undefined && epNum !== null ? epNum : (fileObj?.episode_number ?? 1));
         if (fileObj) {
           const directTitle = String(fileObj.episode_title || fileObj.episodeTitle || fileObj.epName || "").trim();
           if (directTitle && !/^Folge\\s+\\d+$/i.test(directTitle)) return directTitle;
         }
         if (Array.isArray(activeSeasonCacheEpisodes) && activeSeasonCacheEpisodes.length > 0) {
-          const hit = activeSeasonCacheEpisodes.find(e => Number(e.season_number || sNum) === sNum && Number(e.episode_number) === eNum);
+          const hit = activeSeasonCacheEpisodes.find(e => Number(e.season_number !== undefined && e.season_number !== null ? e.season_number : sNum) === sNum && Number(e.episode_number) === eNum);
           if (hit && hit.name && !/^Folge\\s+\\d+$/i.test(hit.name)) return String(hit.name).trim();
         }
         if (typeof clientSeasonCache !== "undefined" && clientSeasonCache instanceof Map) {
@@ -4647,7 +4647,7 @@
           }
         }
         const allFiles = Array.isArray(state.activeDetails?.allStreamFiles) ? state.activeDetails.allStreamFiles : [];
-        const fileWithTitle = allFiles.find(f => Number(f.season_number || 1) === sNum && Number(f.episode_number || 1) === eNum && (f.episode_title || f.episodeTitle));
+        const fileWithTitle = allFiles.find(f => Number(f.season_number ?? 1) === sNum && Number(f.episode_number ?? 1) === eNum && (f.episode_title || f.episodeTitle));
         if (fileWithTitle) {
           return String(fileWithTitle.episode_title || fileWithTitle.episodeTitle).trim();
         }
@@ -4661,11 +4661,11 @@
         return "Folge " + eNum;
       }
 
-      let versionsTabSeasonFilter = 0; // 0 = Alle Staffeln
+      let versionsTabSeasonFilter = -1; // -1 = Alle Staffeln, >=0 = spezifische Staffel (inkl. Staffel 0 Specials)
       let versionsTabPreferredProfile = "auto"; // 'auto' oder spezifisches Profil für Auto-Fill
 
       function setVersionsTabSeasonFilterClient(seasonNum) {
-        versionsTabSeasonFilter = Number(seasonNum) || 0;
+        versionsTabSeasonFilter = seasonNum !== undefined && seasonNum !== null ? Number(seasonNum) : -1;
         refreshDetailModalVersionsTabDomClient();
       }
 
@@ -4703,20 +4703,20 @@
           '</div>';
         }
 
-        // Staffeln ermitteln (bei Serien)
+        // Staffeln ermitteln (bei Serien inklusive Staffel 0 Specials)
         const seasonSet = new Set();
         for (const f of allFiles) {
           if (!f) continue;
-          const sn = Number(f.season_number || 1);
-          if (sn > 0) seasonSet.add(sn);
+          const sn = Number(f.season_number ?? 1);
+          if (sn >= 0) seasonSet.add(sn);
         }
         const availableSeasons = Array.from(seasonSet).sort((a, b) => a - b);
-        const activeSeasonFilter = (type === "s" && versionsTabSeasonFilter > 0 && seasonSet.has(versionsTabSeasonFilter))
+        const activeSeasonFilter = (type === "s" && versionsTabSeasonFilter >= 0 && seasonSet.has(versionsTabSeasonFilter))
           ? versionsTabSeasonFilter
-          : 0;
+          : -1;
 
-        const filteredFiles = (type === "s" && activeSeasonFilter > 0)
-          ? allFiles.filter(f => f && Number(f.season_number || 1) === activeSeasonFilter)
+        const filteredFiles = (type === "s" && activeSeasonFilter >= 0)
+          ? allFiles.filter(f => f && Number(f.season_number ?? 1) === activeSeasonFilter)
           : allFiles;
 
         // Gruppiere Dateien nach Schnittfassung / Qualität
@@ -4739,10 +4739,11 @@
         const seasonFilterBarHtml = (type === "s" && availableSeasons.length > 1) ? (
           '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
             '<span style="font-size:11.5px;font-weight:800;color:#94a3b8">📺 Staffel-Filter:</span>' +
-            '<button type="button" class="season-tab-btn ' + (activeSeasonFilter === 0 ? 'active' : '') + '" style="padding:4px 10px;font-size:11.5px" onclick="setVersionsTabSeasonFilterClient(0)">Alle Staffeln (' + allFiles.length + ')</button>' +
+            '<button type="button" class="season-tab-btn ' + (activeSeasonFilter === -1 ? 'active' : '') + '" style="padding:4px 10px;font-size:11.5px" onclick="setVersionsTabSeasonFilterClient(-1)">Alle Staffeln (' + allFiles.length + ')</button>' +
             availableSeasons.map(sn => {
-              const cnt = allFiles.filter(f => f && Number(f.season_number || 1) === sn).length;
-              return '<button type="button" class="season-tab-btn ' + (activeSeasonFilter === sn ? 'active' : '') + '" style="padding:4px 10px;font-size:11.5px" onclick="setVersionsTabSeasonFilterClient(' + sn + ')">Staffel ' + sn + ' · ' + cnt + '</button>';
+              const cnt = allFiles.filter(f => f && Number(f.season_number ?? 1) === sn).length;
+              const sLabel = sn === 0 ? "Staffel 0 (Specials)" : ("Staffel " + sn);
+              return '<button type="button" class="season-tab-btn ' + (activeSeasonFilter === sn ? 'active' : '') + '" style="padding:4px 10px;font-size:11.5px" onclick="setVersionsTabSeasonFilterClient(' + sn + ')">' + esc(sLabel) + ' · ' + cnt + '</button>';
             }).join("") +
           '</div>'
         ) : '';
@@ -4768,11 +4769,11 @@
 
             // Gruppiere alle vorhandenen Episoden nach (Staffel, Folge)
             const epBuckets = new Map();
-            const seasonsInScope = activeSeasonFilter > 0 ? [activeSeasonFilter] : availableSeasons;
+            const seasonsInScope = activeSeasonFilter >= 0 ? [activeSeasonFilter] : availableSeasons;
             for (const sn of seasonsInScope) {
-              const sFiles = streamOnlyFiles.filter(f => Number(f.season_number || 1) === sn);
+              const sFiles = streamOnlyFiles.filter(f => Number(f.season_number ?? 1) === sn);
               for (const f of sFiles) {
-                const en = Number(f.episode_number || 1);
+                const en = Number(f.episode_number ?? 1);
                 const bKey = sn + "_" + en;
                 if (!epBuckets.has(bKey)) epBuckets.set(bKey, { season: sn, episode: en, files: [] });
                 epBuckets.get(bKey).files.push(f);
@@ -4819,13 +4820,13 @@
                 '</div>' +
                 '<div class="ep-row-bottom">' +
                   '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0">' +
-                    '<button type="button" class="btn-stream-clean" onclick="requestTelegramStream(\\'' + esc(chosenFile.telegram_file_id) + '\\',\\'' + esc(d.title + ' ' + epCode + ' - ' + epTitleStr) + '\\',\\'' + esc(chosenQual) + '\\',{seriesId:' + Number(d.id) + ',season:' + sn + ',episode:' + en + ',epName:\\'' + esc(epTitleStr) + '\\',fileSize:\\'' + esc(chosenSize) + '\\',tags:\\'' + esc(chosenVerLbl) + '\\'})">▶ Stream · ' + esc(chosenQual) + (chosenSize ? (' · ' + esc(chosenSize)) : '') + (chosenSubs.length > 0 ? ' + UT' : '') + '</button>' +
-                    (chosenSubs.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(chosenFile.telegram_file_id) + '\\',\\'' + esc(d.title + ' ' + epCode) + '\\',{seriesId:' + Number(d.id) + ',season:' + sn + ',episode:' + en + '})">💬 UT (' + chosenSubs.length + ')</button>' : '') +
+                    '<button type="button" class="btn-stream-clean" data-fid="' + esc(chosenFile.telegram_file_id) + '" data-title="' + esc(d.title + ' ' + epCode + ' - ' + epTitleStr) + '" data-qual="' + esc(chosenQual) + '" data-sid="' + Number(d.id) + '" data-sn="' + sn + '" data-en="' + en + '" data-epname="' + esc(epTitleStr) + '" data-size="' + esc(chosenSize) + '" data-tags="' + esc(chosenVerLbl) + '" onclick="requestTelegramStreamFromBtn(this)">▶ Stream · ' + esc(chosenQual) + (chosenSize ? (' · ' + esc(chosenSize)) : '') + (chosenSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                    (chosenSubs.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" data-fid="' + esc(chosenFile.telegram_file_id) + '" data-title="' + esc(d.title + ' ' + epCode) + '" data-sid="' + Number(d.id) + '" data-sn="' + sn + '" data-en="' + en + '" onclick="requestTelegramSubtitleOnlyFromBtn(this)">💬 UT (' + chosenSubs.length + ')</button>' : '') +
                     (isAdminUser && chosenFile.raw_filename ? '<span style="font-size:10.5px;color:#94a3b8;font-family:monospace;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(chosenFile.raw_filename) + '">📄 ' + esc(chosenFile.raw_filename) + '</span>' : '') +
                   '</div>' +
                   '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                    (isAdminUser ? '<button type="button" class="ep-ghost-btn admin-remap-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sn + ',episode:' + en + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(chosenFile.telegram_file_id) + '\\',versionLabel:\\'' + esc(chosenVerLbl) + '\\',quality:\\'' + esc(chosenQual) + '\\',rawFilename:\\'' + esc(chosenFile.raw_filename || '') + '\\',messageLink:\\'' + esc(chosenFile.message_link || '') + '\\'})" title="Folge ' + esc(epCode) + ' (' + esc(epTitleStr) + ') neu zuordnen">✏️ ' + esc(epCode) + ' zuordnen</button>' : '') +
-                    (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sn + ',episode:' + en + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(chosenFile.telegram_file_id) + '\\',versionLabel:\\'' + esc(chosenVerLbl) + '\\'})" title="Fehler für ' + esc(epCode) + ' melden">⚠️</button>' : '') +
+                    (isAdminUser ? '<button type="button" class="ep-ghost-btn admin-remap-btn" data-type="s" data-tmdb-id="' + Number(d.id) + '" data-sn="' + sn + '" data-en="' + en + '" data-epname="' + esc(epTitleStr) + '" data-fid="' + esc(chosenFile.telegram_file_id) + '" data-ver="' + esc(chosenVerLbl) + '" data-qual="' + esc(chosenQual) + '" data-raw="' + esc(chosenFile.raw_filename || '') + '" data-msg="' + esc(chosenFile.message_link || '') + '" onclick="openEpisodeCorrectionFromBtn(this)" title="Folge ' + esc(epCode) + ' (' + esc(epTitleStr) + ') neu zuordnen">✏️ ' + esc(epCode) + ' zuordnen</button>' : '') +
+                    (canReportMedia ? '<button type="button" class="ep-ghost-btn" data-type="s" data-tmdb-id="' + Number(d.id) + '" data-sn="' + sn + '" data-en="' + en + '" data-epname="' + esc(epTitleStr) + '" data-fid="' + esc(chosenFile.telegram_file_id) + '" data-ver="' + esc(chosenVerLbl) + '" onclick="openMediaReportFromBtn(this)" title="Fehler für ' + esc(epCode) + ' melden">⚠️</button>' : '') +
                   '</div>' +
                 '</div>' +
               '</div>';
@@ -4872,10 +4873,10 @@
           '</div>' +
           Array.from(groupsMap.entries()).map(([vLabel, filesList]) => {
             const sortedGroupFiles = filesList.slice().sort((a, b) => {
-              const sa = Number(a.season_number || 1);
-              const sb = Number(b.season_number || 1);
+              const sa = Number(a.season_number ?? 1);
+              const sb = Number(b.season_number ?? 1);
               if (sa !== sb) return sa - sb;
-              return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+              return Number(a.episode_number ?? 1) - Number(b.episode_number ?? 1);
             });
             return '<div style="margin-bottom:12px;padding:11px;border-radius:11px;background:rgba(15,23,42,0.65);border:1px solid rgba(148,163,184,0.2)">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
@@ -4884,8 +4885,8 @@
               '</div>' +
               '<div style="display:flex;flex-direction:column;gap:5px;max-height:280px;overflow-y:auto;padding-right:2px">' +
                 sortedGroupFiles.map(f => {
-                  const sNum = Number(f.season_number || 1);
-                  const eNum = Number(f.episode_number || 1);
+                  const sNum = Number(f.season_number ?? 1);
+                  const eNum = Number(f.episode_number ?? 1);
                   const epCode = type === 's' ? ('S' + String(sNum).padStart(2, '0') + 'E' + String(eNum).padStart(2, '0')) : '';
                   const epTitleStr = type === 's' ? resolveClientEpisodeTitle(d.id, sNum, eNum, f) : (d.title || 'Film');
                   const sizeStr = formatFileSizeClient(f.file_size);
@@ -4907,13 +4908,13 @@
                     '</div>' +
                     '<div class="ep-row-bottom">' +
                       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-width:0">' +
-                        '<button type="button" class="' + (isRar ? 'btn amber' : 'btn-stream-clean') + '" onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (epCode ? (' ' + epCode + ' - ' + epTitleStr) : '') + (partStr ? (' (' + partStr + ')') : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{seriesId:' + Number(d.id) + ',season:' + sNum + ',episode:' + eNum + ',epName:\\'' + esc(epTitleStr) + '\\',fileSize:\\'' + esc(sizeStr) + '\\',tags:\\'' + esc(cleanVer) + '\\'})">' + (isRar ? '📦 RAR senden' : ('▶ Stream · ' + esc(f.quality || '1080p') + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
-                        (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (epCode ? (' ' + epCode) : '')) + '\\',{seriesId:' + (type === 's' ? Number(d.id) : 'null') + ',season:' + sNum + ',episode:' + eNum + '})" title="Nur Untertitel einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
+                        '<button type="button" class="' + (isRar ? 'btn amber' : 'btn-stream-clean') + '" data-fid="' + esc(f.telegram_file_id) + '" data-title="' + esc(d.title + (epCode ? (' ' + epCode + ' - ' + epTitleStr) : '') + (partStr ? (' (' + partStr + ')') : '')) + '" data-qual="' + esc(f.quality || '1080p') + '" data-sid="' + Number(d.id) + '" data-sn="' + sNum + '" data-en="' + eNum + '" data-epname="' + esc(epTitleStr) + '" data-size="' + esc(sizeStr) + '" data-tags="' + esc(cleanVer) + '" onclick="requestTelegramStreamFromBtn(this)">' + (isRar ? '📦 RAR senden' : ('▶ Stream · ' + esc(f.quality || '1080p') + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
+                        (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" data-fid="' + esc(f.telegram_file_id) + '" data-title="' + esc(d.title + (epCode ? (' ' + epCode) : '')) + '" data-sid="' + (type === 's' ? Number(d.id) : '') + '" data-sn="' + sNum + '" data-en="' + eNum + '" onclick="requestTelegramSubtitleOnlyFromBtn(this)" title="Nur Untertitel einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
                         (isAdminUser && f.raw_filename ? '<span style="font-size:10.5px;color:#94a3b8;font-family:monospace;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.raw_filename) + '">📄 ' + esc(f.raw_filename) + '</span>' : '') +
                       '</div>' +
                       '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                        (isAdminUser ? '<button type="button" class="ep-ghost-btn admin-remap-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(cleanVer) + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(f.raw_filename || '') + '\\',messageLink:\\'' + esc(f.message_link || '') + '\\'})" title="' + esc((epCode || 'Datei') + ' (' + epTitleStr + ') korrigieren / zuordnen') + '">✏️ ' + (epCode ? esc(epCode) + ' ' : '') + 'zuordnen</button>' : '') +
-                        (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + esc(epTitleStr) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(cleanVer) + '\\'})" title="Fehler melden">⚠️</button>' : '') +
+                        (isAdminUser ? '<button type="button" class="ep-ghost-btn admin-remap-btn" data-type="' + esc(type) + '" data-tmdb-id="' + Number(d.id) + '" data-sn="' + sNum + '" data-en="' + eNum + '" data-epname="' + esc(epTitleStr) + '" data-fid="' + esc(f.telegram_file_id) + '" data-ver="' + esc(cleanVer) + '" data-qual="' + esc(f.quality || '1080p') + '" data-raw="' + esc(f.raw_filename || '') + '" data-msg="' + esc(f.message_link || '') + '" onclick="openEpisodeCorrectionFromBtn(this)" title="' + esc((epCode || 'Datei') + ' (' + epTitleStr + ') korrigieren / zuordnen') + '">✏️ ' + (epCode ? esc(epCode) + ' ' : '') + 'zuordnen</button>' : '') +
+                        (canReportMedia ? '<button type="button" class="ep-ghost-btn" data-type="' + esc(type) + '" data-tmdb-id="' + Number(d.id) + '" data-sn="' + sNum + '" data-en="' + eNum + '" data-epname="' + esc(epTitleStr) + '" data-fid="' + esc(f.telegram_file_id) + '" data-ver="' + esc(cleanVer) + '" onclick="openMediaReportFromBtn(this)" title="Fehler melden">⚠️</button>' : '') +
                       '</div>' +
                     '</div>' +
                   '</div>';
@@ -5029,8 +5030,8 @@
           const f = allFiles[fileIdx];
           const sInp = document.getElementById("modalRemapSeasonInp");
           const eInp = document.getElementById("modalRemapEpisodeInp");
-          if (sInp) sInp.value = String(Number(f.season_number || 1));
-          if (eInp) eInp.value = String(Number(f.episode_number || 1));
+          if (sInp) sInp.value = String(Number(f.season_number ?? 1));
+          if (eInp) eInp.value = String(Number(f.episode_number ?? 1));
         }
       }
 
@@ -5051,10 +5052,10 @@
         const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
           ? d.allStreamFiles
           : (Array.isArray(d.files) ? d.files : [])).slice().sort((a, b) => {
-            const sa = Number(a.season_number || 1);
-            const sb = Number(b.season_number || 1);
+            const sa = Number(a.season_number ?? 1);
+            const sb = Number(b.season_number ?? 1);
             if (sa !== sb) return sa - sb;
-            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+            return Number(a.episode_number ?? 1) - Number(b.episode_number ?? 1);
           });
         if (!keepFileSelection) {
           modalRemapSelectedFileIndex = (typeCode === "s" && allFiles.length > 1) ? 0 : -1;
@@ -5062,8 +5063,8 @@
         const activeFile = (modalRemapSelectedFileIndex >= 0 && allFiles[modalRemapSelectedFileIndex])
           ? allFiles[modalRemapSelectedFileIndex]
           : (allFiles[0] || {});
-        const activeS = Number(activeFile.season_number || 1);
-        const activeE = Number(activeFile.episode_number || 1);
+        const activeS = Number(activeFile.season_number ?? 1);
+        const activeE = Number(activeFile.episode_number ?? 1);
         const activeEpCode = typeCode === "s" ? ("S" + String(activeS).padStart(2, "0") + "E" + String(activeE).padStart(2, "0")) : "🎬 Film";
         const activeEpTitle = typeCode === "s" ? resolveClientEpisodeTitle(d.id, activeS, activeE, activeFile) : (d.title || "Spielfilm");
         const origFilename = activeFile.raw_filename || d.rawFilename || d.title || "";
@@ -5107,8 +5108,8 @@
                 const isSelected = modalRemapSelectedFileIndex === fIdx;
                 const fn = f.raw_filename || f.telegram_file_id || "Unbekannte Datei";
                 const mLink = f.message_link || "";
-                const sNum = Number(f.season_number || 1);
-                const eNum = Number(f.episode_number || 1);
+                const sNum = Number(f.season_number ?? 1);
+                const eNum = Number(f.episode_number ?? 1);
                 const epCodeStr = typeCode === "s" ? ("S" + String(sNum).padStart(2, "0") + "E" + String(eNum).padStart(2, "0")) : "🎬 Film";
                 const epNameStr = typeCode === "s" ? resolveClientEpisodeTitle(d.id, sNum, eNum, f) : (d.title || "Film");
                 return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-radius:7px;background:' + (isSelected ? 'rgba(14,165,233,0.18)' : 'rgba(2,6,23,0.45)') + ';border:1px solid ' + (isSelected ? 'rgba(56,189,248,0.65)' : 'rgba(148,163,184,0.14)') + ';cursor:pointer" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">' +
@@ -5180,14 +5181,14 @@
           const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
             ? d.allStreamFiles
             : (Array.isArray(d.files) ? d.files : [])).slice().sort((a, b) => {
-              const sa = Number(a.season_number || 1);
-              const sb = Number(b.season_number || 1);
+              const sa = Number(a.season_number ?? 1);
+              const sb = Number(b.season_number ?? 1);
               if (sa !== sb) return sa - sb;
-              return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+              return Number(a.episode_number ?? 1) - Number(b.episode_number ?? 1);
             });
           const selFile = (modalRemapSelectedFileIndex >= 0 && allFiles[modalRemapSelectedFileIndex]) ? allFiles[modalRemapSelectedFileIndex] : null;
           const btnTargetBadge = selFile
-            ? ('S' + String(selFile.season_number || 1).padStart(2, '0') + 'E' + String(selFile.episode_number || 1).padStart(2, '0') + ' zuordnen')
+            ? ('S' + String(selFile.season_number ?? 1).padStart(2, '0') + 'E' + String(selFile.episode_number ?? 1).padStart(2, '0') + ' zuordnen')
             : 'Alle zuordnen';
 
           resBox.innerHTML = cands.map(c => {
@@ -5219,14 +5220,14 @@
         const allFiles = (Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
           ? d.allStreamFiles
           : (Array.isArray(d.files) ? d.files : [])).slice().sort((a, b) => {
-            const sa = Number(a.season_number || 1);
-            const sb = Number(b.season_number || 1);
+            const sa = Number(a.season_number ?? 1);
+            const sb = Number(b.season_number ?? 1);
             if (sa !== sb) return sa - sb;
-            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+            return Number(a.episode_number ?? 1) - Number(b.episode_number ?? 1);
           });
         const selFile = (modalRemapSelectedFileIndex >= 0 && allFiles[modalRemapSelectedFileIndex]) ? allFiles[modalRemapSelectedFileIndex] : null;
 
-        setBusyState(true, "🔄 Ordne " + (selFile ? ("S" + String(selFile.season_number || 1).padStart(2, "0") + "E" + String(selFile.episode_number || 1).padStart(2, "0")) : "Dateien & Streams") + " dem neuen Titel zu...");
+        setBusyState(true, "🔄 Ordne " + (selFile ? ("S" + String(selFile.season_number ?? 1).padStart(2, "0") + "E" + String(selFile.episode_number ?? 1).padStart(2, "0")) : "Dateien & Streams") + " dem neuen Titel zu...");
         try {
           let r = null;
           if (selFile && allFiles.length > 1) {
@@ -5239,8 +5240,8 @@
                 oldTypeCode,
                 oldTmdbId: Number(oldTmdbId),
                 seriesId: Number(oldTmdbId),
-                oldSeason: Number(selFile.season_number || 1),
-                oldEpisode: Number(selFile.episode_number || 1),
+                oldSeason: Number(selFile.season_number ?? 1),
+                oldEpisode: Number(selFile.episode_number ?? 1),
                 telegramFileId: String(selFile.telegram_file_id || ""),
                 newTypeCode,
                 newTmdbId: Number(newTmdbId),
@@ -5818,6 +5819,61 @@
         } catch (e) {}
       }
 
+      function requestTelegramStreamFromBtn(btn) {
+        if (!btn) return;
+        const fid = String(btn.getAttribute("data-fid") || "").trim();
+        const title = String(btn.getAttribute("data-title") || state.activeDetails?.title || "Stream").trim();
+        const qual = String(btn.getAttribute("data-qual") || "1080p").trim();
+        const sid = btn.getAttribute("data-sid") ? Number(btn.getAttribute("data-sid")) : (state.activeDetails?.id || undefined);
+        const season = btn.getAttribute("data-sn") !== null && btn.getAttribute("data-sn") !== "" ? Number(btn.getAttribute("data-sn")) : undefined;
+        const episode = btn.getAttribute("data-en") !== null && btn.getAttribute("data-en") !== "" ? Number(btn.getAttribute("data-en")) : undefined;
+        const epName = String(btn.getAttribute("data-epname") || "").trim();
+        const fileSize = String(btn.getAttribute("data-size") || "").trim();
+        const tags = String(btn.getAttribute("data-tags") || "").trim();
+        requestTelegramStream(fid, title, qual, { seriesId: sid, season, episode, epName, fileSize, tags });
+      }
+
+      function requestTelegramSubtitleOnlyFromBtn(btn) {
+        if (!btn) return;
+        const fid = String(btn.getAttribute("data-fid") || "").trim();
+        const title = String(btn.getAttribute("data-title") || state.activeDetails?.title || "Untertitel").trim();
+        const sid = btn.getAttribute("data-sid") ? Number(btn.getAttribute("data-sid")) : (state.activeDetails?.id || undefined);
+        const season = btn.getAttribute("data-sn") !== null && btn.getAttribute("data-sn") !== "" ? Number(btn.getAttribute("data-sn")) : undefined;
+        const episode = btn.getAttribute("data-en") !== null && btn.getAttribute("data-en") !== "" ? Number(btn.getAttribute("data-en")) : undefined;
+        requestTelegramSubtitleOnly(fid, title, { seriesId: sid, season, episode });
+      }
+
+      function openEpisodeCorrectionFromBtn(btn) {
+        if (!btn) return;
+        openEpisodeCorrectionModal({
+          typeCode: btn.getAttribute("data-type") || (state.activeDetails?.typeCode || "m"),
+          tmdbId: Number(btn.getAttribute("data-tmdb-id") || state.activeDetails?.id || 0),
+          title: state.activeDetails?.title || "",
+          season: btn.getAttribute("data-sn") !== null && btn.getAttribute("data-sn") !== "" ? Number(btn.getAttribute("data-sn")) : undefined,
+          episode: btn.getAttribute("data-en") !== null && btn.getAttribute("data-en") !== "" ? Number(btn.getAttribute("data-en")) : undefined,
+          episodeTitle: btn.getAttribute("data-epname") || "",
+          telegramFileId: btn.getAttribute("data-fid") || "",
+          versionLabel: btn.getAttribute("data-ver") || "Originalfassung",
+          quality: btn.getAttribute("data-qual") || "1080p",
+          rawFilename: btn.getAttribute("data-raw") || "",
+          messageLink: btn.getAttribute("data-msg") || ""
+        });
+      }
+
+      function openMediaReportFromBtn(btn) {
+        if (!btn) return;
+        openMediaReportModal({
+          typeCode: btn.getAttribute("data-type") || (state.activeDetails?.typeCode || "m"),
+          tmdbId: Number(btn.getAttribute("data-tmdb-id") || state.activeDetails?.id || 0),
+          title: state.activeDetails?.title || "",
+          season: btn.getAttribute("data-sn") !== null && btn.getAttribute("data-sn") !== "" ? Number(btn.getAttribute("data-sn")) : null,
+          episode: btn.getAttribute("data-en") !== null && btn.getAttribute("data-en") !== "" ? Number(btn.getAttribute("data-en")) : null,
+          episodeTitle: btn.getAttribute("data-epname") || "",
+          telegramFileId: btn.getAttribute("data-fid") || "",
+          versionLabel: btn.getAttribute("data-ver") || ""
+        });
+      }
+
       async function requestTelegramSubtitleOnly(fileId, cleanTitle, extraMeta = null) {
         return requestTelegramStream(fileId, cleanTitle, "Untertitel", { ...(extraMeta || {}), subtitleOnly: true });
       }
@@ -6172,7 +6228,7 @@
                       '<button type="button" class="btn-action-glass" style="padding:4px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllMoviePartsToTelegram(\\'' + esc(blk.key) + '\\')" title="Alle ' + parts.length + ' ' + partWord + ' geordnet von 1 bis ' + parts.length + ' an dein gewähltes Ziel senden">' +
                         '📦 Alle ' + parts.length + ' ' + partWord + ' senden' +
                       '</button>' +
-                      (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(first.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\'})" title="Fehler zu diesem Mehrteiler-Release melden">⚠️</button>' : '') +
+                      (canReportMedia ? '<button type="button" class="ep-ghost-btn" data-type="m" data-tmdb-id="' + Number(d.id) + '" data-fid="' + esc(first.telegram_file_id) + '" data-ver="' + esc(tagsLabel || 'Originalfassung') + '" onclick="openMediaReportFromBtn(this)" title="Fehler zu diesem Mehrteiler-Release melden">⚠️</button>' : '') +
                     '</div>' +
                   '</div>' +
                   '<div class="release-cd-grid">' +
@@ -6181,12 +6237,12 @@
                       const pLabel = p._normPart || ("CD " + p._partNum);
                       const pSubs = Array.isArray(p.subtitles) ? p.subtitles : [];
                       return '<div class="cd-part-chip-wrap">' +
-                        '<button type="button" class="btn-cd-part" onclick="requestTelegramStream(\\'' + esc(p.telegram_file_id) + '\\',\\'' + esc(d.title + ' (' + pLabel + ')') + '\\',\\'' + esc(p.quality || '1080p') + '\\',{fileSize:\\'' + esc(pSize) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})" title="' + esc(d.title + ' – ' + pLabel + (pSize ? ' (' + pSize + ')' : '')) + ' senden">' +
+                        '<button type="button" class="btn-cd-part" data-fid="' + esc(p.telegram_file_id) + '" data-title="' + esc(d.title + ' (' + pLabel + ')') + '" data-qual="' + esc(p.quality || '1080p') + '" data-size="' + esc(pSize) + '" data-tags="' + esc(tagsLabel) + '" onclick="requestTelegramStreamFromBtn(this)" title="' + esc(d.title + ' – ' + pLabel + (pSize ? ' (' + pSize + ')' : '')) + ' senden">' +
                           '<span>▶ ' + esc(pLabel) + '</span>' +
                           (pSize ? '<span class="cd-size-sub">· ' + esc(pSize) + '</span>' : '') +
                           (pSubs.length > 0 ? '<span class="cd-size-sub">+ UT</span>' : '') +
                         '</button>' +
-                        (isAdminUser ? '<button type="button" class="ep-ghost-btn" style="width:24px;height:24px;font-size:11px" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title + ' (' + pLabel + ')') + '\\',telegramFileId:\\'' + esc(p.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\',quality:\\'' + esc(p.quality || '1080p') + '\\',rawFilename:\\'' + esc(p.raw_filename || '') + '\\',messageLink:\\'' + esc(p.message_link || '') + '\\'})" title="' + esc(pLabel) + ' bearbeiten / Details & Quellgruppe prüfen">✏️</button>' : '') +
+                        (isAdminUser ? '<button type="button" class="ep-ghost-btn" style="width:24px;height:24px;font-size:11px" data-type="m" data-tmdb-id="' + Number(d.id) + '" data-epname="' + esc(pLabel) + '" data-fid="' + esc(p.telegram_file_id) + '" data-ver="' + esc(tagsLabel || 'Originalfassung') + '" data-qual="' + esc(p.quality || '1080p') + '" data-raw="' + esc(p.raw_filename || '') + '" data-msg="' + esc(p.message_link || '') + '" onclick="openEpisodeCorrectionFromBtn(this)" title="' + esc(pLabel) + ' bearbeiten / Details & Quellgruppe prüfen">✏️</button>' : '') +
                       '</div>';
                     }).join("") +
                   '</div>' +
@@ -6209,10 +6265,10 @@
                   (subsList.length > 0 ? '<span class="stream-meta-pill" style="border-color:rgba(16,185,129,0.5);color:#34d399" title="Wird beim Video-Versand automatisch mitgesendet">💬 ' + subsList.length + ' UT</span>' : '') +
                 '</div>' +
                 '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
-                  '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" ' + (isRarFile ? '' : ('data-dynamic-delivery-btn="1" data-has-ut="' + (subsList.length > 0 ? '1' : '0') + '"')) + ' onclick="requestTelegramStream(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '\\',\\'' + esc(f.quality || '1080p') + '\\',{fileSize:\\'' + esc(sizeLabel) + '\\',tags:\\'' + esc(tagsLabel) + '\\'})">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
-                  (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\'' + esc(f.telegram_file_id) + '\\',\\'' + esc(d.title) + '\\',{seriesId:null})" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
-                  (isAdminUser ? '<button type="button" class="ep-ghost-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(f.raw_filename || '') + '\\',messageLink:\\'' + esc(f.message_link || '') + '\\'})" title="Datei-Version ändern, Quellgruppe prüfen oder mit anderem TMDb-Titel verknüpfen">✏️</button>' : '') +
-                  (canReportMedia ? '<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'m\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id) + '\\',versionLabel:\\'' + esc(tagsLabel || 'Originalfassung') + '\\'})" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
+                  '<button class="btn-stream-clean ' + (isRarFile || isPrereleaseTag ? 'prerelease' : '') + '" ' + (isRarFile ? '' : ('data-dynamic-delivery-btn="1" data-has-ut="' + (subsList.length > 0 ? '1' : '0') + '"')) + ' data-fid="' + esc(f.telegram_file_id) + '" data-title="' + esc(d.title + (partLabel ? ' (' + partLabel + ')' : '')) + '" data-qual="' + esc(f.quality || '1080p') + '" data-size="' + esc(sizeLabel) + '" data-tags="' + esc(tagsLabel) + '" onclick="requestTelegramStreamFromBtn(this)">' + (isRarFile ? '📦 RAR senden' : ('▶ ' + esc(getActiveDeliveryButtonLabelClient()) + (subsList.length > 0 ? ' + UT' : ''))) + '</button>' +
+                  (subsList.length > 0 ? '<button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" data-fid="' + esc(f.telegram_file_id) + '" data-title="' + esc(d.title) + '" onclick="requestTelegramSubtitleOnlyFromBtn(this)" title="Nur die verknüpfte(n) Untertitel-Datei(en) einzeln senden">💬 UT (' + subsList.length + ')</button>' : '') +
+                  (isAdminUser ? '<button type="button" class="ep-ghost-btn" data-type="m" data-tmdb-id="' + Number(d.id) + '" data-fid="' + esc(f.telegram_file_id) + '" data-ver="' + esc(tagsLabel || 'Originalfassung') + '" data-qual="' + esc(f.quality || '1080p') + '" data-raw="' + esc(f.raw_filename || '') + '" data-msg="' + esc(f.message_link || '') + '" onclick="openEpisodeCorrectionFromBtn(this)" title="Datei-Version ändern, Quellgruppe prüfen oder mit anderem TMDb-Titel verknüpfen">✏️</button>' : '') +
+                  (canReportMedia ? '<button type="button" class="ep-ghost-btn" data-type="m" data-tmdb-id="' + Number(d.id) + '" data-fid="' + esc(f.telegram_file_id) + '" data-ver="' + esc(tagsLabel || 'Originalfassung') + '" onclick="openMediaReportFromBtn(this)" title="Fehler zu dieser Datei melden">⚠️</button>' : '') +
                 '</div>' +
               '</div>';
             }).join("") +
@@ -6433,7 +6489,7 @@
         // Smart Auto-Fill Ergänzung: Falls in allStreamFiles der Serie für diese Staffel Folgen vorliegen, die in ep.files fehlen, automatisch zusammenführen
         if (vipAllowed && Array.isArray(state.activeDetails?.allStreamFiles)) {
           const extraSeasonFiles = state.activeDetails.allStreamFiles.filter(f =>
-            f && Number(f.season_number || 1) === Number(seasonNum) &&
+            f && Number(f.season_number ?? 1) === Number(seasonNum) &&
             !f.is_download_only && !f.isDownloadOnly &&
             String(f.codec || "").toUpperCase() !== "RAR" &&
             !/\\.rar$/i.test(String(f.raw_filename || ""))
@@ -6618,12 +6674,12 @@
                   const fSubs = Array.isArray(f.subtitles) ? f.subtitles : [];
                   const partPrefix = f._normPart ? (f._normPart + ' · ') : '';
                   const btnMeta = [partPrefix + (f.quality || '1080p'), f.codec || '', sz ? ('· ' + sz) : ''].filter(Boolean).join(' ');
-                  return '<button type="button" class="btn-stream-clean" onclick="requestTelegramStream(\\''+esc(f.telegram_file_id)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name + (f._normPart ? ' (' + f._normPart + ')' : ''))+'\\',\\''+esc(f.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(sz)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>';
+                  return '<button type="button" class="btn-stream-clean" data-fid="' + esc(f.telegram_file_id) + '" data-title="' + esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name + (f._normPart ? ' (' + f._normPart + ')' : '')) + '" data-qual="' + esc(f.quality || '1080p') + '" data-sid="' + seriesId + '" data-sn="' + seasonNum + '" data-en="' + ep.episode_number + '" data-epname="' + esc(ep.name) + '" data-size="' + esc(sz) + '" data-tags="' + esc(activeLabel) + '" onclick="requestTelegramStreamFromBtn(this)">▶ ' + esc(btnMeta) + (fSubs.length > 0 ? ' + UT' : '') + '</button>';
                 }).join(" ");
               } else {
                 const activeBtnMeta = [activeVer.quality || '1080p', activeVer.codec || '', activeSizeStr ? ('· ' + activeSizeStr) : '', activeLabel ? ('· ' + activeLabel) : ''].filter(Boolean).join(' ');
-                const playBtnHtml = '<button type="button" class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" onclick="requestTelegramStream(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name)+'\\',\\''+esc(activeVer.quality || '1080p')+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+',epName:\\''+esc(ep.name)+'\\',fileSize:\\''+esc(activeSizeStr)+'\\',tags:\\''+esc(activeLabel)+'\\'})">▶ Stream · ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + UT' : '') + '</button>' +
-                  (activeSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" onclick="requestTelegramSubtitleOnly(\\''+esc(activeFid)+'\\',\\''+esc((state.activeDetails?.title || 'Serie') + ' ' + epCode)+'\\',{seriesId:'+seriesId+',season:'+seasonNum+',episode:'+ep.episode_number+'})" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
+                const playBtnHtml = '<button type="button" class="btn-stream-clean ' + (isPrereleaseEp ? 'prerelease' : '') + '" data-fid="' + esc(activeFid) + '" data-title="' + esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + ep.name) + '" data-qual="' + esc(activeVer.quality || '1080p') + '" data-sid="' + seriesId + '" data-sn="' + seasonNum + '" data-en="' + ep.episode_number + '" data-epname="' + esc(ep.name) + '" data-size="' + esc(activeSizeStr) + '" data-tags="' + esc(activeLabel) + '" onclick="requestTelegramStreamFromBtn(this)">▶ Stream · ' + esc(activeBtnMeta) + (activeSubs.length > 0 ? ' + UT' : '') + '</button>' +
+                  (activeSubs.length > 0 ? ' <button type="button" class="btn-tool-quiet" style="padding:4px 8px;font-size:11px" data-fid="' + esc(activeFid) + '" data-title="' + esc((state.activeDetails?.title || 'Serie') + ' ' + epCode) + '" data-sid="' + seriesId + '" data-sn="' + seasonNum + '" data-en="' + ep.episode_number + '" onclick="requestTelegramSubtitleOnlyFromBtn(this)" title="Nur Untertitel einzeln senden">💬 UT (' + activeSubs.length + ')</button>' : '');
 
                 const switcherTabsHtml = rawVersions.length > 1 ? (
                   '<div class="version-switcher" style="display:inline-flex;gap:3px;align-items:center;background:rgba(15,23,42,0.65);padding:2px 4px;border-radius:7px;border:1px solid rgba(148,163,184,0.22)">' +
@@ -6650,11 +6706,11 @@
           const hasStreamFile = Boolean(Array.isArray(ep.files) && ep.files.length > 0);
 
           const adminEditBtnHtml = (isAdminUser && hasStreamFile)
-            ? ('<button type="button" class="ep-ghost-btn admin-remap-btn" onclick="openEpisodeCorrectionModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\',quality:\\'' + esc(activeQualStr) + '\\',rawFilename:\\'' + esc(activeRawFnStr) + '\\',messageLink:\\'' + esc(activeMsgLinkStr) + '\\'})" title="Folge ' + esc(epCode) + ' (' + esc(ep.name) + ') neu zuordnen oder Schnittfassung ändern">✏️ ' + esc(epCode) + ' zuordnen</button>')
+            ? ('<button type="button" class="ep-ghost-btn admin-remap-btn" data-type="s" data-tmdb-id="' + seriesId + '" data-sn="' + seasonNum + '" data-en="' + ep.episode_number + '" data-epname="' + esc(ep.name) + '" data-fid="' + esc(activeFidStr) + '" data-ver="' + esc(activeVerLblStr) + '" data-qual="' + esc(activeQualStr) + '" data-raw="' + esc(activeRawFnStr) + '" data-msg="' + esc(activeMsgLinkStr) + '" onclick="openEpisodeCorrectionFromBtn(this)" title="Folge ' + esc(epCode) + ' (' + esc(ep.name) + ') neu zuordnen oder Schnittfassung ändern">✏️ ' + esc(epCode) + ' zuordnen</button>')
             : '';
 
           const reportBtnHtml = canReportMedia
-            ? ('<button type="button" class="ep-ghost-btn" onclick="openMediaReportModal({typeCode:\\'s\\',tmdbId:' + seriesId + ',title:\\'' + esc(state.activeDetails?.title || 'Serie') + '\\',season:' + seasonNum + ',episode:' + ep.episode_number + ',episodeTitle:\\'' + esc(ep.name) + '\\',telegramFileId:\\'' + esc(activeFidStr) + '\\',versionLabel:\\'' + esc(activeVerLblStr) + '\\'})" title="Fehler für ' + epCode + ' melden">⚠️</button>')
+            ? ('<button type="button" class="ep-ghost-btn" data-type="s" data-tmdb-id="' + seriesId + '" data-sn="' + seasonNum + '" data-en="' + ep.episode_number + '" data-epname="' + esc(ep.name) + '" data-fid="' + esc(activeFidStr) + '" data-ver="' + esc(activeVerLblStr) + '" onclick="openMediaReportFromBtn(this)" title="Fehler für ' + epCode + ' melden">⚠️</button>')
             : '';
 
           const rowCls = [
@@ -6665,7 +6721,7 @@
 
           return '<div class="' + rowCls + '" data-ep-num="' + Number(ep.episode_number) + '" data-ep-search="' + esc((epCode + ' ' + ep.name + ' ' + ep.episode_number).toLowerCase()) + '">' +
             '<div class="ep-row-top">' +
-              '<div class="ep-title" tabindex="0" onclick="openEpisodeStory('+seriesId+','+seasonNum+','+ep.episode_number+',\\''+esc(ep.name)+'\\')" title="' + esc(epCode + ' – ' + ep.name) + ' (Antippen für Beschreibung)">' +
+              '<div class="ep-title" tabindex="0" data-sid="' + seriesId + '" data-sn="' + seasonNum + '" data-en="' + ep.episode_number + '" data-epname="' + esc(ep.name) + '" onclick="openEpisodeStoryFromEl(this)" title="' + esc(epCode + ' – ' + ep.name) + ' (Antippen für Beschreibung)">' +
                 '<span class="ep-code-badge">' + epCode + '</span>' +
                 '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(ep.name) + '</span></div>' +
               '</div>' +
@@ -6810,15 +6866,15 @@
         const allAdminFiles = (Array.isArray(state.activeDetails?.allStreamFiles) ? state.activeDetails.allStreamFiles : [])
           .slice()
           .sort((a, b) => {
-            const sa = Number(a.season_number || 1);
-            const sb = Number(b.season_number || 1);
+            const sa = Number(a.season_number ?? 1);
+            const sb = Number(b.season_number ?? 1);
             if (sa !== sb) return sa - sb;
-            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+            return Number(a.episode_number ?? 1) - Number(b.episode_number ?? 1);
           });
         const f = allAdminFiles[idx];
         if (!f) return;
-        const sNum = Math.max(1, Number(f.season_number || 1));
-        const eNum = Math.max(1, Number(f.episode_number || 1));
+        const sNum = Math.max(0, Number(f.season_number ?? 1));
+        const eNum = Math.max(0, Number(f.episode_number ?? 1));
         const epTitle = resolveClientEpisodeTitle(activeEpisodeCorrectionState.tmdbId, sNum, eNum, f);
         activeEpisodeCorrectionState.season = sNum;
         activeEpisodeCorrectionState.episode = eNum;
@@ -6911,7 +6967,7 @@
         const tmdbId = Number(opts?.tmdbId || state.activeDetails?.id || 0);
         const title = String(opts?.title || state.activeDetails?.title || "Titel");
         const season = Math.max(0, Number(opts?.season !== undefined && opts?.season !== null ? opts.season : 1));
-        const episode = Math.max(1, Number(opts?.episode || 1));
+        const episode = Math.max(0, Number(opts?.episode !== undefined && opts?.episode !== null ? opts.episode : 1));
         const telegramFileId = String(opts?.telegramFileId || "");
         const versionLabel = String(opts?.versionLabel || "Originalfassung");
         const quality = String(opts?.quality || "1080p");
@@ -6976,10 +7032,10 @@
         const allAdminFiles = (Array.isArray(state.activeDetails?.allStreamFiles) ? state.activeDetails.allStreamFiles : [])
           .slice()
           .sort((a, b) => {
-            const sa = Number(a.season_number || 1);
-            const sb = Number(b.season_number || 1);
+            const sa = Number(a.season_number ?? 1);
+            const sb = Number(b.season_number ?? 1);
             if (sa !== sb) return sa - sb;
-            return Number(a.episode_number || 1) - Number(b.episode_number || 1);
+            return Number(a.episode_number ?? 1) - Number(b.episode_number ?? 1);
           });
 
         const directEpisodeSwitcherHtml = (st.typeCode === "s" && allAdminFiles.length > 1) ? (
@@ -6987,8 +7043,8 @@
             '<label style="font-size:11px;font-weight:800;color:#7dd3fc;display:block;margin-bottom:4px">📂 Folge / Datei direkt wechseln (' + allAdminFiles.length + ' Dateien in dieser Serie):</label>' +
             '<select class="tma-select" style="width:100%;padding:7px 9px;font-size:12px;font-weight:700" onchange="switchEpisodeCorrectionTargetFileClient(this.value)">' +
               allAdminFiles.map((f, idx) => {
-                const sn = Number(f.season_number || 1);
-                const en = Number(f.episode_number || 1);
+                const sn = Number(f.season_number ?? 1);
+                const en = Number(f.episode_number ?? 1);
                 const code = "S" + String(sn).padStart(2, "0") + "E" + String(en).padStart(2, "0");
                 const epT = resolveClientEpisodeTitle(st.tmdbId, sn, en, f);
                 const isCur = (st.telegramFileId && String(f.telegram_file_id) === String(st.telegramFileId)) ||
@@ -7419,8 +7475,8 @@
         if (!reportObj) return;
         const tc = reportObj.type_code === "s" ? "s" : "m";
         const tid = Number(reportObj.tmdb_id || 0);
-        const sNum = Math.max(1, Number(reportObj.season_number || 1));
-        const eNum = Math.max(1, Number(reportObj.episode_number || 1));
+        const sNum = Math.max(0, Number(reportObj.season_number ?? 1));
+        const eNum = Math.max(0, Number(reportObj.episode_number ?? 1));
         const initialMode = reportObj.reason_code === "wrong_media" ? "relink_tmdb" : (tc === "s" ? "move_se" : "relink_tmdb");
         window._pendingEpisodeCorrectionArgs = {
           typeCode: tc,
@@ -7583,7 +7639,7 @@
                 '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
                     ((vipAllowed && activeFid) ? (
-                      '<button type="button" id="epStoryPlayBtn" class="btn-stream-clean" onclick="closeSubModalOverlayClient();requestTelegramStream(\\'' + esc(activeFid) + '\\',\\'' + esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + st.epName) + '\\',\\'' + esc(activeQual) + '\\',{seriesId:' + Number(st.seriesId) + ',season:' + Number(st.season) + ',episode:' + Number(st.episode) + ',epName:\\'' + esc(st.epName) + '\\',fileSize:\\'' + esc(activeSizeStr) + '\\',tags:\\'' + esc(activeVerLbl) + '\\'})">' +
+                      '<button type="button" id="epStoryPlayBtn" class="btn-stream-clean" data-fid="' + esc(activeFid) + '" data-title="' + esc((state.activeDetails?.title || 'Serie') + ' ' + epCode + ' - ' + st.epName) + '" data-qual="' + esc(activeQual) + '" data-sid="' + Number(st.seriesId) + '" data-sn="' + Number(st.season) + '" data-en="' + Number(st.episode) + '" data-epname="' + esc(st.epName) + '" data-size="' + esc(activeSizeStr) + '" data-tags="' + esc(activeVerLbl) + '" onclick="closeSubModalOverlayClient();requestTelegramStreamFromBtn(this)">' +
                         '▶ Stream senden (' + esc(activeQual) + ')' +
                       '</button>'
                     ) : '') +
@@ -7597,10 +7653,10 @@
 
                   '<div style="display:flex;gap:6px;align-items:center">' +
                     (prevEp ? (
-                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" onclick="openEpisodeStory(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(prevEp.episode_number) + ',\\'' + esc(prevEp.name || '') + '\\')" title="Vorherige Folge: ' + esc(prevEp.name || '') + '">◀ S' + String(st.season).padStart(2,'0') + 'E' + String(prevEp.episode_number).padStart(2,'0') + '</button>'
+                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" data-sid="' + Number(st.seriesId) + '" data-sn="' + Number(st.season) + '" data-en="' + Number(prevEp.episode_number) + '" data-epname="' + esc(prevEp.name || '') + '" onclick="openEpisodeStoryFromEl(this)" title="Vorherige Folge: ' + esc(prevEp.name || '') + '">◀ S' + String(st.season).padStart(2,'0') + 'E' + String(prevEp.episode_number).padStart(2,'0') + '</button>'
                     ) : '') +
                     (nextEp ? (
-                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" onclick="openEpisodeStory(' + Number(st.seriesId) + ',' + Number(st.season) + ',' + Number(nextEp.episode_number) + ',\\'' + esc(nextEp.name || '') + '\\')" title="Nächste Folge: ' + esc(nextEp.name || '') + '">S' + String(st.season).padStart(2,'0') + 'E' + String(nextEp.episode_number).padStart(2,'0') + ' ▶</button>'
+                      '<button type="button" class="season-tab-btn" style="padding:5px 10px;font-size:11.5px" data-sid="' + Number(st.seriesId) + '" data-sn="' + Number(st.season) + '" data-en="' + Number(nextEp.episode_number) + '" data-epname="' + esc(nextEp.name || '') + '" onclick="openEpisodeStoryFromEl(this)" title="Nächste Folge: ' + esc(nextEp.name || '') + '">S' + String(st.season).padStart(2,'0') + 'E' + String(nextEp.episode_number).padStart(2,'0') + ' ▶</button>'
                     ) : '') +
                   '</div>' +
                 '</div>' +
@@ -7612,6 +7668,15 @@
         if (focusTarget && typeof jumpSpatialFocus === "function") {
           setTimeout(() => jumpSpatialFocus(focusTarget, false), 25);
         }
+      }
+
+      function openEpisodeStoryFromEl(el) {
+        if (!el) return;
+        const sid = Number(el.getAttribute("data-sid") || 0);
+        const sn = Number(el.getAttribute("data-sn") || 0);
+        const en = Number(el.getAttribute("data-en") || 0);
+        const epName = String(el.getAttribute("data-epname") || "");
+        openEpisodeStory(sid, sn, en, epName);
       }
 
       async function openEpisodeStory(seriesId, season, episode, epName = "") {

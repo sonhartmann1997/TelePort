@@ -13925,7 +13925,7 @@
       }
 
       function selectFullSearchFromAutocompleteClient(qStr) {
-        const cleanQ = String(qStr || "").trim();
+        const cleanQ = String(qStr || document.getElementById("searchInput")?.value || "").trim();
         closeAutocomplete();
         const inp = document.getElementById("searchInput");
         if (inp && typeof inp.blur === "function") inp.blur();
@@ -13990,7 +13990,7 @@
           });
           studs.forEach(st => {
             const cid = st.companyIds || st.id;
-            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openStudioView(\\'' + esc(String(cid)) + '\\',\\'' + esc(st.name) + '\\',\\'' + esc(st.presetStudioId || '') + '\\')">' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" data-cid="' + esc(String(cid)) + '" data-cname="' + esc(st.name) + '" data-cpid="' + esc(st.presetStudioId || '') + '" onclick="closeAutocomplete();openStudioView(this.dataset.cid,this.dataset.cname,this.dataset.cpid)">' +
               '<div class="ac-item-left"><span class="ac-item-icon-box">' + esc(st.icon || '🏢') + '</span><span class="ac-item-text"><b>' + esc(st.name) + '</b></span></div>' +
               '<span class="ac-item-action" style="color:#f59e0b;border-color:rgba(245,158,11,0.35)">Studio ➔</span>' +
             '</div>';
@@ -13999,14 +13999,14 @@
         if (pers.length) {
           html += '<div class="ac-group-title">🌟 Personen (Schauspieler & Regie)</div>';
           pers.forEach(p => {
-            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openPersonView(' + Number(p.id) + ',\\'' + esc(p.name) + '\\')">' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" data-pid="' + Number(p.id) + '" data-pname="' + esc(p.name) + '" onclick="closeAutocomplete();openPersonView(Number(this.dataset.pid),this.dataset.pname)">' +
               '<div class="ac-item-left"><span class="ac-item-icon-box">🌟</span><span class="ac-item-text"><b>' + esc(p.name) + '</b>' + (p.known_for ? ' <span style="color:#94a3b8;font-size:11px">(' + esc(p.known_for) + ')</span>' : '') + '</span></div>' +
               '<span class="ac-item-action" style="color:#38bdf8;border-color:rgba(56,189,248,0.35)">Person ➔</span>' +
             '</div>';
           });
         }
         const totalHitsNum = Math.max(media.length, Number(res.totalResults) || media.length);
-        html += '<div class="ac-item" role="option" tabindex="0" style="margin-top:4px;border-top:1px solid rgba(148,163,184,0.16)" onmousedown="event.preventDefault()" onclick="selectFullSearchFromAutocompleteClient(\\'' + esc(q) + '\\')">' +
+        html += '<div class="ac-item" role="option" tabindex="0" style="margin-top:4px;border-top:1px solid rgba(148,163,184,0.16)" onmousedown="event.preventDefault()" onclick="selectFullSearchFromAutocompleteClient()">' +
           '<div class="ac-item-left"><span class="ac-item-icon-box">🔍</span><span class="ac-item-text">Alle Suchergebnisse für „<b>' + esc(q) + '</b>“ im Katalog anzeigen</span></div>' +
           '<span class="ac-item-action" style="color:#38bdf8;border-color:rgba(56,189,248,0.45)">' + totalHitsNum + ' Treffer ➔</span>' +
         '</div>';

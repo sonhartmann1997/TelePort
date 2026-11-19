@@ -2206,8 +2206,8 @@
     const all = [...(Array.isArray(existingEpisodes) ? existingEpisodes : []), ...(Array.isArray(incomingEpisodes) ? incomingEpisodes : [])];
     for (const ep of all) {
       if (!ep) continue;
-      const sNum = Math.max(1, Number(ep.season || ep.season_number || 1));
-      const eNum = Math.max(1, Number(ep.episode || ep.episode_number || 1));
+      const sNum = Math.max(0, Number(ep.season ?? ep.season_number ?? 1));
+      const eNum = Math.max(0, Number(ep.episode ?? ep.episode_number ?? 1));
       const key = `${sNum}_${eNum}`;
       const code = `S${String(sNum).padStart(2, "0")}E${String(eNum).padStart(2, "0")}`;
       const rawTitle = String(ep.title || ep.episode_title || ep.name || "").trim();
@@ -2250,9 +2250,9 @@
           if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
           const prevList = epMap.get(sid) || [];
           prevList.push({
-            season: Number(r.season_number || 1),
-            episode: Number(r.episode_number || 1),
-            title: r.episode_title || `Folge ${Number(r.episode_number || 1)}`,
+            season: Number(r.season_number ?? 1),
+            episode: Number(r.episode_number ?? 1),
+            title: r.episode_title || `Folge ${Number(r.episode_number ?? 1)}`,
             quality: r.quality || "1080p",
             codec: r.codec || "x264",
             fileId: r.telegram_file_id || null,
@@ -2271,9 +2271,9 @@
           if (!sid || scoreTelegramFileIdValidity(r?.telegram_file_id) === 0) continue;
           const prevList = epMap.get(sid) || [];
           prevList.push({
-            season: Number(r.season_number || 1),
-            episode: Number(r.episode_number || 1),
-            title: r.episode_title || r.title || `Folge ${Number(r.episode_number || 1)}`,
+            season: Number(r.season_number ?? 1),
+            episode: Number(r.episode_number ?? 1),
+            title: r.episode_title || r.title || `Folge ${Number(r.episode_number ?? 1)}`,
             quality: r.quality || "1080p",
             codec: r.codec || "x264",
             fileId: r.telegram_file_id || null,

@@ -5176,6 +5176,17 @@
         }
       }
 
+      function adminDeletePlaylistItemFromBtn(btn) {
+        if (!btn) return;
+        const targetUid = String(btn.getAttribute("data-target-uid") || state.adminPlaylistTargetChatId || "");
+        const folderId = String(btn.getAttribute("data-folder-id") || "");
+        const itemUid = String(btn.getAttribute("data-item-uid") || "");
+        const typeCode = String(btn.getAttribute("data-type") || "m");
+        const tmdbId = Number(btn.getAttribute("data-tmdb-id") || 0);
+        const title = String(btn.getAttribute("data-title") || "");
+        adminDeletePlaylistItemFromD1(targetUid, folderId, itemUid, typeCode, tmdbId, title);
+      }
+
       async function adminDeletePlaylistItemFromD1(targetUid, folderId, itemUid, typeCode, tmdbId, title) {
         const ok = await showCustomConfirm(
           'Möchtest du "' + (title || ('TMDb #' + tmdbId)) + '" wirklich KOMPLETT aus der D1-Datenbank & dem Telegram-Bot löschen (inkl. aller verknüpften Video-Streams) UND aus der Playlist entfernen?',
@@ -5293,6 +5304,30 @@
         } finally {
           setBusyState(false);
         }
+      }
+
+      function adminCopyPlaylistBatchFromBtn(btn) {
+        if (!btn) return;
+        const targetUid = String(btn.getAttribute("data-target-uid") || state.adminPlaylistTargetChatId || "");
+        const folderId = String(btn.getAttribute("data-folder-id") || "");
+        const name = String(btn.getAttribute("data-name") || "");
+        adminCopyPlaylistBatchClient(targetUid, folderId, name);
+      }
+
+      function adminRenamePlaylistFromBtn(btn) {
+        if (!btn) return;
+        const targetUid = String(btn.getAttribute("data-target-uid") || state.adminPlaylistTargetChatId || "");
+        const folderId = String(btn.getAttribute("data-folder-id") || "");
+        const name = String(btn.getAttribute("data-name") || "");
+        adminRenamePlaylist(targetUid, folderId, name);
+      }
+
+      function adminDeletePlaylistFromBtn(btn) {
+        if (!btn) return;
+        const targetUid = String(btn.getAttribute("data-target-uid") || state.adminPlaylistTargetChatId || "");
+        const folderId = String(btn.getAttribute("data-folder-id") || "");
+        const name = String(btn.getAttribute("data-name") || "");
+        adminDeletePlaylist(targetUid, folderId, name);
       }
 
       async function adminRenamePlaylist(targetUid, folderId, currentName) {
@@ -6153,7 +6188,7 @@
                           (idx < activeFolderItems.length - 1 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach unten" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'down\\')">⬇️</button>' : '') +
                           '<button class="btn" style="padding:4px 8px;font-size:11px" title="Details & Streams öffnen" onclick="openDetails(\\'' + tc + '\\',' + Number(it.tmdbId) + ',false)">👁️</button>' +
                           '<button class="btn" style="padding:4px 8px;font-size:11px;border-color:rgba(245,158,11,0.45);color:#fbbf24" title="Nur aus dieser Playlist entfernen (Film/Serie bleibt in D1 erhalten)" onclick="adminRemovePlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\')">➖ Aus Playlist</button>' +
-                          '<button class="btn danger" style="padding:4px 8px;font-size:11px" title="Komplett aus D1-Datenbank + Telegram-Bot UND aus Playlist löschen" onclick="adminDeletePlaylistItemFromD1(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'' + tc + '\\',' + Number(it.tmdbId) + ',\\'' + esc(it.title) + '\\')">🗑️ Aus D1 + Bot</button>' +
+                          '<button class="btn danger" style="padding:4px 8px;font-size:11px" title="Komplett aus D1-Datenbank + Telegram-Bot UND aus Playlist löschen" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(activeFolderObj.id) + '" data-item-uid="' + esc(it.uid) + '" data-type="' + esc(tc) + '" data-tmdb-id="' + Number(it.tmdbId) + '" data-title="' + esc(it.title) + '" onclick="adminDeletePlaylistItemFromBtn(this)">🗑️ Aus D1 + Bot</button>' +
                         '</div>' +
                       '</div>' +
                       epDrawerBodyHtml +
@@ -6206,10 +6241,10 @@
                       '</div>' +
                       '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
                         '<button class="btn ' + (isEditingThis ? 'amber' : 'blue') + '" onclick="adminOpenPlaylistEditor(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\')">📂 Öffnen & Bearbeiten</button>' +
-                        '<button class="btn green" onclick="adminCopyPlaylistBatchClient(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\',\\'' + esc(pl.name) + '\\')" title="Kopiert diese Playlist in 25er-Batches ohne API-Limit">📋 25er-Batch Kopie</button>' +
+                        '<button class="btn green" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminCopyPlaylistBatchFromBtn(this)" title="Kopiert diese Playlist in 25er-Batches ohne API-Limit">📋 25er-Batch Kopie</button>' +
                         '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="adminTogglePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
-                        '<button class="btn" onclick="adminRenamePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\',\\'' + esc(pl.name) + '\\')">✏️</button>' +
-                        '<button class="btn danger" onclick="adminDeletePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\',\\'' + esc(pl.name) + '\\')">🗑️</button>' +
+                        '<button class="btn" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminRenamePlaylistFromBtn(this)">✏️</button>' +
+                        '<button class="btn danger" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminDeletePlaylistFromBtn(this)">🗑️</button>' +
                       '</div>' +
                     '</div>';
                   }).join("")
