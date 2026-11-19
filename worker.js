@@ -31508,6 +31508,7 @@
         background-image: var(--hero-bg-landscape, none);
         background-size: cover;
         background-position: center top;
+        background-repeat: no-repeat !important;
         z-index: 0;
         pointer-events: none;
         opacity: 0;
@@ -31516,6 +31517,17 @@
         -webkit-backface-visibility: hidden;
         transition: opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1);
         will-change: opacity;
+      }
+      .hero-backdrop-layer.is-poster-fallback,
+      .detail-hero-stage:not([data-has-backdrop="1"]) .detail-backdrop-layer {
+        background-image:
+          radial-gradient(circle at 74% 48%, rgba(2, 6, 18, 0) 18%, rgba(4, 7, 15, 0.72) 54%, rgba(4, 7, 15, 0.98) 84%),
+          var(--hero-bg-portrait, var(--hero-bg-landscape, none)),
+          radial-gradient(circle at 72% 48%, rgba(var(--ambi-1, 14, 165, 233), 0.34) 0%, rgba(var(--ambi-2, 37, 99, 235), 0.16) 44%, rgba(4, 7, 15, 0.98) 82%) !important;
+        background-size: 100% 100%, contain, 100% 100% !important;
+        background-position: center center, 76% center, center center !important;
+        background-repeat: no-repeat, no-repeat, no-repeat !important;
+        background-color: #04070f !important;
       }
       .hero-backdrop-layer.active-layer {
         opacity: 1;
@@ -31559,13 +31571,20 @@
         -webkit-backface-visibility: hidden;
         will-change: transform;
       }
-      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten direkt unter der Suchleiste */
+      /* Hochkant-Ansicht (Portrait): Normale 2:3 Filmcover (w780) unbeschnitten ohne Zoom und ohne Vervielfachung */
       @media (orientation: portrait), (max-width: 640px) {
-        .hero-backdrop-layer {
+        .hero-backdrop-layer,
+        .hero-backdrop-layer.is-poster-fallback,
+        .detail-hero-stage:not([data-has-backdrop="1"]) .detail-backdrop-layer {
           inset: 0 !important;
-          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape, none)) !important;
-          background-position: center top !important;
-          background-size: cover !important;
+          background-image:
+            radial-gradient(circle at 50% 42%, rgba(2, 6, 18, 0) 22%, rgba(4, 7, 15, 0.76) 58%, rgba(4, 7, 15, 0.98) 88%),
+            var(--hero-bg-portrait, var(--hero-bg-landscape, none)),
+            radial-gradient(circle at 50% 42%, rgba(var(--ambi-1, 14, 165, 233), 0.34) 0%, rgba(var(--ambi-2, 37, 99, 235), 0.16) 46%, rgba(4, 7, 15, 0.98) 85%) !important;
+          background-position: center center, center top, center center !important;
+          background-size: 100% 100%, contain, 100% 100% !important;
+          background-repeat: no-repeat, no-repeat, no-repeat !important;
+          background-color: #04070f !important;
         }
         .hero-scrim-layer,
         .hero-stage-wrap.hero-bright-backdrop .hero-scrim-layer {
@@ -33746,32 +33765,29 @@
         background-image: var(--hero-bg-landscape);
         background-size: cover;
         background-position: center top;
-        background-repeat: no-repeat;
+        background-repeat: no-repeat !important;
         pointer-events: none;
-        transform: translate3d(0, var(--detail-parallax-y, 0px), 0) scale(var(--detail-parallax-scale, 1));
+        transform: translate3d(0, var(--detail-parallax-y, 0px), 0);
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
         will-change: transform;
       }
       @media (max-width: 640px), (orientation: portrait) {
         .detail-backdrop-layer {
-          background-image: var(--hero-bg-portrait, var(--hero-bg-landscape)) !important;
-          background-position: center top !important;
-          background-size: cover !important;
-        }
-      }
-      @keyframes detailKenBurnsZoom {
-        0% {
-          transform: translate3d(0, var(--detail-parallax-y, 0px), 0) scale(1);
-        }
-        100% {
-          transform: translate3d(-1.2%, calc(var(--detail-parallax-y, 0px) - 0.8%), 0) scale(1.085);
+          background-image:
+            radial-gradient(circle at 50% 42%, rgba(2, 6, 18, 0) 22%, rgba(4, 7, 15, 0.76) 58%, rgba(4, 7, 15, 0.98) 88%),
+            var(--hero-bg-portrait, var(--hero-bg-landscape)),
+            radial-gradient(circle at 50% 42%, rgba(var(--ambi-1, 14, 165, 233), 0.34) 0%, rgba(var(--ambi-2, 37, 99, 235), 0.16) 46%, rgba(4, 7, 15, 0.98) 85%) !important;
+          background-position: center center, center top, center center !important;
+          background-size: 100% 100%, contain, 100% 100% !important;
+          background-repeat: no-repeat, no-repeat, no-repeat !important;
+          background-color: #04070f !important;
         }
       }
       .detail-backdrop-layer.is-ken-burns-active {
-        animation: detailKenBurnsZoom 22s ease-in-out infinite alternate;
+        animation: none !important;
       }
-      /* Lautloser Hintergrund-Video-Teaser & Nahtloser Vordergrund-Kino-Modus */
+      /* Lautloser Hintergrund-Video-Teaser & Nahtloser Vordergrund-Kino-Modus (100% unbeschnitten ohne Zoom) */
       .detail-bg-video-layer {
         position: absolute;
         inset: 0;
@@ -33779,6 +33795,7 @@
         overflow: hidden;
         pointer-events: none;
         opacity: 0;
+        background: #03060d;
         transition: opacity 0.72s cubic-bezier(0.22, 1, 0.36, 1), filter 0.38s ease;
       }
       .detail-bg-video-layer.is-concealing {
@@ -33790,16 +33807,14 @@
       }
       .detail-bg-video-frame {
         position: absolute;
-        top: 50%;
-        left: 50%;
-        width: max(100vw, 177.78vh);
-        height: max(56.25vw, 100vh);
-        transform: translate(-50%, -50%) scale(1.18);
-        clip-path: inset(7.2% 0 7.2% 0);
-        -webkit-clip-path: inset(7.2% 0 7.2% 0);
+        inset: 0;
+        width: 100% !important;
+        height: 100% !important;
+        transform: none !important;
+        clip-path: none !important;
+        -webkit-clip-path: none !important;
         border: 0;
         pointer-events: none;
-        transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1), width 0.32s ease, height 0.32s ease, clip-path 0.32s ease;
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -33900,30 +33915,9 @@
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame,
       .hero.is-trailer-foreground-mode .detail-bg-video-frame {
-        transform: translate(-50%, -50%) scale(1.16);
-      }
-      /* Format-Zoom-Modus (Original 16:9 / 21:9 Kinoformat ohne Randbeschnitt) */
-      .detail-hero-stage.is-cinema-zoom-fit,
-      .hero.is-cinema-zoom-fit {
-        background: #03060d;
-      }
-      .detail-hero-stage.is-cinema-zoom-fit .detail-bg-video-layer,
-      .hero.is-cinema-zoom-fit .detail-bg-video-layer {
-        background: #03060d;
-      }
-      .detail-hero-stage.is-cinema-zoom-fit .detail-bg-video-frame,
-      .hero.is-cinema-zoom-fit .detail-bg-video-frame {
-        width: min(100vw, 177.78vh) !important;
-        height: min(56.25vw, calc(100svh - var(--sticky-header-height, 54px))) !important;
-        transform: translate(-50%, -50%) scale(1.08) !important;
-        clip-path: inset(6.8% 0 6.8% 0) !important;
-        -webkit-clip-path: inset(6.8% 0 6.8% 0) !important;
-      }
-      .detail-hero-stage.is-cinema-zoom-fit .detail-backdrop-layer,
-      .hero.is-cinema-zoom-fit .hero-backdrop-layer {
-        background-size: contain !important;
-        background-position: center center !important;
-        background-color: #03060d !important;
+        transform: none !important;
+        clip-path: none !important;
+        -webkit-clip-path: none !important;
       }
       .detail-foreground-stage-catcher {
         position: absolute;
@@ -41856,6 +41850,8 @@
         const ambiStyleVars = cachedAmbi
           ? ('--ambi-1:' + cachedAmbi.c1 + ';--ambi-2:' + cachedAmbi.c2 + ';--ambi-3:' + cachedAmbi.c3 + ';')
           : '';
+        const hasRealBackdrop = Boolean(String(hero.backdrop_path || "").trim());
+        const posterFallbackClass = hasRealBackdrop ? "" : " is-poster-fallback";
         const brightClass = cachedAmbi && cachedAmbi.isBrightLeft ? ' hero-bright-backdrop' : '';
         const collapsedClass = (state.heroHidden || heroCurtainScrolledToCatalog) ? ' is-collapsed' : '';
         const layerAStyle = (backdropUrl ? ('--hero-bg-landscape:url(' + esc(backdropUrl) + ');') : '--hero-bg-landscape:none;') +
@@ -41886,7 +41882,7 @@
               '<div id="heroAmbilightEl" class="hero-ambilight-glow" style="' + layerAStyle + '"></div>' +
               '<div id="heroAmbilightBeamsEl" class="hero-ambilight-beams"></div>' +
               '<div id="heroStageEl" class="hero" onmouseenter="setHeroPointerHover(true)" onmouseleave="setHeroPointerHover(false)" onmousedown="onHeroMouseDown(event)" ontouchstart="onHeroTouchStart(event)" ontouchmove="onHeroTouchMove(event)" ontouchend="onHeroTouchEnd(event)">' +
-                '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer" style="' + layerAStyle + '"></div>' +
+                '<div id="heroBackdropLayerA" class="hero-backdrop-layer active-layer' + posterFallbackClass + '" style="' + layerAStyle + '"></div>' +
                 '<div id="heroBackdropLayerB" class="hero-backdrop-layer" style="--hero-bg-landscape:none;--hero-bg-portrait:none"></div>' +
                 '<div id="heroBgVideoLayer" class="detail-bg-video-layer hero-bg-video-layer"></div>' +
                 '<div class="hero-scrim-layer"></div>' +
@@ -41931,7 +41927,7 @@
                     '</button>' +
                   '</div>' +
                 '</div>' +
-                '<div id="heroForegroundStageCatcher" class="detail-foreground-stage-catcher hero-foreground-stage-catcher" onclick="onHeroForegroundStageCatcherTapClient(event)" title="Einmal tippen: Slider-Infos einblenden • Doppeltipp Links/Rechts: ±10s Spulen • Doppeltipp Mitte: Kinoformat-Zoom"></div>' +
+                '<div id="heroForegroundStageCatcher" class="detail-foreground-stage-catcher hero-foreground-stage-catcher" onclick="onHeroForegroundStageCatcherTapClient(event)" title="Einmal tippen: Slider-Infos einblenden"></div>' +
                 '<div id="heroSeekRippleBadge" class="detail-seek-ripple-badge" aria-hidden="true"></div>' +
                 '<div id="heroCinemaPlayerDock" class="detail-cinema-player-dock hero-cinema-player-dock" onclick="event.stopPropagation()">' +
                   '<button type="button" id="heroCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleHeroCinemaPlayPauseClient(event)" title="Trailer abspielen / pausieren">▶</button>' +
@@ -41941,7 +41937,6 @@
                     '<span id="heroCinemaTimeLbl" class="cinema-dock-time">0:00</span>' +
                   '</div>' +
                   '<button type="button" id="heroCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextHeroTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen">⏭ 1/2</button>' +
-                  '<button type="button" id="heroCinemaZoomBtn" class="cinema-dock-btn" onclick="toggleHeroCinemaZoomModeClient(event)" title="Kinoformat-Zoom umschalten (Doppeltipp Mitte)">⤢ Fill</button>' +
                   '<button type="button" id="heroCinemaModeBtn" class="cinema-dock-btn" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="Alle Elemente ausblenden & Trailer in den Vordergrund holen">⛶ Kino</button>' +
                 '</div>' +
               '</div>' +
@@ -41980,6 +41975,7 @@
             const heroPosterSafe = esc(hero.poster_path || hero.external_poster_url || hero.poster || "");
             const backdropUrl = resolveHeroSlideBackdropUrlClient(hero);
             const posterUrl = resolveHeroSlidePosterUrlClient(hero, "w780") || backdropUrl;
+            const hasRealBackdrop = Boolean(String(hero.backdrop_path || "").trim());
             const heroCardKey = heroType + "_" + hero.id;
             const isHeroSaved = typeof savedKeysSet !== "undefined" && savedKeysSet.has(heroCardKey);
 
@@ -41995,6 +41991,7 @@
             const activeLayer = layerA.classList.contains("active-layer") ? layerA : layerB;
             const nextLayer = activeLayer === layerA ? layerB : layerA;
             nextLayer.classList.remove("active-layer");
+            nextLayer.classList.toggle("is-poster-fallback", !hasRealBackdrop);
             nextLayer.style.setProperty("--hero-bg-landscape", backdropUrl ? ("url(" + backdropUrl + ")") : "none");
             nextLayer.style.setProperty("--hero-bg-portrait", posterUrl ? ("url(" + posterUrl + ")") : "none");
             void nextLayer.offsetWidth;
@@ -47207,7 +47204,7 @@
           if (!existingStageEl.getAttribute("data-has-backdrop") && (backdropW1280 || portraitBg)) {
             existingStageEl.style.setProperty("--hero-bg-landscape", "url('" + (backdropW1280 || portraitBg) + "')");
             existingStageEl.style.setProperty("--hero-bg-portrait", "url('" + (portraitBg || backdropW1280) + "')");
-            existingStageEl.setAttribute("data-has-backdrop", "1");
+            existingStageEl.setAttribute("data-has-backdrop", d.backdrop_path ? "1" : "");
             applyDynamicHeroAmbilightClient(backdropW1280 || portraitBg);
           }
           const kickerEl = document.getElementById("detailKickerEl");
@@ -47325,16 +47322,16 @@
             '</div>' +
 
             /* 1:1 FULLSCREEN KINO-HERO-STAGE EXAKT WIE IM HAUPT-SLIDER (ZERO JUMP) */
-            '<section id="detailHeroStageEl" class="detail-hero-stage' + (autoOpenTrailer ? ' is-trailer-foreground-mode' : '') + (detailCinemaZoomMode === 'fit' ? ' is-cinema-zoom-fit' : '') + '" data-detail-key="' + esc(detailKey) + '" data-has-backdrop="' + (d.backdrop_path ? '1' : '') + '" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
+            '<section id="detailHeroStageEl" class="detail-hero-stage' + (autoOpenTrailer ? ' is-trailer-foreground-mode' : '') + '" data-detail-key="' + esc(detailKey) + '" data-has-backdrop="' + (d.backdrop_path ? '1' : '') + '" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
               '<div class="detail-backdrop-layer"></div>' +
               '<div id="detailBgVideoLayer" class="detail-bg-video-layer"></div>' +
               '<div class="detail-ambilight-glow"></div>' +
               '<div class="detail-scrim-layer"></div>' +
               '<div class="detail-scroll-dim-overlay"></div>' +
-              '<div id="detailForegroundStageCatcher" class="detail-foreground-stage-catcher" onclick="onForegroundStageCatcherTapClient(event)" title="Einfach tippen: Filminfos einblenden · Doppelt tippen links/rechts: ±10s spulen · Doppelt tippen Mitte: Format-Zoom"></div>' +
+              '<div id="detailForegroundStageCatcher" class="detail-foreground-stage-catcher" onclick="onForegroundStageCatcherTapClient(event)" title="Einfach tippen: Filminfos einblenden"></div>' +
               '<div id="detailSeekRippleBadge" class="detail-seek-ripple-badge" aria-live="polite"></div>' +
 
-              /* EDLES KLICKBARES GLAS-MINI-DOCK UNTEN RECHTS (PLAY/PAUSE, TON, ZEITLEISTE, CLIP-WECHSEL, FORMAT-ZOOM & KINO-ANSICHT) */
+              /* EDLES KLICKBARES GLAS-MINI-DOCK UNTEN RECHTS (PLAY/PAUSE, TON, ZEITLEISTE, CLIP-WECHSEL & KINO-ANSICHT) */
               '<div id="detailCinemaPlayerDock" class="detail-cinema-player-dock" onclick="event.stopPropagation()">' +
                 '<button type="button" id="detailCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleDetailCinemaPlayPauseClient(event)" title="Trailer pausieren / fortsetzen">⏸</button>' +
                 '<button type="button" id="detailCinemaMuteBtn" class="cinema-dock-btn" onclick="toggleDetailBackgroundTeaserAudioClient(event)" title="Ton ein- / ausschalten">🔇</button>' +
@@ -47343,7 +47340,6 @@
                   '<span id="detailCinemaTimeLbl" class="cinema-dock-time">0:00</span>' +
                 '</div>' +
                 '<button type="button" id="detailCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextDetailTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen">⏭</button>' +
-                '<button type="button" id="detailCinemaZoomBtn" class="cinema-dock-btn' + (detailCinemaZoomMode === 'fit' ? ' is-active-mode' : '') + '" onclick="toggleDetailCinemaZoomModeClient(event)" title="Zwischen Randlos-Vollbild und Original-Kinoformat wechseln">' + (detailCinemaZoomMode === 'fit' ? '▭ Fit' : '⤢ Fill') + '</button>' +
                 '<button type="button" id="detailCinemaModeBtn" class="cinema-dock-btn' + (autoOpenTrailer ? ' is-active-mode' : '') + '" onclick="enterDetailForegroundTrailerModeClient(event)" title="Alle Elemente ausblenden & Trailer in den Vordergrund holen">' + (autoOpenTrailer ? '✕ Infos' : '⛶ Kino') + '</button>' +
               '</div>' +
 

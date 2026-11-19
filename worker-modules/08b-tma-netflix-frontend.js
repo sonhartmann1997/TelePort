@@ -4304,7 +4304,7 @@
           if (!existingStageEl.getAttribute("data-has-backdrop") && (backdropW1280 || portraitBg)) {
             existingStageEl.style.setProperty("--hero-bg-landscape", "url('" + (backdropW1280 || portraitBg) + "')");
             existingStageEl.style.setProperty("--hero-bg-portrait", "url('" + (portraitBg || backdropW1280) + "')");
-            existingStageEl.setAttribute("data-has-backdrop", "1");
+            existingStageEl.setAttribute("data-has-backdrop", d.backdrop_path ? "1" : "");
             applyDynamicHeroAmbilightClient(backdropW1280 || portraitBg);
           }
           const kickerEl = document.getElementById("detailKickerEl");
@@ -4422,16 +4422,16 @@
             '</div>' +
 
             /* 1:1 FULLSCREEN KINO-HERO-STAGE EXAKT WIE IM HAUPT-SLIDER (ZERO JUMP) */
-            '<section id="detailHeroStageEl" class="detail-hero-stage' + (autoOpenTrailer ? ' is-trailer-foreground-mode' : '') + (detailCinemaZoomMode === 'fit' ? ' is-cinema-zoom-fit' : '') + '" data-detail-key="' + esc(detailKey) + '" data-has-backdrop="' + (d.backdrop_path ? '1' : '') + '" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
+            '<section id="detailHeroStageEl" class="detail-hero-stage' + (autoOpenTrailer ? ' is-trailer-foreground-mode' : '') + '" data-detail-key="' + esc(detailKey) + '" data-has-backdrop="' + (d.backdrop_path ? '1' : '') + '" style="' + bgVarsStyle + '" ontouchstart="onModalHeroTouchStart(event)" ontouchend="onModalHeroTouchEnd(event)" onmousedown="onModalHeroMouseDown(event)" onmouseup="onModalHeroMouseUp(event)">' +
               '<div class="detail-backdrop-layer"></div>' +
               '<div id="detailBgVideoLayer" class="detail-bg-video-layer"></div>' +
               '<div class="detail-ambilight-glow"></div>' +
               '<div class="detail-scrim-layer"></div>' +
               '<div class="detail-scroll-dim-overlay"></div>' +
-              '<div id="detailForegroundStageCatcher" class="detail-foreground-stage-catcher" onclick="onForegroundStageCatcherTapClient(event)" title="Einfach tippen: Filminfos einblenden · Doppelt tippen links/rechts: ±10s spulen · Doppelt tippen Mitte: Format-Zoom"></div>' +
+              '<div id="detailForegroundStageCatcher" class="detail-foreground-stage-catcher" onclick="onForegroundStageCatcherTapClient(event)" title="Einfach tippen: Filminfos einblenden"></div>' +
               '<div id="detailSeekRippleBadge" class="detail-seek-ripple-badge" aria-live="polite"></div>' +
 
-              /* EDLES KLICKBARES GLAS-MINI-DOCK UNTEN RECHTS (PLAY/PAUSE, TON, ZEITLEISTE, CLIP-WECHSEL, FORMAT-ZOOM & KINO-ANSICHT) */
+              /* EDLES KLICKBARES GLAS-MINI-DOCK UNTEN RECHTS (PLAY/PAUSE, TON, ZEITLEISTE, CLIP-WECHSEL & KINO-ANSICHT) */
               '<div id="detailCinemaPlayerDock" class="detail-cinema-player-dock" onclick="event.stopPropagation()">' +
                 '<button type="button" id="detailCinemaPlayBtn" class="cinema-dock-btn" onclick="toggleDetailCinemaPlayPauseClient(event)" title="Trailer pausieren / fortsetzen">⏸</button>' +
                 '<button type="button" id="detailCinemaMuteBtn" class="cinema-dock-btn" onclick="toggleDetailBackgroundTeaserAudioClient(event)" title="Ton ein- / ausschalten">🔇</button>' +
@@ -4440,7 +4440,6 @@
                   '<span id="detailCinemaTimeLbl" class="cinema-dock-time">0:00</span>' +
                 '</div>' +
                 '<button type="button" id="detailCinemaNextClipBtn" class="cinema-dock-btn" style="display:none" onclick="switchNextDetailTrailerCandidateManualClient(event)" title="Nächsten verfügbaren Trailer / Clip abspielen">⏭</button>' +
-                '<button type="button" id="detailCinemaZoomBtn" class="cinema-dock-btn' + (detailCinemaZoomMode === 'fit' ? ' is-active-mode' : '') + '" onclick="toggleDetailCinemaZoomModeClient(event)" title="Zwischen Randlos-Vollbild und Original-Kinoformat wechseln">' + (detailCinemaZoomMode === 'fit' ? '▭ Fit' : '⤢ Fill') + '</button>' +
                 '<button type="button" id="detailCinemaModeBtn" class="cinema-dock-btn' + (autoOpenTrailer ? ' is-active-mode' : '') + '" onclick="enterDetailForegroundTrailerModeClient(event)" title="Alle Elemente ausblenden & Trailer in den Vordergrund holen">' + (autoOpenTrailer ? '✕ Infos' : '⛶ Kino') + '</button>' +
               '</div>' +
 
