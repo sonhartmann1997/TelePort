@@ -5902,13 +5902,13 @@
         position: absolute;
         right: 0;
         bottom: 0;
-        width: 230px;
-        height: 82px;
-        z-index: 2;
+        width: 224px;
+        height: 76px;
+        z-index: 3;
         pointer-events: none;
         opacity: 0;
-        background: radial-gradient(ellipse at 100% 100%, rgba(4, 7, 15, 0.995) 0%, rgba(4, 7, 15, 0.95) 46%, rgba(4, 7, 15, 0.68) 66%, transparent 86%);
-        transition: opacity 0.24s ease;
+        background: radial-gradient(ellipse 212px 72px at 100% 100%, #000000 0%, #000000 66%, rgba(0, 0, 0, 0.72) 82%, transparent 100%);
+        transition: opacity 0.2s ease;
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer::before,
       .hero.is-trailer-foreground-mode .detail-bg-video-layer::before {
@@ -5918,9 +5918,15 @@
         content: "";
         position: absolute;
         inset: 0;
-        z-index: 1;
+        z-index: 2;
         pointer-events: none;
         background: linear-gradient(180deg, rgba(4, 7, 15, 0.72) 0%, rgba(4, 7, 15, 0) 9%, rgba(4, 7, 15, 0) 90%, rgba(4, 7, 15, 0.62) 100%);
+      }
+      .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer::after,
+      .hero.is-trailer-foreground-mode .detail-bg-video-layer::after {
+        background:
+          linear-gradient(180deg, #000000 0px, #000000 78px, rgba(0, 0, 0, 0.94) 88px, rgba(0, 0, 0, 0.45) 102px, transparent 118px),
+          radial-gradient(ellipse 108px 60px at 0% 100%, #000000 0%, #000000 66%, rgba(0, 0, 0, 0.7) 82%, transparent 100%);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame,
       .hero.is-trailer-foreground-mode .detail-bg-video-frame {
@@ -6042,8 +6048,8 @@
         align-items: center;
         justify-content: space-between;
         gap: 14px;
-        padding: 14px 20px 26px;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0.92) 0%, rgba(4, 7, 15, 0.56) 58%, transparent 100%);
+        padding: 14px 20px 24px;
+        background: linear-gradient(180deg, #000000 0px, #000000 68px, rgba(0, 0, 0, 0.75) 86%, transparent 100%);
         pointer-events: none;
         opacity: 0;
         transform: translate3d(0, -10px, 0);
@@ -6058,10 +6064,8 @@
       .hero.is-trailer-foreground-mode.is-cinema-paused .cinema-top-hud,
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-starting .cinema-top-hud,
       .hero.is-trailer-foreground-mode.is-cinema-starting .cinema-top-hud {
-        padding: 14px 20px 54px;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0.998) 0%, rgba(4, 7, 15, 0.985) 66%, rgba(4, 7, 15, 0.76) 85%, transparent 100%);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        padding: 14px 20px 36px;
+        background: linear-gradient(180deg, #000000 0px, #000000 76px, rgba(0, 0, 0, 0.88) 88%, transparent 100%);
       }
       .cinema-top-hud.is-idle-hidden {
         opacity: 0 !important;
@@ -6280,10 +6284,11 @@
       .cinema-overlay-btn:hover,
       .cinema-overlay-btn:focus-visible,
       .cinema-overlay-btn.spatial-focus {
-        background: rgba(56, 189, 248, 0.24);
-        border-color: rgba(56, 189, 248, 0.78);
+        background: rgba(56, 189, 248, 0.28);
+        border-color: rgba(56, 189, 248, 0.92);
         color: #ffffff;
-        transform: translateY(-1px);
+        transform: translateY(-1px) scale(1.04);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.92), 0 0 22px rgba(56, 189, 248, 0.45);
         outline: none;
       }
       .cinema-overlay-btn.is-primary {
@@ -6297,6 +6302,16 @@
         background: #e0f2fe;
         border-color: #38bdf8;
         color: #060a14;
+        transform: translateY(-1px) scale(1.05);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.95), 0 0 24px rgba(56, 189, 248, 0.55);
+      }
+      .cinema-dock-btn.spatial-focus,
+      .cinema-dock-scrubber.spatial-focus,
+      .cinema-dock-vol-slider.spatial-focus,
+      .cinema-top-hud-close.spatial-focus,
+      .cinema-pause-center-btn.spatial-focus {
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.92), 0 0 18px rgba(56, 189, 248, 0.45) !important;
+        border-color: rgba(56, 189, 248, 0.95) !important;
       }
       /* Dezentes Ende-Overlay (erst bei echtem Video-Ende pState === 0) */
       .cinema-end-overlay {
@@ -13691,8 +13706,16 @@
                 wakeHeroCinemaDockClient();
                 syncHeroCinemaDockUiClient();
                 const endPrimaryBtn = document.getElementById("heroCinemaEndPrimaryBtn");
-                if (endPrimaryBtn && typeof jumpSpatialFocus === "function") {
-                  jumpSpatialFocus(endPrimaryBtn, false);
+                if (endPrimaryBtn) {
+                  if (typeof jumpSpatialFocus === "function") jumpSpatialFocus(endPrimaryBtn, false);
+                  try { endPrimaryBtn.focus({ preventScroll: true }); } catch (_fe) {}
+                  requestAnimationFrame(() => {
+                    const liveBtn = document.getElementById("heroCinemaEndPrimaryBtn");
+                    if (liveBtn && document.getElementById("heroStageEl")?.classList.contains("is-cinema-ended")) {
+                      if (typeof jumpSpatialFocus === "function") jumpSpatialFocus(liveBtn, false);
+                      try { liveBtn.focus({ preventScroll: true }); } catch (_fe2) {}
+                    }
+                  });
                 }
               } else {
                 concealAndPauseHeroTrailerClient({ ended: true, exitForeground: true, pauseDelayMs: 430 });

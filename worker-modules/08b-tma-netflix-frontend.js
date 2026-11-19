@@ -2983,8 +2983,16 @@
                 wakeDetailCinemaDockClient();
                 syncDetailCinemaDockUiClient();
                 const endPrimaryBtn = document.getElementById("detailCinemaEndPrimaryBtn");
-                if (endPrimaryBtn && typeof jumpSpatialFocus === "function") {
-                  jumpSpatialFocus(endPrimaryBtn, false);
+                if (endPrimaryBtn) {
+                  if (typeof jumpSpatialFocus === "function") jumpSpatialFocus(endPrimaryBtn, false);
+                  try { endPrimaryBtn.focus({ preventScroll: true }); } catch (_fe) {}
+                  requestAnimationFrame(() => {
+                    const liveBtn = document.getElementById("detailCinemaEndPrimaryBtn");
+                    if (liveBtn && document.getElementById("detailHeroStageEl")?.classList.contains("is-cinema-ended")) {
+                      if (typeof jumpSpatialFocus === "function") jumpSpatialFocus(liveBtn, false);
+                      try { liveBtn.focus({ preventScroll: true }); } catch (_fe2) {}
+                    }
+                  });
                 }
               } else {
                 finishDetailTrailerToArtworkClient();

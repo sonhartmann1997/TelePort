@@ -7253,6 +7253,9 @@
               : (document.getElementById(p + "CinemaPlayBtn") || rows[rows.length - 1][0]);
           if (defaultTarget && typeof jumpSpatialFocus === "function") {
             jumpSpatialFocus(defaultTarget, false);
+            if (defaultTarget.tagName === "BUTTON") {
+              try { defaultTarget.focus({ preventScroll: true }); } catch (_fe) {}
+            }
           }
           return true;
         }
@@ -7263,9 +7266,8 @@
           if (curRow.length === 1) {
             targetEl = curRow[0];
           } else {
-            const nextCol = dir === "right"
-              ? Math.min(curRow.length - 1, curColIdx + 1)
-              : Math.max(0, curColIdx - 1);
+            const delta = dir === "right" ? 1 : -1;
+            const nextCol = (curColIdx + delta + curRow.length) % curRow.length;
             targetEl = curRow[nextCol];
           }
         } else if (dir === "up" || dir === "down") {
@@ -7294,6 +7296,9 @@
 
         if (targetEl && typeof jumpSpatialFocus === "function") {
           jumpSpatialFocus(targetEl, false);
+          if (targetEl.tagName === "BUTTON") {
+            try { targetEl.focus({ preventScroll: true }); } catch (_fe2) {}
+          }
         }
         return true;
       }
@@ -7756,6 +7761,11 @@
         }
         const target = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(FOCUSABLE_SELECTOR) : null;
         if (target && !target.disabled && !target.classList.contains("is-current-mode")) {
+          const activeCinemaForHover = getActiveForegroundCinemaContextClient();
+          if (activeCinemaForHover) {
+            const allowedCinemaEls = getCinemaFocusableElementsClient(activeCinemaForHover);
+            if (!allowedCinemaEls.includes(target)) return;
+          }
           setSpatialFocus(target, false);
         }
       }, { passive: true });
@@ -9195,28 +9205,9 @@
           return;
         }
 
-        // Kino-Trailer Tastatur- & Fernbedienungs-Shortcuts im aktiven Vordergrund-Modus (K/Space, M, C, J/L, N, S, R, +/-)
-        // Niemals aktiv, wenn ein Eingabefeld (Suche, Merklisten-Suche im rechten Overlay, Jahr etc.) oder ein Seiten-/Such-Overlay geöffnet ist!
-        const elevForTrailerGuard = document.getElementById("tvQuickJumpElevator");
-        const isRightOverlayOpen = Boolean(
-          elevForTrailerGuard && (
-            elevForTrailerGuard.classList.contains("is-visible") ||
-            elevForTrailerGuard.classList.contains("has-subpanel") ||
-            elevForTrailerGuard.classList.contains("is-hover-expanded")
-          )
-        );
-        const isOverlayBlockingTrailerKeys = Boolean(
-          (state && state.sidebarOpen) ||
-          isRightOverlayOpen ||
-          document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
-          document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
-          document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
-          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
-          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
-          document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
-          document.getElementById("lightboxRoot")?.innerHTML.trim()
-        );
-        if (!isTypingInInput && !isOverlayBlockingTrailerKeys && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        // Kino-Trailer Tastatur- & Fernbedienungs-Steuerung im aktiven Vordergrund-Modus (inkl. Pause-Menü & Endcard)
+        // getActiveForegroundCinemaContextClient() blockiert automatisch bei offenen Overlays (Sidebar, rechtes Untermenü, Suche, Dialoge)
+        if (!isTypingInInput && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
           const activeCinemaCtx = getActiveForegroundCinemaContextClient();
           if (activeCinemaCtx) {
             const detailFgActive = activeCinemaCtx.mode === "detail";
@@ -9224,6 +9215,15 @@
             const lk = String(ev.key || "").toLowerCase();
             const isSpace = ev.code === "Space" || ev.key === " ";
 
+            if (ev.key === "Tab") {
+              cancelModalArrowHold();
+              resetVerticalTurboStreakClient();
+              ev.preventDefault();
+              ev.stopPropagation();
+              engageKeyboardNavMode();
+              navigateCinemaPlayerFocusClient(ev.shiftKey ? "left" : "right", activeCinemaCtx);
+              return;
+            }
             if (ev.key === "ArrowLeft" || ev.key === "ArrowRight" || ev.key === "ArrowUp" || ev.key === "ArrowDown") {
               cancelModalArrowHold();
               resetVerticalTurboStreakClient();
@@ -9247,6 +9247,10 @@
             if (lk === "k" || isSpace) {
               ev.preventDefault();
               ev.stopPropagation();
+              if (isSpace && activeCinemaCtx.isEnded) {
+                if (!ev.repeat) confirmCinemaPlayerFocusClient(activeCinemaCtx);
+                return;
+              }
               if (detailFgActive && typeof toggleDetailCinemaPlayPauseClient === "function") toggleDetailCinemaPlayPauseClient(ev);
               else if (heroFgActive && typeof toggleHeroCinemaPlayPauseClient === "function") toggleHeroCinemaPlayPauseClient(ev);
               return;
