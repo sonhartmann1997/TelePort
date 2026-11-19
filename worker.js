@@ -30684,6 +30684,20 @@
       .catalog-edge-trigger-left:hover {
         background: linear-gradient(90deg, rgba(56, 189, 248, 0.35) 0%, transparent 100%);
       }
+      /* Hintergrund-Scroll-Sperre sobald ein Seitenmenü (Links oder Rechts) aktiv/geöffnet ist */
+      body:has(#filterSidebarDrawer.open),
+      body:has(#tvQuickJumpElevator.has-subpanel),
+      body:has(#tvQuickJumpElevator.is-visible),
+      body:has(#tvQuickJumpElevator.is-hover-expanded),
+      body:has(#tvQuickJumpElevator:hover) {
+        overflow: hidden !important;
+        overscroll-behavior: none !important;
+      }
+      .sidebar-body,
+      .sidebar-right-subpanel,
+      .rm-entries-scroll {
+        overscroll-behavior: contain;
+      }
       .catalog-edge-trigger-right {
         position: fixed;
         right: 0;
@@ -39370,11 +39384,53 @@
         return Math.max(200, heroH - topBarH);
       }
 
+      function isAnySideMenuOpenClient() {
+        if (state.sidebarOpen) return true;
+        if (document.getElementById("filterSidebarDrawer")?.classList.contains("open")) return true;
+        const elev = document.getElementById("tvQuickJumpElevator");
+        if (elev && (
+          elev.classList.contains("has-subpanel") ||
+          elev.classList.contains("is-visible") ||
+          elev.classList.contains("is-hover-expanded") ||
+          (typeof elev.matches === "function" && elev.matches(":hover"))
+        )) {
+          return true;
+        }
+        return false;
+      }
+
+      window.addEventListener("wheel", (ev) => {
+        if (!isAnySideMenuOpenClient()) return;
+        const scrollHost = ev.target && typeof ev.target.closest === "function"
+          ? ev.target.closest(".sidebar-body, .sidebar-right-subpanel, .rm-entries-scroll")
+          : null;
+        if (!scrollHost) {
+          ev.preventDefault();
+          return;
+        }
+        const dy = Number(ev.deltaY) || 0;
+        const atTop = scrollHost.scrollTop <= 0 && dy < 0;
+        const atBottom = (scrollHost.scrollTop + scrollHost.clientHeight >= scrollHost.scrollHeight - 1) && dy > 0;
+        if (atTop || atBottom) {
+          ev.preventDefault();
+        }
+      }, { passive: false });
+
+      window.addEventListener("touchmove", (ev) => {
+        if (!isAnySideMenuOpenClient()) return;
+        const scrollHost = ev.target && typeof ev.target.closest === "function"
+          ? ev.target.closest(".sidebar-body, .sidebar-right-subpanel, .rm-entries-scroll")
+          : null;
+        if (!scrollHost) {
+          ev.preventDefault();
+        }
+      }, { passive: false });
+
       function isHeroScrollCouplingActiveClient() {
         if (!document.body || state.heroHidden || state.isSearchMode) return false;
         if (state.currentView && state.currentView !== "discover") return false;
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return false;
-        if (state.sidebarOpen) return false;
+        if (isAnySideMenuOpenClient()) return false;
         if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("customDialogRoot")?.innerHTML.trim()) return false;
@@ -40887,26 +40943,25 @@
           if (document.getElementById("heroStageEl")?.classList.contains("is-trailer-foreground-mode")) {
             return;
           }
-          const isScrolledPast = Boolean(document.body && document.body.classList.contains("hero-scrolled-past"));
-          if (!state.heroHidden && !isScrolledPast) {
-            if (state.searchFocused || heroPointerHovered) return;
-            if (document.getElementById("heroDescEl")?.classList.contains("is-expanded")) return;
-            if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#heroBannerSlot")) {
-              return;
-            }
-            state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
-            state.heroActionsEngaged = false;
-            updateHeroBannerDomOnly();
-            const curSlide = state.heroSlides[state.heroIndex];
-            if (curSlide && curSlide.id) {
-              prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
-            }
-          } else {
-            // Eingeklappter oder vorbeigescrollter Zustand: Rotiere alle paar Sekunden den ausgegrauten Highlight-Vorschlag im Suchfeld
-            const inp = document.getElementById("searchInput");
-            if (inp && inp.value && inp.value.trim().length > 0) return;
-            state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
-            syncHeroSearchPlaceholderAndToggleBtnClient();
+          const isScrolledPast = Boolean(
+            heroCurtainScrolledToCatalog ||
+            (document.body && document.body.classList.contains("hero-scrolled-past")) ||
+            (window.scrollY || window.pageYOffset || 0) > 20
+          );
+          if (state.heroHidden || isScrolledPast || isAnySideMenuOpenClient()) {
+            return;
+          }
+          if (state.searchFocused || heroPointerHovered) return;
+          if (document.getElementById("heroDescEl")?.classList.contains("is-expanded")) return;
+          if (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#heroBannerSlot")) {
+            return;
+          }
+          state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
+          state.heroActionsEngaged = false;
+          updateHeroBannerDomOnly();
+          const curSlide = state.heroSlides[state.heroIndex];
+          if (curSlide && curSlide.id) {
+            prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
           }
         }, intervalMs);
       }
