@@ -1575,7 +1575,7 @@
       /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen):
          WICHTIG: outline-offset: -2px + inset Box-Shadow + kein horizontales scale(), damit die linken & rechten Ränder
          in Scrollboxen (Suchvorschläge, Sidebar, Genre-Grid, Cast-Slider, Katalog) NIEMALS überstehen oder abgeschnitten werden! */
-      .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable),
+      .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn),
       .brand-logo:focus-visible,
       .btn:focus-visible,
       .card:focus-visible,
@@ -5897,17 +5897,24 @@
         z-index: 3;
         filter: brightness(1.03) contrast(1.03);
       }
+      body:has(.is-trailer-foreground-mode) #floatingImportStatusWidget {
+        opacity: 0 !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+      }
       .detail-bg-video-layer::before {
         content: "";
         position: absolute;
         right: 0;
         bottom: 0;
-        width: 224px;
-        height: 76px;
+        width: min(460px, 46vw);
+        height: 92px;
         z-index: 3;
         pointer-events: none;
         opacity: 0;
-        background: radial-gradient(ellipse 212px 72px at 100% 100%, #000000 0%, #000000 66%, rgba(0, 0, 0, 0.72) 82%, transparent 100%);
+        background: linear-gradient(0deg, #000000 0px, #000000 68px, rgba(0, 0, 0, 0.88) 80px, transparent 92px);
+        mask-image: linear-gradient(270deg, #000000 0%, #000000 84%, transparent 100%);
+        -webkit-mask-image: linear-gradient(270deg, #000000 0%, #000000 84%, transparent 100%);
         transition: opacity 0.2s ease;
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-layer::before,
@@ -5926,7 +5933,7 @@
       .hero.is-trailer-foreground-mode .detail-bg-video-layer::after {
         background:
           linear-gradient(180deg, #000000 0px, #000000 78px, rgba(0, 0, 0, 0.94) 88px, rgba(0, 0, 0, 0.45) 102px, transparent 118px),
-          radial-gradient(ellipse 108px 60px at 0% 100%, #000000 0%, #000000 66%, rgba(0, 0, 0, 0.7) 82%, transparent 100%);
+          radial-gradient(ellipse 168px 94px at 0% 100%, #000000 0%, #000000 68%, rgba(0, 0, 0, 0.78) 84%, transparent 100%);
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-bg-video-frame,
       .hero.is-trailer-foreground-mode .detail-bg-video-frame {
@@ -6192,11 +6199,11 @@
         top: 50%;
         left: 50%;
         z-index: 15;
-        width: 98px;
-        height: 98px;
+        width: 104px;
+        height: 104px;
         border-radius: 50%;
         border: 1.5px solid rgba(255, 255, 255, 0.28);
-        background: radial-gradient(circle at 32% 28%, rgba(30, 41, 59, 0.97) 0%, rgba(5, 9, 18, 0.99) 100%);
+        background: radial-gradient(circle at 32% 28%, rgba(30, 41, 59, 0.98) 0%, rgba(5, 9, 18, 0.995) 100%);
         backdrop-filter: blur(22px) saturate(160%);
         -webkit-backdrop-filter: blur(22px) saturate(160%);
         box-shadow: 0 20px 48px rgba(0, 0, 0, 0.84), 0 0 0 14px rgba(4, 7, 15, 0.48), 0 0 32px rgba(var(--ambi-1, 14, 165, 233), 0.28);
@@ -6209,39 +6216,39 @@
         cursor: pointer;
         opacity: 0;
         pointer-events: none;
-        transform: translate3d(-50%, -50%, 0) scale(0.86);
+        transform: translate3d(-50%, -50%, 0) scale(0.86) !important;
         transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease, background 0.18s ease;
       }
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn,
       .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn {
         opacity: 1;
         pointer-events: auto;
-        transform: translate3d(-50%, -50%, 0) scale(1);
+        transform: translate3d(-50%, -50%, 0) scale(1) !important;
       }
       .cinema-pause-center-btn:hover,
       .cinema-pause-center-btn:focus-visible,
       .cinema-pause-center-btn.spatial-focus {
-        border-color: rgba(56, 189, 248, 0.92);
-        background: radial-gradient(circle at 32% 28%, rgba(56, 189, 248, 0.38) 0%, rgba(8, 15, 30, 0.96) 100%);
-        transform: translate3d(-50%, -50%, 0) scale(1.07);
-        outline: none;
+        border-color: rgba(56, 189, 248, 0.95);
+        background: radial-gradient(circle at 32% 28%, rgba(56, 189, 248, 0.38) 0%, rgba(8, 15, 30, 0.97) 100%);
+        transform: translate3d(-50%, -50%, 0) scale(1.06) !important;
+        outline: none !important;
       }
       .cinema-pause-bottom-curtain {
         position: absolute;
         left: 0;
         right: 0;
         bottom: 0;
-        height: clamp(278px, 40vh, 384px);
+        height: clamp(188px, 26vh, 244px);
         z-index: 14;
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
         align-items: center;
-        padding: 0 16px 84px;
+        padding: 0 16px 92px;
         box-sizing: border-box;
-        background: linear-gradient(0deg, rgba(4, 7, 15, 0.998) 0%, rgba(4, 7, 15, 0.992) 72%, rgba(4, 7, 15, 0.88) 86%, transparent 100%);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
+        background: linear-gradient(0deg, #000000 0%, rgba(4, 7, 15, 0.985) 68%, rgba(4, 7, 15, 0.82) 84%, transparent 100%);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
         opacity: 0;
         pointer-events: none;
         transform: translate3d(0, 14px, 0);
