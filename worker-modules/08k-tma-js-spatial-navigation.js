@@ -3,11 +3,18 @@
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
       const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .cinema-top-hud-close, .cinema-pause-center-btn, .cinema-overlay-btn, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
-      const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
+      const CARD_SUB_SELECTOR = ".card-quick-save, .card-hover-play-btn";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
       let userScrolledRecently = false;
       let lastElevatorReturnEl = null;
+      let activeInputProfile = (document.body && document.body.getAttribute("data-tv-profile") === "firetv")
+        ? "firetv"
+        : (document.body && document.body.getAttribute("data-device") === "tv")
+          ? "tv"
+          : "keyboard";
+      let lastFocusBarCardEl = null;
+      let hoverFocusBarClearTimer = null;
 
       window.addEventListener("wheel", () => { userScrolledRecently = true; }, { passive: true });
       window.addEventListener("touchmove", () => { userScrolledRecently = true; }, { passive: true });
@@ -20,6 +27,197 @@
 
       function isCardSubElement(el) {
         return Boolean(el && el.matches && el.matches(CARD_SUB_SELECTOR));
+      }
+
+      function isAnyBlockingOverlayOpenForCardBarClient() {
+        const elev = document.getElementById("tvQuickJumpElevator");
+        const isRightOverlayOpen = Boolean(
+          elev && (elev.classList.contains("has-subpanel") || elev.classList.contains("is-visible") || elev.classList.contains("is-hover-expanded"))
+        );
+        return Boolean(
+          getActiveForegroundCinemaContextClient() ||
+          (state && state.sidebarOpen) ||
+          isRightOverlayOpen ||
+          document.getElementById("modalRoot")?.innerHTML.trim() ||
+          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
+          document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
+          document.getElementById("lightboxRoot")?.innerHTML.trim() ||
+          document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
+          document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
+          document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded")
+        );
+      }
+
+      function isCatalogCardDirectlyActiveClient() {
+        if (!currentSpatialEl || !currentSpatialEl.classList || !currentSpatialEl.classList.contains("card")) return false;
+        if (!document.body.contains(currentSpatialEl)) return false;
+        return !isAnyBlockingOverlayOpenForCardBarClient();
+      }
+
+      function getCardActionMetaClient(cardEl) {
+        if (!cardEl || !cardEl.getAttribute) return null;
+        const rawKey = String(cardEl.getAttribute("data-card-key") || "");
+        const keyParts = rawKey.split("_");
+        const tc = cardEl.getAttribute("data-card-type") || (keyParts[0] === "s" ? "s" : "m");
+        const idNum = Number(cardEl.getAttribute("data-card-id") || keyParts[1] || 0);
+        const title = String(cardEl.getAttribute("data-card-title") || cardEl.querySelector(".card-title-text")?.textContent || "").trim();
+        const year = String(cardEl.getAttribute("data-card-year") || "").trim();
+        const rating = String(cardEl.getAttribute("data-card-rating") || "").trim();
+        const vip = String(cardEl.getAttribute("data-card-vip") || "").trim();
+        const mediaLabel = String(cardEl.getAttribute("data-card-media-label") || (tc === "s" ? "Serie" : "Film")).trim();
+        const wlUid = String(cardEl.getAttribute("data-wl-uid") || "").trim();
+        const isSaved = cardEl.getAttribute("data-card-saved") === "1" || cardEl.classList.contains("card-saved") || (rawKey && typeof savedKeysSet !== "undefined" && savedKeysSet.has(rawKey));
+        return { tc, id: idNum, key: rawKey, title, year, rating, vip, mediaLabel, wlUid, isSaved };
+      }
+
+      function triggerCardTrailerByElClient(cardEl, ev = null) {
+        const meta = getCardActionMetaClient(cardEl);
+        if (!meta || !meta.id) return false;
+        if (typeof playInstantTrailerFromCard === "function") {
+          playInstantTrailerFromCard(ev, meta.tc, meta.id);
+          return true;
+        }
+        const playBtn = cardEl.querySelector(".card-hover-play-btn");
+        if (playBtn) {
+          playBtn.click();
+          return true;
+        }
+        return false;
+      }
+
+      function triggerCardWishlistByElClient(cardEl, ev = null) {
+        const meta = getCardActionMetaClient(cardEl);
+        if (!meta) return false;
+        if (meta.wlUid) {
+          const saveBtn = cardEl.querySelector(".card-quick-save");
+          if (saveBtn) {
+            saveBtn.click();
+            return true;
+          }
+        }
+        if (meta.id && typeof quickToggleCardWishlist === "function") {
+          quickToggleCardWishlist(ev, meta.tc, meta.id, meta.title);
+          return true;
+        }
+        const saveBtn = cardEl.querySelector(".card-quick-save");
+        if (saveBtn) {
+          saveBtn.click();
+          return true;
+        }
+        return false;
+      }
+
+      function triggerFocusBarActionClient(action, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+        const targetCard = (lastFocusBarCardEl && document.body.contains(lastFocusBarCardEl))
+          ? lastFocusBarCardEl
+          : (currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card") : null);
+        if (!targetCard) return;
+        if (action === "details") {
+          targetCard.click();
+        } else if (action === "trailer") {
+          triggerCardTrailerByElClient(targetCard, ev);
+        } else if (action === "wishlist") {
+          triggerCardWishlistByElClient(targetCard, ev);
+        }
+      }
+
+      function resolveDefaultInputProfileClient() {
+        if (document.body && document.body.getAttribute("data-tv-profile") === "firetv") return "firetv";
+        if (document.body && document.body.getAttribute("data-device") === "tv") return "tv";
+        return "keyboard";
+      }
+
+      function syncCatalogFocusInfoBarClient(explicitCardEl = undefined) {
+        const bar = document.getElementById("catalogFocusInfoBar");
+        if (!bar) return;
+        if (isAnyBlockingOverlayOpenForCardBarClient()) {
+          bar.classList.remove("visible");
+          return;
+        }
+        const isSmallMobile = (window.innerWidth || 1024) <= 640;
+        if (isSmallMobile && !isKeyboardNavActive) {
+          bar.classList.remove("visible");
+          return;
+        }
+        let cardEl = null;
+        if (explicitCardEl === null) {
+          cardEl = null;
+        } else if (explicitCardEl && explicitCardEl.classList && explicitCardEl.classList.contains("card")) {
+          cardEl = explicitCardEl;
+        } else if (currentSpatialEl && currentSpatialEl.closest) {
+          cardEl = currentSpatialEl.closest(".card");
+        }
+        if (!cardEl || !document.body.contains(cardEl)) {
+          bar.classList.remove("visible");
+          lastFocusBarCardEl = null;
+          return;
+        }
+        const meta = getCardActionMetaClient(cardEl);
+        if (!meta || !meta.title) {
+          bar.classList.remove("visible");
+          return;
+        }
+        lastFocusBarCardEl = cardEl;
+        const profile = activeInputProfile || resolveDefaultInputProfileClient();
+        const saveLabel = meta.isSaved ? "Entfernen" : "Merken";
+
+        let hintsHtml = "";
+        if (profile === "firetv") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>' +
+            '<span class="cfi-hint-btn is-static"><kbd>⏪/⏩</kbd> Blättern</span>';
+        } else if (profile === "tv") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>';
+        } else if (profile === "gamepad-ps") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>✕</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>✕ halten</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>□</kbd> ' + saveLabel + '</button>';
+        } else if (profile === "gamepad-xbox") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>A</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>A halten</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>X</kbd> ' + saveLabel + '</button>';
+        } else {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>Enter</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>Leertaste</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>Enter halten</kbd> ' + saveLabel + '</button>';
+        }
+
+        const metaParts = [];
+        if (meta.rating && meta.rating !== "–") {
+          metaParts.push('<span class="cfi-rating">★ ' + esc(meta.rating) + '</span>');
+        }
+        if (meta.year && meta.year !== "–") {
+          metaParts.push('<span>' + esc(meta.year) + '</span>');
+        }
+        if (meta.mediaLabel) {
+          metaParts.push('<span>' + esc(meta.mediaLabel) + '</span>');
+        }
+        const vipDotHtml = meta.vip ? '<span class="cfi-vip-dot" title="VIP: ' + esc(meta.vip) + '"></span>' : '';
+        const savedMarkHtml = meta.isSaved ? '<span class="cfi-saved-mark" title="In Merkliste">✓</span>' : '';
+
+        bar.innerHTML =
+          '<div class="cfi-left">' +
+            vipDotHtml +
+            '<span class="cfi-title">' + esc(meta.title) + '</span>' +
+            (metaParts.length ? ('<span class="cfi-meta">' + metaParts.join('<span>·</span>') + '</span>') : '') +
+            savedMarkHtml +
+          '</div>' +
+          '<span class="cfi-divider"></span>' +
+          '<div class="cfi-hints">' + hintsHtml + '</div>';
+
+        bar.classList.add("visible");
+        const ctrlHud = document.getElementById("controllerHudBar");
+        if (ctrlHud) ctrlHud.classList.remove("visible");
       }
 
       function getActiveForegroundCinemaContextClient() {
@@ -563,10 +761,11 @@
               return;
             }
 
-            // Dynamisches Offset aus Sticky-Header + Filter-Bar berechnen
+            // Dynamisches Offset aus Sticky-Header + Filter-Bar berechnen (unten Platz für Fokus-Info-Zeile lassen)
             const obstructionOffset = getStickyTopObstructionOffset(el, navDir);
             const safeTopBoundary = obstructionOffset + 22;
-            const safeBottomBoundary = window.innerHeight - 28;
+            const isCardTarget = Boolean(el.classList && el.classList.contains("card"));
+            const safeBottomBoundary = window.innerHeight - (isCardTarget ? 78 : 28);
             const r = el.getBoundingClientRect();
 
             if (r.top < safeTopBoundary) {
@@ -653,6 +852,7 @@
         if (scrollIntoView) {
           useSpatialScrollIntoView(el, navDir);
         }
+        syncCatalogFocusInfoBarClient();
       }
 
       function jumpSpatialFocus(el, scrollIntoView = true, navDir = lastSpatialNavDir) {
@@ -710,6 +910,7 @@
             clearCardSubnavState(null);
             currentSpatialEl = null;
           }
+          syncCatalogFocusInfoBarClient();
         }
       }
 
@@ -773,12 +974,33 @@
       }, { passive: true });
 
       // Maus-Hover verschiebt die aktive Auswahl direkt auf das gehoverte Objekt (sofern in den Einstellungen aktiviert und Tastatur-Modus NICHT aktiv ist),
-      // sodass man nahtlos mit Pfeiltasten / Controller weitermachen kann!
+      // und aktualisiert die ruhige Fokus-Info-Zeile bei Desktop-Hover auf Katalog-Covern.
       document.addEventListener("mouseover", (ev) => {
-        if (!mouseHoverNavEnabled || isKeyboardNavActive) return;
+        if (isKeyboardNavActive) return;
         const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
         if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
         if (window.matchMedia && !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+        const inBar = Boolean(ev.target && typeof ev.target.closest === "function" && ev.target.closest("#catalogFocusInfoBar"));
+        if (inBar) {
+          if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
+          return;
+        }
+        const hoveredCard = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(".card") : null;
+        if (hoveredCard) {
+          if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
+          if (activeInputProfile !== "keyboard" && activeInputProfile !== "firetv" && activeInputProfile !== "tv") {
+            activeInputProfile = resolveDefaultInputProfileClient();
+          }
+          syncCatalogFocusInfoBarClient(hoveredCard);
+        } else if (!currentSpatialEl || !(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"))) {
+          if (!hoverFocusBarClearTimer) {
+            hoverFocusBarClearTimer = setTimeout(() => {
+              hoverFocusBarClearTimer = null;
+              if (!isKeyboardNavActive) syncCatalogFocusInfoBarClient(null);
+            }, 180);
+          }
+        }
+        if (!mouseHoverNavEnabled) return;
         if (Date.now() - lastSelectJumpAt < 450) return;
         const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
         if (subTarget) {
@@ -797,15 +1019,8 @@
       }, { passive: true });
 
       function engageCardSubNav(cardEl) {
-        if (!cardEl) return false;
-        const infoBtn = cardEl.querySelector(".card-quick-info");
-        const trailerBtn = cardEl.querySelector(".card-quick-trailer");
-        const saveBtn = cardEl.querySelector(".card-quick-save");
-        const firstSub = infoBtn || trailerBtn || saveBtn;
-        if (!firstSub) return false;
-        cardEl.classList.add("card-subnav-active");
-        jumpSpatialFocus(firstSub, false);
-        return true;
+        // Direkte 1-Schritt-Navigation: Kein Sub-Menü auf Covern mehr – Enter/OK öffnet direkt die Details!
+        return false;
       }
 
       function handleSpatialConfirmAction() {
@@ -830,12 +1045,7 @@
           }
           return;
         }
-        // Wenn man auf einer Film-/Serienkarte Enter drückt:
-        // Öffnet zuerst die Schnellauswahl auf der Karte (ℹ️ Details / ▶ Trailer / 🔖 Favorit),
-        // sodass Trailer & Favoriten per Navigationstasten wählbar sind, OHNE das normale Navigieren zwischen den Filmen zu stören!
-        if (currentSpatialEl.classList && currentSpatialEl.classList.contains("card")) {
-          if (engageCardSubNav(currentSpatialEl)) return;
-        }
+        // Direkte 1-Schritt-Aktion auf Film-/Serien-Cover: Öffnet sofort die Detailansicht!
         currentSpatialEl.click();
       }
 
@@ -849,24 +1059,10 @@
         const list = getVisibleFocusables();
         if (!list.length) return;
 
-        // Falls wir uns gerade in der Sub-Auswahl (ℹ️ Details / ▶ Trailer / 🔖 Favorit) einer Karte befinden:
+        // Falls Fokus per Maus auf einem Karten-Sub-Button lag, sauber zurück auf die Karte für nahtlose Raster-Navigation
         if (currentSpatialEl && isCardSubElement(currentSpatialEl)) {
           const parentCard = currentSpatialEl.closest(".card");
           if (parentCard) {
-            const infoBtn = parentCard.querySelector(".card-quick-info");
-            const trailerBtn = parentCard.querySelector(".card-quick-trailer");
-            const saveBtn = parentCard.querySelector(".card-quick-save");
-            if (currentSpatialEl === infoBtn) {
-              if (dir === "right" && trailerBtn) { setSpatialFocus(trailerBtn, false, dir); return; }
-              if (dir === "up" && saveBtn) { setSpatialFocus(saveBtn, false, dir); return; }
-            } else if (currentSpatialEl === trailerBtn) {
-              if (dir === "left" && infoBtn) { setSpatialFocus(infoBtn, false, dir); return; }
-              if (dir === "up" && saveBtn) { setSpatialFocus(saveBtn, false, dir); return; }
-            } else if (currentSpatialEl === saveBtn) {
-              if (dir === "down" && trailerBtn) { setSpatialFocus(trailerBtn, false, dir); return; }
-              if (dir === "left" && infoBtn) { setSpatialFocus(infoBtn, false, dir); return; }
-            }
-            // Pfeildruck nach außen verlässt die Sub-Buttons und springt nahtlos zur Nachbarkarte weiter!
             clearCardSubnavState(null);
             currentSpatialEl.classList.remove("spatial-focus");
             currentSpatialEl = parentCard;
@@ -1720,11 +1916,31 @@
       let modalHoldActiveKey = "";
       let modalHoldTriggered = false;
 
-      // Enter-Taste auf Film-Cover: Kurz drücken = Schnellwahl (Trailer/Merkliste/Details), Gedrückthalten (>= 380ms) = Direkt Trailer im Vollbild starten!
+      // Enter / Fire TV OK auf Film-Cover: Kurz drücken = Direkt Details öffnen, Gedrückthalten (>= 380ms) = Merkliste umschalten!
       const CARD_ENTER_HOLD_MS = 380;
       let cardEnterHoldTimer = null;
       let cardEnterHoldTarget = null;
       let cardEnterHoldTriggered = false;
+
+      function isConfirmSelectKeyClient(ev) {
+        return Boolean(ev && (ev.key === "Enter" || ev.key === "Select" || ev.keyCode === 23));
+      }
+
+      function isMediaPlayPauseKeyClient(ev) {
+        return Boolean(ev && (ev.key === "MediaPlayPause" || ev.key === "MediaPlay" || ev.code === "MediaPlayPause" || ev.keyCode === 179 || ev.keyCode === 85));
+      }
+
+      function isMediaRewindKeyClient(ev) {
+        return Boolean(ev && (ev.key === "MediaRewind" || ev.key === "MediaTrackPrevious" || ev.keyCode === 227 || ev.keyCode === 89));
+      }
+
+      function isMediaFastForwardKeyClient(ev) {
+        return Boolean(ev && (ev.key === "MediaFastForward" || ev.key === "MediaTrackNext" || ev.keyCode === 228 || ev.keyCode === 90));
+      }
+
+      function isRemoteMenuKeyClient(ev) {
+        return Boolean(ev && (ev.key === "ContextMenu" || ev.keyCode === 82 || ev.keyCode === 93));
+      }
 
       function cancelCardEnterHold() {
         if (cardEnterHoldTimer) {
@@ -2242,14 +2458,12 @@
           }
         } else if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
           resetVerticalTurboStreakClient();
-        } else if (ev.key === "Enter") {
+        } else if (isConfirmSelectKeyClient(ev)) {
           const targetCard = cardEnterHoldTarget;
           const didTriggerLong = cardEnterHoldTriggered;
           cancelCardEnterHold();
           if (targetCard && !didTriggerLong && currentSpatialEl === targetCard) {
-            if (!engageCardSubNav(targetCard)) {
-              targetCard.click();
-            }
+            targetCard.click();
           }
         }
       });
@@ -2261,6 +2475,16 @@
 
       document.addEventListener("keydown", (ev) => {
         engageKeyboardNavMode();
+        if (
+          ev.key === "Select" || ev.keyCode === 23 ||
+          isMediaPlayPauseKeyClient(ev) || isMediaRewindKeyClient(ev) ||
+          isMediaFastForwardKeyClient(ev) || isRemoteMenuKeyClient(ev) ||
+          ev.key === "GoBack" || ev.key === "BrowserBack" || ev.keyCode === 4
+        ) {
+          activeInputProfile = "firetv";
+        } else if (activeInputProfile === "gamepad-ps" || activeInputProfile === "gamepad-xbox") {
+          activeInputProfile = resolveDefaultInputProfileClient();
+        }
         if (typeof wakeHeroCinemaDockClient === "function") wakeHeroCinemaDockClient();
         if (typeof wakeDetailCinemaDockClient === "function") wakeDetailCinemaDockClient();
         const activeEl = document.activeElement;
@@ -2270,10 +2494,11 @@
         const isRangeOrNonTextInput = activeTag === "INPUT" && (activeInputType === "range" || activeInputType === "button" || activeInputType === "checkbox" || activeInputType === "radio" || activeInputType === "submit" || activeInputType === "reset");
         const isTypingInInput = (activeTag === "INPUT" && !isRangeOrNonTextInput) || activeTag === "TEXTAREA" || activeTag === "SELECT" || Boolean(activeEl && activeEl.isContentEditable);
 
-        const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || (ev.key === "Backspace" && !isTypingInInput);
+        const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || ev.keyCode === 4 || ev.keyCode === 166 || (ev.key === "Backspace" && !isTypingInInput);
         if (isBackKey) {
           cancelModalArrowHold();
           resetVerticalTurboStreakClient();
+          cancelCardEnterHold();
           const cinemaCtxForBack = getActiveForegroundCinemaContextClient();
           if (cinemaCtxForBack) {
             if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
@@ -2401,7 +2626,7 @@
               navigateCinemaPlayerFocusClient(dirMap[ev.key], activeCinemaCtx);
               return;
             }
-            if (ev.key === "Enter") {
+            if (isConfirmSelectKeyClient(ev)) {
               cancelModalArrowHold();
               resetVerticalTurboStreakClient();
               ev.preventDefault();
@@ -2411,10 +2636,10 @@
               }
               return;
             }
-            if (lk === "k" || isSpace) {
+            if (lk === "k" || isSpace || isMediaPlayPauseKeyClient(ev)) {
               ev.preventDefault();
               ev.stopPropagation();
-              if (isSpace && activeCinemaCtx.isEnded) {
+              if ((isSpace || isMediaPlayPauseKeyClient(ev)) && activeCinemaCtx.isEnded) {
                 if (!ev.repeat) confirmCinemaPlayerFocusClient(activeCinemaCtx);
                 return;
               }
@@ -2434,14 +2659,16 @@
               else if (heroFgActive && typeof toggleHeroCinemaSubtitlesClient === "function") toggleHeroCinemaSubtitlesClient(ev);
               return;
             }
-            if (lk === "j") {
+            if (lk === "j" || isMediaRewindKeyClient(ev)) {
               ev.preventDefault();
+              ev.stopPropagation();
               if (detailFgActive && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(-10, ev);
               else if (heroFgActive && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(-10, ev);
               return;
             }
-            if (lk === "l") {
+            if (lk === "l" || isMediaFastForwardKeyClient(ev)) {
               ev.preventDefault();
+              ev.stopPropagation();
               if (detailFgActive && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(10, ev);
               else if (heroFgActive && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(10, ev);
               return;
@@ -2495,15 +2722,17 @@
           }
         }
 
-        // Smart-TV Fernbedienung & Tastatur Schnell-Tasten: PageUp / PageDown / ChannelUp / ChannelDown / Home / End
+        // Fire TV / Smart-TV Fernbedienung & Tastatur Schnell-Tasten: Rewind/FastForward, Play/Pause, Menü, PageUp/PageDown, Home/End & Leertaste auf Cover (KEINE Buchstaben-Shortcuts!)
         if (!isTypingInInput) {
-          if (ev.key === "PageDown" || ev.key === "ChannelDown") {
+          if (ev.key === "PageDown" || ev.key === "ChannelDown" || isMediaFastForwardKeyClient(ev)) {
             ev.preventDefault();
+            ev.stopPropagation();
             handleTvQuickPageOrBlockStepClient(1);
             return;
           }
-          if (ev.key === "PageUp" || ev.key === "ChannelUp") {
+          if (ev.key === "PageUp" || ev.key === "ChannelUp" || isMediaRewindKeyClient(ev)) {
             ev.preventDefault();
+            ev.stopPropagation();
             handleTvQuickPageOrBlockStepClient(-1);
             return;
           }
@@ -2515,6 +2744,31 @@
           if (ev.key === "End") {
             ev.preventDefault();
             tvElevatorJumpClient("bottom", false);
+            return;
+          }
+          if (isMediaPlayPauseKeyClient(ev) && isCatalogCardDirectlyActiveClient()) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (!ev.repeat) {
+              triggerCardTrailerByElClient(currentSpatialEl, ev);
+            }
+            return;
+          }
+          if (isRemoteMenuKeyClient(ev) && isCatalogCardDirectlyActiveClient()) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (!ev.repeat) {
+              triggerCardWishlistByElClient(currentSpatialEl, ev);
+            }
+            return;
+          }
+          const isSpaceKey = ev.code === "Space" || ev.key === " ";
+          if (isSpaceKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey && isCatalogCardDirectlyActiveClient()) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (!ev.repeat) {
+              triggerCardTrailerByElClient(currentSpatialEl, ev);
+            }
             return;
           }
         }
@@ -2637,8 +2891,8 @@
           return;
         }
 
-        // Enter-Taste: Auf einem Film-Cover öffnet kurzes Drücken die Schnellwahl (Trailer/Merkliste/Details) und Gedrückthalten (>= 350ms) direkt die Infos!
-        if (ev.key === "Enter" && !isTypingInInput && currentSpatialEl) {
+        // Enter / Fire TV OK: Auf einem Film-Cover öffnet kurzes Drücken direkt Details; Gedrückthalten (>= 380ms) oder Shift+Enter schaltet die Merkliste um!
+        if (isConfirmSelectKeyClient(ev) && !isTypingInInput && currentSpatialEl) {
           cancelModalArrowHold();
           resetVerticalTurboStreakClient();
           ev.preventDefault();
@@ -2648,6 +2902,13 @@
             return;
           }
           if (currentSpatialEl.classList && currentSpatialEl.classList.contains("card")) {
+            if (ev.shiftKey) {
+              if (!ev.repeat) {
+                cancelCardEnterHold();
+                triggerCardWishlistByElClient(currentSpatialEl, ev);
+              }
+              return;
+            }
             if (!ev.repeat && cardEnterHoldTarget !== currentSpatialEl) {
               cancelCardEnterHold();
               cardEnterHoldTarget = currentSpatialEl;
@@ -2661,12 +2922,7 @@
                 cardEnterHoldTarget = null;
                 if (target && currentSpatialEl === target) {
                   clearCardSubnavState(null);
-                  const trailerBtn = target.querySelector(".card-quick-trailer");
-                  if (trailerBtn) {
-                    trailerBtn.click();
-                  } else {
-                    target.click();
-                  }
+                  triggerCardWishlistByElClient(target, null);
                 }
               }, CARD_ENTER_HOLD_MS);
             }
@@ -2701,6 +2957,10 @@
       let lastGamepadActivityAt = 0;
       let activeControllerBrand = "";
       let gamepadVerticalHeld = false;
+      let gamepadBtnAPrevPressed = false;
+      let gamepadBtnADownAt = 0;
+      let gamepadBtnACardEl = null;
+      let gamepadBtnAHoldFired = false;
 
       function isPlayStationControllerClient(gpId) {
         const s = String(gpId || "").toLowerCase();
@@ -2711,6 +2971,7 @@
         const hud = document.getElementById("controllerHudBar");
         if (!hud) return;
         const isPs = isPlayStationControllerClient(gp?.id || "");
+        activeInputProfile = isPs ? "gamepad-ps" : "gamepad-xbox";
         const activeCinemaCtx = getActiveForegroundCinemaContextClient();
         if (activeCinemaCtx) {
           const brandKey = (isPs ? "ps_cinema_" : "xbox_cinema_") + (activeCinemaCtx.isEnded ? "end" : "play");
@@ -2737,6 +2998,12 @@
             }
           }
           hud.classList.add("visible");
+          return;
+        }
+        // Wenn die ruhige Katalog-Fokus-Info-Zeile für ein Cover aktiv ist, übernimmt sie die Controller-Hinweise ohne Überlappung!
+        if (isCatalogCardDirectlyActiveClient()) {
+          syncCatalogFocusInfoBarClient();
+          hud.classList.remove("visible");
           return;
         }
         const modeLabel = controllerL2R2Mode === "zoom" ? "Zoom" : "Seite/Sprung";
@@ -2919,21 +3186,55 @@
               gamepadVerticalHeld = true;
             }
 
+            // ✕ / A auf Film-Cover: Kurz drücken = Direkt Details, Gedrückthalten (>= 380ms) = Instant-Trailer!
+            const rawBtnA = Boolean(gp.buttons?.[0]?.pressed);
+            if (rawBtnA && !gamepadBtnAPrevPressed && isCatalogCardDirectlyActiveClient()) {
+              gamepadBtnADownAt = now;
+              gamepadBtnACardEl = currentSpatialEl;
+              gamepadBtnAHoldFired = false;
+              gamepadBtnACardEl.classList.add("is-enter-holding");
+              lastGamepadActivityAt = now;
+              engageKeyboardNavMode();
+              syncControllerHudBarClient(gp);
+            } else if (rawBtnA && gamepadBtnACardEl && !gamepadBtnAHoldFired && now - gamepadBtnADownAt >= CARD_ENTER_HOLD_MS) {
+              gamepadBtnAHoldFired = true;
+              gamepadBtnACardEl.classList.remove("is-enter-holding");
+              const holdTarget = gamepadBtnACardEl;
+              if (currentSpatialEl === holdTarget) {
+                triggerCardTrailerByElClient(holdTarget, null);
+              }
+              lastGamepadStepAt = now + 220;
+            } else if (!rawBtnA && gamepadBtnAPrevPressed && gamepadBtnACardEl) {
+              const relCard = gamepadBtnACardEl;
+              const wasHold = gamepadBtnAHoldFired;
+              relCard.classList.remove("is-enter-holding");
+              gamepadBtnACardEl = null;
+              gamepadBtnADownAt = 0;
+              gamepadBtnAHoldFired = false;
+              if (!wasHold && currentSpatialEl === relCard) {
+                resetVerticalTurboStreakClient();
+                relCard.click();
+                lastGamepadStepAt = now + 120;
+              }
+            }
+            gamepadBtnAPrevPressed = rawBtnA;
+
             const dynamicGamepadInterval = 180;
             if (now - lastGamepadStepAt > dynamicGamepadInterval) {
               const up = upHeld;
               const down = downHeld;
               const left = gp.buttons?.[14]?.pressed || axX < -0.55;
               const right = gp.buttons?.[15]?.pressed || axX > 0.55;
-              const btnA = gp.buttons?.[0]?.pressed;
+              const btnA = rawBtnA && !gamepadBtnACardEl;
               const btnB = gp.buttons?.[1]?.pressed;
               const btnX = gp.buttons?.[2]?.pressed;
               const btnY = gp.buttons?.[3]?.pressed;
               const btnLB = gp.buttons?.[4]?.pressed;
               const btnRB = gp.buttons?.[5]?.pressed;
+              const btnStart = gp.buttons?.[9]?.pressed;
               const btnR3 = gp.buttons?.[11]?.pressed;
 
-              if (up || down || left || right || btnA || btnB || btnX || btnY || btnLB || btnRB || btnR3) {
+              if (up || down || left || right || btnA || btnB || btnX || btnY || btnLB || btnRB || btnStart || btnR3) {
                 lastGamepadActivityAt = now;
                 engageKeyboardNavMode();
                 syncControllerHudBarClient(gp);
@@ -2943,6 +3244,11 @@
               else if (down) { handleVerticalDirectionStepWithTurboClient("down", verticalTurboDir === "down"); lastGamepadStepAt = now; }
               else if (left) { resetVerticalTurboStreakClient(); moveSpatialFocus("left", false, true); lastGamepadStepAt = now; }
               else if (right) { resetVerticalTurboStreakClient(); moveSpatialFocus("right", false, true); lastGamepadStepAt = now; }
+              else if (btnStart && isCatalogCardDirectlyActiveClient()) {
+                resetVerticalTurboStreakClient();
+                triggerCardTrailerByElClient(currentSpatialEl, null);
+                lastGamepadStepAt = now + 220;
+              }
               else if (btnA && currentSpatialEl) {
                 resetVerticalTurboStreakClient();
                 handleSpatialConfirmAction();
@@ -3027,6 +3333,7 @@
         if (mRoot && typeof MutationObserver !== "undefined") {
           const backBtnObs = new MutationObserver(() => {
             if (typeof syncTelegramBackButtonClient === "function") syncTelegramBackButtonClient();
+            if (typeof syncCatalogFocusInfoBarClient === "function") syncCatalogFocusInfoBarClient();
           });
           backBtnObs.observe(mRoot, { childList: true, subtree: false });
         }

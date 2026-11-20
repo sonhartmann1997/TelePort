@@ -9,7 +9,7 @@ const modulesDir = path.resolve(rootDir, 'worker-modules');
 const workerFile = path.resolve(rootDir, 'worker.js');
 
 const WORKER_REPO_STUB = `// Auto-assembled from ./worker-modules/*.js during 'vite build' (bun run build / npm run build)
-// See ./worker-modules/ for the 9 modular departments.
+// See ./worker-modules/ for the 19 modular worker files.
 export default {
   async fetch() {
     return new Response("Run 'bun run build' or 'npm run build' before deploying.", { status: 200 });

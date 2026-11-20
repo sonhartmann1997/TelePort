@@ -1232,26 +1232,27 @@
       .sort-chip { background: transparent; color: #cbd5e1; border: 0; border-radius: 999px; padding: 4px 8px; font-size: calc(11px * var(--scale-text)); font-weight: 700; cursor: pointer; }
       .sort-chip.active { background: #3b82f6; color: #fff; }
 
-      /* Ruhige 2:3 Katalog-Filmcover im Apple TV+ Stil mit integriertem unteren Farbverlauf & Hover-Glas-Aktionen */
+      /* Ruhige 2:3 Katalog-Filmcover: Freies Poster + klare Titel- & Info-Zeile ruhig darunter */
       .carousel {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(calc(132px * var(--scale-cover)), 1fr));
-        gap: calc(12px * var(--scale-cover));
-        align-items: stretch;
+        grid-template-columns: repeat(auto-fill, minmax(calc(136px * var(--scale-cover)), 1fr));
+        column-gap: calc(12px * var(--scale-cover));
+        row-gap: calc(18px * var(--scale-cover));
+        align-items: start;
       }
       .card {
-        background: #0f172a;
+        background: transparent;
+        border: none;
         border-radius: 12px;
-        aspect-ratio: 2 / 3;
-        overflow: hidden;
+        overflow: visible;
         cursor: pointer;
-        transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.16s ease, box-shadow 0.2s ease;
-        border: 1px solid rgba(255, 255, 255, 0.10);
-        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.48);
-        display: block;
+        box-shadow: none;
+        display: flex;
+        flex-direction: column;
         position: relative;
+        outline: none !important;
         content-visibility: auto;
-        contain-intrinsic-size: 132px 198px;
+        contain-intrinsic-size: 136px 248px;
         touch-action: pan-y;
         -webkit-touch-callout: none;
         -webkit-user-select: none;
@@ -1262,24 +1263,33 @@
         -webkit-user-select: none;
         user-select: none;
       }
-      .card:hover,
-      .card.spatial-focus {
-        border-color: #38bdf8 !important;
-        outline: 2px solid #38bdf8 !important;
-        outline-offset: -2px !important;
-        transform: translateY(-2px);
-        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 14px 28px rgba(0, 0, 0, 0.75) !important;
-      }
-      .card:active { transform: scale(0.98); }
       .card-poster-wrap {
-        position: absolute;
-        inset: 0;
+        position: relative;
         width: 100%;
-        height: 100%;
+        aspect-ratio: 2 / 3;
+        border-radius: 12px;
         overflow: hidden;
         background: linear-gradient(110deg, #0f172a 25%, #19253d 48%, #0f172a 72%);
         background-size: 200% 100%;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+        transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 160ms ease, box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1);
         touch-action: pan-y;
+      }
+      .card:hover .card-poster-wrap,
+      .card.spatial-focus .card-poster-wrap,
+      .card:focus-visible .card-poster-wrap {
+        border-color: #38bdf8;
+        transform: translateY(-4px);
+        box-shadow: 0 0 0 2.5px #38bdf8, 0 14px 28px rgba(0, 0, 0, 0.62);
+      }
+      .card:hover,
+      .card.spatial-focus,
+      .card:focus-visible {
+        z-index: 12;
+      }
+      .card:active .card-poster-wrap {
+        transform: translateY(-1px) scale(0.985);
       }
       .card-poster-wrap img,
       .card > img {
@@ -1292,11 +1302,12 @@
         -webkit-user-drag: none;
         -webkit-touch-callout: none;
         user-select: none;
-        transition: opacity 0.24s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: opacity 0.24s ease, transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
       }
       .card:hover .card-poster-wrap img,
-      .card.spatial-focus .card-poster-wrap img {
-        transform: scale(1.045);
+      .card.spatial-focus .card-poster-wrap img,
+      .card:focus-visible .card-poster-wrap img {
+        transform: scale(1.035);
       }
       .card-poster-wrap img.lazy-cover-img.is-loading {
         opacity: 0.18;
@@ -1321,8 +1332,8 @@
         border-radius: 6px;
         background: linear-gradient(135deg, #0284c7, #4338ca);
         color: #fff;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.85);
-        border: 1px solid rgba(255,255,255,0.32);
+        box-shadow: 0 3px 10px rgba(0,0,0,0.75);
+        border: 1px solid rgba(255,255,255,0.28);
         letter-spacing: 0.2px;
       }
       .card-type-badge {
@@ -1330,10 +1341,11 @@
         font-weight: 800;
         padding: 2px 6px;
         border-radius: 6px;
-        background: rgba(10, 14, 24, 0.88);
+        background: rgba(10, 14, 24, 0.86);
         backdrop-filter: blur(8px);
         color: #fff;
         border: 1px solid rgba(255,255,255,0.18);
+        pointer-events: auto;
       }
       /* Minimaler grüner VIP-Punkt oben links auf dem Cover */
       .card-vip-dot {
@@ -1342,12 +1354,12 @@
         border-radius: 50%;
         background: #10b981;
         border: 1.5px solid #ffffff;
-        box-shadow: 0 0 8px rgba(16, 185, 129, 0.95), 0 2px 5px rgba(0, 0, 0, 0.85);
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.92), 0 2px 5px rgba(0, 0, 0, 0.78);
         display: inline-block;
         flex-shrink: 0;
         pointer-events: auto;
       }
-      /* Lesezeichen-Button oben rechts: im Ruhezustand ruhig ausgeblendet (außer wenn gespeichert), bei Hover/Fokus edel sichtbar */
+      /* Lesezeichen-Button oben rechts: im Ruhezustand ruhig ausgeblendet (außer wenn gespeichert), bei Maus-Hover oder Touch dezent sichtbar */
       .card-quick-save {
         position: absolute;
         top: 7px;
@@ -1355,7 +1367,7 @@
         width: 28px;
         height: 28px;
         border-radius: 999px;
-        background: rgba(10, 15, 28, 0.78);
+        background: rgba(10, 15, 28, 0.76);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         border: 1px solid rgba(255, 255, 255, 0.22);
@@ -1368,8 +1380,43 @@
         z-index: 5;
         opacity: 0;
         pointer-events: none;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.48);
         transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, opacity 0.16s ease, border-color 0.14s;
+      }
+      /* Dezenter runder Trailer-Play-Icon-Button unten rechts NUR bei Desktop-Maus-Hover (auf Touch & Tastatur/TV komplett unsichtbar) */
+      .card-hover-play-btn {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        background: rgba(8, 13, 26, 0.82);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 5;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(4px) scale(0.92);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.58);
+        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s;
+      }
+      body:not(.kb-nav-active) .card:hover .card-hover-play-btn {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0) scale(1);
+      }
+      .card-hover-play-btn:hover {
+        background: #0284c7;
+        border-color: #ffffff;
+        transform: translateY(0) scale(1.1);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.45), 0 6px 16px rgba(0, 0, 0, 0.68);
       }
       @media (hover: none), (pointer: coarse) {
         .card-quick-save {
@@ -1379,26 +1426,31 @@
           height: 28px;
           font-size: 12px;
         }
-        .card-quick-info,
-        .card-quick-trailer {
+        .card-hover-play-btn {
           display: none !important;
         }
       }
-      .card.long-press-active {
+      body[data-device="tv"] .card-hover-play-btn,
+      body.kb-nav-active .card-hover-play-btn {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .card.long-press-active .card-poster-wrap {
         transform: scale(0.96) !important;
         transition: transform 0.12s ease;
       }
       .card-quick-save.saved,
-      .card:hover .card-quick-save,
-      .card:focus-within .card-quick-save,
-      .card.spatial-focus .card-quick-save,
-      .card.card-subnav-active .card-quick-save {
+      body:not(.kb-nav-active) .card:hover .card-quick-save {
         opacity: 1;
         pointer-events: auto;
       }
-      .card.card-saved {
-        border-color: rgba(16, 185, 129, 0.65) !important;
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(16, 185, 129, 0.35);
+      .card.card-saved .card-poster-wrap {
+        border-color: rgba(16, 185, 129, 0.52);
+      }
+      .card.card-saved:hover .card-poster-wrap,
+      .card.card-saved.spatial-focus .card-poster-wrap,
+      .card.card-saved:focus-visible .card-poster-wrap {
+        border-color: #38bdf8;
       }
       .card-quick-save:hover,
       .card-quick-save.spatial-focus {
@@ -1408,18 +1460,14 @@
         background: #0ea5e9;
         color: #04101d;
         border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.55), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.5), 0 4px 12px rgba(0,0,0,0.75);
       }
       .card-quick-save.saved {
         background: linear-gradient(135deg, #10b981, #059669);
         border-color: #6ee7b7;
         color: #ffffff;
         font-weight: 900;
-        box-shadow: 0 0 12px rgba(16, 185, 129, 0.55), 0 2px 8px rgba(0, 0, 0, 0.65);
-      }
-      .card-quick-save.saved.spatial-focus {
-        border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.75), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.5), 0 2px 8px rgba(0, 0, 0, 0.55);
       }
       @keyframes quickSavePop {
         0% { transform: scale(0.8); }
@@ -1460,89 +1508,6 @@
       body[data-theme="light"] .detail-collapse-btn:hover {
         background: #e2e8f0;
         border-color: #94a3b8;
-      }
-      /* Hover-Glas-Aktionen (▶ Trailer & ℹ️ Details) schweben über dem unteren Titel-Verlauf */
-      .card-quick-trailer {
-        position: absolute;
-        bottom: 52px;
-        right: 6px;
-        z-index: 5;
-        background: rgba(10, 15, 28, 0.88);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        color: #fff;
-        border: 1px solid rgba(56, 189, 248, 0.65);
-        border-radius: 999px;
-        padding: 3px 8px;
-        font-size: calc(10px * var(--scale-text));
-        font-weight: 800;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(4px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
-      }
-      .card:hover .card-quick-trailer,
-      .card:focus-within .card-quick-trailer,
-      .card.spatial-focus .card-quick-trailer,
-      .card.card-subnav-active .card-quick-trailer {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-      .card-quick-trailer:hover,
-      .card-quick-trailer.spatial-focus {
-        background: var(--red);
-        border-color: #fff;
-        transform: translateY(0) scale(1.06);
-        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.55), 0 4px 14px rgba(0,0,0,0.85);
-      }
-      .card-quick-info {
-        position: absolute;
-        bottom: 52px;
-        left: 6px;
-        z-index: 5;
-        background: rgba(10, 15, 28, 0.88);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        color: #e2e8f0;
-        border: 1px solid rgba(255, 255, 255, 0.28);
-        border-radius: 999px;
-        padding: 3px 8px;
-        font-size: calc(10px * var(--scale-text));
-        font-weight: 800;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(4px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
-      }
-      /* ℹ️ Details auf dem Cover im normalen Maus-Hover ausgeblendet (da Klick auf Karte bereits Details öffnet), nur im TV/Gamepad-Subnav-Modus sichtbar */
-      .card.card-subnav-active .card-quick-info {
-        display: inline-flex !important;
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-      .card-quick-info:hover,
-      .card-quick-info.spatial-focus {
-        background: var(--purple);
-        border-color: #fff;
-        color: #fff;
-        transform: translateY(0) scale(1.06);
-        box-shadow: 0 0 0 3px rgba(91, 70, 245, 0.6), 0 4px 14px rgba(0,0,0,0.85);
-      }
-      .card.card-subnav-active {
-        border-color: var(--accent-primary) !important;
-        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.45), 0 12px 28px rgba(0,0,0,0.75);
       }
       /* Aufgeräumte Detail-Modal Nutzer-Aktionsleiste & eigene kompakte Admin-Leiste */
       .modal-actions-row {
@@ -1859,22 +1824,19 @@
         border-color: #cbd5e1;
       }
       .card-body {
-        position: absolute;
-        inset: auto 0 0 0;
-        z-index: 2;
-        padding: 32px 10px 8px;
+        position: static;
+        padding: 7px 2px 2px;
         display: flex;
         flex-direction: column;
-        justify-content: flex-end;
         gap: 2px;
-        background: linear-gradient(180deg, rgba(4, 7, 16, 0) 0%, rgba(4, 7, 16, 0.84) 48%, rgba(4, 7, 16, 0.98) 100%);
-        pointer-events: none;
+        background: none;
+        pointer-events: auto;
       }
       .card-title {
-        font-size: calc(12px * var(--scale-text));
-        font-weight: 800;
-        color: #ffffff;
-        line-height: 1.24;
+        font-size: calc(12.5px * var(--scale-text));
+        font-weight: 700;
+        color: #e2e8f0;
+        line-height: 1.28;
         display: -webkit-box;
         -webkit-line-clamp: 1;
         -webkit-box-orient: vertical;
@@ -1883,7 +1845,12 @@
         word-break: break-word;
         overflow-wrap: anywhere;
         position: relative;
-        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+        transition: color 160ms ease;
+      }
+      .card:hover .card-title,
+      .card.spatial-focus .card-title,
+      .card:focus-visible .card-title {
+        color: #ffffff;
       }
       .card-title-text {
         display: inline;
@@ -1908,14 +1875,40 @@
         animation: cardTitleMarquee var(--marquee-dur, 5.5s) ease-in-out infinite;
       }
       .card-sub {
-        font-size: calc(10.5px * var(--scale-text));
-        color: #cbd5e1;
+        font-size: calc(11px * var(--scale-text));
+        color: #94a3b8;
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        margin-top: 1px;
-        font-weight: 700;
+        justify-content: space-between;
+        gap: 5px;
+        margin-top: 0;
+        font-weight: 600;
+        line-height: 1.3;
         font-variant-numeric: tabular-nums;
+      }
+      .card-sub-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .card-sub-rating {
+        color: #fbbf24;
+        font-weight: 700;
+      }
+      .card-sub-dot {
+        opacity: 0.45;
+      }
+      .card-wl-folder-link {
+        cursor: pointer;
+        color: #7dd3fc;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       @keyframes cardFadeIn {
         from { opacity: 0.35; }
@@ -1923,29 +1916,47 @@
       }
       .card { animation: cardFadeIn 0.18s ease-out; }
 
-      /* Sanfte Skeleton-Platzhalterkarten beim Nachladen statt hartem Ausgrauen (#21) */
+      /* Sanfte Skeleton-Platzhalterkarten im exakt gleichen 2-teiligen Poster + Text-Layout */
       @keyframes skeletonShimmer {
         0% { background-position: -200% 0; }
         100% { background-position: 200% 0; }
       }
       .skeleton-card {
-        aspect-ratio: 2 / 3;
-        border-radius: 12px;
-        overflow: hidden;
-        background: #0f172a;
-        border: 1px solid rgba(148, 163, 184, 0.12);
+        display: flex;
+        flex-direction: column;
+        background: transparent;
+        border: none;
         position: relative;
         pointer-events: none;
       }
       .skeleton-poster {
         width: 100%;
-        height: 100%;
+        aspect-ratio: 2 / 3;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.12);
         background: linear-gradient(90deg, rgba(15, 23, 42, 0.9) 25%, rgba(30, 41, 59, 0.95) 50%, rgba(15, 23, 42, 0.9) 75%);
         background-size: 200% 100%;
         animation: skeletonShimmer 1.35s infinite linear;
       }
+      .skeleton-body {
+        padding: 8px 2px 2px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
       .skeleton-line {
-        display: none;
+        display: block;
+        height: 11px;
+        width: 82%;
+        border-radius: 5px;
+        background: linear-gradient(90deg, rgba(15, 23, 42, 0.88) 25%, rgba(30, 41, 59, 0.92) 50%, rgba(15, 23, 42, 0.88) 75%);
+        background-size: 200% 100%;
+        animation: skeletonShimmer 1.35s infinite linear;
+      }
+      .skeleton-line.short {
+        width: 50%;
+        height: 9px;
       }
 
       /* Seiten-Anzeige (Seite X von Y) & Direkt-Seitenwahl (#17) */
@@ -2475,14 +2486,14 @@
       .detail-bg-video-layer.is-playing {
         opacity: 1;
       }
-      /* Reiner Top-Bleed im overflow:hidden Container: schiebt YouTubes obere Titelzeile (~62px) aus dem Bild, belässt die Unterkante bündig bei 0px (kein Zoom, 100% unbeschnittene Untertitel!) */
+      /* Reiner Top-Bleed im overflow:hidden Container: schiebt YouTubes obere Titelzeile (~62–66px) komplett aus dem Bild, belässt die Unterkante exakt bündig bei 0px (kein Zoom, 100% unbeschnittene Untertitel!) */
       .detail-bg-video-frame {
         position: absolute;
-        top: -64px;
+        top: -68px;
         left: 0;
         right: 0;
         width: 100% !important;
-        height: calc(100% + 64px) !important;
+        height: calc(100% + 68px) !important;
         transform-origin: 50% 50%;
         transform: translate3d(0, 0, 0) !important;
         clip-path: none !important;
@@ -2492,16 +2503,16 @@
       }
       .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
       .hero.is-cc-safe-framing .detail-bg-video-frame {
-        top: -64px;
-        height: calc(100% + 64px) !important;
+        top: -68px;
+        height: calc(100% + 68px) !important;
         transform: translate3d(0, 0, 0) !important;
       }
       @media (max-height: 460px) {
         .detail-bg-video-frame,
         .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
         .hero.is-cc-safe-framing .detail-bg-video-frame {
-          top: -54px;
-          height: calc(100% + 54px) !important;
+          top: -56px;
+          height: calc(100% + 56px) !important;
         }
       }
       .detail-ambilight-glow {
@@ -2739,7 +2750,7 @@
         gap: 8px;
         padding: 28px 22px 14px;
         border-radius: 0;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0) 0%, rgba(4, 7, 15, 0.24) 28%, rgba(4, 7, 15, 0.62) 66%, rgba(4, 7, 15, 0.86) 100%);
+        background: linear-gradient(180deg, rgba(6, 10, 20, 0) 0%, rgba(6, 10, 20, 0.34) 28%, rgba(6, 10, 20, 0.88) 64%, #060a14 86%, #060a14 100%);
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
         border-top: none;
@@ -2773,7 +2784,12 @@
       }
       .detail-cinema-player-dock:hover,
       .detail-cinema-player-dock:focus-within {
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0) 0%, rgba(4, 7, 15, 0.30) 28%, rgba(4, 7, 15, 0.68) 66%, rgba(4, 7, 15, 0.90) 100%);
+        background: linear-gradient(180deg, rgba(6, 10, 20, 0) 0%, rgba(6, 10, 20, 0.42) 26%, rgba(6, 10, 20, 0.92) 60%, #060a14 82%, #060a14 100%);
+      }
+      /* Im Pause-Zustand deckt der nahtlose Bodenverlauf auch YouTubes "Weitere Videos"-Karten & Button blickdicht ab – ohne harte Kante! */
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .detail-cinema-player-dock,
+      .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .detail-cinema-player-dock {
+        background: linear-gradient(180deg, rgba(6, 10, 20, 0) 0%, rgba(6, 10, 20, 0.62) 24%, #060a14 54%, #060a14 100%);
       }
       .detail-hero-stage.is-cc-safe-framing .detail-cinema-player-dock,
       .hero.is-cc-safe-framing .detail-cinema-player-dock {
@@ -4284,6 +4300,154 @@
         color: #38bdf8;
         font-weight: 900;
       }
+      /* Ruhige, geräteadaptive Fokus-Info-Zeile am unteren Bildrand beim Durchblättern des Katalogs */
+      .catalog-focus-info-bar {
+        position: fixed;
+        left: 50%;
+        bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+        transform: translate(-50%, 10px);
+        z-index: 158;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        max-width: min(94vw, 820px);
+        min-height: 38px;
+        max-height: 46px;
+        padding: 6px 14px;
+        border-radius: 12px;
+        background: rgba(8, 13, 26, 0.90);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border: 1px solid rgba(56, 189, 248, 0.30);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.64);
+        color: #e2e8f0;
+        font-size: calc(12px * var(--scale-text));
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 170ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .catalog-focus-info-bar.visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+        pointer-events: auto;
+      }
+      body:has(#filterSidebarDrawer.open) .catalog-focus-info-bar,
+      body:has(#tvQuickJumpElevator.has-subpanel) .catalog-focus-info-bar,
+      body:has(#searchAutocompleteBox.open) .catalog-focus-info-bar,
+      body:has(#searchGenreDropdownOverlay.open) .catalog-focus-info-bar,
+      body:has(#modalRoot .modal-backdrop) .catalog-focus-info-bar,
+      body:has(.is-trailer-foreground-mode) .catalog-focus-info-bar {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      body[data-device="tv"] .catalog-focus-info-bar {
+        bottom: 22px;
+        padding: 7px 16px;
+        border-color: rgba(56, 189, 248, 0.42);
+      }
+      .cfi-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .cfi-title {
+        font-weight: 800;
+        color: #ffffff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: min(36vw, 290px);
+      }
+      .cfi-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: #94a3b8;
+        font-size: calc(11.5px * var(--scale-text));
+        font-weight: 600;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      .cfi-rating {
+        color: #fbbf24;
+        font-weight: 800;
+      }
+      .cfi-vip-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #10b981;
+        box-shadow: 0 0 6px rgba(16, 185, 129, 0.85);
+        flex-shrink: 0;
+      }
+      .cfi-saved-mark {
+        color: #34d399;
+        font-weight: 800;
+      }
+      .cfi-divider {
+        width: 1px;
+        height: 18px;
+        background: rgba(148, 163, 184, 0.24);
+        flex-shrink: 0;
+      }
+      .cfi-hints {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .cfi-hint-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: 3px 6px;
+        color: #cbd5e1;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+      }
+      .cfi-hint-btn:hover {
+        background: rgba(56, 189, 248, 0.14);
+        border-color: rgba(56, 189, 248, 0.35);
+        color: #ffffff;
+      }
+      .cfi-hint-btn.is-static {
+        cursor: default;
+        opacity: 0.82;
+      }
+      .cfi-hint-btn.is-static:hover {
+        background: transparent;
+        border-color: transparent;
+        color: #cbd5e1;
+      }
+      .cfi-hint-btn kbd {
+        font-family: inherit;
+        font-size: calc(10px * var(--scale-text));
+        font-weight: 800;
+        padding: 1px 6px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.09);
+        border: 1px solid rgba(255, 255, 255, 0.20);
+        color: #f8fafc;
+        letter-spacing: 0.15px;
+      }
+      @media (max-width: 780px) {
+        .cfi-divider,
+        .cfi-hints {
+          display: none;
+        }
+        .cfi-title {
+          max-width: 54vw;
+        }
+      }
       @media (max-width: 640px) {
         .detail-hero-stage {
           padding: 14px 16px 12px;
@@ -4292,6 +4456,9 @@
           padding: 16px 16px 56px;
         }
         #controllerHudBar {
+          display: none !important;
+        }
+        body:not(.kb-nav-active) .catalog-focus-info-bar {
           display: none !important;
         }
       }
@@ -5039,7 +5206,6 @@
       body #detailTrailerBtn:focus-visible,
       body #detailPrimaryPlayBtn.spatial-focus,
       body #detailPrimaryPlayBtn:focus-visible,
-      body .card-quick-trailer.spatial-focus,
       body .cinema-overlay-btn.is-primary.spatial-focus,
       body .cinema-dock-btn.is-primary.spatial-focus,
       body .btn.blue.spatial-focus,
@@ -5061,7 +5227,6 @@
         box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.92), 0 0 0 5px #ff7a00, 0 0 26px rgba(255, 122, 0, 0.85), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
         z-index: 30;
       }
-      body .card-quick-trailer.spatial-focus,
       body .media-mode-tab.active-movie.spatial-focus,
       body .media-mode-tab.active-series.spatial-focus {
         outline-offset: -1px !important;
@@ -5202,6 +5367,7 @@
     <div id="hudToast"></div>
     <div id="liveZoomBadgeEl" aria-live="polite">🔍 Zoom: 100%</div>
     <div id="controllerHudBar" aria-hidden="true"></div>
+    <div id="catalogFocusInfoBar" class="catalog-focus-info-bar" aria-live="polite"></div>
     <div id="antiSpamHudMount" style="position:fixed;bottom:14px;right:14px;left:14px;max-width:480px;margin-left:auto;z-index:1550;pointer-events:none;display:none"></div>
     <div id="modalHoldNavIndicator" class="modal-hold-nav-indicator">
       <span id="modalHoldNavText">⏩ Halten zum Weiterblättern...</span>

@@ -29274,13 +29274,67 @@
         color: #334155;
       }
       body[data-theme="light"] .card {
-        background: #0f172a;
-        border-color: rgba(15, 23, 42, 0.16);
-        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+        background: transparent;
+        border: none;
+        box-shadow: none;
       }
-      body[data-theme="light"] .card:hover {
+      body[data-theme="light"] .card-poster-wrap {
+        background: #e2e8f0;
+        border-color: rgba(15, 23, 42, 0.14);
+        box-shadow: 0 5px 15px rgba(15, 23, 42, 0.11);
+      }
+      body[data-theme="light"] .card:hover .card-poster-wrap,
+      body[data-theme="light"] .card.spatial-focus .card-poster-wrap,
+      body[data-theme="light"] .card:focus-visible .card-poster-wrap {
         border-color: #0284c7;
-        box-shadow: 0 10px 24px rgba(2, 132, 199, 0.22);
+        box-shadow: 0 0 0 2.5px #0284c7, 0 12px 24px rgba(15, 23, 42, 0.20);
+      }
+      body[data-theme="light"] .card-title {
+        color: #0f172a;
+      }
+      body[data-theme="light"] .card:hover .card-title,
+      body[data-theme="light"] .card.spatial-focus .card-title,
+      body[data-theme="light"] .card:focus-visible .card-title {
+        color: #0369a1;
+      }
+      body[data-theme="light"] .card-sub {
+        color: #475569;
+      }
+      body[data-theme="light"] .card-sub-rating {
+        color: #b45309;
+      }
+      body[data-theme="light"] .card-wl-folder-link {
+        color: #0369a1 !important;
+      }
+      body[data-theme="light"] .catalog-focus-info-bar {
+        background: rgba(255, 255, 255, 0.94);
+        border-color: rgba(2, 132, 199, 0.34);
+        color: #0f172a;
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+      }
+      body[data-theme="light"] .cfi-title {
+        color: #0f172a;
+      }
+      body[data-theme="light"] .cfi-meta {
+        color: #475569;
+      }
+      body[data-theme="light"] .cfi-rating {
+        color: #b45309;
+      }
+      body[data-theme="light"] .cfi-divider {
+        background: rgba(15, 23, 42, 0.14);
+      }
+      body[data-theme="light"] .cfi-hint-btn {
+        color: #334155;
+      }
+      body[data-theme="light"] .cfi-hint-btn:hover {
+        background: rgba(2, 132, 199, 0.12);
+        color: #0369a1;
+      }
+      body[data-theme="light"] .cfi-hint-btn kbd {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+        color: #0f172a;
       }
       body[data-theme="light"] .pagination-bar {
         background: #ffffff;
@@ -29856,9 +29910,10 @@
         border-bottom: 1px solid rgba(0, 240, 255, 0.35);
         box-shadow: 0 4px 24px rgba(255, 0, 127, 0.18);
       }
-      body[data-theme="cyberpunk"] .card:hover {
+      body[data-theme="cyberpunk"] .card:hover .card-poster-wrap,
+      body[data-theme="cyberpunk"] .card.spatial-focus .card-poster-wrap {
         border-color: #00f0ff;
-        box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+        box-shadow: 0 0 0 2.5px #00f0ff, 0 12px 26px rgba(0, 240, 255, 0.30);
       }
       /* Barrierefreier Farbenblind-Modus (Okabe-Ito Blau vs. Orange statt Grün vs. Rot) */
       body[data-colorblind="1"]:not([data-theme="light"]) {
@@ -29906,7 +29961,10 @@
         scroll-padding-top: var(--sticky-header-offset, 74px);
         scroll-padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 20px));
       }
-      .card,
+      .card {
+        scroll-margin-top: var(--sticky-header-offset, 74px);
+        scroll-margin-bottom: 76px;
+      }
       .btn,
       .f-pill,
       .ff-tab-btn,
@@ -29919,8 +29977,9 @@
       }
       /* Geräte-spezifische automatische Anpassung (User-Agent) */
       body[data-device="tv"] .carousel {
-        grid-template-columns: repeat(auto-fill, minmax(calc(155px * var(--scale-cover)), 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(auto-fill, minmax(calc(158px * var(--scale-cover)), 1fr));
+        column-gap: calc(14px * var(--scale-cover));
+        row-gap: calc(20px * var(--scale-cover));
       }
       body[data-device="mobile"] header {
         padding: calc(6px * var(--scale-menu)) calc(8px * var(--scale-menu));
@@ -29930,8 +29989,9 @@
         font-size: calc(15.5px * var(--scale-menu));
       }
       body[data-device="mobile"] .carousel {
-        grid-template-columns: repeat(auto-fill, minmax(calc(104px * var(--scale-cover)), 1fr));
-        gap: 8px;
+        grid-template-columns: repeat(auto-fill, minmax(calc(106px * var(--scale-cover)), 1fr));
+        column-gap: calc(10px * var(--scale-cover));
+        row-gap: calc(16px * var(--scale-cover));
       }
 
       /* Gemeinsame 1:1 Kino-Typografie & Button-Variablen für Hero-Slider & Detailansicht */
@@ -29943,13 +30003,12 @@
         --cinema-btn-pad: calc(9.5px * var(--scale-menu)) calc(18px * var(--scale-menu));
       }
 
-      /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen):
+      /* Klare Fokus-Markierung für Pfeiltasten, Fire TV / Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks & .card-Rahmen ausgenommen):
          WICHTIG: outline-offset: -2px + inset Box-Shadow + kein horizontales scale(), damit die linken & rechten Ränder
          in Scrollboxen (Suchvorschläge, Sidebar, Genre-Grid, Cast-Slider, Katalog) NIEMALS überstehen oder abgeschnitten werden! */
-      .spatial-focus:where(:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn):not(.hero-btn-play):not(#heroBtnTrailer):not(.detail-btn-play-white):not(#detailTrailerBtn):not(#detailPrimaryPlayBtn):not(#heroCinemaPlayBtn):not(#detailCinemaPlayBtn):not(.card-quick-trailer):not(.btn.blue):not(.btn.red):not(.btn.primary):not(.btn.active):not(.btn.hero-primary):not(.page-jump-btn.primary):not(.page-jump-btn.active):not(.media-mode-tab.active-movie):not(.media-mode-tab.active-series)),
+      .spatial-focus:where(:not(.card):not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn):not(.hero-btn-play):not(#heroBtnTrailer):not(.detail-btn-play-white):not(#detailTrailerBtn):not(#detailPrimaryPlayBtn):not(#heroCinemaPlayBtn):not(#detailCinemaPlayBtn):not(.card-hover-play-btn):not(.btn.blue):not(.btn.red):not(.btn.primary):not(.btn.active):not(.btn.hero-primary):not(.page-jump-btn.primary):not(.page-jump-btn.active):not(.media-mode-tab.active-movie):not(.media-mode-tab.active-series)),
       .brand-logo:focus-visible,
       .btn:focus-visible:where(:not(.blue):not(.red):not(.primary):not(.active):not(.hero-primary)),
-      .card:focus-visible,
       .media-mode-tab:focus-visible:where(:not(.active-movie):not(.active-series)),
       .ff-tab-btn:focus-visible,
       .f-pill:focus-visible,
@@ -31020,11 +31079,12 @@
         transform: translateX(-2px);
         filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.7));
       }
-      /* Dezentes Feedback beim Enter-Gedrückthalten auf einem Cover (direkter Trailer-Start) */
-      .card.is-enter-holding {
-        box-shadow: 0 0 0 2.5px #38bdf8, 0 0 26px rgba(56, 189, 248, 0.55) !important;
-        transform: scale(0.985);
-        transition: transform 0.22s ease, box-shadow 0.22s ease !important;
+      /* Dezentes Feedback beim Enter-/OK-Gedrückthalten auf einem Cover (Merkliste / Controller-Trailer) */
+      .card.is-enter-holding .card-poster-wrap {
+        border-color: #10b981 !important;
+        box-shadow: 0 0 0 2.5px #10b981, 0 0 24px rgba(16, 185, 129, 0.48) !important;
+        transform: translateY(-2px) scale(0.975) !important;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease !important;
       }
       /* Hintergrund-Scroll-Sperre sobald ein Seitenmenü (Links oder Rechts) aktiv/geöffnet ist */
       body:has(#filterSidebarDrawer.open),
@@ -32978,26 +33038,27 @@
       .sort-chip { background: transparent; color: #cbd5e1; border: 0; border-radius: 999px; padding: 4px 8px; font-size: calc(11px * var(--scale-text)); font-weight: 700; cursor: pointer; }
       .sort-chip.active { background: #3b82f6; color: #fff; }
 
-      /* Ruhige 2:3 Katalog-Filmcover im Apple TV+ Stil mit integriertem unteren Farbverlauf & Hover-Glas-Aktionen */
+      /* Ruhige 2:3 Katalog-Filmcover: Freies Poster + klare Titel- & Info-Zeile ruhig darunter */
       .carousel {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(calc(132px * var(--scale-cover)), 1fr));
-        gap: calc(12px * var(--scale-cover));
-        align-items: stretch;
+        grid-template-columns: repeat(auto-fill, minmax(calc(136px * var(--scale-cover)), 1fr));
+        column-gap: calc(12px * var(--scale-cover));
+        row-gap: calc(18px * var(--scale-cover));
+        align-items: start;
       }
       .card {
-        background: #0f172a;
+        background: transparent;
+        border: none;
         border-radius: 12px;
-        aspect-ratio: 2 / 3;
-        overflow: hidden;
+        overflow: visible;
         cursor: pointer;
-        transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.16s ease, box-shadow 0.2s ease;
-        border: 1px solid rgba(255, 255, 255, 0.10);
-        box-shadow: 0 8px 22px rgba(0, 0, 0, 0.48);
-        display: block;
+        box-shadow: none;
+        display: flex;
+        flex-direction: column;
         position: relative;
+        outline: none !important;
         content-visibility: auto;
-        contain-intrinsic-size: 132px 198px;
+        contain-intrinsic-size: 136px 248px;
         touch-action: pan-y;
         -webkit-touch-callout: none;
         -webkit-user-select: none;
@@ -33008,24 +33069,33 @@
         -webkit-user-select: none;
         user-select: none;
       }
-      .card:hover,
-      .card.spatial-focus {
-        border-color: #38bdf8 !important;
-        outline: 2px solid #38bdf8 !important;
-        outline-offset: -2px !important;
-        transform: translateY(-2px);
-        box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 14px 28px rgba(0, 0, 0, 0.75) !important;
-      }
-      .card:active { transform: scale(0.98); }
       .card-poster-wrap {
-        position: absolute;
-        inset: 0;
+        position: relative;
         width: 100%;
-        height: 100%;
+        aspect-ratio: 2 / 3;
+        border-radius: 12px;
         overflow: hidden;
         background: linear-gradient(110deg, #0f172a 25%, #19253d 48%, #0f172a 72%);
         background-size: 200% 100%;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+        transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 160ms ease, box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1);
         touch-action: pan-y;
+      }
+      .card:hover .card-poster-wrap,
+      .card.spatial-focus .card-poster-wrap,
+      .card:focus-visible .card-poster-wrap {
+        border-color: #38bdf8;
+        transform: translateY(-4px);
+        box-shadow: 0 0 0 2.5px #38bdf8, 0 14px 28px rgba(0, 0, 0, 0.62);
+      }
+      .card:hover,
+      .card.spatial-focus,
+      .card:focus-visible {
+        z-index: 12;
+      }
+      .card:active .card-poster-wrap {
+        transform: translateY(-1px) scale(0.985);
       }
       .card-poster-wrap img,
       .card > img {
@@ -33038,11 +33108,12 @@
         -webkit-user-drag: none;
         -webkit-touch-callout: none;
         user-select: none;
-        transition: opacity 0.24s ease, transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+        transition: opacity 0.24s ease, transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
       }
       .card:hover .card-poster-wrap img,
-      .card.spatial-focus .card-poster-wrap img {
-        transform: scale(1.045);
+      .card.spatial-focus .card-poster-wrap img,
+      .card:focus-visible .card-poster-wrap img {
+        transform: scale(1.035);
       }
       .card-poster-wrap img.lazy-cover-img.is-loading {
         opacity: 0.18;
@@ -33067,8 +33138,8 @@
         border-radius: 6px;
         background: linear-gradient(135deg, #0284c7, #4338ca);
         color: #fff;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.85);
-        border: 1px solid rgba(255,255,255,0.32);
+        box-shadow: 0 3px 10px rgba(0,0,0,0.75);
+        border: 1px solid rgba(255,255,255,0.28);
         letter-spacing: 0.2px;
       }
       .card-type-badge {
@@ -33076,10 +33147,11 @@
         font-weight: 800;
         padding: 2px 6px;
         border-radius: 6px;
-        background: rgba(10, 14, 24, 0.88);
+        background: rgba(10, 14, 24, 0.86);
         backdrop-filter: blur(8px);
         color: #fff;
         border: 1px solid rgba(255,255,255,0.18);
+        pointer-events: auto;
       }
       /* Minimaler grüner VIP-Punkt oben links auf dem Cover */
       .card-vip-dot {
@@ -33088,12 +33160,12 @@
         border-radius: 50%;
         background: #10b981;
         border: 1.5px solid #ffffff;
-        box-shadow: 0 0 8px rgba(16, 185, 129, 0.95), 0 2px 5px rgba(0, 0, 0, 0.85);
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.92), 0 2px 5px rgba(0, 0, 0, 0.78);
         display: inline-block;
         flex-shrink: 0;
         pointer-events: auto;
       }
-      /* Lesezeichen-Button oben rechts: im Ruhezustand ruhig ausgeblendet (außer wenn gespeichert), bei Hover/Fokus edel sichtbar */
+      /* Lesezeichen-Button oben rechts: im Ruhezustand ruhig ausgeblendet (außer wenn gespeichert), bei Maus-Hover oder Touch dezent sichtbar */
       .card-quick-save {
         position: absolute;
         top: 7px;
@@ -33101,7 +33173,7 @@
         width: 28px;
         height: 28px;
         border-radius: 999px;
-        background: rgba(10, 15, 28, 0.78);
+        background: rgba(10, 15, 28, 0.76);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         border: 1px solid rgba(255, 255, 255, 0.22);
@@ -33114,8 +33186,43 @@
         z-index: 5;
         opacity: 0;
         pointer-events: none;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.48);
         transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, opacity 0.16s ease, border-color 0.14s;
+      }
+      /* Dezenter runder Trailer-Play-Icon-Button unten rechts NUR bei Desktop-Maus-Hover (auf Touch & Tastatur/TV komplett unsichtbar) */
+      .card-hover-play-btn {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        width: 30px;
+        height: 30px;
+        border-radius: 999px;
+        background: rgba(8, 13, 26, 0.82);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        color: #ffffff;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 5;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(4px) scale(0.92);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.58);
+        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s;
+      }
+      body:not(.kb-nav-active) .card:hover .card-hover-play-btn {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateY(0) scale(1);
+      }
+      .card-hover-play-btn:hover {
+        background: #0284c7;
+        border-color: #ffffff;
+        transform: translateY(0) scale(1.1);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.45), 0 6px 16px rgba(0, 0, 0, 0.68);
       }
       @media (hover: none), (pointer: coarse) {
         .card-quick-save {
@@ -33125,26 +33232,31 @@
           height: 28px;
           font-size: 12px;
         }
-        .card-quick-info,
-        .card-quick-trailer {
+        .card-hover-play-btn {
           display: none !important;
         }
       }
-      .card.long-press-active {
+      body[data-device="tv"] .card-hover-play-btn,
+      body.kb-nav-active .card-hover-play-btn {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      .card.long-press-active .card-poster-wrap {
         transform: scale(0.96) !important;
         transition: transform 0.12s ease;
       }
       .card-quick-save.saved,
-      .card:hover .card-quick-save,
-      .card:focus-within .card-quick-save,
-      .card.spatial-focus .card-quick-save,
-      .card.card-subnav-active .card-quick-save {
+      body:not(.kb-nav-active) .card:hover .card-quick-save {
         opacity: 1;
         pointer-events: auto;
       }
-      .card.card-saved {
-        border-color: rgba(16, 185, 129, 0.65) !important;
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(16, 185, 129, 0.35);
+      .card.card-saved .card-poster-wrap {
+        border-color: rgba(16, 185, 129, 0.52);
+      }
+      .card.card-saved:hover .card-poster-wrap,
+      .card.card-saved.spatial-focus .card-poster-wrap,
+      .card.card-saved:focus-visible .card-poster-wrap {
+        border-color: #38bdf8;
       }
       .card-quick-save:hover,
       .card-quick-save.spatial-focus {
@@ -33154,18 +33266,14 @@
         background: #0ea5e9;
         color: #04101d;
         border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.55), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.5), 0 4px 12px rgba(0,0,0,0.75);
       }
       .card-quick-save.saved {
         background: linear-gradient(135deg, #10b981, #059669);
         border-color: #6ee7b7;
         color: #ffffff;
         font-weight: 900;
-        box-shadow: 0 0 12px rgba(16, 185, 129, 0.55), 0 2px 8px rgba(0, 0, 0, 0.65);
-      }
-      .card-quick-save.saved.spatial-focus {
-        border-color: #fff;
-        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.75), 0 4px 12px rgba(0,0,0,0.85);
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.5), 0 2px 8px rgba(0, 0, 0, 0.55);
       }
       @keyframes quickSavePop {
         0% { transform: scale(0.8); }
@@ -33206,89 +33314,6 @@
       body[data-theme="light"] .detail-collapse-btn:hover {
         background: #e2e8f0;
         border-color: #94a3b8;
-      }
-      /* Hover-Glas-Aktionen (▶ Trailer & ℹ️ Details) schweben über dem unteren Titel-Verlauf */
-      .card-quick-trailer {
-        position: absolute;
-        bottom: 52px;
-        right: 6px;
-        z-index: 5;
-        background: rgba(10, 15, 28, 0.88);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        color: #fff;
-        border: 1px solid rgba(56, 189, 248, 0.65);
-        border-radius: 999px;
-        padding: 3px 8px;
-        font-size: calc(10px * var(--scale-text));
-        font-weight: 800;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(4px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
-      }
-      .card:hover .card-quick-trailer,
-      .card:focus-within .card-quick-trailer,
-      .card.spatial-focus .card-quick-trailer,
-      .card.card-subnav-active .card-quick-trailer {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-      .card-quick-trailer:hover,
-      .card-quick-trailer.spatial-focus {
-        background: var(--red);
-        border-color: #fff;
-        transform: translateY(0) scale(1.06);
-        box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.55), 0 4px 14px rgba(0,0,0,0.85);
-      }
-      .card-quick-info {
-        position: absolute;
-        bottom: 52px;
-        left: 6px;
-        z-index: 5;
-        background: rgba(10, 15, 28, 0.88);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        color: #e2e8f0;
-        border: 1px solid rgba(255, 255, 255, 0.28);
-        border-radius: 999px;
-        padding: 3px 8px;
-        font-size: calc(10px * var(--scale-text));
-        font-weight: 800;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-        opacity: 0;
-        pointer-events: none;
-        transform: translateY(4px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.75);
-        transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s, box-shadow 0.14s;
-      }
-      /* ℹ️ Details auf dem Cover im normalen Maus-Hover ausgeblendet (da Klick auf Karte bereits Details öffnet), nur im TV/Gamepad-Subnav-Modus sichtbar */
-      .card.card-subnav-active .card-quick-info {
-        display: inline-flex !important;
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0);
-      }
-      .card-quick-info:hover,
-      .card-quick-info.spatial-focus {
-        background: var(--purple);
-        border-color: #fff;
-        color: #fff;
-        transform: translateY(0) scale(1.06);
-        box-shadow: 0 0 0 3px rgba(91, 70, 245, 0.6), 0 4px 14px rgba(0,0,0,0.85);
-      }
-      .card.card-subnav-active {
-        border-color: var(--accent-primary) !important;
-        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.45), 0 12px 28px rgba(0,0,0,0.75);
       }
       /* Aufgeräumte Detail-Modal Nutzer-Aktionsleiste & eigene kompakte Admin-Leiste */
       .modal-actions-row {
@@ -33605,22 +33630,19 @@
         border-color: #cbd5e1;
       }
       .card-body {
-        position: absolute;
-        inset: auto 0 0 0;
-        z-index: 2;
-        padding: 32px 10px 8px;
+        position: static;
+        padding: 7px 2px 2px;
         display: flex;
         flex-direction: column;
-        justify-content: flex-end;
         gap: 2px;
-        background: linear-gradient(180deg, rgba(4, 7, 16, 0) 0%, rgba(4, 7, 16, 0.84) 48%, rgba(4, 7, 16, 0.98) 100%);
-        pointer-events: none;
+        background: none;
+        pointer-events: auto;
       }
       .card-title {
-        font-size: calc(12px * var(--scale-text));
-        font-weight: 800;
-        color: #ffffff;
-        line-height: 1.24;
+        font-size: calc(12.5px * var(--scale-text));
+        font-weight: 700;
+        color: #e2e8f0;
+        line-height: 1.28;
         display: -webkit-box;
         -webkit-line-clamp: 1;
         -webkit-box-orient: vertical;
@@ -33629,7 +33651,12 @@
         word-break: break-word;
         overflow-wrap: anywhere;
         position: relative;
-        text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+        transition: color 160ms ease;
+      }
+      .card:hover .card-title,
+      .card.spatial-focus .card-title,
+      .card:focus-visible .card-title {
+        color: #ffffff;
       }
       .card-title-text {
         display: inline;
@@ -33654,14 +33681,40 @@
         animation: cardTitleMarquee var(--marquee-dur, 5.5s) ease-in-out infinite;
       }
       .card-sub {
-        font-size: calc(10.5px * var(--scale-text));
-        color: #cbd5e1;
+        font-size: calc(11px * var(--scale-text));
+        color: #94a3b8;
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        margin-top: 1px;
-        font-weight: 700;
+        justify-content: space-between;
+        gap: 5px;
+        margin-top: 0;
+        font-weight: 600;
+        line-height: 1.3;
         font-variant-numeric: tabular-nums;
+      }
+      .card-sub-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .card-sub-rating {
+        color: #fbbf24;
+        font-weight: 700;
+      }
+      .card-sub-dot {
+        opacity: 0.45;
+      }
+      .card-wl-folder-link {
+        cursor: pointer;
+        color: #7dd3fc;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       @keyframes cardFadeIn {
         from { opacity: 0.35; }
@@ -33669,29 +33722,47 @@
       }
       .card { animation: cardFadeIn 0.18s ease-out; }
 
-      /* Sanfte Skeleton-Platzhalterkarten beim Nachladen statt hartem Ausgrauen (#21) */
+      /* Sanfte Skeleton-Platzhalterkarten im exakt gleichen 2-teiligen Poster + Text-Layout */
       @keyframes skeletonShimmer {
         0% { background-position: -200% 0; }
         100% { background-position: 200% 0; }
       }
       .skeleton-card {
-        aspect-ratio: 2 / 3;
-        border-radius: 12px;
-        overflow: hidden;
-        background: #0f172a;
-        border: 1px solid rgba(148, 163, 184, 0.12);
+        display: flex;
+        flex-direction: column;
+        background: transparent;
+        border: none;
         position: relative;
         pointer-events: none;
       }
       .skeleton-poster {
         width: 100%;
-        height: 100%;
+        aspect-ratio: 2 / 3;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid rgba(148, 163, 184, 0.12);
         background: linear-gradient(90deg, rgba(15, 23, 42, 0.9) 25%, rgba(30, 41, 59, 0.95) 50%, rgba(15, 23, 42, 0.9) 75%);
         background-size: 200% 100%;
         animation: skeletonShimmer 1.35s infinite linear;
       }
+      .skeleton-body {
+        padding: 8px 2px 2px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
       .skeleton-line {
-        display: none;
+        display: block;
+        height: 11px;
+        width: 82%;
+        border-radius: 5px;
+        background: linear-gradient(90deg, rgba(15, 23, 42, 0.88) 25%, rgba(30, 41, 59, 0.92) 50%, rgba(15, 23, 42, 0.88) 75%);
+        background-size: 200% 100%;
+        animation: skeletonShimmer 1.35s infinite linear;
+      }
+      .skeleton-line.short {
+        width: 50%;
+        height: 9px;
       }
 
       /* Seiten-Anzeige (Seite X von Y) & Direkt-Seitenwahl (#17) */
@@ -34221,14 +34292,14 @@
       .detail-bg-video-layer.is-playing {
         opacity: 1;
       }
-      /* Reiner Top-Bleed im overflow:hidden Container: schiebt YouTubes obere Titelzeile (~62px) aus dem Bild, belässt die Unterkante bündig bei 0px (kein Zoom, 100% unbeschnittene Untertitel!) */
+      /* Reiner Top-Bleed im overflow:hidden Container: schiebt YouTubes obere Titelzeile (~62–66px) komplett aus dem Bild, belässt die Unterkante exakt bündig bei 0px (kein Zoom, 100% unbeschnittene Untertitel!) */
       .detail-bg-video-frame {
         position: absolute;
-        top: -64px;
+        top: -68px;
         left: 0;
         right: 0;
         width: 100% !important;
-        height: calc(100% + 64px) !important;
+        height: calc(100% + 68px) !important;
         transform-origin: 50% 50%;
         transform: translate3d(0, 0, 0) !important;
         clip-path: none !important;
@@ -34238,16 +34309,16 @@
       }
       .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
       .hero.is-cc-safe-framing .detail-bg-video-frame {
-        top: -64px;
-        height: calc(100% + 64px) !important;
+        top: -68px;
+        height: calc(100% + 68px) !important;
         transform: translate3d(0, 0, 0) !important;
       }
       @media (max-height: 460px) {
         .detail-bg-video-frame,
         .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
         .hero.is-cc-safe-framing .detail-bg-video-frame {
-          top: -54px;
-          height: calc(100% + 54px) !important;
+          top: -56px;
+          height: calc(100% + 56px) !important;
         }
       }
       .detail-ambilight-glow {
@@ -34485,7 +34556,7 @@
         gap: 8px;
         padding: 28px 22px 14px;
         border-radius: 0;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0) 0%, rgba(4, 7, 15, 0.24) 28%, rgba(4, 7, 15, 0.62) 66%, rgba(4, 7, 15, 0.86) 100%);
+        background: linear-gradient(180deg, rgba(6, 10, 20, 0) 0%, rgba(6, 10, 20, 0.34) 28%, rgba(6, 10, 20, 0.88) 64%, #060a14 86%, #060a14 100%);
         backdrop-filter: none;
         -webkit-backdrop-filter: none;
         border-top: none;
@@ -34519,7 +34590,12 @@
       }
       .detail-cinema-player-dock:hover,
       .detail-cinema-player-dock:focus-within {
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0) 0%, rgba(4, 7, 15, 0.30) 28%, rgba(4, 7, 15, 0.68) 66%, rgba(4, 7, 15, 0.90) 100%);
+        background: linear-gradient(180deg, rgba(6, 10, 20, 0) 0%, rgba(6, 10, 20, 0.42) 26%, rgba(6, 10, 20, 0.92) 60%, #060a14 82%, #060a14 100%);
+      }
+      /* Im Pause-Zustand deckt der nahtlose Bodenverlauf auch YouTubes "Weitere Videos"-Karten & Button blickdicht ab – ohne harte Kante! */
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .detail-cinema-player-dock,
+      .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .detail-cinema-player-dock {
+        background: linear-gradient(180deg, rgba(6, 10, 20, 0) 0%, rgba(6, 10, 20, 0.62) 24%, #060a14 54%, #060a14 100%);
       }
       .detail-hero-stage.is-cc-safe-framing .detail-cinema-player-dock,
       .hero.is-cc-safe-framing .detail-cinema-player-dock {
@@ -36030,6 +36106,154 @@
         color: #38bdf8;
         font-weight: 900;
       }
+      /* Ruhige, geräteadaptive Fokus-Info-Zeile am unteren Bildrand beim Durchblättern des Katalogs */
+      .catalog-focus-info-bar {
+        position: fixed;
+        left: 50%;
+        bottom: max(12px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+        transform: translate(-50%, 10px);
+        z-index: 158;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        max-width: min(94vw, 820px);
+        min-height: 38px;
+        max-height: 46px;
+        padding: 6px 14px;
+        border-radius: 12px;
+        background: rgba(8, 13, 26, 0.90);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border: 1px solid rgba(56, 189, 248, 0.30);
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.64);
+        color: #e2e8f0;
+        font-size: calc(12px * var(--scale-text));
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 170ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .catalog-focus-info-bar.visible {
+        opacity: 1;
+        transform: translate(-50%, 0);
+        pointer-events: auto;
+      }
+      body:has(#filterSidebarDrawer.open) .catalog-focus-info-bar,
+      body:has(#tvQuickJumpElevator.has-subpanel) .catalog-focus-info-bar,
+      body:has(#searchAutocompleteBox.open) .catalog-focus-info-bar,
+      body:has(#searchGenreDropdownOverlay.open) .catalog-focus-info-bar,
+      body:has(#modalRoot .modal-backdrop) .catalog-focus-info-bar,
+      body:has(.is-trailer-foreground-mode) .catalog-focus-info-bar {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+      body[data-device="tv"] .catalog-focus-info-bar {
+        bottom: 22px;
+        padding: 7px 16px;
+        border-color: rgba(56, 189, 248, 0.42);
+      }
+      .cfi-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .cfi-title {
+        font-weight: 800;
+        color: #ffffff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: min(36vw, 290px);
+      }
+      .cfi-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: #94a3b8;
+        font-size: calc(11.5px * var(--scale-text));
+        font-weight: 600;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+      }
+      .cfi-rating {
+        color: #fbbf24;
+        font-weight: 800;
+      }
+      .cfi-vip-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #10b981;
+        box-shadow: 0 0 6px rgba(16, 185, 129, 0.85);
+        flex-shrink: 0;
+      }
+      .cfi-saved-mark {
+        color: #34d399;
+        font-weight: 800;
+      }
+      .cfi-divider {
+        width: 1px;
+        height: 18px;
+        background: rgba(148, 163, 184, 0.24);
+        flex-shrink: 0;
+      }
+      .cfi-hints {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .cfi-hint-btn {
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        padding: 3px 6px;
+        color: #cbd5e1;
+        font-size: calc(11px * var(--scale-text));
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+        cursor: pointer;
+        transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+      }
+      .cfi-hint-btn:hover {
+        background: rgba(56, 189, 248, 0.14);
+        border-color: rgba(56, 189, 248, 0.35);
+        color: #ffffff;
+      }
+      .cfi-hint-btn.is-static {
+        cursor: default;
+        opacity: 0.82;
+      }
+      .cfi-hint-btn.is-static:hover {
+        background: transparent;
+        border-color: transparent;
+        color: #cbd5e1;
+      }
+      .cfi-hint-btn kbd {
+        font-family: inherit;
+        font-size: calc(10px * var(--scale-text));
+        font-weight: 800;
+        padding: 1px 6px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.09);
+        border: 1px solid rgba(255, 255, 255, 0.20);
+        color: #f8fafc;
+        letter-spacing: 0.15px;
+      }
+      @media (max-width: 780px) {
+        .cfi-divider,
+        .cfi-hints {
+          display: none;
+        }
+        .cfi-title {
+          max-width: 54vw;
+        }
+      }
       @media (max-width: 640px) {
         .detail-hero-stage {
           padding: 14px 16px 12px;
@@ -36038,6 +36262,9 @@
           padding: 16px 16px 56px;
         }
         #controllerHudBar {
+          display: none !important;
+        }
+        body:not(.kb-nav-active) .catalog-focus-info-bar {
           display: none !important;
         }
       }
@@ -36785,7 +37012,6 @@
       body #detailTrailerBtn:focus-visible,
       body #detailPrimaryPlayBtn.spatial-focus,
       body #detailPrimaryPlayBtn:focus-visible,
-      body .card-quick-trailer.spatial-focus,
       body .cinema-overlay-btn.is-primary.spatial-focus,
       body .cinema-dock-btn.is-primary.spatial-focus,
       body .btn.blue.spatial-focus,
@@ -36807,7 +37033,6 @@
         box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.92), 0 0 0 5px #ff7a00, 0 0 26px rgba(255, 122, 0, 0.85), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
         z-index: 30;
       }
-      body .card-quick-trailer.spatial-focus,
       body .media-mode-tab.active-movie.spatial-focus,
       body .media-mode-tab.active-series.spatial-focus {
         outline-offset: -1px !important;
@@ -36948,6 +37173,7 @@
     <div id="hudToast"></div>
     <div id="liveZoomBadgeEl" aria-live="polite">🔍 Zoom: 100%</div>
     <div id="controllerHudBar" aria-hidden="true"></div>
+    <div id="catalogFocusInfoBar" class="catalog-focus-info-bar" aria-live="polite"></div>
     <div id="antiSpamHudMount" style="position:fixed;bottom:14px;right:14px;left:14px;max-width:480px;margin-left:auto;z-index:1550;pointer-events:none;display:none"></div>
     <div id="modalHoldNavIndicator" class="modal-hold-nav-indicator">
       <span id="modalHoldNavText">⏩ Halten zum Weiterblättern...</span>
@@ -37663,15 +37889,18 @@
       }
       applyUiScaleToDom();
 
-      // Automatische Geräteerkennung (User-Agent + Viewport)
+      // Automatische Geräteerkennung (User-Agent + Fire TV / Silk + Viewport)
       function detectClientDeviceAndAdapt() {
         const ua = String(navigator.userAgent || "").toLowerCase();
         const w = window.innerWidth || 1024;
+        const maxTouch = Number(navigator.maxTouchPoints || 0);
+        const isFireTv = /\\baft[a-z0-9]{1,5}\\b|fire\\s?tv/i.test(ua) || (/\\bsilk\\b/i.test(ua) && !/mobile/i.test(ua) && maxTouch === 0 && w >= 900);
+        const isSmartTv = isFireTv || /android.*tv|smart-tv|smarttv|googletv|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua);
         let devType = "desktop";
         let devLabel = "💻 Desktop";
-        if (/android.*tv|smart-tv|smarttv|googletv|aftm|aftb|aftt|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua)) {
+        if (isSmartTv) {
           devType = "tv";
-          devLabel = "📺 Smart-TV / Controller";
+          devLabel = isFireTv ? "📺 Fire TV" : "📺 Smart-TV / Controller";
         } else if (/ipad|tablet|playbook|silk/i.test(ua) || (/android/i.test(ua) && !/mobile/i.test(ua))) {
           devType = "tablet";
           devLabel = "📟 Tablet";
@@ -37680,6 +37909,11 @@
           devLabel = "📱 Mobil";
         }
         document.body.setAttribute("data-device", devType);
+        if (isFireTv) {
+          document.body.setAttribute("data-tv-profile", "firetv");
+        } else {
+          document.body.removeAttribute("data-tv-profile");
+        }
         const b = document.getElementById("deviceBadge");
         if (b) b.textContent = devLabel;
         applyUiScaleToDom();
@@ -39628,6 +39862,7 @@
         else savedKeysSet.delete(key);
         document.querySelectorAll('.card[data-card-key="' + key + '"]').forEach(cardEl => {
           cardEl.classList.toggle("card-saved", Boolean(isSaved));
+          cardEl.setAttribute("data-card-saved", isSaved ? "1" : "0");
           const btn = cardEl.querySelector(".card-quick-save");
           if (btn) {
             btn.classList.toggle("saved", Boolean(isSaved));
@@ -39666,6 +39901,9 @@
         }
         if (typeof syncRightMenuBadgesClient === "function") {
           syncRightMenuBadgesClient();
+        }
+        if (typeof syncCatalogFocusInfoBarClient === "function") {
+          syncCatalogFocusInfoBarClient();
         }
       }
 
@@ -46750,7 +46988,7 @@
         syncSmartPageIndicatorDomClient(true);
       }
 
-      // Einzelne Katalog-Karte als HTML mit IntersectionObserver-Lazy-Cover & Seiten-Attribut rendern
+      // Einzelne Katalog-Karte als HTML: Freies Poster, ruhige Titel-/Info-Zeile darunter & Datenattribute für die Fokus-Info-Zeile
       function buildCatalogCardHtmlClient(it, idx, opts = {}) {
         const showTop10Ranks = Boolean(opts.showTop10Ranks);
         const isMixedMediaView = Boolean(opts.isMixedMediaView);
@@ -46761,31 +46999,35 @@
         const cardKey = tc + "_" + it.id;
         const isCardSaved = savedKeysSet.has(cardKey);
         const rankHtml = (showTop10Ranks && idx < 10) ? ('<span class="card-rank-badge">#' + (idx + 1) + '</span>') : "";
-        const vipQualityHtml = (vipAllowed && it.vipQuality)
-          ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(it.vipQuality) + '"></span>')
+        const vipQualityText = (vipAllowed && it.vipQuality) ? String(it.vipQuality) : "";
+        const vipQualityHtml = vipQualityText
+          ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(vipQualityText) + '"></span>')
           : "";
         const itemTitleSafe = esc(it.title || it.name || "");
         const resolvedCardPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "");
-        const itemPosterSafe = esc(it.poster_path || it.external_poster_url || it.poster || "");
         const yrStr = esc((it.release_date || it.first_air_date || "").slice(0, 4) || "–");
         const ratStr = it.vote_average ? Number(it.vote_average).toFixed(1) : "–";
-        const subRightTxt = isMixedMediaView ? ((tc === "s" ? "📺 " : "🎬 ") + yrStr) : yrStr;
+        const mediaLabel = tc === "s" ? "Serie" : "Film";
         const effectivePosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : LAZY_POSTER_FALLBACK_SVG;
+        const mixedSuffixHtml = isMixedMediaView ? ('<span class="card-sub-dot">·</span><span>' + mediaLabel + '</span>') : "";
 
-        return '<div class="card' + (isCardSaved ? " card-saved" : "") + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" data-page-num="' + itemPageNum + '" onclick="openDetails(\\'' + tc + '\\',' + it.id + ')">' +
+        return '<div class="card' + (isCardSaved ? " card-saved" : "") + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-type="' + tc + '" data-card-id="' + it.id + '" data-card-title="' + itemTitleSafe + '" data-card-year="' + yrStr + '" data-card-rating="' + esc(ratStr) + '" data-card-vip="' + esc(vipQualityText) + '" data-card-saved="' + (isCardSaved ? "1" : "0") + '" data-card-media-label="' + mediaLabel + '" data-page-num="' + itemPageNum + '" onclick="openDetails(\\'' + tc + '\\',' + it.id + ')">' +
           '<div class="card-poster-wrap">' +
             '<div class="card-top-left-stack">' +
               rankHtml +
               vipQualityHtml +
             '</div>' +
             '<button type="button" class="card-quick-save ' + (isCardSaved ? "saved" : "") + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ')" title="' + (isCardSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)") + '">' + (isCardSaved ? "✓" : "🔖") + '</button>' +
-            '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + it.id + ')" title="Details öffnen">ℹ️ Details</button>' +
-            '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
+            '<button type="button" class="card-hover-play-btn" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" aria-label="Trailer abspielen" title="Instant-Trailer abspielen">' +
+              '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 2.6a.9.9 0 0 1 1.37-.77l8.2 5.4a.9.9 0 0 1 0 1.54l-8.2 5.4A.9.9 0 0 1 4.2 13.4V2.6z"/></svg>' +
+            '</button>' +
             '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '"' + (idx < 8 ? ' fetchpriority="high"' : '') + ' draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
           '</div>' +
           '<div class="card-body">' +
             '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
-            '<div class="card-sub"><span style="color:#fbbf24">★ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
+            '<div class="card-sub">' +
+              '<span class="card-sub-meta"><span class="card-sub-rating">★ ' + ratStr + '</span><span class="card-sub-dot">·</span><span>' + yrStr + '</span>' + mixedSuffixHtml + '</span>' +
+            '</div>' +
           '</div>' +
         '</div>';
       }
@@ -54446,25 +54688,27 @@
             const cardKey = tc + "_" + targetId;
             const itemTitleSafe = esc(it.title || 'Titel');
             const resolvedCardPoster = resolvePosterUrlClient(it.poster, 'w342', '');
-            const itemPosterSafe = esc(it.poster || '');
             const yrStr = esc((it.year && it.year !== 'K. A.') ? String(it.year).slice(0, 4) : '–');
+            const ratStr = it.rating ? Number(it.rating).toFixed(1) : '';
+            const mediaLabel = isSer ? 'Serie' : 'Film';
             const epsList = Array.isArray(it.episodes) ? it.episodes : [];
             const plObj = it.folderId ? folders.find(f => f.id === it.folderId) : null;
             const epCountBadgeHtml = (isSer && epsList.length > 0)
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
             const subLeftHtml = folders.length > 0
-              ? ('<span style="cursor:pointer;color:#7dd3fc" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + (isSer ? 'Serie' : 'Film') + ' ▾')) + '</span>')
-              : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film')) + '</span>');
+              ? ('<span class="card-wl-folder-link" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + mediaLabel + ' ▾')) + '</span>')
+              : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : mediaLabel) + '</span>');
             const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
-            return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ')">' +
+            return '<div class="card card-saved" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-type="' + tc + '" data-card-id="' + targetId + '" data-card-title="' + itemTitleSafe + '" data-card-year="' + yrStr + '" data-card-rating="' + esc(ratStr) + '" data-card-vip="" data-card-saved="1" data-card-media-label="' + mediaLabel + '" data-wl-uid="' + esc(it.uid || '') + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ')">' +
               '<div class="card-poster-wrap">' +
                 '<div class="card-top-left-stack">' +
                   epCountBadgeHtml +
                 '</div>' +
                 '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
-                '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + targetId + ')" title="Details öffnen">ℹ️ Details</button>' +
-                '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ')" title="Instant-Trailer abspielen">▶ Trailer</button>' +
+                '<button type="button" class="card-hover-play-btn" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ')" aria-label="Trailer abspielen" title="Instant-Trailer abspielen">' +
+                  '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 2.6a.9.9 0 0 1 1.37-.77l8.2 5.4a.9.9 0 0 1 0 1.54l-8.2 5.4A.9.9 0 0 1 4.2 13.4V2.6z"/></svg>' +
+                '</button>' +
                 '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + wlPosterSrc + '" draggable="false" alt="' + itemTitleSafe + '" />' +
               '</div>' +
               '<div class="card-body">' +
@@ -63433,11 +63677,18 @@
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
       const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .cinema-top-hud-close, .cinema-pause-center-btn, .cinema-overlay-btn, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
-      const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
+      const CARD_SUB_SELECTOR = ".card-quick-save, .card-hover-play-btn";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
       let userScrolledRecently = false;
       let lastElevatorReturnEl = null;
+      let activeInputProfile = (document.body && document.body.getAttribute("data-tv-profile") === "firetv")
+        ? "firetv"
+        : (document.body && document.body.getAttribute("data-device") === "tv")
+          ? "tv"
+          : "keyboard";
+      let lastFocusBarCardEl = null;
+      let hoverFocusBarClearTimer = null;
 
       window.addEventListener("wheel", () => { userScrolledRecently = true; }, { passive: true });
       window.addEventListener("touchmove", () => { userScrolledRecently = true; }, { passive: true });
@@ -63450,6 +63701,197 @@
 
       function isCardSubElement(el) {
         return Boolean(el && el.matches && el.matches(CARD_SUB_SELECTOR));
+      }
+
+      function isAnyBlockingOverlayOpenForCardBarClient() {
+        const elev = document.getElementById("tvQuickJumpElevator");
+        const isRightOverlayOpen = Boolean(
+          elev && (elev.classList.contains("has-subpanel") || elev.classList.contains("is-visible") || elev.classList.contains("is-hover-expanded"))
+        );
+        return Boolean(
+          getActiveForegroundCinemaContextClient() ||
+          (state && state.sidebarOpen) ||
+          isRightOverlayOpen ||
+          document.getElementById("modalRoot")?.innerHTML.trim() ||
+          document.getElementById("customDialogRoot")?.innerHTML.trim() ||
+          document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
+          document.getElementById("lightboxRoot")?.innerHTML.trim() ||
+          document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
+          document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
+          document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded")
+        );
+      }
+
+      function isCatalogCardDirectlyActiveClient() {
+        if (!currentSpatialEl || !currentSpatialEl.classList || !currentSpatialEl.classList.contains("card")) return false;
+        if (!document.body.contains(currentSpatialEl)) return false;
+        return !isAnyBlockingOverlayOpenForCardBarClient();
+      }
+
+      function getCardActionMetaClient(cardEl) {
+        if (!cardEl || !cardEl.getAttribute) return null;
+        const rawKey = String(cardEl.getAttribute("data-card-key") || "");
+        const keyParts = rawKey.split("_");
+        const tc = cardEl.getAttribute("data-card-type") || (keyParts[0] === "s" ? "s" : "m");
+        const idNum = Number(cardEl.getAttribute("data-card-id") || keyParts[1] || 0);
+        const title = String(cardEl.getAttribute("data-card-title") || cardEl.querySelector(".card-title-text")?.textContent || "").trim();
+        const year = String(cardEl.getAttribute("data-card-year") || "").trim();
+        const rating = String(cardEl.getAttribute("data-card-rating") || "").trim();
+        const vip = String(cardEl.getAttribute("data-card-vip") || "").trim();
+        const mediaLabel = String(cardEl.getAttribute("data-card-media-label") || (tc === "s" ? "Serie" : "Film")).trim();
+        const wlUid = String(cardEl.getAttribute("data-wl-uid") || "").trim();
+        const isSaved = cardEl.getAttribute("data-card-saved") === "1" || cardEl.classList.contains("card-saved") || (rawKey && typeof savedKeysSet !== "undefined" && savedKeysSet.has(rawKey));
+        return { tc, id: idNum, key: rawKey, title, year, rating, vip, mediaLabel, wlUid, isSaved };
+      }
+
+      function triggerCardTrailerByElClient(cardEl, ev = null) {
+        const meta = getCardActionMetaClient(cardEl);
+        if (!meta || !meta.id) return false;
+        if (typeof playInstantTrailerFromCard === "function") {
+          playInstantTrailerFromCard(ev, meta.tc, meta.id);
+          return true;
+        }
+        const playBtn = cardEl.querySelector(".card-hover-play-btn");
+        if (playBtn) {
+          playBtn.click();
+          return true;
+        }
+        return false;
+      }
+
+      function triggerCardWishlistByElClient(cardEl, ev = null) {
+        const meta = getCardActionMetaClient(cardEl);
+        if (!meta) return false;
+        if (meta.wlUid) {
+          const saveBtn = cardEl.querySelector(".card-quick-save");
+          if (saveBtn) {
+            saveBtn.click();
+            return true;
+          }
+        }
+        if (meta.id && typeof quickToggleCardWishlist === "function") {
+          quickToggleCardWishlist(ev, meta.tc, meta.id, meta.title);
+          return true;
+        }
+        const saveBtn = cardEl.querySelector(".card-quick-save");
+        if (saveBtn) {
+          saveBtn.click();
+          return true;
+        }
+        return false;
+      }
+
+      function triggerFocusBarActionClient(action, ev) {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+        if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+        const targetCard = (lastFocusBarCardEl && document.body.contains(lastFocusBarCardEl))
+          ? lastFocusBarCardEl
+          : (currentSpatialEl && currentSpatialEl.closest ? currentSpatialEl.closest(".card") : null);
+        if (!targetCard) return;
+        if (action === "details") {
+          targetCard.click();
+        } else if (action === "trailer") {
+          triggerCardTrailerByElClient(targetCard, ev);
+        } else if (action === "wishlist") {
+          triggerCardWishlistByElClient(targetCard, ev);
+        }
+      }
+
+      function resolveDefaultInputProfileClient() {
+        if (document.body && document.body.getAttribute("data-tv-profile") === "firetv") return "firetv";
+        if (document.body && document.body.getAttribute("data-device") === "tv") return "tv";
+        return "keyboard";
+      }
+
+      function syncCatalogFocusInfoBarClient(explicitCardEl = undefined) {
+        const bar = document.getElementById("catalogFocusInfoBar");
+        if (!bar) return;
+        if (isAnyBlockingOverlayOpenForCardBarClient()) {
+          bar.classList.remove("visible");
+          return;
+        }
+        const isSmallMobile = (window.innerWidth || 1024) <= 640;
+        if (isSmallMobile && !isKeyboardNavActive) {
+          bar.classList.remove("visible");
+          return;
+        }
+        let cardEl = null;
+        if (explicitCardEl === null) {
+          cardEl = null;
+        } else if (explicitCardEl && explicitCardEl.classList && explicitCardEl.classList.contains("card")) {
+          cardEl = explicitCardEl;
+        } else if (currentSpatialEl && currentSpatialEl.closest) {
+          cardEl = currentSpatialEl.closest(".card");
+        }
+        if (!cardEl || !document.body.contains(cardEl)) {
+          bar.classList.remove("visible");
+          lastFocusBarCardEl = null;
+          return;
+        }
+        const meta = getCardActionMetaClient(cardEl);
+        if (!meta || !meta.title) {
+          bar.classList.remove("visible");
+          return;
+        }
+        lastFocusBarCardEl = cardEl;
+        const profile = activeInputProfile || resolveDefaultInputProfileClient();
+        const saveLabel = meta.isSaved ? "Entfernen" : "Merken";
+
+        let hintsHtml = "";
+        if (profile === "firetv") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>' +
+            '<span class="cfi-hint-btn is-static"><kbd>⏪/⏩</kbd> Blättern</span>';
+        } else if (profile === "tv") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>';
+        } else if (profile === "gamepad-ps") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>✕</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>✕ halten</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>□</kbd> ' + saveLabel + '</button>';
+        } else if (profile === "gamepad-xbox") {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>A</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>A halten</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>X</kbd> ' + saveLabel + '</button>';
+        } else {
+          hintsHtml =
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>Enter</kbd> Details</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>Leertaste</kbd> Trailer</button>' +
+            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>Enter halten</kbd> ' + saveLabel + '</button>';
+        }
+
+        const metaParts = [];
+        if (meta.rating && meta.rating !== "–") {
+          metaParts.push('<span class="cfi-rating">★ ' + esc(meta.rating) + '</span>');
+        }
+        if (meta.year && meta.year !== "–") {
+          metaParts.push('<span>' + esc(meta.year) + '</span>');
+        }
+        if (meta.mediaLabel) {
+          metaParts.push('<span>' + esc(meta.mediaLabel) + '</span>');
+        }
+        const vipDotHtml = meta.vip ? '<span class="cfi-vip-dot" title="VIP: ' + esc(meta.vip) + '"></span>' : '';
+        const savedMarkHtml = meta.isSaved ? '<span class="cfi-saved-mark" title="In Merkliste">✓</span>' : '';
+
+        bar.innerHTML =
+          '<div class="cfi-left">' +
+            vipDotHtml +
+            '<span class="cfi-title">' + esc(meta.title) + '</span>' +
+            (metaParts.length ? ('<span class="cfi-meta">' + metaParts.join('<span>·</span>') + '</span>') : '') +
+            savedMarkHtml +
+          '</div>' +
+          '<span class="cfi-divider"></span>' +
+          '<div class="cfi-hints">' + hintsHtml + '</div>';
+
+        bar.classList.add("visible");
+        const ctrlHud = document.getElementById("controllerHudBar");
+        if (ctrlHud) ctrlHud.classList.remove("visible");
       }
 
       function getActiveForegroundCinemaContextClient() {
@@ -63993,10 +64435,11 @@
               return;
             }
 
-            // Dynamisches Offset aus Sticky-Header + Filter-Bar berechnen
+            // Dynamisches Offset aus Sticky-Header + Filter-Bar berechnen (unten Platz für Fokus-Info-Zeile lassen)
             const obstructionOffset = getStickyTopObstructionOffset(el, navDir);
             const safeTopBoundary = obstructionOffset + 22;
-            const safeBottomBoundary = window.innerHeight - 28;
+            const isCardTarget = Boolean(el.classList && el.classList.contains("card"));
+            const safeBottomBoundary = window.innerHeight - (isCardTarget ? 78 : 28);
             const r = el.getBoundingClientRect();
 
             if (r.top < safeTopBoundary) {
@@ -64083,6 +64526,7 @@
         if (scrollIntoView) {
           useSpatialScrollIntoView(el, navDir);
         }
+        syncCatalogFocusInfoBarClient();
       }
 
       function jumpSpatialFocus(el, scrollIntoView = true, navDir = lastSpatialNavDir) {
@@ -64140,6 +64584,7 @@
             clearCardSubnavState(null);
             currentSpatialEl = null;
           }
+          syncCatalogFocusInfoBarClient();
         }
       }
 
@@ -64203,12 +64648,33 @@
       }, { passive: true });
 
       // Maus-Hover verschiebt die aktive Auswahl direkt auf das gehoverte Objekt (sofern in den Einstellungen aktiviert und Tastatur-Modus NICHT aktiv ist),
-      // sodass man nahtlos mit Pfeiltasten / Controller weitermachen kann!
+      // und aktualisiert die ruhige Fokus-Info-Zeile bei Desktop-Hover auf Katalog-Covern.
       document.addEventListener("mouseover", (ev) => {
-        if (!mouseHoverNavEnabled || isKeyboardNavActive) return;
+        if (isKeyboardNavActive) return;
         const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
         if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
         if (window.matchMedia && !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+        const inBar = Boolean(ev.target && typeof ev.target.closest === "function" && ev.target.closest("#catalogFocusInfoBar"));
+        if (inBar) {
+          if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
+          return;
+        }
+        const hoveredCard = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(".card") : null;
+        if (hoveredCard) {
+          if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
+          if (activeInputProfile !== "keyboard" && activeInputProfile !== "firetv" && activeInputProfile !== "tv") {
+            activeInputProfile = resolveDefaultInputProfileClient();
+          }
+          syncCatalogFocusInfoBarClient(hoveredCard);
+        } else if (!currentSpatialEl || !(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"))) {
+          if (!hoverFocusBarClearTimer) {
+            hoverFocusBarClearTimer = setTimeout(() => {
+              hoverFocusBarClearTimer = null;
+              if (!isKeyboardNavActive) syncCatalogFocusInfoBarClient(null);
+            }, 180);
+          }
+        }
+        if (!mouseHoverNavEnabled) return;
         if (Date.now() - lastSelectJumpAt < 450) return;
         const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
         if (subTarget) {
@@ -64227,15 +64693,8 @@
       }, { passive: true });
 
       function engageCardSubNav(cardEl) {
-        if (!cardEl) return false;
-        const infoBtn = cardEl.querySelector(".card-quick-info");
-        const trailerBtn = cardEl.querySelector(".card-quick-trailer");
-        const saveBtn = cardEl.querySelector(".card-quick-save");
-        const firstSub = infoBtn || trailerBtn || saveBtn;
-        if (!firstSub) return false;
-        cardEl.classList.add("card-subnav-active");
-        jumpSpatialFocus(firstSub, false);
-        return true;
+        // Direkte 1-Schritt-Navigation: Kein Sub-Menü auf Covern mehr – Enter/OK öffnet direkt die Details!
+        return false;
       }
 
       function handleSpatialConfirmAction() {
@@ -64260,12 +64719,7 @@
           }
           return;
         }
-        // Wenn man auf einer Film-/Serienkarte Enter drückt:
-        // Öffnet zuerst die Schnellauswahl auf der Karte (ℹ️ Details / ▶ Trailer / 🔖 Favorit),
-        // sodass Trailer & Favoriten per Navigationstasten wählbar sind, OHNE das normale Navigieren zwischen den Filmen zu stören!
-        if (currentSpatialEl.classList && currentSpatialEl.classList.contains("card")) {
-          if (engageCardSubNav(currentSpatialEl)) return;
-        }
+        // Direkte 1-Schritt-Aktion auf Film-/Serien-Cover: Öffnet sofort die Detailansicht!
         currentSpatialEl.click();
       }
 
@@ -64279,24 +64733,10 @@
         const list = getVisibleFocusables();
         if (!list.length) return;
 
-        // Falls wir uns gerade in der Sub-Auswahl (ℹ️ Details / ▶ Trailer / 🔖 Favorit) einer Karte befinden:
+        // Falls Fokus per Maus auf einem Karten-Sub-Button lag, sauber zurück auf die Karte für nahtlose Raster-Navigation
         if (currentSpatialEl && isCardSubElement(currentSpatialEl)) {
           const parentCard = currentSpatialEl.closest(".card");
           if (parentCard) {
-            const infoBtn = parentCard.querySelector(".card-quick-info");
-            const trailerBtn = parentCard.querySelector(".card-quick-trailer");
-            const saveBtn = parentCard.querySelector(".card-quick-save");
-            if (currentSpatialEl === infoBtn) {
-              if (dir === "right" && trailerBtn) { setSpatialFocus(trailerBtn, false, dir); return; }
-              if (dir === "up" && saveBtn) { setSpatialFocus(saveBtn, false, dir); return; }
-            } else if (currentSpatialEl === trailerBtn) {
-              if (dir === "left" && infoBtn) { setSpatialFocus(infoBtn, false, dir); return; }
-              if (dir === "up" && saveBtn) { setSpatialFocus(saveBtn, false, dir); return; }
-            } else if (currentSpatialEl === saveBtn) {
-              if (dir === "down" && trailerBtn) { setSpatialFocus(trailerBtn, false, dir); return; }
-              if (dir === "left" && infoBtn) { setSpatialFocus(infoBtn, false, dir); return; }
-            }
-            // Pfeildruck nach außen verlässt die Sub-Buttons und springt nahtlos zur Nachbarkarte weiter!
             clearCardSubnavState(null);
             currentSpatialEl.classList.remove("spatial-focus");
             currentSpatialEl = parentCard;
@@ -65150,11 +65590,31 @@
       let modalHoldActiveKey = "";
       let modalHoldTriggered = false;
 
-      // Enter-Taste auf Film-Cover: Kurz drücken = Schnellwahl (Trailer/Merkliste/Details), Gedrückthalten (>= 380ms) = Direkt Trailer im Vollbild starten!
+      // Enter / Fire TV OK auf Film-Cover: Kurz drücken = Direkt Details öffnen, Gedrückthalten (>= 380ms) = Merkliste umschalten!
       const CARD_ENTER_HOLD_MS = 380;
       let cardEnterHoldTimer = null;
       let cardEnterHoldTarget = null;
       let cardEnterHoldTriggered = false;
+
+      function isConfirmSelectKeyClient(ev) {
+        return Boolean(ev && (ev.key === "Enter" || ev.key === "Select" || ev.keyCode === 23));
+      }
+
+      function isMediaPlayPauseKeyClient(ev) {
+        return Boolean(ev && (ev.key === "MediaPlayPause" || ev.key === "MediaPlay" || ev.code === "MediaPlayPause" || ev.keyCode === 179 || ev.keyCode === 85));
+      }
+
+      function isMediaRewindKeyClient(ev) {
+        return Boolean(ev && (ev.key === "MediaRewind" || ev.key === "MediaTrackPrevious" || ev.keyCode === 227 || ev.keyCode === 89));
+      }
+
+      function isMediaFastForwardKeyClient(ev) {
+        return Boolean(ev && (ev.key === "MediaFastForward" || ev.key === "MediaTrackNext" || ev.keyCode === 228 || ev.keyCode === 90));
+      }
+
+      function isRemoteMenuKeyClient(ev) {
+        return Boolean(ev && (ev.key === "ContextMenu" || ev.keyCode === 82 || ev.keyCode === 93));
+      }
 
       function cancelCardEnterHold() {
         if (cardEnterHoldTimer) {
@@ -65672,14 +66132,12 @@
           }
         } else if (ev.key === "ArrowUp" || ev.key === "ArrowDown") {
           resetVerticalTurboStreakClient();
-        } else if (ev.key === "Enter") {
+        } else if (isConfirmSelectKeyClient(ev)) {
           const targetCard = cardEnterHoldTarget;
           const didTriggerLong = cardEnterHoldTriggered;
           cancelCardEnterHold();
           if (targetCard && !didTriggerLong && currentSpatialEl === targetCard) {
-            if (!engageCardSubNav(targetCard)) {
-              targetCard.click();
-            }
+            targetCard.click();
           }
         }
       });
@@ -65691,6 +66149,16 @@
 
       document.addEventListener("keydown", (ev) => {
         engageKeyboardNavMode();
+        if (
+          ev.key === "Select" || ev.keyCode === 23 ||
+          isMediaPlayPauseKeyClient(ev) || isMediaRewindKeyClient(ev) ||
+          isMediaFastForwardKeyClient(ev) || isRemoteMenuKeyClient(ev) ||
+          ev.key === "GoBack" || ev.key === "BrowserBack" || ev.keyCode === 4
+        ) {
+          activeInputProfile = "firetv";
+        } else if (activeInputProfile === "gamepad-ps" || activeInputProfile === "gamepad-xbox") {
+          activeInputProfile = resolveDefaultInputProfileClient();
+        }
         if (typeof wakeHeroCinemaDockClient === "function") wakeHeroCinemaDockClient();
         if (typeof wakeDetailCinemaDockClient === "function") wakeDetailCinemaDockClient();
         const activeEl = document.activeElement;
@@ -65700,10 +66168,11 @@
         const isRangeOrNonTextInput = activeTag === "INPUT" && (activeInputType === "range" || activeInputType === "button" || activeInputType === "checkbox" || activeInputType === "radio" || activeInputType === "submit" || activeInputType === "reset");
         const isTypingInInput = (activeTag === "INPUT" && !isRangeOrNonTextInput) || activeTag === "TEXTAREA" || activeTag === "SELECT" || Boolean(activeEl && activeEl.isContentEditable);
 
-        const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || (ev.key === "Backspace" && !isTypingInInput);
+        const isBackKey = ev.key === "Escape" || ev.key === "GoBack" || ev.key === "BrowserBack" || ev.key === "XF86Back" || ev.keyCode === 4 || ev.keyCode === 166 || (ev.key === "Backspace" && !isTypingInInput);
         if (isBackKey) {
           cancelModalArrowHold();
           resetVerticalTurboStreakClient();
+          cancelCardEnterHold();
           const cinemaCtxForBack = getActiveForegroundCinemaContextClient();
           if (cinemaCtxForBack) {
             if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
@@ -65831,7 +66300,7 @@
               navigateCinemaPlayerFocusClient(dirMap[ev.key], activeCinemaCtx);
               return;
             }
-            if (ev.key === "Enter") {
+            if (isConfirmSelectKeyClient(ev)) {
               cancelModalArrowHold();
               resetVerticalTurboStreakClient();
               ev.preventDefault();
@@ -65841,10 +66310,10 @@
               }
               return;
             }
-            if (lk === "k" || isSpace) {
+            if (lk === "k" || isSpace || isMediaPlayPauseKeyClient(ev)) {
               ev.preventDefault();
               ev.stopPropagation();
-              if (isSpace && activeCinemaCtx.isEnded) {
+              if ((isSpace || isMediaPlayPauseKeyClient(ev)) && activeCinemaCtx.isEnded) {
                 if (!ev.repeat) confirmCinemaPlayerFocusClient(activeCinemaCtx);
                 return;
               }
@@ -65864,14 +66333,16 @@
               else if (heroFgActive && typeof toggleHeroCinemaSubtitlesClient === "function") toggleHeroCinemaSubtitlesClient(ev);
               return;
             }
-            if (lk === "j") {
+            if (lk === "j" || isMediaRewindKeyClient(ev)) {
               ev.preventDefault();
+              ev.stopPropagation();
               if (detailFgActive && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(-10, ev);
               else if (heroFgActive && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(-10, ev);
               return;
             }
-            if (lk === "l") {
+            if (lk === "l" || isMediaFastForwardKeyClient(ev)) {
               ev.preventDefault();
+              ev.stopPropagation();
               if (detailFgActive && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(10, ev);
               else if (heroFgActive && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(10, ev);
               return;
@@ -65925,15 +66396,17 @@
           }
         }
 
-        // Smart-TV Fernbedienung & Tastatur Schnell-Tasten: PageUp / PageDown / ChannelUp / ChannelDown / Home / End
+        // Fire TV / Smart-TV Fernbedienung & Tastatur Schnell-Tasten: Rewind/FastForward, Play/Pause, Menü, PageUp/PageDown, Home/End & Leertaste auf Cover (KEINE Buchstaben-Shortcuts!)
         if (!isTypingInInput) {
-          if (ev.key === "PageDown" || ev.key === "ChannelDown") {
+          if (ev.key === "PageDown" || ev.key === "ChannelDown" || isMediaFastForwardKeyClient(ev)) {
             ev.preventDefault();
+            ev.stopPropagation();
             handleTvQuickPageOrBlockStepClient(1);
             return;
           }
-          if (ev.key === "PageUp" || ev.key === "ChannelUp") {
+          if (ev.key === "PageUp" || ev.key === "ChannelUp" || isMediaRewindKeyClient(ev)) {
             ev.preventDefault();
+            ev.stopPropagation();
             handleTvQuickPageOrBlockStepClient(-1);
             return;
           }
@@ -65945,6 +66418,31 @@
           if (ev.key === "End") {
             ev.preventDefault();
             tvElevatorJumpClient("bottom", false);
+            return;
+          }
+          if (isMediaPlayPauseKeyClient(ev) && isCatalogCardDirectlyActiveClient()) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (!ev.repeat) {
+              triggerCardTrailerByElClient(currentSpatialEl, ev);
+            }
+            return;
+          }
+          if (isRemoteMenuKeyClient(ev) && isCatalogCardDirectlyActiveClient()) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (!ev.repeat) {
+              triggerCardWishlistByElClient(currentSpatialEl, ev);
+            }
+            return;
+          }
+          const isSpaceKey = ev.code === "Space" || ev.key === " ";
+          if (isSpaceKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey && isCatalogCardDirectlyActiveClient()) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            if (!ev.repeat) {
+              triggerCardTrailerByElClient(currentSpatialEl, ev);
+            }
             return;
           }
         }
@@ -66067,8 +66565,8 @@
           return;
         }
 
-        // Enter-Taste: Auf einem Film-Cover öffnet kurzes Drücken die Schnellwahl (Trailer/Merkliste/Details) und Gedrückthalten (>= 350ms) direkt die Infos!
-        if (ev.key === "Enter" && !isTypingInInput && currentSpatialEl) {
+        // Enter / Fire TV OK: Auf einem Film-Cover öffnet kurzes Drücken direkt Details; Gedrückthalten (>= 380ms) oder Shift+Enter schaltet die Merkliste um!
+        if (isConfirmSelectKeyClient(ev) && !isTypingInInput && currentSpatialEl) {
           cancelModalArrowHold();
           resetVerticalTurboStreakClient();
           ev.preventDefault();
@@ -66078,6 +66576,13 @@
             return;
           }
           if (currentSpatialEl.classList && currentSpatialEl.classList.contains("card")) {
+            if (ev.shiftKey) {
+              if (!ev.repeat) {
+                cancelCardEnterHold();
+                triggerCardWishlistByElClient(currentSpatialEl, ev);
+              }
+              return;
+            }
             if (!ev.repeat && cardEnterHoldTarget !== currentSpatialEl) {
               cancelCardEnterHold();
               cardEnterHoldTarget = currentSpatialEl;
@@ -66091,12 +66596,7 @@
                 cardEnterHoldTarget = null;
                 if (target && currentSpatialEl === target) {
                   clearCardSubnavState(null);
-                  const trailerBtn = target.querySelector(".card-quick-trailer");
-                  if (trailerBtn) {
-                    trailerBtn.click();
-                  } else {
-                    target.click();
-                  }
+                  triggerCardWishlistByElClient(target, null);
                 }
               }, CARD_ENTER_HOLD_MS);
             }
@@ -66131,6 +66631,10 @@
       let lastGamepadActivityAt = 0;
       let activeControllerBrand = "";
       let gamepadVerticalHeld = false;
+      let gamepadBtnAPrevPressed = false;
+      let gamepadBtnADownAt = 0;
+      let gamepadBtnACardEl = null;
+      let gamepadBtnAHoldFired = false;
 
       function isPlayStationControllerClient(gpId) {
         const s = String(gpId || "").toLowerCase();
@@ -66141,6 +66645,7 @@
         const hud = document.getElementById("controllerHudBar");
         if (!hud) return;
         const isPs = isPlayStationControllerClient(gp?.id || "");
+        activeInputProfile = isPs ? "gamepad-ps" : "gamepad-xbox";
         const activeCinemaCtx = getActiveForegroundCinemaContextClient();
         if (activeCinemaCtx) {
           const brandKey = (isPs ? "ps_cinema_" : "xbox_cinema_") + (activeCinemaCtx.isEnded ? "end" : "play");
@@ -66167,6 +66672,12 @@
             }
           }
           hud.classList.add("visible");
+          return;
+        }
+        // Wenn die ruhige Katalog-Fokus-Info-Zeile für ein Cover aktiv ist, übernimmt sie die Controller-Hinweise ohne Überlappung!
+        if (isCatalogCardDirectlyActiveClient()) {
+          syncCatalogFocusInfoBarClient();
+          hud.classList.remove("visible");
           return;
         }
         const modeLabel = controllerL2R2Mode === "zoom" ? "Zoom" : "Seite/Sprung";
@@ -66349,21 +66860,55 @@
               gamepadVerticalHeld = true;
             }
 
+            // ✕ / A auf Film-Cover: Kurz drücken = Direkt Details, Gedrückthalten (>= 380ms) = Instant-Trailer!
+            const rawBtnA = Boolean(gp.buttons?.[0]?.pressed);
+            if (rawBtnA && !gamepadBtnAPrevPressed && isCatalogCardDirectlyActiveClient()) {
+              gamepadBtnADownAt = now;
+              gamepadBtnACardEl = currentSpatialEl;
+              gamepadBtnAHoldFired = false;
+              gamepadBtnACardEl.classList.add("is-enter-holding");
+              lastGamepadActivityAt = now;
+              engageKeyboardNavMode();
+              syncControllerHudBarClient(gp);
+            } else if (rawBtnA && gamepadBtnACardEl && !gamepadBtnAHoldFired && now - gamepadBtnADownAt >= CARD_ENTER_HOLD_MS) {
+              gamepadBtnAHoldFired = true;
+              gamepadBtnACardEl.classList.remove("is-enter-holding");
+              const holdTarget = gamepadBtnACardEl;
+              if (currentSpatialEl === holdTarget) {
+                triggerCardTrailerByElClient(holdTarget, null);
+              }
+              lastGamepadStepAt = now + 220;
+            } else if (!rawBtnA && gamepadBtnAPrevPressed && gamepadBtnACardEl) {
+              const relCard = gamepadBtnACardEl;
+              const wasHold = gamepadBtnAHoldFired;
+              relCard.classList.remove("is-enter-holding");
+              gamepadBtnACardEl = null;
+              gamepadBtnADownAt = 0;
+              gamepadBtnAHoldFired = false;
+              if (!wasHold && currentSpatialEl === relCard) {
+                resetVerticalTurboStreakClient();
+                relCard.click();
+                lastGamepadStepAt = now + 120;
+              }
+            }
+            gamepadBtnAPrevPressed = rawBtnA;
+
             const dynamicGamepadInterval = 180;
             if (now - lastGamepadStepAt > dynamicGamepadInterval) {
               const up = upHeld;
               const down = downHeld;
               const left = gp.buttons?.[14]?.pressed || axX < -0.55;
               const right = gp.buttons?.[15]?.pressed || axX > 0.55;
-              const btnA = gp.buttons?.[0]?.pressed;
+              const btnA = rawBtnA && !gamepadBtnACardEl;
               const btnB = gp.buttons?.[1]?.pressed;
               const btnX = gp.buttons?.[2]?.pressed;
               const btnY = gp.buttons?.[3]?.pressed;
               const btnLB = gp.buttons?.[4]?.pressed;
               const btnRB = gp.buttons?.[5]?.pressed;
+              const btnStart = gp.buttons?.[9]?.pressed;
               const btnR3 = gp.buttons?.[11]?.pressed;
 
-              if (up || down || left || right || btnA || btnB || btnX || btnY || btnLB || btnRB || btnR3) {
+              if (up || down || left || right || btnA || btnB || btnX || btnY || btnLB || btnRB || btnStart || btnR3) {
                 lastGamepadActivityAt = now;
                 engageKeyboardNavMode();
                 syncControllerHudBarClient(gp);
@@ -66373,6 +66918,11 @@
               else if (down) { handleVerticalDirectionStepWithTurboClient("down", verticalTurboDir === "down"); lastGamepadStepAt = now; }
               else if (left) { resetVerticalTurboStreakClient(); moveSpatialFocus("left", false, true); lastGamepadStepAt = now; }
               else if (right) { resetVerticalTurboStreakClient(); moveSpatialFocus("right", false, true); lastGamepadStepAt = now; }
+              else if (btnStart && isCatalogCardDirectlyActiveClient()) {
+                resetVerticalTurboStreakClient();
+                triggerCardTrailerByElClient(currentSpatialEl, null);
+                lastGamepadStepAt = now + 220;
+              }
               else if (btnA && currentSpatialEl) {
                 resetVerticalTurboStreakClient();
                 handleSpatialConfirmAction();
@@ -66457,6 +67007,7 @@
         if (mRoot && typeof MutationObserver !== "undefined") {
           const backBtnObs = new MutationObserver(() => {
             if (typeof syncTelegramBackButtonClient === "function") syncTelegramBackButtonClient();
+            if (typeof syncCatalogFocusInfoBarClient === "function") syncCatalogFocusInfoBarClient();
           });
           backBtnObs.observe(mRoot, { childList: true, subtree: false });
         }

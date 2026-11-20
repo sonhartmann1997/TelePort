@@ -1022,7 +1022,7 @@
         syncSmartPageIndicatorDomClient(true);
       }
 
-      // Einzelne Katalog-Karte als HTML mit IntersectionObserver-Lazy-Cover & Seiten-Attribut rendern
+      // Einzelne Katalog-Karte als HTML: Freies Poster, ruhige Titel-/Info-Zeile darunter & Datenattribute für die Fokus-Info-Zeile
       function buildCatalogCardHtmlClient(it, idx, opts = {}) {
         const showTop10Ranks = Boolean(opts.showTop10Ranks);
         const isMixedMediaView = Boolean(opts.isMixedMediaView);
@@ -1033,31 +1033,35 @@
         const cardKey = tc + "_" + it.id;
         const isCardSaved = savedKeysSet.has(cardKey);
         const rankHtml = (showTop10Ranks && idx < 10) ? ('<span class="card-rank-badge">#' + (idx + 1) + '</span>') : "";
-        const vipQualityHtml = (vipAllowed && it.vipQuality)
-          ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(it.vipQuality) + '"></span>')
+        const vipQualityText = (vipAllowed && it.vipQuality) ? String(it.vipQuality) : "";
+        const vipQualityHtml = vipQualityText
+          ? ('<span class="card-vip-dot" title="VIP-Stream verfügbar: ' + esc(vipQualityText) + '"></span>')
           : "";
         const itemTitleSafe = esc(it.title || it.name || "");
         const resolvedCardPoster = resolvePosterUrlClient(it.poster_path, "w342", it.external_poster_url || it.poster || "");
-        const itemPosterSafe = esc(it.poster_path || it.external_poster_url || it.poster || "");
         const yrStr = esc((it.release_date || it.first_air_date || "").slice(0, 4) || "–");
         const ratStr = it.vote_average ? Number(it.vote_average).toFixed(1) : "–";
-        const subRightTxt = isMixedMediaView ? ((tc === "s" ? "📺 " : "🎬 ") + yrStr) : yrStr;
+        const mediaLabel = tc === "s" ? "Serie" : "Film";
         const effectivePosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : LAZY_POSTER_FALLBACK_SVG;
+        const mixedSuffixHtml = isMixedMediaView ? ('<span class="card-sub-dot">·</span><span>' + mediaLabel + '</span>') : "";
 
-        return '<div class="card' + (isCardSaved ? " card-saved" : "") + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" data-page-num="' + itemPageNum + '" onclick="openDetails(\\'' + tc + '\\',' + it.id + ')">' +
+        return '<div class="card' + (isCardSaved ? " card-saved" : "") + '" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-type="' + tc + '" data-card-id="' + it.id + '" data-card-title="' + itemTitleSafe + '" data-card-year="' + yrStr + '" data-card-rating="' + esc(ratStr) + '" data-card-vip="' + esc(vipQualityText) + '" data-card-saved="' + (isCardSaved ? "1" : "0") + '" data-card-media-label="' + mediaLabel + '" data-page-num="' + itemPageNum + '" onclick="openDetails(\\'' + tc + '\\',' + it.id + ')">' +
           '<div class="card-poster-wrap">' +
             '<div class="card-top-left-stack">' +
               rankHtml +
               vipQualityHtml +
             '</div>' +
             '<button type="button" class="card-quick-save ' + (isCardSaved ? "saved" : "") + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ')" title="' + (isCardSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)") + '">' + (isCardSaved ? "✓" : "🔖") + '</button>' +
-            '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + it.id + ')" title="Details öffnen">ℹ️ Details</button>' +
-            '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
+            '<button type="button" class="card-hover-play-btn" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" aria-label="Trailer abspielen" title="Instant-Trailer abspielen">' +
+              '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 2.6a.9.9 0 0 1 1.37-.77l8.2 5.4a.9.9 0 0 1 0 1.54l-8.2 5.4A.9.9 0 0 1 4.2 13.4V2.6z"/></svg>' +
+            '</button>' +
             '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '"' + (idx < 8 ? ' fetchpriority="high"' : '') + ' draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
           '</div>' +
           '<div class="card-body">' +
             '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
-            '<div class="card-sub"><span style="color:#fbbf24">★ ' + ratStr + '</span><span>' + subRightTxt + '</span></div>' +
+            '<div class="card-sub">' +
+              '<span class="card-sub-meta"><span class="card-sub-rating">★ ' + ratStr + '</span><span class="card-sub-dot">·</span><span>' + yrStr + '</span>' + mixedSuffixHtml + '</span>' +
+            '</div>' +
           '</div>' +
         '</div>';
       }

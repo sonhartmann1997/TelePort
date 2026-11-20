@@ -910,13 +910,67 @@
         color: #334155;
       }
       body[data-theme="light"] .card {
-        background: #0f172a;
-        border-color: rgba(15, 23, 42, 0.16);
-        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+        background: transparent;
+        border: none;
+        box-shadow: none;
       }
-      body[data-theme="light"] .card:hover {
+      body[data-theme="light"] .card-poster-wrap {
+        background: #e2e8f0;
+        border-color: rgba(15, 23, 42, 0.14);
+        box-shadow: 0 5px 15px rgba(15, 23, 42, 0.11);
+      }
+      body[data-theme="light"] .card:hover .card-poster-wrap,
+      body[data-theme="light"] .card.spatial-focus .card-poster-wrap,
+      body[data-theme="light"] .card:focus-visible .card-poster-wrap {
         border-color: #0284c7;
-        box-shadow: 0 10px 24px rgba(2, 132, 199, 0.22);
+        box-shadow: 0 0 0 2.5px #0284c7, 0 12px 24px rgba(15, 23, 42, 0.20);
+      }
+      body[data-theme="light"] .card-title {
+        color: #0f172a;
+      }
+      body[data-theme="light"] .card:hover .card-title,
+      body[data-theme="light"] .card.spatial-focus .card-title,
+      body[data-theme="light"] .card:focus-visible .card-title {
+        color: #0369a1;
+      }
+      body[data-theme="light"] .card-sub {
+        color: #475569;
+      }
+      body[data-theme="light"] .card-sub-rating {
+        color: #b45309;
+      }
+      body[data-theme="light"] .card-wl-folder-link {
+        color: #0369a1 !important;
+      }
+      body[data-theme="light"] .catalog-focus-info-bar {
+        background: rgba(255, 255, 255, 0.94);
+        border-color: rgba(2, 132, 199, 0.34);
+        color: #0f172a;
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+      }
+      body[data-theme="light"] .cfi-title {
+        color: #0f172a;
+      }
+      body[data-theme="light"] .cfi-meta {
+        color: #475569;
+      }
+      body[data-theme="light"] .cfi-rating {
+        color: #b45309;
+      }
+      body[data-theme="light"] .cfi-divider {
+        background: rgba(15, 23, 42, 0.14);
+      }
+      body[data-theme="light"] .cfi-hint-btn {
+        color: #334155;
+      }
+      body[data-theme="light"] .cfi-hint-btn:hover {
+        background: rgba(2, 132, 199, 0.12);
+        color: #0369a1;
+      }
+      body[data-theme="light"] .cfi-hint-btn kbd {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+        color: #0f172a;
       }
       body[data-theme="light"] .pagination-bar {
         background: #ffffff;
@@ -1492,9 +1546,10 @@
         border-bottom: 1px solid rgba(0, 240, 255, 0.35);
         box-shadow: 0 4px 24px rgba(255, 0, 127, 0.18);
       }
-      body[data-theme="cyberpunk"] .card:hover {
+      body[data-theme="cyberpunk"] .card:hover .card-poster-wrap,
+      body[data-theme="cyberpunk"] .card.spatial-focus .card-poster-wrap {
         border-color: #00f0ff;
-        box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+        box-shadow: 0 0 0 2.5px #00f0ff, 0 12px 26px rgba(0, 240, 255, 0.30);
       }
       /* Barrierefreier Farbenblind-Modus (Okabe-Ito Blau vs. Orange statt Grün vs. Rot) */
       body[data-colorblind="1"]:not([data-theme="light"]) {
@@ -1542,7 +1597,10 @@
         scroll-padding-top: var(--sticky-header-offset, 74px);
         scroll-padding-bottom: max(28px, calc(env(safe-area-inset-bottom, 0px) + 20px));
       }
-      .card,
+      .card {
+        scroll-margin-top: var(--sticky-header-offset, 74px);
+        scroll-margin-bottom: 76px;
+      }
       .btn,
       .f-pill,
       .ff-tab-btn,
@@ -1555,8 +1613,9 @@
       }
       /* Geräte-spezifische automatische Anpassung (User-Agent) */
       body[data-device="tv"] .carousel {
-        grid-template-columns: repeat(auto-fill, minmax(calc(155px * var(--scale-cover)), 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(auto-fill, minmax(calc(158px * var(--scale-cover)), 1fr));
+        column-gap: calc(14px * var(--scale-cover));
+        row-gap: calc(20px * var(--scale-cover));
       }
       body[data-device="mobile"] header {
         padding: calc(6px * var(--scale-menu)) calc(8px * var(--scale-menu));
@@ -1566,8 +1625,9 @@
         font-size: calc(15.5px * var(--scale-menu));
       }
       body[data-device="mobile"] .carousel {
-        grid-template-columns: repeat(auto-fill, minmax(calc(104px * var(--scale-cover)), 1fr));
-        gap: 8px;
+        grid-template-columns: repeat(auto-fill, minmax(calc(106px * var(--scale-cover)), 1fr));
+        column-gap: calc(10px * var(--scale-cover));
+        row-gap: calc(16px * var(--scale-cover));
       }
 
       /* Gemeinsame 1:1 Kino-Typografie & Button-Variablen für Hero-Slider & Detailansicht */
@@ -1579,13 +1639,12 @@
         --cinema-btn-pad: calc(9.5px * var(--scale-menu)) calc(18px * var(--scale-menu));
       }
 
-      /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen):
+      /* Klare Fokus-Markierung für Pfeiltasten, Fire TV / Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks & .card-Rahmen ausgenommen):
          WICHTIG: outline-offset: -2px + inset Box-Shadow + kein horizontales scale(), damit die linken & rechten Ränder
          in Scrollboxen (Suchvorschläge, Sidebar, Genre-Grid, Cast-Slider, Katalog) NIEMALS überstehen oder abgeschnitten werden! */
-      .spatial-focus:where(:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn):not(.hero-btn-play):not(#heroBtnTrailer):not(.detail-btn-play-white):not(#detailTrailerBtn):not(#detailPrimaryPlayBtn):not(#heroCinemaPlayBtn):not(#detailCinemaPlayBtn):not(.card-quick-trailer):not(.btn.blue):not(.btn.red):not(.btn.primary):not(.btn.active):not(.btn.hero-primary):not(.page-jump-btn.primary):not(.page-jump-btn.active):not(.media-mode-tab.active-movie):not(.media-mode-tab.active-series)),
+      .spatial-focus:where(:not(.card):not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn):not(.hero-btn-play):not(#heroBtnTrailer):not(.detail-btn-play-white):not(#detailTrailerBtn):not(#detailPrimaryPlayBtn):not(#heroCinemaPlayBtn):not(#detailCinemaPlayBtn):not(.card-hover-play-btn):not(.btn.blue):not(.btn.red):not(.btn.primary):not(.btn.active):not(.btn.hero-primary):not(.page-jump-btn.primary):not(.page-jump-btn.active):not(.media-mode-tab.active-movie):not(.media-mode-tab.active-series)),
       .brand-logo:focus-visible,
       .btn:focus-visible:where(:not(.blue):not(.red):not(.primary):not(.active):not(.hero-primary)),
-      .card:focus-visible,
       .media-mode-tab:focus-visible:where(:not(.active-movie):not(.active-series)),
       .ff-tab-btn:focus-visible,
       .f-pill:focus-visible,
@@ -2656,11 +2715,12 @@
         transform: translateX(-2px);
         filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.7));
       }
-      /* Dezentes Feedback beim Enter-Gedrückthalten auf einem Cover (direkter Trailer-Start) */
-      .card.is-enter-holding {
-        box-shadow: 0 0 0 2.5px #38bdf8, 0 0 26px rgba(56, 189, 248, 0.55) !important;
-        transform: scale(0.985);
-        transition: transform 0.22s ease, box-shadow 0.22s ease !important;
+      /* Dezentes Feedback beim Enter-/OK-Gedrückthalten auf einem Cover (Merkliste / Controller-Trailer) */
+      .card.is-enter-holding .card-poster-wrap {
+        border-color: #10b981 !important;
+        box-shadow: 0 0 0 2.5px #10b981, 0 0 24px rgba(16, 185, 129, 0.48) !important;
+        transform: translateY(-2px) scale(0.975) !important;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease !important;
       }
       /* Hintergrund-Scroll-Sperre sobald ein Seitenmenü (Links oder Rechts) aktiv/geöffnet ist */
       body:has(#filterSidebarDrawer.open),

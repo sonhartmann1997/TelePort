@@ -671,15 +671,18 @@
       }
       applyUiScaleToDom();
 
-      // Automatische Geräteerkennung (User-Agent + Viewport)
+      // Automatische Geräteerkennung (User-Agent + Fire TV / Silk + Viewport)
       function detectClientDeviceAndAdapt() {
         const ua = String(navigator.userAgent || "").toLowerCase();
         const w = window.innerWidth || 1024;
+        const maxTouch = Number(navigator.maxTouchPoints || 0);
+        const isFireTv = /\\baft[a-z0-9]{1,5}\\b|fire\\s?tv/i.test(ua) || (/\\bsilk\\b/i.test(ua) && !/mobile/i.test(ua) && maxTouch === 0 && w >= 900);
+        const isSmartTv = isFireTv || /android.*tv|smart-tv|smarttv|googletv|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua);
         let devType = "desktop";
         let devLabel = "💻 Desktop";
-        if (/android.*tv|smart-tv|smarttv|googletv|aftm|aftb|aftt|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua)) {
+        if (isSmartTv) {
           devType = "tv";
-          devLabel = "📺 Smart-TV / Controller";
+          devLabel = isFireTv ? "📺 Fire TV" : "📺 Smart-TV / Controller";
         } else if (/ipad|tablet|playbook|silk/i.test(ua) || (/android/i.test(ua) && !/mobile/i.test(ua))) {
           devType = "tablet";
           devLabel = "📟 Tablet";
@@ -688,6 +691,11 @@
           devLabel = "📱 Mobil";
         }
         document.body.setAttribute("data-device", devType);
+        if (isFireTv) {
+          document.body.setAttribute("data-tv-profile", "firetv");
+        } else {
+          document.body.removeAttribute("data-tv-profile");
+        }
         const b = document.getElementById("deviceBadge");
         if (b) b.textContent = devLabel;
         applyUiScaleToDom();
@@ -2636,6 +2644,7 @@
         else savedKeysSet.delete(key);
         document.querySelectorAll('.card[data-card-key="' + key + '"]').forEach(cardEl => {
           cardEl.classList.toggle("card-saved", Boolean(isSaved));
+          cardEl.setAttribute("data-card-saved", isSaved ? "1" : "0");
           const btn = cardEl.querySelector(".card-quick-save");
           if (btn) {
             btn.classList.toggle("saved", Boolean(isSaved));
@@ -2674,6 +2683,9 @@
         }
         if (typeof syncRightMenuBadgesClient === "function") {
           syncRightMenuBadgesClient();
+        }
+        if (typeof syncCatalogFocusInfoBarClient === "function") {
+          syncCatalogFocusInfoBarClient();
         }
       }
 

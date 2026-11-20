@@ -1181,25 +1181,27 @@
             const cardKey = tc + "_" + targetId;
             const itemTitleSafe = esc(it.title || 'Titel');
             const resolvedCardPoster = resolvePosterUrlClient(it.poster, 'w342', '');
-            const itemPosterSafe = esc(it.poster || '');
             const yrStr = esc((it.year && it.year !== 'K. A.') ? String(it.year).slice(0, 4) : '–');
+            const ratStr = it.rating ? Number(it.rating).toFixed(1) : '';
+            const mediaLabel = isSer ? 'Serie' : 'Film';
             const epsList = Array.isArray(it.episodes) ? it.episodes : [];
             const plObj = it.folderId ? folders.find(f => f.id === it.folderId) : null;
             const epCountBadgeHtml = (isSer && epsList.length > 0)
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
             const subLeftHtml = folders.length > 0
-              ? ('<span style="cursor:pointer;color:#7dd3fc" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + (isSer ? 'Serie' : 'Film') + ' ▾')) + '</span>')
-              : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : (isSer ? '📺 Serie' : '🎬 Film')) + '</span>');
+              ? ('<span class="card-wl-folder-link" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + mediaLabel + ' ▾')) + '</span>')
+              : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : mediaLabel) + '</span>');
             const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
-            return '<div class="card" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-title="' + itemTitleSafe + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ')">' +
+            return '<div class="card card-saved" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-type="' + tc + '" data-card-id="' + targetId + '" data-card-title="' + itemTitleSafe + '" data-card-year="' + yrStr + '" data-card-rating="' + esc(ratStr) + '" data-card-vip="" data-card-saved="1" data-card-media-label="' + mediaLabel + '" data-wl-uid="' + esc(it.uid || '') + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ')">' +
               '<div class="card-poster-wrap">' +
                 '<div class="card-top-left-stack">' +
                   epCountBadgeHtml +
                 '</div>' +
                 '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
-                '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + targetId + ')" title="Details öffnen">ℹ️ Details</button>' +
-                '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ')" title="Instant-Trailer abspielen">▶ Trailer</button>' +
+                '<button type="button" class="card-hover-play-btn" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ')" aria-label="Trailer abspielen" title="Instant-Trailer abspielen">' +
+                  '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 2.6a.9.9 0 0 1 1.37-.77l8.2 5.4a.9.9 0 0 1 0 1.54l-8.2 5.4A.9.9 0 0 1 4.2 13.4V2.6z"/></svg>' +
+                '</button>' +
                 '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + wlPosterSrc + '" draggable="false" alt="' + itemTitleSafe + '" />' +
               '</div>' +
               '<div class="card-body">' +
