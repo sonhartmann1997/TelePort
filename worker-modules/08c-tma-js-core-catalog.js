@@ -2849,20 +2849,10 @@
           });
       }
 
-      function scheduleCardIntentPrewarmClient(cardEl, delayMs = 70) {
-        if (!cardEl || typeof cardEl.getAttribute !== "function") return;
-        const rawKey = cardEl.getAttribute("data-card-key") || "";
-        if (!rawKey) return;
-        const parts = rawKey.split("_");
-        if (parts.length < 2) return;
-        const tc = parts[0] === "s" ? "s" : "m";
-        const idNum = Number(parts[1]);
-        if (!idNum) return;
-        if (cardHoverPrewarmTimer) clearTimeout(cardHoverPrewarmTimer);
-        cardHoverPrewarmTimer = setTimeout(() => {
-          cardHoverPrewarmTimer = null;
-          prewarmItemDetailsClient(tc, idNum);
-        }, delayMs);
+      function scheduleCardIntentPrewarmClient(_cardEl, _delayMs = 70) {
+        // Deaktiviert zur drastischen Worker-Entlastung (kein Hover-/Fokus-Request-Sturm auf /api/tma/details).
+        // Details laden dank schlankem Backend & Edge-Cache direkt bei Klick/OK blitzschnell.
+        return;
       }
 
       function activateCardTitleMarquee(card) {
@@ -3027,11 +3017,10 @@
         const tc = parts[0] === "s" ? "s" : "m";
         const idNum = Number(parts[1]);
         if (!idNum) return;
-        if (cardTouchPrewarmTimer) clearTimeout(cardTouchPrewarmTimer);
-        cardTouchPrewarmTimer = setTimeout(() => {
+        if (cardTouchPrewarmTimer) {
+          clearTimeout(cardTouchPrewarmTimer);
           cardTouchPrewarmTimer = null;
-          prewarmItemDetailsClient(tc, idNum);
-        }, 42);
+        }
         const titleEl = card.querySelector(".card-title");
         const titleTxt = card.getAttribute("data-card-title") || (titleEl ? titleEl.textContent : "") || "Titel";
 
@@ -3406,15 +3395,7 @@
           if (typeof prewarmAllHeroSlidesClearLogosClient === "function") {
             prewarmAllHeroSlidesClearLogosClient();
           }
-          const activeSlide = state.heroSlides[0];
-          if (activeSlide && activeSlide.id) {
-            const activeType = activeSlide.media_type === "tv" || state.type === "s" ? "s" : "m";
-            prewarmItemDetailsClient(activeType, activeSlide.id);
-          }
-        }, 35);
-        setTimeout(() => {
-          ensureHeroSlidesOverviewsClient();
-        }, 380);
+        }, 40);
       }
 
       // =========================================================================
@@ -3631,7 +3612,7 @@
           },
           {
             root: null,
-            rootMargin: "0px 0px 850px 0px",
+            rootMargin: "0px 0px 450px 0px",
             threshold: 0.01
           }
         );
@@ -4367,14 +4348,7 @@
           if (!window._sideEdgeIntroHintShown && typeof triggerSideEdgeHintsAutoFadeClient === "function") {
             setTimeout(() => triggerSideEdgeHintsAutoFadeClient(5000, "intro"), 120);
           }
-          // Sobald der Nutzer vom Slider nach unten zu den Covern scrollt, direkt die nächste Seite im Hintergrund vorladen!
-          if (state.hasMorePages && !state.loadingMore && Number(state.page || 1) === Number(state.startPage || 1) && typeof loadMoreResults === "function") {
-            setTimeout(() => {
-              if (heroCurtainScrolledToCatalog && state.hasMorePages && !state.loadingMore) {
-                loadMoreResults(true);
-              }
-            }, 120);
-          }
+          // Seite 2 wird sauber über den IntersectionObserver beim echten Scrollen nachgeladen (kein vorzeitiger 120ms-Prefetch).
         } else {
           if (document.body) {
             document.body.classList.remove("hero-scrolled-past", "page-scrolled");

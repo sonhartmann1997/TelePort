@@ -2233,10 +2233,6 @@
           state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
           state.heroActionsEngaged = false;
           updateHeroBannerDomOnly();
-          const curSlide = state.heroSlides[state.heroIndex];
-          if (curSlide && curSlide.id) {
-            prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
-          }
         }, intervalMs);
       }
 
@@ -2248,10 +2244,6 @@
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = false;
         updateHeroBannerDomOnly();
-        const curSlide = state.heroSlides[state.heroIndex];
-        if (curSlide && curSlide.id) {
-          prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
-        }
         startHeroRotationTimer();
       }
 
@@ -2263,10 +2255,6 @@
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = true;
         updateHeroBannerDomOnly();
-        const curSlide = state.heroSlides[state.heroIndex];
-        if (curSlide && curSlide.id) {
-          prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
-        }
         startHeroRotationTimer();
         const trBtn = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
         if (trBtn && typeof jumpSpatialFocus === "function") {
@@ -3089,13 +3077,64 @@
 
       function prewarmAllHeroSlidesClearLogosClient() {
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return;
-        state.heroSlides.forEach((sl, idx) => {
-          if (!sl || !sl.id) return;
+        const missingKeys = [];
+        const slideByKey = new Map();
+        state.heroSlides.forEach((sl) => {
+          if (!sl || !sl.id || Number(sl.id) >= 8000000) return;
           const slType = sl.media_type === "tv" || state.type === "s" ? "s" : "m";
-          setTimeout(() => {
-            ensureHeroSlideClearLogoClient(sl, slType);
-          }, idx * 55);
+          const key = slType + "_" + Number(sl.id);
+          slideByKey.set(key, sl);
+          const existingLp = String(sl.logo_path || "").trim() || (clientClearLogoCache.has(key) ? String(clientClearLogoCache.get(key) || "").trim() : "");
+          if (existingLp) {
+            sl.logo_path = existingLp;
+            clientClearLogoCache.set(key, existingLp);
+            preloadClearLogoBitmapClient(existingLp);
+          } else if (!clientClearLogoCache.has(key) && !clientClearLogoFetchPromises.has(key)) {
+            missingKeys.push(key);
+          }
         });
+        const uniqMissing = Array.from(new Set(missingKeys)).slice(0, 8);
+        if (uniqMissing.length === 0) return;
+
+        // 1 einziger gebündelter Batch-Call (/api/tma/logos) statt 6 separater /api/tma/logo Requests!
+        const batchPromise = (async () => {
+          try {
+            const res = await apiFetchJson(API_BASE + "/logos?items=" + encodeURIComponent(uniqMissing.join(",")));
+            const logosMap = (res && res.logos && typeof res.logos === "object") ? res.logos : {};
+            let cacheDirty = false;
+            const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            for (const key of uniqMissing) {
+              const fetchedLp = String(logosMap[key] || "").trim();
+              clientClearLogoCache.set(key, fetchedLp);
+              cacheDirty = true;
+              const sl = slideByKey.get(key);
+              if (sl) sl.logo_path = fetchedLp;
+              if (fetchedLp) {
+                preloadClearLogoBitmapClient(fetchedLp).then((ready) => {
+                  if (!ready || !sl) return;
+                  const curActive = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+                  if (curActive && String(curActive.id) === String(sl.id)) {
+                    const heroTitleBox = document.getElementById("heroTitleBoxEl");
+                    if (heroTitleBox) {
+                      heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(sl.title || sl.name || "", fetchedLp);
+                    }
+                  }
+                });
+              }
+            }
+            if (cacheDirty) schedulePersistClearLogoCacheClient();
+            return logosMap;
+          } catch (_e) {
+            return {};
+          } finally {
+            for (const key of uniqMissing) {
+              clientClearLogoFetchPromises.delete(key);
+            }
+          }
+        })();
+        for (const key of uniqMissing) {
+          clientClearLogoFetchPromises.set(key, batchPromise.then(m => String((m && m[key]) || "")));
+        }
       }
 
       // Gemeinsame, wiederverwendbare Stage-Beschreibungsbox für Hero-Slider, Such-Hero & Detailseite (Single Source of Truth)

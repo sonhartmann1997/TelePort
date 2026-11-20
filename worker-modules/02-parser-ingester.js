@@ -2398,13 +2398,89 @@
     return fallbackUrl;
   }
 
-  // --- Fetch mit Timeout + universeller TMDb v3 (api_key) & v4 (Bearer JWT) Auth-Normalisierung ---
+  function scheduleBackgroundWork(promiseOrFn) {
+    try {
+      const p = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
+      if (!p || typeof p.then !== "function") return;
+      const safeP = p.catch(() => {});
+      const activeCtx = typeof globalThis !== "undefined" ? globalThis._activeWorkerCtx : null;
+      if (activeCtx && typeof activeCtx.waitUntil === "function") {
+        activeCtx.waitUntil(safeP);
+      }
+    } catch (_e) {}
+  }
+
+  function buildEdgeCacheKeyRequest(rawUrl) {
+    try {
+      const u = new URL(String(rawUrl || ""));
+      // Geheimnisse (api_key) niemals im öffentlichen Edge-Cache-Key speichern
+      u.searchParams.delete("api_key");
+      return new Request(u.toString(), { method: "GET" });
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function resolveExternalEdgeCacheTtl(rawUrl) {
+    const u = String(rawUrl || "");
+    if (u.includes("www.youtube.com/oembed") || u.includes("api.kinocheck.com")) {
+      return 86400; // 24 Stunden
+    }
+    if (u.includes("api.themoviedb.org/3/")) {
+      if (u.includes("/discover/") || u.includes("/trending/") || u.includes("/search/")) {
+        return 900; // 15 Minuten
+      }
+      if (u.includes("/images") || u.includes("/videos") || u.includes("/movie/") || u.includes("/tv/") || u.includes("/collection/") || u.includes("/person/")) {
+        return 43200; // 12 Stunden
+      }
+      return 1800; // 30 Minuten
+    }
+    return 0;
+  }
+
+  // --- Fetch mit Timeout, Edge-Cache (caches.default), Subrequest-Circuit-Breaker & TMDb Auth-Normalisierung ---
   async function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
       let targetUrl = String(url || "");
       let effectiveOptions = { ...options };
+      const method = String(effectiveOptions.method || "GET").toUpperCase();
+      const edgeCacheTtl = method === "GET" && !effectiveOptions._skipEdgeCache
+        ? resolveExternalEdgeCacheTtl(targetUrl)
+        : 0;
+      const edgeCacheApi = (edgeCacheTtl > 0 && typeof caches !== "undefined" && caches && caches.default)
+        ? caches.default
+        : null;
+      const edgeCacheKey = edgeCacheApi ? buildEdgeCacheKeyRequest(targetUrl) : null;
+
+      // 1. Cloudflare Edge Cache (0ms externe Latenz, 0 TMDb-Subrequests!)
+      if (edgeCacheApi && edgeCacheKey) {
+        try {
+          const cachedEdgeRes = await edgeCacheApi.match(edgeCacheKey);
+          if (cachedEdgeRes && cachedEdgeRes.ok) {
+            clearTimeout(id);
+            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
+              activeWorkerTelemetry.cacheHit = true;
+            }
+            return cachedEdgeRes;
+          }
+        } catch (_cacheErr) {}
+      }
+
+      // 2. Harter Subrequest-Circuit-Breaker für Cloudflare Free Plan (50 Subrequests Limit)
+      const hardSubrequestCap = effectiveOptions._criticalSubrequest ? 47 : 42;
+      if (typeof currentInvocationSubrequests === "number" && currentInvocationSubrequests >= hardSubrequestCap) {
+        clearTimeout(id);
+        if (typeof subrequestBudgetExhausted !== "undefined") {
+          subrequestBudgetExhausted = true;
+        }
+        return new Response(JSON.stringify({ ok: false, budget_exhausted: true }), {
+          status: 429,
+          headers: { "Content-Type": "application/json; charset=utf-8" }
+        });
+      }
+
       if (targetUrl.includes("api.themoviedb.org")) {
         trackStat("tmdbCalls");
         const hdrs = { ...(options?.headers || {}) };
@@ -2450,6 +2526,22 @@
       }
       const res = await fetch(targetUrl, { ...effectiveOptions, signal: controller.signal });
       clearTimeout(id);
+
+      // Erfolgreiche GET-Antworten asynchron im Cloudflare Edge Cache sichern (blockiert nicht die Antwort)
+      if (edgeCacheApi && edgeCacheKey && res && res.ok && edgeCacheTtl > 0) {
+        try {
+          const resClone = res.clone();
+          const cacheHeaders = new Headers(resClone.headers);
+          cacheHeaders.set("Cache-Control", `public, max-age=${edgeCacheTtl}`);
+          cacheHeaders.delete("Set-Cookie");
+          const cacheableRes = new Response(resClone.body, {
+            status: resClone.status,
+            statusText: resClone.statusText,
+            headers: cacheHeaders
+          });
+          scheduleBackgroundWork(() => edgeCacheApi.put(edgeCacheKey, cacheableRes));
+        } catch (_putErr) {}
+      }
       return res;
     } catch (err) {
       clearTimeout(id);

@@ -3533,13 +3533,89 @@
     return fallbackUrl;
   }
 
-  // --- Fetch mit Timeout + universeller TMDb v3 (api_key) & v4 (Bearer JWT) Auth-Normalisierung ---
+  function scheduleBackgroundWork(promiseOrFn) {
+    try {
+      const p = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
+      if (!p || typeof p.then !== "function") return;
+      const safeP = p.catch(() => {});
+      const activeCtx = typeof globalThis !== "undefined" ? globalThis._activeWorkerCtx : null;
+      if (activeCtx && typeof activeCtx.waitUntil === "function") {
+        activeCtx.waitUntil(safeP);
+      }
+    } catch (_e) {}
+  }
+
+  function buildEdgeCacheKeyRequest(rawUrl) {
+    try {
+      const u = new URL(String(rawUrl || ""));
+      // Geheimnisse (api_key) niemals im öffentlichen Edge-Cache-Key speichern
+      u.searchParams.delete("api_key");
+      return new Request(u.toString(), { method: "GET" });
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function resolveExternalEdgeCacheTtl(rawUrl) {
+    const u = String(rawUrl || "");
+    if (u.includes("www.youtube.com/oembed") || u.includes("api.kinocheck.com")) {
+      return 86400; // 24 Stunden
+    }
+    if (u.includes("api.themoviedb.org/3/")) {
+      if (u.includes("/discover/") || u.includes("/trending/") || u.includes("/search/")) {
+        return 900; // 15 Minuten
+      }
+      if (u.includes("/images") || u.includes("/videos") || u.includes("/movie/") || u.includes("/tv/") || u.includes("/collection/") || u.includes("/person/")) {
+        return 43200; // 12 Stunden
+      }
+      return 1800; // 30 Minuten
+    }
+    return 0;
+  }
+
+  // --- Fetch mit Timeout, Edge-Cache (caches.default), Subrequest-Circuit-Breaker & TMDb Auth-Normalisierung ---
   async function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
       let targetUrl = String(url || "");
       let effectiveOptions = { ...options };
+      const method = String(effectiveOptions.method || "GET").toUpperCase();
+      const edgeCacheTtl = method === "GET" && !effectiveOptions._skipEdgeCache
+        ? resolveExternalEdgeCacheTtl(targetUrl)
+        : 0;
+      const edgeCacheApi = (edgeCacheTtl > 0 && typeof caches !== "undefined" && caches && caches.default)
+        ? caches.default
+        : null;
+      const edgeCacheKey = edgeCacheApi ? buildEdgeCacheKeyRequest(targetUrl) : null;
+
+      // 1. Cloudflare Edge Cache (0ms externe Latenz, 0 TMDb-Subrequests!)
+      if (edgeCacheApi && edgeCacheKey) {
+        try {
+          const cachedEdgeRes = await edgeCacheApi.match(edgeCacheKey);
+          if (cachedEdgeRes && cachedEdgeRes.ok) {
+            clearTimeout(id);
+            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
+              activeWorkerTelemetry.cacheHit = true;
+            }
+            return cachedEdgeRes;
+          }
+        } catch (_cacheErr) {}
+      }
+
+      // 2. Harter Subrequest-Circuit-Breaker für Cloudflare Free Plan (50 Subrequests Limit)
+      const hardSubrequestCap = effectiveOptions._criticalSubrequest ? 47 : 42;
+      if (typeof currentInvocationSubrequests === "number" && currentInvocationSubrequests >= hardSubrequestCap) {
+        clearTimeout(id);
+        if (typeof subrequestBudgetExhausted !== "undefined") {
+          subrequestBudgetExhausted = true;
+        }
+        return new Response(JSON.stringify({ ok: false, budget_exhausted: true }), {
+          status: 429,
+          headers: { "Content-Type": "application/json; charset=utf-8" }
+        });
+      }
+
       if (targetUrl.includes("api.themoviedb.org")) {
         trackStat("tmdbCalls");
         const hdrs = { ...(options?.headers || {}) };
@@ -3585,6 +3661,22 @@
       }
       const res = await fetch(targetUrl, { ...effectiveOptions, signal: controller.signal });
       clearTimeout(id);
+
+      // Erfolgreiche GET-Antworten asynchron im Cloudflare Edge Cache sichern (blockiert nicht die Antwort)
+      if (edgeCacheApi && edgeCacheKey && res && res.ok && edgeCacheTtl > 0) {
+        try {
+          const resClone = res.clone();
+          const cacheHeaders = new Headers(resClone.headers);
+          cacheHeaders.set("Cache-Control", `public, max-age=${edgeCacheTtl}`);
+          cacheHeaders.delete("Set-Cookie");
+          const cacheableRes = new Response(resClone.body, {
+            status: resClone.status,
+            statusText: resClone.statusText,
+            headers: cacheHeaders
+          });
+          scheduleBackgroundWork(() => edgeCacheApi.put(edgeCacheKey, cacheableRes));
+        } catch (_putErr) {}
+      }
       return res;
     } catch (err) {
       clearTimeout(id);
@@ -5955,62 +6047,121 @@
       memoryFallback.set("d1_all_series_ep_map_cache_ts", now);
     }
 
-    // Map aus D1 movies & series für fehlende Poster + Set gültiger VIP-Film-Streams (3 Minuten im RAM gecacht)
+    // Gezielter D1-Lookup NUR für die tatsächlich in der Liste vorhandenen IDs (keine LIMIT 1500 Full-Table-Scans!)
     let posterLookup = memoryFallback.get("d1_poster_lookup_cache");
     let validMovieIdsSet = memoryFallback.get("d1_valid_movie_ids_set_cache");
     const posterLookupTs = Number(memoryFallback.get("d1_poster_lookup_cache_ts") || 0);
-      // Schlanke Spalten-Abfrage OHNE details_json (spart >90% CPU-Zeit und verhindert 10ms Free-Tier Limit!)
-      if (!(posterLookup instanceof Map) || !(validMovieIdsSet instanceof Set) || (now - posterLookupTs) > 180000) {
-        posterLookup = new Map();
-        validMovieIdsSet = new Set();
-        const db = await ensureD1Schema(env);
-        const rawDb = getRawD1Binding(env);
-        if (db && rawDb) {
-          try {
+    if (!(posterLookup instanceof Map) || (now - posterLookupTs) > 300000) {
+      posterLookup = new Map();
+      memoryFallback.set("d1_poster_lookup_cache", posterLookup);
+      memoryFallback.set("d1_poster_lookup_cache_ts", now);
+    }
+    if (!(validMovieIdsSet instanceof Set) || (now - posterLookupTs) > 300000) {
+      validMovieIdsSet = new Set();
+      memoryFallback.set("d1_valid_movie_ids_set_cache", validMovieIdsSet);
+    }
+
+    const missingMovieIds = [];
+    const missingSeriesIds = [];
+    const needVipCheckMovieIds = [];
+    for (const item of list) {
+      if (!item) continue;
+      const isSer = item.contentType === "series" || item.contentType === "episode";
+      const tid = Number(item.contentType === "episode" ? item.seriesId : item.tmdbId);
+      if (!tid) continue;
+      if (isSer) {
+        if (!posterLookup.has(`s_${tid}`)) missingSeriesIds.push(tid);
+      } else {
+        if (!posterLookup.has(`m_${tid}`)) missingMovieIds.push(tid);
+        if (!validMovieIdsSet.has(tid) && !memoryFallback.has(`d1_movie_vip_checked_${tid}`)) {
+          needVipCheckMovieIds.push(tid);
+        }
+      }
+    }
+
+    const uniqMissingM = [...new Set(missingMovieIds)].slice(0, 80);
+    const uniqMissingS = [...new Set(missingSeriesIds)].slice(0, 80);
+    const uniqVipCheckM = [...new Set(needVipCheckMovieIds)].slice(0, 80);
+
+    if (uniqMissingM.length > 0 || uniqMissingS.length > 0 || uniqVipCheckM.length > 0) {
+      const db = await ensureD1Schema(env);
+      const rawDb = getRawD1Binding(env);
+      if (db && rawDb) {
+        try {
+          const stmts = [];
+          const keys = [];
+          if (uniqMissingM.length > 0) {
+            stmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM movies WHERE tmdb_id IN (${uniqMissingM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqMissingM));
+            keys.push("m");
+          }
+          if (uniqMissingS.length > 0) {
+            stmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM series WHERE tmdb_id IN (${uniqMissingS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqMissingS));
+            keys.push("s");
+          }
+          if (uniqVipCheckM.length > 0) {
+            stmts.push(rawDb.prepare(`SELECT DISTINCT movie_id FROM movie_files WHERE movie_id IN (${uniqVipCheckM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipCheckM));
+            keys.push("mf");
+          }
+          if (stmts.length > 0) {
             trackStat("d1Reads");
             if (typeof countD1Subrequest === "function") countD1Subrequest();
-            const [mRows, sRows, mfRows] = await rawDb.batch([
-              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM movies LIMIT 1500"),
-              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM series LIMIT 1500"),
-              rawDb.prepare("SELECT DISTINCT movie_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'")
-            ]);
-            for (const r of (mRows?.results || [])) {
-              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
-              posterLookup.set(`m_${Number(r.tmdb_id)}`, {
-                poster: p,
-                vote_average: Number(r.vote_average || 0),
-                release_year: r.release_year ? String(r.release_year) : "",
-                fsk: r.fsk || ""
-              });
-            }
-            for (const r of (sRows?.results || [])) {
-              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
-              posterLookup.set(`s_${Number(r.tmdb_id)}`, {
-                poster: p,
-                vote_average: Number(r.vote_average || 0),
-                release_year: r.release_year ? String(r.release_year) : "",
-                fsk: r.fsk || ""
-              });
-            }
-            for (const mf of (mfRows?.results || [])) {
-              if (mf && mf.movie_id) {
-                validMovieIdsSet.add(Number(mf.movie_id));
+            const batchResults = await rawDb.batch(stmts);
+            for (let bIdx = 0; bIdx < keys.length; bIdx++) {
+              const kind = keys[bIdx];
+              const rows = batchResults?.[bIdx]?.results || [];
+              if (kind === "m") {
+                const foundM = new Set();
+                for (const r of rows) {
+                  const mid = Number(r.tmdb_id);
+                  foundM.add(mid);
+                  const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+                  posterLookup.set(`m_${mid}`, {
+                    poster: p,
+                    vote_average: Number(r.vote_average || 0),
+                    release_year: r.release_year ? String(r.release_year) : "",
+                    fsk: r.fsk || ""
+                  });
+                }
+                for (const mid of uniqMissingM) {
+                  if (!foundM.has(mid)) posterLookup.set(`m_${mid}`, { poster: "", vote_average: 0, release_year: "", fsk: "" });
+                }
+              } else if (kind === "s") {
+                const foundS = new Set();
+                for (const r of rows) {
+                  const sid = Number(r.tmdb_id);
+                  foundS.add(sid);
+                  const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+                  posterLookup.set(`s_${sid}`, {
+                    poster: p,
+                    vote_average: Number(r.vote_average || 0),
+                    release_year: r.release_year ? String(r.release_year) : "",
+                    fsk: r.fsk || ""
+                  });
+                }
+                for (const sid of uniqMissingS) {
+                  if (!foundS.has(sid)) posterLookup.set(`s_${sid}`, { poster: "", vote_average: 0, release_year: "", fsk: "" });
+                }
+              } else if (kind === "mf") {
+                for (const mf of rows) {
+                  if (mf && mf.movie_id) validMovieIdsSet.add(Number(mf.movie_id));
+                }
+                for (const mid of uniqVipCheckM) {
+                  memoryFallback.set(`d1_movie_vip_checked_${mid}`, now);
+                }
               }
             }
-            memoryFallback.set("d1_poster_lookup_cache", posterLookup);
-            memoryFallback.set("d1_valid_movie_ids_set_cache", validMovieIdsSet);
-            memoryFallback.set("d1_poster_lookup_cache_ts", now);
-          } catch (e) {}
-        }
-        for (const [k, v] of memoryFallback.entries()) {
-          if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
-            const mid = Number(k.replace("d1_movie_files_", ""));
-            if (mid && v.some(x => x && scoreTelegramFileIdValidity(x.telegram_file_id || x.fileId || x.file_id) > 0)) {
-              validMovieIdsSet.add(mid);
-            }
+          }
+        } catch (e) {}
+      }
+      for (const [k, v] of memoryFallback.entries()) {
+        if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
+          const mid = Number(k.replace("d1_movie_files_", ""));
+          if (mid && v.some(x => x && scoreTelegramFileIdValidity(x.telegram_file_id || x.fileId || x.file_id) > 0)) {
+            validMovieIdsSet.add(mid);
           }
         }
       }
+    }
 
       for (const item of list) {
         if (!item) continue;
@@ -7250,12 +7401,16 @@
   let d1SchemaInitialized = false;
   let d1SchemaInitPromise = null;
   let activeD1WriteBuffer = null;
+  const D1_SCHEMA_VERSION = "20261120_v1";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
   function countD1Subrequest() {
     if (typeof currentInvocationSubrequests === "number") {
       currentInvocationSubrequests++;
+    }
+    if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
+      activeWorkerTelemetry.d1OpsCount = (activeWorkerTelemetry.d1OpsCount || 0) + 1;
     }
   }
 
@@ -7386,6 +7541,22 @@
     }
     const rawDb = getRawD1Binding(env) || db;
     d1SchemaInitPromise = (async () => {
+      // Cold-Start Fast-Path (Free Plan Schutz): 1 einzelner D1-Read prüft die Schema-Version
+      // und überspringt alle 26 CREATE TABLE/INDEX DDL-Statements + sqlite_master-Inspektion!
+      try {
+        countD1Subrequest();
+        const verRow = await rawDb
+          .prepare("SELECT data_json FROM entity_cache WHERE cache_key = ?1")
+          .bind("d1_schema_version")
+          .first();
+        if (verRow && String(verRow.data_json || "") === D1_SCHEMA_VERSION) {
+          d1SchemaInitialized = true;
+          d1SchemaInitPromise = null;
+          return;
+        }
+      } catch (_fastPathErr) {
+        // Tabelle existiert noch nicht -> vollständige Erst-Initialisierung unten ausführen
+      }
       try {
         countD1Subrequest();
         await rawDb.batch(unwrapRawD1Statements([
@@ -7724,6 +7895,13 @@
             }
           }
         }
+        try {
+          countD1Subrequest();
+          await rawDb
+            .prepare("INSERT INTO entity_cache (cache_key, entity_type, data_json, updated_at) VALUES (?1, 'system', ?2, ?3) ON CONFLICT(cache_key) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at")
+            .bind("d1_schema_version", D1_SCHEMA_VERSION, Date.now())
+            .run();
+        } catch (_saveVerErr) {}
         d1SchemaInitialized = true;
       } catch (e) {
         d1SchemaInitialized = true;
@@ -7733,6 +7911,143 @@
     })();
     await d1SchemaInitPromise;
     return db;
+  }
+
+  // Batch-Lookup für gecachte Medien-Metadaten (FSK, Studios, Anbieter, Overview, Poster, Logo) in 1 einziger D1-Batch-Abfrage!
+  async function getMediaMetaBatchFromD1(env, items = [], fallbackTypeCode = "m") {
+    const metaMap = new Map();
+    if (!Array.isArray(items) || items.length === 0) return metaMap;
+    const movieIdsToQuery = [];
+    const seriesIdsToQuery = [];
+    for (const it of items) {
+      if (!it || !it.id) continue;
+      const isTv = it.media_type === "tv" || (it.media_type !== "movie" && fallbackTypeCode === "s");
+      const tc = isTv ? "s" : "m";
+      const tid = Number(it.id);
+      if (!tid) continue;
+      const key = `${tc}_${tid}`;
+      if (metaMap.has(key)) continue;
+      const ramHit = getCachedTmdb(isTv ? `tv_${tid}` : `movie_${tid}`) ||
+        memoryFallback.get(isTv ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
+      if (ramHit && typeof ramHit === "object") {
+        metaMap.set(key, ramHit);
+        continue;
+      }
+      if (isTv) seriesIdsToQuery.push(tid);
+      else movieIdsToQuery.push(tid);
+    }
+
+    const uniqM = [...new Set(movieIdsToQuery)].slice(0, 40);
+    const uniqS = [...new Set(seriesIdsToQuery)].slice(0, 40);
+    if (uniqM.length === 0 && uniqS.length === 0) return metaMap;
+
+    const db = await ensureD1Schema(env);
+    const rawDb = getRawD1Binding(env);
+    if (!db || !rawDb) return metaMap;
+    try {
+      const stmts = [];
+      const kinds = [];
+      const entityKeys = [];
+      if (uniqM.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT tmdb_id, details_json FROM movies WHERE tmdb_id IN (${uniqM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqM));
+        kinds.push("m");
+        for (const id of uniqM) entityKeys.push(`movie_${id}`);
+      }
+      if (uniqS.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT tmdb_id, details_json FROM series WHERE tmdb_id IN (${uniqS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqS));
+        kinds.push("s");
+        for (const id of uniqS) entityKeys.push(`tv_${id}`);
+      }
+      if (entityKeys.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT cache_key, data_json FROM entity_cache WHERE cache_key IN (${entityKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...entityKeys));
+        kinds.push("ent");
+      }
+      trackStat("d1Reads");
+      countD1Subrequest();
+      const results = await rawDb.batch(stmts);
+      for (let i = 0; i < kinds.length; i++) {
+        const k = kinds[i];
+        const rows = results?.[i]?.results || [];
+        for (const row of rows) {
+          try {
+            if (k === "m" && row.details_json) {
+              const parsed = JSON.parse(row.details_json);
+              if (parsed && parsed.id) {
+                const mk = `m_${Number(row.tmdb_id)}`;
+                metaMap.set(mk, parsed);
+                setCachedTmdb(`movie_${Number(row.tmdb_id)}`, parsed);
+              }
+            } else if (k === "s" && row.details_json) {
+              const parsed = JSON.parse(row.details_json);
+              if (parsed && parsed.id) {
+                const sk = `s_${Number(row.tmdb_id)}`;
+                metaMap.set(sk, parsed);
+                setCachedTmdb(`tv_${Number(row.tmdb_id)}`, parsed);
+              }
+            } else if (k === "ent" && row.data_json && row.cache_key) {
+              const ck = String(row.cache_key);
+              const isTvEnt = ck.startsWith("tv_");
+              const tid = Number(ck.replace(/^(?:movie_|tv_)/, ""));
+              const mk = `${isTvEnt ? "s" : "m"}_${tid}`;
+              if (tid && !metaMap.has(mk)) {
+                const parsed = JSON.parse(row.data_json);
+                if (parsed && parsed.id) {
+                  metaMap.set(mk, parsed);
+                  setCachedTmdb(ck, parsed);
+                }
+              }
+            }
+          } catch (_parseErr) {}
+        }
+      }
+    } catch (_e) {}
+    return metaMap;
+  }
+
+  // Batch-Lookup für ClearLogos in 1 einziger D1-Abfrage statt 6 einzelner Requests!
+  async function getClearLogosBatchFromD1(env, items = [], fallbackTypeCode = "m") {
+    const logoMap = new Map();
+    if (!Array.isArray(items) || items.length === 0) return logoMap;
+    const keysToQuery = [];
+    for (const it of items) {
+      if (!it || !it.id) continue;
+      const isTv = it.typeCode === "s" || it.media_type === "tv" || (it.media_type !== "movie" && it.typeCode !== "m" && fallbackTypeCode === "s");
+      const tid = Number(it.id);
+      if (!tid || tid >= 8000000) continue;
+      const key = `logo_${isTv ? "s" : "m"}_${tid}`;
+      if (memoryFallback.has(key)) {
+        logoMap.set(`${isTv ? "s" : "m"}_${tid}`, String(memoryFallback.get(key) || ""));
+      } else {
+        keysToQuery.push(key);
+      }
+    }
+    const uniqKeys = [...new Set(keysToQuery)].slice(0, 24);
+    if (uniqKeys.length === 0) return logoMap;
+    const db = await ensureD1Schema(env);
+    const rawDb = getRawD1Binding(env);
+    if (!db || !rawDb) return logoMap;
+    try {
+      trackStat("d1Reads");
+      countD1Subrequest();
+      const res = await rawDb
+        .prepare(`SELECT cache_key, data_json, updated_at FROM entity_cache WHERE cache_key IN (${uniqKeys.map((_, i) => `?${i + 1}`).join(",")})`)
+        .bind(...uniqKeys)
+        .all();
+      const now = Date.now();
+      for (const row of (res?.results || [])) {
+        if (!row || !row.cache_key || !row.data_json) continue;
+        if (now - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) continue;
+        try {
+          const parsed = JSON.parse(row.data_json);
+          if (parsed && typeof parsed.logo_path === "string") {
+            const lp = String(parsed.logo_path || "");
+            memoryFallback.set(row.cache_key, lp);
+            logoMap.set(String(row.cache_key).replace(/^logo_/, ""), lp);
+          }
+        } catch (_e) {}
+      }
+    } catch (_e) {}
+    return logoMap;
   }
 
   function inferReviewReasonCodeFromLogItem(item) {
@@ -11235,111 +11550,128 @@
       }
     }
 
-    // 2. D1-Datenbank NUR für noch nicht im RAM-Cache geprüfte IDs abfragen (komprimiert per SQL GROUP BY)!
+    // 2. D1-Datenbank in EINER EINZIGEN rawDb.batch() Abfrage für alle noch nicht im RAM-Cache geprüften IDs abfragen!
     const db = await ensureD1Schema(env);
-    if (db) {
+    const rawDb = getRawD1Binding(env);
+    if (db && rawDb) {
       try {
         const uniqPosterM = [...new Set(uncachedPosterMovieIds)].slice(0, 60);
         const uniqVipM = hasVipStreamAccess ? [...new Set(uncachedVipMovieIds)].slice(0, 60) : [];
-        if (uniqPosterM.length > 0 || uniqVipM.length > 0) {
-          const [resMPoster, resMFiles] = await Promise.all([
-            uniqPosterM.length > 0
-              ? db.prepare(`SELECT tmdb_id, poster_path FROM movies WHERE tmdb_id IN (${uniqPosterM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterM).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] }),
-            uniqVipM.length > 0
-              ? db.prepare(`SELECT movie_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY movie_id, quality, codec`).bind(...uniqVipM).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] })
-          ]);
-          const foundPosterM = new Set();
-          for (const row of (resMPoster?.results || [])) {
-            const mid = Number(row.tmdb_id);
-            const pVal = row.poster_path || "";
-            if (pVal) {
-              posterMap.set(`m_${mid}`, pVal);
-              foundPosterM.add(mid);
-            }
-          }
-          for (const mid of uniqPosterM) {
-            if (!foundPosterM.has(mid)) memoryFallback.set(`d1_poster_miss_m_${mid}`, nowVipCheckTs);
-          }
-          for (const row of (resMFiles?.results || [])) {
-            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
-            const mid = Number(row.movie_id);
-            const rowCnt = Math.max(1, Number(row.file_cnt || 1));
-            const cur = bestMovieMap.get(mid);
-            const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
-            if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
-              bestMovieMap.set(mid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
-            } else {
-              cur.count += rowCnt;
-            }
-          }
-          for (const mid of uniqVipM) {
-            const matched = bestMovieMap.get(mid);
-            if (matched) {
-              memoryFallback.set(`d1_vip_summary_m_${mid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
-            } else {
-              memoryFallback.set(`d1_vip_summary_m_${mid}`, { none: true, ts: nowVipCheckTs });
-            }
-          }
-        }
-
         const uniqPosterS = [...new Set(uncachedPosterSeriesIds)].slice(0, 60);
         const uniqVipS = hasVipStreamAccess ? [...new Set(uncachedVipSeriesIds)].slice(0, 60) : [];
-        if (uniqPosterS.length > 0 || uniqVipS.length > 0) {
-          const [resSPoster, resSFiles] = await Promise.all([
-            uniqPosterS.length > 0
-              ? db.prepare(`SELECT tmdb_id, poster_path FROM series WHERE tmdb_id IN (${uniqPosterS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterS).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] }),
-            uniqVipS.length > 0
-              ? db.prepare(`SELECT series_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY series_id, quality, codec`).bind(...uniqVipS).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] })
-          ]);
-          const foundPosterS = new Set();
-          for (const row of (resSPoster?.results || [])) {
-            const sid = Number(row.tmdb_id);
-            const pVal = row.poster_path || "";
-            if (pVal) {
-              posterMap.set(`s_${sid}`, pVal);
-              foundPosterS.add(sid);
-            }
-          }
-          for (const sid of uniqPosterS) {
-            if (!foundPosterS.has(sid)) memoryFallback.set(`d1_poster_miss_s_${sid}`, nowVipCheckTs);
-          }
-          for (const row of (resSFiles?.results || [])) {
-            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
-            const sid = Number(row.series_id);
-            const rowCnt = Math.max(1, Number(row.file_cnt || 1));
-            const cur = bestSeriesMap.get(sid);
-            const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
-            if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
-              bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
-            } else {
-              cur.count += rowCnt;
-            }
-          }
-          for (const sid of uniqVipS) {
-            const matched = bestSeriesMap.get(sid);
-            if (matched) {
-              memoryFallback.set(`d1_vip_summary_s_${sid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
-            } else {
-              memoryFallback.set(`d1_vip_summary_s_${sid}`, { none: true, ts: nowVipCheckTs });
+
+        const batchStmts = [];
+        const batchKinds = [];
+        if (uniqPosterM.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path FROM movies WHERE tmdb_id IN (${uniqPosterM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterM));
+          batchKinds.push("pm");
+        }
+        if (uniqVipM.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT movie_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY movie_id, quality, codec`).bind(...uniqVipM));
+          batchKinds.push("vm");
+        }
+        if (uniqPosterS.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path FROM series WHERE tmdb_id IN (${uniqPosterS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterS));
+          batchKinds.push("ps");
+        }
+        if (uniqVipS.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT series_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY series_id, quality, codec`).bind(...uniqVipS));
+          batchKinds.push("vs");
+        }
+
+        if (batchStmts.length > 0) {
+          trackStat("d1Reads");
+          countD1Subrequest();
+          const batchRes = await rawDb.batch(batchStmts);
+          for (let bIdx = 0; bIdx < batchKinds.length; bIdx++) {
+            const kind = batchKinds[bIdx];
+            const rows = batchRes?.[bIdx]?.results || [];
+            if (kind === "pm") {
+              const foundPosterM = new Set();
+              for (const row of rows) {
+                const mid = Number(row.tmdb_id);
+                const pVal = row.poster_path || "";
+                if (pVal) {
+                  posterMap.set(`m_${mid}`, pVal);
+                  foundPosterM.add(mid);
+                }
+              }
+              for (const mid of uniqPosterM) {
+                if (!foundPosterM.has(mid)) memoryFallback.set(`d1_poster_miss_m_${mid}`, nowVipCheckTs);
+              }
+            } else if (kind === "vm") {
+              for (const row of rows) {
+                if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
+                const mid = Number(row.movie_id);
+                const rowCnt = Math.max(1, Number(row.file_cnt || 1));
+                const cur = bestMovieMap.get(mid);
+                const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
+                if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
+                  bestMovieMap.set(mid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
+                } else {
+                  cur.count += rowCnt;
+                }
+              }
+              for (const mid of uniqVipM) {
+                const matched = bestMovieMap.get(mid);
+                if (matched) {
+                  memoryFallback.set(`d1_vip_summary_m_${mid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+                } else {
+                  memoryFallback.set(`d1_vip_summary_m_${mid}`, { none: true, ts: nowVipCheckTs });
+                }
+              }
+            } else if (kind === "ps") {
+              const foundPosterS = new Set();
+              for (const row of rows) {
+                const sid = Number(row.tmdb_id);
+                const pVal = row.poster_path || "";
+                if (pVal) {
+                  posterMap.set(`s_${sid}`, pVal);
+                  foundPosterS.add(sid);
+                }
+              }
+              for (const sid of uniqPosterS) {
+                if (!foundPosterS.has(sid)) memoryFallback.set(`d1_poster_miss_s_${sid}`, nowVipCheckTs);
+              }
+            } else if (kind === "vs") {
+              for (const row of rows) {
+                if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
+                const sid = Number(row.series_id);
+                const rowCnt = Math.max(1, Number(row.file_cnt || 1));
+                const cur = bestSeriesMap.get(sid);
+                const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
+                if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
+                  bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
+                } else {
+                  cur.count += rowCnt;
+                }
+              }
+              for (const sid of uniqVipS) {
+                const matched = bestSeriesMap.get(sid);
+                if (matched) {
+                  memoryFallback.set(`d1_vip_summary_s_${sid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+                } else {
+                  memoryFallback.set(`d1_vip_summary_s_${sid}`, { none: true, ts: nowVipCheckTs });
+                }
+              }
             }
           }
         }
       } catch (e) {}
     }
 
-    // 3. Für bis zu 6 Einträge auf der Seite, denen in de-DE weiterhin das Poster fehlt, direkt EN/Internationales Poster nachladen!
-    const missingPosterItems = items.filter(it => {
-      if (!it || !it.id) return false;
-      const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
-      return !it.poster_path && !it.external_poster_url && !posterMap.has(`${tc}_${Number(it.id)}`) && Number(it.id) < 8000000;
-    }).slice(0, 6);
+    // 3. Free-Plan-Schutz: Max. 2 fehlende Poster pro Seite (und nur bei genügend Subrequest-Budget) nachladen!
+    const missingPosterItems = (typeof hasSubrequestBudget === "function" && hasSubrequestBudget(28))
+      ? items.filter(it => {
+          if (!it || !it.id) return false;
+          const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
+          return !it.poster_path && !it.external_poster_url && !posterMap.has(`${tc}_${Number(it.id)}`) && Number(it.id) < 8000000;
+        }).slice(0, 2)
+      : [];
 
     if (missingPosterItems.length > 0 && env?.TMDB_BEARER_TOKEN) {
       await Promise.all(missingPosterItems.map(async (it) => {
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(32)) return;
         const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
         const endpoint = tc === "s" ? "tv" : "movie";
         const tid = Number(it.id);
@@ -11347,7 +11679,7 @@
           const imgData = await cachedExternalFetchJson(
             `https://api.themoviedb.org/3/${endpoint}/${tid}/images?include_image_language=de,en,null`,
             { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
-            2800
+            2400
           );
           const foundPath = imgData?.posters?.[0]?.file_path || "";
           if (foundPath) {
@@ -13910,14 +14242,14 @@
     const memHit = getCachedTmdb(memKey);
     if (memHit) return memHit;
 
-    if (!hasSubrequestBudget(40)) {
+    if (!hasSubrequestBudget(38)) {
       subrequestBudgetExhausted = true;
       return null;
     }
 
     try {
-      currentInvocationSubrequests++;
-      const res = await fetchWithTimeout(url, { ...options, _countedSubrequest: true }, timeoutMs);
+      // fetchWithTimeout prüft Edge Cache zuerst (0 Subrequests bei Hit!) und zählt echte Fetches automatisch mit
+      const res = await fetchWithTimeout(url, options, timeoutMs);
       if (!res || !res.ok) return null;
       const text = await res.text();
       if (!text || text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
@@ -15618,11 +15950,13 @@
       : (candidatesInput ? [String(candidatesInput).trim()] : []);
     if (rawList.length === 0) return [];
     const uniqueKeys = Array.from(new Set(rawList)).slice(0, 6);
-    const toVerify = uniqueKeys.slice(0, 3);
-    if (hasSubrequestBudget(30)) {
+    // Max. 2 parallele oEmbed-Checks (Edge-gecacht für 24h in fetchWithTimeout!) statt 3
+    const toVerify = uniqueKeys.slice(0, 2);
+    if (hasSubrequestBudget(28)) {
       await Promise.all(toVerify.map(async (key) => {
         const memKey = `yt_oembed_${key}`;
         if (memoryFallback.has(memKey)) return;
+        if (!hasSubrequestBudget(32)) return;
         try {
           const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${key}`)}&format=json`;
           const res = await fetchWithTimeout(oembedUrl, { method: "GET" }, 1100);
@@ -15870,7 +16204,7 @@
       const imgData = await res.json();
       const logoPath = extractBestTmdbClearLogoPath(imgData);
       memoryFallback.set(memKey, logoPath || "");
-      await saveEntityToD1(env, memKey, "tmdb_logo", { logo_path: logoPath || "" }).catch(() => {});
+      scheduleBackgroundWork(() => saveEntityToD1(env, memKey, "tmdb_logo", { logo_path: logoPath || "" }));
       return logoPath || "";
     } catch (_e) {
       return "";
@@ -15918,11 +16252,11 @@
 
       let overview = (data.overview || "").trim();
       let isEnglishFallback = false;
-      if (!overview) {
+      if (!overview && hasSubrequestBudget(34)) {
         try {
           const resEn = await fetchWithTimeout(`https://api.themoviedb.org/3/movie/${movieId}?language=en-US`, {
             headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-          }, 3500);
+          }, 3000);
           if (resEn.ok) {
             const dataEn = await resEn.json();
             if (dataEn.overview && dataEn.overview.trim()) {
@@ -15963,8 +16297,10 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
+      // YouTube oEmbed NICHT bei jedem Metadaten-Fetch ausführen (spart 3 Subrequests pro Film bei Suche/Filter/Discover!)
+      // Die Trailer-Prüfung erfolgt gecacht erst beim Öffnen von /api/tma/details.
       const extractedTrailers = extractYoutubeTrailerCandidatesMetaFromVideos(data.videos);
-      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(extractedTrailers.keys);
+      const trailerCandidates = extractedTrailers.keys || [];
       const trailerCandidatesMeta = resolveYoutubeTrailerCandidatesMeta(trailerCandidates, extractedTrailers.meta);
       const trailerKey = trailerCandidates[0] || null;
 
@@ -16001,11 +16337,7 @@
         memoryFallback.set(`logo_m_${result.id}`, result.logo_path);
       }
       setCachedTmdb(cacheKey, result);
-      if (d1Movie) {
-        await saveMovieToD1(env, result);
-      } else {
-        await saveEntityToD1(env, cacheKey, "tmdb_movie", result);
-      }
+      scheduleBackgroundWork(() => (d1Movie ? saveMovieToD1(env, result) : saveEntityToD1(env, cacheKey, "tmdb_movie", result)));
       return result;
     } catch (e) {
       return null;
@@ -16192,11 +16524,11 @@
 
       let overview = (data.overview || "").trim();
       let isEnglishFallback = false;
-      if (!overview) {
+      if (!overview && hasSubrequestBudget(34)) {
         try {
           const resEn = await fetchWithTimeout(`https://api.themoviedb.org/3/tv/${seriesId}?language=en-US`, {
             headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-          }, 3500);
+          }, 3000);
           if (resEn.ok) {
             const dataEn = await resEn.json();
             if (dataEn.overview && dataEn.overview.trim()) {
@@ -16279,8 +16611,9 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
+      // YouTube oEmbed erst gezielt beim Öffnen von /api/tma/details ausführen (spart 3 Subrequests pro Serie!)
       const extractedTrailers = extractYoutubeTrailerCandidatesMetaFromVideos(data.videos);
-      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(extractedTrailers.keys);
+      const trailerCandidates = extractedTrailers.keys || [];
       const trailerCandidatesMeta = resolveYoutubeTrailerCandidatesMeta(trailerCandidates, extractedTrailers.meta);
       const trailerKey = trailerCandidates[0] || null;
 
@@ -16334,11 +16667,7 @@
         memoryFallback.set(`logo_s_${result.id}`, result.logo_path);
       }
       setCachedTmdb(cacheKey, result);
-      if (d1Series) {
-        await saveSeriesToD1(env, result);
-      } else {
-        await saveEntityToD1(env, cacheKey, "tmdb_tv", result);
-      }
+      scheduleBackgroundWork(() => (d1Series ? saveSeriesToD1(env, result) : saveEntityToD1(env, cacheKey, "tmdb_tv", result)));
       return result;
     } catch (e) {
       return null;
@@ -16620,12 +16949,23 @@
     if ((hasFskFilters || hasIncFskFilters || needsStudioOrPlatformDetailCheck) && candidates.length > 0 && env) {
       const toEnrich = candidates.slice(0, 24);
       const rest = candidates.slice(24);
+      // 1. Zuerst ALLE 24 Kandidaten gebündelt aus RAM + 1 einziger D1-Batch-Abfrage anreichern!
+      const d1MetaBatch = typeof getMediaMetaBatchFromD1 === "function"
+        ? await getMediaMetaBatchFromD1(env, toEnrich, "m").catch(() => new Map())
+        : new Map();
+      // 2. Nur max. 6 noch fehlende Titel innerhalb des sicheren Free-Plan-Budgets von TMDb nachladen
+      let tmdbFallbackCount = 0;
       const enrichedBatch = await Promise.all(
         toEnrich.map(async (item) => {
           const isTv = item.media_type === "tv";
-          const details = isTv
-            ? await fetchSeriesDetails(env, item.id)
-            : await fetchMovieDetails(env, item.id);
+          const batchKey = `${isTv ? "s" : "m"}_${Number(item.id)}`;
+          let details = d1MetaBatch.get(batchKey) || null;
+          if (!details && tmdbFallbackCount < 6 && hasSubrequestBudget(30)) {
+            tmdbFallbackCount++;
+            details = isTv
+              ? await fetchSeriesDetails(env, item.id)
+              : await fetchMovieDetails(env, item.id);
+          }
           if (details) {
             return {
               ...item,
@@ -17560,18 +17900,16 @@
       let results = filterSyncPass(rawMediaResults, true);
       let lastScannedPage = pageNum;
 
-      // Parallele Multi-Page-Bündelung (bis zu 6 TMDb-Suchseiten gleichzeitig via Promise.all),
-      // sobald irgendein strikter Filter aktiv ist (insb. Streaming-Anbieter wie Netflix, Studios, FSK, Genres, Jahr),
-      // damit kombinierte Suchen wie Name: "der" + Anbieter: "Netflix" sofort viele Treffer liefern statt seitenweise zu warten!
-      const needsDeepParallelScan = (!ignoreFilters || explicitFilterYear) && (
+      // Free-Plan-sichere Multi-Page-Bündelung (max. 2 Extra-Seiten statt 5, nur wenn < 10 Treffer & Budget vorhanden!)
+      const needsDeepParallelScan = (!ignoreFilters || explicitFilterYear) && results.length < 10 && (
         hasPlatformFilters ||
         hasStudioFilters ||
         hasFskFilters ||
-        (anyStrictFilterActive && results.length < 14)
+        anyStrictFilterActive
       );
-      if (needsDeepParallelScan && pageNum < rawTotalPages) {
+      if (needsDeepParallelScan && pageNum < rawTotalPages && hasSubrequestBudget(26)) {
         const extraPages = [];
-        for (let p = pageNum + 1; p <= Math.min(rawTotalPages, pageNum + 5); p++) {
+        for (let p = pageNum + 1; p <= Math.min(rawTotalPages, pageNum + 2); p++) {
           extraPages.push(p);
         }
         if (extraPages.length > 0) {
@@ -17594,7 +17932,7 @@
 
       // Spezialfall 2 (Ausnahme-Lösung): Jahr in Klammern "(YYYY)" ist Teil des echten Filmtitels (0 Treffer mit Jahresfilter)
       // -> Automatischer Fallback auf die wörtliche Suche inkl. Klammern ohne Jahreszwang!
-      if (explicitFilterYear && results.length === 0 && pageNum === 1) {
+      if (explicitFilterYear && results.length === 0 && pageNum === 1 && hasSubrequestBudget(28)) {
         const literalData = await fetchRawSearchMultiPage(env, parsedYearQuery.rawQuery, includeAdult, 1).catch(() => null);
         const literalMedia = (literalData?.results || []).filter(i => i.media_type === "movie" || i.media_type === "tv");
         const fallbackPool = literalMedia.length > 0 ? literalMedia : rawMediaResults;
@@ -17608,14 +17946,24 @@
 
       const rawUnfilteredCount = rawMediaResults.length;
 
-      // Paralleler D1-Katalog- & Detail-Abgleich für FSK, Filmstudios & Streaming-Anbieter (bis zu 36 Kandidaten gleichzeitig)
+      // D1-Batch-First Detail-Abgleich für FSK, Filmstudios & Streaming-Anbieter (1 D1-Batch + max. 6 uncached TMDb-Calls!)
       if ((hasFskFilters || hasStudioFilters || hasPlatformFilters) && results.length > 0 && env) {
-        const candidateSlice = results.slice(0, 36);
+        const candidateSlice = results.slice(0, 24);
+        const d1MetaBatch = typeof getMediaMetaBatchFromD1 === "function"
+          ? await getMediaMetaBatchFromD1(env, candidateSlice, "m").catch(() => new Map())
+          : new Map();
+        let tmdbFallbackCount = 0;
         const enriched = await Promise.all(
           candidateSlice.map(async (item) => {
-            const details = item.media_type === "tv"
-              ? await fetchSeriesDetails(env, item.id)
-              : await fetchMovieDetails(env, item.id);
+            const isTv = item.media_type === "tv";
+            const batchKey = `${isTv ? "s" : "m"}_${Number(item.id)}`;
+            let details = d1MetaBatch.get(batchKey) || null;
+            if (!details && tmdbFallbackCount < 6 && hasSubrequestBudget(30)) {
+              tmdbFallbackCount++;
+              details = isTv
+                ? await fetchSeriesDetails(env, item.id)
+                : await fetchMovieDetails(env, item.id);
+            }
             return details
               ? {
                   ...item,
@@ -40099,20 +40447,10 @@
           });
       }
 
-      function scheduleCardIntentPrewarmClient(cardEl, delayMs = 70) {
-        if (!cardEl || typeof cardEl.getAttribute !== "function") return;
-        const rawKey = cardEl.getAttribute("data-card-key") || "";
-        if (!rawKey) return;
-        const parts = rawKey.split("_");
-        if (parts.length < 2) return;
-        const tc = parts[0] === "s" ? "s" : "m";
-        const idNum = Number(parts[1]);
-        if (!idNum) return;
-        if (cardHoverPrewarmTimer) clearTimeout(cardHoverPrewarmTimer);
-        cardHoverPrewarmTimer = setTimeout(() => {
-          cardHoverPrewarmTimer = null;
-          prewarmItemDetailsClient(tc, idNum);
-        }, delayMs);
+      function scheduleCardIntentPrewarmClient(_cardEl, _delayMs = 70) {
+        // Deaktiviert zur drastischen Worker-Entlastung (kein Hover-/Fokus-Request-Sturm auf /api/tma/details).
+        // Details laden dank schlankem Backend & Edge-Cache direkt bei Klick/OK blitzschnell.
+        return;
       }
 
       function activateCardTitleMarquee(card) {
@@ -40277,11 +40615,10 @@
         const tc = parts[0] === "s" ? "s" : "m";
         const idNum = Number(parts[1]);
         if (!idNum) return;
-        if (cardTouchPrewarmTimer) clearTimeout(cardTouchPrewarmTimer);
-        cardTouchPrewarmTimer = setTimeout(() => {
+        if (cardTouchPrewarmTimer) {
+          clearTimeout(cardTouchPrewarmTimer);
           cardTouchPrewarmTimer = null;
-          prewarmItemDetailsClient(tc, idNum);
-        }, 42);
+        }
         const titleEl = card.querySelector(".card-title");
         const titleTxt = card.getAttribute("data-card-title") || (titleEl ? titleEl.textContent : "") || "Titel";
 
@@ -40656,15 +40993,7 @@
           if (typeof prewarmAllHeroSlidesClearLogosClient === "function") {
             prewarmAllHeroSlidesClearLogosClient();
           }
-          const activeSlide = state.heroSlides[0];
-          if (activeSlide && activeSlide.id) {
-            const activeType = activeSlide.media_type === "tv" || state.type === "s" ? "s" : "m";
-            prewarmItemDetailsClient(activeType, activeSlide.id);
-          }
-        }, 35);
-        setTimeout(() => {
-          ensureHeroSlidesOverviewsClient();
-        }, 380);
+        }, 40);
       }
 
       // =========================================================================
@@ -40881,7 +41210,7 @@
           },
           {
             root: null,
-            rootMargin: "0px 0px 850px 0px",
+            rootMargin: "0px 0px 450px 0px",
             threshold: 0.01
           }
         );
@@ -41617,14 +41946,7 @@
           if (!window._sideEdgeIntroHintShown && typeof triggerSideEdgeHintsAutoFadeClient === "function") {
             setTimeout(() => triggerSideEdgeHintsAutoFadeClient(5000, "intro"), 120);
           }
-          // Sobald der Nutzer vom Slider nach unten zu den Covern scrollt, direkt die nächste Seite im Hintergrund vorladen!
-          if (state.hasMorePages && !state.loadingMore && Number(state.page || 1) === Number(state.startPage || 1) && typeof loadMoreResults === "function") {
-            setTimeout(() => {
-              if (heroCurtainScrolledToCatalog && state.hasMorePages && !state.loadingMore) {
-                loadMoreResults(true);
-              }
-            }, 120);
-          }
+          // Seite 2 wird sauber über den IntersectionObserver beim echten Scrollen nachgeladen (kein vorzeitiger 120ms-Prefetch).
         } else {
           if (document.body) {
             document.body.classList.remove("hero-scrolled-past", "page-scrolled");
@@ -44184,10 +44506,6 @@
           state.heroIndex = (state.heroIndex + 1) % state.heroSlides.length;
           state.heroActionsEngaged = false;
           updateHeroBannerDomOnly();
-          const curSlide = state.heroSlides[state.heroIndex];
-          if (curSlide && curSlide.id) {
-            prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
-          }
         }, intervalMs);
       }
 
@@ -44199,10 +44517,6 @@
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = false;
         updateHeroBannerDomOnly();
-        const curSlide = state.heroSlides[state.heroIndex];
-        if (curSlide && curSlide.id) {
-          prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
-        }
         startHeroRotationTimer();
       }
 
@@ -44214,10 +44528,6 @@
         state.heroIndex = (idx + state.heroSlides.length) % state.heroSlides.length;
         state.heroActionsEngaged = true;
         updateHeroBannerDomOnly();
-        const curSlide = state.heroSlides[state.heroIndex];
-        if (curSlide && curSlide.id) {
-          prewarmItemDetailsClient(curSlide.media_type === "tv" || state.type === "s" ? "s" : "m", curSlide.id);
-        }
         startHeroRotationTimer();
         const trBtn = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
         if (trBtn && typeof jumpSpatialFocus === "function") {
@@ -45040,13 +45350,64 @@
 
       function prewarmAllHeroSlidesClearLogosClient() {
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return;
-        state.heroSlides.forEach((sl, idx) => {
-          if (!sl || !sl.id) return;
+        const missingKeys = [];
+        const slideByKey = new Map();
+        state.heroSlides.forEach((sl) => {
+          if (!sl || !sl.id || Number(sl.id) >= 8000000) return;
           const slType = sl.media_type === "tv" || state.type === "s" ? "s" : "m";
-          setTimeout(() => {
-            ensureHeroSlideClearLogoClient(sl, slType);
-          }, idx * 55);
+          const key = slType + "_" + Number(sl.id);
+          slideByKey.set(key, sl);
+          const existingLp = String(sl.logo_path || "").trim() || (clientClearLogoCache.has(key) ? String(clientClearLogoCache.get(key) || "").trim() : "");
+          if (existingLp) {
+            sl.logo_path = existingLp;
+            clientClearLogoCache.set(key, existingLp);
+            preloadClearLogoBitmapClient(existingLp);
+          } else if (!clientClearLogoCache.has(key) && !clientClearLogoFetchPromises.has(key)) {
+            missingKeys.push(key);
+          }
         });
+        const uniqMissing = Array.from(new Set(missingKeys)).slice(0, 8);
+        if (uniqMissing.length === 0) return;
+
+        // 1 einziger gebündelter Batch-Call (/api/tma/logos) statt 6 separater /api/tma/logo Requests!
+        const batchPromise = (async () => {
+          try {
+            const res = await apiFetchJson(API_BASE + "/logos?items=" + encodeURIComponent(uniqMissing.join(",")));
+            const logosMap = (res && res.logos && typeof res.logos === "object") ? res.logos : {};
+            let cacheDirty = false;
+            const activeHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            for (const key of uniqMissing) {
+              const fetchedLp = String(logosMap[key] || "").trim();
+              clientClearLogoCache.set(key, fetchedLp);
+              cacheDirty = true;
+              const sl = slideByKey.get(key);
+              if (sl) sl.logo_path = fetchedLp;
+              if (fetchedLp) {
+                preloadClearLogoBitmapClient(fetchedLp).then((ready) => {
+                  if (!ready || !sl) return;
+                  const curActive = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+                  if (curActive && String(curActive.id) === String(sl.id)) {
+                    const heroTitleBox = document.getElementById("heroTitleBoxEl");
+                    if (heroTitleBox) {
+                      heroTitleBox.innerHTML = buildHeroTitleOrLogoInnerHtmlClient(sl.title || sl.name || "", fetchedLp);
+                    }
+                  }
+                });
+              }
+            }
+            if (cacheDirty) schedulePersistClearLogoCacheClient();
+            return logosMap;
+          } catch (_e) {
+            return {};
+          } finally {
+            for (const key of uniqMissing) {
+              clientClearLogoFetchPromises.delete(key);
+            }
+          }
+        })();
+        for (const key of uniqMissing) {
+          clientClearLogoFetchPromises.set(key, batchPromise.then(m => String((m && m[key]) || "")));
+        }
       }
 
       // Gemeinsame, wiederverwendbare Stage-Beschreibungsbox für Hero-Slider, Such-Hero & Detailseite (Single Source of Truth)
@@ -67429,8 +67790,43 @@
   // @DEPARTMENT: 09-tma-api-worker-export | 9. TMA Backend-API Router, Series-Health & Worker-Export
   // @ANCHOR: TMA_BACKEND_API
 
+  const cachedAppHtmlByOrigin = new Map();
+  function computeLightweightEtag(str) {
+    let h = 2166136261;
+    const s = String(str || "");
+    const step = Math.max(1, Math.floor(s.length / 4096));
+    for (let i = 0; i < s.length; i += step) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return `"tma-${s.length}-${(h >>> 0).toString(36)}"`;
+  }
+
+  function attachWorkerDiagHeader(res, path) {
+    try {
+      if (!res || !String(path || "").startsWith("/api/tma/")) return res;
+      const startMs = typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry?.requestStartMs
+        ? activeWorkerTelemetry.requestStartMs
+        : Date.now();
+      const wallMs = Math.max(1, Date.now() - startMs);
+      const subs = typeof currentInvocationSubrequests === "number" ? currentInvocationSubrequests : 0;
+      const d1Ops = typeof activeWorkerTelemetry === "object" ? (activeWorkerTelemetry.d1OpsCount || 0) : 0;
+      const cacheState = (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry.cacheHit) ? "hit" : "miss";
+      const clonedHeaders = new Headers(res.headers);
+      clonedHeaders.set("X-Worker-Diag", `sub=${subs};d1=${d1Ops};cache=${cacheState};ms=${wallMs}`);
+      return new Response(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: clonedHeaders
+      });
+    } catch (_e) {
+      return res;
+    }
+  }
+
   async function handleTmaRequest(request, env, ctx = null) {
     globalThis._activeWorkerEnv = env;
+    if (ctx) globalThis._activeWorkerCtx = ctx;
     resetSubrequestBudget();
     const url = new URL(request.url);
     const path = url.pathname;
@@ -67514,14 +67910,107 @@
     }
 
     if (path === "/" || path === "/app" || path === "/miniapp") {
-      return new Response(renderNetflixMiniAppHtml(url.origin), {
+      let cachedEntry = cachedAppHtmlByOrigin.get(url.origin);
+      if (!cachedEntry) {
+        const html = renderNetflixMiniAppHtml(url.origin);
+        cachedEntry = { html, etag: computeLightweightEtag(html) };
+        if (cachedAppHtmlByOrigin.size > 6) cachedAppHtmlByOrigin.clear();
+        cachedAppHtmlByOrigin.set(url.origin, cachedEntry);
+      }
+      const ifNoneMatch = String(request.headers.get("If-None-Match") || "").trim();
+      if (ifNoneMatch && ifNoneMatch === cachedEntry.etag) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            "ETag": cachedEntry.etag,
+            "Cache-Control": "public, max-age=60, stale-while-revalidate=300"
+          }
+        });
+      }
+      return new Response(cachedEntry.html, {
         status: 200,
         headers: {
           "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-          "Pragma": "no-cache"
+          "ETag": cachedEntry.etag,
+          "Cache-Control": "public, max-age=60, stale-while-revalidate=300"
         }
       });
+    }
+
+    // Zero-Auth Public Fast-Paths (keine Auth/D1-User/KV-Settings nötig + 24h Cloudflare Edge Cache!)
+    if (path === "/api/tma/logo" && request.method === "GET") {
+      const edgeCache = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+      const cacheKeyReq = edgeCache ? new Request(url.toString(), { method: "GET" }) : null;
+      if (edgeCache && cacheKeyReq) {
+        try {
+          const hit = await edgeCache.match(cacheKeyReq);
+          if (hit) {
+            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+            return hit;
+          }
+        } catch (_e) {}
+      }
+      const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
+      const id = url.searchParams.get("id") || "";
+      const logoPath = await resolveMediaClearLogoPath(env, typeCode, id, "");
+      const res = new Response(JSON.stringify({ ok: true, id: Number(id), typeCode, logo_path: logoPath || "" }), {
+        status: 200,
+        headers: { ...corsHeaders, "Cache-Control": "public, max-age=86400" }
+      });
+      if (edgeCache && cacheKeyReq) {
+        scheduleBackgroundWork(() => edgeCache.put(cacheKeyReq, res.clone()));
+      }
+      return res;
+    }
+
+    if (path === "/api/tma/logos" && request.method === "GET") {
+      const edgeCache = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+      const cacheKeyReq = edgeCache ? new Request(url.toString(), { method: "GET" }) : null;
+      if (edgeCache && cacheKeyReq) {
+        try {
+          const hit = await edgeCache.match(cacheKeyReq);
+          if (hit) {
+            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+            return hit;
+          }
+        } catch (_e) {}
+      }
+      const rawItems = String(url.searchParams.get("items") || "").split(",").map(s => s.trim()).filter(Boolean).slice(0, 8);
+      const parsed = [];
+      for (const token of rawItems) {
+        const m = token.match(/^([ms])_(\d+)$/);
+        if (m) parsed.push({ key: token, typeCode: m[1], id: Number(m[2]) });
+      }
+      const logosOut = {};
+      if (parsed.length > 0) {
+        const batchMap = typeof getClearLogosBatchFromD1 === "function"
+          ? await getClearLogosBatchFromD1(env, parsed, "m").catch(() => new Map())
+          : new Map();
+        const stillMissing = [];
+        for (const p of parsed) {
+          if (batchMap.has(p.key)) {
+            logosOut[p.key] = batchMap.get(p.key) || "";
+          } else {
+            stillMissing.push(p);
+          }
+        }
+        // Max. 4 uncached TMDb /images Abrufe in diesem Batch (innerhalb des Free-Plan-Budgets)
+        if (stillMissing.length > 0 && hasSubrequestBudget(30)) {
+          await Promise.all(stillMissing.slice(0, 4).map(async (p) => {
+            if (!hasSubrequestBudget(34)) return;
+            const lp = await resolveMediaClearLogoPath(env, p.typeCode, p.id, "").catch(() => "");
+            logosOut[p.key] = lp || "";
+          }));
+        }
+      }
+      const res = new Response(JSON.stringify({ ok: true, logos: logosOut }), {
+        status: 200,
+        headers: { ...corsHeaders, "Cache-Control": "public, max-age=86400" }
+      });
+      if (edgeCache && cacheKeyReq) {
+        scheduleBackgroundWork(() => edgeCache.put(cacheKeyReq, res.clone()));
+      }
+      return res;
     }
 
     try {
@@ -67545,10 +68034,14 @@
         ? { ...baseUserSettings, ...clientHeaderSettings }
         : baseUserSettings;
       if (clientHeaderSettings && typeof clientHeaderSettings === "object" && path === "/api/tma/discover") {
-        if (auth.isAuthenticated) {
-          await saveUserSettings(env, chatId, settings);
-        } else {
-          memoryFallback.set("settings_guest", settings);
+        // Nur schreiben, wenn sich die Einstellungen tatsächlich geändert haben (eliminiert blinde KV-Writes pro Seitenaufruf!)
+        const settingsChanged = JSON.stringify(settings) !== JSON.stringify(baseUserSettings);
+        if (settingsChanged) {
+          if (auth.isAuthenticated) {
+            scheduleBackgroundWork(() => saveUserSettings(env, chatId, settings));
+          } else {
+            memoryFallback.set("settings_guest", settings);
+          }
         }
       }
 
@@ -69799,6 +70292,22 @@
         const page = Math.max(1, Math.min(500, parseInt(url.searchParams.get("page") || "1", 10) || 1));
         const bypass = url.searchParams.get("bypass") === "1";
 
+        // Cloudflare Edge Cache für nicht-personalisierte Guest-Standardansichten (5 Min TTL, 0 D1/TMDb-Last!)
+        const canEdgeCacheDiscover = !auth.isAuthenticated && !clientHeaderSettings && mode !== "random";
+        const edgeCache = (canEdgeCacheDiscover && typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const discoverCacheKey = edgeCache
+          ? new Request(`${url.origin}/api/tma/discover?type=${typeCode}&genreId=${encodeURIComponent(genreId)}&companyId=${encodeURIComponent(companyId)}&mode=${encodeURIComponent(mode)}&sort=${encodeURIComponent(sortBy)}&page=${page}&bypass=${bypass ? 1 : 0}`, { method: "GET" })
+          : null;
+        if (edgeCache && discoverCacheKey) {
+          try {
+            const cachedDiscoverRes = await edgeCache.match(discoverCacheKey);
+            if (cachedDiscoverRes && cachedDiscoverRes.ok) {
+              if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+              return cachedDiscoverRes;
+            }
+          } catch (_e) {}
+        }
+
         const baseEffectiveSettings = bypass ? { ...settings, filtersActive: false, showUnreleased: true, onlyVipStreams: false } : settings;
         const effectiveSettings = companyId ? { ...baseEffectiveSettings, explicitCompanyId: companyId } : baseEffectiveSettings;
         const lookahead = await fetchFilteredDiscoverWithLookahead(
@@ -69819,21 +70328,39 @@
           : visibleItems;
         items = await attachVipQualitiesToMediaList(env, items, typeCode, hasVipStreamAccess);
 
-        // Für die ersten 14 Highlight-Kandidaten auf Seite 1 bereits gecachte ClearLogos direkt mitliefern & fehlende Beschreibungen (overview) nachladen
+        // Seite 1: Gecachte ClearLogos & Beschreibungen gebündelt aus RAM + D1-Batch anreichern; max. 3 fehlende Overviews per TMDb
         if (page === 1 && Array.isArray(items) && items.length > 0) {
-          for (const it of items.slice(0, 14)) {
-            if (!it || !it.id || it.logo_path) continue;
+          const topCandidates = items.slice(0, 14);
+          const missingOvCandidates = topCandidates.filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
+          const [d1LogosMap, d1MetaMap] = await Promise.all([
+            typeof getClearLogosBatchFromD1 === "function"
+              ? getClearLogosBatchFromD1(env, topCandidates, typeCode).catch(() => new Map())
+              : Promise.resolve(new Map()),
+            (missingOvCandidates.length > 0 && typeof getMediaMetaBatchFromD1 === "function")
+              ? getMediaMetaBatchFromD1(env, missingOvCandidates, typeCode).catch(() => new Map())
+              : Promise.resolve(new Map())
+          ]);
+          for (const it of topCandidates) {
+            if (!it || !it.id) continue;
             const isSer = it.media_type === "tv" || typeCode === "s";
-            const memKey = `logo_${isSer ? "s" : "m"}_${Number(it.id)}`;
-            if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(memKey)) {
-              const cachedLp = memoryFallback.get(memKey);
-              if (cachedLp) it.logo_path = cachedLp;
+            const k = `${isSer ? "s" : "m"}_${Number(it.id)}`;
+            if (!it.logo_path && d1LogosMap.has(k) && d1LogosMap.get(k)) {
+              it.logo_path = d1LogosMap.get(k);
+            }
+            if ((!it.overview || !String(it.overview).trim()) && d1MetaMap.has(k)) {
+              const cachedDet = d1MetaMap.get(k);
+              if (cachedDet?.overview && String(cachedDet.overview).trim() && cachedDet.overview !== "Keine Beschreibung verfügbar.") {
+                it.overview = String(cachedDet.overview).trim();
+              }
             }
           }
-          const missingOvItems = items.slice(0, 10).filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
-          if (missingOvItems.length > 0) {
+          const stillMissingOv = topCandidates
+            .filter(it => it && it.id && (!it.overview || !String(it.overview).trim()))
+            .slice(0, 3);
+          if (stillMissingOv.length > 0 && hasSubrequestBudget(30)) {
             await Promise.race([
-              Promise.all(missingOvItems.map(async (it) => {
+              Promise.all(stillMissingOv.map(async (it) => {
+                if (!hasSubrequestBudget(34)) return;
                 try {
                   const isSer = it.media_type === "tv" || typeCode === "s";
                   const det = isSer ? await fetchSeriesDetails(env, it.id) : await fetchMovieDetails(env, it.id);
@@ -69842,7 +70369,7 @@
                   }
                 } catch (_e) {}
               })),
-              new Promise(resolve => setTimeout(resolve, 1100))
+              new Promise(resolve => setTimeout(resolve, 900))
             ]);
           }
         }
@@ -69862,7 +70389,7 @@
           .filter(i => (i.contentType === "movie" || i.contentType === "series") && i.tmdbId)
           .map(i => (i.contentType === "series" ? "s_" : "m_") + i.tmdbId);
 
-        return new Response(JSON.stringify({
+        const discoverRes = new Response(JSON.stringify({
           ok: true,
           botUsername,
           savedKeys,
@@ -69880,7 +70407,16 @@
           genreEmojis: GENRE_EMOJIS,
           settings,
           items
-        }), { status: 200, headers: corsHeaders });
+        }), {
+          status: 200,
+          headers: canEdgeCacheDiscover
+            ? { ...corsHeaders, "Cache-Control": "public, max-age=300" }
+            : corsHeaders
+        });
+        if (edgeCache && discoverCacheKey) {
+          scheduleBackgroundWork(() => edgeCache.put(discoverCacheKey, discoverRes.clone()));
+        }
+        return discoverRes;
       }
 
       if (path === "/api/tma/translate" && (request.method === "POST" || request.method === "GET")) {
@@ -70081,20 +70617,20 @@
           (u.desc && u.desc.toLowerCase().includes(qEntityLow))
         ).slice(0, 5);
 
-        // 2. Passende Filmreihen, Personen & Filmstudios (lokal + TMDB /search/company) parallel abrufen
+        // 2. Passende Filmreihen, Personen & Filmstudios (Edge- & RAM-gecacht via cachedExternalFetchJson) parallel abrufen
         const [searchData, colSearchData, multiRes, companyRes] = await Promise.all([
           searchTMDBPage(env, q, settings, page, sortBy, bypass),
-          page === 1 ? searchCollectionsTMDB(env, strippedQueryForEntities, 1).catch(() => null) : Promise.resolve(null),
-          page === 1 ? fetchWithTimeout(
+          (page === 1 && hasSubrequestBudget(28)) ? searchCollectionsTMDB(env, strippedQueryForEntities, 1).catch(() => null) : Promise.resolve(null),
+          (page === 1 && hasSubrequestBudget(28)) ? cachedExternalFetchJson(
             `https://api.themoviedb.org/3/search/person?query=${encodeURIComponent(strippedQueryForEntities)}&language=de-DE&page=1`,
             { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
-            3500
-          ).then(r => (r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null),
-          page === 1 ? fetchWithTimeout(
+            3200
+          ).catch(() => null) : Promise.resolve(null),
+          (page === 1 && hasSubrequestBudget(28)) ? cachedExternalFetchJson(
             `https://api.themoviedb.org/3/search/company?query=${encodeURIComponent(strippedQueryForEntities)}&page=1`,
             { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
-            3500
-          ).then(r => (r.ok ? r.json() : null)).catch(() => null) : Promise.resolve(null)
+            3200
+          ).catch(() => null) : Promise.resolve(null)
         ]);
 
         const localFeaturedCols = page === 1 ? FEATURED_COLLECTIONS.filter(c => c.name.toLowerCase().includes(qEntityLow)) : [];
@@ -70195,6 +70731,19 @@
         visibleItems = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, "m", effectiveSettings, hasVipStreamAccess);
         visibleItems = await attachVipQualitiesToMediaList(env, visibleItems, "m", hasVipStreamAccess);
 
+        // Für den Such-Hero-Slider (Seite 1) bereits gecachte ClearLogos direkt aus RAM/D1-Batch mitliefern
+        if (page === 1 && Array.isArray(visibleItems) && visibleItems.length >= 2 && typeof getClearLogosBatchFromD1 === "function") {
+          const searchHeroSlice = visibleItems.slice(0, 6);
+          const sLogosMap = await getClearLogosBatchFromD1(env, searchHeroSlice, "m").catch(() => new Map());
+          for (const it of searchHeroSlice) {
+            if (!it || !it.id || it.logo_path) continue;
+            const k = `${it.media_type === "tv" ? "s" : "m"}_${Number(it.id)}`;
+            if (sLogosMap.has(k) && sLogosMap.get(k)) {
+              it.logo_path = sLogosMap.get(k);
+            }
+          }
+        }
+
         const rawTotalPages = isPersonOrColFallback ? 1 : Math.max(1, Number(searchData?.total_pages || 1));
         const hasMoreAfterFilter = !isPersonOrColFallback && visibleItems.length > 0 && page < rawTotalPages;
         const totalPages = hasMoreAfterFilter ? rawTotalPages : page;
@@ -70221,13 +70770,6 @@
         }), { status: 200, headers: corsHeaders });
       }
 
-      if (path === "/api/tma/logo" && request.method === "GET") {
-        const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
-        const id = url.searchParams.get("id") || "";
-        const logoPath = await resolveMediaClearLogoPath(env, typeCode, id, "");
-        return new Response(JSON.stringify({ ok: true, id: Number(id), typeCode, logo_path: logoPath || "" }), { status: 200, headers: corsHeaders });
-      }
-
       if (path === "/api/tma/details" && request.method === "GET") {
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
         const id = url.searchParams.get("id") || "";
@@ -70243,20 +70785,48 @@
         const year = (rawDate.split("-")[0]) || "K.A.";
         const vote = details.vote_average ? Math.round(details.vote_average * 10) / 10 : "–";
 
-        // Parallel & mit Timeout-Schutz für Telegraph ausführen, damit Detailansicht auch nach langer Standzeit sofort lädt!
+        const isAdminUser = Boolean(auth.user?.isAdmin);
+        const canSeeStreams = Boolean(hasVipStreamAccess || isAdminUser);
+        // Telegraph wird in TMA-Details NICHT synchron erzeugt (spart externe API-Calls & CPU; bereits vorhandene URL wird direkt genutzt).
+        const telegraphUrl = details.telegraphUrl || "";
+
         const rawCandidateKeys = Array.isArray(details.trailerCandidates) && details.trailerCandidates.length > 0
           ? details.trailerCandidates
           : (details.trailerKey ? [details.trailerKey] : []);
-        const [telegraphUrl, savedList, movieFiles, botUsername, seriesD1SeasonsMeta, mediaDownloads, resolvedLogoPath, resolvedTrailersPack] = await Promise.all([
-          Promise.race([
-            ensureMovieOrSeriesTelegraphUrl(env, typeCode, details).catch(() => ""),
-            new Promise(resolve => setTimeout(() => resolve(details.telegraphUrl || ""), 2200))
-          ]),
+
+        // Serien-D1-Abfrage dedupliziert: 1 einzige episode_files Abfrage liefert sowohl seasonCounts als auch allStreamFiles!
+        const fetchSeriesEpisodeFilesOnce = async () => {
+          if (isMovie || !canSeeStreams) return [];
+          const db = await ensureD1Schema(env);
+          if (db) {
+            try {
+              const epFilesRes = await db
+                .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, quality, codec, part, tags, version_label, file_size, raw_filename, raw_caption, message_link, updated_at FROM episode_files WHERE series_id = ?1 ORDER BY season_number ASC, episode_number ASC")
+                .bind(details.id)
+                .all();
+              if (Array.isArray(epFilesRes?.results) && epFilesRes.results.length > 0) {
+                return epFilesRes.results.map(enrichStreamFileRowMeta);
+              }
+            } catch (_e) {}
+          }
+          if (memoryFallback) {
+            const memCollected = [];
+            for (const [k, v] of memoryFallback.entries()) {
+              if (k.startsWith(`d1_ep_files_${details.id}_`) && Array.isArray(v)) {
+                memCollected.push(...v.map(enrichStreamFileRowMeta));
+              }
+            }
+            if (memCollected.length > 0) return memCollected;
+          }
+          return [];
+        };
+
+        const [savedList, movieFiles, botUsername, seriesEpisodeFiles, mediaDownloads, resolvedLogoPath, resolvedTrailersPack] = await Promise.all([
           auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
-          (isMovie && (hasVipStreamAccess || Boolean(auth.user?.isAdmin))) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
+          (isMovie && canSeeStreams) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
           tgApi(env).getBotUsername(env).catch(() => ""),
-          (!isMovie && (hasVipStreamAccess || Boolean(auth.user?.isAdmin))) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
-          (hasVipStreamAccess || Boolean(auth.user?.isAdmin)) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
+          fetchSeriesEpisodeFilesOnce(),
+          canSeeStreams ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
           resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || ""),
           typeof resolveTrailerCandidatesWithFallbacks === "function"
             ? resolveTrailerCandidatesWithFallbacks(env, typeCode, details, rawCandidateKeys, details.trailerCandidatesMeta).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
@@ -70264,14 +70834,32 @@
                 ? verifyEmbeddableYoutubeCandidates(rawCandidateKeys).then(keys => ({ keys, meta: details.trailerCandidatesMeta || {}, source: keys.length ? "tmdb" : "none" })).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
                 : Promise.resolve({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
         ]);
-        // Falls Details ein Poster gefunden haben, sofort in D1, Bot-VIP-Playlist und User-Merkliste zurückschreiben!
-        if (details.poster_path || details.external_poster_url) {
-          await backfillMediaPosterInLists(env, typeCode, details.id, details.poster_path, details.external_poster_url || "", auth.isAuthenticated ? chatId : null);
+
+        // Poster-Backfill NUR asynchron im Hintergrund UND nur wenn der Eintrag in der Merkliste wirklich noch kein Poster hat!
+        const matchedSavedItem = (savedList || []).find(i => String(i.tmdbId) === String(details.id) && i.contentType !== "episode");
+        if (matchedSavedItem && (!matchedSavedItem.poster || String(matchedSavedItem.poster).includes("placeholder")) && (details.poster_path || details.external_poster_url)) {
+          scheduleBackgroundWork(() => backfillMediaPosterInLists(env, typeCode, details.id, details.poster_path, details.external_poster_url || "", auth.isAuthenticated ? chatId : null));
         }
-        const seasonCounts = seriesD1SeasonsMeta?.seasonCounts || {};
+
+        // seasonCounts direkt aus den einmalig geladenen seriesEpisodeFiles berechnen (kein zweiter D1-Read!)
+        const seasonCounts = {};
+        if (!isMovie && Array.isArray(seriesEpisodeFiles) && seriesEpisodeFiles.length > 0) {
+          const epSetsBySeason = new Map();
+          for (const ef of seriesEpisodeFiles) {
+            const sn = Number(ef.season_number || 1);
+            const en = Number(ef.episode_number || 1);
+            if (sn > 0) {
+              if (!epSetsBySeason.has(sn)) epSetsBySeason.set(sn, new Set());
+              epSetsBySeason.get(sn).add(en);
+            }
+          }
+          for (const [sn, epSet] of epSetsBySeason.entries()) {
+            seasonCounts[sn] = epSet.size;
+          }
+        }
         const vipSeasonsSorted = Object.keys(seasonCounts).map(Number).filter(n => n > 0).sort((a, b) => a - b);
         const firstVipSeason = vipSeasonsSorted[0] || 1;
-        const isSaved = (savedList || []).some(i => String(i.tmdbId) === String(details.id) && i.contentType !== "episode");
+        const isSaved = Boolean(matchedSavedItem);
         const candidateKeys = Array.isArray(resolvedTrailersPack?.keys) && resolvedTrailersPack.keys.length > 0
           ? resolvedTrailersPack.keys
           : [];
@@ -70326,28 +70914,7 @@
         });
 
         // Für VIPs (Tab "Versionen") & Admins (inkl. Original-Dateiname & Telegram-Link) verknüpfte Episoden-/Film-Dateien bereitstellen
-        const isAdminUser = Boolean(auth.user?.isAdmin);
-        let allStreamFiles = movieFiles;
-        if (!isMovie && (hasVipStreamAccess || isAdminUser)) {
-          const db = await ensureD1Schema(env);
-          if (db) {
-            try {
-              const epFilesRes = await db.prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, quality, codec, part, tags, version_label, file_size, raw_filename, raw_caption, message_link, updated_at FROM episode_files WHERE series_id = ?1 ORDER BY season_number ASC, episode_number ASC").bind(details.id).all();
-              if (Array.isArray(epFilesRes?.results) && epFilesRes.results.length > 0) {
-                allStreamFiles = epFilesRes.results.map(enrichStreamFileRowMeta);
-              }
-            } catch (e) {}
-          }
-          if ((!allStreamFiles || allStreamFiles.length === 0) && memoryFallback) {
-            const memCollected = [];
-            for (const [k, v] of memoryFallback.entries()) {
-              if (k.startsWith(`d1_ep_files_${details.id}_`) && Array.isArray(v)) {
-                memCollected.push(...v.map(enrichStreamFileRowMeta));
-              }
-            }
-            if (memCollected.length > 0) allStreamFiles = memCollected;
-          }
-        }
+        const allStreamFiles = isMovie ? movieFiles : seriesEpisodeFiles;
 
         const availableVersions = Array.from(new Set(
           (allStreamFiles || []).map(f => extractEpisodeVersionLabel(f)).filter(Boolean)
@@ -71692,6 +72259,7 @@
   export default {
     async fetch(request, env, ctx) {
       globalThis._activeWorkerEnv = env;
+      globalThis._activeWorkerCtx = ctx;
       resetSubrequestBudget();
       try {
         const url = new URL(request.url);
@@ -71779,7 +72347,8 @@
           url.pathname.startsWith("/api/tma/") ||
           (request.method === "GET" && url.pathname === "/" && url.searchParams.get("status") !== "1")
         ) {
-          return await handleTmaRequest(request, env, ctx);
+          const tmaRes = await handleTmaRequest(request, env, ctx);
+          return attachWorkerDiagHeader(tmaRes, url.pathname);
         }
 
         if (request.method === "GET") {

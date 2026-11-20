@@ -2337,62 +2337,121 @@
       memoryFallback.set("d1_all_series_ep_map_cache_ts", now);
     }
 
-    // Map aus D1 movies & series für fehlende Poster + Set gültiger VIP-Film-Streams (3 Minuten im RAM gecacht)
+    // Gezielter D1-Lookup NUR für die tatsächlich in der Liste vorhandenen IDs (keine LIMIT 1500 Full-Table-Scans!)
     let posterLookup = memoryFallback.get("d1_poster_lookup_cache");
     let validMovieIdsSet = memoryFallback.get("d1_valid_movie_ids_set_cache");
     const posterLookupTs = Number(memoryFallback.get("d1_poster_lookup_cache_ts") || 0);
-      // Schlanke Spalten-Abfrage OHNE details_json (spart >90% CPU-Zeit und verhindert 10ms Free-Tier Limit!)
-      if (!(posterLookup instanceof Map) || !(validMovieIdsSet instanceof Set) || (now - posterLookupTs) > 180000) {
-        posterLookup = new Map();
-        validMovieIdsSet = new Set();
-        const db = await ensureD1Schema(env);
-        const rawDb = getRawD1Binding(env);
-        if (db && rawDb) {
-          try {
+    if (!(posterLookup instanceof Map) || (now - posterLookupTs) > 300000) {
+      posterLookup = new Map();
+      memoryFallback.set("d1_poster_lookup_cache", posterLookup);
+      memoryFallback.set("d1_poster_lookup_cache_ts", now);
+    }
+    if (!(validMovieIdsSet instanceof Set) || (now - posterLookupTs) > 300000) {
+      validMovieIdsSet = new Set();
+      memoryFallback.set("d1_valid_movie_ids_set_cache", validMovieIdsSet);
+    }
+
+    const missingMovieIds = [];
+    const missingSeriesIds = [];
+    const needVipCheckMovieIds = [];
+    for (const item of list) {
+      if (!item) continue;
+      const isSer = item.contentType === "series" || item.contentType === "episode";
+      const tid = Number(item.contentType === "episode" ? item.seriesId : item.tmdbId);
+      if (!tid) continue;
+      if (isSer) {
+        if (!posterLookup.has(`s_${tid}`)) missingSeriesIds.push(tid);
+      } else {
+        if (!posterLookup.has(`m_${tid}`)) missingMovieIds.push(tid);
+        if (!validMovieIdsSet.has(tid) && !memoryFallback.has(`d1_movie_vip_checked_${tid}`)) {
+          needVipCheckMovieIds.push(tid);
+        }
+      }
+    }
+
+    const uniqMissingM = [...new Set(missingMovieIds)].slice(0, 80);
+    const uniqMissingS = [...new Set(missingSeriesIds)].slice(0, 80);
+    const uniqVipCheckM = [...new Set(needVipCheckMovieIds)].slice(0, 80);
+
+    if (uniqMissingM.length > 0 || uniqMissingS.length > 0 || uniqVipCheckM.length > 0) {
+      const db = await ensureD1Schema(env);
+      const rawDb = getRawD1Binding(env);
+      if (db && rawDb) {
+        try {
+          const stmts = [];
+          const keys = [];
+          if (uniqMissingM.length > 0) {
+            stmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM movies WHERE tmdb_id IN (${uniqMissingM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqMissingM));
+            keys.push("m");
+          }
+          if (uniqMissingS.length > 0) {
+            stmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM series WHERE tmdb_id IN (${uniqMissingS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqMissingS));
+            keys.push("s");
+          }
+          if (uniqVipCheckM.length > 0) {
+            stmts.push(rawDb.prepare(`SELECT DISTINCT movie_id FROM movie_files WHERE movie_id IN (${uniqVipCheckM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'`).bind(...uniqVipCheckM));
+            keys.push("mf");
+          }
+          if (stmts.length > 0) {
             trackStat("d1Reads");
             if (typeof countD1Subrequest === "function") countD1Subrequest();
-            const [mRows, sRows, mfRows] = await rawDb.batch([
-              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM movies LIMIT 1500"),
-              rawDb.prepare("SELECT tmdb_id, poster_path, vote_average, release_year, fsk FROM series LIMIT 1500"),
-              rawDb.prepare("SELECT DISTINCT movie_id FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'")
-            ]);
-            for (const r of (mRows?.results || [])) {
-              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
-              posterLookup.set(`m_${Number(r.tmdb_id)}`, {
-                poster: p,
-                vote_average: Number(r.vote_average || 0),
-                release_year: r.release_year ? String(r.release_year) : "",
-                fsk: r.fsk || ""
-              });
-            }
-            for (const r of (sRows?.results || [])) {
-              const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
-              posterLookup.set(`s_${Number(r.tmdb_id)}`, {
-                poster: p,
-                vote_average: Number(r.vote_average || 0),
-                release_year: r.release_year ? String(r.release_year) : "",
-                fsk: r.fsk || ""
-              });
-            }
-            for (const mf of (mfRows?.results || [])) {
-              if (mf && mf.movie_id) {
-                validMovieIdsSet.add(Number(mf.movie_id));
+            const batchResults = await rawDb.batch(stmts);
+            for (let bIdx = 0; bIdx < keys.length; bIdx++) {
+              const kind = keys[bIdx];
+              const rows = batchResults?.[bIdx]?.results || [];
+              if (kind === "m") {
+                const foundM = new Set();
+                for (const r of rows) {
+                  const mid = Number(r.tmdb_id);
+                  foundM.add(mid);
+                  const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+                  posterLookup.set(`m_${mid}`, {
+                    poster: p,
+                    vote_average: Number(r.vote_average || 0),
+                    release_year: r.release_year ? String(r.release_year) : "",
+                    fsk: r.fsk || ""
+                  });
+                }
+                for (const mid of uniqMissingM) {
+                  if (!foundM.has(mid)) posterLookup.set(`m_${mid}`, { poster: "", vote_average: 0, release_year: "", fsk: "" });
+                }
+              } else if (kind === "s") {
+                const foundS = new Set();
+                for (const r of rows) {
+                  const sid = Number(r.tmdb_id);
+                  foundS.add(sid);
+                  const p = r.poster_path ? resolvePosterUrl(r.poster_path, "w185", "") : "";
+                  posterLookup.set(`s_${sid}`, {
+                    poster: p,
+                    vote_average: Number(r.vote_average || 0),
+                    release_year: r.release_year ? String(r.release_year) : "",
+                    fsk: r.fsk || ""
+                  });
+                }
+                for (const sid of uniqMissingS) {
+                  if (!foundS.has(sid)) posterLookup.set(`s_${sid}`, { poster: "", vote_average: 0, release_year: "", fsk: "" });
+                }
+              } else if (kind === "mf") {
+                for (const mf of rows) {
+                  if (mf && mf.movie_id) validMovieIdsSet.add(Number(mf.movie_id));
+                }
+                for (const mid of uniqVipCheckM) {
+                  memoryFallback.set(`d1_movie_vip_checked_${mid}`, now);
+                }
               }
             }
-            memoryFallback.set("d1_poster_lookup_cache", posterLookup);
-            memoryFallback.set("d1_valid_movie_ids_set_cache", validMovieIdsSet);
-            memoryFallback.set("d1_poster_lookup_cache_ts", now);
-          } catch (e) {}
-        }
-        for (const [k, v] of memoryFallback.entries()) {
-          if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
-            const mid = Number(k.replace("d1_movie_files_", ""));
-            if (mid && v.some(x => x && scoreTelegramFileIdValidity(x.telegram_file_id || x.fileId || x.file_id) > 0)) {
-              validMovieIdsSet.add(mid);
-            }
+          }
+        } catch (e) {}
+      }
+      for (const [k, v] of memoryFallback.entries()) {
+        if (k.startsWith("d1_movie_files_") && Array.isArray(v)) {
+          const mid = Number(k.replace("d1_movie_files_", ""));
+          if (mid && v.some(x => x && scoreTelegramFileIdValidity(x.telegram_file_id || x.fileId || x.file_id) > 0)) {
+            validMovieIdsSet.add(mid);
           }
         }
       }
+    }
 
       for (const item of list) {
         if (!item) continue;

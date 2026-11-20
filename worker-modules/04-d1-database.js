@@ -8,12 +8,16 @@
   let d1SchemaInitialized = false;
   let d1SchemaInitPromise = null;
   let activeD1WriteBuffer = null;
+  const D1_SCHEMA_VERSION = "20261120_v1";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
   function countD1Subrequest() {
     if (typeof currentInvocationSubrequests === "number") {
       currentInvocationSubrequests++;
+    }
+    if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
+      activeWorkerTelemetry.d1OpsCount = (activeWorkerTelemetry.d1OpsCount || 0) + 1;
     }
   }
 
@@ -144,6 +148,22 @@
     }
     const rawDb = getRawD1Binding(env) || db;
     d1SchemaInitPromise = (async () => {
+      // Cold-Start Fast-Path (Free Plan Schutz): 1 einzelner D1-Read prüft die Schema-Version
+      // und überspringt alle 26 CREATE TABLE/INDEX DDL-Statements + sqlite_master-Inspektion!
+      try {
+        countD1Subrequest();
+        const verRow = await rawDb
+          .prepare("SELECT data_json FROM entity_cache WHERE cache_key = ?1")
+          .bind("d1_schema_version")
+          .first();
+        if (verRow && String(verRow.data_json || "") === D1_SCHEMA_VERSION) {
+          d1SchemaInitialized = true;
+          d1SchemaInitPromise = null;
+          return;
+        }
+      } catch (_fastPathErr) {
+        // Tabelle existiert noch nicht -> vollständige Erst-Initialisierung unten ausführen
+      }
       try {
         countD1Subrequest();
         await rawDb.batch(unwrapRawD1Statements([
@@ -482,6 +502,13 @@
             }
           }
         }
+        try {
+          countD1Subrequest();
+          await rawDb
+            .prepare("INSERT INTO entity_cache (cache_key, entity_type, data_json, updated_at) VALUES (?1, 'system', ?2, ?3) ON CONFLICT(cache_key) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at")
+            .bind("d1_schema_version", D1_SCHEMA_VERSION, Date.now())
+            .run();
+        } catch (_saveVerErr) {}
         d1SchemaInitialized = true;
       } catch (e) {
         d1SchemaInitialized = true;
@@ -491,6 +518,143 @@
     })();
     await d1SchemaInitPromise;
     return db;
+  }
+
+  // Batch-Lookup für gecachte Medien-Metadaten (FSK, Studios, Anbieter, Overview, Poster, Logo) in 1 einziger D1-Batch-Abfrage!
+  async function getMediaMetaBatchFromD1(env, items = [], fallbackTypeCode = "m") {
+    const metaMap = new Map();
+    if (!Array.isArray(items) || items.length === 0) return metaMap;
+    const movieIdsToQuery = [];
+    const seriesIdsToQuery = [];
+    for (const it of items) {
+      if (!it || !it.id) continue;
+      const isTv = it.media_type === "tv" || (it.media_type !== "movie" && fallbackTypeCode === "s");
+      const tc = isTv ? "s" : "m";
+      const tid = Number(it.id);
+      if (!tid) continue;
+      const key = `${tc}_${tid}`;
+      if (metaMap.has(key)) continue;
+      const ramHit = getCachedTmdb(isTv ? `tv_${tid}` : `movie_${tid}`) ||
+        memoryFallback.get(isTv ? `d1_catalog_series_${tid}` : `d1_catalog_movie_${tid}`);
+      if (ramHit && typeof ramHit === "object") {
+        metaMap.set(key, ramHit);
+        continue;
+      }
+      if (isTv) seriesIdsToQuery.push(tid);
+      else movieIdsToQuery.push(tid);
+    }
+
+    const uniqM = [...new Set(movieIdsToQuery)].slice(0, 40);
+    const uniqS = [...new Set(seriesIdsToQuery)].slice(0, 40);
+    if (uniqM.length === 0 && uniqS.length === 0) return metaMap;
+
+    const db = await ensureD1Schema(env);
+    const rawDb = getRawD1Binding(env);
+    if (!db || !rawDb) return metaMap;
+    try {
+      const stmts = [];
+      const kinds = [];
+      const entityKeys = [];
+      if (uniqM.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT tmdb_id, details_json FROM movies WHERE tmdb_id IN (${uniqM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqM));
+        kinds.push("m");
+        for (const id of uniqM) entityKeys.push(`movie_${id}`);
+      }
+      if (uniqS.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT tmdb_id, details_json FROM series WHERE tmdb_id IN (${uniqS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqS));
+        kinds.push("s");
+        for (const id of uniqS) entityKeys.push(`tv_${id}`);
+      }
+      if (entityKeys.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT cache_key, data_json FROM entity_cache WHERE cache_key IN (${entityKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...entityKeys));
+        kinds.push("ent");
+      }
+      trackStat("d1Reads");
+      countD1Subrequest();
+      const results = await rawDb.batch(stmts);
+      for (let i = 0; i < kinds.length; i++) {
+        const k = kinds[i];
+        const rows = results?.[i]?.results || [];
+        for (const row of rows) {
+          try {
+            if (k === "m" && row.details_json) {
+              const parsed = JSON.parse(row.details_json);
+              if (parsed && parsed.id) {
+                const mk = `m_${Number(row.tmdb_id)}`;
+                metaMap.set(mk, parsed);
+                setCachedTmdb(`movie_${Number(row.tmdb_id)}`, parsed);
+              }
+            } else if (k === "s" && row.details_json) {
+              const parsed = JSON.parse(row.details_json);
+              if (parsed && parsed.id) {
+                const sk = `s_${Number(row.tmdb_id)}`;
+                metaMap.set(sk, parsed);
+                setCachedTmdb(`tv_${Number(row.tmdb_id)}`, parsed);
+              }
+            } else if (k === "ent" && row.data_json && row.cache_key) {
+              const ck = String(row.cache_key);
+              const isTvEnt = ck.startsWith("tv_");
+              const tid = Number(ck.replace(/^(?:movie_|tv_)/, ""));
+              const mk = `${isTvEnt ? "s" : "m"}_${tid}`;
+              if (tid && !metaMap.has(mk)) {
+                const parsed = JSON.parse(row.data_json);
+                if (parsed && parsed.id) {
+                  metaMap.set(mk, parsed);
+                  setCachedTmdb(ck, parsed);
+                }
+              }
+            }
+          } catch (_parseErr) {}
+        }
+      }
+    } catch (_e) {}
+    return metaMap;
+  }
+
+  // Batch-Lookup für ClearLogos in 1 einziger D1-Abfrage statt 6 einzelner Requests!
+  async function getClearLogosBatchFromD1(env, items = [], fallbackTypeCode = "m") {
+    const logoMap = new Map();
+    if (!Array.isArray(items) || items.length === 0) return logoMap;
+    const keysToQuery = [];
+    for (const it of items) {
+      if (!it || !it.id) continue;
+      const isTv = it.typeCode === "s" || it.media_type === "tv" || (it.media_type !== "movie" && it.typeCode !== "m" && fallbackTypeCode === "s");
+      const tid = Number(it.id);
+      if (!tid || tid >= 8000000) continue;
+      const key = `logo_${isTv ? "s" : "m"}_${tid}`;
+      if (memoryFallback.has(key)) {
+        logoMap.set(`${isTv ? "s" : "m"}_${tid}`, String(memoryFallback.get(key) || ""));
+      } else {
+        keysToQuery.push(key);
+      }
+    }
+    const uniqKeys = [...new Set(keysToQuery)].slice(0, 24);
+    if (uniqKeys.length === 0) return logoMap;
+    const db = await ensureD1Schema(env);
+    const rawDb = getRawD1Binding(env);
+    if (!db || !rawDb) return logoMap;
+    try {
+      trackStat("d1Reads");
+      countD1Subrequest();
+      const res = await rawDb
+        .prepare(`SELECT cache_key, data_json, updated_at FROM entity_cache WHERE cache_key IN (${uniqKeys.map((_, i) => `?${i + 1}`).join(",")})`)
+        .bind(...uniqKeys)
+        .all();
+      const now = Date.now();
+      for (const row of (res?.results || [])) {
+        if (!row || !row.cache_key || !row.data_json) continue;
+        if (now - Number(row.updated_at || 0) > D1_MOVIE_TTL_MS) continue;
+        try {
+          const parsed = JSON.parse(row.data_json);
+          if (parsed && typeof parsed.logo_path === "string") {
+            const lp = String(parsed.logo_path || "");
+            memoryFallback.set(row.cache_key, lp);
+            logoMap.set(String(row.cache_key).replace(/^logo_/, ""), lp);
+          }
+        } catch (_e) {}
+      }
+    } catch (_e) {}
+    return logoMap;
   }
 
   function inferReviewReasonCodeFromLogItem(item) {
@@ -3993,111 +4157,128 @@
       }
     }
 
-    // 2. D1-Datenbank NUR für noch nicht im RAM-Cache geprüfte IDs abfragen (komprimiert per SQL GROUP BY)!
+    // 2. D1-Datenbank in EINER EINZIGEN rawDb.batch() Abfrage für alle noch nicht im RAM-Cache geprüften IDs abfragen!
     const db = await ensureD1Schema(env);
-    if (db) {
+    const rawDb = getRawD1Binding(env);
+    if (db && rawDb) {
       try {
         const uniqPosterM = [...new Set(uncachedPosterMovieIds)].slice(0, 60);
         const uniqVipM = hasVipStreamAccess ? [...new Set(uncachedVipMovieIds)].slice(0, 60) : [];
-        if (uniqPosterM.length > 0 || uniqVipM.length > 0) {
-          const [resMPoster, resMFiles] = await Promise.all([
-            uniqPosterM.length > 0
-              ? db.prepare(`SELECT tmdb_id, poster_path FROM movies WHERE tmdb_id IN (${uniqPosterM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterM).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] }),
-            uniqVipM.length > 0
-              ? db.prepare(`SELECT movie_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY movie_id, quality, codec`).bind(...uniqVipM).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] })
-          ]);
-          const foundPosterM = new Set();
-          for (const row of (resMPoster?.results || [])) {
-            const mid = Number(row.tmdb_id);
-            const pVal = row.poster_path || "";
-            if (pVal) {
-              posterMap.set(`m_${mid}`, pVal);
-              foundPosterM.add(mid);
-            }
-          }
-          for (const mid of uniqPosterM) {
-            if (!foundPosterM.has(mid)) memoryFallback.set(`d1_poster_miss_m_${mid}`, nowVipCheckTs);
-          }
-          for (const row of (resMFiles?.results || [])) {
-            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
-            const mid = Number(row.movie_id);
-            const rowCnt = Math.max(1, Number(row.file_cnt || 1));
-            const cur = bestMovieMap.get(mid);
-            const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
-            if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
-              bestMovieMap.set(mid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
-            } else {
-              cur.count += rowCnt;
-            }
-          }
-          for (const mid of uniqVipM) {
-            const matched = bestMovieMap.get(mid);
-            if (matched) {
-              memoryFallback.set(`d1_vip_summary_m_${mid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
-            } else {
-              memoryFallback.set(`d1_vip_summary_m_${mid}`, { none: true, ts: nowVipCheckTs });
-            }
-          }
-        }
-
         const uniqPosterS = [...new Set(uncachedPosterSeriesIds)].slice(0, 60);
         const uniqVipS = hasVipStreamAccess ? [...new Set(uncachedVipSeriesIds)].slice(0, 60) : [];
-        if (uniqPosterS.length > 0 || uniqVipS.length > 0) {
-          const [resSPoster, resSFiles] = await Promise.all([
-            uniqPosterS.length > 0
-              ? db.prepare(`SELECT tmdb_id, poster_path FROM series WHERE tmdb_id IN (${uniqPosterS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterS).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] }),
-            uniqVipS.length > 0
-              ? db.prepare(`SELECT series_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY series_id, quality, codec`).bind(...uniqVipS).all().catch(() => ({ results: [] }))
-              : Promise.resolve({ results: [] })
-          ]);
-          const foundPosterS = new Set();
-          for (const row of (resSPoster?.results || [])) {
-            const sid = Number(row.tmdb_id);
-            const pVal = row.poster_path || "";
-            if (pVal) {
-              posterMap.set(`s_${sid}`, pVal);
-              foundPosterS.add(sid);
-            }
-          }
-          for (const sid of uniqPosterS) {
-            if (!foundPosterS.has(sid)) memoryFallback.set(`d1_poster_miss_s_${sid}`, nowVipCheckTs);
-          }
-          for (const row of (resSFiles?.results || [])) {
-            if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
-            const sid = Number(row.series_id);
-            const rowCnt = Math.max(1, Number(row.file_cnt || 1));
-            const cur = bestSeriesMap.get(sid);
-            const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
-            if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
-              bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
-            } else {
-              cur.count += rowCnt;
-            }
-          }
-          for (const sid of uniqVipS) {
-            const matched = bestSeriesMap.get(sid);
-            if (matched) {
-              memoryFallback.set(`d1_vip_summary_s_${sid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
-            } else {
-              memoryFallback.set(`d1_vip_summary_s_${sid}`, { none: true, ts: nowVipCheckTs });
+
+        const batchStmts = [];
+        const batchKinds = [];
+        if (uniqPosterM.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path FROM movies WHERE tmdb_id IN (${uniqPosterM.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterM));
+          batchKinds.push("pm");
+        }
+        if (uniqVipM.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT movie_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM movie_files WHERE movie_id IN (${uniqVipM.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY movie_id, quality, codec`).bind(...uniqVipM));
+          batchKinds.push("vm");
+        }
+        if (uniqPosterS.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT tmdb_id, poster_path FROM series WHERE tmdb_id IN (${uniqPosterS.map((_, i) => `?${i + 1}`).join(",")})`).bind(...uniqPosterS));
+          batchKinds.push("ps");
+        }
+        if (uniqVipS.length > 0) {
+          batchStmts.push(rawDb.prepare(`SELECT series_id, quality, codec, MAX(telegram_file_id) AS telegram_file_id, COUNT(*) AS file_cnt FROM episode_files WHERE series_id IN (${uniqVipS.map((_, i) => `?${i + 1}`).join(",")}) AND telegram_file_id IS NOT NULL AND telegram_file_id != '' AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%' GROUP BY series_id, quality, codec`).bind(...uniqVipS));
+          batchKinds.push("vs");
+        }
+
+        if (batchStmts.length > 0) {
+          trackStat("d1Reads");
+          countD1Subrequest();
+          const batchRes = await rawDb.batch(batchStmts);
+          for (let bIdx = 0; bIdx < batchKinds.length; bIdx++) {
+            const kind = batchKinds[bIdx];
+            const rows = batchRes?.[bIdx]?.results || [];
+            if (kind === "pm") {
+              const foundPosterM = new Set();
+              for (const row of rows) {
+                const mid = Number(row.tmdb_id);
+                const pVal = row.poster_path || "";
+                if (pVal) {
+                  posterMap.set(`m_${mid}`, pVal);
+                  foundPosterM.add(mid);
+                }
+              }
+              for (const mid of uniqPosterM) {
+                if (!foundPosterM.has(mid)) memoryFallback.set(`d1_poster_miss_m_${mid}`, nowVipCheckTs);
+              }
+            } else if (kind === "vm") {
+              for (const row of rows) {
+                if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
+                const mid = Number(row.movie_id);
+                const rowCnt = Math.max(1, Number(row.file_cnt || 1));
+                const cur = bestMovieMap.get(mid);
+                const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
+                if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
+                  bestMovieMap.set(mid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
+                } else {
+                  cur.count += rowCnt;
+                }
+              }
+              for (const mid of uniqVipM) {
+                const matched = bestMovieMap.get(mid);
+                if (matched) {
+                  memoryFallback.set(`d1_vip_summary_m_${mid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+                } else {
+                  memoryFallback.set(`d1_vip_summary_m_${mid}`, { none: true, ts: nowVipCheckTs });
+                }
+              }
+            } else if (kind === "ps") {
+              const foundPosterS = new Set();
+              for (const row of rows) {
+                const sid = Number(row.tmdb_id);
+                const pVal = row.poster_path || "";
+                if (pVal) {
+                  posterMap.set(`s_${sid}`, pVal);
+                  foundPosterS.add(sid);
+                }
+              }
+              for (const sid of uniqPosterS) {
+                if (!foundPosterS.has(sid)) memoryFallback.set(`d1_poster_miss_s_${sid}`, nowVipCheckTs);
+              }
+            } else if (kind === "vs") {
+              for (const row of rows) {
+                if (scoreTelegramFileIdValidity(row.telegram_file_id) === 0) continue;
+                const sid = Number(row.series_id);
+                const rowCnt = Math.max(1, Number(row.file_cnt || 1));
+                const cur = bestSeriesMap.get(sid);
+                const candLabel = `${row.quality || "1080p"}${row.codec ? " " + row.codec : ""}`.trim();
+                if (!cur || rankQualityLabel(row.quality) > rankQualityLabel(cur.label)) {
+                  bestSeriesMap.set(sid, { label: candLabel, count: (cur?.count || 0) + rowCnt });
+                } else {
+                  cur.count += rowCnt;
+                }
+              }
+              for (const sid of uniqVipS) {
+                const matched = bestSeriesMap.get(sid);
+                if (matched) {
+                  memoryFallback.set(`d1_vip_summary_s_${sid}`, { label: matched.label, count: matched.count, ts: nowVipCheckTs });
+                } else {
+                  memoryFallback.set(`d1_vip_summary_s_${sid}`, { none: true, ts: nowVipCheckTs });
+                }
+              }
             }
           }
         }
       } catch (e) {}
     }
 
-    // 3. Für bis zu 6 Einträge auf der Seite, denen in de-DE weiterhin das Poster fehlt, direkt EN/Internationales Poster nachladen!
-    const missingPosterItems = items.filter(it => {
-      if (!it || !it.id) return false;
-      const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
-      return !it.poster_path && !it.external_poster_url && !posterMap.has(`${tc}_${Number(it.id)}`) && Number(it.id) < 8000000;
-    }).slice(0, 6);
+    // 3. Free-Plan-Schutz: Max. 2 fehlende Poster pro Seite (und nur bei genügend Subrequest-Budget) nachladen!
+    const missingPosterItems = (typeof hasSubrequestBudget === "function" && hasSubrequestBudget(28))
+      ? items.filter(it => {
+          if (!it || !it.id) return false;
+          const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
+          return !it.poster_path && !it.external_poster_url && !posterMap.has(`${tc}_${Number(it.id)}`) && Number(it.id) < 8000000;
+        }).slice(0, 2)
+      : [];
 
     if (missingPosterItems.length > 0 && env?.TMDB_BEARER_TOKEN) {
       await Promise.all(missingPosterItems.map(async (it) => {
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(32)) return;
         const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
         const endpoint = tc === "s" ? "tv" : "movie";
         const tid = Number(it.id);
@@ -4105,7 +4286,7 @@
           const imgData = await cachedExternalFetchJson(
             `https://api.themoviedb.org/3/${endpoint}/${tid}/images?include_image_language=de,en,null`,
             { headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` } },
-            2800
+            2400
           );
           const foundPath = imgData?.posters?.[0]?.file_path || "";
           if (foundPath) {

@@ -486,14 +486,14 @@
     const memHit = getCachedTmdb(memKey);
     if (memHit) return memHit;
 
-    if (!hasSubrequestBudget(40)) {
+    if (!hasSubrequestBudget(38)) {
       subrequestBudgetExhausted = true;
       return null;
     }
 
     try {
-      currentInvocationSubrequests++;
-      const res = await fetchWithTimeout(url, { ...options, _countedSubrequest: true }, timeoutMs);
+      // fetchWithTimeout prüft Edge Cache zuerst (0 Subrequests bei Hit!) und zählt echte Fetches automatisch mit
+      const res = await fetchWithTimeout(url, options, timeoutMs);
       if (!res || !res.ok) return null;
       const text = await res.text();
       if (!text || text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
@@ -2194,11 +2194,13 @@
       : (candidatesInput ? [String(candidatesInput).trim()] : []);
     if (rawList.length === 0) return [];
     const uniqueKeys = Array.from(new Set(rawList)).slice(0, 6);
-    const toVerify = uniqueKeys.slice(0, 3);
-    if (hasSubrequestBudget(30)) {
+    // Max. 2 parallele oEmbed-Checks (Edge-gecacht für 24h in fetchWithTimeout!) statt 3
+    const toVerify = uniqueKeys.slice(0, 2);
+    if (hasSubrequestBudget(28)) {
       await Promise.all(toVerify.map(async (key) => {
         const memKey = `yt_oembed_${key}`;
         if (memoryFallback.has(memKey)) return;
+        if (!hasSubrequestBudget(32)) return;
         try {
           const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${key}`)}&format=json`;
           const res = await fetchWithTimeout(oembedUrl, { method: "GET" }, 1100);
@@ -2446,7 +2448,7 @@
       const imgData = await res.json();
       const logoPath = extractBestTmdbClearLogoPath(imgData);
       memoryFallback.set(memKey, logoPath || "");
-      await saveEntityToD1(env, memKey, "tmdb_logo", { logo_path: logoPath || "" }).catch(() => {});
+      scheduleBackgroundWork(() => saveEntityToD1(env, memKey, "tmdb_logo", { logo_path: logoPath || "" }));
       return logoPath || "";
     } catch (_e) {
       return "";
@@ -2494,11 +2496,11 @@
 
       let overview = (data.overview || "").trim();
       let isEnglishFallback = false;
-      if (!overview) {
+      if (!overview && hasSubrequestBudget(34)) {
         try {
           const resEn = await fetchWithTimeout(`https://api.themoviedb.org/3/movie/${movieId}?language=en-US`, {
             headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-          }, 3500);
+          }, 3000);
           if (resEn.ok) {
             const dataEn = await resEn.json();
             if (dataEn.overview && dataEn.overview.trim()) {
@@ -2539,8 +2541,10 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
+      // YouTube oEmbed NICHT bei jedem Metadaten-Fetch ausführen (spart 3 Subrequests pro Film bei Suche/Filter/Discover!)
+      // Die Trailer-Prüfung erfolgt gecacht erst beim Öffnen von /api/tma/details.
       const extractedTrailers = extractYoutubeTrailerCandidatesMetaFromVideos(data.videos);
-      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(extractedTrailers.keys);
+      const trailerCandidates = extractedTrailers.keys || [];
       const trailerCandidatesMeta = resolveYoutubeTrailerCandidatesMeta(trailerCandidates, extractedTrailers.meta);
       const trailerKey = trailerCandidates[0] || null;
 
@@ -2577,11 +2581,7 @@
         memoryFallback.set(`logo_m_${result.id}`, result.logo_path);
       }
       setCachedTmdb(cacheKey, result);
-      if (d1Movie) {
-        await saveMovieToD1(env, result);
-      } else {
-        await saveEntityToD1(env, cacheKey, "tmdb_movie", result);
-      }
+      scheduleBackgroundWork(() => (d1Movie ? saveMovieToD1(env, result) : saveEntityToD1(env, cacheKey, "tmdb_movie", result)));
       return result;
     } catch (e) {
       return null;
@@ -2768,11 +2768,11 @@
 
       let overview = (data.overview || "").trim();
       let isEnglishFallback = false;
-      if (!overview) {
+      if (!overview && hasSubrequestBudget(34)) {
         try {
           const resEn = await fetchWithTimeout(`https://api.themoviedb.org/3/tv/${seriesId}?language=en-US`, {
             headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-          }, 3500);
+          }, 3000);
           if (resEn.ok) {
             const dataEn = await resEn.json();
             if (dataEn.overview && dataEn.overview.trim()) {
@@ -2855,8 +2855,9 @@
           profile_path: c.profile_path || ""
         }));
       const genresList = (data.genres || []).map(g => ({ id: g.id, name: g.name }));
+      // YouTube oEmbed erst gezielt beim Öffnen von /api/tma/details ausführen (spart 3 Subrequests pro Serie!)
       const extractedTrailers = extractYoutubeTrailerCandidatesMetaFromVideos(data.videos);
-      const trailerCandidates = await verifyEmbeddableYoutubeCandidates(extractedTrailers.keys);
+      const trailerCandidates = extractedTrailers.keys || [];
       const trailerCandidatesMeta = resolveYoutubeTrailerCandidatesMeta(trailerCandidates, extractedTrailers.meta);
       const trailerKey = trailerCandidates[0] || null;
 
@@ -2910,11 +2911,7 @@
         memoryFallback.set(`logo_s_${result.id}`, result.logo_path);
       }
       setCachedTmdb(cacheKey, result);
-      if (d1Series) {
-        await saveSeriesToD1(env, result);
-      } else {
-        await saveEntityToD1(env, cacheKey, "tmdb_tv", result);
-      }
+      scheduleBackgroundWork(() => (d1Series ? saveSeriesToD1(env, result) : saveEntityToD1(env, cacheKey, "tmdb_tv", result)));
       return result;
     } catch (e) {
       return null;
@@ -3196,12 +3193,23 @@
     if ((hasFskFilters || hasIncFskFilters || needsStudioOrPlatformDetailCheck) && candidates.length > 0 && env) {
       const toEnrich = candidates.slice(0, 24);
       const rest = candidates.slice(24);
+      // 1. Zuerst ALLE 24 Kandidaten gebündelt aus RAM + 1 einziger D1-Batch-Abfrage anreichern!
+      const d1MetaBatch = typeof getMediaMetaBatchFromD1 === "function"
+        ? await getMediaMetaBatchFromD1(env, toEnrich, "m").catch(() => new Map())
+        : new Map();
+      // 2. Nur max. 6 noch fehlende Titel innerhalb des sicheren Free-Plan-Budgets von TMDb nachladen
+      let tmdbFallbackCount = 0;
       const enrichedBatch = await Promise.all(
         toEnrich.map(async (item) => {
           const isTv = item.media_type === "tv";
-          const details = isTv
-            ? await fetchSeriesDetails(env, item.id)
-            : await fetchMovieDetails(env, item.id);
+          const batchKey = `${isTv ? "s" : "m"}_${Number(item.id)}`;
+          let details = d1MetaBatch.get(batchKey) || null;
+          if (!details && tmdbFallbackCount < 6 && hasSubrequestBudget(30)) {
+            tmdbFallbackCount++;
+            details = isTv
+              ? await fetchSeriesDetails(env, item.id)
+              : await fetchMovieDetails(env, item.id);
+          }
           if (details) {
             return {
               ...item,
@@ -4136,18 +4144,16 @@
       let results = filterSyncPass(rawMediaResults, true);
       let lastScannedPage = pageNum;
 
-      // Parallele Multi-Page-Bündelung (bis zu 6 TMDb-Suchseiten gleichzeitig via Promise.all),
-      // sobald irgendein strikter Filter aktiv ist (insb. Streaming-Anbieter wie Netflix, Studios, FSK, Genres, Jahr),
-      // damit kombinierte Suchen wie Name: "der" + Anbieter: "Netflix" sofort viele Treffer liefern statt seitenweise zu warten!
-      const needsDeepParallelScan = (!ignoreFilters || explicitFilterYear) && (
+      // Free-Plan-sichere Multi-Page-Bündelung (max. 2 Extra-Seiten statt 5, nur wenn < 10 Treffer & Budget vorhanden!)
+      const needsDeepParallelScan = (!ignoreFilters || explicitFilterYear) && results.length < 10 && (
         hasPlatformFilters ||
         hasStudioFilters ||
         hasFskFilters ||
-        (anyStrictFilterActive && results.length < 14)
+        anyStrictFilterActive
       );
-      if (needsDeepParallelScan && pageNum < rawTotalPages) {
+      if (needsDeepParallelScan && pageNum < rawTotalPages && hasSubrequestBudget(26)) {
         const extraPages = [];
-        for (let p = pageNum + 1; p <= Math.min(rawTotalPages, pageNum + 5); p++) {
+        for (let p = pageNum + 1; p <= Math.min(rawTotalPages, pageNum + 2); p++) {
           extraPages.push(p);
         }
         if (extraPages.length > 0) {
@@ -4170,7 +4176,7 @@
 
       // Spezialfall 2 (Ausnahme-Lösung): Jahr in Klammern "(YYYY)" ist Teil des echten Filmtitels (0 Treffer mit Jahresfilter)
       // -> Automatischer Fallback auf die wörtliche Suche inkl. Klammern ohne Jahreszwang!
-      if (explicitFilterYear && results.length === 0 && pageNum === 1) {
+      if (explicitFilterYear && results.length === 0 && pageNum === 1 && hasSubrequestBudget(28)) {
         const literalData = await fetchRawSearchMultiPage(env, parsedYearQuery.rawQuery, includeAdult, 1).catch(() => null);
         const literalMedia = (literalData?.results || []).filter(i => i.media_type === "movie" || i.media_type === "tv");
         const fallbackPool = literalMedia.length > 0 ? literalMedia : rawMediaResults;
@@ -4184,14 +4190,24 @@
 
       const rawUnfilteredCount = rawMediaResults.length;
 
-      // Paralleler D1-Katalog- & Detail-Abgleich für FSK, Filmstudios & Streaming-Anbieter (bis zu 36 Kandidaten gleichzeitig)
+      // D1-Batch-First Detail-Abgleich für FSK, Filmstudios & Streaming-Anbieter (1 D1-Batch + max. 6 uncached TMDb-Calls!)
       if ((hasFskFilters || hasStudioFilters || hasPlatformFilters) && results.length > 0 && env) {
-        const candidateSlice = results.slice(0, 36);
+        const candidateSlice = results.slice(0, 24);
+        const d1MetaBatch = typeof getMediaMetaBatchFromD1 === "function"
+          ? await getMediaMetaBatchFromD1(env, candidateSlice, "m").catch(() => new Map())
+          : new Map();
+        let tmdbFallbackCount = 0;
         const enriched = await Promise.all(
           candidateSlice.map(async (item) => {
-            const details = item.media_type === "tv"
-              ? await fetchSeriesDetails(env, item.id)
-              : await fetchMovieDetails(env, item.id);
+            const isTv = item.media_type === "tv";
+            const batchKey = `${isTv ? "s" : "m"}_${Number(item.id)}`;
+            let details = d1MetaBatch.get(batchKey) || null;
+            if (!details && tmdbFallbackCount < 6 && hasSubrequestBudget(30)) {
+              tmdbFallbackCount++;
+              details = isTv
+                ? await fetchSeriesDetails(env, item.id)
+                : await fetchMovieDetails(env, item.id);
+            }
             return details
               ? {
                   ...item,
