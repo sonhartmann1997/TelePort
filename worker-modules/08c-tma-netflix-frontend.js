@@ -7684,6 +7684,12 @@
         if (typeof window.syncActiveCardMarquee === "function") {
           window.syncActiveCardMarquee(parentCard || el);
         }
+        if (el.closest && el.closest(".hero") && document.body && !state.heroHidden && !state.isSearchMode) {
+          document.body.classList.add("in-hero-slider");
+          if (typeof updateSmartPageIndicatorClient === "function") {
+            updateSmartPageIndicatorClient(false);
+          }
+        }
 
         if (scrollIntoView) {
           useSpatialScrollIntoView(el, navDir);
@@ -7736,7 +7742,8 @@
         }
       }
 
-      // Echte physische Mausbewegung (>= 6px) oder Klick reaktiviert die Maussteuerung
+      // Echte physische Mausbewegung (>= 4px) oder Klick reaktiviert die Maussteuerung sofort
+      let pendingKbClickRescueEl = null;
       document.addEventListener("mousemove", (ev) => {
         if (typeof ev.clientX !== "number" || typeof ev.clientY !== "number") return;
         if (lastMouseX === null || lastMouseY === null) {
@@ -7745,9 +7752,10 @@
           return;
         }
         const dist = Math.hypot(ev.clientX - lastMouseX, ev.clientY - lastMouseY);
-        if (dist >= 6) {
+        if (dist >= 4) {
           lastMouseX = ev.clientX;
           lastMouseY = ev.clientY;
+          pendingKbClickRescueEl = null;
           disengageKeyboardNavMode(ev);
         }
       }, { passive: true });
@@ -7757,7 +7765,39 @@
           lastMouseX = ev.clientX;
           lastMouseY = ev.clientY;
         }
+        const wasKbActive = isKeyboardNavActive;
         disengageKeyboardNavMode(ev);
+        pendingKbClickRescueEl = null;
+        if (wasKbActive && (ev.target === document.documentElement || ev.target === document.body) && typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+          try {
+            const realEl = document.elementFromPoint(ev.clientX, ev.clientY);
+            if (realEl && realEl !== document.documentElement && realEl !== document.body) {
+              pendingKbClickRescueEl = realEl;
+            }
+          } catch (_ce) {}
+        }
+      }, true);
+
+      document.addEventListener("mouseup", (ev) => {
+        if (!pendingKbClickRescueEl) return;
+        const rescueTarget = pendingKbClickRescueEl;
+        pendingKbClickRescueEl = null;
+        try {
+          const curUnder = (typeof ev.clientX === "number" && typeof ev.clientY === "number")
+            ? document.elementFromPoint(ev.clientX, ev.clientY)
+            : null;
+          const clickable = (curUnder && curUnder.closest && curUnder.closest("button, a, input, select, [role='button'], .card, .sidebar-menu-row, .tv-elevator-btn, .f-pill, .hero-dot"))
+            || (rescueTarget.closest && rescueTarget.closest("button, a, input, select, [role='button'], .card, .sidebar-menu-row, .tv-elevator-btn, .f-pill, .hero-dot"))
+            || rescueTarget;
+          if (clickable && typeof clickable.click === "function") {
+            clickable.click();
+          }
+        } catch (_re) {}
+      }, true);
+
+      document.addEventListener("wheel", () => {
+        pendingKbClickRescueEl = null;
+        disengageKeyboardNavMode();
       }, { passive: true });
 
       // Maus-Hover verschiebt die aktive Auswahl direkt auf das gehoverte Objekt (sofern in den Einstellungen aktiviert und Tastatur-Modus NICHT aktiv ist),
@@ -8049,10 +8089,18 @@
             }, 65);
           };
 
+          const focusHeroDescOrHeaderUp = () => {
+            if (descHeroEl && list.includes(descHeroEl)) {
+              setSpatialFocus(descHeroEl, true, "up");
+              return true;
+            }
+            return focusSearchOrHeaderUp();
+          };
+
           if (currentSpatialEl.id === "heroDescEl") {
             if (dir === "down") {
-              if (trBtn) { setSpatialFocus(trBtn, true); return; }
-              if (detBtn) { setSpatialFocus(detBtn, true); return; }
+              if (trBtn) { setSpatialFocus(trBtn, true, "down"); return; }
+              if (detBtn) { setSpatialFocus(detBtn, true, "down"); return; }
             }
             if (dir === "up") {
               if (focusSearchOrHeaderUp()) return;
@@ -8060,7 +8108,13 @@
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDesc = document.getElementById("heroDescEl");
-              if (nextDesc) setSpatialFocus(nextDesc, true);
+              const nextDescFocusable = Boolean(nextDesc && (nextDesc.classList.contains("is-long-desc") || nextDesc.classList.contains("is-expanded")));
+              if (nextDescFocusable) {
+                setSpatialFocus(nextDesc, true, dir);
+              } else {
+                const nextTr = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
+                if (nextTr) setSpatialFocus(nextTr, true, dir);
+              }
               return;
             }
           } else if (currentSpatialEl.id === "heroBtnTrailer") {
@@ -8079,7 +8133,7 @@
               return;
             }
             if (dir === "up") {
-              if (focusSearchOrHeaderUp()) return;
+              if (focusHeroDescOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnDetails") {
             if (dir === "left") {
@@ -8097,7 +8151,7 @@
               return;
             }
             if (dir === "up") {
-              if (focusSearchOrHeaderUp()) return;
+              if (focusHeroDescOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnWishlist") {
             if (dir === "left") {
@@ -8115,7 +8169,7 @@
               return;
             }
             if (dir === "up") {
-              if (focusSearchOrHeaderUp()) return;
+              if (focusHeroDescOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
             // Punktleiste (< • • • • ━━ • >): Links/Rechts blättert, Hoch zurück zu Trailer, Runter direkt ins Cover-Grid
@@ -8840,9 +8894,21 @@
       let verticalTurboStreak = 0;
       let verticalTurboLastStepAt = 0;
       let verticalTurboExpressDone = false;
+      let verticalHoldTimer = null;
+      let verticalHoldShowTimer = null;
+      const VERTICAL_HOLD_SHOW_DELAY_MS = 160;
+      const VERTICAL_HOLD_DURATION_MS = 460;
       let controllerL2R2Mode = "page"; // "page" (Standard: 5-Zeilen / Seiten-Blättern) oder "zoom" (UI-Zoom)
 
       function resetVerticalTurboStreakClient() {
+        if (verticalHoldTimer) {
+          clearTimeout(verticalHoldTimer);
+          verticalHoldTimer = null;
+        }
+        if (verticalHoldShowTimer) {
+          clearTimeout(verticalHoldShowTimer);
+          verticalHoldShowTimer = null;
+        }
         verticalTurboDir = "";
         verticalTurboStreak = 0;
         verticalTurboLastStepAt = 0;
@@ -9031,80 +9097,66 @@
       }
 
       function handleVerticalDirectionStepWithTurboClient(dir, isRepeatEvent = false) {
-        const now = Date.now();
-        const isSameDir = verticalTurboDir === dir && (now - verticalTurboLastStepAt < 420);
-        if (!isSameDir) {
-          verticalTurboDir = dir;
-          verticalTurboStreak = 1;
-          verticalTurboExpressDone = false;
-        } else {
-          verticalTurboLastStepAt = now;
-          if (verticalTurboExpressDone) {
-            // Nach abgeschlossenem Direkt-Sprung (Oben/Unten/Grid) bis zum Loslassen der Taste ruhig am Ziel bleiben
-            return;
-          }
-          verticalTurboStreak++;
-        }
-        verticalTurboLastStepAt = now;
-
         const inTvElevator = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"));
         const inAutocomplete = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchAutocompleteBox"));
-        if (inTvElevator || inAutocomplete || state.sidebarOpen) {
-          moveSpatialFocus(dir, false);
+        const inGenreOverlay = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchGenreDropdownOverlay"));
+        const inExpandedDesc = Boolean(currentSpatialEl && currentSpatialEl.classList && currentSpatialEl.classList.contains("expandable-desc-box") && currentSpatialEl.classList.contains("is-expanded"));
+        if (inTvElevator || inAutocomplete || inGenreOverlay || inExpandedDesc || state.sidebarOpen) {
+          moveSpatialFocus(dir, false, Boolean(isRepeatEvent));
           return;
         }
 
-        // Komfort-Shortcut: Runter gedrückt halten auf dem Hero-Slider (oder Header) springt unmittelbar ins Cover-Grid!
-        const isOnHeroOrHeader = Boolean(
-          currentSpatialEl &&
-          currentSpatialEl.closest &&
-          (currentSpatialEl.closest(".hero") || currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))
-        );
-        if (dir === "down" && isOnHeroOrHeader && (isRepeatEvent || verticalTurboStreak >= 2) && !verticalTurboExpressDone) {
-          verticalTurboExpressDone = true;
-          cancelTopBarUpHold();
-          if (typeof scrollToCatalogBelowHeroClient === "function" && currentSpatialEl.closest(".hero")) {
-            scrollToCatalogBelowHeroClient();
+        // Auto-Repeat beim Gedrückthalten löst KEINE weiteren Zeilensprünge aus (verhindert jedes Herumspringen!):
+        // Nur der ruhige Halte-Timer springt gezielt nach oben zur Suche bzw. nach unten zur Seitenwahl.
+        if (isRepeatEvent) {
+          if (verticalTurboDir === dir && (verticalHoldTimer || verticalTurboExpressDone)) {
+            verticalTurboLastStepAt = Date.now();
+            return;
           }
-          setTimeout(() => {
-            const firstGridCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
-            if (firstGridCard) {
-              jumpSpatialFocus(firstGridCard, true, "down");
-              if (typeof showHudToast === "function") showHudToast("🎬 Direkt im Cover-Grid");
-            }
-          }, 55);
           return;
         }
 
-        // Stufe 1 (Schritte 1–2): Präziser 1-Zeilen-Schritt
-        if (verticalTurboStreak <= 2) {
-          cancelTopBarUpHold();
-          moveSpatialFocus(dir, false);
-          return;
-        }
+        // Normaler Druck: Immer exakt 1 Zeile wechseln (nie mehr als eine!)
+        resetVerticalTurboStreakClient();
+        verticalTurboDir = dir;
+        verticalTurboStreak = 1;
+        verticalTurboLastStepAt = Date.now();
+        verticalTurboExpressDone = false;
+        moveSpatialFocus(dir, false, false);
 
-        // Stufe 2 (Schritte 3–7): Beschleunigter 3-Zeilen-Turbo-Sprung
-        if (verticalTurboStreak <= 7) {
+        const isModalOpenNow = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+        const isPageJumpOpenNow = Boolean(
+          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
+          document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")
+        );
+        if (isPageJumpOpenNow) return;
+
+        verticalHoldShowTimer = setTimeout(() => {
+          verticalHoldShowTimer = null;
+          if (verticalTurboDir !== dir || verticalTurboExpressDone) return;
           topBarUpHoldActive = true;
           const ind = document.getElementById("modalHoldNavIndicator");
           const txt = document.getElementById("modalHoldNavText");
           const bar = document.getElementById("modalHoldNavBar");
           if (ind && txt && bar) {
             ind.classList.remove("left", "right");
-            txt.textContent = dir === "up"
-              ? "⚡ Turbo-Sprung ▲ (3× Zeilen) • Weiter halten für Anfang/Suche…"
-              : "⚡ Turbo-Sprung ▼ (3× Zeilen) • Weiter halten für Seitenwahl/Ende…";
+            if (isModalOpenNow) {
+              txt.textContent = dir === "up" ? "⬆️ Halten: Anfang der Detailansicht" : "⏬ Halten: Ende der Detailansicht";
+            } else {
+              txt.textContent = dir === "up" ? "🔍 Halten: Direkt zur Suche" : "📄 Halten: Direkt zur Seitenwahl";
+            }
+            bar.style.transition = "none";
+            bar.style.width = "0%";
             ind.style.display = "flex";
-            const pct = Math.min(100, Math.round(((verticalTurboStreak - 2) / 5) * 100));
-            bar.style.transition = "width 90ms linear";
-            bar.style.width = pct + "%";
+            void bar.offsetWidth;
+            bar.style.transition = "width " + Math.max(120, VERTICAL_HOLD_DURATION_MS - VERTICAL_HOLD_SHOW_DELAY_MS) + "ms linear";
+            bar.style.width = "100%";
           }
-          moveSpatialFocusMultiRowClient(dir, 3);
-          return;
-        }
+        }, VERTICAL_HOLD_SHOW_DELAY_MS);
 
-        // Stufe 3 (Ab Schritt 8): Direkt-Sprung ganz an den Anfang (Oben) oder ans Ende (Unten)
-        if (!verticalTurboExpressDone) {
+        verticalHoldTimer = setTimeout(() => {
+          verticalHoldTimer = null;
+          if (verticalTurboDir !== dir) return;
           verticalTurboExpressDone = true;
           cancelTopBarUpHold();
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
@@ -9121,10 +9173,34 @@
               if (lastModalEl) jumpSpatialFocus(lastModalEl, true, "down");
               if (typeof showHudToast === "function") showHudToast("⏬ Ende der Detailansicht");
             }
-          } else {
-            tvElevatorJumpClient(dir === "up" ? "top" : "bottom", false);
+            return;
           }
-        }
+
+          if (dir === "up") {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            if (state.currentView === "wishlist") {
+              const wlInp = document.getElementById("wishlistSearchInp");
+              if (wlInp) {
+                jumpSpatialFocus(wlInp, false, "up");
+                try { wlInp.focus({ preventScroll: true }); } catch (_we) {}
+                if (typeof showHudToast === "function") showHudToast("🔍 Merklisten-Suche aktiv");
+                return;
+              }
+            }
+            if (typeof focusSearchWithoutScrollClient === "function") {
+              focusSearchWithoutScrollClient();
+            } else {
+              tvElevatorJumpClient("top", false);
+            }
+          } else {
+            const totPages = Math.max(1, Number(state.totalPages) || 1);
+            if (totPages > 1 && typeof openPageJumpModalClient === "function") {
+              openPageJumpModalClient();
+            } else {
+              tvElevatorJumpClient("bottom", false);
+            }
+          }
+        }, VERTICAL_HOLD_DURATION_MS);
       }
 
       function toggleControllerTriggerModeClient() {
@@ -9848,11 +9924,11 @@
 
             const upHeld = Boolean(gp.buttons?.[12]?.pressed || axY < -0.55);
             const downHeld = Boolean(gp.buttons?.[13]?.pressed || axY > 0.55);
-            if (!upHeld && !downHeld && verticalTurboStreak > 0 && (now - verticalTurboLastStepAt > 210)) {
+            if (!upHeld && !downHeld && verticalTurboDir) {
               resetVerticalTurboStreakClient();
             }
 
-            const dynamicGamepadInterval = (verticalTurboStreak >= 3) ? 125 : 180;
+            const dynamicGamepadInterval = 180;
             if (now - lastGamepadStepAt > dynamicGamepadInterval) {
               const up = upHeld;
               const down = downHeld;
@@ -9872,8 +9948,8 @@
                 syncControllerHudBarClient(gp);
               }
 
-              if (up) { handleVerticalDirectionStepWithTurboClient("up", true); lastGamepadStepAt = now; }
-              else if (down) { handleVerticalDirectionStepWithTurboClient("down", true); lastGamepadStepAt = now; }
+              if (up) { handleVerticalDirectionStepWithTurboClient("up", verticalTurboDir === "up"); lastGamepadStepAt = now; }
+              else if (down) { handleVerticalDirectionStepWithTurboClient("down", verticalTurboDir === "down"); lastGamepadStepAt = now; }
               else if (left) { resetVerticalTurboStreakClient(); moveSpatialFocus("left", false, true); lastGamepadStepAt = now; }
               else if (right) { resetVerticalTurboStreakClient(); moveSpatialFocus("right", false, true); lastGamepadStepAt = now; }
               else if (btnA && currentSpatialEl) {

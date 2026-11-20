@@ -1674,10 +1674,25 @@
         transform: scaleX(1);
       }
 
-      /* Tastatur-/Controller-Modus aktiv: Mauszeiger ausblenden & konkurrierende Hover-Effekte unterdrücken */
+      /* Tastatur-/Controller-Modus aktiv: Mauszeiger ausblenden & ALLE konkurrierenden Maus-Hover-Effekte sofort abschalten */
       body.kb-nav-active,
       body.kb-nav-active * {
         cursor: none !important;
+      }
+      body.kb-nav-active #appRoot,
+      body.kb-nav-active header,
+      body.kb-nav-active #filterSidebarDrawer,
+      body.kb-nav-active #tvQuickJumpElevator,
+      body.kb-nav-active #modalRoot,
+      body.kb-nav-active #pageJumpModalRoot,
+      body.kb-nav-active #customDialogRoot,
+      body.kb-nav-active #personSpotlightOverlayRoot,
+      body.kb-nav-active #searchGenreDropdownOverlay,
+      body.kb-nav-active #smartPageIndicatorBtn,
+      body.kb-nav-active #catalogBackToTopFab,
+      body.kb-nav-active .catalog-edge-trigger-left,
+      body.kb-nav-active .catalog-edge-trigger-right {
+        pointer-events: none !important;
       }
       body.kb-nav-active .card:hover:not(.spatial-focus) {
         border-color: rgba(255, 255, 255, 0.08);
@@ -5386,6 +5401,12 @@
         box-shadow: 0 12px 32px rgba(0, 0, 0, 0.82), 0 0 0 2px rgba(56, 189, 248, 0.45);
         transform: translate3d(0, -2px, 0);
       }
+      body.in-hero-slider #smartPageIndicatorBtn,
+      body.in-hero-slider .catalog-back-to-top-fab {
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
       /* TV- & Touch-Seiten-Schnellwahl-Popup */
       .page-jump-modal-backdrop {
         position: fixed;
@@ -8221,6 +8242,25 @@
       @media (prefers-reduced-motion: reduce) {
         #tmaBootSplashscreen { transition: opacity 0.15s linear; transform: none !important; }
         .neon-splash-bar-fill { animation: none; width: 100%; }
+      }
+      /* Portal-Orange Fokusrahmen (#ff7a00) für maximalen Kontrast auf Trailer- & hellen/blauen Hauptbuttons */
+      .hero-btn-play.spatial-focus,
+      #heroBtnTrailer.spatial-focus,
+      .detail-btn-play-white.spatial-focus,
+      #detailTrailerBtn.spatial-focus,
+      #detailPrimaryPlayBtn.spatial-focus,
+      .card-quick-trailer.spatial-focus,
+      .cinema-overlay-btn.is-primary.spatial-focus,
+      .cinema-dock-btn.is-primary.spatial-focus,
+      .btn.blue.spatial-focus,
+      .btn.primary.spatial-focus,
+      .btn.hero-primary.spatial-focus,
+      .page-jump-btn.primary.spatial-focus,
+      .media-mode-tab.active-movie.spatial-focus,
+      .media-mode-tab.active-series.spatial-focus {
+        outline: none !important;
+        border-color: #ff7a00 !important;
+        box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.92), 0 0 0 5px #ff7a00, 0 0 24px rgba(255, 122, 0, 0.72), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
       }
     </style>
   </head>
@@ -12001,6 +12041,7 @@
           !state.currentPersonId &&
           totPages > 1 &&
           state.items.length > 0 &&
+          !(document.body && document.body.classList.contains("in-hero-slider")) &&
           (state.isSearchMode || state.heroHidden || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
         );
 
@@ -12880,8 +12921,12 @@
 
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
+        const prevInFrontHero = document.body.classList.contains("in-hero-slider");
         const inFrontHero = typeof isUserInHeroSliderFront === "function" ? isUserInHeroSliderFront() : false;
         document.body.classList.toggle("in-hero-slider", inFrontHero);
+        if (inFrontHero !== prevInFrontHero && typeof updateSmartPageIndicatorClient === "function") {
+          updateSmartPageIndicatorClient(false);
+        }
         if (!inFrontHero && typeof stopHeroBackgroundVideoTeaserClient === "function") {
           const bgLayer = document.getElementById("heroBgVideoLayer");
           if (heroBgTeaserActiveKey || (bgLayer && bgLayer.innerHTML)) {
@@ -14874,6 +14919,12 @@
         } else {
           animateHeroCatalogSnapScrollClient(0);
         }
+        if (document.body) {
+          document.body.classList.add("in-hero-slider");
+        }
+        if (typeof updateSmartPageIndicatorClient === "function") {
+          updateSmartPageIndicatorClient(false);
+        }
         setTimeout(() => {
           if (focusMode === "header") {
             const topEl = document.getElementById("searchInput") || document.getElementById("sidebarToggleBtn");
@@ -14881,6 +14932,9 @@
           } else {
             const heroTarget = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails") || document.getElementById("heroBtnWishlist");
             if (heroTarget && typeof jumpSpatialFocus === "function") jumpSpatialFocus(heroTarget, false, "up");
+          }
+          if (typeof updateSmartPageIndicatorClient === "function") {
+            updateSmartPageIndicatorClient(false);
           }
         }, 70);
         return true;
