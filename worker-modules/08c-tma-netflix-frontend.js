@@ -7096,7 +7096,7 @@
       // SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH
       // Inklusive Select-then-Jump Regel & Hero-Slider Rotations-Navigation!
       // =========================================================================
-      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-vol-slider, .cinema-dock-scrubber, .cinema-top-hud-close, .cinema-pause-center-btn, .cinema-overlay-btn, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
+      const FOCUSABLE_SELECTOR = ".brand-logo, .btn, .sidebar-collapse-btn, .sidebar-menu-row, .top-adj-nav-btn, #topBarBackBtn, .return-last-detail-chip, .detail-collapse-btn, .detail-back-btn, .detail-adj-btn, .detail-kicker-link, .detail-meta-link, .detail-meta-studio, .detail-credit-pill, .detail-btn-play-white, .detail-btn-glass, .detail-version-select, .detail-cast-card, .detail-sim-card, .media-mode-tab, .card, .ff-tab-btn, .f-pill, .sort-chip, .sort-select, .mode-filter-select, .new-filter-select, .df-btn, .ep-title, .expandable-desc-box.is-long-desc, .expandable-desc-box.is-expanded, .hero-btn-play, .hero-btn-info, .hero-btn-wishlist, .hero-meta-year, .hero-meta-genre, .hero-circle-arrow, .hero-dot, .hero-hide-btn, .cinema-dock-btn, .cinema-dock-scrubber, .cinema-top-hud-close, .cinema-pause-center-btn, .cinema-overlay-btn, .world-portal-card, .worlds-search-input, .ac-item, .search-scope-select, .search-genre-trigger-btn, .mobile-search-collapse-btn, .genre-overlay-chip, .genre-overlay-type-btn, .genre-overlay-close-btn, #searchInput, .search-clear-btn, .search-submit-btn, .recent-chip, .recent-strip-scroll-btn, .page-counter-pill, #smartPageIndicatorBtn, .tv-elevator-btn, .rm-entry-card, .rm-ctrl-select, .rm-ctrl-input, .rm-az-chip, .page-jump-btn, .page-step-btn, .page-jump-slider, .page-jump-number-inp";
       const CARD_SUB_SELECTOR = ".card-quick-info, .card-quick-trailer, .card-quick-save";
       let currentSpatialEl = null;
       let lastSelectJumpAt = 0;
@@ -7187,6 +7187,8 @@
         return r.width > 2 && r.height > 2;
       }
 
+      let lastFocusedCinemaDockBtnId = "";
+
       function getCinemaControlRowsClient(ctx) {
         if (!ctx) return [];
         const p = ctx.prefix;
@@ -7217,7 +7219,13 @@
 
         const dock = document.getElementById(p + "CinemaPlayerDock");
         if (dock) {
-          const dockControls = Array.from(dock.querySelectorAll("button.cinema-dock-btn, input.cinema-dock-vol-slider, input.cinema-dock-scrubber")).filter(isCinemaControlElementInteractiveClient);
+          // Tier 1: Eigene Zeitleisten-Zeile (Pfeil ↑ aus der Steuerung springt hierher, ←/→ spulen ±10s, ↓ kehrt zurück)
+          const scrubber = document.getElementById(p + "CinemaScrubber");
+          if (isCinemaControlElementInteractiveClient(scrubber)) {
+            rows.push([scrubber]);
+          }
+          // Tier 2: Reine Button-Steuerleiste (←/→ laufen komplett frei von links nach rechts ohne jemals an Lautstärke hängen zu bleiben!)
+          const dockControls = Array.from(dock.querySelectorAll("button.cinema-dock-btn")).filter(isCinemaControlElementInteractiveClient);
           if (dockControls.length) rows.push(dockControls);
         }
         return rows;
@@ -7227,25 +7235,48 @@
         return getCinemaControlRowsClient(ctx).flat();
       }
 
-      function navigateCinemaPlayerFocusClient(dir, ctx) {
+      function navigateCinemaPlayerFocusClient(dir, ctx, opts = {}) {
         if (!ctx) return false;
+        const isTabNav = Boolean(opts && opts.isTabNav);
         wakeActiveCinemaDockClient(ctx);
         cancelActiveCinemaEndcardCountdownClient(ctx);
         const p = ctx.prefix;
 
-        // Auf Scrubber oder Lautstärkeregler passen Links/Rechts direkt Zeit (±10s) bzw. Lautstärke (±10%) an!
-        if (currentSpatialEl && (dir === "left" || dir === "right")) {
+        // Tab / Shift+Tab wandert linear durch alle Steuerelemente ohne von Scrubber/Lautstärke abgefangen zu werden
+        if (isTabNav) {
+          const flatEls = getCinemaFocusableElementsClient(ctx);
+          if (!flatEls.length) return false;
+          const idx = flatEls.indexOf(currentSpatialEl);
+          const step = dir === "left" ? -1 : 1;
+          const nextEl = idx === -1
+            ? flatEls[step > 0 ? 0 : flatEls.length - 1]
+            : flatEls[(idx + step + flatEls.length) % flatEls.length];
+          if (nextEl && typeof jumpSpatialFocus === "function") {
+            jumpSpatialFocus(nextEl, false);
+            if (nextEl.tagName === "BUTTON" || nextEl.tagName === "INPUT") {
+              try { nextEl.focus({ preventScroll: true }); } catch (_ft) {}
+            }
+          }
+          return true;
+        }
+
+        // Auf dem Lautstärke-Button regeln Pfeil ↑ / ↓ stufenlos die Lautstärke (±10%), während ← / → direkt zu den Nachbar-Buttons wechseln!
+        if (currentSpatialEl && currentSpatialEl.id === p + "CinemaMuteBtn" && (dir === "up" || dir === "down")) {
+          const volDelta = dir === "up" ? 10 : -10;
+          if (typeof syncCinemaVolPopoverFocusStateClient === "function") {
+            syncCinemaVolPopoverFocusStateClient(currentSpatialEl);
+          }
+          if (ctx.mode === "detail" && typeof adjustDetailCinemaVolumeStepClient === "function") adjustDetailCinemaVolumeStepClient(volDelta);
+          else if (ctx.mode === "hero" && typeof adjustHeroCinemaVolumeStepClient === "function") adjustHeroCinemaVolumeStepClient(volDelta);
+          return true;
+        }
+
+        // Auf der eigenen Zeitleisten-Zeile (Scrubber) spulen ← / → gezielt ±10s, während ↑ / ↓ die Zeile sofort verlassen!
+        if (currentSpatialEl && currentSpatialEl.id === p + "CinemaScrubber" && (dir === "left" || dir === "right")) {
           const stepSign = dir === "right" ? 1 : -1;
-          if (currentSpatialEl.id === p + "CinemaScrubber") {
-            if (ctx.mode === "detail" && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(stepSign * 10);
-            else if (ctx.mode === "hero" && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(stepSign * 10);
-            return true;
-          }
-          if (currentSpatialEl.id === p + "CinemaVolSlider") {
-            if (ctx.mode === "detail" && typeof adjustDetailCinemaVolumeStepClient === "function") adjustDetailCinemaVolumeStepClient(stepSign * 10);
-            else if (ctx.mode === "hero" && typeof adjustHeroCinemaVolumeStepClient === "function") adjustHeroCinemaVolumeStepClient(stepSign * 10);
-            return true;
-          }
+          if (ctx.mode === "detail" && typeof seekDetailCinemaRelativeClient === "function") seekDetailCinemaRelativeClient(stepSign * 10);
+          else if (ctx.mode === "hero" && typeof seekHeroCinemaRelativeClient === "function") seekHeroCinemaRelativeClient(stepSign * 10);
+          return true;
         }
 
         const rows = getCinemaControlRowsClient(ctx);
@@ -7277,6 +7308,10 @@
           return true;
         }
 
+        if (currentSpatialEl && currentSpatialEl.classList && currentSpatialEl.classList.contains("cinema-dock-btn") && currentSpatialEl.id) {
+          lastFocusedCinemaDockBtnId = currentSpatialEl.id;
+        }
+
         let targetEl = null;
         if (dir === "left" || dir === "right") {
           const curRow = rows[curRowIdx];
@@ -7294,6 +7329,12 @@
           const targetRow = rows[nextRowIdx];
           if (targetRow.length === 1) {
             targetEl = targetRow[0];
+          } else if (currentSpatialEl && currentSpatialEl.id === p + "CinemaScrubber" && dir === "down") {
+            // Vom vollbreiten Scrubber nach unten direkt zurück zum zuletzt genutzten Dock-Button (oder Play)
+            const remembered = lastFocusedCinemaDockBtnId ? document.getElementById(lastFocusedCinemaDockBtnId) : null;
+            targetEl = (remembered && targetRow.includes(remembered))
+              ? remembered
+              : (document.getElementById(p + "CinemaPlayBtn") || targetRow[0]);
           } else {
             const curRect = currentSpatialEl.getBoundingClientRect();
             const curCx = curRect.left + curRect.width / 2;
@@ -7312,6 +7353,9 @@
         }
 
         if (targetEl && typeof jumpSpatialFocus === "function") {
+          if (targetEl.classList && targetEl.classList.contains("cinema-dock-btn") && targetEl.id) {
+            lastFocusedCinemaDockBtnId = targetEl.id;
+          }
           jumpSpatialFocus(targetEl, false);
           if (targetEl.tagName === "BUTTON") {
             try { targetEl.focus({ preventScroll: true }); } catch (_fe2) {}
@@ -7332,9 +7376,11 @@
             else if (ctx.mode === "hero" && typeof toggleHeroCinemaPlayPauseClient === "function") toggleHeroCinemaPlayPauseClient();
             return true;
           }
-          if (currentSpatialEl.id === p + "CinemaVolSlider") {
-            if (ctx.mode === "detail" && typeof toggleDetailBackgroundTeaserAudioClient === "function") toggleDetailBackgroundTeaserAudioClient();
-            else if (ctx.mode === "hero" && typeof toggleHeroBackgroundTeaserAudioClient === "function") toggleHeroBackgroundTeaserAudioClient();
+          if (currentSpatialEl.id === p + "CinemaMuteBtn") {
+            if (typeof syncCinemaVolPopoverFocusStateClient === "function") {
+              syncCinemaVolPopoverFocusStateClient(currentSpatialEl);
+            }
+            currentSpatialEl.click();
             return true;
           }
           currentSpatialEl.click();
@@ -7389,7 +7435,7 @@
           if (el.closest && el.closest(".detail-sticky-mini-header:not(.is-visible)")) return false;
           // Player-Controls, Top-HUD, Pause- & Endcard-Overlays dürfen NUR fokussierbar sein, wenn der Trailer-Player im Vordergrund aktiv ist!
           if (el.closest && el.closest(".detail-cinema-player-dock, .hero-cinema-player-dock, .cinema-top-hud, .cinema-pause-bottom-curtain, .cinema-end-overlay")) return false;
-          if (el.classList && (el.classList.contains("cinema-dock-btn") || el.classList.contains("cinema-dock-scrubber") || el.classList.contains("cinema-dock-vol-slider") || el.classList.contains("cinema-top-hud-close") || el.classList.contains("cinema-pause-center-btn") || el.classList.contains("cinema-overlay-btn"))) return false;
+          if (el.classList && (el.classList.contains("cinema-dock-btn") || el.classList.contains("cinema-dock-scrubber") || el.classList.contains("cinema-vol-step-btn") || el.classList.contains("cinema-top-hud-close") || el.classList.contains("cinema-pause-center-btn") || el.classList.contains("cinema-overlay-btn"))) return false;
           if (el.classList && el.classList.contains("tv-elevator-btn")) {
             return !(document.body && document.body.classList.contains("in-hero-slider")) && !isModalActive;
           }
@@ -7660,6 +7706,9 @@
         }
         currentSpatialEl = el;
         currentSpatialEl.classList.add("spatial-focus");
+        if (typeof syncCinemaVolPopoverFocusStateClient === "function") {
+          syncCinemaVolPopoverFocusStateClient(currentSpatialEl);
+        }
         const elevBox = document.getElementById("tvQuickJumpElevator");
         if (elevBox) {
           const goingIntoElev = Boolean(el.closest && el.closest("#tvQuickJumpElevator"));
@@ -9433,7 +9482,7 @@
               ev.preventDefault();
               ev.stopPropagation();
               engageKeyboardNavMode();
-              navigateCinemaPlayerFocusClient(ev.shiftKey ? "left" : "right", activeCinemaCtx);
+              navigateCinemaPlayerFocusClient(ev.shiftKey ? "left" : "right", activeCinemaCtx, { isTabNav: true });
               return;
             }
             if (ev.key === "ArrowLeft" || ev.key === "ArrowRight" || ev.key === "ArrowUp" || ev.key === "ArrowDown") {
