@@ -766,13 +766,19 @@
             const safeTopBoundary = obstructionOffset + 22;
             const isCardTarget = Boolean(el.classList && el.classList.contains("card"));
             const safeBottomBoundary = window.innerHeight - (isCardTarget ? 78 : 28);
-            const r = el.getBoundingClientRect();
+            const curtainEl = document.getElementById("heroCurtainShell");
+            const pendingCurtainCollapseH = (curtainEl && curtainEl.classList.contains("is-collapsed"))
+              ? Math.max(0, curtainEl.getBoundingClientRect().height)
+              : 0;
+            const rawR = el.getBoundingClientRect();
+            const effTop = rawR.top - pendingCurtainCollapseH;
+            const effBottom = rawR.bottom - pendingCurtainCollapseH;
 
-            if (r.top < safeTopBoundary) {
-              const targetScrollY = Math.max(0, curScrollY + (r.top - safeTopBoundary));
+            if (effTop < safeTopBoundary) {
+              const targetScrollY = Math.max(0, curScrollY + (effTop - safeTopBoundary));
               window.scrollTo({ top: targetScrollY, behavior: "auto" });
-            } else if (r.bottom > safeBottomBoundary) {
-              const targetScrollY = Math.max(0, curScrollY + (r.bottom - safeBottomBoundary));
+            } else if (effBottom > safeBottomBoundary) {
+              const targetScrollY = Math.max(0, curScrollY + (effBottom - safeBottomBoundary));
               window.scrollTo({ top: targetScrollY, behavior: "auto" });
             }
           } catch (e) {}
@@ -1244,17 +1250,36 @@
           const hideBtn = document.getElementById("heroHideBtn");
 
           const scrollDownFromHeroToCatalog = () => {
+            const usesCurtainCollapse = Boolean(document.getElementById("heroCurtainShell"));
             if (typeof scrollToCatalogBelowHeroClient === "function") {
-              scrollToCatalogBelowHeroClient();
+              scrollToCatalogBelowHeroClient(null, { bounceLock: true });
             }
-            setTimeout(() => {
+            const focusFirstCatalogEntry = () => {
               const firstCatalogCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
               const fallbackFilterEl = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select, .floating-filter-bar .new-filter-select");
               const targetEl = firstCatalogCard || fallbackFilterEl;
-              if (targetEl) {
-                jumpSpatialFocus(targetEl, true, "down");
+              if (usesCurtainCollapse) {
+                if ((window.scrollY || window.pageYOffset || 0) !== 0) {
+                  window.scrollTo(0, 0);
+                }
+                if (targetEl) {
+                  jumpSpatialFocus(targetEl, false, "down");
+                }
+              } else if (targetEl) {
+                jumpSpatialFocus(targetEl, false, "down");
+                const topBarH = (document.getElementById("topUnifiedBar")?.offsetHeight) || 54;
+                const r = targetEl.getBoundingClientRect();
+                const curY = window.scrollY || window.pageYOffset || 0;
+                const destY = Math.max(0, Math.round(curY + r.top - topBarH - 18));
+                window.scrollTo({ top: destY, behavior: "smooth" });
               }
-            }, 65);
+            };
+            focusFirstCatalogEntry();
+            requestAnimationFrame(() => {
+              if (usesCurtainCollapse && (window.scrollY || window.pageYOffset || 0) !== 0) {
+                window.scrollTo(0, 0);
+              }
+            });
           };
 
           const focusHeroDescOrHeaderUp = () => {

@@ -2486,14 +2486,15 @@
       .detail-bg-video-layer.is-playing {
         opacity: 1;
       }
-      /* Reiner Top-Bleed im overflow:hidden Container: schiebt YouTubes obere Titelzeile (~62–66px) komplett aus dem Bild, belässt die Unterkante exakt bündig bei 0px (kein Zoom, 100% unbeschnittene Untertitel!) */
+      /* 100% unbeschnittenes 1:1 Vollbild-Framing ohne Top-Shift: zeigt den originalen YouTube-Titel unbeschnitten und synchronisiert die Player-Mitte exakt 1:1 mit unseren Center-Overlays */
       .detail-bg-video-frame {
         position: absolute;
-        top: -68px;
+        top: 0;
         left: 0;
         right: 0;
+        bottom: 0;
         width: 100% !important;
-        height: calc(100% + 68px) !important;
+        height: 100% !important;
         transform-origin: 50% 50%;
         transform: translate3d(0, 0, 0) !important;
         clip-path: none !important;
@@ -2503,17 +2504,10 @@
       }
       .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
       .hero.is-cc-safe-framing .detail-bg-video-frame {
-        top: -68px;
-        height: calc(100% + 68px) !important;
+        top: 0;
+        bottom: 0;
+        height: 100% !important;
         transform: translate3d(0, 0, 0) !important;
-      }
-      @media (max-height: 460px) {
-        .detail-bg-video-frame,
-        .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
-        .hero.is-cc-safe-framing .detail-bg-video-frame {
-          top: -56px;
-          height: calc(100% + 56px) !important;
-        }
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -2681,6 +2675,27 @@
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
       }
+      .detail-seek-ripple-badge.is-icon-circle {
+        z-index: 16;
+        width: 96px;
+        height: 96px;
+        padding: 0;
+        border-radius: 50%;
+        background: #080f1e;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border: 1.5px solid rgba(255, 255, 255, 0.32);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.68), 0 0 28px rgba(var(--ambi-1, 14, 165, 233), 0.26);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .detail-seek-ripple-badge.is-icon-circle svg {
+        width: 36px;
+        height: 36px;
+        display: block;
+        flex-shrink: 0;
+      }
       .detail-seek-ripple-badge.is-loading-pulse {
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
@@ -2830,7 +2845,7 @@
         -webkit-user-select: none;
         pointer-events: none;
       }
-      /* Sanft auslaufende Auto-Hide Kino-Kopfzeile oben (kein harter schwarzer Balken, verschwindet im Idle komplett) */
+      /* Auto-Hide Schließen-Button oben rechts (lässt den originalen YouTube-Titel oben links frei und unüberdeckt) */
       .cinema-top-hud {
         position: absolute;
         top: 0;
@@ -2839,10 +2854,10 @@
         z-index: 16;
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-        padding: 16px 20px 32px;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0.56) 0%, rgba(4, 7, 15, 0.22) 52%, rgba(4, 7, 15, 0) 100%);
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 14px 18px;
+        background: none;
         pointer-events: none;
         opacity: 0;
         visibility: hidden;
@@ -2917,18 +2932,18 @@
         transform: scale(1.04);
         outline: none;
       }
-      /* Blickdichter Lade-Indikator in der Bildmitte (verdeckt YouTubes mittigen Start-/Pause-Indikator komplett, ohne Schattenbox) */
+      /* Blickdichter Lade-Indikator in der Bildmitte (exakt 1:1 deckungsgleich mit YouTubes mittigem Start-/Pause-Symbol) */
       .cinema-start-center-shield {
         position: absolute;
         top: 50%;
         left: 50%;
-        z-index: 14;
-        width: 88px;
-        height: 88px;
+        z-index: 15;
+        width: 96px;
+        height: 96px;
         border-radius: 50%;
-        border: 1.5px solid rgba(56, 189, 248, 0.28);
-        background: #060a14;
-        box-shadow: 0 14px 36px rgba(0, 0, 0, 0.68), 0 0 24px rgba(var(--ambi-1, 14, 165, 233), 0.22);
+        border: 1.5px solid rgba(56, 189, 248, 0.32);
+        background: #080f1e;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.68), 0 0 28px rgba(var(--ambi-1, 14, 165, 233), 0.26);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -3158,15 +3173,20 @@
       }
       @media (max-width: 640px) {
         .cinema-top-hud {
-          padding: 12px 12px 24px;
+          padding: 10px 12px;
           gap: 10px;
         }
         .cinema-top-hud-title {
           font-size: 14px;
         }
-        .cinema-start-center-shield {
-          width: 68px;
-          height: 68px;
+        .cinema-start-center-shield,
+        .detail-seek-ripple-badge.is-icon-circle {
+          width: 72px;
+          height: 72px;
+        }
+        .detail-seek-ripple-badge.is-icon-circle svg {
+          width: 28px;
+          height: 28px;
         }
         .cinema-pause-center-btn {
           width: 72px;

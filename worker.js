@@ -34292,14 +34292,15 @@
       .detail-bg-video-layer.is-playing {
         opacity: 1;
       }
-      /* Reiner Top-Bleed im overflow:hidden Container: schiebt YouTubes obere Titelzeile (~62–66px) komplett aus dem Bild, belässt die Unterkante exakt bündig bei 0px (kein Zoom, 100% unbeschnittene Untertitel!) */
+      /* 100% unbeschnittenes 1:1 Vollbild-Framing ohne Top-Shift: zeigt den originalen YouTube-Titel unbeschnitten und synchronisiert die Player-Mitte exakt 1:1 mit unseren Center-Overlays */
       .detail-bg-video-frame {
         position: absolute;
-        top: -68px;
+        top: 0;
         left: 0;
         right: 0;
+        bottom: 0;
         width: 100% !important;
-        height: calc(100% + 68px) !important;
+        height: 100% !important;
         transform-origin: 50% 50%;
         transform: translate3d(0, 0, 0) !important;
         clip-path: none !important;
@@ -34309,17 +34310,10 @@
       }
       .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
       .hero.is-cc-safe-framing .detail-bg-video-frame {
-        top: -68px;
-        height: calc(100% + 68px) !important;
+        top: 0;
+        bottom: 0;
+        height: 100% !important;
         transform: translate3d(0, 0, 0) !important;
-      }
-      @media (max-height: 460px) {
-        .detail-bg-video-frame,
-        .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
-        .hero.is-cc-safe-framing .detail-bg-video-frame {
-          top: -56px;
-          height: calc(100% + 56px) !important;
-        }
       }
       .detail-ambilight-glow {
         position: absolute;
@@ -34487,6 +34481,27 @@
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
       }
+      .detail-seek-ripple-badge.is-icon-circle {
+        z-index: 16;
+        width: 96px;
+        height: 96px;
+        padding: 0;
+        border-radius: 50%;
+        background: #080f1e;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border: 1.5px solid rgba(255, 255, 255, 0.32);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.68), 0 0 28px rgba(var(--ambi-1, 14, 165, 233), 0.26);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .detail-seek-ripple-badge.is-icon-circle svg {
+        width: 36px;
+        height: 36px;
+        display: block;
+        flex-shrink: 0;
+      }
       .detail-seek-ripple-badge.is-loading-pulse {
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
@@ -34636,7 +34651,7 @@
         -webkit-user-select: none;
         pointer-events: none;
       }
-      /* Sanft auslaufende Auto-Hide Kino-Kopfzeile oben (kein harter schwarzer Balken, verschwindet im Idle komplett) */
+      /* Auto-Hide Schließen-Button oben rechts (lässt den originalen YouTube-Titel oben links frei und unüberdeckt) */
       .cinema-top-hud {
         position: absolute;
         top: 0;
@@ -34645,10 +34660,10 @@
         z-index: 16;
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        gap: 14px;
-        padding: 16px 20px 32px;
-        background: linear-gradient(180deg, rgba(4, 7, 15, 0.56) 0%, rgba(4, 7, 15, 0.22) 52%, rgba(4, 7, 15, 0) 100%);
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 14px 18px;
+        background: none;
         pointer-events: none;
         opacity: 0;
         visibility: hidden;
@@ -34723,18 +34738,18 @@
         transform: scale(1.04);
         outline: none;
       }
-      /* Blickdichter Lade-Indikator in der Bildmitte (verdeckt YouTubes mittigen Start-/Pause-Indikator komplett, ohne Schattenbox) */
+      /* Blickdichter Lade-Indikator in der Bildmitte (exakt 1:1 deckungsgleich mit YouTubes mittigem Start-/Pause-Symbol) */
       .cinema-start-center-shield {
         position: absolute;
         top: 50%;
         left: 50%;
-        z-index: 14;
-        width: 88px;
-        height: 88px;
+        z-index: 15;
+        width: 96px;
+        height: 96px;
         border-radius: 50%;
-        border: 1.5px solid rgba(56, 189, 248, 0.28);
-        background: #060a14;
-        box-shadow: 0 14px 36px rgba(0, 0, 0, 0.68), 0 0 24px rgba(var(--ambi-1, 14, 165, 233), 0.22);
+        border: 1.5px solid rgba(56, 189, 248, 0.32);
+        background: #080f1e;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.68), 0 0 28px rgba(var(--ambi-1, 14, 165, 233), 0.26);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -34964,15 +34979,20 @@
       }
       @media (max-width: 640px) {
         .cinema-top-hud {
-          padding: 12px 12px 24px;
+          padding: 10px 12px;
           gap: 10px;
         }
         .cinema-top-hud-title {
           font-size: 14px;
         }
-        .cinema-start-center-shield {
-          width: 68px;
-          height: 68px;
+        .cinema-start-center-shield,
+        .detail-seek-ripple-badge.is-icon-circle {
+          width: 72px;
+          height: 72px;
+        }
+        .detail-seek-ripple-badge.is-icon-circle svg {
+          width: 28px;
+          height: 28px;
         }
         .cinema-pause-center-btn {
           width: 72px;
@@ -41932,10 +41952,6 @@
           '<div id="' + p + 'ForegroundStageCatcher" class="' + catcherClass + '" onmousemove="' + wakeFn + '" onclick="' + tapFn + '" title="Einmal tippen: Steuerung / Pause · Doppeltippen links/rechts: ±10s"></div>' +
           '<div id="' + p + 'SeekRippleBadge" class="detail-seek-ripple-badge" aria-live="polite"></div>' +
           '<div id="' + p + 'CinemaTopHud" class="cinema-top-hud" onmousemove="' + wakeFn + '" onclick="event.stopPropagation()">' +
-            '<div class="cinema-top-hud-info">' +
-              '<div id="' + p + 'CinemaTopTitle" class="cinema-top-hud-title">' + safeTitle + '</div>' +
-              '<div id="' + p + 'CinemaTopMeta" class="cinema-top-hud-meta">' + safeYear + '</div>' +
-            '</div>' +
             '<button type="button" id="' + p + 'CinemaTopCloseBtn" class="cinema-top-hud-close" onclick="' + exitFn + '" title="Trailer schließen (Esc)" aria-label="Trailer schließen">✕</button>' +
           '</div>' +
           '<div id="' + p + 'CinemaStartShield" class="cinema-start-center-shield" aria-hidden="true"></div>' +
@@ -42336,22 +42352,28 @@
         }
       }
 
-      function showHeroSeekRippleBadgeClient(text, zone = "center") {
+      function showHeroSeekRippleBadgeClient(text, zone = "center", opts = null) {
         const badge = document.getElementById("heroSeekRippleBadge");
         if (!badge) return;
         if (heroSeekRippleTimer) {
           clearTimeout(heroSeekRippleTimer);
           heroSeekRippleTimer = null;
         }
-        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center");
-        badge.textContent = text;
+        const isHtmlIcon = Boolean(opts && opts.isHtmlIcon);
+        const holdMs = Math.max(260, Number(opts && opts.durationMs) || 680);
+        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center") + (isHtmlIcon ? " is-icon-circle" : "");
+        if (isHtmlIcon) {
+          badge.innerHTML = text;
+        } else {
+          badge.textContent = text;
+        }
         requestAnimationFrame(() => {
           badge.classList.add("is-visible");
         });
         heroSeekRippleTimer = setTimeout(() => {
           badge.classList.remove("is-visible");
           heroSeekRippleTimer = null;
-        }, 680);
+        }, holdMs);
       }
 
       function clearHeroBgTeaserTimersClient() {
@@ -42892,7 +42914,7 @@
           sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
         }
         applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
-        scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, true);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 1850 : 1250, true);
         if (isFgResume) ensureHeroCinemaLiveClockClient();
         syncHeroCinemaDockUiClient();
       }
@@ -43178,10 +43200,10 @@
               if (heroBgTeaserSpeed !== 1) {
                 sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
               }
-              if (heroBgTeaserChromeShieldRequired || !isFg) {
+              if (heroBgTeaserChromeShieldRequired || !isFg || !wasConfirmedBefore) {
                 const elapsedPlaying = Date.now() - (heroBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(420, 2100 - elapsedPlaying);
-                scheduleHeroRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
+                const holdRemainingMs = Math.max(480, 2250 - elapsedPlaying);
+                scheduleHeroRevealAfterYoutubeChromeHidesClient(holdRemainingMs, !wasConfirmedBefore);
               } else if (layer && isFg && !heroBgTeaserStoppedByUser && !heroBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
@@ -43564,7 +43586,11 @@
           }
           ensureHeroCinemaLiveClockClient();
           const layer = document.getElementById("heroBgVideoLayer");
-          if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired) {
+          const elapsedSincePlaying = heroBgTeaserPlayingStartedAt > 0
+            ? (Date.now() - heroBgTeaserPlayingStartedAt)
+            : 0;
+          const initialChromeStillFading = Boolean(heroBgTeaserPlayingStartedAt > 0 && elapsedSincePlaying < 2250);
+          if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired && !initialChromeStillFading) {
             stageEl.classList.remove("is-cinema-starting");
             setHeroTrailerLoadingBadgeClient(false);
             if (layer) {
@@ -43576,8 +43602,8 @@
             const elapsed = heroBgTeaserPlayingStartedAt > 0
               ? (Date.now() - heroBgTeaserPlayingStartedAt)
               : (Date.now() - (heroBgTeaserStageOpenedAt || Date.now()));
-            const remainingMs = Math.max(400, 1500 - elapsed);
-            scheduleHeroRevealAfterYoutubeChromeHidesClient(remainingMs, false);
+            const remainingMs = Math.max(600, 2250 - elapsed);
+            scheduleHeroRevealAfterYoutubeChromeHidesClient(remainingMs, true);
           } else {
             resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
           }
@@ -43650,7 +43676,7 @@
         }
         if (heroBgTeaserEnded || heroBgTeaserPaused) {
           resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
-          showHeroSeekRippleBadgeClient("▶ Fortsetzen", "center");
+          showHeroSeekRippleBadgeClient(CINEMA_ICONS_CLIENT.pause, "center", { isHtmlIcon: true, durationMs: 900 });
         } else {
           // Video-Frame sichtbar lassen – gezielte TelePort-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
           if (heroBgTeaserRevealTimer) {
@@ -48483,7 +48509,7 @@
           sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
         }
         applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
-        scheduleDetailRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, true);
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 1850 : 1250, true);
         if (isFgResume) ensureDetailCinemaLiveClockClient();
         syncDetailCinemaDockUiClient();
       }
@@ -48556,22 +48582,28 @@
       let detailFgLastTapAt = 0;
       let detailSeekRippleTimer = null;
 
-      function showDetailSeekRippleBadgeClient(text, zone = "center") {
+      function showDetailSeekRippleBadgeClient(text, zone = "center", opts = null) {
         const badge = document.getElementById("detailSeekRippleBadge");
         if (!badge) return;
         if (detailSeekRippleTimer) {
           clearTimeout(detailSeekRippleTimer);
           detailSeekRippleTimer = null;
         }
-        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center");
-        badge.textContent = text;
+        const isHtmlIcon = Boolean(opts && opts.isHtmlIcon);
+        const holdMs = Math.max(260, Number(opts && opts.durationMs) || 680);
+        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center") + (isHtmlIcon ? " is-icon-circle" : "");
+        if (isHtmlIcon) {
+          badge.innerHTML = text;
+        } else {
+          badge.textContent = text;
+        }
         requestAnimationFrame(() => {
           badge.classList.add("is-visible");
         });
         detailSeekRippleTimer = setTimeout(() => {
           badge.classList.remove("is-visible");
           detailSeekRippleTimer = null;
-        }, 680);
+        }, holdMs);
       }
 
       function seekDetailCinemaRelativeClient(deltaSec, ev) {
@@ -49160,10 +49192,10 @@
                 const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
                 if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
               }
-              if (detailBgTeaserChromeShieldRequired || !isFg) {
+              if (detailBgTeaserChromeShieldRequired || !isFg || !wasConfirmedBefore) {
                 const elapsedPlaying = Date.now() - (detailBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(420, 2100 - elapsedPlaying);
-                scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
+                const holdRemainingMs = Math.max(480, 2250 - elapsedPlaying);
+                scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs, !wasConfirmedBefore);
               } else if (layer && isFg && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll && !detailBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
@@ -49302,7 +49334,7 @@
         }
         if (detailBgTeaserEnded || detailBgTeaserPaused) {
           resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
-          showDetailSeekRippleBadgeClient("▶ Fortsetzen", "center");
+          showDetailSeekRippleBadgeClient(CINEMA_ICONS_CLIENT.pause, "center", { isHtmlIcon: true, durationMs: 900 });
         } else {
           // Video-Frame sichtbar lassen – gezielte TelePort-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
           if (detailBgTeaserRevealTimer) {
@@ -49567,8 +49599,12 @@
           }
           ensureDetailCinemaLiveClockClient();
           const layer = document.getElementById("detailBgVideoLayer");
-          // 1. Trailer läuft bereits sichtbar im Hintergrund -> 0ms sofort mit Ton weiterlaufen lassen!
-          if (detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserChromeShieldRequired) {
+          const elapsedSincePlaying = detailBgTeaserPlayingStartedAt > 0
+            ? (Date.now() - detailBgTeaserPlayingStartedAt)
+            : 0;
+          const initialChromeStillFading = Boolean(detailBgTeaserPlayingStartedAt > 0 && elapsedSincePlaying < 2250);
+          // 1. Trailer läuft bereits sichtbar im Hintergrund (und Start-Chrome ist weg) -> 0ms sofort mit Ton weiterlaufen lassen!
+          if (detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserChromeShieldRequired && !initialChromeStillFading) {
             stageEl.classList.remove("is-cinema-starting");
             setDetailTrailerLoadingBadgeClient(false);
             if (layer) {
@@ -49576,13 +49612,13 @@
               layer.classList.add("is-playing");
             }
           } else if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
-            // 2. Trailer lädt gerade schon im Hintergrund an -> KEIN Timer-Reset, gezieltes Start-Overlay bis YT-Chrome weg ist!
+            // 2. Trailer lädt gerade schon im Hintergrund an -> gezieltes Start-Overlay bis YT-Chrome weg ist!
             sendYoutubeBgTeaserCommandClient("playVideo");
             const elapsed = detailBgTeaserPlayingStartedAt > 0
               ? (Date.now() - detailBgTeaserPlayingStartedAt)
               : (Date.now() - (detailBgTeaserStageOpenedAt || Date.now()));
-            const remainingMs = Math.max(400, 1500 - elapsed);
-            scheduleDetailRevealAfterYoutubeChromeHidesClient(remainingMs, false);
+            const remainingMs = Math.max(600, 2250 - elapsed);
+            scheduleDetailRevealAfterYoutubeChromeHidesClient(remainingMs, true);
           } else {
             // 3. Trailer war vorgepuffert-geparkt, pausiert oder beendet -> Ohne Vollbild-Cover direkt mit Start-Shield fortsetzen
             resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
@@ -64440,13 +64476,19 @@
             const safeTopBoundary = obstructionOffset + 22;
             const isCardTarget = Boolean(el.classList && el.classList.contains("card"));
             const safeBottomBoundary = window.innerHeight - (isCardTarget ? 78 : 28);
-            const r = el.getBoundingClientRect();
+            const curtainEl = document.getElementById("heroCurtainShell");
+            const pendingCurtainCollapseH = (curtainEl && curtainEl.classList.contains("is-collapsed"))
+              ? Math.max(0, curtainEl.getBoundingClientRect().height)
+              : 0;
+            const rawR = el.getBoundingClientRect();
+            const effTop = rawR.top - pendingCurtainCollapseH;
+            const effBottom = rawR.bottom - pendingCurtainCollapseH;
 
-            if (r.top < safeTopBoundary) {
-              const targetScrollY = Math.max(0, curScrollY + (r.top - safeTopBoundary));
+            if (effTop < safeTopBoundary) {
+              const targetScrollY = Math.max(0, curScrollY + (effTop - safeTopBoundary));
               window.scrollTo({ top: targetScrollY, behavior: "auto" });
-            } else if (r.bottom > safeBottomBoundary) {
-              const targetScrollY = Math.max(0, curScrollY + (r.bottom - safeBottomBoundary));
+            } else if (effBottom > safeBottomBoundary) {
+              const targetScrollY = Math.max(0, curScrollY + (effBottom - safeBottomBoundary));
               window.scrollTo({ top: targetScrollY, behavior: "auto" });
             }
           } catch (e) {}
@@ -64918,17 +64960,36 @@
           const hideBtn = document.getElementById("heroHideBtn");
 
           const scrollDownFromHeroToCatalog = () => {
+            const usesCurtainCollapse = Boolean(document.getElementById("heroCurtainShell"));
             if (typeof scrollToCatalogBelowHeroClient === "function") {
-              scrollToCatalogBelowHeroClient();
+              scrollToCatalogBelowHeroClient(null, { bounceLock: true });
             }
-            setTimeout(() => {
+            const focusFirstCatalogEntry = () => {
               const firstCatalogCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
               const fallbackFilterEl = document.querySelector(".floating-filter-bar .f-pill, .floating-filter-bar .sort-select, .floating-filter-bar .mode-filter-select, .floating-filter-bar .new-filter-select");
               const targetEl = firstCatalogCard || fallbackFilterEl;
-              if (targetEl) {
-                jumpSpatialFocus(targetEl, true, "down");
+              if (usesCurtainCollapse) {
+                if ((window.scrollY || window.pageYOffset || 0) !== 0) {
+                  window.scrollTo(0, 0);
+                }
+                if (targetEl) {
+                  jumpSpatialFocus(targetEl, false, "down");
+                }
+              } else if (targetEl) {
+                jumpSpatialFocus(targetEl, false, "down");
+                const topBarH = (document.getElementById("topUnifiedBar")?.offsetHeight) || 54;
+                const r = targetEl.getBoundingClientRect();
+                const curY = window.scrollY || window.pageYOffset || 0;
+                const destY = Math.max(0, Math.round(curY + r.top - topBarH - 18));
+                window.scrollTo({ top: destY, behavior: "smooth" });
               }
-            }, 65);
+            };
+            focusFirstCatalogEntry();
+            requestAnimationFrame(() => {
+              if (usesCurtainCollapse && (window.scrollY || window.pageYOffset || 0) !== 0) {
+                window.scrollTo(0, 0);
+              }
+            });
           };
 
           const focusHeroDescOrHeaderUp = () => {

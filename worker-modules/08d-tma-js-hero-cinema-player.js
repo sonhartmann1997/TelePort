@@ -113,10 +113,6 @@
           '<div id="' + p + 'ForegroundStageCatcher" class="' + catcherClass + '" onmousemove="' + wakeFn + '" onclick="' + tapFn + '" title="Einmal tippen: Steuerung / Pause · Doppeltippen links/rechts: ±10s"></div>' +
           '<div id="' + p + 'SeekRippleBadge" class="detail-seek-ripple-badge" aria-live="polite"></div>' +
           '<div id="' + p + 'CinemaTopHud" class="cinema-top-hud" onmousemove="' + wakeFn + '" onclick="event.stopPropagation()">' +
-            '<div class="cinema-top-hud-info">' +
-              '<div id="' + p + 'CinemaTopTitle" class="cinema-top-hud-title">' + safeTitle + '</div>' +
-              '<div id="' + p + 'CinemaTopMeta" class="cinema-top-hud-meta">' + safeYear + '</div>' +
-            '</div>' +
             '<button type="button" id="' + p + 'CinemaTopCloseBtn" class="cinema-top-hud-close" onclick="' + exitFn + '" title="Trailer schließen (Esc)" aria-label="Trailer schließen">✕</button>' +
           '</div>' +
           '<div id="' + p + 'CinemaStartShield" class="cinema-start-center-shield" aria-hidden="true"></div>' +
@@ -517,22 +513,28 @@
         }
       }
 
-      function showHeroSeekRippleBadgeClient(text, zone = "center") {
+      function showHeroSeekRippleBadgeClient(text, zone = "center", opts = null) {
         const badge = document.getElementById("heroSeekRippleBadge");
         if (!badge) return;
         if (heroSeekRippleTimer) {
           clearTimeout(heroSeekRippleTimer);
           heroSeekRippleTimer = null;
         }
-        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center");
-        badge.textContent = text;
+        const isHtmlIcon = Boolean(opts && opts.isHtmlIcon);
+        const holdMs = Math.max(260, Number(opts && opts.durationMs) || 680);
+        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center") + (isHtmlIcon ? " is-icon-circle" : "");
+        if (isHtmlIcon) {
+          badge.innerHTML = text;
+        } else {
+          badge.textContent = text;
+        }
         requestAnimationFrame(() => {
           badge.classList.add("is-visible");
         });
         heroSeekRippleTimer = setTimeout(() => {
           badge.classList.remove("is-visible");
           heroSeekRippleTimer = null;
-        }, 680);
+        }, holdMs);
       }
 
       function clearHeroBgTeaserTimersClient() {
@@ -1073,7 +1075,7 @@
           sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
         }
         applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
-        scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, true);
+        scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 1850 : 1250, true);
         if (isFgResume) ensureHeroCinemaLiveClockClient();
         syncHeroCinemaDockUiClient();
       }
@@ -1359,10 +1361,10 @@
               if (heroBgTeaserSpeed !== 1) {
                 sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
               }
-              if (heroBgTeaserChromeShieldRequired || !isFg) {
+              if (heroBgTeaserChromeShieldRequired || !isFg || !wasConfirmedBefore) {
                 const elapsedPlaying = Date.now() - (heroBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(420, 2100 - elapsedPlaying);
-                scheduleHeroRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
+                const holdRemainingMs = Math.max(480, 2250 - elapsedPlaying);
+                scheduleHeroRevealAfterYoutubeChromeHidesClient(holdRemainingMs, !wasConfirmedBefore);
               } else if (layer && isFg && !heroBgTeaserStoppedByUser && !heroBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
@@ -1745,7 +1747,11 @@
           }
           ensureHeroCinemaLiveClockClient();
           const layer = document.getElementById("heroBgVideoLayer");
-          if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired) {
+          const elapsedSincePlaying = heroBgTeaserPlayingStartedAt > 0
+            ? (Date.now() - heroBgTeaserPlayingStartedAt)
+            : 0;
+          const initialChromeStillFading = Boolean(heroBgTeaserPlayingStartedAt > 0 && elapsedSincePlaying < 2250);
+          if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired && !initialChromeStillFading) {
             stageEl.classList.remove("is-cinema-starting");
             setHeroTrailerLoadingBadgeClient(false);
             if (layer) {
@@ -1757,8 +1763,8 @@
             const elapsed = heroBgTeaserPlayingStartedAt > 0
               ? (Date.now() - heroBgTeaserPlayingStartedAt)
               : (Date.now() - (heroBgTeaserStageOpenedAt || Date.now()));
-            const remainingMs = Math.max(400, 1500 - elapsed);
-            scheduleHeroRevealAfterYoutubeChromeHidesClient(remainingMs, false);
+            const remainingMs = Math.max(600, 2250 - elapsed);
+            scheduleHeroRevealAfterYoutubeChromeHidesClient(remainingMs, true);
           } else {
             resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
           }
@@ -1831,7 +1837,7 @@
         }
         if (heroBgTeaserEnded || heroBgTeaserPaused) {
           resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
-          showHeroSeekRippleBadgeClient("▶ Fortsetzen", "center");
+          showHeroSeekRippleBadgeClient(CINEMA_ICONS_CLIENT.pause, "center", { isHtmlIcon: true, durationMs: 900 });
         } else {
           // Video-Frame sichtbar lassen – gezielte TelePort-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
           if (heroBgTeaserRevealTimer) {

@@ -2517,7 +2517,7 @@
           sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
         }
         applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
-        scheduleDetailRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, true);
+        scheduleDetailRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 1850 : 1250, true);
         if (isFgResume) ensureDetailCinemaLiveClockClient();
         syncDetailCinemaDockUiClient();
       }
@@ -2590,22 +2590,28 @@
       let detailFgLastTapAt = 0;
       let detailSeekRippleTimer = null;
 
-      function showDetailSeekRippleBadgeClient(text, zone = "center") {
+      function showDetailSeekRippleBadgeClient(text, zone = "center", opts = null) {
         const badge = document.getElementById("detailSeekRippleBadge");
         if (!badge) return;
         if (detailSeekRippleTimer) {
           clearTimeout(detailSeekRippleTimer);
           detailSeekRippleTimer = null;
         }
-        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center");
-        badge.textContent = text;
+        const isHtmlIcon = Boolean(opts && opts.isHtmlIcon);
+        const holdMs = Math.max(260, Number(opts && opts.durationMs) || 680);
+        badge.className = "detail-seek-ripple-badge is-" + (zone === "left" || zone === "right" ? zone : "center") + (isHtmlIcon ? " is-icon-circle" : "");
+        if (isHtmlIcon) {
+          badge.innerHTML = text;
+        } else {
+          badge.textContent = text;
+        }
         requestAnimationFrame(() => {
           badge.classList.add("is-visible");
         });
         detailSeekRippleTimer = setTimeout(() => {
           badge.classList.remove("is-visible");
           detailSeekRippleTimer = null;
-        }, 680);
+        }, holdMs);
       }
 
       function seekDetailCinemaRelativeClient(deltaSec, ev) {
@@ -3194,10 +3200,10 @@
                 const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
                 if (backdropLayer) backdropLayer.classList.remove("is-ken-burns-active");
               }
-              if (detailBgTeaserChromeShieldRequired || !isFg) {
+              if (detailBgTeaserChromeShieldRequired || !isFg || !wasConfirmedBefore) {
                 const elapsedPlaying = Date.now() - (detailBgTeaserPlayingStartedAt || Date.now());
-                const holdRemainingMs = Math.max(420, 2100 - elapsedPlaying);
-                scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs, false);
+                const holdRemainingMs = Math.max(480, 2250 - elapsedPlaying);
+                scheduleDetailRevealAfterYoutubeChromeHidesClient(holdRemainingMs, !wasConfirmedBefore);
               } else if (layer && isFg && !detailBgTeaserStoppedByUser && !detailBgTeaserPausedByScroll && !detailBgTeaserDelayedPauseTimer) {
                 layer.classList.remove("is-concealing");
                 layer.classList.add("is-playing");
@@ -3336,7 +3342,7 @@
         }
         if (detailBgTeaserEnded || detailBgTeaserPaused) {
           resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
-          showDetailSeekRippleBadgeClient("▶ Fortsetzen", "center");
+          showDetailSeekRippleBadgeClient(CINEMA_ICONS_CLIENT.pause, "center", { isHtmlIcon: true, durationMs: 900 });
         } else {
           // Video-Frame sichtbar lassen – gezielte TelePort-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
           if (detailBgTeaserRevealTimer) {
@@ -3601,8 +3607,12 @@
           }
           ensureDetailCinemaLiveClockClient();
           const layer = document.getElementById("detailBgVideoLayer");
-          // 1. Trailer läuft bereits sichtbar im Hintergrund -> 0ms sofort mit Ton weiterlaufen lassen!
-          if (detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserChromeShieldRequired) {
+          const elapsedSincePlaying = detailBgTeaserPlayingStartedAt > 0
+            ? (Date.now() - detailBgTeaserPlayingStartedAt)
+            : 0;
+          const initialChromeStillFading = Boolean(detailBgTeaserPlayingStartedAt > 0 && elapsedSincePlaying < 2250);
+          // 1. Trailer läuft bereits sichtbar im Hintergrund (und Start-Chrome ist weg) -> 0ms sofort mit Ton weiterlaufen lassen!
+          if (detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserChromeShieldRequired && !initialChromeStillFading) {
             stageEl.classList.remove("is-cinema-starting");
             setDetailTrailerLoadingBadgeClient(false);
             if (layer) {
@@ -3610,13 +3620,13 @@
               layer.classList.add("is-playing");
             }
           } else if (!detailBgTeaserPaused && !detailBgTeaserEnded) {
-            // 2. Trailer lädt gerade schon im Hintergrund an -> KEIN Timer-Reset, gezieltes Start-Overlay bis YT-Chrome weg ist!
+            // 2. Trailer lädt gerade schon im Hintergrund an -> gezieltes Start-Overlay bis YT-Chrome weg ist!
             sendYoutubeBgTeaserCommandClient("playVideo");
             const elapsed = detailBgTeaserPlayingStartedAt > 0
               ? (Date.now() - detailBgTeaserPlayingStartedAt)
               : (Date.now() - (detailBgTeaserStageOpenedAt || Date.now()));
-            const remainingMs = Math.max(400, 1500 - elapsed);
-            scheduleDetailRevealAfterYoutubeChromeHidesClient(remainingMs, false);
+            const remainingMs = Math.max(600, 2250 - elapsed);
+            scheduleDetailRevealAfterYoutubeChromeHidesClient(remainingMs, true);
           } else {
             // 3. Trailer war vorgepuffert-geparkt, pausiert oder beendet -> Ohne Vollbild-Cover direkt mit Start-Shield fortsetzen
             resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
