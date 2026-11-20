@@ -3705,7 +3705,7 @@
               challengeObj.status = "confirmed";
               challengeObj.user = {
                 id: Number(message.from?.id || chatId),
-                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                first_name: String(message.from?.first_name || message.from?.username || "Filmfreund"),
                 last_name: String(message.from?.last_name || ""),
                 username: String(message.from?.username || "")
               };
@@ -3745,7 +3745,7 @@
               challengeObj.status = "confirmed";
               challengeObj.user = {
                 id: Number(message.from?.id || chatId),
-                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                first_name: String(message.from?.first_name || message.from?.username || "Filmfreund"),
                 last_name: String(message.from?.last_name || ""),
                 username: String(message.from?.username || "")
               };
@@ -4801,14 +4801,14 @@
           const prevSort = memoryFallback.get(sortKey) || defaultSort;
           let nextSortOverride = null;
 
-          if (prevCtx && prevCtx.type === "ybr" && prevCtx.id === `${typeCode}_${year}_${mode}_${pageNum}_${originId}`) {
+          if (prevCtx && prevCtx.type === "ybr" && (prevCtx.id === `${typeCode}_${year}_${mode}_${pageNum}` || prevCtx.id === `${typeCode}_${year}_${mode}_${pageNum}_${originId}`)) {
             const inverted = invertSortDirection(prevSort);
             nextSortOverride = inverted.nextSort;
             await answerCallbackQuery(cq.id, `🔄 Sortierung umgekehrt (${inverted.arrow})`);
           } else {
             await answerCallbackQuery(cq.id, `📅 Lade Jahrgang ${year}...`);
           }
-          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, originId, msgId, nextSortOverride);
+          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, msgId, nextSortOverride);
           return;
         }
 
@@ -4819,24 +4819,23 @@
           const mode = parts[3] || "pop";
           const pageNum = parseInt(parts[4], 10) || 1;
           const sortAction = parts[5];
-          const originId = parts[6] || "";
           const sortKey = `ybr_sort_${chatId}_${typeCode}_${year}_${mode}`;
           const defaultSort = (mode === "top" || mode === "gems") ? "rating_desc" : "pop_desc";
           const prevSort = memoryFallback.get(sortKey) || defaultSort;
           const { nextSort, label } = resolveNextSort(prevSort, sortAction);
           await answerCallbackQuery(cq.id, label);
-          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, originId, msgId, nextSort);
+          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, msgId, nextSort);
           return;
         }
 
         if (data.startsWith("yfilt_tog_")) {
           const ctxKey = data.replace("yfilt_tog_", "");
-          const [typeCode, year, mode, pageStr, originId] = ctxKey.split("_");
+          const [typeCode, year, mode, pageStr] = ctxKey.split("_");
           const settings = await getUserSettings(env, chatId);
           settings.filtersActive = !(settings.filtersActive !== false);
           await saveUserSettings(env, chatId, settings);
           await answerCallbackQuery(cq.id, settings.filtersActive ? "🟢 Jahres-Filter AKTIV!" : "🔴 Jahres-Filter AUS!");
-          await showYearBrowseList(env, chatId, typeCode || "m", year || "2024", mode || "pop", parseInt(pageStr, 10) || 1, originId || "", msgId);
+          await showYearBrowseList(env, chatId, typeCode || "m", year || "2024", mode || "pop", parseInt(pageStr, 10) || 1, msgId);
           return;
         }
         if (data.startsWith("yfilt_fsk_") || data.startsWith("yfilt_gen_") || data.startsWith("yfilt_era_")) {

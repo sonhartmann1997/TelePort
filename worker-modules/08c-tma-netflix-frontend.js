@@ -991,6 +991,14 @@
         }
       }
 
+      function saveVerifiedChannelIdClient(channelId) {
+        try {
+          const clean = String(channelId || "").trim();
+          if (clean) localStorage.setItem("tma_verified_channel_id", clean);
+          else localStorage.removeItem("tma_verified_channel_id");
+        } catch (e) {}
+      }
+
       function parseClientTelegramChannelOrLink(rawVal) {
         const s = String(rawVal || "").trim();
         if (!s) return { channelId: "", sampleMessageId: null };
@@ -7119,7 +7127,6 @@
           document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
           document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
           document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
-          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
           document.getElementById("lightboxRoot")?.innerHTML.trim()
@@ -7351,7 +7358,6 @@
           return getCinemaFocusableElementsClient(activeCinemaCtx);
         }
         const dialogEl = document.getElementById("customDialogRoot");
-        const pageJumpEl = document.getElementById("pageJumpModalRoot");
         const spotlightEl = document.getElementById("personSpotlightOverlayRoot");
         const modalEl = document.getElementById("modalRoot");
         const topUnifiedHeader = document.getElementById("topUnifiedBar");
@@ -7361,9 +7367,7 @@
         const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
-          : (pageJumpEl && pageJumpEl.innerHTML.trim())
-            ? pageJumpEl
-            : (lbEl && lbEl.innerHTML.trim())
+          : (lbEl && lbEl.innerHTML.trim())
               ? lbEl
               : isSpotlightActive
                 ? spotlightEl
@@ -7686,8 +7690,8 @@
         }
         if (el.closest && el.closest(".hero") && document.body && !state.heroHidden && !state.isSearchMode) {
           document.body.classList.add("in-hero-slider");
-          if (typeof updateSmartPageIndicatorClient === "function") {
-            updateSmartPageIndicatorClient(false);
+          if (typeof syncSmartPageIndicatorDomClient === "function") {
+            syncSmartPageIndicatorDomClient(false);
           }
         }
 
@@ -7728,16 +7732,28 @@
           if (document.body) document.body.classList.remove("kb-nav-active");
           const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
           if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
-          if (ev && mouseHoverNavEnabled && Date.now() - lastSelectJumpAt >= 450) {
-            const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
-            if (subTarget) {
-              setSpatialFocus(subTarget, false);
-              return;
-            }
-            const target = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(FOCUSABLE_SELECTOR) : null;
-            if (target && !target.disabled && !target.classList.contains("is-current-mode")) {
-              setSpatialFocus(target, false);
-            }
+          let realUnder = null;
+          if (ev && typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+            try {
+              realUnder = document.elementFromPoint(ev.clientX, ev.clientY);
+            } catch (_ep) {}
+          }
+          if (!realUnder && ev && ev.target) realUnder = ev.target;
+          const subTarget = realUnder && typeof realUnder.closest === "function" ? realUnder.closest(CARD_SUB_SELECTOR) : null;
+          const focusTarget = realUnder && typeof realUnder.closest === "function" ? realUnder.closest(FOCUSABLE_SELECTOR) : null;
+          if (mouseHoverNavEnabled && subTarget) {
+            setSpatialFocus(subTarget, false);
+            return;
+          }
+          if (mouseHoverNavEnabled && focusTarget && !focusTarget.disabled && !focusTarget.classList.contains("is-current-mode")) {
+            setSpatialFocus(focusTarget, false);
+            return;
+          }
+          // Verhindert klebenbleibende Tastatur-Markierung, wenn die Maus beim Zurückwechseln ein anderes Element oder freien Raum berührt
+          if (currentSpatialEl && (!focusTarget || focusTarget !== currentSpatialEl)) {
+            currentSpatialEl.classList.remove("spatial-focus");
+            clearCardSubnavState(null);
+            currentSpatialEl = null;
           }
         }
       }
@@ -7768,7 +7784,7 @@
         const wasKbActive = isKeyboardNavActive;
         disengageKeyboardNavMode(ev);
         pendingKbClickRescueEl = null;
-        if (wasKbActive && (ev.target === document.documentElement || ev.target === document.body) && typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+        if (wasKbActive && ev.button === 0 && (ev.target === document.documentElement || ev.target === document.body) && typeof ev.clientX === "number" && typeof ev.clientY === "number") {
           try {
             const realEl = document.elementFromPoint(ev.clientX, ev.clientY);
             if (realEl && realEl !== document.documentElement && realEl !== document.body) {
@@ -7782,6 +7798,7 @@
         if (!pendingKbClickRescueEl) return;
         const rescueTarget = pendingKbClickRescueEl;
         pendingKbClickRescueEl = null;
+        if (ev.button !== 0) return;
         try {
           const curUnder = (typeof ev.clientX === "number" && typeof ev.clientY === "number")
             ? document.elementFromPoint(ev.clientX, ev.clientY)
@@ -8090,7 +8107,11 @@
           };
 
           const focusHeroDescOrHeaderUp = () => {
-            if (descHeroEl && list.includes(descHeroEl)) {
+            if (descHeroEl && typeof syncExpandableDescriptionsOverflowClient === "function") {
+              syncExpandableDescriptionsOverflowClient(descHeroEl);
+            }
+            const descFocusable = Boolean(descHeroEl && (descHeroEl.classList.contains("is-long-desc") || descHeroEl.classList.contains("is-expanded")));
+            if (descHeroEl && (descFocusable || list.includes(descHeroEl))) {
               setSpatialFocus(descHeroEl, true, "up");
               return true;
             }
@@ -8108,6 +8129,9 @@
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDesc = document.getElementById("heroDescEl");
+              if (nextDesc && typeof syncExpandableDescriptionsOverflowClient === "function") {
+                syncExpandableDescriptionsOverflowClient(nextDesc);
+              }
               const nextDescFocusable = Boolean(nextDesc && (nextDesc.classList.contains("is-long-desc") || nextDesc.classList.contains("is-expanded")));
               if (nextDescFocusable) {
                 setSpatialFocus(nextDesc, true, dir);
@@ -8489,7 +8513,6 @@
         // Rechts-Rand-Ausbruch & Links-Rand-Ausbruch + Intelligente Zonen-Übergänge (Filterleiste ↔ Hero-Slider ↔ Cover-Grid)
         const hasOverlayBlockingElevator = Boolean(
           document.getElementById("modalRoot")?.innerHTML.trim() ||
-          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
           document.getElementById("lightboxRoot")?.innerHTML.trim() ||
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           state.sidebarOpen
@@ -9126,7 +9149,6 @@
 
         const isModalOpenNow = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
         const isPageJumpOpenNow = Boolean(
-          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
           document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")
         );
         if (isPageJumpOpenNow) return;
@@ -9314,7 +9336,7 @@
             ev.preventDefault();
             return;
           }
-          if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) {
+          if (document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")) {
             if (typeof closePageJumpModalClient === "function") closePageJumpModalClient();
             ev.preventDefault();
             return;
@@ -9629,6 +9651,10 @@
         }
         if (ev.key === "ArrowDown") {
           cancelModalArrowHold();
+          if (ev.repeat && verticalTurboDir === "down" && (verticalHoldTimer || verticalTurboExpressDone)) {
+            ev.preventDefault();
+            return;
+          }
           const acOpen = Boolean(document.getElementById("searchAutocompleteBox")?.classList.contains("open"));
           if (isSearchInpFocused && acOpen && typeof onSearchInputKeyDownClient === "function") {
             onSearchInputKeyDownClient(ev, activeEl);
@@ -9641,6 +9667,10 @@
         }
         if (ev.key === "ArrowUp") {
           cancelModalArrowHold();
+          if (ev.repeat && verticalTurboDir === "up" && (verticalHoldTimer || verticalTurboExpressDone)) {
+            ev.preventDefault();
+            return;
+          }
           const acOpen = Boolean(document.getElementById("searchAutocompleteBox")?.classList.contains("open"));
           if (isSearchInpFocused && acOpen && typeof onSearchInputKeyDownClient === "function") {
             onSearchInputKeyDownClient(ev, activeEl);
@@ -9715,6 +9745,7 @@
       let lastGamepadZoomAt = 0;
       let lastGamepadActivityAt = 0;
       let activeControllerBrand = "";
+      let gamepadVerticalHeld = false;
 
       function isPlayStationControllerClient(gpId) {
         const s = String(gpId || "").toLowerCase();
@@ -9924,8 +9955,13 @@
 
             const upHeld = Boolean(gp.buttons?.[12]?.pressed || axY < -0.55);
             const downHeld = Boolean(gp.buttons?.[13]?.pressed || axY > 0.55);
-            if (!upHeld && !downHeld && verticalTurboDir) {
-              resetVerticalTurboStreakClient();
+            if (!upHeld && !downHeld) {
+              if (gamepadVerticalHeld) {
+                gamepadVerticalHeld = false;
+                if (verticalTurboDir) resetVerticalTurboStreakClient();
+              }
+            } else {
+              gamepadVerticalHeld = true;
             }
 
             const dynamicGamepadInterval = 180;

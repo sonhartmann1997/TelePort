@@ -805,6 +805,7 @@
       }
     }
     memoryFallback.set(memKey, existingMem);
+    memoryFallback.delete("d1_diag_logs_query_cache");
 
     const db = await ensureD1Schema(env);
     if (!db || !logId) return;
@@ -818,6 +819,7 @@
 
   async function clearImportDiagnosticLogsInD1(env) {
     memoryFallback.set("d1_import_diagnostic_logs", []);
+    memoryFallback.delete("d1_diag_logs_query_cache");
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -3168,7 +3170,7 @@
               ).bind(sid, foundPosterPath, JSON.stringify(updatedDetails), now).run().catch(() => null);
               memoryFallback.set(`d1_series_${sid}`, updatedDetails);
               memoryFallback.set(`d1_catalog_series_${sid}`, updatedDetails);
-              tmdbCache.set(`tv_${sid}`, { data: updatedDetails, expires: now + TMDB_CACHE_TTL_MS });
+              setCachedTmdb(`tv_${sid}`, updatedDetails);
               healedPosters++;
             }
           } catch (e) {}
@@ -4426,8 +4428,10 @@
     return null;
   }
 
-  async function saveMovieToD1(env, movieObj) {
+  async function saveMovieToD1(env, movieObj, ...extraArgs) {
     if (!movieObj || !movieObj.id) return;
+    const extraOpts = extraArgs.find(arg => arg && typeof arg === "object" && !Array.isArray(arg));
+    if (extraOpts?.manualOverride) movieObj.manualOverride = true;
     const mid = Number(movieObj.id);
     const prevSavedTs = Number(memoryFallback.get(`d1_movie_saved_ts_${mid}`) || 0);
     const prevMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
@@ -4625,8 +4629,10 @@
     } catch (e) {}
   }
 
-  async function saveSeriesToD1(env, seriesObj) {
+  async function saveSeriesToD1(env, seriesObj, ...extraArgs) {
     if (!seriesObj || !seriesObj.id) return;
+    const extraOpts = extraArgs.find(arg => arg && typeof arg === "object" && !Array.isArray(arg));
+    if (extraOpts?.manualOverride) seriesObj.manualOverride = true;
     const sid = Number(seriesObj.id);
     const prevSavedTs = Number(memoryFallback.get(`d1_series_saved_ts_${sid}`) || 0);
     const prevSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
@@ -4822,7 +4828,7 @@
       const rawMaxEpCount = Number(seasonObj.seasonEpisodeCount || (Array.isArray(seasonObj.episodes) ? seasonObj.episodes.length : 0));
       let highestUploadedEp = 0;
       try {
-        const uploadedFiles = await getSeasonEpisodeFilesFromD1(env, seriesId, seasonNumber);
+        const uploadedFiles = await getEpisodeFilesFromD1(env, seriesId, seasonNumber);
         highestUploadedEp = Math.max(0, ...(uploadedFiles || []).map(f => Number(f.episode_number || 0)));
       } catch (e) {}
       const maxEpCount = FORCE_EPISODE_GROUP_SERIES.has(Number(seriesId)) && rawMaxEpCount > 0

@@ -8047,6 +8047,7 @@
       }
     }
     memoryFallback.set(memKey, existingMem);
+    memoryFallback.delete("d1_diag_logs_query_cache");
 
     const db = await ensureD1Schema(env);
     if (!db || !logId) return;
@@ -8060,6 +8061,7 @@
 
   async function clearImportDiagnosticLogsInD1(env) {
     memoryFallback.set("d1_import_diagnostic_logs", []);
+    memoryFallback.delete("d1_diag_logs_query_cache");
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -10410,7 +10412,7 @@
               ).bind(sid, foundPosterPath, JSON.stringify(updatedDetails), now).run().catch(() => null);
               memoryFallback.set(`d1_series_${sid}`, updatedDetails);
               memoryFallback.set(`d1_catalog_series_${sid}`, updatedDetails);
-              tmdbCache.set(`tv_${sid}`, { data: updatedDetails, expires: now + TMDB_CACHE_TTL_MS });
+              setCachedTmdb(`tv_${sid}`, updatedDetails);
               healedPosters++;
             }
           } catch (e) {}
@@ -11668,8 +11670,10 @@
     return null;
   }
 
-  async function saveMovieToD1(env, movieObj) {
+  async function saveMovieToD1(env, movieObj, ...extraArgs) {
     if (!movieObj || !movieObj.id) return;
+    const extraOpts = extraArgs.find(arg => arg && typeof arg === "object" && !Array.isArray(arg));
+    if (extraOpts?.manualOverride) movieObj.manualOverride = true;
     const mid = Number(movieObj.id);
     const prevSavedTs = Number(memoryFallback.get(`d1_movie_saved_ts_${mid}`) || 0);
     const prevMovie = memoryFallback.get(`d1_catalog_movie_${mid}`);
@@ -11867,8 +11871,10 @@
     } catch (e) {}
   }
 
-  async function saveSeriesToD1(env, seriesObj) {
+  async function saveSeriesToD1(env, seriesObj, ...extraArgs) {
     if (!seriesObj || !seriesObj.id) return;
+    const extraOpts = extraArgs.find(arg => arg && typeof arg === "object" && !Array.isArray(arg));
+    if (extraOpts?.manualOverride) seriesObj.manualOverride = true;
     const sid = Number(seriesObj.id);
     const prevSavedTs = Number(memoryFallback.get(`d1_series_saved_ts_${sid}`) || 0);
     const prevSeries = memoryFallback.get(`d1_catalog_series_${sid}`);
@@ -12064,7 +12070,7 @@
       const rawMaxEpCount = Number(seasonObj.seasonEpisodeCount || (Array.isArray(seasonObj.episodes) ? seasonObj.episodes.length : 0));
       let highestUploadedEp = 0;
       try {
-        const uploadedFiles = await getSeasonEpisodeFilesFromD1(env, seriesId, seasonNumber);
+        const uploadedFiles = await getEpisodeFilesFromD1(env, seriesId, seasonNumber);
         highestUploadedEp = Math.max(0, ...(uploadedFiles || []).map(f => Number(f.episode_number || 0)));
       } catch (e) {}
       const maxEpCount = FORCE_EPISODE_GROUP_SERIES.has(Number(seriesId)) && rawMaxEpCount > 0
@@ -26026,7 +26032,7 @@
               challengeObj.status = "confirmed";
               challengeObj.user = {
                 id: Number(message.from?.id || chatId),
-                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                first_name: String(message.from?.first_name || message.from?.username || "Filmfreund"),
                 last_name: String(message.from?.last_name || ""),
                 username: String(message.from?.username || "")
               };
@@ -26066,7 +26072,7 @@
               challengeObj.status = "confirmed";
               challengeObj.user = {
                 id: Number(message.from?.id || chatId),
-                first_name: String(message.from?.first_name || firstName || "Filmfreund"),
+                first_name: String(message.from?.first_name || message.from?.username || "Filmfreund"),
                 last_name: String(message.from?.last_name || ""),
                 username: String(message.from?.username || "")
               };
@@ -27122,14 +27128,14 @@
           const prevSort = memoryFallback.get(sortKey) || defaultSort;
           let nextSortOverride = null;
 
-          if (prevCtx && prevCtx.type === "ybr" && prevCtx.id === `${typeCode}_${year}_${mode}_${pageNum}_${originId}`) {
+          if (prevCtx && prevCtx.type === "ybr" && (prevCtx.id === `${typeCode}_${year}_${mode}_${pageNum}` || prevCtx.id === `${typeCode}_${year}_${mode}_${pageNum}_${originId}`)) {
             const inverted = invertSortDirection(prevSort);
             nextSortOverride = inverted.nextSort;
             await answerCallbackQuery(cq.id, `🔄 Sortierung umgekehrt (${inverted.arrow})`);
           } else {
             await answerCallbackQuery(cq.id, `📅 Lade Jahrgang ${year}...`);
           }
-          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, originId, msgId, nextSortOverride);
+          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, msgId, nextSortOverride);
           return;
         }
 
@@ -27140,24 +27146,23 @@
           const mode = parts[3] || "pop";
           const pageNum = parseInt(parts[4], 10) || 1;
           const sortAction = parts[5];
-          const originId = parts[6] || "";
           const sortKey = `ybr_sort_${chatId}_${typeCode}_${year}_${mode}`;
           const defaultSort = (mode === "top" || mode === "gems") ? "rating_desc" : "pop_desc";
           const prevSort = memoryFallback.get(sortKey) || defaultSort;
           const { nextSort, label } = resolveNextSort(prevSort, sortAction);
           await answerCallbackQuery(cq.id, label);
-          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, originId, msgId, nextSort);
+          await showYearBrowseList(env, chatId, typeCode, year, mode, pageNum, msgId, nextSort);
           return;
         }
 
         if (data.startsWith("yfilt_tog_")) {
           const ctxKey = data.replace("yfilt_tog_", "");
-          const [typeCode, year, mode, pageStr, originId] = ctxKey.split("_");
+          const [typeCode, year, mode, pageStr] = ctxKey.split("_");
           const settings = await getUserSettings(env, chatId);
           settings.filtersActive = !(settings.filtersActive !== false);
           await saveUserSettings(env, chatId, settings);
           await answerCallbackQuery(cq.id, settings.filtersActive ? "🟢 Jahres-Filter AKTIV!" : "🔴 Jahres-Filter AUS!");
-          await showYearBrowseList(env, chatId, typeCode || "m", year || "2024", mode || "pop", parseInt(pageStr, 10) || 1, originId || "", msgId);
+          await showYearBrowseList(env, chatId, typeCode || "m", year || "2024", mode || "pop", parseInt(pageStr, 10) || 1, msgId);
           return;
         }
         if (data.startsWith("yfilt_fsk_") || data.startsWith("yfilt_gen_") || data.startsWith("yfilt_era_")) {
@@ -28657,12 +28662,19 @@
     const cleanAccount = String(accountLabel || "User").trim();
     const label = `${encodeURIComponent(cleanIssuer)}:${encodeURIComponent(cleanAccount)}`;
     const otpauthUrl = `otpauth://totp/${label}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(cleanIssuer)}&algorithm=SHA1&digits=6&period=30`;
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&data=${encodeURIComponent(otpauthUrl)}`;
-    return { otpauthUrl, qrCodeUrl };
+    // Kein Drittanbieter-QR-Request (api.qrserver.com), damit das TOTP-Secret niemals extern geleakt wird!
+    return { otpauthUrl, qrCodeUrl: "" };
   }
 
   function getSessionSigningSecret(env) {
-    return String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+    const configured = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+    if (configured) return configured;
+    if (!globalThis.__ephemeralTmaSessionSecret) {
+      const randBytes = new Uint8Array(32);
+      crypto.getRandomValues(randBytes);
+      globalThis.__ephemeralTmaSessionSecret = bytesToHex(randBytes);
+    }
+    return globalThis.__ephemeralTmaSessionSecret;
   }
 
   async function signTmaSessionToken(payload, env) {
@@ -28732,8 +28744,8 @@
           },
           env
         );
-        if (userProfile && verifiedToken.isAdmin) userProfile.isAdmin = true;
-        if (userProfile && verifiedToken.isVip) userProfile.isVip = true;
+        if (userProfile && !dbRow && verifiedToken.isAdmin) userProfile.isAdmin = true;
+        if (userProfile && !dbRow && verifiedToken.isVip) userProfile.isVip = true;
         return {
           isAuthenticated: true,
           isGuest: false,
@@ -29934,11 +29946,11 @@
       /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen):
          WICHTIG: outline-offset: -2px + inset Box-Shadow + kein horizontales scale(), damit die linken & rechten Ränder
          in Scrollboxen (Suchvorschläge, Sidebar, Genre-Grid, Cast-Slider, Katalog) NIEMALS überstehen oder abgeschnitten werden! */
-      .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn),
+      .spatial-focus:where(:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn):not(.hero-btn-play):not(#heroBtnTrailer):not(.detail-btn-play-white):not(#detailTrailerBtn):not(#detailPrimaryPlayBtn):not(#heroCinemaPlayBtn):not(#detailCinemaPlayBtn):not(.card-quick-trailer):not(.btn.blue):not(.btn.red):not(.btn.primary):not(.btn.active):not(.btn.hero-primary):not(.page-jump-btn.primary):not(.page-jump-btn.active):not(.media-mode-tab.active-movie):not(.media-mode-tab.active-series)),
       .brand-logo:focus-visible,
-      .btn:focus-visible,
+      .btn:focus-visible:where(:not(.blue):not(.red):not(.primary):not(.active):not(.hero-primary)),
       .card:focus-visible,
-      .media-mode-tab:focus-visible,
+      .media-mode-tab:focus-visible:where(:not(.active-movie):not(.active-series)),
       .ff-tab-btn:focus-visible,
       .f-pill:focus-visible,
       .sort-chip:focus-visible,
@@ -30033,7 +30045,7 @@
         transform: scaleX(1);
       }
 
-      /* Tastatur-/Controller-Modus aktiv: Mauszeiger ausblenden & konkurrierende Hover-Effekte unterdrücken */
+      /* Tastatur-/Controller-Modus aktiv: Mauszeiger ausblenden & ALLE konkurrierenden Maus-Hover-Effekte sofort abschalten */
       body.kb-nav-active,
       body.kb-nav-active * {
         cursor: none !important;
@@ -32146,6 +32158,13 @@
       .expandable-desc-box.is-expanded {
         cursor: pointer;
       }
+      .expandable-desc-box.is-long-desc.spatial-focus,
+      .expandable-desc-box.is-expanded.spatial-focus {
+        background: rgba(8, 13, 24, 0.78);
+        border-color: #38bdf8 !important;
+        padding: 6px 10px 6px;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.45), 0 0 18px rgba(56, 189, 248, 0.28), 0 8px 22px rgba(0, 0, 0, 0.65) !important;
+      }
       .expandable-desc-box.is-long-desc:hover .desc-expand-hint,
       .expandable-desc-box.is-long-desc.spatial-focus .desc-expand-hint {
         color: #ffffff;
@@ -33745,6 +33764,12 @@
         box-shadow: 0 12px 32px rgba(0, 0, 0, 0.82), 0 0 0 2px rgba(56, 189, 248, 0.45);
         transform: translate3d(0, -2px, 0);
       }
+      body.in-hero-slider #smartPageIndicatorBtn,
+      body.in-hero-slider .catalog-back-to-top-fab {
+        opacity: 0 !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
       /* TV- & Touch-Seiten-Schnellwahl-Popup */
       .page-jump-modal-backdrop {
         position: fixed;
@@ -34321,17 +34346,23 @@
         right: 0;
         bottom: 0;
         width: 100%;
-        height: 86px;
+        height: 0;
         z-index: 3;
         pointer-events: none;
-        opacity: 1;
-        background: linear-gradient(0deg, #000000 0px, #000000 70px, rgba(0, 0, 0, 0.92) 78px, transparent 86px);
-        transition: height 0.18s ease;
+        opacity: 0;
+        background: none;
+        transition: opacity 0.2s ease, height 0.18s ease;
       }
-      .detail-hero-stage.is-trailer-foreground-mode.is-cc-safe-framing .detail-bg-video-layer::before,
-      .hero.is-trailer-foreground-mode.is-cc-safe-framing .detail-bg-video-layer::before {
-        height: 70px;
-        background: linear-gradient(0deg, #000000 0px, #000000 56px, rgba(0, 0, 0, 0.86) 64px, transparent 70px);
+      /* Unterer Schwarzbalken nur beim Start, Pause oder Endcard – während laufender Wiedergabe komplett frei für Untertitel! */
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-starting .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode.is-cinema-starting .detail-bg-video-layer::before,
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode.is-cinema-paused .detail-bg-video-layer::before,
+      .detail-hero-stage.is-trailer-foreground-mode.is-cinema-ended .detail-bg-video-layer::before,
+      .hero.is-trailer-foreground-mode.is-cinema-ended .detail-bg-video-layer::before {
+        height: 82px;
+        opacity: 1;
+        background: linear-gradient(0deg, #000000 0px, #000000 66px, rgba(0, 0, 0, 0.9) 74px, transparent 82px);
       }
       .detail-bg-video-layer::after {
         content: "";
@@ -34407,19 +34438,21 @@
         from { opacity: 0.72; transform: translate(-50%, -50%) scale(0.97); }
         to { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
       }
-      /* Dauerhaftes TelePort-Logo unten rechts (überdeckt im Leerlauf exakt den Bereich des YouTube-Logos) */
+      /* Kompaktes TelePort-Logo unten rechts (überdeckt im Leerlauf gezielt das kleine YouTube-Ecklogo, ohne Untertitel zu beschneiden) */
       .cinema-teleport-watermark {
         position: absolute;
-        right: 22px;
-        bottom: 18px;
+        right: 8px;
+        bottom: 8px;
+        min-width: 112px;
         z-index: 15;
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 7px;
-        padding: 5px 12px 5px 8px;
+        padding: 6px 14px 6px 10px;
         border-radius: 999px;
-        background: rgba(0, 0, 0, 0.92);
-        border: 1px solid rgba(56, 189, 248, 0.22);
+        background: #000000;
+        border: 1px solid rgba(56, 189, 248, 0.24);
         color: #f8fafc;
         font-size: calc(13px * var(--scale-text));
         font-weight: 900;
@@ -34470,19 +34503,22 @@
         color: #f8fafc;
         box-sizing: border-box;
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: translate3d(0, 14px, 0);
-        transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1), transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.2s ease, background 0.2s ease;
+        transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1), transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.24s linear, border-color 0.2s ease, background 0.2s ease;
       }
       .hero:not(.is-trailer-foreground-mode) .hero-cinema-player-dock,
       .detail-hero-stage:not(.is-trailer-foreground-mode) .detail-cinema-player-dock {
         opacity: 0 !important;
+        visibility: hidden !important;
         pointer-events: none !important;
         transform: translate3d(0, 14px, 0) !important;
       }
       .detail-hero-stage.is-trailer-foreground-mode .detail-cinema-player-dock,
       .hero.is-trailer-foreground-mode .detail-cinema-player-dock {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: translate3d(0, 0, 0);
       }
@@ -34532,12 +34568,14 @@
         background: linear-gradient(180deg, #000000 0px, #000000 68px, rgba(0, 0, 0, 0.75) 86%, transparent 100%);
         pointer-events: none;
         opacity: 0;
+        visibility: hidden;
         transform: translate3d(0, -10px, 0);
-        transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.24s cubic-bezier(0.16, 1, 0.3, 1), transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.24s linear;
       }
       .detail-hero-stage.is-trailer-foreground-mode .cinema-top-hud,
       .hero.is-trailer-foreground-mode .cinema-top-hud {
         opacity: 1;
+        visibility: visible;
         transform: translate3d(0, 0, 0);
       }
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused .cinema-top-hud,
@@ -34691,9 +34729,10 @@
         justify-content: center;
         cursor: pointer;
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: translate3d(-50%, -50%, 0) scale(0.86) !important;
-        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease, background 0.18s ease;
+        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.2s linear, border-color 0.18s ease, background 0.18s ease;
       }
       .cinema-pause-center-btn svg {
         width: 40px;
@@ -34704,6 +34743,7 @@
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn,
       .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-center-btn {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: translate3d(-50%, -50%, 0) scale(1) !important;
       }
@@ -34732,13 +34772,15 @@
         backdrop-filter: blur(14px);
         -webkit-backdrop-filter: blur(14px);
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: translate3d(0, 14px, 0);
-        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1), transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s linear;
       }
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-bottom-curtain,
       .hero.is-trailer-foreground-mode.is-cinema-paused:not(.is-cinema-ended) .cinema-pause-bottom-curtain {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: translate3d(0, 0, 0);
       }
@@ -34829,13 +34871,15 @@
         -webkit-backdrop-filter: blur(18px);
         text-align: center;
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
         transform: scale(0.98);
-        transition: opacity 0.26s cubic-bezier(0.16, 1, 0.3, 1), transform 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.26s cubic-bezier(0.16, 1, 0.3, 1), transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.26s linear;
       }
       .detail-hero-stage.is-trailer-foreground-mode.is-cinema-ended .cinema-end-overlay,
       .hero.is-trailer-foreground-mode.is-cinema-ended .cinema-end-overlay {
         opacity: 1;
+        visibility: visible;
         pointer-events: auto;
         transform: scale(1);
       }
@@ -36562,6 +36606,80 @@
         #tmaBootSplashscreen { transition: opacity 0.15s linear; transform: none !important; }
         .neon-splash-bar-fill { animation: none; width: 100%; }
       }
+      /* Tastatur-/Controller-Modus aktiv: Am Ende des Stylesheets alle Kind-Elemente (inkl. pointer-events: auto !important) zuverlässig vom Maus-Hover entkoppeln */
+      body.kb-nav-active #appRoot,
+      body.kb-nav-active #appRoot *,
+      body.kb-nav-active header,
+      body.kb-nav-active header *,
+      body.kb-nav-active #filterSidebarDrawer,
+      body.kb-nav-active #filterSidebarDrawer *,
+      body.kb-nav-active #tvQuickJumpElevator,
+      body.kb-nav-active #tvQuickJumpElevator *,
+      body.kb-nav-active #modalRoot,
+      body.kb-nav-active #modalRoot *,
+      body.kb-nav-active #pageJumpModalRoot,
+      body.kb-nav-active #pageJumpModalRoot *,
+      body.kb-nav-active #customDialogRoot,
+      body.kb-nav-active #customDialogRoot *,
+      body.kb-nav-active #personSpotlightOverlayRoot,
+      body.kb-nav-active #personSpotlightOverlayRoot *,
+      body.kb-nav-active #searchGenreDropdownOverlay,
+      body.kb-nav-active #searchGenreDropdownOverlay *,
+      body.kb-nav-active #smartPageIndicatorBtn,
+      body.kb-nav-active #smartPageIndicatorBtn *,
+      body.kb-nav-active #catalogBackToTopFab,
+      body.kb-nav-active #catalogBackToTopFab *,
+      body.kb-nav-active .catalog-edge-trigger-left,
+      body.kb-nav-active .catalog-edge-trigger-left *,
+      body.kb-nav-active .catalog-edge-trigger-right,
+      body.kb-nav-active .catalog-edge-trigger-right * {
+        pointer-events: none !important;
+      }
+      /* Portal-Orange Fokusrahmen (#ff7a00) für maximalen Kontrast auf Trailer- & hellen/blauen Hauptbuttons */
+      body .hero-btn-play.spatial-focus,
+      body .hero-btn-play:focus-visible,
+      body .hero-btn-play.is-trailer-unavailable.spatial-focus,
+      body #heroBtnTrailer.spatial-focus,
+      body #heroBtnTrailer:focus-visible,
+      body #heroCinemaPlayBtn.spatial-focus,
+      body #heroCinemaPlayBtn:focus-visible,
+      body #detailCinemaPlayBtn.spatial-focus,
+      body #detailCinemaPlayBtn:focus-visible,
+      body .cinema-pause-center-btn.spatial-focus,
+      body .detail-btn-play-white.spatial-focus,
+      body .detail-btn-play-white:focus-visible,
+      body #detailTrailerBtn.spatial-focus,
+      body #detailTrailerBtn:focus-visible,
+      body #detailPrimaryPlayBtn.spatial-focus,
+      body #detailPrimaryPlayBtn:focus-visible,
+      body .card-quick-trailer.spatial-focus,
+      body .cinema-overlay-btn.is-primary.spatial-focus,
+      body .cinema-dock-btn.is-primary.spatial-focus,
+      body .btn.blue.spatial-focus,
+      body .btn.blue:focus-visible,
+      body .btn.red.spatial-focus,
+      body .btn.red:focus-visible,
+      body .btn.primary.spatial-focus,
+      body .btn.primary:focus-visible,
+      body .btn.active.spatial-focus,
+      body .btn.active:focus-visible,
+      body .btn.hero-primary.spatial-focus,
+      body .page-jump-btn.primary.spatial-focus,
+      body .page-jump-btn.active.spatial-focus,
+      body .media-mode-tab.active-movie.spatial-focus,
+      body .media-mode-tab.active-series.spatial-focus {
+        outline: 3px solid #ff7a00 !important;
+        outline-offset: 2px !important;
+        border-color: #ff7a00 !important;
+        box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.92), 0 0 0 5px #ff7a00, 0 0 26px rgba(255, 122, 0, 0.85), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
+        z-index: 30;
+      }
+      body .card-quick-trailer.spatial-focus,
+      body .media-mode-tab.active-movie.spatial-focus,
+      body .media-mode-tab.active-series.spatial-focus {
+        outline-offset: -1px !important;
+        box-shadow: inset 0 0 0 1px rgba(255, 195, 113, 0.8), 0 0 0 2px #ff7a00, 0 0 18px rgba(255, 122, 0, 0.85) !important;
+      }
     </style>
   </head>
   <body>
@@ -36759,12 +36877,12 @@
           const hasModal = Boolean(modalRoot && modalRoot.innerHTML.trim().length > 0);
           const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
           const hasSpotlight = Boolean(spotlightRoot && spotlightRoot.innerHTML.trim().length > 0);
-          const pageJumpRoot = document.getElementById("pageJumpModalRoot");
-          const hasPageJump = Boolean(pageJumpRoot && pageJumpRoot.innerHTML.trim().length > 0);
+          const customDialogRoot = document.getElementById("customDialogRoot");
+          const hasCustomDialog = Boolean(customDialogRoot && customDialogRoot.innerHTML.trim().length > 0);
           const isSidebarOpen = Boolean(typeof state !== "undefined" && state.sidebarOpen);
           const isNonDiscoverView = Boolean(typeof state !== "undefined" && state.currentView && state.currentView !== "discover");
 
-          if (hasModal || hasSpotlight || hasPageJump || isSidebarOpen || isNonDiscoverView) {
+          if (hasModal || hasSpotlight || hasCustomDialog || isSidebarOpen || isNonDiscoverView) {
             liveTg.BackButton.show();
             if (typeof liveTg.BackButton.offClick === "function") {
               liveTg.BackButton.offClick(handleTelegramBackButtonClickClient);
@@ -36781,6 +36899,18 @@
 
       function handleTelegramBackButtonClickClient() {
         try {
+          const customDialogRoot = document.getElementById("customDialogRoot");
+          if (customDialogRoot && customDialogRoot.innerHTML.trim().length > 0) {
+            if (customDialogRoot.querySelector(".page-jump-modal-backdrop") && typeof closePageJumpModalClient === "function") {
+              closePageJumpModalClient();
+            } else if (typeof closeCustomDialog === "function") {
+              closeCustomDialog(null);
+            } else {
+              customDialogRoot.innerHTML = "";
+            }
+            syncTelegramBackButtonClient();
+            return;
+          }
           const modalRoot = document.getElementById("modalRoot");
           if (modalRoot && modalRoot.innerHTML.trim().length > 0) {
             if (typeof closeDetailModal === "function") closeDetailModal();
@@ -36793,19 +36923,13 @@
             syncTelegramBackButtonClient();
             return;
           }
-          const pageJumpRoot = document.getElementById("pageJumpModalRoot");
-          if (pageJumpRoot && pageJumpRoot.innerHTML.trim().length > 0 && typeof closePageJumpModalClient === "function") {
-            closePageJumpModalClient();
+          if (typeof state !== "undefined" && state.sidebarOpen && typeof closeFilterSidebar === "function") {
+            closeFilterSidebar();
             syncTelegramBackButtonClient();
             return;
           }
-          if (typeof state !== "undefined" && state.sidebarOpen && typeof closeSidebarMenuClient === "function") {
-            closeSidebarMenuClient();
-            syncTelegramBackButtonClient();
-            return;
-          }
-          if (typeof state !== "undefined" && state.currentView && state.currentView !== "discover" && typeof switchMainViewClient === "function") {
-            switchMainViewClient("discover");
+          if (typeof state !== "undefined" && state.currentView && state.currentView !== "discover" && typeof loadDiscover === "function") {
+            loadDiscover(state.type, state.genreId, state.mode, state.sort, false, false, 1);
             syncTelegramBackButtonClient();
             return;
           }
@@ -38245,10 +38369,13 @@
           }
           if (fb) fb.textContent = "";
           if (mount) {
+            const otpUriHtml = r.otpauthUrl
+              ? ('<a href="' + esc(r.otpauthUrl) + '" class="btn blue" style="text-decoration:none">🔐 Direkt in Authenticator-App öffnen</a>')
+              : '';
             mount.innerHTML = '<div class="admin-sub-box" style="padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center">' +
-              '<div style="font-size:12px;color:var(--text);font-weight:700">1. Scanne diesen QR-Code mit Google Authenticator oder Authy:</div>' +
-              '<img src="' + esc(r.qrCodeUrl) + '" alt="TOTP QR Code" style="width:180px;height:180px;border-radius:8px;background:#fff;padding:6px" />' +
-              '<div style="font-size:11px;color:var(--muted)">Manueller Setup-Schlüssel (Base32):<br><code style="color:#fbbf24;font-size:12px;user-select:all;letter-spacing:1px">' + esc(r.secret) + '</code></div>' +
+              '<div style="font-size:12px;color:var(--text);font-weight:700">1. Richte 2FA sicher lokal in deiner Authenticator-App (Google Authenticator, Authy, 1Password) ein:</div>' +
+              otpUriHtml +
+              '<div style="font-size:11px;color:var(--muted)">Manueller Setup-Schlüssel (Base32 – wird niemals an externe QR-Server gesendet):<br><code style="color:#fbbf24;font-size:12px;user-select:all;letter-spacing:1px">' + esc(r.secret) + '</code></div>' +
               '<div style="font-size:12px;color:var(--text);font-weight:700;margin-top:4px">2. Gib zur Aktivierung den 6-stelligen Code aus der App ein:</div>' +
               '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
                 '<input id="verifyTotpSetupInp" class="tma-input" placeholder="123456" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')confirm2faSetupEnable()" style="padding:8px 12px;border-color:rgba(16,185,129,0.5);font-size:15px;letter-spacing:3px;font-weight:800;width:140px;text-align:center" />' +
@@ -38894,7 +39021,6 @@
         if (document.getElementById("detailHeroStageEl")?.classList.contains("is-trailer-foreground-mode")) return false;
         if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("customDialogRoot")?.innerHTML.trim()) return false;
-        if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
         return true;
       }
@@ -40096,6 +40222,24 @@
       const LAZY_POSTER_FALLBACK_SVG =
         "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2364748b%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E";
 
+      function buildPosterFallbackSvg(titleText, isSeriesOrLabel) {
+        const safeLabel = (typeof isSeriesOrLabel === "string" && isSeriesOrLabel.trim())
+          ? isSeriesOrLabel.trim().slice(0, 12).toUpperCase()
+          : (isSeriesOrLabel ? "SERIE" : "FILM");
+        const cleanTitle = String(titleText || "Kein Poster")
+          .replace(/[<>&"']/g, "")
+          .trim()
+          .slice(0, 26);
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">' +
+          '<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs>' +
+          '<rect width="300" height="450" fill="url(#bg)"/>' +
+          '<rect x="95" y="160" width="110" height="28" rx="6" fill="rgba(56,189,248,0.16)" stroke="rgba(56,189,248,0.45)"/>' +
+          '<text x="150" y="179" fill="#7dd3fc" font-family="sans-serif" font-size="12" font-weight="700" text-anchor="middle">' + safeLabel + '</text>' +
+          '<text x="150" y="230" fill="#e2e8f0" font-family="sans-serif" font-size="15" font-weight="700" text-anchor="middle">' + (cleanTitle || "Kein Poster") + '</text>' +
+          '</svg>';
+        return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+      }
+
       let heroWaterfallSeq = 0;
       let catalogCoversUnlocked = false;
       let lazyCoverObserver = null;
@@ -40341,6 +40485,7 @@
           !state.currentPersonId &&
           totPages > 1 &&
           state.items.length > 0 &&
+          !(document.body && document.body.classList.contains("in-hero-slider")) &&
           (state.isSearchMode || state.heroHidden || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
         );
 
@@ -40436,7 +40581,10 @@
       function closePageJumpModalClient() {
         const dialogRoot = document.getElementById("customDialogRoot");
         if (dialogRoot) dialogRoot.innerHTML = "";
-        const returnBtn = document.getElementById("smartPageIndicatorBtn") || document.getElementById("sectionPageCounterPill");
+        const inHero = Boolean(document.body && document.body.classList.contains("in-hero-slider"));
+        const returnBtn = inHero
+          ? (document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails"))
+          : (document.querySelector("#resultsGridContainer .card.spatial-focus, #resultsGridContainer .card") || document.getElementById("smartPageIndicatorBtn") || document.getElementById("sectionPageCounterPill"));
         if (returnBtn && typeof jumpSpatialFocus === "function") {
           jumpSpatialFocus(returnBtn, false);
         }
@@ -40598,14 +40746,16 @@
         requestAnimationFrame(() => {
           catalogWindowScrollRafPending = false;
           const y = window.scrollY || window.pageYOffset || 0;
+          if (typeof syncHeroScrollFadeAndTopBarStateClient === "function") {
+            syncHeroScrollFadeAndTopBarStateClient();
+          }
           if (y > 8 || heroCurtainScrolledToCatalog) {
             if (!catalogCoversUnlocked) {
               unlockCatalogCoversLoadingClient(true);
             }
             syncSmartPageIndicatorDomClient(true);
-          }
-          if (typeof syncHeroScrollFadeAndTopBarStateClient === "function") {
-            syncHeroScrollFadeAndTopBarStateClient();
+          } else {
+            syncSmartPageIndicatorDomClient(false);
           }
         });
       }, { passive: true });
@@ -40974,6 +41124,9 @@
         } else {
           if (document.body) {
             document.body.classList.remove("hero-scrolled-past", "page-scrolled");
+            if (!state.heroHidden && !state.isSearchMode && state.currentView === "discover") {
+              document.body.classList.add("in-hero-slider");
+            }
           }
           if (curtainEl && !state.heroHidden) {
             curtainEl.classList.remove("is-collapsed");
@@ -40989,6 +41142,7 @@
         }
         syncHeroScrollFadeAndTopBarStateClient();
         syncHeroSearchPlaceholderAndToggleBtnClient();
+        syncSmartPageIndicatorDomClient(goingToCatalog);
       }
 
       let heroLastHorizWheelAt = 0;
@@ -41220,8 +41374,12 @@
 
       function syncHeroScrollFadeAndTopBarStateClient() {
         if (!document.body) return;
+        const prevInFrontHero = document.body.classList.contains("in-hero-slider");
         const inFrontHero = typeof isUserInHeroSliderFront === "function" ? isUserInHeroSliderFront() : false;
         document.body.classList.toggle("in-hero-slider", inFrontHero);
+        if (inFrontHero !== prevInFrontHero && typeof syncSmartPageIndicatorDomClient === "function") {
+          syncSmartPageIndicatorDomClient(false);
+        }
         if (!inFrontHero && typeof stopHeroBackgroundVideoTeaserClient === "function") {
           const bgLayer = document.getElementById("heroBgVideoLayer");
           if (heroBgTeaserActiveKey || (bgLayer && bgLayer.innerHTML)) {
@@ -41301,7 +41459,11 @@
       let heroBgTeaserChromeShieldRequired = true;
       let heroBgTeaserPreloadedParked = false;
       let heroBgTeaserMuted = true;
+      let heroBgTeaserUserMuted = false;
       let heroBgTeaserPendingUnmute = false;
+      let heroBgTeaserUnmuteRetries = 0;
+      let heroBgTeaserUnmuteRetryTimers = [];
+      let heroBgTeaserDeferTimer = null;
       let heroBgTeaserPaused = false;
       let heroBgTeaserEnded = false;
       let heroBgTeaserStoppedByUser = false;
@@ -41315,6 +41477,36 @@
       let heroBgTeaserCurTime = 0;
       let heroBgTeaserDuration = 0;
       let heroBgTeaserScrubbing = false;
+      let heroBgTeaserLastInfoAt = 0;
+      let heroCinemaLiveClockTimer = null;
+      let heroCinemaLiveClockLastTickAt = 0;
+      let heroCinemaLiveClockPingCount = 0;
+
+      function clearHeroUnmuteRetryTimersClient() {
+        if (Array.isArray(heroBgTeaserUnmuteRetryTimers) && heroBgTeaserUnmuteRetryTimers.length) {
+          heroBgTeaserUnmuteRetryTimers.forEach(t => clearTimeout(t));
+          heroBgTeaserUnmuteRetryTimers = [];
+        }
+      }
+
+      function enforceHeroForegroundUnmuteClient() {
+        clearHeroUnmuteRetryTimersClient();
+        heroBgTeaserUserMuted = false;
+        heroBgTeaserMuted = false;
+        heroBgTeaserPendingUnmute = true;
+        heroBgTeaserUnmuteRetries = 0;
+        window._heroUnmuteGraceUntil = Date.now() + 3000;
+        const applyOnce = () => {
+          const st = document.getElementById("heroStageEl");
+          if (!st || !st.classList.contains("is-trailer-foreground-mode") || heroBgTeaserUserMuted) return;
+          const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+          sendYoutubeHeroTeaserCommandClient("unMute");
+          sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
+        };
+        applyOnce();
+        heroBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 240));
+        heroBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 680));
+      }
       const CINEMA_ICONS_CLIENT = {
         play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8.2 5.14v13.72a1 1 0 0 0 1.53.85l10.8-6.86a1 1 0 0 0 0-1.7L9.73 4.29A1 1 0 0 0 8.2 5.14Z"/></svg>',
         pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4.5" width="4.2" height="15" rx="1.4"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.4"/></svg>',
@@ -41437,15 +41629,23 @@
         return "🎬 Trailer startet…";
       }
 
-      function buildTrailerEmbedUrlClient(cleanKey, startSeconds = 0, ccMode = "off") {
+      function buildTrailerEmbedUrlClient(cleanKey, startSeconds = 0, ccMode = "off", widgetId = 1) {
         const ccEnabled = ccMode === "de" || ccMode === "en";
         const hlParam = ccMode === "en" ? "en" : "de";
         const ccParams = ccEnabled
           ? ("&cc_load_policy=1&cc_lang_pref=" + encodeURIComponent(ccMode))
           : "&cc_load_policy=0";
+        let originParam = "";
+        try {
+          const orig = (typeof window !== "undefined" && window.location && window.location.origin) ? String(window.location.origin) : "";
+          if (orig && (orig.startsWith("https://") || orig.startsWith("http://"))) {
+            originParam = "&origin=" + encodeURIComponent(orig);
+          }
+        } catch (_oe) {}
+        const safeWidgetId = Math.max(1, Number(widgetId) || 1);
         return "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(cleanKey) +
           "?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&showinfo=0&rel=0" +
-          "&modestbranding=1&iv_load_policy=3" + ccParams + "&autohide=1&playsinline=1&enablejsapi=1&hl=" + hlParam +
+          "&modestbranding=1&iv_load_policy=3" + ccParams + "&autohide=1&playsinline=1&enablejsapi=1" + originParam + "&widgetid=" + safeWidgetId + "&hl=" + hlParam +
           "&start=" + Math.max(0, Math.floor(Number(startSeconds || 0)));
       }
 
@@ -41577,6 +41777,56 @@
           clearInterval(heroBgTeaserHandshakeTimer);
           heroBgTeaserHandshakeTimer = null;
         }
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
+        stopHeroCinemaLiveClockClient();
+        clearHeroUnmuteRetryTimersClient();
+      }
+
+      function stopHeroCinemaLiveClockClient() {
+        if (heroCinemaLiveClockTimer) {
+          clearInterval(heroCinemaLiveClockTimer);
+          heroCinemaLiveClockTimer = null;
+        }
+        heroCinemaLiveClockLastTickAt = 0;
+        heroCinemaLiveClockPingCount = 0;
+      }
+
+      function ensureHeroCinemaLiveClockClient() {
+        if (heroCinemaLiveClockTimer) return;
+        heroCinemaLiveClockLastTickAt = Date.now();
+        heroCinemaLiveClockPingCount = 0;
+        heroCinemaLiveClockTimer = setInterval(() => {
+          const liveStage = document.getElementById("heroStageEl");
+          const isFgLive = Boolean(liveStage && liveStage.classList.contains("is-trailer-foreground-mode"));
+          if (!isFgLive || !heroBgTeaserActiveKey || heroBgTeaserPaused || heroBgTeaserEnded) {
+            stopHeroCinemaLiveClockClient();
+            return;
+          }
+          const now = Date.now();
+          const dtSec = Math.max(0, Math.min(2.5, (now - (heroCinemaLiveClockLastTickAt || now)) / 1000));
+          heroCinemaLiveClockLastTickAt = now;
+          if (heroBgTeaserScrubbing) return;
+          const infoStale = !heroBgTeaserLastInfoAt || (now - heroBgTeaserLastInfoAt) >= 1100;
+          if (infoStale && (heroBgTeaserIsPlayingConfirmed || (heroBgTeaserStageOpenedAt && (now - heroBgTeaserStageOpenedAt) >= 1400))) {
+            const spd = Number(heroBgTeaserSpeed || 1) > 0 ? Number(heroBgTeaserSpeed || 1) : 1;
+            const nextSec = (Number(heroBgTeaserCurTime) || 0) + (dtSec * spd);
+            heroBgTeaserCurTime = heroBgTeaserDuration > 0 ? Math.min(heroBgTeaserDuration, nextSec) : nextSec;
+            heroBgTeaserIsPlayingConfirmed = true;
+            syncHeroCinemaDockUiClient();
+          }
+          heroCinemaLiveClockPingCount += 1;
+          if ((heroBgTeaserDuration <= 0 || infoStale) && (heroCinemaLiveClockPingCount % 4 === 1)) {
+            const frame = document.getElementById("heroBgVideoIframe");
+            if (frame && frame.contentWindow) {
+              try {
+                frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*");
+              } catch (_pe) {}
+            }
+          }
+        }, 500);
       }
 
       function sendYoutubeHeroTeaserCommandClient(funcName, args = []) {
@@ -41586,7 +41836,9 @@
           frame.contentWindow.postMessage(JSON.stringify({
             event: "command",
             func: funcName,
-            args: args
+            args: args,
+            id: 1,
+            channel: "widget"
           }), "*");
         } catch (_e) {}
       }
@@ -41808,7 +42060,8 @@
           if (heroBgTeaserDuration > 0) {
             timeLbl.textContent = formatHeroTrailerDockTimeClient(heroBgTeaserCurTime) + " / " + formatHeroTrailerDockTimeClient(heroBgTeaserDuration);
           } else {
-            timeLbl.textContent = formatHeroTrailerDockTimeClient(heroBgTeaserCurTime);
+            const safeCur = heroBgTeaserIsPlayingConfirmed ? heroBgTeaserCurTime : 0;
+            timeLbl.textContent = formatHeroTrailerDockTimeClient(safeCur);
           }
         }
         const scrubber = document.getElementById("heroCinemaScrubber");
@@ -41906,6 +42159,7 @@
               if (heroBgTeaserSpeed !== 1) {
                 sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
               }
+              ensureHeroCinemaLiveClockClient();
               wakeHeroCinemaDockClient();
             } else {
               sendYoutubeHeroTeaserCommandClient("playVideo");
@@ -41930,6 +42184,7 @@
           clearTimeout(heroBgTeaserDelayedPauseTimer);
           heroBgTeaserDelayedPauseTimer = null;
         }
+        stopHeroCinemaLiveClockClient();
         setHeroTrailerLoadingBadgeClient(false);
         heroBgTeaserPaused = true;
         heroBgTeaserChromeShieldRequired = true;
@@ -41995,6 +42250,7 @@
             sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
           }
           applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+          ensureHeroCinemaLiveClockClient();
           wakeHeroCinemaDockClient();
           syncHeroCinemaDockUiClient();
           return;
@@ -42011,6 +42267,7 @@
             sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
           }
           applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
+          ensureHeroCinemaLiveClockClient();
           wakeHeroCinemaDockClient();
           syncHeroCinemaDockUiClient();
           return;
@@ -42033,6 +42290,7 @@
         }
         applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
         scheduleHeroRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, true);
+        if (isFgResume) ensureHeroCinemaLiveClockClient();
         syncHeroCinemaDockUiClient();
       }
 
@@ -42058,6 +42316,7 @@
         heroBgTeaserEnded = false;
         heroBgTeaserCurTime = 0;
         heroBgTeaserDuration = 0;
+        heroBgTeaserLastInfoAt = 0;
         const stageEl = document.getElementById("heroStageEl");
         if (stageEl) {
           stageEl.classList.remove("is-trailer-foreground-mode", "is-cinema-starting", "is-cinema-paused", "is-cinema-ended", "is-cc-safe-framing");
@@ -42089,24 +42348,24 @@
             return;
           }
           try {
-            frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "heroBgVideoIframe" }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"] }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onApiChange"] }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"] }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"], id: 1, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onApiChange"], id: 1, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"], id: 1, channel: "widget" }), "*");
             if (!heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserStoppedByUser) {
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [], id: 1, channel: "widget" }), "*");
             }
             if (heroBgTeaserPendingUnmute || !heroBgTeaserMuted) {
               const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [] }), "*");
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [targetVol] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [], id: 1, channel: "widget" }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [targetVol], id: 1, channel: "widget" }), "*");
             }
             if (ticks === 0 || ticks === 3) {
               applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
             }
           } catch (_e) {}
           ticks++;
-          if (ticks >= 14 || heroBgTeaserIsPlayingConfirmed) {
+          if (ticks >= 32 || (heroBgTeaserIsPlayingConfirmed && heroBgTeaserDuration > 0)) {
             if (heroBgTeaserHandshakeTimer) {
               clearInterval(heroBgTeaserHandshakeTimer);
               heroBgTeaserHandshakeTimer = null;
@@ -42117,8 +42376,13 @@
         heroBgTeaserHandshakeTimer = setInterval(sendHandshake, 280);
       }
 
-      function mountHeroTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2, overrideCcMode = null, opts = {}) {
+      function mountHeroTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 0, overrideCcMode = null, opts = {}) {
         clearHeroBgTeaserTimersClient();
+        clearHeroUnmuteRetryTimersClient();
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
         if (idx < 0 || idx >= heroBgTeaserCandidates.length) {
           stopHeroBackgroundVideoTeaserClient();
           return;
@@ -42139,12 +42403,19 @@
         heroBgTeaserPlayingStartedAt = 0;
         heroBgTeaserPaused = false;
         heroBgTeaserEnded = false;
-        heroBgTeaserCurTime = Math.max(0, Number(startSeconds || 0));
+        const safeStartSec = Math.max(0, Number(startSeconds || 0));
+        heroBgTeaserCurTime = safeStartSec;
+        heroBgTeaserLastInfoAt = 0;
         if (!(opts && opts.keepDuration)) {
           heroBgTeaserDuration = 0;
         }
         heroBgTeaserPendingUnmute = Boolean(startUnmuted);
         heroBgTeaserMuted = !startUnmuted;
+        if (startUnmuted) {
+          heroBgTeaserUserMuted = false;
+          heroBgTeaserUnmuteRetries = 0;
+          window._heroUnmuteGraceUntil = Date.now() + 3000;
+        }
 
         const stageEl = document.getElementById("heroStageEl");
         const isFgMount = Boolean(startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")));
@@ -42152,8 +42423,9 @@
         if (isFgMount) layer.classList.add("is-playing");
         else layer.classList.remove("is-playing");
 
-        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, startSeconds, heroBgTeaserCcMode);
-        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" data-slide-key="' + esc(heroBgTeaserActiveSlideKey || "") + '" src="' + esc(embedSrc) + '" onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
+        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, safeStartSec, heroBgTeaserCcMode, 1);
+        const lazyAttr = isFgMount ? "" : ' loading="lazy"';
+        layer.innerHTML = '<iframe id="heroBgVideoIframe" class="detail-bg-video-frame" data-slide-key="' + esc(heroBgTeaserActiveSlideKey || "") + '" src="' + esc(embedSrc) + '"' + lazyAttr + ' onload="onHeroBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
 
         if (stageEl) {
           stageEl.classList.remove("is-cinema-paused", "is-cinema-ended");
@@ -42163,6 +42435,7 @@
         if (isFgMount) {
           setHeroTrailerLoadingBadgeClient(false);
           scheduleHeroRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 2100, true);
+          ensureHeroCinemaLiveClockClient();
         }
 
         heroBgTeaserWatchdogTimer = setTimeout(() => {
@@ -42171,7 +42444,7 @@
               if (typeof clientBlockedYoutubeKeys !== "undefined") clientBlockedYoutubeKeys.add(cleanKey);
               const nextIdx = heroBgTeaserCandidateIdx + 1;
               if (nextIdx < heroBgTeaserCandidates.length) {
-                mountHeroTrailerCandidateAtIndexClient(nextIdx, startUnmuted || !heroBgTeaserMuted, 2);
+                mountHeroTrailerCandidateAtIndexClient(nextIdx, startUnmuted || !heroBgTeaserMuted, 0);
               }
             }
           }
@@ -42205,7 +42478,7 @@
             if (typeof clientBlockedYoutubeKeys !== "undefined") clientBlockedYoutubeKeys.add(heroBgTeaserActiveKey);
             const nextIdx = heroBgTeaserCandidateIdx + 1;
             if (nextIdx < heroBgTeaserCandidates.length) {
-              mountHeroTrailerCandidateAtIndexClient(nextIdx, heroBgTeaserPendingUnmute || !heroBgTeaserMuted, 2);
+              mountHeroTrailerCandidateAtIndexClient(nextIdx, heroBgTeaserPendingUnmute || !heroBgTeaserMuted, 0);
             } else {
               const failedHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
               if (failedHero) {
@@ -42228,17 +42501,35 @@
             if (typeof msg.info.playerState === "number") {
               pState = msg.info.playerState;
             }
-            if (typeof msg.info.currentTime === "number") {
-              heroBgTeaserCurTime = msg.info.currentTime;
+            const rawCurTime = typeof msg.info.currentTime === "number"
+              ? msg.info.currentTime
+              : (msg.info.progressState && typeof msg.info.progressState.current === "number" ? msg.info.progressState.current : null);
+            if (rawCurTime !== null && Number.isFinite(rawCurTime) && rawCurTime >= 0) {
+              heroBgTeaserCurTime = rawCurTime;
+              heroBgTeaserLastInfoAt = Date.now();
             }
-            if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
-              heroBgTeaserDuration = msg.info.duration;
-            }
-            if (typeof msg.info.muted === "boolean" && !heroBgTeaserPendingUnmute && Date.now() > (window._heroUnmuteGraceUntil || 0)) {
-              heroBgTeaserMuted = msg.info.muted;
+            const rawDur = (typeof msg.info.duration === "number" && msg.info.duration > 0)
+              ? msg.info.duration
+              : ((msg.info.progressState && typeof msg.info.progressState.duration === "number" && msg.info.progressState.duration > 0)
+                ? msg.info.progressState.duration
+                : (msg.info.videoData && Number(msg.info.videoData.lengthSeconds) > 0 ? Number(msg.info.videoData.lengthSeconds) : 0));
+            if (rawDur > 0 && Number.isFinite(rawDur)) {
+              heroBgTeaserDuration = rawDur;
             }
             const curStageEl = document.getElementById("heroStageEl");
             const isFgLive = Boolean(curStageEl && curStageEl.classList.contains("is-trailer-foreground-mode"));
+            if (typeof msg.info.muted === "boolean") {
+              if (isFgLive && !heroBgTeaserUserMuted && msg.info.muted === true && heroBgTeaserUnmuteRetries < 4) {
+                heroBgTeaserUnmuteRetries += 1;
+                window._heroUnmuteGraceUntil = Date.now() + 1800;
+                const retryVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+                sendYoutubeHeroTeaserCommandClient("unMute");
+                sendYoutubeHeroTeaserCommandClient("setVolume", [retryVol]);
+                heroBgTeaserMuted = false;
+              } else if (!heroBgTeaserPendingUnmute && (msg.info.muted === false || heroBgTeaserUserMuted || Date.now() > (window._heroUnmuteGraceUntil || 0))) {
+                heroBgTeaserMuted = msg.info.muted;
+              }
+            }
             // Im stillen Hintergrund-Preview 3,2s vor Ende sanft ausblenden; im aktiven Kino-Vordergrund bis zum echten Ende durchspielen!
             if (
               !isFgLive &&
@@ -42270,13 +42561,15 @@
               if (!wasConfirmedBefore || !heroBgTeaserPlayingStartedAt) {
                 heroBgTeaserPlayingStartedAt = Date.now();
               }
-              if (heroBgTeaserPendingUnmute || (isFg && !heroBgTeaserMuted)) {
+              if (heroBgTeaserDuration <= 0 && heroFrame && heroFrame.contentWindow) {
+                try { heroFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*"); } catch (_le) {}
+              }
+              if (isFg) {
+                ensureHeroCinemaLiveClockClient();
+              }
+              if (heroBgTeaserPendingUnmute || (isFg && !heroBgTeaserUserMuted)) {
                 heroBgTeaserPendingUnmute = false;
-                heroBgTeaserMuted = false;
-                window._heroUnmuteGraceUntil = Date.now() + 900;
-                const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
-                sendYoutubeHeroTeaserCommandClient("unMute");
-                sendYoutubeHeroTeaserCommandClient("setVolume", [targetVol]);
+                enforceHeroForegroundUnmuteClient();
               }
               applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
               if (heroBgTeaserSpeed !== 1) {
@@ -42296,6 +42589,7 @@
               syncHeroCinemaDockUiClient();
             } else if (pState === 2) {
               heroBgTeaserPaused = true;
+              stopHeroCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               setHeroTrailerLoadingBadgeClient(false);
               // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte STREAMFLIX-Ersatzoverlays überdecken nur die YouTube-Controls!
@@ -42314,10 +42608,12 @@
               wakeHeroCinemaDockClient();
               syncHeroCinemaDockUiClient();
             } else if (pState === 0) {
+              stopHeroCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               if (isFg) {
                 heroBgTeaserEnded = true;
                 heroBgTeaserPaused = true;
+                if (heroBgTeaserDuration > 0) heroBgTeaserCurTime = heroBgTeaserDuration;
                 setHeroTrailerLoadingBadgeClient(false);
                 wakeHeroCinemaDockClient();
                 syncHeroCinemaDockUiClient();
@@ -42428,6 +42724,80 @@
         return [];
       }
 
+      // Lädt den schweren YouTube-Iframe im Hero-Slider erst als Letztes – nachdem sichtbare Elemente & Cover Priorität hatten!
+      function scheduleDeferredHeroIframeMountClient(reqSeq, slideKey, mountFn) {
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
+        const runWhenIdle = () => {
+          if (reqSeq !== heroBgTeaserRequestSeq) return;
+          const finishMount = () => {
+            if (reqSeq !== heroBgTeaserRequestSeq) return;
+            const curHero = state.heroSlides && (state.heroSlides[state.heroIndex] || state.heroSlides[0]);
+            const curSlideKey = curHero ? ((curHero.media_type === "tv" || state.type === "s" ? "s" : "m") + "_" + curHero.id) : "";
+            if (!curHero || curSlideKey !== slideKey) return;
+            if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+            if (heroCurtainScrolledToCatalog || state.heroHidden || state.isSearchMode) return;
+            mountFn();
+          };
+          if (typeof window.requestIdleCallback === "function") {
+            window.requestIdleCallback(() => {
+              heroBgTeaserDeferTimer = setTimeout(finishMount, 450);
+            }, { timeout: 1400 });
+          } else {
+            heroBgTeaserDeferTimer = setTimeout(finishMount, 750);
+          }
+        };
+
+        const waitForVisibleImagesThenRun = () => {
+          if (reqSeq !== heroBgTeaserRequestSeq) return;
+          const visibleImgs = Array.from(document.querySelectorAll("#resultsGridContainer img.lazy-cover-img")).slice(0, 10);
+          const pendingImgs = visibleImgs.filter(img => {
+            const src = img.getAttribute("src") || "";
+            return src && !src.startsWith("data:") && !img.complete;
+          });
+          if (pendingImgs.length === 0) {
+            heroBgTeaserDeferTimer = setTimeout(runWhenIdle, 550);
+            return;
+          }
+          let done = false;
+          let remaining = pendingImgs.length;
+          const onOneDone = () => {
+            remaining -= 1;
+            if (!done && remaining <= 0) {
+              done = true;
+              if (heroBgTeaserDeferTimer) clearTimeout(heroBgTeaserDeferTimer);
+              heroBgTeaserDeferTimer = setTimeout(runWhenIdle, 450);
+            }
+          };
+          pendingImgs.forEach(img => {
+            img.addEventListener("load", onOneDone, { once: true });
+            img.addEventListener("error", onOneDone, { once: true });
+          });
+          heroBgTeaserDeferTimer = setTimeout(() => {
+            if (!done) {
+              done = true;
+              runWhenIdle();
+            }
+          }, 2200);
+        };
+
+        if (document.readyState === "complete") {
+          waitForVisibleImagesThenRun();
+        } else {
+          let loadFired = false;
+          const onDocLoad = () => {
+            if (loadFired) return;
+            loadFired = true;
+            if (heroBgTeaserDeferTimer) clearTimeout(heroBgTeaserDeferTimer);
+            waitForVisibleImagesThenRun();
+          };
+          window.addEventListener("load", onDocLoad, { once: true });
+          heroBgTeaserDeferTimer = setTimeout(onDocLoad, 2800);
+        }
+      }
+
       function scheduleHeroBackgroundVideoTeaserClient(immediateForeground = false) {
         if (state.isSearchMode || state.heroHidden || !Array.isArray(state.heroSlides) || !state.heroSlides.length) {
           stopHeroBackgroundVideoTeaserClient();
@@ -42458,7 +42828,11 @@
           clearTimeout(heroBgTeaserTimer);
           heroBgTeaserTimer = null;
         }
-        const delayMs = immediateForeground ? 0 : (previewDisabled ? 550 : 420);
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
+        const delayMs = immediateForeground ? 0 : 750;
         const reqSeq = ++heroBgTeaserRequestSeq;
         heroBgTeaserTimer = setTimeout(async () => {
           heroBgTeaserTimer = null;
@@ -42482,8 +42856,17 @@
           if (cands.length === 0 || previewDisabled) return;
           const existingFrame = document.getElementById("heroBgVideoIframe");
           if (existingFrame && existingFrame.getAttribute("data-slide-key") === slideKey && heroBgTeaserActiveKey === cands[0]) return;
-          mountHeroTrailerCandidateAtIndexClient(0, immediateForeground, immediateForeground ? 0 : 2);
-          syncHeroCinemaDockUiClient();
+          if (immediateForeground) {
+            mountHeroTrailerCandidateAtIndexClient(0, true, 0);
+            syncHeroCinemaDockUiClient();
+          } else {
+            scheduleDeferredHeroIframeMountClient(reqSeq, slideKey, () => {
+              const liveFrame = document.getElementById("heroBgVideoIframe");
+              if (liveFrame && liveFrame.getAttribute("data-slide-key") === slideKey && heroBgTeaserActiveKey === cands[0]) return;
+              mountHeroTrailerCandidateAtIndexClient(0, false, 0);
+              syncHeroCinemaDockUiClient();
+            });
+          }
         }, delayMs);
       }
 
@@ -42551,12 +42934,15 @@
           clearTimeout(heroBgTeaserTimer);
           heroBgTeaserTimer = null;
         }
+        if (heroBgTeaserDeferTimer) {
+          clearTimeout(heroBgTeaserDeferTimer);
+          heroBgTeaserDeferTimer = null;
+        }
         heroBgTeaserActiveSlideKey = slideKey;
         heroBgTeaserCandidates = candidates;
         heroBgTeaserCandidatesSlideKey = slideKey;
         heroBgTeaserStoppedByUser = false;
-        heroBgTeaserPendingUnmute = true;
-        heroBgTeaserMuted = false;
+        enforceHeroForegroundUnmuteClient();
 
         const existingFrame = document.getElementById("heroBgVideoIframe");
         const frameMatchesSlide = Boolean(
@@ -42566,12 +42952,14 @@
           candidates.includes(heroBgTeaserActiveKey)
         );
         if (frameMatchesSlide) {
-          sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
           applyYoutubeSubtitlesStateClient(sendYoutubeHeroTeaserCommandClient, heroBgTeaserCcMode, heroBgTeaserActiveKey);
           if (heroBgTeaserSpeed && heroBgTeaserSpeed !== 1) {
             sendYoutubeHeroTeaserCommandClient("setPlaybackRate", [heroBgTeaserSpeed]);
           }
+          if (heroBgTeaserDuration <= 0 && existingFrame.contentWindow) {
+            try { existingFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*"); } catch (_le2) {}
+          }
+          ensureHeroCinemaLiveClockClient();
           const layer = document.getElementById("heroBgVideoLayer");
           if (heroBgTeaserIsPlayingConfirmed && !heroBgTeaserPaused && !heroBgTeaserEnded && !heroBgTeaserChromeShieldRequired) {
             stageEl.classList.remove("is-cinema-starting");
@@ -42603,6 +42991,7 @@
       function exitHeroForegroundTrailerModeClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         cancelHeroCinemaEndcardCountdownClient(true);
+        stopHeroCinemaLiveClockClient();
         heroBgTeaserRequestSeq += 1;
         const stageEl = document.getElementById("heroStageEl");
         if (!stageEl) return;
@@ -42700,17 +43089,16 @@
           return;
         }
         if (heroBgTeaserMuted) {
-          heroBgTeaserPendingUnmute = true;
-          heroBgTeaserMuted = false;
           const vol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : saveTrailerVolumeClient(85);
-          sendYoutubeHeroTeaserCommandClient("unMute");
-          sendYoutubeHeroTeaserCommandClient("setVolume", [vol]);
+          enforceHeroForegroundUnmuteClient();
           showHeroSeekRippleBadgeClient("🔊 " + vol + "%", "center");
           if (heroBgTeaserEnded || heroBgTeaserPaused) {
             resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
             return;
           }
         } else {
+          clearHeroUnmuteRetryTimersClient();
+          heroBgTeaserUserMuted = true;
           heroBgTeaserPendingUnmute = false;
           heroBgTeaserMuted = true;
           sendYoutubeHeroTeaserCommandClient("mute");
@@ -42726,12 +43114,16 @@
         const vol = saveTrailerVolumeClient(inpEl.value);
         inpEl.style.setProperty("--vol-pct", vol + "%");
         if (vol <= 0) {
+          clearHeroUnmuteRetryTimersClient();
+          heroBgTeaserUserMuted = true;
           heroBgTeaserMuted = true;
           heroBgTeaserPendingUnmute = false;
           sendYoutubeHeroTeaserCommandClient("mute");
         } else {
+          heroBgTeaserUserMuted = false;
           heroBgTeaserMuted = false;
           heroBgTeaserPendingUnmute = false;
+          window._heroUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeHeroTeaserCommandClient("unMute");
           sendYoutubeHeroTeaserCommandClient("setVolume", [vol]);
         }
@@ -42744,11 +43136,15 @@
         const baseVol = heroBgTeaserMuted ? 0 : getSavedTrailerVolumeClient();
         const nextVol = saveTrailerVolumeClient(baseVol + Number(delta || 0));
         if (nextVol <= 0) {
+          clearHeroUnmuteRetryTimersClient();
+          heroBgTeaserUserMuted = true;
           heroBgTeaserMuted = true;
           sendYoutubeHeroTeaserCommandClient("mute");
           showHeroSeekRippleBadgeClient("🔇 Stumm", "center");
         } else {
+          heroBgTeaserUserMuted = false;
           heroBgTeaserMuted = false;
+          window._heroUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeHeroTeaserCommandClient("unMute");
           sendYoutubeHeroTeaserCommandClient("setVolume", [nextVol]);
           showHeroSeekRippleBadgeClient("🔊 " + nextVol + "%", "center");
@@ -42976,13 +43372,24 @@
         } else {
           animateHeroCatalogSnapScrollClient(0);
         }
+        if (document.body) {
+          document.body.classList.add("in-hero-slider");
+        }
+        if (typeof syncSmartPageIndicatorDomClient === "function") {
+          syncSmartPageIndicatorDomClient(false);
+        }
+        syncExpandableDescriptionsOverflowClient();
         setTimeout(() => {
+          syncExpandableDescriptionsOverflowClient();
           if (focusMode === "header") {
             const topEl = document.getElementById("searchInput") || document.getElementById("sidebarToggleBtn");
             if (topEl && typeof jumpSpatialFocus === "function") jumpSpatialFocus(topEl, false, "up");
           } else {
             const heroTarget = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails") || document.getElementById("heroBtnWishlist");
             if (heroTarget && typeof jumpSpatialFocus === "function") jumpSpatialFocus(heroTarget, false, "up");
+          }
+          if (typeof syncSmartPageIndicatorDomClient === "function") {
+            syncSmartPageIndicatorDomClient(false);
           }
         }, 70);
         return true;
@@ -42997,7 +43404,6 @@
           if (
             document.getElementById("modalRoot")?.innerHTML.trim() ||
             document.getElementById("lightboxRoot")?.innerHTML.trim() ||
-            document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
             document.getElementById("customDialogRoot")?.innerHTML.trim()
           ) {
             return;
@@ -43690,6 +44096,9 @@
         if (typeof isUserInHeroSliderFront === "function") {
           document.body.classList.toggle("in-hero-slider", isUserInHeroSliderFront());
         }
+        if (typeof syncSmartPageIndicatorDomClient === "function") {
+          syncSmartPageIndicatorDomClient(false);
+        }
       }
 
       const clientClearLogoCache = new Map();
@@ -44155,6 +44564,7 @@
               }
               const hintEl = descEl.querySelector(".desc-expand-hint");
               if (hintEl) hintEl.textContent = "▾ Mehr lesen";
+              syncExpandableDescriptionsOverflowClient(descEl);
               requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(descEl));
             }
             const transBtn = document.getElementById("heroDescTranslateBtn");
@@ -45996,9 +46406,12 @@
         } else {
           await loadDiscover(state.type, state.genreId, state.mode, state.sort, false, true, p);
         }
-        if (isHeroSnapEligibleClient() && !heroCurtainScrolledToCatalog) {
-          heroCurtainScrolledToCatalog = true;
-          updateHeroCurtainCollapseStateClient();
+        if (typeof isHeroScrollCouplingActiveClient === "function" && isHeroScrollCouplingActiveClient() && !heroCurtainScrolledToCatalog) {
+          if (typeof animateHeroCatalogSnapScrollClient === "function") {
+            animateHeroCatalogSnapScrollClient(100, { bounceLock: false });
+          } else {
+            heroCurtainScrolledToCatalog = true;
+          }
         }
         unlockCatalogCoversLoadingClient(false);
         preloadCatalogPageCoversClient(p);
@@ -46036,7 +46449,7 @@
             '<button type="button" class="card-quick-save ' + (isCardSaved ? "saved" : "") + '" onclick="quickToggleCardWishlist(event,\\'' + tc + '\\',' + it.id + ')" title="' + (isCardSaved ? "In deiner Merkliste gespeichert (Tipp oder gedrückt halten zum Entfernen)" : "In Merkliste speichern (Tipp oder Karte gedrückt halten)") + '">' + (isCardSaved ? "✓" : "🔖") + '</button>' +
             '<button type="button" class="card-quick-info" onclick="event.stopPropagation();openDetails(\\'' + tc + '\\',' + it.id + ')" title="Details öffnen">ℹ️ Details</button>' +
             '<button type="button" class="card-quick-trailer" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + it.id + ')" title="Instant-Trailer sofort abspielen">▶ Trailer</button>' +
-            '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '" draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
+            '<img class="lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + effectivePosterSrc + '" data-page-num="' + itemPageNum + '"' + (idx < 8 ? ' fetchpriority="high"' : '') + ' draggable="false" oncontextmenu="return false;" alt="' + itemTitleSafe + '" />' +
           '</div>' +
           '<div class="card-body">' +
             '<div class="card-title"><span class="card-title-text">' + itemTitleSafe + '</span></div>' +
@@ -46820,11 +47233,13 @@
         }
       }
 
-      async function openCollectionView(colId) {
+      async function openCollectionView(colId, sortOverride = null) {
         document.getElementById("modalRoot").innerHTML = "";
+        const effSort = sortOverride || state.sort || "year_asc";
+        if (sortOverride) state.sort = sortOverride;
         setBusyState(true, "🍿 Lade Filmreihe...");
         try {
-          const r = await apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(colId) + "&sort=" + state.sort);
+          const r = await apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(colId) + "&sort=" + encodeURIComponent(effSort));
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "collection";
@@ -46840,11 +47255,13 @@
         }
       }
 
-      async function openUniverseView(uniId) {
+      async function openUniverseView(uniId, sortOverride = null) {
         document.getElementById("modalRoot").innerHTML = "";
+        const effSort = sortOverride || state.sort || "year_asc";
+        if (sortOverride) state.sort = sortOverride;
         setBusyState(true, "🌌 Lade Filmuniversum...");
         try {
-          const r = await apiFetchJson(API_BASE + "/universes?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(uniId) + "&sort=" + state.sort);
+          const r = await apiFetchJson(API_BASE + "/universes?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(uniId) + "&sort=" + encodeURIComponent(effSort));
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "universe";
@@ -47015,7 +47432,10 @@
       let detailBgTeaserPlayingStartedAt = 0;
       let detailBgTeaserChromeShieldRequired = true;
       let detailBgTeaserMuted = true;
+      let detailBgTeaserUserMuted = false;
       let detailBgTeaserPendingUnmute = false;
+      let detailBgTeaserUnmuteRetries = 0;
+      let detailBgTeaserUnmuteRetryTimers = [];
       let detailBgTeaserPaused = false;
       let detailBgTeaserEnded = false;
       let detailBgTeaserPausedByScroll = false;
@@ -47030,6 +47450,32 @@
       let detailBgTeaserCcMode = "off";
       let detailBgTeaserSpeed = 1;
       const clientBlockedYoutubeKeys = new Set();
+
+      function clearDetailUnmuteRetryTimersClient() {
+        if (Array.isArray(detailBgTeaserUnmuteRetryTimers) && detailBgTeaserUnmuteRetryTimers.length) {
+          detailBgTeaserUnmuteRetryTimers.forEach(t => clearTimeout(t));
+          detailBgTeaserUnmuteRetryTimers = [];
+        }
+      }
+
+      function enforceDetailForegroundUnmuteClient() {
+        clearDetailUnmuteRetryTimersClient();
+        detailBgTeaserUserMuted = false;
+        detailBgTeaserMuted = false;
+        detailBgTeaserPendingUnmute = true;
+        detailBgTeaserUnmuteRetries = 0;
+        window._detailUnmuteGraceUntil = Date.now() + 3000;
+        const applyOnce = () => {
+          const st = document.getElementById("detailHeroStageEl");
+          if (!st || !st.classList.contains("is-trailer-foreground-mode") || detailBgTeaserUserMuted) return;
+          const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+          sendYoutubeBgTeaserCommandClient("unMute");
+          sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
+        };
+        applyOnce();
+        detailBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 240));
+        detailBgTeaserUnmuteRetryTimers.push(setTimeout(applyOnce, 680));
+      }
 
       function formatTrailerDockTimeClient(secInput) {
         const s = Math.max(0, Math.floor(Number(secInput) || 0));
@@ -47098,12 +47544,62 @@
           clearInterval(detailBgTeaserHandshakeTimer);
           detailBgTeaserHandshakeTimer = null;
         }
+        stopDetailCinemaLiveClockClient();
+        clearDetailUnmuteRetryTimersClient();
       }
 
       let detailBgTeaserPreloadedParked = false;
+      let detailBgTeaserLastInfoAt = 0;
+      let detailCinemaLiveClockTimer = null;
+      let detailCinemaLiveClockLastTickAt = 0;
+      let detailCinemaLiveClockPingCount = 0;
       let detailCinemaDockIdleTimer = null;
       let detailCinemaEndcardTimer = null;
       let detailCinemaEndcardSecondsLeft = 0;
+
+      function stopDetailCinemaLiveClockClient() {
+        if (detailCinemaLiveClockTimer) {
+          clearInterval(detailCinemaLiveClockTimer);
+          detailCinemaLiveClockTimer = null;
+        }
+        detailCinemaLiveClockLastTickAt = 0;
+        detailCinemaLiveClockPingCount = 0;
+      }
+
+      function ensureDetailCinemaLiveClockClient() {
+        if (detailCinemaLiveClockTimer) return;
+        detailCinemaLiveClockLastTickAt = Date.now();
+        detailCinemaLiveClockPingCount = 0;
+        detailCinemaLiveClockTimer = setInterval(() => {
+          const liveStage = document.getElementById("detailHeroStageEl");
+          const isFgLive = Boolean(liveStage && liveStage.classList.contains("is-trailer-foreground-mode"));
+          if (!isFgLive || !detailBgTeaserActiveKey || detailBgTeaserPaused || detailBgTeaserEnded) {
+            stopDetailCinemaLiveClockClient();
+            return;
+          }
+          const now = Date.now();
+          const dtSec = Math.max(0, Math.min(2.5, (now - (detailCinemaLiveClockLastTickAt || now)) / 1000));
+          detailCinemaLiveClockLastTickAt = now;
+          if (detailBgTeaserScrubbing) return;
+          const infoStale = !detailBgTeaserLastInfoAt || (now - detailBgTeaserLastInfoAt) >= 1100;
+          if (infoStale && (detailBgTeaserIsPlayingConfirmed || (detailBgTeaserStageOpenedAt && (now - detailBgTeaserStageOpenedAt) >= 1400))) {
+            const spd = Number(detailBgTeaserSpeed || 1) > 0 ? Number(detailBgTeaserSpeed || 1) : 1;
+            const nextSec = (Number(detailBgTeaserCurTime) || 0) + (dtSec * spd);
+            detailBgTeaserCurTime = detailBgTeaserDuration > 0 ? Math.min(detailBgTeaserDuration, nextSec) : nextSec;
+            detailBgTeaserIsPlayingConfirmed = true;
+            syncDetailCinemaDockUiClient();
+          }
+          detailCinemaLiveClockPingCount += 1;
+          if ((detailBgTeaserDuration <= 0 || infoStale) && (detailCinemaLiveClockPingCount % 4 === 1)) {
+            const frame = document.getElementById("detailBgVideoIframe");
+            if (frame && frame.contentWindow) {
+              try {
+                frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 2, channel: "widget" }), "*");
+              } catch (_dpe) {}
+            }
+          }
+        }, 500);
+      }
 
       function renderDetailCinemaEndcardCloseBtnLabelClient(secondsLeft) {
         const closeBtn = document.getElementById("detailCinemaEndCloseBtn");
@@ -47268,6 +47764,7 @@
               if (detailBgTeaserSpeed !== 1) {
                 sendYoutubeBgTeaserCommandClient("setPlaybackRate", [detailBgTeaserSpeed]);
               }
+              ensureDetailCinemaLiveClockClient();
               wakeDetailCinemaDockClient();
             } else {
               sendYoutubeBgTeaserCommandClient("playVideo");
@@ -47293,6 +47790,7 @@
           clearTimeout(detailBgTeaserDelayedPauseTimer);
           detailBgTeaserDelayedPauseTimer = null;
         }
+        stopDetailCinemaLiveClockClient();
         setDetailTrailerLoadingBadgeClient(false);
         detailBgTeaserPaused = true;
         detailBgTeaserChromeShieldRequired = true;
@@ -47362,6 +47860,7 @@
             sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
           }
           applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
+          ensureDetailCinemaLiveClockClient();
           wakeDetailCinemaDockClient();
           syncDetailCinemaDockUiClient();
           return;
@@ -47378,6 +47877,7 @@
             sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
           }
           applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
+          ensureDetailCinemaLiveClockClient();
           wakeDetailCinemaDockClient();
           syncDetailCinemaDockUiClient();
           return;
@@ -47400,6 +47900,7 @@
         }
         applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
         scheduleDetailRevealAfterYoutubeChromeHidesClient(wasPreloadedParked ? 900 : 1150, true);
+        if (isFgResume) ensureDetailCinemaLiveClockClient();
         syncDetailCinemaDockUiClient();
       }
 
@@ -47757,7 +48258,8 @@
           if (detailBgTeaserDuration > 0) {
             timeLbl.textContent = formatTrailerDockTimeClient(detailBgTeaserCurTime) + " / " + formatTrailerDockTimeClient(detailBgTeaserDuration);
           } else {
-            timeLbl.textContent = formatTrailerDockTimeClient(detailBgTeaserCurTime);
+            const safeCur = detailBgTeaserIsPlayingConfirmed ? detailBgTeaserCurTime : 0;
+            timeLbl.textContent = formatTrailerDockTimeClient(safeCur);
           }
         }
         const scrubber = document.getElementById("detailCinemaScrubber");
@@ -47797,6 +48299,7 @@
         detailBgTeaserPausedByScroll = false;
         detailBgTeaserCurTime = 0;
         detailBgTeaserDuration = 0;
+        detailBgTeaserLastInfoAt = 0;
         const stageEl = document.getElementById("detailHeroStageEl");
         if (stageEl) {
           stageEl.classList.remove("is-trailer-foreground-mode", "is-cinema-starting", "is-cinema-paused", "is-cinema-ended", "is-cc-safe-framing");
@@ -47819,7 +48322,9 @@
           frame.contentWindow.postMessage(JSON.stringify({
             event: "command",
             func: funcName,
-            args: args
+            args: args,
+            id: 2,
+            channel: "widget"
           }), "*");
         } catch (_e) {}
       }
@@ -47840,24 +48345,24 @@
             return;
           }
           try {
-            frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: "detailBgVideoIframe" }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"] }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onApiChange"] }), "*");
-            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"] }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 2, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onStateChange"], id: 2, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onApiChange"], id: 2, channel: "widget" }), "*");
+            frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "addEventListener", args: ["onError"], id: 2, channel: "widget" }), "*");
             if (!detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserStoppedByUser) {
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "playVideo", args: [], id: 2, channel: "widget" }), "*");
             }
             if (detailBgTeaserPendingUnmute || !detailBgTeaserMuted) {
               const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [] }), "*");
-              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [targetVol] }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "unMute", args: [], id: 2, channel: "widget" }), "*");
+              frame.contentWindow.postMessage(JSON.stringify({ event: "command", func: "setVolume", args: [targetVol], id: 2, channel: "widget" }), "*");
             }
             if (ticks === 0 || ticks === 3) {
               applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
             }
           } catch (_e) {}
           ticks++;
-          if (ticks >= 14 || detailBgTeaserIsPlayingConfirmed) {
+          if (ticks >= 32 || (detailBgTeaserIsPlayingConfirmed && detailBgTeaserDuration > 0)) {
             if (detailBgTeaserHandshakeTimer) {
               clearInterval(detailBgTeaserHandshakeTimer);
               detailBgTeaserHandshakeTimer = null;
@@ -47868,8 +48373,9 @@
         detailBgTeaserHandshakeTimer = setInterval(sendHandshake, 280);
       }
 
-      function mountDetailTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 2, overrideCcMode = null, opts = {}) {
+      function mountDetailTrailerCandidateAtIndexClient(idx, startUnmuted = false, startSeconds = 0, overrideCcMode = null, opts = {}) {
         clearDetailBgTeaserTimersClient();
+        clearDetailUnmuteRetryTimersClient();
         if (idx < 0 || idx >= detailBgTeaserCandidates.length) {
           activateDetailKenBurnsFallbackClient();
           return;
@@ -47891,12 +48397,19 @@
         detailBgTeaserPaused = false;
         detailBgTeaserEnded = false;
         detailBgTeaserPausedByScroll = false;
-        detailBgTeaserCurTime = Math.max(0, Number(startSeconds || 0));
+        const safeStartSec = Math.max(0, Number(startSeconds || 0));
+        detailBgTeaserCurTime = safeStartSec;
+        detailBgTeaserLastInfoAt = 0;
         if (!(opts && opts.keepDuration)) {
           detailBgTeaserDuration = 0;
         }
         detailBgTeaserPendingUnmute = Boolean(startUnmuted);
         detailBgTeaserMuted = !startUnmuted;
+        if (startUnmuted) {
+          detailBgTeaserUserMuted = false;
+          detailBgTeaserUnmuteRetries = 0;
+          window._detailUnmuteGraceUntil = Date.now() + 3000;
+        }
 
         const stageEl = document.getElementById("detailHeroStageEl");
         const isFgMount = Boolean(startUnmuted || (stageEl && stageEl.classList.contains("is-trailer-foreground-mode")));
@@ -47905,7 +48418,7 @@
         else layer.classList.remove("is-playing");
 
         // WICHTIG: Immer mit autoplay=1&mute=1 starten (100% Autoplay-Erlaubnis auf iOS/Android/Telegram WebView) und Ton sofort per JS-API zuschalten!
-        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, startSeconds, detailBgTeaserCcMode);
+        const embedSrc = buildTrailerEmbedUrlClient(cleanKey, safeStartSec, detailBgTeaserCcMode, 2);
         layer.innerHTML = '<iframe id="detailBgVideoIframe" class="detail-bg-video-frame" src="' + esc(embedSrc) + '" onload="onDetailBgYoutubeIframeLoadClient()" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1" tabindex="-1" aria-hidden="true"></iframe>';
 
         if (stageEl) {
@@ -47916,6 +48429,7 @@
         if (isFgMount) {
           setDetailTrailerLoadingBadgeClient(false);
           scheduleDetailRevealAfterYoutubeChromeHidesClient((opts && opts.fastRevealMs) ? opts.fastRevealMs : 2100, true);
+          ensureDetailCinemaLiveClockClient();
         }
 
         // Watchdog: Falls YouTube das Video blockiert oder nach 5,2s noch nicht im Playing-State (1) ist -> nächsten Trailer testen!
@@ -47932,7 +48446,7 @@
       function advanceToNextDetailTrailerCandidateClient(keepUnmuted = false) {
         const nextIdx = detailBgTeaserCandidateIdx + 1;
         if (nextIdx < detailBgTeaserCandidates.length) {
-          mountDetailTrailerCandidateAtIndexClient(nextIdx, keepUnmuted, 2);
+          mountDetailTrailerCandidateAtIndexClient(nextIdx, keepUnmuted, 0);
         } else {
           activateDetailKenBurnsFallbackClient();
         }
@@ -47974,17 +48488,35 @@
             if (typeof msg.info.playerState === "number") {
               pState = msg.info.playerState;
             }
-            if (typeof msg.info.currentTime === "number") {
-              detailBgTeaserCurTime = msg.info.currentTime;
+            const rawDetailCurTime = typeof msg.info.currentTime === "number"
+              ? msg.info.currentTime
+              : (msg.info.progressState && typeof msg.info.progressState.current === "number" ? msg.info.progressState.current : null);
+            if (rawDetailCurTime !== null && Number.isFinite(rawDetailCurTime) && rawDetailCurTime >= 0) {
+              detailBgTeaserCurTime = rawDetailCurTime;
+              detailBgTeaserLastInfoAt = Date.now();
             }
-            if (typeof msg.info.duration === "number" && msg.info.duration > 0) {
-              detailBgTeaserDuration = msg.info.duration;
-            }
-            if (typeof msg.info.muted === "boolean" && !detailBgTeaserPendingUnmute && Date.now() > (window._detailUnmuteGraceUntil || 0)) {
-              detailBgTeaserMuted = msg.info.muted;
+            const rawDetailDur = (typeof msg.info.duration === "number" && msg.info.duration > 0)
+              ? msg.info.duration
+              : ((msg.info.progressState && typeof msg.info.progressState.duration === "number" && msg.info.progressState.duration > 0)
+                ? msg.info.progressState.duration
+                : (msg.info.videoData && Number(msg.info.videoData.lengthSeconds) > 0 ? Number(msg.info.videoData.lengthSeconds) : 0));
+            if (rawDetailDur > 0 && Number.isFinite(rawDetailDur)) {
+              detailBgTeaserDuration = rawDetailDur;
             }
             const curStageEl = document.getElementById("detailHeroStageEl");
             const isFgLive = Boolean(curStageEl && curStageEl.classList.contains("is-trailer-foreground-mode"));
+            if (typeof msg.info.muted === "boolean") {
+              if (isFgLive && !detailBgTeaserUserMuted && msg.info.muted === true && detailBgTeaserUnmuteRetries < 4) {
+                detailBgTeaserUnmuteRetries += 1;
+                window._detailUnmuteGraceUntil = Date.now() + 1800;
+                const retryVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
+                sendYoutubeBgTeaserCommandClient("unMute");
+                sendYoutubeBgTeaserCommandClient("setVolume", [retryVol]);
+                detailBgTeaserMuted = false;
+              } else if (!detailBgTeaserPendingUnmute && (msg.info.muted === false || detailBgTeaserUserMuted || Date.now() > (window._detailUnmuteGraceUntil || 0))) {
+                detailBgTeaserMuted = msg.info.muted;
+              }
+            }
             // Im stillen Hintergrund-Preview 3,2s vor Ende sanft ausblenden; im aktiven Kino-Vordergrund bis zum echten Ende durchspielen!
             if (
               !isFgLive &&
@@ -48016,13 +48548,15 @@
               if (!wasConfirmedBefore || !detailBgTeaserPlayingStartedAt) {
                 detailBgTeaserPlayingStartedAt = Date.now();
               }
-              if (detailBgTeaserPendingUnmute || (isFg && !detailBgTeaserMuted)) {
+              if (detailBgTeaserDuration <= 0 && detailFrame && detailFrame.contentWindow) {
+                try { detailFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 2, channel: "widget" }), "*"); } catch (_dle) {}
+              }
+              if (isFg) {
+                ensureDetailCinemaLiveClockClient();
+              }
+              if (detailBgTeaserPendingUnmute || (isFg && !detailBgTeaserUserMuted)) {
                 detailBgTeaserPendingUnmute = false;
-                detailBgTeaserMuted = false;
-                window._detailUnmuteGraceUntil = Date.now() + 900;
-                const targetVol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : 85;
-                sendYoutubeBgTeaserCommandClient("unMute");
-                sendYoutubeBgTeaserCommandClient("setVolume", [targetVol]);
+                enforceDetailForegroundUnmuteClient();
               }
               applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
               if (detailBgTeaserSpeed !== 1) {
@@ -48046,6 +48580,7 @@
               syncDetailCinemaDockUiClient();
             } else if (pState === 2) {
               detailBgTeaserPaused = true;
+              stopDetailCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               setDetailTrailerLoadingBadgeClient(false);
               // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte STREAMFLIX-Ersatzoverlays überdecken nur YouTube-Controls!
@@ -48064,10 +48599,12 @@
               wakeDetailCinemaDockClient();
               syncDetailCinemaDockUiClient();
             } else if (pState === 0) {
+              stopDetailCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               if (isFg) {
                 detailBgTeaserEnded = true;
                 detailBgTeaserPaused = true;
+                if (detailBgTeaserDuration > 0) detailBgTeaserCurTime = detailBgTeaserDuration;
                 setDetailTrailerLoadingBadgeClient(false);
                 wakeDetailCinemaDockClient();
                 syncDetailCinemaDockUiClient();
@@ -48132,7 +48669,7 @@
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
           if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML) return;
           if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) return;
-          mountDetailTrailerCandidateAtIndexClient(0, false, 2);
+          mountDetailTrailerCandidateAtIndexClient(0, false, 0);
         }, 320);
       }
 
@@ -48202,17 +48739,16 @@
           return;
         }
         if (detailBgTeaserMuted) {
-          detailBgTeaserPendingUnmute = true;
-          detailBgTeaserMuted = false;
           const vol = getSavedTrailerVolumeClient() > 0 ? getSavedTrailerVolumeClient() : saveTrailerVolumeClient(85);
-          sendYoutubeBgTeaserCommandClient("unMute");
-          sendYoutubeBgTeaserCommandClient("setVolume", [vol]);
+          enforceDetailForegroundUnmuteClient();
           showDetailSeekRippleBadgeClient("🔊 " + vol + "%", "center");
           if (detailBgTeaserEnded || detailBgTeaserPaused) {
             resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
             return;
           }
         } else {
+          clearDetailUnmuteRetryTimersClient();
+          detailBgTeaserUserMuted = true;
           detailBgTeaserPendingUnmute = false;
           detailBgTeaserMuted = true;
           sendYoutubeBgTeaserCommandClient("mute");
@@ -48228,12 +48764,16 @@
         const vol = saveTrailerVolumeClient(inpEl.value);
         inpEl.style.setProperty("--vol-pct", vol + "%");
         if (vol <= 0) {
+          clearDetailUnmuteRetryTimersClient();
+          detailBgTeaserUserMuted = true;
           detailBgTeaserMuted = true;
           detailBgTeaserPendingUnmute = false;
           sendYoutubeBgTeaserCommandClient("mute");
         } else {
+          detailBgTeaserUserMuted = false;
           detailBgTeaserMuted = false;
           detailBgTeaserPendingUnmute = false;
+          window._detailUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [vol]);
         }
@@ -48246,11 +48786,15 @@
         const baseVol = detailBgTeaserMuted ? 0 : getSavedTrailerVolumeClient();
         const nextVol = saveTrailerVolumeClient(baseVol + Number(delta || 0));
         if (nextVol <= 0) {
+          clearDetailUnmuteRetryTimersClient();
+          detailBgTeaserUserMuted = true;
           detailBgTeaserMuted = true;
           sendYoutubeBgTeaserCommandClient("mute");
           showDetailSeekRippleBadgeClient("🔇 Stumm", "center");
         } else {
+          detailBgTeaserUserMuted = false;
           detailBgTeaserMuted = false;
+          window._detailUnmuteGraceUntil = Date.now() + 2000;
           sendYoutubeBgTeaserCommandClient("unMute");
           sendYoutubeBgTeaserCommandClient("setVolume", [nextVol]);
           showDetailSeekRippleBadgeClient("🔊 " + nextVol + "%", "center");
@@ -48389,19 +48933,20 @@
         detailBgTeaserCandidates = candidates;
         detailBgTeaserStoppedByUser = false;
         detailBgTeaserPausedByScroll = false;
-        detailBgTeaserPendingUnmute = true;
-        detailBgTeaserMuted = false;
         stageEl.classList.add("is-trailer-foreground-mode", "is-cinema-starting");
         setDetailTrailerLoadingBadgeClient(false);
+        enforceDetailForegroundUnmuteClient();
 
         const existingFrame = document.getElementById("detailBgVideoIframe");
         if (existingFrame && detailBgTeaserActiveKey) {
-          sendYoutubeBgTeaserCommandClient("unMute");
-          sendYoutubeBgTeaserCommandClient("setVolume", [getSavedTrailerVolumeClient()]);
           applyYoutubeSubtitlesStateClient(sendYoutubeBgTeaserCommandClient, detailBgTeaserCcMode, detailBgTeaserActiveKey);
           if (detailBgTeaserSpeed && detailBgTeaserSpeed !== 1) {
             sendYoutubeBgTeaserCommandClient("setPlaybackRate", [detailBgTeaserSpeed]);
           }
+          if (detailBgTeaserDuration <= 0 && existingFrame.contentWindow) {
+            try { existingFrame.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 2, channel: "widget" }), "*"); } catch (_dle2) {}
+          }
+          ensureDetailCinemaLiveClockClient();
           const layer = document.getElementById("detailBgVideoLayer");
           // 1. Trailer läuft bereits sichtbar im Hintergrund -> 0ms sofort mit Ton weiterlaufen lassen!
           if (detailBgTeaserIsPlayingConfirmed && !detailBgTeaserPaused && !detailBgTeaserEnded && !detailBgTeaserChromeShieldRequired) {
@@ -48436,6 +48981,7 @@
       function exitDetailForegroundTrailerModeClient(ev) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
         cancelDetailCinemaEndcardCountdownClient(true);
+        stopDetailCinemaLiveClockClient();
         const stageEl = document.getElementById("detailHeroStageEl");
         if (!stageEl) return;
         stageEl.classList.remove("is-cinema-starting", "is-cinema-controls-idle");
@@ -49249,10 +49795,16 @@
         }
         const d = state.activeDetails;
         if (!d || !d.trailers || !d.trailers.embeds) return;
-        const box = document.getElementById("trailerEmbedContainer");
-        if (!box) return;
         const embedUrl = d.trailers.embeds[activeKey] || d.trailers.embeds.youtube;
-        box.innerHTML = '<div class="embed-box"><iframe class="embed-frame" src="' + esc(embedUrl) + '" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1"></iframe></div>';
+        const box = document.getElementById("trailerEmbedContainer");
+        if (box) {
+          box.innerHTML = '<div class="embed-box"><iframe class="embed-frame" src="' + esc(embedUrl) + '" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1"></iframe></div>';
+          return;
+        }
+        const activeIframe = document.getElementById("detailBgTeaserIframe");
+        if (activeIframe && embedUrl) {
+          activeIframe.src = embedUrl;
+        }
       }
 
       // Client-Hilfsfunktion: Dateigröße in MB / GB formatieren (tabular-nums)
@@ -49769,6 +50321,9 @@
                   '<div id="seriesArchiveDownloadsMount">' +
                     (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '') +
                   '</div>' +
+                  ((vipAllowed || isAdminUser) && Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
+                    ? ('<div id="flixTabPanel_versions" style="margin-top:12px">' + buildDetailModalVersionsTabHtml(d, type, vipAllowed, isAdminUser, canReportMedia) + '</div>')
+                    : '') +
                 '</section>'
               ) : (hasMultiPartOrArchivesForMovie ? (
                 '<section id="detailStreamsSection" class="detail-section-block">' +
@@ -49776,6 +50331,9 @@
                     '<h3 class="detail-section-heading">Alle Teile & Versionen</h3>' +
                   '</div>' +
                   buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) +
+                  ((vipAllowed || isAdminUser) && Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 1
+                    ? ('<div id="flixTabPanel_versions" style="margin-top:12px">' + buildDetailModalVersionsTabHtml(d, type, vipAllowed, isAdminUser, canReportMedia) + '</div>')
+                    : '') +
                 '</section>'
               ) : '')) +
               castSectionHtml +
@@ -50810,7 +51368,7 @@
           if (state.mode === "admin") {
             loadAdminPanelView();
           } else {
-            loadView(false);
+            loadDiscover(state.type, state.genreId, state.mode, state.sort, false, false, state.page || 1);
           }
         } finally {
           setBusyState(false);
@@ -56423,6 +56981,14 @@
         } catch (e) {
           return "";
         }
+      }
+
+      function saveVerifiedChannelIdClient(channelId) {
+        try {
+          const clean = String(channelId || "").trim();
+          if (clean) localStorage.setItem("tma_verified_channel_id", clean);
+          else localStorage.removeItem("tma_verified_channel_id");
+        } catch (e) {}
       }
 
       function parseClientTelegramChannelOrLink(rawVal) {
@@ -62553,7 +63119,6 @@
           document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
           document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
           document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
-          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
           document.getElementById("lightboxRoot")?.innerHTML.trim()
@@ -62785,7 +63350,6 @@
           return getCinemaFocusableElementsClient(activeCinemaCtx);
         }
         const dialogEl = document.getElementById("customDialogRoot");
-        const pageJumpEl = document.getElementById("pageJumpModalRoot");
         const spotlightEl = document.getElementById("personSpotlightOverlayRoot");
         const modalEl = document.getElementById("modalRoot");
         const topUnifiedHeader = document.getElementById("topUnifiedBar");
@@ -62795,9 +63359,7 @@
         const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
-          : (pageJumpEl && pageJumpEl.innerHTML.trim())
-            ? pageJumpEl
-            : (lbEl && lbEl.innerHTML.trim())
+          : (lbEl && lbEl.innerHTML.trim())
               ? lbEl
               : isSpotlightActive
                 ? spotlightEl
@@ -62817,6 +63379,9 @@
           if (!state.sidebarOpen && sidebarEl && sidebarEl.contains(el)) return false;
           if (el.closest && el.closest(".hero-curtain-shell.is-collapsed")) return false;
           if (el.closest && el.closest(".detail-sticky-mini-header:not(.is-visible)")) return false;
+          // Player-Controls, Top-HUD, Pause- & Endcard-Overlays dürfen NUR fokussierbar sein, wenn der Trailer-Player im Vordergrund aktiv ist!
+          if (el.closest && el.closest(".detail-cinema-player-dock, .hero-cinema-player-dock, .cinema-top-hud, .cinema-pause-bottom-curtain, .cinema-end-overlay")) return false;
+          if (el.classList && (el.classList.contains("cinema-dock-btn") || el.classList.contains("cinema-dock-scrubber") || el.classList.contains("cinema-dock-vol-slider") || el.classList.contains("cinema-top-hud-close") || el.classList.contains("cinema-pause-center-btn") || el.classList.contains("cinema-overlay-btn"))) return false;
           if (el.classList && el.classList.contains("tv-elevator-btn")) {
             return !(document.body && document.body.classList.contains("in-hero-slider")) && !isModalActive;
           }
@@ -63115,6 +63680,12 @@
         if (typeof window.syncActiveCardMarquee === "function") {
           window.syncActiveCardMarquee(parentCard || el);
         }
+        if (el.closest && el.closest(".hero") && document.body && !state.heroHidden && !state.isSearchMode) {
+          document.body.classList.add("in-hero-slider");
+          if (typeof syncSmartPageIndicatorDomClient === "function") {
+            syncSmartPageIndicatorDomClient(false);
+          }
+        }
 
         if (scrollIntoView) {
           useSpatialScrollIntoView(el, navDir);
@@ -63153,21 +63724,34 @@
           if (document.body) document.body.classList.remove("kb-nav-active");
           const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
           if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
-          if (ev && mouseHoverNavEnabled && Date.now() - lastSelectJumpAt >= 450) {
-            const subTarget = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SUB_SELECTOR) : null;
-            if (subTarget) {
-              setSpatialFocus(subTarget, false);
-              return;
-            }
-            const target = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(FOCUSABLE_SELECTOR) : null;
-            if (target && !target.disabled && !target.classList.contains("is-current-mode")) {
-              setSpatialFocus(target, false);
-            }
+          let realUnder = null;
+          if (ev && typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+            try {
+              realUnder = document.elementFromPoint(ev.clientX, ev.clientY);
+            } catch (_ep) {}
+          }
+          if (!realUnder && ev && ev.target) realUnder = ev.target;
+          const subTarget = realUnder && typeof realUnder.closest === "function" ? realUnder.closest(CARD_SUB_SELECTOR) : null;
+          const focusTarget = realUnder && typeof realUnder.closest === "function" ? realUnder.closest(FOCUSABLE_SELECTOR) : null;
+          if (mouseHoverNavEnabled && subTarget) {
+            setSpatialFocus(subTarget, false);
+            return;
+          }
+          if (mouseHoverNavEnabled && focusTarget && !focusTarget.disabled && !focusTarget.classList.contains("is-current-mode")) {
+            setSpatialFocus(focusTarget, false);
+            return;
+          }
+          // Verhindert klebenbleibende Tastatur-Markierung, wenn die Maus beim Zurückwechseln ein anderes Element oder freien Raum berührt
+          if (currentSpatialEl && (!focusTarget || focusTarget !== currentSpatialEl)) {
+            currentSpatialEl.classList.remove("spatial-focus");
+            clearCardSubnavState(null);
+            currentSpatialEl = null;
           }
         }
       }
 
-      // Echte physische Mausbewegung (>= 6px) oder Klick reaktiviert die Maussteuerung
+      // Echte physische Mausbewegung (>= 4px) oder Klick reaktiviert die Maussteuerung sofort
+      let pendingKbClickRescueEl = null;
       document.addEventListener("mousemove", (ev) => {
         if (typeof ev.clientX !== "number" || typeof ev.clientY !== "number") return;
         if (lastMouseX === null || lastMouseY === null) {
@@ -63176,9 +63760,10 @@
           return;
         }
         const dist = Math.hypot(ev.clientX - lastMouseX, ev.clientY - lastMouseY);
-        if (dist >= 6) {
+        if (dist >= 4) {
           lastMouseX = ev.clientX;
           lastMouseY = ev.clientY;
+          pendingKbClickRescueEl = null;
           disengageKeyboardNavMode(ev);
         }
       }, { passive: true });
@@ -63188,7 +63773,40 @@
           lastMouseX = ev.clientX;
           lastMouseY = ev.clientY;
         }
+        const wasKbActive = isKeyboardNavActive;
         disengageKeyboardNavMode(ev);
+        pendingKbClickRescueEl = null;
+        if (wasKbActive && ev.button === 0 && (ev.target === document.documentElement || ev.target === document.body) && typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+          try {
+            const realEl = document.elementFromPoint(ev.clientX, ev.clientY);
+            if (realEl && realEl !== document.documentElement && realEl !== document.body) {
+              pendingKbClickRescueEl = realEl;
+            }
+          } catch (_ce) {}
+        }
+      }, true);
+
+      document.addEventListener("mouseup", (ev) => {
+        if (!pendingKbClickRescueEl) return;
+        const rescueTarget = pendingKbClickRescueEl;
+        pendingKbClickRescueEl = null;
+        if (ev.button !== 0) return;
+        try {
+          const curUnder = (typeof ev.clientX === "number" && typeof ev.clientY === "number")
+            ? document.elementFromPoint(ev.clientX, ev.clientY)
+            : null;
+          const clickable = (curUnder && curUnder.closest && curUnder.closest("button, a, input, select, [role='button'], .card, .sidebar-menu-row, .tv-elevator-btn, .f-pill, .hero-dot"))
+            || (rescueTarget.closest && rescueTarget.closest("button, a, input, select, [role='button'], .card, .sidebar-menu-row, .tv-elevator-btn, .f-pill, .hero-dot"))
+            || rescueTarget;
+          if (clickable && typeof clickable.click === "function") {
+            clickable.click();
+          }
+        } catch (_re) {}
+      }, true);
+
+      document.addEventListener("wheel", () => {
+        pendingKbClickRescueEl = null;
+        disengageKeyboardNavMode();
       }, { passive: true });
 
       // Maus-Hover verschiebt die aktive Auswahl direkt auf das gehoverte Objekt (sofern in den Einstellungen aktiviert und Tastatur-Modus NICHT aktiv ist),
@@ -63347,19 +63965,21 @@
         }
 
         // Smarte 2-Spalten-Navigation im Ambilight-Glas-Menü (#filterSidebarDrawer):
-        // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen inkl. der untersten 2 Elemente!
-        //   Klick nach Rechts (ArrowRight) öffnet sofort die Optionen rechts im Sub-Panel (#sidebarRightSubPanel).
-        //   Klick nach Links (ArrowLeft) schließt die Menü-Übersicht und kehrt direkt zur Karte zurück!
-        // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Klick nach Links (ArrowLeft) vom linken Rand führt sofort zurück in die Menü-Übersicht!
+        // - Links in der Menü-Übersicht (#sidebarDrawerBody): Hoch/Runter läuft sauber einzeilig durch alle Menü-Zeilen; Enter öffnet die ausgewählte Kategorie.
+        //   Pfeil Rechts (entgegengesetzte Richtung zum Öffnen nach Links) schließt das linke Menü sofort wieder!
+        // - Rechts im Optionen-Panel (#sidebarRightSubPanel): Pfeil Links vom linken Rand führt zurück in die Menü-Übersicht; Pfeil Rechts vom rechten Rand schließt das Menü.
         if (state.sidebarOpen) {
           const inLeftMenuCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarDrawerBody"));
           const inRightSubCol = Boolean(currentSpatialEl.closest && currentSpatialEl.closest("#sidebarRightSubPanel"));
           if (inLeftMenuCol) {
-            if (dir === "left") {
+            if (dir === "right") {
               if (typeof closeFilterSidebar === "function") {
                 closeFilterSidebar();
-                return;
               }
+              return;
+            }
+            if (dir === "left") {
+              return;
             }
             const leftRows = Array.from(document.querySelectorAll("#sidebarDrawerBody .sidebar-menu-row")).filter(el => list.includes(el));
             const rowIdx = leftRows.indexOf(currentSpatialEl);
@@ -63378,17 +63998,6 @@
                   if (sbHeaderBtn && list.includes(sbHeaderBtn)) setSpatialFocus(sbHeaderBtn, true, "up");
                 }
                 return;
-              }
-              if (dir === "right") {
-                const catAttr = currentSpatialEl.getAttribute("data-sb-cat");
-                if (catAttr) {
-                  switchSidebarCategoryTab(catAttr, true);
-                  return;
-                }
-                if (typeof closeFilterSidebar === "function") {
-                  closeFilterSidebar();
-                  return;
-                }
               }
             }
           } else if (inRightSubCol && (dir === "left" || dir === "right")) {
@@ -63489,10 +64098,22 @@
             }, 65);
           };
 
+          const focusHeroDescOrHeaderUp = () => {
+            if (descHeroEl && typeof syncExpandableDescriptionsOverflowClient === "function") {
+              syncExpandableDescriptionsOverflowClient(descHeroEl);
+            }
+            const descFocusable = Boolean(descHeroEl && (descHeroEl.classList.contains("is-long-desc") || descHeroEl.classList.contains("is-expanded")));
+            if (descHeroEl && (descFocusable || list.includes(descHeroEl))) {
+              setSpatialFocus(descHeroEl, true, "up");
+              return true;
+            }
+            return focusSearchOrHeaderUp();
+          };
+
           if (currentSpatialEl.id === "heroDescEl") {
             if (dir === "down") {
-              if (trBtn) { setSpatialFocus(trBtn, true); return; }
-              if (detBtn) { setSpatialFocus(detBtn, true); return; }
+              if (trBtn) { setSpatialFocus(trBtn, true, "down"); return; }
+              if (detBtn) { setSpatialFocus(detBtn, true, "down"); return; }
             }
             if (dir === "up") {
               if (focusSearchOrHeaderUp()) return;
@@ -63500,7 +64121,16 @@
             if (dir === "left" || dir === "right") {
               setHeroSlideIndex(state.heroIndex + (dir === "right" ? 1 : -1));
               const nextDesc = document.getElementById("heroDescEl");
-              if (nextDesc) setSpatialFocus(nextDesc, true);
+              if (nextDesc && typeof syncExpandableDescriptionsOverflowClient === "function") {
+                syncExpandableDescriptionsOverflowClient(nextDesc);
+              }
+              const nextDescFocusable = Boolean(nextDesc && (nextDesc.classList.contains("is-long-desc") || nextDesc.classList.contains("is-expanded")));
+              if (nextDescFocusable) {
+                setSpatialFocus(nextDesc, true, dir);
+              } else {
+                const nextTr = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
+                if (nextTr) setSpatialFocus(nextTr, true, dir);
+              }
               return;
             }
           } else if (currentSpatialEl.id === "heroBtnTrailer") {
@@ -63519,7 +64149,7 @@
               return;
             }
             if (dir === "up") {
-              if (focusSearchOrHeaderUp()) return;
+              if (focusHeroDescOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnDetails") {
             if (dir === "left") {
@@ -63537,7 +64167,7 @@
               return;
             }
             if (dir === "up") {
-              if (focusSearchOrHeaderUp()) return;
+              if (focusHeroDescOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.id === "heroBtnWishlist") {
             if (dir === "left") {
@@ -63555,7 +64185,7 @@
               return;
             }
             if (dir === "up") {
-              if (focusSearchOrHeaderUp()) return;
+              if (focusHeroDescOrHeaderUp()) return;
             }
           } else if (currentSpatialEl.classList.contains("hero-dot") || currentSpatialEl.classList.contains("hero-circle-arrow")) {
             // Punktleiste (< • • • • ━━ • >): Links/Rechts blättert, Hoch zurück zu Trailer, Runter direkt ins Cover-Grid
@@ -63671,9 +64301,15 @@
               modalBackdropEl.scrollTo({ top: 0, behavior: "smooth" });
             } else if ((window.scrollY || window.pageYOffset || 0) > 15) {
               window.scrollTo({ top: 0, behavior: "smooth" });
-            } else if (!suppressScroll && !modalBackdropEl && typeof tvElevatorJumpClient === "function") {
-              // Vertikales Rand-Wrap-Around (Oben -> Unten zur Seitenwahl / Katalog-Ende)
-              tvElevatorJumpClient("bottom", true);
+            } else if (!modalBackdropEl && typeof expandHeroSliderAndFocusClient === "function") {
+              const isHeroCollapsedNow = Boolean(
+                (typeof heroCurtainScrolledToCatalog !== "undefined" && heroCurtainScrolledToCatalog) ||
+                (document.body && document.body.classList.contains("hero-scrolled-past")) ||
+                state.heroHidden
+              );
+              if (isHeroCollapsedNow) {
+                expandHeroSliderAndFocusClient("hero");
+              }
             }
             return;
           }
@@ -63732,20 +64368,13 @@
               return;
             }
             if (dir === "left") {
-              const rmTabAttr = currentSpatialEl.getAttribute && currentSpatialEl.getAttribute("data-rm-tab");
-              if (rmTabAttr && typeof toggleRightMenuSubPanelClient === "function") {
-                toggleRightMenuSubPanelClient(rmTabAttr, true);
-                return;
+              // Entgegengesetzte Richtung zum Öffnen nach Rechts -> schließt das rechte Seitenmenü sofort wieder (Enter öffnet den ausgewählten Eintrag)
+              if (typeof closeRightMenuOverlayClient === "function") {
+                closeRightMenuOverlayClient(null, true);
+              } else {
+                if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+                if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
               }
-              if (elevContainer && elevContainer.classList.contains("has-subpanel")) {
-                const subFirst = document.querySelector("#rightMenuSubPanel .rm-entry-card, #rightMenuSubPanel .rm-ctrl-select, #rightMenuSubPanel .rm-az-chip");
-                if (subFirst) {
-                  setSpatialFocus(subFirst, false, "left");
-                  return;
-                }
-              }
-              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
-              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
               if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
                 setSpatialFocus(lastElevatorReturnEl, true, "left");
                 return;
@@ -63763,12 +64392,6 @@
               return;
             }
             if (dir === "right") {
-              if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
-              if (elevContainer) elevContainer.classList.remove("is-visible", "is-hover-expanded", "has-subpanel");
-              if (lastElevatorReturnEl && document.body.contains(lastElevatorReturnEl) && list.includes(lastElevatorReturnEl)) {
-                setSpatialFocus(lastElevatorReturnEl, true, "left");
-                return;
-              }
               return;
             }
           } else if (dir === "right" || dir === "left") {
@@ -63819,12 +64442,14 @@
             const nextShIdx = dir === "right" ? shIdx + 1 : shIdx - 1;
             if (nextShIdx >= 0 && nextShIdx < sbHeaderItems.length) {
               setSpatialFocus(sbHeaderItems[nextShIdx], !suppressScroll, dir);
+            } else if (dir === "right" && typeof closeFilterSidebar === "function") {
+              closeFilterSidebar();
             }
             return;
           }
         }
 
-        // Von der obersten Zeile der Filterleiste (.floating-filter-bar) führt Pfeil hoch (⬆) direkt in den Hero-Slider / Spotlight-Strip / Suchleiste
+        // Von der obersten Zeile der Filterleiste (.floating-filter-bar) führt Pfeil hoch (⬆) direkt in den Hero-Slider (fährt ihn ggf. wieder aus) / Suchleiste
         const curFF = currentSpatialEl.closest ? currentSpatialEl.closest(".floating-filter-bar") : null;
         if (curFF && dir === "up") {
           const curBoxFF = getSpatialLayoutBox(currentSpatialEl);
@@ -63834,6 +64459,9 @@
             getSpatialLayoutBox(cand).bottom <= curBoxFF.top + 6
           );
           if (!hasHigherInFF) {
+            if (typeof expandHeroSliderAndFocusClient === "function" && expandHeroSliderAndFocusClient("hero")) {
+              return;
+            }
             const actHeroDot = document.querySelector('.hero-dot[data-hero-card="' + state.heroIndex + '"]') || document.querySelector(".hero-dot.active");
             const heroTr = document.getElementById("heroBtnTrailer");
             const restoreBtn = document.getElementById("heroRestoreBtn");
@@ -63877,7 +64505,6 @@
         // Rechts-Rand-Ausbruch & Links-Rand-Ausbruch + Intelligente Zonen-Übergänge (Filterleiste ↔ Hero-Slider ↔ Cover-Grid)
         const hasOverlayBlockingElevator = Boolean(
           document.getElementById("modalRoot")?.innerHTML.trim() ||
-          document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
           document.getElementById("lightboxRoot")?.innerHTML.trim() ||
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           state.sidebarOpen
@@ -64109,8 +64736,8 @@
           }
           setSpatialFocus(bestEl, !suppressScroll, dir);
         } else {
-          // Vertikales Rand-Wrap-Around am unteren Ende (Unten -> Oben zur Suche / Kopfleiste)
-          if (!suppressScroll && dir === "down" && !hasOverlayBlockingElevator && typeof tvElevatorJumpClient === "function") {
+          // Vertikales Rand-Wrap-Around am unteren Ende nur bei bewusstem Einzeltipp (nicht beim Gedrückthalten!)
+          if (!suppressScroll && !isRepeatEvent && verticalTurboStreak <= 1 && dir === "down" && !hasOverlayBlockingElevator && typeof tvElevatorJumpClient === "function") {
             tvElevatorJumpClient("top", true);
             return;
           }
@@ -64282,9 +64909,21 @@
       let verticalTurboStreak = 0;
       let verticalTurboLastStepAt = 0;
       let verticalTurboExpressDone = false;
+      let verticalHoldTimer = null;
+      let verticalHoldShowTimer = null;
+      const VERTICAL_HOLD_SHOW_DELAY_MS = 160;
+      const VERTICAL_HOLD_DURATION_MS = 460;
       let controllerL2R2Mode = "page"; // "page" (Standard: 5-Zeilen / Seiten-Blättern) oder "zoom" (UI-Zoom)
 
       function resetVerticalTurboStreakClient() {
+        if (verticalHoldTimer) {
+          clearTimeout(verticalHoldTimer);
+          verticalHoldTimer = null;
+        }
+        if (verticalHoldShowTimer) {
+          clearTimeout(verticalHoldShowTimer);
+          verticalHoldShowTimer = null;
+        }
         verticalTurboDir = "";
         verticalTurboStreak = 0;
         verticalTurboLastStepAt = 0;
@@ -64473,75 +65112,65 @@
       }
 
       function handleVerticalDirectionStepWithTurboClient(dir, isRepeatEvent = false) {
-        const now = Date.now();
-        const isSameDir = verticalTurboDir === dir && (now - verticalTurboLastStepAt < 420);
-        if (!isSameDir) {
-          verticalTurboDir = dir;
-          verticalTurboStreak = 1;
-          verticalTurboExpressDone = false;
-        } else {
-          verticalTurboStreak++;
-        }
-        verticalTurboLastStepAt = now;
-
         const inTvElevator = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#tvQuickJumpElevator"));
         const inAutocomplete = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchAutocompleteBox"));
-        if (inTvElevator || inAutocomplete || state.sidebarOpen) {
-          moveSpatialFocus(dir, false);
+        const inGenreOverlay = Boolean(currentSpatialEl && currentSpatialEl.closest && currentSpatialEl.closest("#searchGenreDropdownOverlay"));
+        const inExpandedDesc = Boolean(currentSpatialEl && currentSpatialEl.classList && currentSpatialEl.classList.contains("expandable-desc-box") && currentSpatialEl.classList.contains("is-expanded"));
+        if (inTvElevator || inAutocomplete || inGenreOverlay || inExpandedDesc || state.sidebarOpen) {
+          moveSpatialFocus(dir, false, Boolean(isRepeatEvent));
           return;
         }
 
-        // Komfort-Shortcut: Runter gedrückt halten auf dem Hero-Slider (oder Header) springt unmittelbar ins Cover-Grid!
-        const isOnHeroOrHeader = Boolean(
-          currentSpatialEl &&
-          currentSpatialEl.closest &&
-          (currentSpatialEl.closest(".hero") || currentSpatialEl.closest("header") || currentSpatialEl.closest(".search-bar-outer"))
-        );
-        if (dir === "down" && isOnHeroOrHeader && (isRepeatEvent || verticalTurboStreak >= 2) && !verticalTurboExpressDone) {
-          verticalTurboExpressDone = true;
-          cancelTopBarUpHold();
-          if (typeof scrollToCatalogBelowHeroClient === "function" && currentSpatialEl.closest(".hero")) {
-            scrollToCatalogBelowHeroClient();
+        // Auto-Repeat beim Gedrückthalten löst KEINE weiteren Zeilensprünge aus (verhindert jedes Herumspringen!):
+        // Nur der ruhige Halte-Timer springt gezielt nach oben zur Suche bzw. nach unten zur Seitenwahl.
+        if (isRepeatEvent) {
+          if (verticalTurboDir === dir && (verticalHoldTimer || verticalTurboExpressDone)) {
+            verticalTurboLastStepAt = Date.now();
+            return;
           }
-          setTimeout(() => {
-            const firstGridCard = document.querySelector("#resultsGridContainer .card, #appRoot .card");
-            if (firstGridCard) {
-              jumpSpatialFocus(firstGridCard, true, "down");
-              if (typeof showHudToast === "function") showHudToast("🎬 Direkt im Cover-Grid");
-            }
-          }, 55);
           return;
         }
 
-        // Stufe 1 (Schritte 1–2): Präziser 1-Zeilen-Schritt
-        if (verticalTurboStreak <= 2) {
-          cancelTopBarUpHold();
-          moveSpatialFocus(dir, false);
-          return;
-        }
+        // Normaler Druck: Immer exakt 1 Zeile wechseln (nie mehr als eine!)
+        resetVerticalTurboStreakClient();
+        verticalTurboDir = dir;
+        verticalTurboStreak = 1;
+        verticalTurboLastStepAt = Date.now();
+        verticalTurboExpressDone = false;
+        moveSpatialFocus(dir, false, false);
 
-        // Stufe 2 (Schritte 3–7): Beschleunigter 3-Zeilen-Turbo-Sprung
-        if (verticalTurboStreak <= 7) {
+        const isModalOpenNow = Boolean(document.getElementById("modalRoot")?.innerHTML.trim());
+        const isPageJumpOpenNow = Boolean(
+          document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")
+        );
+        if (isPageJumpOpenNow) return;
+
+        verticalHoldShowTimer = setTimeout(() => {
+          verticalHoldShowTimer = null;
+          if (verticalTurboDir !== dir || verticalTurboExpressDone) return;
           topBarUpHoldActive = true;
           const ind = document.getElementById("modalHoldNavIndicator");
           const txt = document.getElementById("modalHoldNavText");
           const bar = document.getElementById("modalHoldNavBar");
           if (ind && txt && bar) {
             ind.classList.remove("left", "right");
-            txt.textContent = dir === "up"
-              ? "⚡ Turbo-Sprung ▲ (3× Zeilen) • Weiter halten für Anfang/Suche…"
-              : "⚡ Turbo-Sprung ▼ (3× Zeilen) • Weiter halten für Seitenwahl/Ende…";
+            if (isModalOpenNow) {
+              txt.textContent = dir === "up" ? "⬆️ Halten: Anfang der Detailansicht" : "⏬ Halten: Ende der Detailansicht";
+            } else {
+              txt.textContent = dir === "up" ? "🔍 Halten: Direkt zur Suche" : "📄 Halten: Direkt zur Seitenwahl";
+            }
+            bar.style.transition = "none";
+            bar.style.width = "0%";
             ind.style.display = "flex";
-            const pct = Math.min(100, Math.round(((verticalTurboStreak - 2) / 5) * 100));
-            bar.style.transition = "width 90ms linear";
-            bar.style.width = pct + "%";
+            void bar.offsetWidth;
+            bar.style.transition = "width " + Math.max(120, VERTICAL_HOLD_DURATION_MS - VERTICAL_HOLD_SHOW_DELAY_MS) + "ms linear";
+            bar.style.width = "100%";
           }
-          moveSpatialFocusMultiRowClient(dir, 3);
-          return;
-        }
+        }, VERTICAL_HOLD_SHOW_DELAY_MS);
 
-        // Stufe 3 (Ab Schritt 8): Direkt-Sprung ganz an den Anfang (Oben) oder ans Ende (Unten)
-        if (!verticalTurboExpressDone) {
+        verticalHoldTimer = setTimeout(() => {
+          verticalHoldTimer = null;
+          if (verticalTurboDir !== dir) return;
           verticalTurboExpressDone = true;
           cancelTopBarUpHold();
           const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
@@ -64558,10 +65187,34 @@
               if (lastModalEl) jumpSpatialFocus(lastModalEl, true, "down");
               if (typeof showHudToast === "function") showHudToast("⏬ Ende der Detailansicht");
             }
-          } else {
-            tvElevatorJumpClient(dir === "up" ? "top" : "bottom", false);
+            return;
           }
-        }
+
+          if (dir === "up") {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            if (state.currentView === "wishlist") {
+              const wlInp = document.getElementById("wishlistSearchInp");
+              if (wlInp) {
+                jumpSpatialFocus(wlInp, false, "up");
+                try { wlInp.focus({ preventScroll: true }); } catch (_we) {}
+                if (typeof showHudToast === "function") showHudToast("🔍 Merklisten-Suche aktiv");
+                return;
+              }
+            }
+            if (typeof focusSearchWithoutScrollClient === "function") {
+              focusSearchWithoutScrollClient();
+            } else {
+              tvElevatorJumpClient("top", false);
+            }
+          } else {
+            const totPages = Math.max(1, Number(state.totalPages) || 1);
+            if (totPages > 1 && typeof openPageJumpModalClient === "function") {
+              openPageJumpModalClient();
+            } else {
+              tvElevatorJumpClient("bottom", false);
+            }
+          }
+        }, VERTICAL_HOLD_DURATION_MS);
       }
 
       function toggleControllerTriggerModeClient() {
@@ -64675,7 +65328,7 @@
             ev.preventDefault();
             return;
           }
-          if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) {
+          if (document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")) {
             if (typeof closePageJumpModalClient === "function") closePageJumpModalClient();
             ev.preventDefault();
             return;
@@ -64990,6 +65643,10 @@
         }
         if (ev.key === "ArrowDown") {
           cancelModalArrowHold();
+          if (ev.repeat && verticalTurboDir === "down" && (verticalHoldTimer || verticalTurboExpressDone)) {
+            ev.preventDefault();
+            return;
+          }
           const acOpen = Boolean(document.getElementById("searchAutocompleteBox")?.classList.contains("open"));
           if (isSearchInpFocused && acOpen && typeof onSearchInputKeyDownClient === "function") {
             onSearchInputKeyDownClient(ev, activeEl);
@@ -65002,6 +65659,10 @@
         }
         if (ev.key === "ArrowUp") {
           cancelModalArrowHold();
+          if (ev.repeat && verticalTurboDir === "up" && (verticalHoldTimer || verticalTurboExpressDone)) {
+            ev.preventDefault();
+            return;
+          }
           const acOpen = Boolean(document.getElementById("searchAutocompleteBox")?.classList.contains("open"));
           if (isSearchInpFocused && acOpen && typeof onSearchInputKeyDownClient === "function") {
             onSearchInputKeyDownClient(ev, activeEl);
@@ -65076,6 +65737,7 @@
       let lastGamepadZoomAt = 0;
       let lastGamepadActivityAt = 0;
       let activeControllerBrand = "";
+      let gamepadVerticalHeld = false;
 
       function isPlayStationControllerClient(gpId) {
         const s = String(gpId || "").toLowerCase();
@@ -65285,11 +65947,16 @@
 
             const upHeld = Boolean(gp.buttons?.[12]?.pressed || axY < -0.55);
             const downHeld = Boolean(gp.buttons?.[13]?.pressed || axY > 0.55);
-            if (!upHeld && !downHeld && verticalTurboStreak > 0 && (now - verticalTurboLastStepAt > 210)) {
-              resetVerticalTurboStreakClient();
+            if (!upHeld && !downHeld) {
+              if (gamepadVerticalHeld) {
+                gamepadVerticalHeld = false;
+                if (verticalTurboDir) resetVerticalTurboStreakClient();
+              }
+            } else {
+              gamepadVerticalHeld = true;
             }
 
-            const dynamicGamepadInterval = (verticalTurboStreak >= 3) ? 125 : 180;
+            const dynamicGamepadInterval = 180;
             if (now - lastGamepadStepAt > dynamicGamepadInterval) {
               const up = upHeld;
               const down = downHeld;
@@ -65309,8 +65976,8 @@
                 syncControllerHudBarClient(gp);
               }
 
-              if (up) { handleVerticalDirectionStepWithTurboClient("up", true); lastGamepadStepAt = now; }
-              else if (down) { handleVerticalDirectionStepWithTurboClient("down", true); lastGamepadStepAt = now; }
+              if (up) { handleVerticalDirectionStepWithTurboClient("up", verticalTurboDir === "up"); lastGamepadStepAt = now; }
+              else if (down) { handleVerticalDirectionStepWithTurboClient("down", verticalTurboDir === "down"); lastGamepadStepAt = now; }
               else if (left) { resetVerticalTurboStreakClient(); moveSpatialFocus("left", false, true); lastGamepadStepAt = now; }
               else if (right) { resetVerticalTurboStreakClient(); moveSpatialFocus("right", false, true); lastGamepadStepAt = now; }
               else if (btnA && currentSpatialEl) {
@@ -66846,7 +67513,7 @@
           // Falls ein Diagnose-Log-Eintrag (msgId) übergeben wurde, Status direkt in D1 aktualisieren
           const logMsgId = Number(body.msgId || rawEntry.source_message_id || rawEntry.msg_id || 0);
           if (logMsgId > 0 && typeof updateImportDiagnosticLogStatusInD1 === "function") {
-            await updateImportDiagnosticLogStatusInD1(env, logMsgId, "OK", resolved.tmdbId, resolved.cleanTitle);
+            await updateImportDiagnosticLogStatusInD1(env, logMsgId, "OK", resolved.matchedTitle || resolved.cleanTitle, resolved.tmdbId, resolved.typeCode, resolved.season ?? null, resolved.episode ?? null);
           }
 
           // 3. In Ziel-Playlist eintragen
@@ -66897,12 +67564,12 @@
             if (typeCode === "s") {
               officialDetails = await fetchSeriesDetails(env, newTmdbId);
               if (officialDetails && !officialDetails.error) {
-                await saveSeriesToD1(env, officialDetails, "TMDb", { manualOverride: true });
+                await saveSeriesToD1(env, { ...officialDetails, manualOverride: true });
               }
             } else {
               officialDetails = await fetchMovieDetails(env, newTmdbId);
               if (officialDetails && !officialDetails.error) {
-                await saveMovieToD1(env, officialDetails, null, "TMDb", { manualOverride: true });
+                await saveMovieToD1(env, { ...officialDetails, manualOverride: true });
               }
             }
           } catch (e) {}
@@ -66995,7 +67662,7 @@
 
             if (resolved && resolved.ok && resolved.tmdbId && resolved.confidence >= 62) {
               if (msgId > 0 && typeof updateImportDiagnosticLogStatusInD1 === "function") {
-                await updateImportDiagnosticLogStatusInD1(env, msgId, "OK", resolved.tmdbId, resolved.matchedTitle || resolved.cleanTitle);
+                await updateImportDiagnosticLogStatusInD1(env, msgId, "OK", resolved.matchedTitle || resolved.cleanTitle, resolved.tmdbId, resolved.typeCode, resolved.season ?? null, resolved.episode ?? null);
               }
               healedItems.push({
                 msgId,
@@ -67366,20 +68033,24 @@
 
           // 6. Neuen Titel zur Bot-VIP-Playlist hinzufügen
           try {
-            const botPlaylistChatId = getBotVipPlaylistChatId(env);
-            const foldersData = await getSavedFoldersData(env, botPlaylistChatId);
-            const targetFolder = (foldersData?.folders || []).find(fl => fl.type === (newTypeCode === "s" ? "series" : "movie")) || foldersData?.folders?.[0];
-            if (targetFolder) {
+            const botPlaylistChatId = "bot_vip";
+            const folders = await getFolders(env, botPlaylistChatId);
+            const targetType = newTypeCode === "s" ? "series" : "movie";
+            const targetFolder = (Array.isArray(folders) ? folders : []).find(fl => fl.type === targetType)
+              || (Array.isArray(folders) ? folders[0] : null)
+              || await createOrGetJsonPlaylistFolder(env, botPlaylistChatId, newTypeCode === "s" ? "VIP Serien" : "VIP Filme", "Admin Remap", "both");
+            if (targetFolder && targetFolder.id) {
               const rawDate = String(newDetails.releaseDate || newDetails.release_date || newDetails.first_air_date || "");
               const yr = rawDate.split("-")[0] || "k.A.";
-              await addMediaToFolder(env, botPlaylistChatId, targetFolder.id, {
-                tmdbId: newDetails.id,
+              await batchSaveIngestedItemsToPlaylist(env, botPlaylistChatId, targetFolder.id, [{
+                ok: true,
                 typeCode: newTypeCode,
-                title: newDetails.title,
+                tmdbId: newDetails.id,
+                cleanTitle: newDetails.title || newDetails.name || "Unbekannt",
                 year: yr,
                 poster: resolvePosterUrl(newDetails.poster_path, "w342", newDetails.external_poster_url || ""),
                 voteAverage: Number(newDetails.vote_average || 0)
-              });
+              }], { playlistMode: "both" });
             }
           } catch (e) {}
 
@@ -67724,20 +68395,24 @@
 
             // Ziel-Titel in der Bot-VIP-Playlist registrieren
             try {
-              const botPlaylistChatId = getBotVipPlaylistChatId(env);
-              const foldersData = await getSavedFoldersData(env, botPlaylistChatId);
-              const targetFolder = (foldersData?.folders || []).find(fl => fl.type === (newTypeCode === "s" ? "series" : "movie")) || foldersData?.folders?.[0];
-              if (targetFolder) {
+              const botPlaylistChatId = "bot_vip";
+              const folders = await getFolders(env, botPlaylistChatId);
+              const targetType = newTypeCode === "s" ? "series" : "movie";
+              const targetFolder = (Array.isArray(folders) ? folders : []).find(fl => fl.type === targetType)
+                || (Array.isArray(folders) ? folders[0] : null)
+                || await createOrGetJsonPlaylistFolder(env, botPlaylistChatId, newTypeCode === "s" ? "VIP Serien" : "VIP Filme", "Admin Remap", "both");
+              if (targetFolder && targetFolder.id) {
                 const rawDate = String(newDetails.releaseDate || newDetails.release_date || newDetails.first_air_date || "");
                 const yr = rawDate.split("-")[0] || "k.A.";
-                await addMediaToFolder(env, botPlaylistChatId, targetFolder.id, {
-                  tmdbId: newDetails.id,
+                await batchSaveIngestedItemsToPlaylist(env, botPlaylistChatId, targetFolder.id, [{
+                  ok: true,
                   typeCode: newTypeCode,
-                  title: newDetails.title,
+                  tmdbId: newDetails.id,
+                  cleanTitle: newDetails.title || newDetails.name || "Unbekannt",
                   year: yr,
                   poster: resolvePosterUrl(newDetails.poster_path, "w342", newDetails.external_poster_url || ""),
                   voteAverage: Number(newDetails.vote_average || 0)
-                });
+                }], { playlistMode: "both" });
               }
             } catch (e) {}
 
@@ -68232,10 +68907,10 @@
             new Promise(resolve => setTimeout(() => resolve(details.telegraphUrl || ""), 2200))
           ]),
           auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
-          (isMovie && hasVipStreamAccess) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
+          (isMovie && (hasVipStreamAccess || Boolean(auth.user?.isAdmin))) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
           tgApi(env).getBotUsername(env).catch(() => ""),
-          (!isMovie && hasVipStreamAccess) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
-          (hasVipStreamAccess || auth.isAdmin) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
+          (!isMovie && (hasVipStreamAccess || Boolean(auth.user?.isAdmin))) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
+          (hasVipStreamAccess || Boolean(auth.user?.isAdmin)) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
           resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || ""),
           typeof resolveTrailerCandidatesWithFallbacks === "function"
             ? resolveTrailerCandidatesWithFallbacks(env, typeCode, details, rawCandidateKeys, details.trailerCandidatesMeta).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
@@ -68290,11 +68965,24 @@
         // Prüfen, ob der Film/die Serie zu einem bekannten Filmuniversum gehört
         const matchedUniverse = detectUniverseForItem(typeCode, details);
         const providerButtons = buildStreamingProviderButtons(details);
-        const shareData = buildUnifiedTelegramSharePost(typeCode, details, botUsername, matchedUniverse);
+        const shareData = buildUnifiedTelegramSharePost({
+          typeCode,
+          itemId: details.id,
+          title,
+          releaseYear: year,
+          voteAverage: vote,
+          genres: details.genres || "",
+          fsk: details.fsk || "",
+          overview: details.overview || "",
+          posterUrl: resolvePosterUrl(details.poster_path, "w500", details.external_poster_url || ""),
+          telegraphUrl: telegraphUrl || "",
+          botUsername: botUsername || ""
+        });
 
         // Für VIPs (Tab "Versionen") & Admins (inkl. Original-Dateiname & Telegram-Link) verknüpfte Episoden-/Film-Dateien bereitstellen
+        const isAdminUser = Boolean(auth.user?.isAdmin);
         let allStreamFiles = movieFiles;
-        if (!isMovie && (hasVipStreamAccess || auth.isAdmin)) {
+        if (!isMovie && (hasVipStreamAccess || isAdminUser)) {
           const db = await ensureD1Schema(env);
           if (db) {
             try {
@@ -68323,8 +69011,8 @@
           (details.activeGroupName ? normalizeCompactVersionTags(details.activeGroupName) : "") ||
           "";
 
-        const sanitizedStreamFiles = (hasVipStreamAccess || auth.isAdmin)
-          ? (allStreamFiles || []).map(f => auth.isAdmin ? f : {
+        const sanitizedStreamFiles = (hasVipStreamAccess || isAdminUser)
+          ? (allStreamFiles || []).map(f => isAdminUser ? f : {
               id: f.id,
               series_id: f.series_id,
               movie_id: f.movie_id,
@@ -68449,7 +69137,7 @@
 
       // Fehlermeldungs-Endpunkt ("Fehler melden") — strikt für freigeschaltete VIP-Mitglieder und Admins
       if (path === "/api/tma/reports" && request.method === "POST") {
-        if (!auth.isAuthenticated || (!hasVipStreamAccess && !auth.isAdmin)) {
+        if (!auth.isAuthenticated || (!hasVipStreamAccess && !auth.user?.isAdmin)) {
           return new Response(JSON.stringify({
             ok: false,
             error: "Nur freigeschaltete VIP-Mitglieder und Administratoren können Fehlermeldungen einreichen."
@@ -68640,12 +69328,12 @@
         const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED")) || "").trim();
         const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")) || "").trim();
         const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
-        // Erlaube Versand wenn entweder eingeloggt + VIP ODER wenn ein eigenes Bot-Token vom Nutzer angegeben wurde
-        if (!auth.isAuthenticated && !customBotToken && !kvDefaultChatId) {
-          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen, über Telegram öffnen oder ein eigenes Bot-Token angeben." }), { status: 403, headers: corsHeaders });
+        // Strenge Auth- & VIP-/Admin-Prüfung (kein Bypass durch customBotToken oder globale KV-Defaults!)
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 403, headers: corsHeaders });
         }
-        if (!hasVipStreamAccess && !customBotToken && !kvDefaultChatId) {
-          return new Response(JSON.stringify({ ok: false, error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder freigeschaltet." }), { status: 403, headers: corsHeaders });
+        if (!hasVipStreamAccess && !auth.user?.isAdmin) {
+          return new Response(JSON.stringify({ ok: false, error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder und Administratoren freigeschaltet." }), { status: 403, headers: corsHeaders });
         }
 
         const savedDeliv = (settings && settings.deliveryConfig && typeof settings.deliveryConfig === "object")
@@ -69598,6 +70286,15 @@
       }
 
       if (path === "/api/import-json" && request.method === "POST") {
+        const importWebhookSec = typeof getWebhookSecurityConfig === "function"
+          ? await getWebhookSecurityConfig(env)
+          : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || "") };
+        const configuredImportSecret = String(importWebhookSec?.secretToken || "").trim();
+        const incomingImportSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+        const hasValidImportSecret = Boolean(configuredImportSecret && incomingImportSecret && incomingImportSecret === configuredImportSecret);
+        if ((!auth.isAuthenticated || !auth.user?.isAdmin) && !hasValidImportSecret) {
+          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur autorisierte Administratoren dürfen /api/import-json verwenden." }), { status: 403, headers: corsHeaders });
+        }
         const body = await request.json().catch(() => ({}));
         const rawEntries = Array.isArray(body.entries)
           ? body.entries
@@ -69690,6 +70387,19 @@
             });
           }
           if (request.method === "POST") {
+            // Niemals ungeprüft auf den Haupt-Bot (env) zurückfallen – verhindert Webhook-Secret-Bypass!
+            if (!customToken || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken)) {
+              return new Response(JSON.stringify({ ok: false, error: "Fehlendes oder ungültiges botToken-Parameter für /api/telegram/custom-webhook." }), {
+                status: 400,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
+            if (env.TELEGRAM_BOT_TOKEN && customToken === String(env.TELEGRAM_BOT_TOKEN).trim()) {
+              return new Response(JSON.stringify({ ok: false, error: "Bitte nutze /webhook mit Secret-Header für den Haupt-Bot." }), {
+                status: 403,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
             const update = await request.json().catch(() => null);
             if (!update || typeof update !== "object") {
               return new Response(JSON.stringify({ ok: false, error: "Ungültiges oder leeres JSON im Request-Body." }), {
@@ -69697,7 +70407,7 @@
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
-            const scopedEnv = customToken ? { ...env, TELEGRAM_BOT_TOKEN: customToken } : env;
+            const scopedEnv = { ...env, TELEGRAM_BOT_TOKEN: customToken };
             const runCustomHook = async () => {
               try {
                 await handleUpdate(scopedEnv, update);
@@ -69733,6 +70443,17 @@
             const webhookSecurity = typeof getWebhookSecurityConfig === "function"
               ? await getWebhookSecurityConfig(env)
               : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || ""), maxConnections: 8 };
+            const activeSetWhSecret = String(webhookSecurity?.secretToken || "").trim();
+            const incomingWhHeader = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+            const incomingWhQuery = String(url.searchParams.get("secret") || "").trim();
+            const hasValidWhSecret = Boolean(activeSetWhSecret && (incomingWhHeader === activeSetWhSecret || incomingWhQuery === activeSetWhSecret));
+            const whAdminAuth = hasValidWhSecret ? null : await resolveTmaAuthContext(request, env).catch(() => null);
+            if (!hasValidWhSecret && !(whAdminAuth?.isAuthenticated && whAdminAuth?.user?.isAdmin)) {
+              return new Response(JSON.stringify({ ok: false, error: "Unauthorized: Admin-Authentifizierung oder gültiges Webhook-Secret erforderlich." }), {
+                status: 403,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
             const whPayload = {
               url: officialWebhookEndpoint,
               max_connections: webhookSecurity.maxConnections || 8,

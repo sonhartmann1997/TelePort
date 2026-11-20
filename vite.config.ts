@@ -24,18 +24,10 @@ function assembleWorkerFromModulesSync(): string | null {
     .filter((f) => f.endsWith('.js'))
     .sort();
   if (files.length === 0) return null;
-  let combined =
+  const combined =
     files
       .map((f) => fs.readFileSync(path.join(modulesDir, f), 'utf8').trimEnd())
       .join('\n\n') + '\n';
-
-  combined = combined
-    .replace('" - viii -": " - 8 -", " viii ": " 8 "', '" - viii -": " - 8 -"')
-    .replace(
-      'async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {\n    const list =',
-      'async function enrichSavedListWithD1EpisodesAndPosters(env, chatId, rawItems = null) {\n    let list ='
-    )
-    .replace('list = validFilteredList;\n      changed = true;', 'changed = true;');
 
   return combined;
 }

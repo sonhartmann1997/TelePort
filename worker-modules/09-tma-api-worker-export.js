@@ -1431,7 +1431,7 @@
           // Falls ein Diagnose-Log-Eintrag (msgId) übergeben wurde, Status direkt in D1 aktualisieren
           const logMsgId = Number(body.msgId || rawEntry.source_message_id || rawEntry.msg_id || 0);
           if (logMsgId > 0 && typeof updateImportDiagnosticLogStatusInD1 === "function") {
-            await updateImportDiagnosticLogStatusInD1(env, logMsgId, "OK", resolved.tmdbId, resolved.cleanTitle);
+            await updateImportDiagnosticLogStatusInD1(env, logMsgId, "OK", resolved.matchedTitle || resolved.cleanTitle, resolved.tmdbId, resolved.typeCode, resolved.season ?? null, resolved.episode ?? null);
           }
 
           // 3. In Ziel-Playlist eintragen
@@ -1482,12 +1482,12 @@
             if (typeCode === "s") {
               officialDetails = await fetchSeriesDetails(env, newTmdbId);
               if (officialDetails && !officialDetails.error) {
-                await saveSeriesToD1(env, officialDetails, "TMDb", { manualOverride: true });
+                await saveSeriesToD1(env, { ...officialDetails, manualOverride: true });
               }
             } else {
               officialDetails = await fetchMovieDetails(env, newTmdbId);
               if (officialDetails && !officialDetails.error) {
-                await saveMovieToD1(env, officialDetails, null, "TMDb", { manualOverride: true });
+                await saveMovieToD1(env, { ...officialDetails, manualOverride: true });
               }
             }
           } catch (e) {}
@@ -1580,7 +1580,7 @@
 
             if (resolved && resolved.ok && resolved.tmdbId && resolved.confidence >= 62) {
               if (msgId > 0 && typeof updateImportDiagnosticLogStatusInD1 === "function") {
-                await updateImportDiagnosticLogStatusInD1(env, msgId, "OK", resolved.tmdbId, resolved.matchedTitle || resolved.cleanTitle);
+                await updateImportDiagnosticLogStatusInD1(env, msgId, "OK", resolved.matchedTitle || resolved.cleanTitle, resolved.tmdbId, resolved.typeCode, resolved.season ?? null, resolved.episode ?? null);
               }
               healedItems.push({
                 msgId,
@@ -1951,20 +1951,24 @@
 
           // 6. Neuen Titel zur Bot-VIP-Playlist hinzufügen
           try {
-            const botPlaylistChatId = getBotVipPlaylistChatId(env);
-            const foldersData = await getSavedFoldersData(env, botPlaylistChatId);
-            const targetFolder = (foldersData?.folders || []).find(fl => fl.type === (newTypeCode === "s" ? "series" : "movie")) || foldersData?.folders?.[0];
-            if (targetFolder) {
+            const botPlaylistChatId = "bot_vip";
+            const folders = await getFolders(env, botPlaylistChatId);
+            const targetType = newTypeCode === "s" ? "series" : "movie";
+            const targetFolder = (Array.isArray(folders) ? folders : []).find(fl => fl.type === targetType)
+              || (Array.isArray(folders) ? folders[0] : null)
+              || await createOrGetJsonPlaylistFolder(env, botPlaylistChatId, newTypeCode === "s" ? "VIP Serien" : "VIP Filme", "Admin Remap", "both");
+            if (targetFolder && targetFolder.id) {
               const rawDate = String(newDetails.releaseDate || newDetails.release_date || newDetails.first_air_date || "");
               const yr = rawDate.split("-")[0] || "k.A.";
-              await addMediaToFolder(env, botPlaylistChatId, targetFolder.id, {
-                tmdbId: newDetails.id,
+              await batchSaveIngestedItemsToPlaylist(env, botPlaylistChatId, targetFolder.id, [{
+                ok: true,
                 typeCode: newTypeCode,
-                title: newDetails.title,
+                tmdbId: newDetails.id,
+                cleanTitle: newDetails.title || newDetails.name || "Unbekannt",
                 year: yr,
                 poster: resolvePosterUrl(newDetails.poster_path, "w342", newDetails.external_poster_url || ""),
                 voteAverage: Number(newDetails.vote_average || 0)
-              });
+              }], { playlistMode: "both" });
             }
           } catch (e) {}
 
@@ -2309,20 +2313,24 @@
 
             // Ziel-Titel in der Bot-VIP-Playlist registrieren
             try {
-              const botPlaylistChatId = getBotVipPlaylistChatId(env);
-              const foldersData = await getSavedFoldersData(env, botPlaylistChatId);
-              const targetFolder = (foldersData?.folders || []).find(fl => fl.type === (newTypeCode === "s" ? "series" : "movie")) || foldersData?.folders?.[0];
-              if (targetFolder) {
+              const botPlaylistChatId = "bot_vip";
+              const folders = await getFolders(env, botPlaylistChatId);
+              const targetType = newTypeCode === "s" ? "series" : "movie";
+              const targetFolder = (Array.isArray(folders) ? folders : []).find(fl => fl.type === targetType)
+                || (Array.isArray(folders) ? folders[0] : null)
+                || await createOrGetJsonPlaylistFolder(env, botPlaylistChatId, newTypeCode === "s" ? "VIP Serien" : "VIP Filme", "Admin Remap", "both");
+              if (targetFolder && targetFolder.id) {
                 const rawDate = String(newDetails.releaseDate || newDetails.release_date || newDetails.first_air_date || "");
                 const yr = rawDate.split("-")[0] || "k.A.";
-                await addMediaToFolder(env, botPlaylistChatId, targetFolder.id, {
-                  tmdbId: newDetails.id,
+                await batchSaveIngestedItemsToPlaylist(env, botPlaylistChatId, targetFolder.id, [{
+                  ok: true,
                   typeCode: newTypeCode,
-                  title: newDetails.title,
+                  tmdbId: newDetails.id,
+                  cleanTitle: newDetails.title || newDetails.name || "Unbekannt",
                   year: yr,
                   poster: resolvePosterUrl(newDetails.poster_path, "w342", newDetails.external_poster_url || ""),
                   voteAverage: Number(newDetails.vote_average || 0)
-                });
+                }], { playlistMode: "both" });
               }
             } catch (e) {}
 
@@ -2817,10 +2825,10 @@
             new Promise(resolve => setTimeout(() => resolve(details.telegraphUrl || ""), 2200))
           ]),
           auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
-          (isMovie && hasVipStreamAccess) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
+          (isMovie && (hasVipStreamAccess || Boolean(auth.user?.isAdmin))) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
           tgApi(env).getBotUsername(env).catch(() => ""),
-          (!isMovie && hasVipStreamAccess) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
-          (hasVipStreamAccess || auth.isAdmin) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
+          (!isMovie && (hasVipStreamAccess || Boolean(auth.user?.isAdmin))) ? getSeriesSeasonsAndEpisodeTitlesFromD1(env, details.id, null).catch(() => ({ seasonCounts: {} })) : Promise.resolve({ seasonCounts: {} }),
+          (hasVipStreamAccess || Boolean(auth.user?.isAdmin)) ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
           resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || ""),
           typeof resolveTrailerCandidatesWithFallbacks === "function"
             ? resolveTrailerCandidatesWithFallbacks(env, typeCode, details, rawCandidateKeys, details.trailerCandidatesMeta).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
@@ -2875,11 +2883,24 @@
         // Prüfen, ob der Film/die Serie zu einem bekannten Filmuniversum gehört
         const matchedUniverse = detectUniverseForItem(typeCode, details);
         const providerButtons = buildStreamingProviderButtons(details);
-        const shareData = buildUnifiedTelegramSharePost(typeCode, details, botUsername, matchedUniverse);
+        const shareData = buildUnifiedTelegramSharePost({
+          typeCode,
+          itemId: details.id,
+          title,
+          releaseYear: year,
+          voteAverage: vote,
+          genres: details.genres || "",
+          fsk: details.fsk || "",
+          overview: details.overview || "",
+          posterUrl: resolvePosterUrl(details.poster_path, "w500", details.external_poster_url || ""),
+          telegraphUrl: telegraphUrl || "",
+          botUsername: botUsername || ""
+        });
 
         // Für VIPs (Tab "Versionen") & Admins (inkl. Original-Dateiname & Telegram-Link) verknüpfte Episoden-/Film-Dateien bereitstellen
+        const isAdminUser = Boolean(auth.user?.isAdmin);
         let allStreamFiles = movieFiles;
-        if (!isMovie && (hasVipStreamAccess || auth.isAdmin)) {
+        if (!isMovie && (hasVipStreamAccess || isAdminUser)) {
           const db = await ensureD1Schema(env);
           if (db) {
             try {
@@ -2908,8 +2929,8 @@
           (details.activeGroupName ? normalizeCompactVersionTags(details.activeGroupName) : "") ||
           "";
 
-        const sanitizedStreamFiles = (hasVipStreamAccess || auth.isAdmin)
-          ? (allStreamFiles || []).map(f => auth.isAdmin ? f : {
+        const sanitizedStreamFiles = (hasVipStreamAccess || isAdminUser)
+          ? (allStreamFiles || []).map(f => isAdminUser ? f : {
               id: f.id,
               series_id: f.series_id,
               movie_id: f.movie_id,
@@ -3034,7 +3055,7 @@
 
       // Fehlermeldungs-Endpunkt ("Fehler melden") — strikt für freigeschaltete VIP-Mitglieder und Admins
       if (path === "/api/tma/reports" && request.method === "POST") {
-        if (!auth.isAuthenticated || (!hasVipStreamAccess && !auth.isAdmin)) {
+        if (!auth.isAuthenticated || (!hasVipStreamAccess && !auth.user?.isAdmin)) {
           return new Response(JSON.stringify({
             ok: false,
             error: "Nur freigeschaltete VIP-Mitglieder und Administratoren können Fehlermeldungen einreichen."
@@ -3225,12 +3246,12 @@
         const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED")) || "").trim();
         const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")) || "").trim();
         const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
-        // Erlaube Versand wenn entweder eingeloggt + VIP ODER wenn ein eigenes Bot-Token vom Nutzer angegeben wurde
-        if (!auth.isAuthenticated && !customBotToken && !kvDefaultChatId) {
-          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen, über Telegram öffnen oder ein eigenes Bot-Token angeben." }), { status: 403, headers: corsHeaders });
+        // Strenge Auth- & VIP-/Admin-Prüfung (kein Bypass durch customBotToken oder globale KV-Defaults!)
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 403, headers: corsHeaders });
         }
-        if (!hasVipStreamAccess && !customBotToken && !kvDefaultChatId) {
-          return new Response(JSON.stringify({ ok: false, error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder freigeschaltet." }), { status: 403, headers: corsHeaders });
+        if (!hasVipStreamAccess && !auth.user?.isAdmin) {
+          return new Response(JSON.stringify({ ok: false, error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder und Administratoren freigeschaltet." }), { status: 403, headers: corsHeaders });
         }
 
         const savedDeliv = (settings && settings.deliveryConfig && typeof settings.deliveryConfig === "object")
@@ -4183,6 +4204,15 @@
       }
 
       if (path === "/api/import-json" && request.method === "POST") {
+        const importWebhookSec = typeof getWebhookSecurityConfig === "function"
+          ? await getWebhookSecurityConfig(env)
+          : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || "") };
+        const configuredImportSecret = String(importWebhookSec?.secretToken || "").trim();
+        const incomingImportSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+        const hasValidImportSecret = Boolean(configuredImportSecret && incomingImportSecret && incomingImportSecret === configuredImportSecret);
+        if ((!auth.isAuthenticated || !auth.user?.isAdmin) && !hasValidImportSecret) {
+          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur autorisierte Administratoren dürfen /api/import-json verwenden." }), { status: 403, headers: corsHeaders });
+        }
         const body = await request.json().catch(() => ({}));
         const rawEntries = Array.isArray(body.entries)
           ? body.entries
@@ -4275,6 +4305,19 @@
             });
           }
           if (request.method === "POST") {
+            // Niemals ungeprüft auf den Haupt-Bot (env) zurückfallen – verhindert Webhook-Secret-Bypass!
+            if (!customToken || !/^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken)) {
+              return new Response(JSON.stringify({ ok: false, error: "Fehlendes oder ungültiges botToken-Parameter für /api/telegram/custom-webhook." }), {
+                status: 400,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
+            if (env.TELEGRAM_BOT_TOKEN && customToken === String(env.TELEGRAM_BOT_TOKEN).trim()) {
+              return new Response(JSON.stringify({ ok: false, error: "Bitte nutze /webhook mit Secret-Header für den Haupt-Bot." }), {
+                status: 403,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
             const update = await request.json().catch(() => null);
             if (!update || typeof update !== "object") {
               return new Response(JSON.stringify({ ok: false, error: "Ungültiges oder leeres JSON im Request-Body." }), {
@@ -4282,7 +4325,7 @@
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
-            const scopedEnv = customToken ? { ...env, TELEGRAM_BOT_TOKEN: customToken } : env;
+            const scopedEnv = { ...env, TELEGRAM_BOT_TOKEN: customToken };
             const runCustomHook = async () => {
               try {
                 await handleUpdate(scopedEnv, update);
@@ -4318,6 +4361,17 @@
             const webhookSecurity = typeof getWebhookSecurityConfig === "function"
               ? await getWebhookSecurityConfig(env)
               : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || ""), maxConnections: 8 };
+            const activeSetWhSecret = String(webhookSecurity?.secretToken || "").trim();
+            const incomingWhHeader = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+            const incomingWhQuery = String(url.searchParams.get("secret") || "").trim();
+            const hasValidWhSecret = Boolean(activeSetWhSecret && (incomingWhHeader === activeSetWhSecret || incomingWhQuery === activeSetWhSecret));
+            const whAdminAuth = hasValidWhSecret ? null : await resolveTmaAuthContext(request, env).catch(() => null);
+            if (!hasValidWhSecret && !(whAdminAuth?.isAuthenticated && whAdminAuth?.user?.isAdmin)) {
+              return new Response(JSON.stringify({ ok: false, error: "Unauthorized: Admin-Authentifizierung oder gültiges Webhook-Secret erforderlich." }), {
+                status: 403,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
             const whPayload = {
               url: officialWebhookEndpoint,
               max_connections: webhookSecurity.maxConnections || 8,

@@ -973,9 +973,12 @@
         } else {
           await loadDiscover(state.type, state.genreId, state.mode, state.sort, false, true, p);
         }
-        if (isHeroSnapEligibleClient() && !heroCurtainScrolledToCatalog) {
-          heroCurtainScrolledToCatalog = true;
-          updateHeroCurtainCollapseStateClient();
+        if (typeof isHeroScrollCouplingActiveClient === "function" && isHeroScrollCouplingActiveClient() && !heroCurtainScrolledToCatalog) {
+          if (typeof animateHeroCatalogSnapScrollClient === "function") {
+            animateHeroCatalogSnapScrollClient(100, { bounceLock: false });
+          } else {
+            heroCurtainScrolledToCatalog = true;
+          }
         }
         unlockCatalogCoversLoadingClient(false);
         preloadCatalogPageCoversClient(p);
@@ -1797,11 +1800,13 @@
         }
       }
 
-      async function openCollectionView(colId) {
+      async function openCollectionView(colId, sortOverride = null) {
         document.getElementById("modalRoot").innerHTML = "";
+        const effSort = sortOverride || state.sort || "year_asc";
+        if (sortOverride) state.sort = sortOverride;
         setBusyState(true, "🍿 Lade Filmreihe...");
         try {
-          const r = await apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(colId) + "&sort=" + state.sort);
+          const r = await apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(colId) + "&sort=" + encodeURIComponent(effSort));
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "collection";
@@ -1817,11 +1822,13 @@
         }
       }
 
-      async function openUniverseView(uniId) {
+      async function openUniverseView(uniId, sortOverride = null) {
         document.getElementById("modalRoot").innerHTML = "";
+        const effSort = sortOverride || state.sort || "year_asc";
+        if (sortOverride) state.sort = sortOverride;
         setBusyState(true, "🌌 Lade Filmuniversum...");
         try {
-          const r = await apiFetchJson(API_BASE + "/universes?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(uniId) + "&sort=" + state.sort);
+          const r = await apiFetchJson(API_BASE + "/universes?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(uniId) + "&sort=" + encodeURIComponent(effSort));
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "universe";
@@ -4355,10 +4362,16 @@
         }
         const d = state.activeDetails;
         if (!d || !d.trailers || !d.trailers.embeds) return;
-        const box = document.getElementById("trailerEmbedContainer");
-        if (!box) return;
         const embedUrl = d.trailers.embeds[activeKey] || d.trailers.embeds.youtube;
-        box.innerHTML = '<div class="embed-box"><iframe class="embed-frame" src="' + esc(embedUrl) + '" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1"></iframe></div>';
+        const box = document.getElementById("trailerEmbedContainer");
+        if (box) {
+          box.innerHTML = '<div class="embed-box"><iframe class="embed-frame" src="' + esc(embedUrl) + '" frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" sandbox="allow-scripts allow-same-origin allow-presentation" playsinline="1" webkit-playsinline="1"></iframe></div>';
+          return;
+        }
+        const activeIframe = document.getElementById("detailBgTeaserIframe");
+        if (activeIframe && embedUrl) {
+          activeIframe.src = embedUrl;
+        }
       }
 
       // Client-Hilfsfunktion: Dateigröße in MB / GB formatieren (tabular-nums)
@@ -4875,6 +4888,9 @@
                   '<div id="seriesArchiveDownloadsMount">' +
                     (vipAllowed && Array.isArray(d.downloads) && d.downloads.length > 0 ? buildArchiveDownloadsSectionHtml(d, isAdminUser) : '') +
                   '</div>' +
+                  ((vipAllowed || isAdminUser) && Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 0
+                    ? ('<div id="flixTabPanel_versions" style="margin-top:12px">' + buildDetailModalVersionsTabHtml(d, type, vipAllowed, isAdminUser, canReportMedia) + '</div>')
+                    : '') +
                 '</section>'
               ) : (hasMultiPartOrArchivesForMovie ? (
                 '<section id="detailStreamsSection" class="detail-section-block">' +
@@ -4882,6 +4898,9 @@
                     '<h3 class="detail-section-heading">Alle Teile & Versionen</h3>' +
                   '</div>' +
                   buildMovieStreamsReleaseSectionHtml(d, isAdminUser, canReportMedia) +
+                  ((vipAllowed || isAdminUser) && Array.isArray(d.allStreamFiles) && d.allStreamFiles.length > 1
+                    ? ('<div id="flixTabPanel_versions" style="margin-top:12px">' + buildDetailModalVersionsTabHtml(d, type, vipAllowed, isAdminUser, canReportMedia) + '</div>')
+                    : '') +
                 '</section>'
               ) : '')) +
               castSectionHtml +
@@ -5916,7 +5935,7 @@
           if (state.mode === "admin") {
             loadAdminPanelView();
           } else {
-            loadView(false);
+            loadDiscover(state.type, state.genreId, state.mode, state.sort, false, false, state.page || 1);
           }
         } finally {
           setBusyState(false);

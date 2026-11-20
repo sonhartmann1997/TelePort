@@ -298,12 +298,19 @@
     const cleanAccount = String(accountLabel || "User").trim();
     const label = `${encodeURIComponent(cleanIssuer)}:${encodeURIComponent(cleanAccount)}`;
     const otpauthUrl = `otpauth://totp/${label}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(cleanIssuer)}&algorithm=SHA1&digits=6&period=30`;
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&data=${encodeURIComponent(otpauthUrl)}`;
-    return { otpauthUrl, qrCodeUrl };
+    // Kein Drittanbieter-QR-Request (api.qrserver.com), damit das TOTP-Secret niemals extern geleakt wird!
+    return { otpauthUrl, qrCodeUrl: "" };
   }
 
   function getSessionSigningSecret(env) {
-    return String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+    const configured = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+    if (configured) return configured;
+    if (!globalThis.__ephemeralTmaSessionSecret) {
+      const randBytes = new Uint8Array(32);
+      crypto.getRandomValues(randBytes);
+      globalThis.__ephemeralTmaSessionSecret = bytesToHex(randBytes);
+    }
+    return globalThis.__ephemeralTmaSessionSecret;
   }
 
   async function signTmaSessionToken(payload, env) {
@@ -373,8 +380,8 @@
           },
           env
         );
-        if (userProfile && verifiedToken.isAdmin) userProfile.isAdmin = true;
-        if (userProfile && verifiedToken.isVip) userProfile.isVip = true;
+        if (userProfile && !dbRow && verifiedToken.isAdmin) userProfile.isAdmin = true;
+        if (userProfile && !dbRow && verifiedToken.isVip) userProfile.isVip = true;
         return {
           isAuthenticated: true,
           isGuest: false,
@@ -1575,11 +1582,11 @@
       /* Klare Fokus-Markierung für Pfeiltasten, Android TV Fernbedienung, Gamepad & Maus-Hover (Textlinks ausgenommen):
          WICHTIG: outline-offset: -2px + inset Box-Shadow + kein horizontales scale(), damit die linken & rechten Ränder
          in Scrollboxen (Suchvorschläge, Sidebar, Genre-Grid, Cast-Slider, Katalog) NIEMALS überstehen oder abgeschnitten werden! */
-      .spatial-focus:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn),
+      .spatial-focus:where(:not(#searchInput):not(.search-scope-select):not(.expandable-desc-box):not(.detail-meta-link):not(.detail-meta-studio):not(.hero-meta-year):not(.hero-meta-genre):not(.modal-genre-link):not(.modal-meta-item.clickable):not(.cinema-pause-center-btn):not(.cinema-overlay-btn):not(.hero-btn-play):not(#heroBtnTrailer):not(.detail-btn-play-white):not(#detailTrailerBtn):not(#detailPrimaryPlayBtn):not(#heroCinemaPlayBtn):not(#detailCinemaPlayBtn):not(.card-quick-trailer):not(.btn.blue):not(.btn.red):not(.btn.primary):not(.btn.active):not(.btn.hero-primary):not(.page-jump-btn.primary):not(.page-jump-btn.active):not(.media-mode-tab.active-movie):not(.media-mode-tab.active-series)),
       .brand-logo:focus-visible,
-      .btn:focus-visible,
+      .btn:focus-visible:where(:not(.blue):not(.red):not(.primary):not(.active):not(.hero-primary)),
       .card:focus-visible,
-      .media-mode-tab:focus-visible,
+      .media-mode-tab:focus-visible:where(:not(.active-movie):not(.active-series)),
       .ff-tab-btn:focus-visible,
       .f-pill:focus-visible,
       .sort-chip:focus-visible,
@@ -1678,21 +1685,6 @@
       body.kb-nav-active,
       body.kb-nav-active * {
         cursor: none !important;
-      }
-      body.kb-nav-active #appRoot,
-      body.kb-nav-active header,
-      body.kb-nav-active #filterSidebarDrawer,
-      body.kb-nav-active #tvQuickJumpElevator,
-      body.kb-nav-active #modalRoot,
-      body.kb-nav-active #pageJumpModalRoot,
-      body.kb-nav-active #customDialogRoot,
-      body.kb-nav-active #personSpotlightOverlayRoot,
-      body.kb-nav-active #searchGenreDropdownOverlay,
-      body.kb-nav-active #smartPageIndicatorBtn,
-      body.kb-nav-active #catalogBackToTopFab,
-      body.kb-nav-active .catalog-edge-trigger-left,
-      body.kb-nav-active .catalog-edge-trigger-right {
-        pointer-events: none !important;
       }
       body.kb-nav-active .card:hover:not(.spatial-focus) {
         border-color: rgba(255, 255, 255, 0.08);
@@ -3801,6 +3793,13 @@
       .expandable-desc-box.is-long-desc,
       .expandable-desc-box.is-expanded {
         cursor: pointer;
+      }
+      .expandable-desc-box.is-long-desc.spatial-focus,
+      .expandable-desc-box.is-expanded.spatial-focus {
+        background: rgba(8, 13, 24, 0.78);
+        border-color: #38bdf8 !important;
+        padding: 6px 10px 6px;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.45), 0 0 18px rgba(56, 189, 248, 0.28), 0 8px 22px rgba(0, 0, 0, 0.65) !important;
       }
       .expandable-desc-box.is-long-desc:hover .desc-expand-hint,
       .expandable-desc-box.is-long-desc.spatial-focus .desc-expand-hint {
@@ -8243,24 +8242,79 @@
         #tmaBootSplashscreen { transition: opacity 0.15s linear; transform: none !important; }
         .neon-splash-bar-fill { animation: none; width: 100%; }
       }
+      /* Tastatur-/Controller-Modus aktiv: Am Ende des Stylesheets alle Kind-Elemente (inkl. pointer-events: auto !important) zuverlässig vom Maus-Hover entkoppeln */
+      body.kb-nav-active #appRoot,
+      body.kb-nav-active #appRoot *,
+      body.kb-nav-active header,
+      body.kb-nav-active header *,
+      body.kb-nav-active #filterSidebarDrawer,
+      body.kb-nav-active #filterSidebarDrawer *,
+      body.kb-nav-active #tvQuickJumpElevator,
+      body.kb-nav-active #tvQuickJumpElevator *,
+      body.kb-nav-active #modalRoot,
+      body.kb-nav-active #modalRoot *,
+      body.kb-nav-active #pageJumpModalRoot,
+      body.kb-nav-active #pageJumpModalRoot *,
+      body.kb-nav-active #customDialogRoot,
+      body.kb-nav-active #customDialogRoot *,
+      body.kb-nav-active #personSpotlightOverlayRoot,
+      body.kb-nav-active #personSpotlightOverlayRoot *,
+      body.kb-nav-active #searchGenreDropdownOverlay,
+      body.kb-nav-active #searchGenreDropdownOverlay *,
+      body.kb-nav-active #smartPageIndicatorBtn,
+      body.kb-nav-active #smartPageIndicatorBtn *,
+      body.kb-nav-active #catalogBackToTopFab,
+      body.kb-nav-active #catalogBackToTopFab *,
+      body.kb-nav-active .catalog-edge-trigger-left,
+      body.kb-nav-active .catalog-edge-trigger-left *,
+      body.kb-nav-active .catalog-edge-trigger-right,
+      body.kb-nav-active .catalog-edge-trigger-right * {
+        pointer-events: none !important;
+      }
       /* Portal-Orange Fokusrahmen (#ff7a00) für maximalen Kontrast auf Trailer- & hellen/blauen Hauptbuttons */
-      .hero-btn-play.spatial-focus,
-      #heroBtnTrailer.spatial-focus,
-      .detail-btn-play-white.spatial-focus,
-      #detailTrailerBtn.spatial-focus,
-      #detailPrimaryPlayBtn.spatial-focus,
-      .card-quick-trailer.spatial-focus,
-      .cinema-overlay-btn.is-primary.spatial-focus,
-      .cinema-dock-btn.is-primary.spatial-focus,
-      .btn.blue.spatial-focus,
-      .btn.primary.spatial-focus,
-      .btn.hero-primary.spatial-focus,
-      .page-jump-btn.primary.spatial-focus,
-      .media-mode-tab.active-movie.spatial-focus,
-      .media-mode-tab.active-series.spatial-focus {
-        outline: none !important;
+      body .hero-btn-play.spatial-focus,
+      body .hero-btn-play:focus-visible,
+      body .hero-btn-play.is-trailer-unavailable.spatial-focus,
+      body #heroBtnTrailer.spatial-focus,
+      body #heroBtnTrailer:focus-visible,
+      body #heroCinemaPlayBtn.spatial-focus,
+      body #heroCinemaPlayBtn:focus-visible,
+      body #detailCinemaPlayBtn.spatial-focus,
+      body #detailCinemaPlayBtn:focus-visible,
+      body .cinema-pause-center-btn.spatial-focus,
+      body .detail-btn-play-white.spatial-focus,
+      body .detail-btn-play-white:focus-visible,
+      body #detailTrailerBtn.spatial-focus,
+      body #detailTrailerBtn:focus-visible,
+      body #detailPrimaryPlayBtn.spatial-focus,
+      body #detailPrimaryPlayBtn:focus-visible,
+      body .card-quick-trailer.spatial-focus,
+      body .cinema-overlay-btn.is-primary.spatial-focus,
+      body .cinema-dock-btn.is-primary.spatial-focus,
+      body .btn.blue.spatial-focus,
+      body .btn.blue:focus-visible,
+      body .btn.red.spatial-focus,
+      body .btn.red:focus-visible,
+      body .btn.primary.spatial-focus,
+      body .btn.primary:focus-visible,
+      body .btn.active.spatial-focus,
+      body .btn.active:focus-visible,
+      body .btn.hero-primary.spatial-focus,
+      body .page-jump-btn.primary.spatial-focus,
+      body .page-jump-btn.active.spatial-focus,
+      body .media-mode-tab.active-movie.spatial-focus,
+      body .media-mode-tab.active-series.spatial-focus {
+        outline: 3px solid #ff7a00 !important;
+        outline-offset: 2px !important;
         border-color: #ff7a00 !important;
-        box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.92), 0 0 0 5px #ff7a00, 0 0 24px rgba(255, 122, 0, 0.72), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
+        box-shadow: 0 0 0 2px rgba(6, 10, 20, 0.92), 0 0 0 5px #ff7a00, 0 0 26px rgba(255, 122, 0, 0.85), 0 8px 22px rgba(0, 0, 0, 0.78) !important;
+        z-index: 30;
+      }
+      body .card-quick-trailer.spatial-focus,
+      body .media-mode-tab.active-movie.spatial-focus,
+      body .media-mode-tab.active-series.spatial-focus {
+        outline-offset: -1px !important;
+        box-shadow: inset 0 0 0 1px rgba(255, 195, 113, 0.8), 0 0 0 2px #ff7a00, 0 0 18px rgba(255, 122, 0, 0.85) !important;
       }
     </style>
   </head>
@@ -8459,12 +8513,12 @@
           const hasModal = Boolean(modalRoot && modalRoot.innerHTML.trim().length > 0);
           const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
           const hasSpotlight = Boolean(spotlightRoot && spotlightRoot.innerHTML.trim().length > 0);
-          const pageJumpRoot = document.getElementById("pageJumpModalRoot");
-          const hasPageJump = Boolean(pageJumpRoot && pageJumpRoot.innerHTML.trim().length > 0);
+          const customDialogRoot = document.getElementById("customDialogRoot");
+          const hasCustomDialog = Boolean(customDialogRoot && customDialogRoot.innerHTML.trim().length > 0);
           const isSidebarOpen = Boolean(typeof state !== "undefined" && state.sidebarOpen);
           const isNonDiscoverView = Boolean(typeof state !== "undefined" && state.currentView && state.currentView !== "discover");
 
-          if (hasModal || hasSpotlight || hasPageJump || isSidebarOpen || isNonDiscoverView) {
+          if (hasModal || hasSpotlight || hasCustomDialog || isSidebarOpen || isNonDiscoverView) {
             liveTg.BackButton.show();
             if (typeof liveTg.BackButton.offClick === "function") {
               liveTg.BackButton.offClick(handleTelegramBackButtonClickClient);
@@ -8481,6 +8535,18 @@
 
       function handleTelegramBackButtonClickClient() {
         try {
+          const customDialogRoot = document.getElementById("customDialogRoot");
+          if (customDialogRoot && customDialogRoot.innerHTML.trim().length > 0) {
+            if (customDialogRoot.querySelector(".page-jump-modal-backdrop") && typeof closePageJumpModalClient === "function") {
+              closePageJumpModalClient();
+            } else if (typeof closeCustomDialog === "function") {
+              closeCustomDialog(null);
+            } else {
+              customDialogRoot.innerHTML = "";
+            }
+            syncTelegramBackButtonClient();
+            return;
+          }
           const modalRoot = document.getElementById("modalRoot");
           if (modalRoot && modalRoot.innerHTML.trim().length > 0) {
             if (typeof closeDetailModal === "function") closeDetailModal();
@@ -8493,19 +8559,13 @@
             syncTelegramBackButtonClient();
             return;
           }
-          const pageJumpRoot = document.getElementById("pageJumpModalRoot");
-          if (pageJumpRoot && pageJumpRoot.innerHTML.trim().length > 0 && typeof closePageJumpModalClient === "function") {
-            closePageJumpModalClient();
+          if (typeof state !== "undefined" && state.sidebarOpen && typeof closeFilterSidebar === "function") {
+            closeFilterSidebar();
             syncTelegramBackButtonClient();
             return;
           }
-          if (typeof state !== "undefined" && state.sidebarOpen && typeof closeSidebarMenuClient === "function") {
-            closeSidebarMenuClient();
-            syncTelegramBackButtonClient();
-            return;
-          }
-          if (typeof state !== "undefined" && state.currentView && state.currentView !== "discover" && typeof switchMainViewClient === "function") {
-            switchMainViewClient("discover");
+          if (typeof state !== "undefined" && state.currentView && state.currentView !== "discover" && typeof loadDiscover === "function") {
+            loadDiscover(state.type, state.genreId, state.mode, state.sort, false, false, 1);
             syncTelegramBackButtonClient();
             return;
           }
@@ -9945,10 +10005,13 @@
           }
           if (fb) fb.textContent = "";
           if (mount) {
+            const otpUriHtml = r.otpauthUrl
+              ? ('<a href="' + esc(r.otpauthUrl) + '" class="btn blue" style="text-decoration:none">🔐 Direkt in Authenticator-App öffnen</a>')
+              : '';
             mount.innerHTML = '<div class="admin-sub-box" style="padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center">' +
-              '<div style="font-size:12px;color:var(--text);font-weight:700">1. Scanne diesen QR-Code mit Google Authenticator oder Authy:</div>' +
-              '<img src="' + esc(r.qrCodeUrl) + '" alt="TOTP QR Code" style="width:180px;height:180px;border-radius:8px;background:#fff;padding:6px" />' +
-              '<div style="font-size:11px;color:var(--muted)">Manueller Setup-Schlüssel (Base32):<br><code style="color:#fbbf24;font-size:12px;user-select:all;letter-spacing:1px">' + esc(r.secret) + '</code></div>' +
+              '<div style="font-size:12px;color:var(--text);font-weight:700">1. Richte 2FA sicher lokal in deiner Authenticator-App (Google Authenticator, Authy, 1Password) ein:</div>' +
+              otpUriHtml +
+              '<div style="font-size:11px;color:var(--muted)">Manueller Setup-Schlüssel (Base32 – wird niemals an externe QR-Server gesendet):<br><code style="color:#fbbf24;font-size:12px;user-select:all;letter-spacing:1px">' + esc(r.secret) + '</code></div>' +
               '<div style="font-size:12px;color:var(--text);font-weight:700;margin-top:4px">2. Gib zur Aktivierung den 6-stelligen Code aus der App ein:</div>' +
               '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
                 '<input id="verifyTotpSetupInp" class="tma-input" placeholder="123456" maxlength="6" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')confirm2faSetupEnable()" style="padding:8px 12px;border-color:rgba(16,185,129,0.5);font-size:15px;letter-spacing:3px;font-weight:800;width:140px;text-align:center" />' +
@@ -10594,7 +10657,6 @@
         if (document.getElementById("detailHeroStageEl")?.classList.contains("is-trailer-foreground-mode")) return false;
         if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("customDialogRoot")?.innerHTML.trim()) return false;
-        if (document.getElementById("pageJumpModalRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
         return true;
       }
@@ -11796,6 +11858,24 @@
       const LAZY_POSTER_FALLBACK_SVG =
         "data:image/svg+xml;utf8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22450%22 viewBox=%220 0 300 450%22%3E%3Crect width=%22300%22 height=%22450%22 fill=%22%230f172a%22/%3E%3Ctext x=%22150%22 y=%22225%22 fill=%22%2364748b%22 font-family=%22sans-serif%22 font-size=%2216%22 text-anchor=%22middle%22%3EKein Poster%3C/text%3E%3C/svg%3E";
 
+      function buildPosterFallbackSvg(titleText, isSeriesOrLabel) {
+        const safeLabel = (typeof isSeriesOrLabel === "string" && isSeriesOrLabel.trim())
+          ? isSeriesOrLabel.trim().slice(0, 12).toUpperCase()
+          : (isSeriesOrLabel ? "SERIE" : "FILM");
+        const cleanTitle = String(titleText || "Kein Poster")
+          .replace(/[<>&"']/g, "")
+          .trim()
+          .slice(0, 26);
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="450" viewBox="0 0 300 450">' +
+          '<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#1e293b"/></linearGradient></defs>' +
+          '<rect width="300" height="450" fill="url(#bg)"/>' +
+          '<rect x="95" y="160" width="110" height="28" rx="6" fill="rgba(56,189,248,0.16)" stroke="rgba(56,189,248,0.45)"/>' +
+          '<text x="150" y="179" fill="#7dd3fc" font-family="sans-serif" font-size="12" font-weight="700" text-anchor="middle">' + safeLabel + '</text>' +
+          '<text x="150" y="230" fill="#e2e8f0" font-family="sans-serif" font-size="15" font-weight="700" text-anchor="middle">' + (cleanTitle || "Kein Poster") + '</text>' +
+          '</svg>';
+        return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+      }
+
       let heroWaterfallSeq = 0;
       let catalogCoversUnlocked = false;
       let lazyCoverObserver = null;
@@ -12137,7 +12217,10 @@
       function closePageJumpModalClient() {
         const dialogRoot = document.getElementById("customDialogRoot");
         if (dialogRoot) dialogRoot.innerHTML = "";
-        const returnBtn = document.getElementById("smartPageIndicatorBtn") || document.getElementById("sectionPageCounterPill");
+        const inHero = Boolean(document.body && document.body.classList.contains("in-hero-slider"));
+        const returnBtn = inHero
+          ? (document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails"))
+          : (document.querySelector("#resultsGridContainer .card.spatial-focus, #resultsGridContainer .card") || document.getElementById("smartPageIndicatorBtn") || document.getElementById("sectionPageCounterPill"));
         if (returnBtn && typeof jumpSpatialFocus === "function") {
           jumpSpatialFocus(returnBtn, false);
         }
@@ -12299,14 +12382,16 @@
         requestAnimationFrame(() => {
           catalogWindowScrollRafPending = false;
           const y = window.scrollY || window.pageYOffset || 0;
+          if (typeof syncHeroScrollFadeAndTopBarStateClient === "function") {
+            syncHeroScrollFadeAndTopBarStateClient();
+          }
           if (y > 8 || heroCurtainScrolledToCatalog) {
             if (!catalogCoversUnlocked) {
               unlockCatalogCoversLoadingClient(true);
             }
             syncSmartPageIndicatorDomClient(true);
-          }
-          if (typeof syncHeroScrollFadeAndTopBarStateClient === "function") {
-            syncHeroScrollFadeAndTopBarStateClient();
+          } else {
+            syncSmartPageIndicatorDomClient(false);
           }
         });
       }, { passive: true });
@@ -12675,6 +12760,9 @@
         } else {
           if (document.body) {
             document.body.classList.remove("hero-scrolled-past", "page-scrolled");
+            if (!state.heroHidden && !state.isSearchMode && state.currentView === "discover") {
+              document.body.classList.add("in-hero-slider");
+            }
           }
           if (curtainEl && !state.heroHidden) {
             curtainEl.classList.remove("is-collapsed");
@@ -12690,6 +12778,7 @@
         }
         syncHeroScrollFadeAndTopBarStateClient();
         syncHeroSearchPlaceholderAndToggleBtnClient();
+        syncSmartPageIndicatorDomClient(goingToCatalog);
       }
 
       let heroLastHorizWheelAt = 0;
@@ -12924,8 +13013,8 @@
         const prevInFrontHero = document.body.classList.contains("in-hero-slider");
         const inFrontHero = typeof isUserInHeroSliderFront === "function" ? isUserInHeroSliderFront() : false;
         document.body.classList.toggle("in-hero-slider", inFrontHero);
-        if (inFrontHero !== prevInFrontHero && typeof updateSmartPageIndicatorClient === "function") {
-          updateSmartPageIndicatorClient(false);
+        if (inFrontHero !== prevInFrontHero && typeof syncSmartPageIndicatorDomClient === "function") {
+          syncSmartPageIndicatorDomClient(false);
         }
         if (!inFrontHero && typeof stopHeroBackgroundVideoTeaserClient === "function") {
           const bgLayer = document.getElementById("heroBgVideoLayer");
@@ -14922,10 +15011,12 @@
         if (document.body) {
           document.body.classList.add("in-hero-slider");
         }
-        if (typeof updateSmartPageIndicatorClient === "function") {
-          updateSmartPageIndicatorClient(false);
+        if (typeof syncSmartPageIndicatorDomClient === "function") {
+          syncSmartPageIndicatorDomClient(false);
         }
+        syncExpandableDescriptionsOverflowClient();
         setTimeout(() => {
+          syncExpandableDescriptionsOverflowClient();
           if (focusMode === "header") {
             const topEl = document.getElementById("searchInput") || document.getElementById("sidebarToggleBtn");
             if (topEl && typeof jumpSpatialFocus === "function") jumpSpatialFocus(topEl, false, "up");
@@ -14933,8 +15024,8 @@
             const heroTarget = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails") || document.getElementById("heroBtnWishlist");
             if (heroTarget && typeof jumpSpatialFocus === "function") jumpSpatialFocus(heroTarget, false, "up");
           }
-          if (typeof updateSmartPageIndicatorClient === "function") {
-            updateSmartPageIndicatorClient(false);
+          if (typeof syncSmartPageIndicatorDomClient === "function") {
+            syncSmartPageIndicatorDomClient(false);
           }
         }, 70);
         return true;
@@ -14949,7 +15040,6 @@
           if (
             document.getElementById("modalRoot")?.innerHTML.trim() ||
             document.getElementById("lightboxRoot")?.innerHTML.trim() ||
-            document.getElementById("pageJumpModalRoot")?.innerHTML.trim() ||
             document.getElementById("customDialogRoot")?.innerHTML.trim()
           ) {
             return;
@@ -15642,6 +15732,9 @@
         if (typeof isUserInHeroSliderFront === "function") {
           document.body.classList.toggle("in-hero-slider", isUserInHeroSliderFront());
         }
+        if (typeof syncSmartPageIndicatorDomClient === "function") {
+          syncSmartPageIndicatorDomClient(false);
+        }
       }
 
       const clientClearLogoCache = new Map();
@@ -16107,6 +16200,7 @@
               }
               const hintEl = descEl.querySelector(".desc-expand-hint");
               if (hintEl) hintEl.textContent = "▾ Mehr lesen";
+              syncExpandableDescriptionsOverflowClient(descEl);
               requestAnimationFrame(() => syncExpandableDescriptionsOverflowClient(descEl));
             }
             const transBtn = document.getElementById("heroDescTranslateBtn");

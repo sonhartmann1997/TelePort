@@ -417,6 +417,11 @@ export default function App() {
         d1BatchCacheHits,
       };
 
+      const sandboxSecret = envMap.TELEGRAM_WEBHOOK_SECRET || 'studio_local_sandbox_import_secret';
+      const sandboxEnvMap: Record<string, string> = {
+        ...envMap,
+        TELEGRAM_WEBHOOK_SECRET: sandboxSecret,
+      };
       const importReq: WorkerRequestData = {
         ...requestData,
         method: 'POST',
@@ -424,13 +429,14 @@ export default function App() {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          'X-Telegram-Bot-Api-Secret-Token': sandboxSecret,
         },
         body: JSON.stringify(enrichedPayload),
       };
 
       // Phase B: Measure Worker D1 batch execution + catalog registration latency
       const tWorkerD1Start = performance.now();
-      const res = await executeWorkerSandbox(workerCode, importReq, envMap, kvNamespace);
+      const res = await executeWorkerSandbox(workerCode, importReq, sandboxEnvMap, kvNamespace);
       let parsedBody: Record<string, any> | null = null;
       try {
         parsedBody = JSON.parse(res.response.body);
