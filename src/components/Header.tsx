@@ -62,10 +62,10 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <div className="min-w-0 flex items-center gap-2.5 flex-wrap">
             <span className="text-sm font-bold tracking-tight text-white truncate">
-              TelePort &amp; STREAMFLIX Studio
+              TelePort Studio
             </span>
             <span className="text-[11px] font-mono text-slate-400 hidden sm:inline">
-              worker.js · 9 Module
+              worker.js · 19 Module
             </span>
           </div>
         </div>

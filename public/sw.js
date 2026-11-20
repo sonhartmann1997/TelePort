@@ -1,4 +1,4 @@
-const CACHE_NAME = "streamflix-v1";
+const CACHE_NAME = "teleport-v1";
 const APP_SHELL = [
   "/app",
   "/favicon.svg",

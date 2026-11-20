@@ -550,7 +550,7 @@ export default function App() {
       {/* Main Workspace with dynamic import() Suspense boundaries */}
       <main className="flex-1 overflow-hidden p-3">
         {activeTab === 'tma' && (
-          <Suspense fallback={<ViewLoadingFallback label="STREAMFLIX Mini-App Simulator" />}>
+          <Suspense fallback={<ViewLoadingFallback label="TelePort Mini-App Simulator" />}>
             <NetflixTmaSimulator
               workerCode={workerCode}
               envVars={envVars}

@@ -1003,7 +1003,7 @@
         exp: Date.now() + (Number(ttlMs) > 0 ? Number(ttlMs) : 24 * 60 * 60 * 1000)
       };
       const payloadHex = Array.from(enc.encode(JSON.stringify(dataObj))).map(b => b.toString(16).padStart(2, "0")).join("");
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),
@@ -1026,7 +1026,7 @@
       const [payloadHex, sigHex] = raw.split(".");
       if (!payloadHex || !sigHex || payloadHex.length % 2 !== 0) return { ok: false, error: "Formatfehler im Launch-Token" };
       const enc = new TextEncoder();
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),

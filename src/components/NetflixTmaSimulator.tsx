@@ -685,12 +685,12 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
     return map;
   }, [envVars]);
 
-  // Inject bridge script into the STREAMFLIX HTML so all fetch('/api/...') calls route through executeWorkerSandbox
+  // Inject bridge script into the TelePort HTML so all fetch('/api/...') calls route through executeWorkerSandbox
   const buildInjectedMiniAppHtml = useCallback(
     (rawHtml: string, persona: AuthPersona) => {
       const personaUser =
         persona === 'admin_vip'
-          ? { id: 100998877, first_name: 'Admin', username: 'streamflix_admin', language_code: 'de' }
+          ? { id: 100998877, first_name: 'Admin', username: 'teleport_admin', language_code: 'de' }
           : persona === 'standard_user'
             ? { id: 55443322, first_name: 'Max', username: 'kino_fan', language_code: 'de' }
             : null;
@@ -1021,7 +1021,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
 
   useMouseDragScroll(iframeRef, workspaceContainerRef, srcDocHtml);
 
-  // Listen for fetch requests coming from inside the simulated STREAMFLIX iframe
+  // Listen for fetch requests coming from inside the simulated TelePort iframe
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
       const data = event.data;
@@ -1212,7 +1212,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         </div>
       </div>
 
-      {/* Main STREAMFLIX Mini-App Viewport */}
+      {/* Main TelePort Mini-App Viewport */}
       <div className="flex-1 bg-[#0b0d13] flex items-center justify-center overflow-hidden relative">
         {isLoading && (
           <div className="absolute inset-0 z-20 bg-[#0b0d13]/85 backdrop-blur-xs flex flex-col items-center justify-center gap-2 text-slate-200">
@@ -1234,7 +1234,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
         >
           <iframe
             ref={iframeRef}
-            title="STREAMFLIX Telegram Mini-App Simulator"
+            title="TelePort Telegram Mini-App Simulator"
             srcDoc={srcDocHtml}
             className="w-full h-full border-0 bg-[#0b0d13]"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"

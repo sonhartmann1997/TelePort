@@ -57,8 +57,8 @@ export const WORKER_DEPARTMENTS = [
   },
   {
     id: '08-tma-netflix-frontend',
-    title: '8. STREAMFLIX Netflix Mini-App (TMA) Frontend & Auth-Crypto',
-    shortTitle: '08 · STREAMFLIX UI & Auth',
+    title: '8. TelePort Mini-App (TMA) Frontend & Auth-Crypto',
+    shortTitle: '08 · TelePort UI & Auth',
     anchorStart: '// @ANCHOR: TMA_ROUTES',
     anchorEnd: '// @ANCHOR: TMA_BACKEND_API',
   },
@@ -142,15 +142,55 @@ export function splitWorkerIntoModules(sourceCode) {
     const header = `  // @DEPARTMENT: ${dept.id} | ${dept.title}`;
     const deptLines = [header, ...cleaned];
 
-    // Split 08-tma-netflix-frontend into 08a, 08b, 08c so every single file is < 300 KB for GitHub API sync
+    // Split 08-tma-netflix-frontend into 11 semantic domain modules (08a..08k, all < 250 KB)
     if (dept.id === '08-tma-netflix-frontend' && deptLines.length > 3000) {
-      const third = Math.ceil(deptLines.length / 3);
-      const partA = deptLines.slice(0, third).join('\n').trimEnd() + '\n';
-      const partB = deptLines.slice(third, third * 2).join('\n').trimEnd() + '\n';
-      const partC = deptLines.slice(third * 2).join('\n').trimEnd() + '\n';
-      fs.writeFileSync(path.join(modulesDir, '08a-tma-netflix-frontend.js'), partA, 'utf8');
-      fs.writeFileSync(path.join(modulesDir, '08b-tma-netflix-frontend.js'), partB, 'utf8');
-      fs.writeFileSync(path.join(modulesDir, '08c-tma-netflix-frontend.js'), partC, 'utf8');
+      const semanticSplits = [
+        { file: '08a-tma-auth-shell.js', idx: 0 },
+        { file: '08b-tma-css-hero-player.js', find: '/* 100% Vollbild TelePort Kino-Spotlight:' },
+        { file: '08c-tma-js-core-catalog.js', find: 'const API_BASE = "${workerOrigin}/api/tma";', offset: -1 },
+        { file: '08d-tma-js-hero-cinema-player.js', find: '// HAUPTSLIDER INLINE-KINO-TRAILER ENGINE', offset: -1 },
+        { file: '08e-tma-js-detail-trailer.js', find: 'async function openStudioView(companyId, companyName, presetStudioId = "") {' },
+        { file: '08f-tma-js-detail-modal-streams.js', find: 'function renderOrPatchDetailStageClient(type, id, d, forceSeasonNum = null' },
+        { file: '08g-tma-js-corrections-wishlist.js', find: '// GRANULARER "FOLGEN KORRIGIEREN"-DIALOG & "FEHLER MELDEN"-MODAL (CLIENT)', offset: -1 },
+        { file: '08h-tma-js-backup-parser.js', find: '// ADMIN-PANEL: USER-LISTE, VIP-STATUS TOGGLE, SMART PLAYLIST MANAGER, FILM-CRUD & 100K+ BACKUP-IMPORTER', offset: -1 },
+        { file: '08i-tma-js-backup-review.js', find: 'async function handleBackupFileInput(ev) {' },
+        { file: '08j-tma-js-admin-diagnostics.js', find: '// PERSISTENTES DIAGNOSE-LOG (D1 + Browser localStorage + KI-Analyse-Export)', offset: -1 },
+        { file: '08k-tma-js-spatial-navigation.js', find: '// SPATIAL NAVIGATION: PFEILTASTEN, ANDROID-TV REMOTE, GAMEPAD, MAUS-HOVER & TYPE-TO-SEARCH', offset: -1 },
+      ];
+
+      const resolved = [];
+      let allFound = true;
+      for (const spec of semanticSplits) {
+        if (typeof spec.idx === 'number') {
+          resolved.push({ file: spec.file, idx: spec.idx });
+          continue;
+        }
+        const hit = deptLines.findIndex((l) => l.includes(spec.find));
+        if (hit === -1) {
+          allFound = false;
+          break;
+        }
+        resolved.push({ file: spec.file, idx: Math.max(0, hit + (spec.offset || 0)) });
+      }
+
+      if (allFound && resolved.every((r, i) => i === 0 || r.idx > resolved[i - 1].idx)) {
+        for (let i = 0; i < resolved.length; i++) {
+          const start = resolved[i].idx;
+          const end = i + 1 < resolved.length ? resolved[i + 1].idx : deptLines.length;
+          const chunk = deptLines.slice(start, end).join('\n').trimEnd() + '\n';
+          fs.writeFileSync(path.join(modulesDir, resolved[i].file), chunk, 'utf8');
+        }
+      } else {
+        const chunkCount = Math.max(4, Math.ceil(Buffer.byteLength(deptLines.join('\n')) / (230 * 1024)));
+        const linesPerChunk = Math.ceil(deptLines.length / chunkCount);
+        for (let i = 0; i < chunkCount; i++) {
+          const letter = String.fromCharCode(97 + i);
+          const chunk = deptLines.slice(i * linesPerChunk, (i + 1) * linesPerChunk).join('\n').trimEnd() + '\n';
+          if (chunk.trim()) {
+            fs.writeFileSync(path.join(modulesDir, `08${letter}-tma-frontend-part.js`), chunk, 'utf8');
+          }
+        }
+      }
     } else {
       const content = deptLines.join('\n').trimEnd() + '\n';
       fs.writeFileSync(path.join(modulesDir, `${dept.id}.js`), content, 'utf8');

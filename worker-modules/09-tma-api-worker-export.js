@@ -44,8 +44,8 @@
 
     if (path === "/manifest.json" || path === "/manifest.webmanifest") {
       const pwaManifest = {
-        name: "STREAMFLIX – TelePort",
-        short_name: "STREAMFLIX",
+        name: "TelePort",
+        short_name: "TelePort",
         description: "Exklusive Filme, Serien & Trailer direkt im Stream.",
         start_url: "/app",
         scope: "/",
@@ -73,7 +73,7 @@
     }
 
     if (path === "/sw.js" || path === "/service-worker.js") {
-      const swCode = `const CACHE_NAME="streamflix-v1";const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname.startsWith("/assets/")||u.pathname==="/favicon.svg")){e.respondWith(caches.match(r).then(cached=>{const fp=fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>cached);return cached||fp}));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
+      const swCode = `const CACHE_NAME="teleport-v1";const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname.startsWith("/assets/")||u.pathname==="/favicon.svg")){e.respondWith(caches.match(r).then(cached=>{const fp=fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>cached);return cached||fp}));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
       return new Response(swCode, {
         status: 200,
         headers: {
@@ -434,7 +434,7 @@
           const newSecret = generateBase32TotpSecret(32);
           await saveUserTotpInD1(env, auth.chatId, newSecret, false);
           const accountLabel = auth.user.customUsername || auth.user.tgUsername || `TG-${auth.chatId}`;
-          const { otpauthUrl, qrCodeUrl } = buildOtpAuthUri(newSecret, accountLabel, "StreamFlix TMA");
+          const { otpauthUrl, qrCodeUrl } = buildOtpAuthUri(newSecret, accountLabel, "TelePort TMA");
           return new Response(JSON.stringify({
             ok: true,
             secret: newSecret,
@@ -4399,7 +4399,7 @@
 
           return new Response(JSON.stringify({
             status: "online",
-            service: "Telegram Movie & Series Bot + Netflix Mini-App (Cloudflare Worker v3.7.0)",
+            service: "TelePort Movie & Series Bot + Mini-App (Cloudflare Worker v3.7.0)",
             webhookUrl: officialWebhookEndpoint,
             miniAppUrl: `${configuredWebhookBase}/app`,
             studioUrl: `${configuredWebhookBase}/studio`,

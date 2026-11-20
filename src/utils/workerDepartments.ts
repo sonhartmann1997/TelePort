@@ -122,13 +122,13 @@ export const WORKER_DEPARTMENT_DEFINITIONS: WorkerDepartmentMeta[] = [
   {
     id: '08-tma-netflix-frontend',
     number: '08',
-    title: 'STREAMFLIX Netflix Mini-App (TMA) Frontend & Auth-Crypto',
-    shortTitle: 'STREAMFLIX UI & Auth',
+    title: 'TelePort Mini-App (TMA) Frontend & Auth-Crypto',
+    shortTitle: 'TelePort UI & Auth',
     anchorStart: '// @ANCHOR: TMA_ROUTES',
     anchorEnd: '// @ANCHOR: TMA_BACKEND_API',
     anchors: ['TMA_ROUTES', 'TMA_AUTH_SECURITY'],
     description:
-      'Immersives STREAMFLIX Frontend (#141414), HMAC-SHA256 initData-Security, PBKDF2 Web-Login, TOTP 2FA & Admin-Dashboard UI.',
+      'Immersives TelePort Frontend (#060a14), HMAC-SHA256 initData-Security, PBKDF2 Web-Login, TOTP 2FA & Admin-Dashboard UI.',
   },
   {
     id: '09-tma-api-worker-export',

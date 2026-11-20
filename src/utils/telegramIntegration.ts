@@ -108,7 +108,7 @@ const DEFAULT_CONFIG: TelegramBotConfig = {
   sourceGroupId: '',
   botToken: '',
   botUsername: '',
-  webhookSecret: 'streamflix_custom_hook_secret',
+  webhookSecret: 'teleport_custom_hook_secret',
 };
 
 function notifyActivityListeners(): void {
@@ -485,7 +485,7 @@ export function generateWebhookEndpoint(
   baseOrigin: string,
   botToken?: string
 ): string {
-  const cleanOrigin = (baseOrigin || window.location.origin || 'https://streamflix-worker.workers.dev').replace(/\/$/, '');
+  const cleanOrigin = (baseOrigin || window.location.origin || 'https://teleport-worker.workers.dev').replace(/\/$/, '');
   const baseHook = `${cleanOrigin}/api/telegram/custom-webhook`;
   if (!botToken || !botToken.trim()) {
     return baseHook;

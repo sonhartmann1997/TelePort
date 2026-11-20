@@ -8,11 +8,7 @@ const modulesDir = path.join(rootDir, 'worker-modules');
 const workerPath = path.join(rootDir, 'worker.js');
 const publicWorkerPath = path.join(rootDir, 'public', 'worker.js');
 
-const TEMPLATE_LITERAL_MODULES = new Set([
-  '08a-tma-netflix-frontend.js',
-  '08b-tma-netflix-frontend.js',
-  '08c-tma-netflix-frontend.js',
-]);
+const TEMPLATE_LITERAL_MODULE_RE = /^08[a-z]-.*\.js$/;
 
 const DEPRECATED_PATTERNS = [
   {
@@ -92,15 +88,14 @@ function runPreAssemblyModuleStaticAnalysis() {
       }
     }
 
-    // 2. Check template-literal escaping inside 08a / 08b / 08c (prevents Uncaught SyntaxError: Invalid regular expression flags)
-    if (TEMPLATE_LITERAL_MODULES.has(file)) {
-      let templateStartIdx = 0;
-      if (file === '08a-tma-netflix-frontend.js') {
-        const idx = lines.findIndex((l) => l.includes('return `<!DOCTYPE html>'));
-        templateStartIdx = idx !== -1 ? idx : 0;
-      }
+    // 2. Check template-literal escaping inside all 08*.js TMA frontend modules (prevents Uncaught SyntaxError: Invalid regular expression flags)
+    if (TEMPLATE_LITERAL_MODULE_RE.test(file)) {
+      const startMarkerIdx = lines.findIndex((l) => l.includes('return `<!DOCTYPE html>'));
+      const endMarkerIdx = lines.findIndex((l) => l.includes('</html>`;'));
+      const templateStartIdx = startMarkerIdx !== -1 ? startMarkerIdx : 0;
+      const templateEndIdx = endMarkerIdx !== -1 ? endMarkerIdx + 1 : lines.length;
 
-      for (let i = templateStartIdx; i < lines.length; i++) {
+      for (let i = templateStartIdx; i < templateEndIdx; i++) {
         const line = lines[i];
         const singleBackslashRe = /(?<!\\)\\(?!\\|`|\$\{)(.)/g;
         let match;
@@ -165,7 +160,7 @@ async function verifyEmbeddedMiniAppScripts(assembledCode, moduleMap) {
     `return ${templateLiteralSource};`
   );
   const renderedHtml = evaluateHtml(
-    'https://streamflix.example.com',
+    'https://teleport.example.com',
     {},
     {},
     {},

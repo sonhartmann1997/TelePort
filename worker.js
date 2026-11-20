@@ -4621,7 +4621,7 @@
         exp: Date.now() + (Number(ttlMs) > 0 ? Number(ttlMs) : 24 * 60 * 60 * 1000)
       };
       const payloadHex = Array.from(enc.encode(JSON.stringify(dataObj))).map(b => b.toString(16).padStart(2, "0")).join("");
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),
@@ -4644,7 +4644,7 @@
       const [payloadHex, sigHex] = raw.split(".");
       if (!payloadHex || !sigHex || payloadHex.length % 2 !== 0) return { ok: false, error: "Formatfehler im Launch-Token" };
       const enc = new TextEncoder();
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "streamflix_default_worker_secret_key");
+      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),
@@ -25581,7 +25581,7 @@
           `Deine Datei \`${escapeMd(docObj.file_name || "result.json")}\` ist *${(fileSizeBytes / (1024 * 1024)).toFixed(1)} MB* groß.\n\n` +
           `📌 *Telegram Bot-API Limit:* Bots dürfen über Telegram maximal *20 MB* direkt herunterladen.\n` +
           `🚀 *Lösung für 100.000+ Einträge (bis 500 MB+):*\n` +
-          `Öffne die **StreamFlix Mini-App ▸ 👑 Admin ▸ 📦 Backup-Import (100k+)**. Dort werden Formatfehler automatisch repariert, Duplikate gefiltert und unsichere Treffer im **Korrektur-Tab** angezeigt!`,
+          `Öffne die **TelePort Mini-App ▸ 👑 Admin ▸ 📦 Backup-Import (100k+)**. Dort werden Formatfehler automatisch repariert, Duplikate gefiltert und unsichere Treffer im **Korrektur-Tab** angezeigt!`,
           { reply_markup: { inline_keyboard: [buildFooterRow(chatId, true)] } }
         );
         return true;
@@ -28362,7 +28362,7 @@
     }
   }
 
-  // @DEPARTMENT: 08-tma-netflix-frontend | 8. STREAMFLIX Netflix Mini-App (TMA) Frontend & Auth-Crypto
+  // @DEPARTMENT: 08-tma-netflix-frontend | 8. TelePort Mini-App (TMA) Frontend & Auth-Crypto
   // @ANCHOR: TMA_ROUTES
   // @ANCHOR: TMA_AUTH_SECURITY
   // ============================================================================
@@ -28657,8 +28657,8 @@
     return false;
   }
 
-  function buildOtpAuthUri(secret, accountLabel, issuer = "StreamFlix TMA") {
-    const cleanIssuer = String(issuer || "StreamFlix TMA").trim();
+  function buildOtpAuthUri(secret, accountLabel, issuer = "TelePort TMA") {
+    const cleanIssuer = String(issuer || "TelePort TMA").trim();
     const cleanAccount = String(accountLabel || "User").trim();
     const label = `${encodeURIComponent(cleanIssuer)}:${encodeURIComponent(cleanAccount)}`;
     const otpauthUrl = `otpauth://totp/${label}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(cleanIssuer)}&algorithm=SHA1&digits=6&period=30`;
@@ -28962,7 +28962,7 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="STREAMFLIX" />
+    <meta name="apple-mobile-web-app-title" content="TelePort" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='28' y2='28' gradientUnits='userSpaceOnUse'%3E%3Cstop offset='0%25' stop-color='%2338bdf8'/%3E%3Cstop offset='50%25' stop-color='%23a855f7'/%3E%3Cstop offset='100%25' stop-color='%236366f1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='11.5' stroke='url(%23g)' stroke-width='2.6' stroke-dasharray='18 5'/%3E%3Ccircle cx='14' cy='14' r='7.5' stroke='%2338bdf8' stroke-width='1.5' stroke-opacity='0.8'/%3E%3Cpath d='M11.8 9.8L18.5 14L11.8 18.2V9.8Z' fill='url(%23g)'/%3E%3C/svg%3E" />
     <link rel="alternate icon" type="image/svg+xml" href="/favicon.svg" />
@@ -31744,7 +31744,7 @@
         opacity: 1;
       }
 
-      /* 100% Vollbild Flixnet Kino-Spotlight: Unbeschnittene Cover/Backdrops am oberen Rand + weicher Top-Fade + Bild-Ausfüllung hinter der Top-Leiste */
+      /* 100% Vollbild TelePort Kino-Spotlight: Unbeschnittene Cover/Backdrops am oberen Rand + weicher Top-Fade + Bild-Ausfüllung hinter der Top-Leiste */
       @keyframes heroSlideProgress {
         0% { width: 0%; }
         100% { width: 100%; }
@@ -32006,7 +32006,7 @@
         opacity: 0.25;
         transform: translate3d(8px, 0, 0);
       }
-      /* Flixnet Kicker über dem großen Filmtitel */
+      /* TelePort Kicker über dem großen Filmtitel */
       .hero-kicker {
         font-size: calc(10.5px * var(--scale-text));
         font-weight: 800;
@@ -32327,7 +32327,7 @@
         border-color: rgba(52, 211, 153, 0.72) !important;
         color: #ecfdf5 !important;
       }
-      /* Minimalistische Flixnet-Punktleiste unten mittig + animierter "∨" Scroll-Hinweis-Pfeil */
+      /* Minimalistische TelePort-Punktleiste unten mittig + animierter "∨" Scroll-Hinweis-Pfeil */
       .hero-bottom-bar {
         display: flex;
         flex-direction: column;
@@ -34007,7 +34007,7 @@
       .scale-label { font-size: calc(11.5px * var(--scale-text)); font-weight: 700; color: #e2e8f0; }
       .scale-opts { display: flex; gap: 4px; flex-wrap: wrap; }
 
-      /* Premium Fullscreen App Detail-View im Flixnet- & Kino-Slider-Design (1:1 Größe mit Slider + Unified Topbar) */
+      /* Premium Fullscreen App Detail-View im TelePort Kino-Slider-Design (1:1 Größe mit Slider + Unified Topbar) */
       body.modal-open-pause-hero .hero-dot.active .hero-thumb-progress-fill {
         animation-play-state: paused !important;
       }
@@ -34221,14 +34221,14 @@
       .detail-bg-video-layer.is-playing {
         opacity: 1;
       }
-      /* Vertikaler Overscan im overflow:hidden Container schiebt YouTubes obere Titelzeile (~62px) & untere Leiste (Link, Weitere Videos, YouTube-Logo ~58px) komplett aus dem Bild – ohne Schattenboxen! */
+      /* Reiner Top-Bleed im overflow:hidden Container: schiebt YouTubes obere Titelzeile (~62px) aus dem Bild, belässt die Unterkante bündig bei 0px (kein Zoom, 100% unbeschnittene Untertitel!) */
       .detail-bg-video-frame {
         position: absolute;
-        top: -70px;
+        top: -64px;
         left: 0;
         right: 0;
         width: 100% !important;
-        height: calc(100% + 140px) !important;
+        height: calc(100% + 64px) !important;
         transform-origin: 50% 50%;
         transform: translate3d(0, 0, 0) !important;
         clip-path: none !important;
@@ -34238,14 +34238,16 @@
       }
       .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
       .hero.is-cc-safe-framing .detail-bg-video-frame {
-        top: -70px;
-        height: calc(100% + 128px) !important;
+        top: -64px;
+        height: calc(100% + 64px) !important;
         transform: translate3d(0, 0, 0) !important;
       }
       @media (max-height: 460px) {
-        .detail-bg-video-frame {
-          top: -60px;
-          height: calc(100% + 120px) !important;
+        .detail-bg-video-frame,
+        .detail-hero-stage.is-cc-safe-framing .detail-bg-video-frame,
+        .hero.is-cc-safe-framing .detail-bg-video-frame {
+          top: -54px;
+          height: calc(100% + 54px) !important;
         }
       }
       .detail-ambilight-glow {
@@ -34423,19 +34425,19 @@
         from { opacity: 0.72; transform: translate(-50%, -50%) scale(0.97); }
         to { opacity: 1; transform: translate(-50%, -50%) scale(1.02); }
       }
-      /* Blickdichtes TelePort-Badge unten rechts (ohne Transparenz – überdeckt zuverlässig die rechte untere Ecke im Idle-Modus) */
+      /* Blickdichtes TelePort-Badge unten rechts (ohne Transparenz – deckt den YouTube-Button unten rechts komplett ab, ohne Untertitel in der Mitte zu berühren) */
       .cinema-teleport-watermark {
         position: absolute;
-        right: 8px;
-        bottom: 8px;
-        min-width: 128px;
-        min-height: 38px;
+        right: 4px;
+        bottom: 4px;
+        min-width: 142px;
+        min-height: 44px;
         z-index: 15;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 7px;
-        padding: 7px 16px 7px 12px;
+        padding: 8px 18px 8px 14px;
         border-radius: 999px;
         background: #060a14;
         border: 1px solid rgba(56, 189, 248, 0.36);
@@ -35325,9 +35327,11 @@
           display: none;
         }
         .cinema-teleport-watermark {
-          right: 12px;
-          bottom: 12px;
-          padding: 4px 9px 4px 7px;
+          right: 4px;
+          bottom: 4px;
+          min-width: 124px;
+          min-height: 36px;
+          padding: 5px 12px 5px 10px;
           font-size: 11px;
         }
         .cinema-dock-btn {
@@ -35440,7 +35444,7 @@
         font-weight: 700;
         cursor: pointer;
       }
-      /* Flixnet Hero Action Bar: 1:1 mit Slider-Buttons (unter der Beschreibung) */
+      /* TelePort Hero Action Bar: 1:1 mit Slider-Buttons (unter der Beschreibung) */
       .detail-action-bar {
         display: inline-flex;
         align-items: center;
@@ -36985,6 +36989,7 @@
         }
       });
     </script>
+
     <script>
       const API_BASE = "${workerOrigin}/api/tma";
       const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
@@ -42952,7 +42957,7 @@
               stopHeroCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               setHeroTrailerLoadingBadgeClient(false);
-              // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte STREAMFLIX-Ersatzoverlays überdecken nur die YouTube-Controls!
+              // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte TelePort-Ersatzoverlays überdecken nur die YouTube-Controls!
               if (!isFg || heroBgTeaserPreloadedParked || heroBgTeaserEnded) {
                 heroBgTeaserChromeShieldRequired = true;
                 if (layer) {
@@ -43409,7 +43414,7 @@
           resumeHeroTrailerWithBackdropShieldClient({ restartIfEnded: true });
           showHeroSeekRippleBadgeClient("▶ Fortsetzen", "center");
         } else {
-          // Video-Frame sichtbar lassen – gezielte STREAMFLIX-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
+          // Video-Frame sichtbar lassen – gezielte TelePort-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
           if (heroBgTeaserRevealTimer) {
             clearTimeout(heroBgTeaserRevealTimer);
             heroBgTeaserRevealTimer = null;
@@ -48930,7 +48935,7 @@
               stopDetailCinemaLiveClockClient();
               if (stageEl) stageEl.classList.remove("is-cinema-starting");
               setDetailTrailerLoadingBadgeClient(false);
-              // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte STREAMFLIX-Ersatzoverlays überdecken nur YouTube-Controls!
+              // Im Vordergrund-Kino-Modus bleibt das pausierte Video sichtbar; gezielte TelePort-Ersatzoverlays überdecken nur YouTube-Controls!
               if (!isFg || detailBgTeaserPreloadedParked || detailBgTeaserEnded) {
                 detailBgTeaserChromeShieldRequired = true;
                 if (layer) {
@@ -49057,7 +49062,7 @@
           resumeDetailTrailerWithBackdropShieldClient({ restartIfEnded: true });
           showDetailSeekRippleBadgeClient("▶ Fortsetzen", "center");
         } else {
-          // Video-Frame sichtbar lassen – gezielte STREAMFLIX-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
+          // Video-Frame sichtbar lassen – gezielte TelePort-Ersatzoverlays überdecken nur YouTube-Pause-Controls!
           if (detailBgTeaserRevealTimer) {
             clearTimeout(detailBgTeaserRevealTimer);
             detailBgTeaserRevealTimer = null;
@@ -66514,8 +66519,8 @@
 
     if (path === "/manifest.json" || path === "/manifest.webmanifest") {
       const pwaManifest = {
-        name: "STREAMFLIX – TelePort",
-        short_name: "STREAMFLIX",
+        name: "TelePort",
+        short_name: "TelePort",
         description: "Exklusive Filme, Serien & Trailer direkt im Stream.",
         start_url: "/app",
         scope: "/",
@@ -66543,7 +66548,7 @@
     }
 
     if (path === "/sw.js" || path === "/service-worker.js") {
-      const swCode = `const CACHE_NAME="streamflix-v1";const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname.startsWith("/assets/")||u.pathname==="/favicon.svg")){e.respondWith(caches.match(r).then(cached=>{const fp=fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>cached);return cached||fp}));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
+      const swCode = `const CACHE_NAME="teleport-v1";const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname.startsWith("/assets/")||u.pathname==="/favicon.svg")){e.respondWith(caches.match(r).then(cached=>{const fp=fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>cached);return cached||fp}));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
       return new Response(swCode, {
         status: 200,
         headers: {
@@ -66904,7 +66909,7 @@
           const newSecret = generateBase32TotpSecret(32);
           await saveUserTotpInD1(env, auth.chatId, newSecret, false);
           const accountLabel = auth.user.customUsername || auth.user.tgUsername || `TG-${auth.chatId}`;
-          const { otpauthUrl, qrCodeUrl } = buildOtpAuthUri(newSecret, accountLabel, "StreamFlix TMA");
+          const { otpauthUrl, qrCodeUrl } = buildOtpAuthUri(newSecret, accountLabel, "TelePort TMA");
           return new Response(JSON.stringify({
             ok: true,
             secret: newSecret,
@@ -70869,7 +70874,7 @@
 
           return new Response(JSON.stringify({
             status: "online",
-            service: "Telegram Movie & Series Bot + Netflix Mini-App (Cloudflare Worker v3.7.0)",
+            service: "TelePort Movie & Series Bot + Mini-App (Cloudflare Worker v3.7.0)",
             webhookUrl: officialWebhookEndpoint,
             miniAppUrl: `${configuredWebhookBase}/app`,
             studioUrl: `${configuredWebhookBase}/studio`,

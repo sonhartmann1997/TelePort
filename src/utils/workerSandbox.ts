@@ -142,8 +142,8 @@ function recordSimulatedTelegramCall(method: string, payload: any): any {
       result: {
         id: 77889900,
         is_bot: true,
-        first_name: 'Streamflix Movie Bot',
-        username: 'StreamflixMovieBot',
+        first_name: 'TelePort Movie Bot',
+        username: 'TelePortMovieBot',
       },
     };
   }
@@ -151,7 +151,7 @@ function recordSimulatedTelegramCall(method: string, payload: any): any {
   return { ok: true, result: true };
 }
 
-// Curated German TMDb dataset for instant offline/sandbox simulation of STREAMFLIX & Bot
+// Curated German TMDb dataset for instant offline/sandbox simulation of TelePort & Bot
 const SIMULATED_TMDB_MOVIES = [
   {
     id: 157336,
@@ -1258,7 +1258,7 @@ export async function executeWorkerSandbox(
 
   const env: Record<string, any> = {
     TELEGRAM_BOT_TOKEN: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
-    TMDB_BEARER_TOKEN: 'sim_tmdb_token_v4_streamflix',
+    TMDB_BEARER_TOKEN: 'sim_tmdb_token_v4_teleport',
     ...envVars,
     MY_KV: kvNamespace,
     KV: kvNamespace,

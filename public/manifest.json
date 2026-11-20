@@ -1,6 +1,6 @@
 {
-  "name": "STREAMFLIX – TelePort",
-  "short_name": "STREAMFLIX",
+  "name": "TelePort",
+  "short_name": "TelePort",
   "description": "Exklusive Filme, Serien & Trailer direkt im Stream.",
   "start_url": "/app",
   "scope": "/",

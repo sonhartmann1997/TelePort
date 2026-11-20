@@ -3254,7 +3254,7 @@
           `Deine Datei \`${escapeMd(docObj.file_name || "result.json")}\` ist *${(fileSizeBytes / (1024 * 1024)).toFixed(1)} MB* groß.\n\n` +
           `📌 *Telegram Bot-API Limit:* Bots dürfen über Telegram maximal *20 MB* direkt herunterladen.\n` +
           `🚀 *Lösung für 100.000+ Einträge (bis 500 MB+):*\n` +
-          `Öffne die **StreamFlix Mini-App ▸ 👑 Admin ▸ 📦 Backup-Import (100k+)**. Dort werden Formatfehler automatisch repariert, Duplikate gefiltert und unsichere Treffer im **Korrektur-Tab** angezeigt!`,
+          `Öffne die **TelePort Mini-App ▸ 👑 Admin ▸ 📦 Backup-Import (100k+)**. Dort werden Formatfehler automatisch repariert, Duplikate gefiltert und unsichere Treffer im **Korrektur-Tab** angezeigt!`,
           { reply_markup: { inline_keyboard: [buildFooterRow(chatId, true)] } }
         );
         return true;

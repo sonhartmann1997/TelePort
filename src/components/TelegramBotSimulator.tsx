@@ -148,7 +148,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
           update_id: Date.now(),
           message: {
             message_id: 1,
-            from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'streamflix_admin' },
+            from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'teleport_admin' },
             chat: { id: 100998877, type: 'private', first_name: 'Admin' },
             date: Math.floor(Date.now() / 1000),
             text: '/start',
@@ -169,7 +169,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
         update_id: Date.now(),
         message: {
           message_id: Math.floor(Math.random() * 90000) + 100,
-          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'streamflix_admin' },
+          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'teleport_admin' },
           chat: { id: 100998877, type: 'private', first_name: 'Admin' },
           date: Math.floor(Date.now() / 1000),
           text: txt,
@@ -185,7 +185,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
         update_id: Date.now(),
         message: {
           message_id: Math.floor(Math.random() * 90000) + 500,
-          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'streamflix_admin' },
+          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'teleport_admin' },
           chat: { id: 100998877, type: 'private', first_name: 'Admin' },
           date: Math.floor(Date.now() / 1000),
           caption: filename,
@@ -211,7 +211,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
         update_id: Date.now(),
         message: {
           message_id: Math.floor(Math.random() * 90000) + 600,
-          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'streamflix_admin' },
+          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'teleport_admin' },
           chat: { id: 100998877, type: 'private', first_name: 'Admin' },
           date: Math.floor(Date.now() / 1000),
           caption: filename,
@@ -250,7 +250,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
         update_id: Date.now(),
         callback_query: {
           id: `cbq_${Date.now()}`,
-          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'streamflix_admin' },
+          from: { id: 100998877, is_bot: false, first_name: 'Admin', username: 'teleport_admin' },
           message: {
             message_id: messageId,
             chat: { id: 100998877, type: 'private', first_name: 'Admin' },
@@ -291,7 +291,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-white">
-                  Streamflix Movie &amp; Series Bot
+                  TelePort Movie &amp; Series Bot
                 </span>
                 <span className="text-[10px] text-emerald-400 font-medium">
                   bot · online

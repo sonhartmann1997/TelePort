@@ -85,7 +85,7 @@ export const KVStorageManager: React.FC<KVStorageManagerProps> = ({
     const origin =
       typeof window !== 'undefined' && window.location?.origin
         ? window.location.origin
-        : 'https://streamflix-worker.workers.dev';
+        : 'https://teleport-worker.workers.dev';
     return generateWebhookEndpoint(origin, botForm.botToken);
   }, [botForm.botToken]);
 
