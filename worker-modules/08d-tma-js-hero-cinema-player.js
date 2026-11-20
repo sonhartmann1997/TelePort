@@ -1524,7 +1524,7 @@
             const curSlideKey = curHero ? ((curHero.media_type === "tv" || state.type === "s" ? "s" : "m") + "_" + curHero.id) : "";
             if (!curHero || curSlideKey !== slideKey) return;
             if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
-            if (heroCurtainScrolledToCatalog || state.heroHidden || state.isSearchMode) return;
+            if (heroCurtainScrolledToCatalog || !isHeroStageAvailableForCurrentViewClient()) return;
             mountFn();
           };
           if (typeof window.requestIdleCallback === "function") {
@@ -1585,7 +1585,7 @@
       }
 
       function scheduleHeroBackgroundVideoTeaserClient(immediateForeground = false) {
-        if (state.isSearchMode || state.heroHidden || !Array.isArray(state.heroSlides) || !state.heroSlides.length) {
+        if (!isHeroStageAvailableForCurrentViewClient()) {
           stopHeroBackgroundVideoTeaserClient();
           return;
         }
@@ -1628,7 +1628,7 @@
           if (!curHero || curSlideKey !== slideKey) return;
           if (!immediateForeground) {
             if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
-            if (heroCurtainScrolledToCatalog || state.heroHidden || state.isSearchMode) return;
+            if (heroCurtainScrolledToCatalog || !isHeroStageAvailableForCurrentViewClient()) return;
           }
           const cands = await resolveHeroSlideTrailerCandidatesClient(curHero, heroType);
           if (reqSeq !== heroBgTeaserRequestSeq) return;
@@ -2167,7 +2167,9 @@
       }
 
       function expandHeroSliderAndFocusClient(focusMode = "hero") {
-        if (state.isSearchMode || state.currentView !== "discover" || !state.heroSlides || !state.heroSlides.length) {
+        const hasSearchHero = state.isSearchMode && Array.isArray(state.items) && state.items.length >= 2;
+        const hasDiscoverHero = !state.isSearchMode && (!state.currentView || state.currentView === "discover");
+        if ((!hasSearchHero && !hasDiscoverHero) || !state.heroSlides || !state.heroSlides.length) {
           return false;
         }
         if (state.heroHidden) {
@@ -2200,10 +2202,10 @@
 
       function startHeroRotationTimer() {
         if (heroRotationTimer) clearInterval(heroRotationTimer);
-        if (state.isSearchMode || state.heroSlides.length <= 1) return;
+        if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
         const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
-          if (state.isSearchMode || state.heroSlides.length <= 1) return;
+          if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
           if (
             document.getElementById("modalRoot")?.innerHTML.trim() ||
             document.getElementById("lightboxRoot")?.innerHTML.trim() ||
@@ -2334,7 +2336,7 @@
       }
 
       function triggerHeroSwipeUpCollapseClient(opts) {
-        if (state.isSearchMode || state.heroHidden) return;
+        if (!isHeroStageAvailableForCurrentViewClient()) return;
         scrollToCatalogBelowHeroClient(null, opts);
       }
 
@@ -2348,7 +2350,8 @@
         if (direction === "up") {
           triggerHeroSwipeUpCollapseClient(opts);
         } else if (direction === "down") {
-          if (state.heroHidden && !state.isSearchMode) {
+          const canRevealHiddenHero = state.heroHidden && Array.isArray(state.heroSlides) && state.heroSlides.length > 0;
+          if (canRevealHiddenHero) {
             toggleHeroSliderHidden(false);
           } else if (heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 10) {
             animateHeroCatalogSnapScrollClient(0, opts);
@@ -2457,7 +2460,7 @@
             try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
             clearHeroDescTransientFocusClient();
           }
-          if (Math.abs(dy) >= Math.abs(dx) * 0.95 && !state.heroHidden && !state.isSearchMode) {
+          if (Math.abs(dy) >= Math.abs(dx) * 0.95 && isHeroStageAvailableForCurrentViewClient()) {
             if (dy <= -HERO_BOUNCE_LOCK_MIN_DIST && heroMouseInstantVy <= -HERO_BOUNCE_LOCK_VELOCITY && Math.abs(dy) > Math.abs(dx) * 1.15) {
               heroMouseDragActive = false;
               heroMouseDraggingUp = false;
@@ -2589,7 +2592,7 @@
         if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
           clearHeroDescTransientFocusClient();
         }
-        if (Math.abs(dy) >= Math.abs(dx) * 0.95 && !state.heroHidden && !state.isSearchMode) {
+        if (Math.abs(dy) >= Math.abs(dx) * 0.95 && isHeroStageAvailableForCurrentViewClient()) {
           if (ev.cancelable) {
             ev.preventDefault();
           }
@@ -2886,13 +2889,7 @@
 
       function syncHeroExpandedBodyClass() {
         if (!document.body) return;
-        const isExp = Boolean(
-          !state.isSearchMode &&
-          !state.heroHidden &&
-          (!state.currentView || state.currentView === "discover") &&
-          Array.isArray(state.heroSlides) &&
-          state.heroSlides.length > 0
-        );
+        const isExp = Boolean(isHeroStageAvailableForCurrentViewClient());
         if (document.body.classList.contains("hero-slider-expanded") !== isExp) {
           document.body.classList.toggle("hero-slider-expanded", isExp);
         }
@@ -3101,10 +3098,45 @@
         });
       }
 
+      // Gemeinsame, wiederverwendbare Stage-Beschreibungsbox für Hero-Slider, Such-Hero & Detailseite (Single Source of Truth)
+      function buildUnifiedStageDescriptionBoxHtmlClient(opts) {
+        const boxId = String(opts?.boxId || "heroDescEl");
+        const textId = String(opts?.textId || "heroDescTextEl");
+        const translateBtnId = String(opts?.translateBtnId || "heroDescTranslateBtn");
+        const translateTargetKey = String(opts?.translateTargetKey || "activeDetails");
+        const overviewText = String(opts?.overviewText || "").trim();
+        const rawOrigOverview = String(opts?.rawOrigOverview || "").trim();
+        const showTransBtn = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrigOverview);
+        const isTranslated = Boolean(opts?.isTranslated);
+        const alwaysRenderBtn = Boolean(opts?.alwaysRenderTranslateBtn);
+        const transBtnHtml = (alwaysRenderBtn || showTransBtn)
+          ? '<button type="button" id="' + esc(translateBtnId) + '" class="desc-translate-btn' + (isTranslated ? ' is-translated' : '') + '"' +
+              (alwaysRenderBtn ? (' style="display:' + (showTransBtn ? 'inline-flex' : 'none') + '"') : '') +
+              ' onclick="translateOverviewTextClient(event,\\'' + esc(translateTargetKey) + '\\',\\'' + esc(boxId) + '\\',\\'' + esc(textId) + '\\',\\'' + esc(translateBtnId) + '\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' +
+              (isTranslated ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') +
+            '</button>'
+          : '';
+        return '<div id="' + esc(boxId) + '" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\');}">' +
+          '<div id="' + esc(textId) + '" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrigOverview) + '">' + esc(overviewText) + '</div>' +
+          '<div class="desc-actions-row">' +
+            '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+            transBtnHtml +
+          '</div>' +
+        '</div>';
+      }
+
+      function getHeroStageKickerTextClient() {
+        if (state.isSearchMode && state.searchQuery) {
+          return 'SUCH-HIGHLIGHT · „' + String(state.searchQuery).trim() + '“';
+        }
+        return "HIGHLIGHT DIESE WOCHE";
+      }
+
       function buildHeroBannerInnerHtml() {
         syncHeroExpandedBodyClass();
         syncHeroSearchPlaceholderAndToggleBtnClient();
-        if (state.isSearchMode || !state.heroSlides.length) return "";
+        if (!Array.isArray(state.heroSlides) || !state.heroSlides.length) return "";
+        if (state.isSearchMode && (!Array.isArray(state.items) || state.items.length < 2)) return "";
         const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
         if (!hero) return "";
         const heroType = hero.media_type === "tv" || state.type === "s" ? "s" : "m";
@@ -3171,26 +3203,23 @@
                 '<div class="hero-inner">' +
                   '<div class="hero-widescreen-body">' +
                     '<div id="heroContentEl" class="hero-content">' +
-                      '<div id="heroKickerEl" class="hero-kicker">HIGHLIGHT DIESE WOCHE</div>' +
+                      '<div id="heroKickerEl" class="hero-kicker">' + esc(getHeroStageKickerTextClient()) + '</div>' +
                       '<div id="heroTitleBoxEl" class="hero-title">' +
                         buildHeroTitleOrLogoInnerHtmlClient(heroTitleRaw, hero.logo_path || clientClearLogoCache.get(heroCardKey) || "") +
                       '</div>' +
                       '<div id="heroMetaCleanEl" class="hero-meta-clean">' +
                         buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr) +
                       '</div>' +
-                      (function() {
-                        const heroOvText = resolveHeroOverviewTextClient(hero, isMovie);
-                        const rawOrigOv = String(hero._originalOverviewEn || hero.overview || "").trim();
-                        const showTransBtn = isLikelyEnglishOverviewClient(rawOrigOv);
-                        const isCurrentlyTranslated = Boolean(hero._showTranslatedOverviewDe && hero._translatedOverviewDe);
-                        return '<div id="heroDescEl" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'heroDescEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'heroDescEl\\');}">' +
-                          '<div id="heroDescTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrigOv) + '">' + esc(heroOvText) + '</div>' +
-                          '<div class="desc-actions-row">' +
-                            '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                            '<button type="button" id="heroDescTranslateBtn" class="desc-translate-btn' + (isCurrentlyTranslated ? ' is-translated' : '') + '" style="display:' + (showTransBtn ? 'inline-flex' : 'none') + '" onclick="translateOverviewTextClient(event,\\'' + heroCardKey + '\\',\\'heroDescEl\\',\\'heroDescTextEl\\',\\'heroDescTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isCurrentlyTranslated ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') + '</button>' +
-                          '</div>' +
-                        '</div>';
-                      })() +
+                      buildUnifiedStageDescriptionBoxHtmlClient({
+                        boxId: "heroDescEl",
+                        textId: "heroDescTextEl",
+                        translateBtnId: "heroDescTranslateBtn",
+                        translateTargetKey: heroCardKey,
+                        overviewText: resolveHeroOverviewTextClient(hero, isMovie),
+                        rawOrigOverview: String(hero._originalOverviewEn || hero.overview || "").trim(),
+                        isTranslated: Boolean(hero._showTranslatedOverviewDe && hero._translatedOverviewDe),
+                        alwaysRenderTranslateBtn: true
+                      }) +
                       '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
                         '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? ' is-trailer-unavailable' : '') + '" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? 'Kein direkt abspielbarer Trailer verfügbar – YouTube-Suche öffnen' : 'Trailer direkt im Hauptslider einblenden') + '">' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? '🔎 Trailer suchen' : '▶ Trailer') + '</button>' +
                         '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ')">ⓘ Details</button>' +
@@ -3200,8 +3229,8 @@
                   '</div>' +
                   '<div class="hero-bottom-bar">' +
                     thumbsNavHtml +
-                    '<button type="button" id="heroScrollDownHintBtn" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToCatalogBelowHeroClient(event)" title="Nach unten zum Katalog & allen Filmen/Serien gleiten" aria-label="Nach unten zum Katalog & allen Filmen/Serien gleiten">' +
-                      '<span id="heroScrollDownHintLabel" class="hero-scroll-down-label">🍿 Zum Katalog</span>' +
+                    '<button type="button" id="heroScrollDownHintBtn" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToCatalogBelowHeroClient(event)" title="Nach unten zu allen Treffern & Covern gleiten" aria-label="Nach unten zu allen Treffern & Covern gleiten">' +
+                      '<span id="heroScrollDownHintLabel" class="hero-scroll-down-label">' + (state.isSearchMode ? '🔍 Zu allen Suchergebnissen' : '🍿 Zum Katalog') + '</span>' +
                       '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
                         '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' +
                       '</svg>' +
@@ -3239,7 +3268,7 @@
         const layerB = document.getElementById("heroBackdropLayerB");
 
         // Butterweicher 0,5s In-Place Crossfade & Tiefen-Gleiten (ohne Zittern) + dynamisches Ambilight-Update + Hochkant-Cover
-        if (!forceFullRebuild && !state.isSearchMode && state.heroSlides.length > 0 && existingStage && layerA && layerB) {
+        if (!forceFullRebuild && state.heroSlides.length > 0 && (!state.isSearchMode || (Array.isArray(state.items) && state.items.length >= 2)) && existingStage && layerA && layerB) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
           if (hero) {
             const heroType = hero.media_type === "tv" || state.type === "s" ? "s" : "m";
@@ -3274,11 +3303,19 @@
             nextLayer.classList.add("active-layer");
             activeLayer.classList.remove("active-layer");
 
-            // 2. Content, Genres, HD-Badge & Merkliste-Button sanft aktualisieren
+            // 2. Content, Kicker, Genres, HD-Badge & Merkliste-Button sanft aktualisieren
             const contentEl = document.getElementById("heroContentEl");
             if (contentEl) {
               contentEl.classList.add("hero-fade-step");
               setTimeout(() => contentEl.classList.remove("hero-fade-step"), 60);
+            }
+            const kickerEl = document.getElementById("heroKickerEl");
+            if (kickerEl) {
+              kickerEl.textContent = getHeroStageKickerTextClient();
+            }
+            const scrollHintLbl = document.getElementById("heroScrollDownHintLabel");
+            if (scrollHintLbl) {
+              scrollHintLbl.textContent = state.isSearchMode ? "🔍 Zu allen Suchergebnissen" : "🍿 Zum Katalog";
             }
 
             const heroLogoPath = hero.logo_path || clientClearLogoCache.get(heroCardKey) || "";

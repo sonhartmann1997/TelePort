@@ -31036,14 +31036,18 @@
         -webkit-backdrop-filter: blur(14px) saturate(165%);
         border: 1px solid rgba(255, 255, 255, 0.14);
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(56, 189, 248, 0.12);
-        opacity: 0.78;
+        opacity: 0;
         transition:
           width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-          opacity 0.22s ease,
+          opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1),
           color 0.22s ease,
           border-color 0.22s ease,
           box-shadow 0.22s ease,
           background 0.22s ease;
+      }
+      .catalog-edge-trigger-left.is-edge-hint-visible,
+      .catalog-edge-trigger-right.is-edge-hint-visible {
+        opacity: 0.82;
       }
       .catalog-edge-trigger-left {
         left: 0;
@@ -32814,7 +32818,7 @@
         }
       }
 
-      .section { position: relative; z-index: 5; padding: 8px 14px; }
+      .section { position: relative; z-index: 5; padding: 8px 14px; overflow: visible; }
       .section-title { font-size: calc(13.5px * var(--scale-text)); font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: #e5e5e5; }
       .mode-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; align-items: center; }
 
@@ -33045,6 +33049,8 @@
         column-gap: calc(12px * var(--scale-cover));
         row-gap: calc(18px * var(--scale-cover));
         align-items: start;
+        padding: 8px 6px 14px;
+        overflow: visible;
       }
       .card {
         background: transparent;
@@ -33057,8 +33063,6 @@
         flex-direction: column;
         position: relative;
         outline: none !important;
-        content-visibility: auto;
-        contain-intrinsic-size: 136px 248px;
         touch-action: pan-y;
         -webkit-touch-callout: none;
         -webkit-user-select: none;
@@ -36151,12 +36155,20 @@
         font-size: calc(12px * var(--scale-text));
         opacity: 0;
         pointer-events: none;
-        transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 170ms cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 280ms cubic-bezier(0.22, 1, 0.36, 1), transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
       }
       .catalog-focus-info-bar.visible {
         opacity: 1;
         transform: translate(-50%, 0);
         pointer-events: auto;
+      }
+      .catalog-focus-info-bar.is-title-only {
+        justify-content: center;
+        padding: 6px 16px;
+        max-width: min(90vw, 600px);
+      }
+      .catalog-focus-info-bar.is-title-only .cfi-title {
+        max-width: min(56vw, 380px);
       }
       body:has(#filterSidebarDrawer.open) .catalog-focus-info-bar,
       body:has(#tvQuickJumpElevator.has-subpanel) .catalog-focus-info-bar,
@@ -38041,10 +38053,14 @@
           } else if (typeof focusFirstResultCard === "function") {
             focusFirstResultCard(false);
           }
+          if (typeof triggerSideEdgeHintsAutoFadeClient === "function") {
+            triggerSideEdgeHintsAutoFadeClient(2500, "close");
+          }
         }
       }
 
-      function closeFilterSidebar() {
+      function closeFilterSidebar(suppressEdgeHint = false) {
+        const wasOpen = Boolean(state.sidebarOpen || document.getElementById("filterSidebarDrawer")?.classList.contains("open"));
         state.sidebarOpen = false;
         state.sidebarTab = null;
         state.sidebarDesignOpen = false;
@@ -38060,6 +38076,9 @@
           lastElevatorReturnEl = null;
         } else if (typeof focusFirstResultCard === "function") {
           focusFirstResultCard(false);
+        }
+        if (wasOpen && !suppressEdgeHint && typeof triggerSideEdgeHintsAutoFadeClient === "function") {
+          triggerSideEdgeHintsAutoFadeClient(2500, "close");
         }
       }
 
@@ -39017,7 +39036,7 @@
           lastModalTriggerKey = (typeCode && id) ? (typeCode + "_" + id) : "";
           lastModalTriggerEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : null;
           const activeEl = document.activeElement;
-          const inHeroSlider = !heroCurtainScrolledToCatalog && !state.heroHidden && !state.isSearchMode && (!state.currentView || state.currentView === "discover");
+          const inHeroSlider = !heroCurtainScrolledToCatalog && isHeroStageAvailableForCurrentViewClient();
           if (inHeroSlider) {
             if (
               (lastModalTriggerEl && lastModalTriggerEl.id === "heroBtnTrailer") ||
@@ -39469,6 +39488,34 @@
         document.documentElement.addEventListener("mouseleave", cancelSideMenuHoverTimersClient);
       }
 
+      let sideEdgeHintsFadeTimer = null;
+
+      function triggerSideEdgeHintsAutoFadeClient(durationMs = 2500, reason = "close") {
+        if (reason === "intro") {
+          if (window._sideEdgeIntroHintShown) return;
+          window._sideEdgeIntroHintShown = true;
+        }
+        const leftEdge = document.getElementById("catalogEdgeTriggerLeft");
+        const rightEdge = document.getElementById("catalogEdgeTriggerRight");
+        if (!leftEdge && !rightEdge) return;
+        if (document.body && document.body.classList.contains("in-hero-slider")) return;
+        if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+        if (leftEdge) leftEdge.classList.add("is-edge-hint-visible");
+        if (rightEdge) rightEdge.classList.add("is-edge-hint-visible");
+        if (sideEdgeHintsFadeTimer) {
+          clearTimeout(sideEdgeHintsFadeTimer);
+          sideEdgeHintsFadeTimer = null;
+        }
+        const safeMs = Math.max(800, Number(durationMs) || 2500);
+        sideEdgeHintsFadeTimer = setTimeout(() => {
+          sideEdgeHintsFadeTimer = null;
+          const lEl = document.getElementById("catalogEdgeTriggerLeft");
+          const rEl = document.getElementById("catalogEdgeTriggerRight");
+          if (lEl) lEl.classList.remove("is-edge-hint-visible");
+          if (rEl) rEl.classList.remove("is-edge-hint-visible");
+        }, safeMs);
+      }
+
       function openRightMenuOverlayClient(forceImmediate = false) {
         cancelRightEdgeHoverOpenClient();
         if (!forceImmediate && Date.now() < (window.__rmDismissedUntil || 0)) return;
@@ -39476,7 +39523,7 @@
         const elev = document.getElementById("tvQuickJumpElevator");
         if (!elev) return;
         if (state.sidebarOpen && typeof closeFilterSidebar === "function") {
-          closeFilterSidebar();
+          closeFilterSidebar(true);
         }
         window.__rmDismissedUntil = 0;
         elev.classList.remove("is-dismissed");
@@ -39488,8 +39535,15 @@
 
       function closeRightMenuOverlayClient(ev = null, suppressHoverUntilLeave = true) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
-        state.rightMenuTab = null;
         const elev = document.getElementById("tvQuickJumpElevator");
+        const wasOpen = Boolean(
+          elev && (
+            elev.classList.contains("has-subpanel") ||
+            elev.classList.contains("is-visible") ||
+            elev.classList.contains("is-hover-expanded")
+          )
+        );
+        state.rightMenuTab = null;
         if (elev) {
           elev.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
           if (suppressHoverUntilLeave) {
@@ -39513,6 +39567,9 @@
           }
         }
         syncRightMenuBadgesClient();
+        if (wasOpen && suppressHoverUntilLeave) {
+          triggerSideEdgeHintsAutoFadeClient(2500, "close");
+        }
       }
 
       function hasActiveRightMenuFiltersClient() {
@@ -40573,19 +40630,24 @@
 
       function rebuildHeroSlides(itemsList) {
         const withBackdrop = (itemsList || []).filter(i => i && (i.backdrop_path || i.poster_path));
-        const withOverview = withBackdrop.filter(i => i.overview && !isGenericPlaceholderOverviewClient(i.overview));
-        const withoutOverview = withBackdrop.filter(i => !i.overview || isGenericPlaceholderOverviewClient(i.overview));
-        const prioritizedPool = withOverview.concat(withoutOverview);
-        if (prioritizedPool.length <= 6) {
-          state.heroSlides = prioritizedPool.slice(0, 6);
+        if (state.isSearchMode) {
+          // Bei Suchergebnissen exakte Relevanz-Reihenfolge der besten Treffer (ab 2 Treffern, bis zu 6 Slides)
+          state.heroSlides = withBackdrop.length >= 2 ? withBackdrop.slice(0, 6) : [];
         } else {
-          const pool = prioritizedPool.slice(0, 14);
-          const picked = [];
-          while (picked.length < 6 && pool.length > 0) {
-            const idx = Math.floor(Math.random() * pool.length);
-            picked.push(pool.splice(idx, 1)[0]);
+          const withOverview = withBackdrop.filter(i => i.overview && !isGenericPlaceholderOverviewClient(i.overview));
+          const withoutOverview = withBackdrop.filter(i => !i.overview || isGenericPlaceholderOverviewClient(i.overview));
+          const prioritizedPool = withOverview.concat(withoutOverview);
+          if (prioritizedPool.length <= 6) {
+            state.heroSlides = prioritizedPool.slice(0, 6);
+          } else {
+            const pool = prioritizedPool.slice(0, 14);
+            const picked = [];
+            while (picked.length < 6 && pool.length > 0) {
+              const idx = Math.floor(Math.random() * pool.length);
+              picked.push(pool.splice(idx, 1)[0]);
+            }
+            state.heroSlides = picked;
           }
-          state.heroSlides = picked;
         }
         state.heroIndex = 0;
         state.heroActionsEngaged = false;
@@ -40808,11 +40870,8 @@
             for (const entry of entries) {
               if (entry.isIntersecting && state.hasMorePages && !state.loadingMore) {
                 const sliderBlocking = Boolean(
-                  !state.isSearchMode &&
-                  !state.heroHidden &&
-                  !heroCurtainScrolledToCatalog &&
-                  Array.isArray(state.heroSlides) &&
-                  state.heroSlides.length > 0
+                  isHeroStageAvailableForCurrentViewClient() &&
+                  !heroCurtainScrolledToCatalog
                 );
                 if (!sliderBlocking && typeof loadMoreResults === "function") {
                   loadMoreResults(true);
@@ -40878,7 +40937,7 @@
           totPages > 1 &&
           state.items.length > 0 &&
           !(document.body && document.body.classList.contains("in-hero-slider")) &&
-          (state.isSearchMode || state.heroHidden || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
+          (!isHeroStageAvailableForCurrentViewClient() || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
         );
 
         let floatBtn = document.getElementById("smartPageIndicatorBtn");
@@ -40990,7 +41049,7 @@
         // Falls die Seite bereits im aktuellen Endlos-Grid geladen ist, direkt weich zur ersten Karte dieser Seite scrollen!
         const firstCardOnPage = document.querySelector('#resultsGridContainer .card[data-page-num="' + targetP + '"]');
         if (firstCardOnPage) {
-          if (!heroCurtainScrolledToCatalog && !state.heroHidden && !state.isSearchMode) {
+          if (!heroCurtainScrolledToCatalog && isHeroStageAvailableForCurrentViewClient()) {
             animateHeroCatalogSnapScrollClient(getHeroCatalogSnapScrollYClient());
           }
           state.visibleCatalogPage = targetP;
@@ -41103,11 +41162,7 @@
         syncSmartPageIndicatorDomClient(false);
 
         const sliderIsActiveFront = Boolean(
-          !state.isSearchMode &&
-          !state.heroHidden &&
-          (!state.currentView || state.currentView === "discover") &&
-          Array.isArray(state.heroSlides) &&
-          state.heroSlides.length > 0 &&
+          isHeroStageAvailableForCurrentViewClient() &&
           !heroCurtainScrolledToCatalog
         );
 
@@ -41183,14 +41238,69 @@
         return !(hdr && hdr.classList.contains("mobile-search-expanded"));
       }
 
-      function isUserInHeroSliderFront() {
-        if (!document.body) return false;
-        if (state.heroHidden || state.isSearchMode) return false;
-        if (state.currentView && state.currentView !== "discover") return false;
+      function isHeroStageAvailableForCurrentViewClient() {
+        if (!document.body || state.heroHidden) return false;
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return false;
+        if (state.isSearchMode) {
+          return Array.isArray(state.items) && state.items.length >= 2;
+        }
+        return !state.currentView || state.currentView === "discover";
+      }
+
+      function isUserInHeroSliderFront() {
+        if (!isHeroStageAvailableForCurrentViewClient()) return false;
         if (heroCurtainScrolledToCatalog || document.body.classList.contains("hero-scrolled-past")) return false;
         const y = window.scrollY || window.pageYOffset || 0;
         return y <= 20;
+      }
+
+      let smoothContainerScrollRafMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+
+      function animateContainerScrollTopSmoothClient(scrollEl, targetTop, durationMs = 380) {
+        if (!scrollEl) return;
+        const clampedTarget = Math.max(0, Number(targetTop) || 0);
+        const startTop = Number(scrollEl.scrollTop) || 0;
+        const delta = clampedTarget - startTop;
+        if (Math.abs(delta) < 2) {
+          scrollEl.scrollTop = clampedTarget;
+          return;
+        }
+        const prefersReduced = Boolean(
+          typeof window !== "undefined" &&
+          window.matchMedia &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        );
+        if (prefersReduced || durationMs <= 0) {
+          scrollEl.scrollTop = clampedTarget;
+          return;
+        }
+        if (smoothContainerScrollRafMap && smoothContainerScrollRafMap.has(scrollEl)) {
+          cancelAnimationFrame(smoothContainerScrollRafMap.get(scrollEl));
+          smoothContainerScrollRafMap.delete(scrollEl);
+        }
+        const startTime = performance.now();
+        const step = (now) => {
+          const elapsed = now - startTime;
+          const progress = Math.max(0, Math.min(1, elapsed / durationMs));
+          // Sanfte Kino-Vorhang-Kurve (easeOutQuint-inspiriert wie Hero-Slider)
+          const eased = 1 - Math.pow(1 - progress, 4);
+          scrollEl.scrollTop = startTop + delta * eased;
+          if (progress < 1) {
+            const rafId = requestAnimationFrame(step);
+            if (smoothContainerScrollRafMap) smoothContainerScrollRafMap.set(scrollEl, rafId);
+          } else {
+            scrollEl.scrollTop = clampedTarget;
+            if (smoothContainerScrollRafMap) smoothContainerScrollRafMap.delete(scrollEl);
+          }
+        };
+        const firstRaf = requestAnimationFrame(step);
+        if (smoothContainerScrollRafMap) smoothContainerScrollRafMap.set(scrollEl, firstRaf);
+      }
+
+      function scrollDetailModalToHeroStageTopClient() {
+        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        if (!modalBackdrop || modalBackdrop.scrollTop <= 1) return;
+        animateContainerScrollTopSmoothClient(modalBackdrop, 0, 380);
       }
 
       function syncHeroSearchPlaceholderAndToggleBtnClient() {
@@ -41217,8 +41327,8 @@
         const inp = document.getElementById("searchInput");
         if (!inp) return;
         const compactPill = isMobileCompactSearchPillActiveClient();
-        const onCatalogDiscover = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
-        if (showCompactSpotlightHint && onCatalogDiscover && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
+        const onHeroCapableView = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
+        if (showCompactSpotlightHint && onHeroCapableView && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
           inp.placeholder = formatCollapsedHeroSearchPlaceholderClient(hero, compactPill);
           inp.classList.add("hero-placeholder-active");
@@ -41310,9 +41420,7 @@
       }, { passive: false });
 
       function isHeroScrollCouplingActiveClient() {
-        if (!document.body || state.heroHidden || state.isSearchMode) return false;
-        if (state.currentView && state.currentView !== "discover") return false;
-        if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return false;
+        if (!isHeroStageAvailableForCurrentViewClient()) return false;
         if (isAnySideMenuOpenClient()) return false;
         if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
@@ -41505,6 +41613,10 @@
               focusFirstResultCard(false);
             }
           }
+          // Beim ersten Betreten der Cover-Ansicht Seiten-Hinweise einmalig synchron für 5s anzeigen
+          if (!window._sideEdgeIntroHintShown && typeof triggerSideEdgeHintsAutoFadeClient === "function") {
+            setTimeout(() => triggerSideEdgeHintsAutoFadeClient(5000, "intro"), 120);
+          }
           // Sobald der Nutzer vom Slider nach unten zu den Covern scrollt, direkt die nächste Seite im Hintergrund vorladen!
           if (state.hasMorePages && !state.loadingMore && Number(state.page || 1) === Number(state.startPage || 1) && typeof loadMoreResults === "function") {
             setTimeout(() => {
@@ -41516,7 +41628,7 @@
         } else {
           if (document.body) {
             document.body.classList.remove("hero-scrolled-past", "page-scrolled");
-            if (!state.heroHidden && !state.isSearchMode && state.currentView === "discover") {
+            if (isHeroStageAvailableForCurrentViewClient()) {
               document.body.classList.add("in-hero-slider");
             }
           }
@@ -41781,7 +41893,7 @@
         const y = window.scrollY || window.pageYOffset || 0;
         document.body.classList.toggle("catalog-deep-scrolled", y > 420);
         const stageWrap = document.getElementById("heroStageWrapEl");
-        if (!stageWrap || state.heroHidden || state.isSearchMode) {
+        if (!stageWrap || !isHeroStageAvailableForCurrentViewClient()) {
           document.body.classList.toggle("page-scrolled", y > 10);
           if (stageWrap) {
             stageWrap.style.setProperty("--hero-scroll-fade", "0");
@@ -43363,7 +43475,7 @@
             const curSlideKey = curHero ? ((curHero.media_type === "tv" || state.type === "s" ? "s" : "m") + "_" + curHero.id) : "";
             if (!curHero || curSlideKey !== slideKey) return;
             if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
-            if (heroCurtainScrolledToCatalog || state.heroHidden || state.isSearchMode) return;
+            if (heroCurtainScrolledToCatalog || !isHeroStageAvailableForCurrentViewClient()) return;
             mountFn();
           };
           if (typeof window.requestIdleCallback === "function") {
@@ -43424,7 +43536,7 @@
       }
 
       function scheduleHeroBackgroundVideoTeaserClient(immediateForeground = false) {
-        if (state.isSearchMode || state.heroHidden || !Array.isArray(state.heroSlides) || !state.heroSlides.length) {
+        if (!isHeroStageAvailableForCurrentViewClient()) {
           stopHeroBackgroundVideoTeaserClient();
           return;
         }
@@ -43467,7 +43579,7 @@
           if (!curHero || curSlideKey !== slideKey) return;
           if (!immediateForeground) {
             if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
-            if (heroCurtainScrolledToCatalog || state.heroHidden || state.isSearchMode) return;
+            if (heroCurtainScrolledToCatalog || !isHeroStageAvailableForCurrentViewClient()) return;
           }
           const cands = await resolveHeroSlideTrailerCandidatesClient(curHero, heroType);
           if (reqSeq !== heroBgTeaserRequestSeq) return;
@@ -44006,7 +44118,9 @@
       }
 
       function expandHeroSliderAndFocusClient(focusMode = "hero") {
-        if (state.isSearchMode || state.currentView !== "discover" || !state.heroSlides || !state.heroSlides.length) {
+        const hasSearchHero = state.isSearchMode && Array.isArray(state.items) && state.items.length >= 2;
+        const hasDiscoverHero = !state.isSearchMode && (!state.currentView || state.currentView === "discover");
+        if ((!hasSearchHero && !hasDiscoverHero) || !state.heroSlides || !state.heroSlides.length) {
           return false;
         }
         if (state.heroHidden) {
@@ -44039,10 +44153,10 @@
 
       function startHeroRotationTimer() {
         if (heroRotationTimer) clearInterval(heroRotationTimer);
-        if (state.isSearchMode || state.heroSlides.length <= 1) return;
+        if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
         const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
-          if (state.isSearchMode || state.heroSlides.length <= 1) return;
+          if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
           if (
             document.getElementById("modalRoot")?.innerHTML.trim() ||
             document.getElementById("lightboxRoot")?.innerHTML.trim() ||
@@ -44173,7 +44287,7 @@
       }
 
       function triggerHeroSwipeUpCollapseClient(opts) {
-        if (state.isSearchMode || state.heroHidden) return;
+        if (!isHeroStageAvailableForCurrentViewClient()) return;
         scrollToCatalogBelowHeroClient(null, opts);
       }
 
@@ -44187,7 +44301,8 @@
         if (direction === "up") {
           triggerHeroSwipeUpCollapseClient(opts);
         } else if (direction === "down") {
-          if (state.heroHidden && !state.isSearchMode) {
+          const canRevealHiddenHero = state.heroHidden && Array.isArray(state.heroSlides) && state.heroSlides.length > 0;
+          if (canRevealHiddenHero) {
             toggleHeroSliderHidden(false);
           } else if (heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 10) {
             animateHeroCatalogSnapScrollClient(0, opts);
@@ -44296,7 +44411,7 @@
             try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
             clearHeroDescTransientFocusClient();
           }
-          if (Math.abs(dy) >= Math.abs(dx) * 0.95 && !state.heroHidden && !state.isSearchMode) {
+          if (Math.abs(dy) >= Math.abs(dx) * 0.95 && isHeroStageAvailableForCurrentViewClient()) {
             if (dy <= -HERO_BOUNCE_LOCK_MIN_DIST && heroMouseInstantVy <= -HERO_BOUNCE_LOCK_VELOCITY && Math.abs(dy) > Math.abs(dx) * 1.15) {
               heroMouseDragActive = false;
               heroMouseDraggingUp = false;
@@ -44428,7 +44543,7 @@
         if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
           clearHeroDescTransientFocusClient();
         }
-        if (Math.abs(dy) >= Math.abs(dx) * 0.95 && !state.heroHidden && !state.isSearchMode) {
+        if (Math.abs(dy) >= Math.abs(dx) * 0.95 && isHeroStageAvailableForCurrentViewClient()) {
           if (ev.cancelable) {
             ev.preventDefault();
           }
@@ -44725,13 +44840,7 @@
 
       function syncHeroExpandedBodyClass() {
         if (!document.body) return;
-        const isExp = Boolean(
-          !state.isSearchMode &&
-          !state.heroHidden &&
-          (!state.currentView || state.currentView === "discover") &&
-          Array.isArray(state.heroSlides) &&
-          state.heroSlides.length > 0
-        );
+        const isExp = Boolean(isHeroStageAvailableForCurrentViewClient());
         if (document.body.classList.contains("hero-slider-expanded") !== isExp) {
           document.body.classList.toggle("hero-slider-expanded", isExp);
         }
@@ -44940,10 +45049,45 @@
         });
       }
 
+      // Gemeinsame, wiederverwendbare Stage-Beschreibungsbox für Hero-Slider, Such-Hero & Detailseite (Single Source of Truth)
+      function buildUnifiedStageDescriptionBoxHtmlClient(opts) {
+        const boxId = String(opts?.boxId || "heroDescEl");
+        const textId = String(opts?.textId || "heroDescTextEl");
+        const translateBtnId = String(opts?.translateBtnId || "heroDescTranslateBtn");
+        const translateTargetKey = String(opts?.translateTargetKey || "activeDetails");
+        const overviewText = String(opts?.overviewText || "").trim();
+        const rawOrigOverview = String(opts?.rawOrigOverview || "").trim();
+        const showTransBtn = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrigOverview);
+        const isTranslated = Boolean(opts?.isTranslated);
+        const alwaysRenderBtn = Boolean(opts?.alwaysRenderTranslateBtn);
+        const transBtnHtml = (alwaysRenderBtn || showTransBtn)
+          ? '<button type="button" id="' + esc(translateBtnId) + '" class="desc-translate-btn' + (isTranslated ? ' is-translated' : '') + '"' +
+              (alwaysRenderBtn ? (' style="display:' + (showTransBtn ? 'inline-flex' : 'none') + '"') : '') +
+              ' onclick="translateOverviewTextClient(event,\\'' + esc(translateTargetKey) + '\\',\\'' + esc(boxId) + '\\',\\'' + esc(textId) + '\\',\\'' + esc(translateBtnId) + '\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' +
+              (isTranslated ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') +
+            '</button>'
+          : '';
+        return '<div id="' + esc(boxId) + '" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\');}">' +
+          '<div id="' + esc(textId) + '" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrigOverview) + '">' + esc(overviewText) + '</div>' +
+          '<div class="desc-actions-row">' +
+            '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
+            transBtnHtml +
+          '</div>' +
+        '</div>';
+      }
+
+      function getHeroStageKickerTextClient() {
+        if (state.isSearchMode && state.searchQuery) {
+          return 'SUCH-HIGHLIGHT · „' + String(state.searchQuery).trim() + '“';
+        }
+        return "HIGHLIGHT DIESE WOCHE";
+      }
+
       function buildHeroBannerInnerHtml() {
         syncHeroExpandedBodyClass();
         syncHeroSearchPlaceholderAndToggleBtnClient();
-        if (state.isSearchMode || !state.heroSlides.length) return "";
+        if (!Array.isArray(state.heroSlides) || !state.heroSlides.length) return "";
+        if (state.isSearchMode && (!Array.isArray(state.items) || state.items.length < 2)) return "";
         const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
         if (!hero) return "";
         const heroType = hero.media_type === "tv" || state.type === "s" ? "s" : "m";
@@ -45010,26 +45154,23 @@
                 '<div class="hero-inner">' +
                   '<div class="hero-widescreen-body">' +
                     '<div id="heroContentEl" class="hero-content">' +
-                      '<div id="heroKickerEl" class="hero-kicker">HIGHLIGHT DIESE WOCHE</div>' +
+                      '<div id="heroKickerEl" class="hero-kicker">' + esc(getHeroStageKickerTextClient()) + '</div>' +
                       '<div id="heroTitleBoxEl" class="hero-title">' +
                         buildHeroTitleOrLogoInnerHtmlClient(heroTitleRaw, hero.logo_path || clientClearLogoCache.get(heroCardKey) || "") +
                       '</div>' +
                       '<div id="heroMetaCleanEl" class="hero-meta-clean">' +
                         buildHeroMetaLineInnerHtml(hero, isMovie, voteStr, yearStr) +
                       '</div>' +
-                      (function() {
-                        const heroOvText = resolveHeroOverviewTextClient(hero, isMovie);
-                        const rawOrigOv = String(hero._originalOverviewEn || hero.overview || "").trim();
-                        const showTransBtn = isLikelyEnglishOverviewClient(rawOrigOv);
-                        const isCurrentlyTranslated = Boolean(hero._showTranslatedOverviewDe && hero._translatedOverviewDe);
-                        return '<div id="heroDescEl" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'heroDescEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'heroDescEl\\');}">' +
-                          '<div id="heroDescTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrigOv) + '">' + esc(heroOvText) + '</div>' +
-                          '<div class="desc-actions-row">' +
-                            '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                            '<button type="button" id="heroDescTranslateBtn" class="desc-translate-btn' + (isCurrentlyTranslated ? ' is-translated' : '') + '" style="display:' + (showTransBtn ? 'inline-flex' : 'none') + '" onclick="translateOverviewTextClient(event,\\'' + heroCardKey + '\\',\\'heroDescEl\\',\\'heroDescTextEl\\',\\'heroDescTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isCurrentlyTranslated ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') + '</button>' +
-                          '</div>' +
-                        '</div>';
-                      })() +
+                      buildUnifiedStageDescriptionBoxHtmlClient({
+                        boxId: "heroDescEl",
+                        textId: "heroDescTextEl",
+                        translateBtnId: "heroDescTranslateBtn",
+                        translateTargetKey: heroCardKey,
+                        overviewText: resolveHeroOverviewTextClient(hero, isMovie),
+                        rawOrigOverview: String(hero._originalOverviewEn || hero.overview || "").trim(),
+                        isTranslated: Boolean(hero._showTranslatedOverviewDe && hero._translatedOverviewDe),
+                        alwaysRenderTranslateBtn: true
+                      }) +
                       '<div id="heroActionsBox" class="hero-actions-box ' + (state.heroActionsEngaged ? 'engaged' : '') + '">' +
                         '<button type="button" id="heroBtnTrailer" class="hero-btn-play hero-action-btn' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? ' is-trailer-unavailable' : '') + '" onclick="enterHeroForegroundTrailerModeClient(event,false)" title="' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? 'Kein direkt abspielbarer Trailer verfügbar – YouTube-Suche öffnen' : 'Trailer direkt im Hauptslider einblenden') + '">' + (hero._trailerChecked && hero._hasEmbeddableTrailer === false ? '🔎 Trailer suchen' : '▶ Trailer') + '</button>' +
                         '<button type="button" id="heroBtnDetails" class="hero-btn-info hero-action-btn" onclick="openDetails(\\''+ heroType +'\\',' + hero.id + ')">ⓘ Details</button>' +
@@ -45039,8 +45180,8 @@
                   '</div>' +
                   '<div class="hero-bottom-bar">' +
                     thumbsNavHtml +
-                    '<button type="button" id="heroScrollDownHintBtn" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToCatalogBelowHeroClient(event)" title="Nach unten zum Katalog & allen Filmen/Serien gleiten" aria-label="Nach unten zum Katalog & allen Filmen/Serien gleiten">' +
-                      '<span id="heroScrollDownHintLabel" class="hero-scroll-down-label">🍿 Zum Katalog</span>' +
+                    '<button type="button" id="heroScrollDownHintBtn" tabindex="-1" class="hero-scroll-down-hint" onclick="scrollToCatalogBelowHeroClient(event)" title="Nach unten zu allen Treffern & Covern gleiten" aria-label="Nach unten zu allen Treffern & Covern gleiten">' +
+                      '<span id="heroScrollDownHintLabel" class="hero-scroll-down-label">' + (state.isSearchMode ? '🔍 Zu allen Suchergebnissen' : '🍿 Zum Katalog') + '</span>' +
                       '<svg class="hero-scroll-down-chevron" viewBox="0 0 24 13" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
                         '<path d="M2.5 2.25L12 10.75L21.5 2.25" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>' +
                       '</svg>' +
@@ -45078,7 +45219,7 @@
         const layerB = document.getElementById("heroBackdropLayerB");
 
         // Butterweicher 0,5s In-Place Crossfade & Tiefen-Gleiten (ohne Zittern) + dynamisches Ambilight-Update + Hochkant-Cover
-        if (!forceFullRebuild && !state.isSearchMode && state.heroSlides.length > 0 && existingStage && layerA && layerB) {
+        if (!forceFullRebuild && state.heroSlides.length > 0 && (!state.isSearchMode || (Array.isArray(state.items) && state.items.length >= 2)) && existingStage && layerA && layerB) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
           if (hero) {
             const heroType = hero.media_type === "tv" || state.type === "s" ? "s" : "m";
@@ -45113,11 +45254,19 @@
             nextLayer.classList.add("active-layer");
             activeLayer.classList.remove("active-layer");
 
-            // 2. Content, Genres, HD-Badge & Merkliste-Button sanft aktualisieren
+            // 2. Content, Kicker, Genres, HD-Badge & Merkliste-Button sanft aktualisieren
             const contentEl = document.getElementById("heroContentEl");
             if (contentEl) {
               contentEl.classList.add("hero-fade-step");
               setTimeout(() => contentEl.classList.remove("hero-fade-step"), 60);
+            }
+            const kickerEl = document.getElementById("heroKickerEl");
+            if (kickerEl) {
+              kickerEl.textContent = getHeroStageKickerTextClient();
+            }
+            const scrollHintLbl = document.getElementById("heroScrollDownHintLabel");
+            if (scrollHintLbl) {
+              scrollHintLbl.textContent = state.isSearchMode ? "🔍 Zu allen Suchergebnissen" : "🍿 Zum Katalog";
             }
 
             const heroLogoPath = hero.logo_path || clientClearLogoCache.get(heroCardKey) || "";
@@ -46945,6 +47094,9 @@
         }
         state.openFilterDropdown = null;
         state.filtersCollapsedInSearch = false;
+        if (typeof clearSearchShortcutReturnCardClient === "function") {
+          clearSearchShortcutReturnCardClient();
+        }
         document.body.classList.remove("search-active-dim");
         updateMediaModeIndicatorDom();
         if (heroRotationTimer) clearInterval(heroRotationTimer);
@@ -46970,6 +47122,8 @@
           state.searchMatchedPersons = res.persons || [];
           state.searchMatchedStudios = res.studios || [];
           if ((res.items || []).length === 0 && res.filteredOutCount > 0 && !bypass) {
+            state.heroSlides = [];
+            if (typeof syncHeroExpandedBodyClass === "function") syncHeroExpandedBodyClass();
             root.innerHTML = '<div class="section"><div id="floatingFilterMount">' + buildFloatingFilterBarHtml() + '</div><div class="panel-box"><div class="section-title">⚠️ Keine Treffer wegen aktiver Filter (' + res.filteredOutCount + ' ausgeblendet)</div><button class="btn red" onclick="runSearch(true)">🔓 Filter temporär deaktivieren (Alle ' + res.filteredOutCount + ' zeigen)</button></div></div>';
             if (jumpToResults && typeof focusFirstResultCard === "function") focusFirstResultCard(false);
             syncSmartPageIndicatorDomClient();
@@ -46980,9 +47134,53 @@
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
           state.hasMorePages = Boolean(res.hasMore ?? (pageNum < state.totalPages));
           document.body.classList.remove("search-active-dim");
+
+          const detectedEntityCount =
+            state.searchMatchedCollections.length +
+            state.searchMatchedUniverses.length +
+            state.searchMatchedPersons.length +
+            state.searchMatchedStudios.length;
+
+          if (state.items.length >= 2) {
+            rebuildHeroSlides(state.items);
+            heroCurtainScrolledToCatalog = pageNum > 1 || Boolean(state.heroHidden);
+            if (!heroCurtainScrolledToCatalog) {
+              document.body.classList.remove("hero-scrolled-past", "page-scrolled");
+              if ((window.scrollY || window.pageYOffset || 0) !== 0) {
+                window.scrollTo(0, 0);
+              }
+            }
+          } else {
+            state.heroSlides = [];
+            heroCurtainScrolledToCatalog = true;
+          }
+
           renderDiscover("🔍 Suchergebnisse: " + q);
-          if (jumpToResults && typeof focusFirstResultCard === "function") {
-            focusFirstResultCard(false);
+          if (typeof preloadHeroSlidesAndUnlockCoversClient === "function") {
+            preloadHeroSlidesAndUnlockCoversClient();
+          }
+
+          // Exakt 1 Suchtreffer (ohne zusätzliche Entitäten) -> direkt Detailseite öffnen (Suchansicht bleibt für Zurück im Hintergrund)
+          if (pageNum === 1 && state.items.length === 1 && detectedEntityCount === 0) {
+            const onlyItem = state.items[0];
+            if (onlyItem && onlyItem.id) {
+              const onlyType = (onlyItem.media_type === "tv" || onlyItem.media_type === "s") ? "s" : "m";
+              if (typeof openDetails === "function") {
+                openDetails(onlyType, onlyItem.id);
+              }
+              return;
+            }
+          }
+
+          if (jumpToResults) {
+            if (!heroCurtainScrolledToCatalog && typeof isHeroStageAvailableForCurrentViewClient === "function" && isHeroStageAvailableForCurrentViewClient()) {
+              const heroFocusTarget = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
+              if (heroFocusTarget && typeof jumpSpatialFocus === "function") {
+                jumpSpatialFocus(heroFocusTarget, false);
+              }
+            } else if (typeof focusFirstResultCard === "function") {
+              focusFirstResultCard(false);
+            }
           }
         } catch (err) {
           root.innerHTML = '<div class="section"><div class="panel-box">⚠️ Fehler bei der Suche: ' + esc(err.message) + '</div></div>';
@@ -47600,9 +47798,14 @@
         const root = document.getElementById("appRoot");
         const vipAllowed = isCurrentUserVip();
 
-        const heroSectionHtml = state.isSearchMode
-          ? ""
-          : '<div id="heroBannerSlot">' + buildHeroBannerInnerHtml() + '</div>';
+        const canRenderHeroSlot = Boolean(
+          Array.isArray(state.heroSlides) &&
+          state.heroSlides.length > 0 &&
+          (!state.isSearchMode || state.items.length >= 2)
+        );
+        const heroSectionHtml = canRenderHeroSlot
+          ? '<div id="heroBannerSlot">' + buildHeroBannerInnerHtml() + '</div>'
+          : (typeof syncHeroExpandedBodyClass === "function" ? (syncHeroExpandedBodyClass(), "") : "");
 
         const isColView = state.currentView === "collection" && state.currentCollectionId;
         const isUniView = state.currentView === "universe" && state.currentUniverseId;
@@ -48010,7 +48213,11 @@
           const backdropRect = modalBackdrop.getBoundingClientRect();
           const targetRect = targetEl.getBoundingClientRect();
           const offsetTop = modalBackdrop.scrollTop + (targetRect.top - backdropRect.top) - 12;
-          modalBackdrop.scrollTo({ top: Math.max(0, offsetTop), behavior: "smooth" });
+          if (typeof animateContainerScrollTopSmoothClient === "function") {
+            animateContainerScrollTopSmoothClient(modalBackdrop, Math.max(0, offsetTop), 380);
+          } else {
+            modalBackdrop.scrollTo({ top: Math.max(0, offsetTop), behavior: "smooth" });
+          }
           return;
         }
         if (targetEl && typeof targetEl.scrollIntoView === "function") {
@@ -51126,7 +51333,7 @@
               '<div class="detail-sticky-mini-actions">' +
                 '<button type="button" id="detailStickyPrimaryPlayBtn" class="detail-btn-play-white" style="padding:6px 14px;font-size:12.5px" onclick="' + primaryClickJs + '">' + esc(primaryPlayBtnLabel) + '</button>' +
                 '<button type="button" id="modalStickyWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" style="padding:6px 12px;font-size:12px" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')" title="Auf die Merkliste setzen / entfernen">' + (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") + '</button>' +
-                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
+                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="scrollDetailModalToHeroStageTopClient()" title="Nach oben zur Bühne">↑ Oben</button>' +
                 '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="closeDetailModal()" title="Detailansicht schließen (Esc)">✕</button>' +
               '</div>' +
             '</div>' +
@@ -51152,20 +51359,17 @@
                     /* 3. KOMPAKTE 1-ZEILIGE META-ZEILE (1:1 MIT SLIDER) */
                     '<div id="detailMetaCleanEl" class="hero-meta-clean">' + unboxedMetaHtml + '</div>' +
 
-                    /* 4. BESCHREIBUNG ÜBER DEN AKTIONS-BUTTONS (1:1 WIE IM SLIDER) */
-                    (function() {
-                      const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
-                      const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
-                      const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
-                      const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
-                      return '<div id="modalHeaderOverviewEl" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
-                        '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
-                        '<div class="desc-actions-row">' +
-                          '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                          (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? " is-translated" : "") + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? "🇬🇧 Original anzeigen" : "🌐 Auf Deutsch übersetzen") + '</button>' : '') +
-                        '</div>' +
-                      '</div>';
-                    })() +
+                    /* 4. BESCHREIBUNG ÜBER DEN AKTIONS-BUTTONS (EINHEITLICHE STAGE-KOMPONENTE 1:1 WIE IM SLIDER) */
+                    buildUnifiedStageDescriptionBoxHtmlClient({
+                      boxId: "modalHeaderOverviewEl",
+                      textId: "modalHeaderOverviewTextEl",
+                      translateBtnId: "modalHeaderTranslateBtn",
+                      translateTargetKey: "activeDetails",
+                      overviewText: String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim(),
+                      rawOrigOverview: String(d._originalOverviewEn || d.overview || "").trim(),
+                      isTranslated: Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe),
+                      alwaysRenderTranslateBtn: false
+                    }) +
 
                     /* 5. AKTIONS-BUTTONS UNTER DER BESCHREIBUNG */
                     '<div class="detail-action-bar">' +
@@ -63839,10 +64043,52 @@
         return "keyboard";
       }
 
+      let catalogFocusBarFadeTimer = null;
+      let catalogFocusShortcutsIntroActive = false;
+      let catalogFocusShortcutsIntroDone = false;
+      let catalogFocusShortcutsIntroTimer = null;
+      let catalogFocusBarHovered = false;
+      let catalogFocusBarHoverBound = false;
+
+      function scheduleCatalogFocusBarAutoFadeClient(durationMs = 2500) {
+        if (catalogFocusBarFadeTimer) {
+          clearTimeout(catalogFocusBarFadeTimer);
+          catalogFocusBarFadeTimer = null;
+        }
+        if (catalogFocusBarHovered) return;
+        const safeMs = Math.max(800, Number(durationMs) || 2500);
+        catalogFocusBarFadeTimer = setTimeout(() => {
+          catalogFocusBarFadeTimer = null;
+          if (catalogFocusBarHovered) return;
+          const barEl = document.getElementById("catalogFocusInfoBar");
+          if (barEl) barEl.classList.remove("visible");
+        }, safeMs);
+      }
+
       function syncCatalogFocusInfoBarClient(explicitCardEl = undefined) {
         const bar = document.getElementById("catalogFocusInfoBar");
         if (!bar) return;
+        if (!catalogFocusBarHoverBound) {
+          catalogFocusBarHoverBound = true;
+          bar.addEventListener("mouseenter", () => {
+            catalogFocusBarHovered = true;
+            if (catalogFocusBarFadeTimer) {
+              clearTimeout(catalogFocusBarFadeTimer);
+              catalogFocusBarFadeTimer = null;
+            }
+          });
+          bar.addEventListener("mouseleave", () => {
+            catalogFocusBarHovered = false;
+            if (bar.classList.contains("visible") && !catalogFocusShortcutsIntroActive) {
+              scheduleCatalogFocusBarAutoFadeClient(2500);
+            }
+          });
+        }
         if (isAnyBlockingOverlayOpenForCardBarClient()) {
+          if (catalogFocusBarFadeTimer) {
+            clearTimeout(catalogFocusBarFadeTimer);
+            catalogFocusBarFadeTimer = null;
+          }
           bar.classList.remove("visible");
           return;
         }
@@ -63860,6 +64106,10 @@
           cardEl = currentSpatialEl.closest(".card");
         }
         if (!cardEl || !document.body.contains(cardEl)) {
+          if (catalogFocusBarFadeTimer) {
+            clearTimeout(catalogFocusBarFadeTimer);
+            catalogFocusBarFadeTimer = null;
+          }
           bar.classList.remove("visible");
           lastFocusBarCardEl = null;
           return;
@@ -63869,37 +64119,62 @@
           bar.classList.remove("visible");
           return;
         }
+        const prevCardEl = lastFocusBarCardEl;
         lastFocusBarCardEl = cardEl;
+
+        // Einmaliger 5-Sekunden-Hinweis beim allerersten Cover-Fokus (Shortcuts unten + Seitenmenü-Rand-Laschen synchron)
+        if (!catalogFocusShortcutsIntroDone && !catalogFocusShortcutsIntroActive) {
+          catalogFocusShortcutsIntroActive = true;
+          if (typeof triggerSideEdgeHintsAutoFadeClient === "function") {
+            triggerSideEdgeHintsAutoFadeClient(5000, "intro");
+          }
+          if (catalogFocusShortcutsIntroTimer) {
+            clearTimeout(catalogFocusShortcutsIntroTimer);
+          }
+          catalogFocusShortcutsIntroTimer = setTimeout(() => {
+            catalogFocusShortcutsIntroTimer = null;
+            catalogFocusShortcutsIntroActive = false;
+            catalogFocusShortcutsIntroDone = true;
+            if (!catalogFocusBarHovered) {
+              const liveBar = document.getElementById("catalogFocusInfoBar");
+              if (liveBar) liveBar.classList.remove("visible");
+            }
+          }, 5000);
+        }
+
+        const showShortcutsNow = catalogFocusShortcutsIntroActive && !catalogFocusShortcutsIntroDone;
         const profile = activeInputProfile || resolveDefaultInputProfileClient();
         const saveLabel = meta.isSaved ? "Entfernen" : "Merken";
 
         let hintsHtml = "";
-        if (profile === "firetv") {
-          hintsHtml =
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>' +
-            '<span class="cfi-hint-btn is-static"><kbd>⏪/⏩</kbd> Blättern</span>';
-        } else if (profile === "tv") {
-          hintsHtml =
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>';
-        } else if (profile === "gamepad-ps") {
-          hintsHtml =
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>✕</kbd> Details</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>✕ halten</kbd> Trailer</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>□</kbd> ' + saveLabel + '</button>';
-        } else if (profile === "gamepad-xbox") {
-          hintsHtml =
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>A</kbd> Details</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>A halten</kbd> Trailer</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>X</kbd> ' + saveLabel + '</button>';
-        } else {
-          hintsHtml =
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>Enter</kbd> Details</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>Leertaste</kbd> Trailer</button>' +
-            '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>Enter halten</kbd> ' + saveLabel + '</button>';
+        if (showShortcutsNow) {
+          if (profile === "firetv") {
+            hintsHtml =
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>' +
+              '<span class="cfi-hint-btn is-static"><kbd>⏪/⏩</kbd> Blättern</span>';
+          } else if (profile === "tv") {
+            hintsHtml =
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>OK</kbd> Details</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>⏯</kbd> Trailer</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>OK halten</kbd> ' + saveLabel + '</button>';
+          } else if (profile === "gamepad-ps") {
+            hintsHtml =
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>✕</kbd> Details</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>✕ halten</kbd> Trailer</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>□</kbd> ' + saveLabel + '</button>';
+          } else if (profile === "gamepad-xbox") {
+            hintsHtml =
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>A</kbd> Details</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>A halten</kbd> Trailer</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>X</kbd> ' + saveLabel + '</button>';
+          } else {
+            hintsHtml =
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'details\\',event)"><kbd>Enter</kbd> Details</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'trailer\\',event)"><kbd>Leertaste</kbd> Trailer</button>' +
+              '<button type="button" class="cfi-hint-btn" onclick="triggerFocusBarActionClient(\\'wishlist\\',event)"><kbd>Enter halten</kbd> ' + saveLabel + '</button>';
+          }
         }
 
         const metaParts = [];
@@ -63915,6 +64190,7 @@
         const vipDotHtml = meta.vip ? '<span class="cfi-vip-dot" title="VIP: ' + esc(meta.vip) + '"></span>' : '';
         const savedMarkHtml = meta.isSaved ? '<span class="cfi-saved-mark" title="In Merkliste">✓</span>' : '';
 
+        bar.classList.toggle("is-title-only", !showShortcutsNow);
         bar.innerHTML =
           '<div class="cfi-left">' +
             vipDotHtml +
@@ -63922,10 +64198,12 @@
             (metaParts.length ? ('<span class="cfi-meta">' + metaParts.join('<span>·</span>') + '</span>') : '') +
             savedMarkHtml +
           '</div>' +
-          '<span class="cfi-divider"></span>' +
-          '<div class="cfi-hints">' + hintsHtml + '</div>';
+          (showShortcutsNow ? ('<span class="cfi-divider"></span><div class="cfi-hints">' + hintsHtml + '</div>') : '');
 
         bar.classList.add("visible");
+        if (!showShortcutsNow && (cardEl !== prevCardEl || !catalogFocusBarFadeTimer)) {
+          scheduleCatalogFocusBarAutoFadeClient(2500);
+        }
         const ctrlHud = document.getElementById("controllerHudBar");
         if (ctrlHud) ctrlHud.classList.remove("visible");
       }
@@ -64386,13 +64664,32 @@
             }
 
             if (modalBackdrop) {
-              const inHeroStageOrHeader = Boolean(
-                el.closest && (el.closest("#detailHeroStageEl") || el.closest("#topUnifiedBar"))
+              const inHeroStage = Boolean(
+                el.closest &&
+                el.closest("#detailHeroStageEl") &&
+                !el.closest("#modalPosterPickerBox, #modalRemapMediaBox")
               );
+              const inHeroStageOrHeader = Boolean(
+                inHeroStage || (el.closest && el.closest("#topUnifiedBar"))
+              );
+              // Sobald auf der Detailseite der Fokus auf der Bühnen-/Aktionsreihe (Trailer, Speichern, Infos) liegt,
+              // wandert die Ansicht komplett mit sanftem Hero-Slider-Übergang wieder ganz nach oben!
+              if (inHeroStage && modalBackdrop.scrollTop > 2) {
+                if (typeof scrollDetailModalToHeroStageTopClient === "function") {
+                  scrollDetailModalToHeroStageTopClient();
+                } else {
+                  modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+                }
+                return;
+              }
               if (inHeroStageOrHeader && navDir === "up" && modalBackdrop.scrollTop > 0) {
                 const rTopCheck = el.getBoundingClientRect();
                 if (rTopCheck.top < 110) {
-                  modalBackdrop.scrollTop = 0;
+                  if (typeof scrollDetailModalToHeroStageTopClient === "function") {
+                    scrollDetailModalToHeroStageTopClient();
+                  } else {
+                    modalBackdrop.scrollTop = 0;
+                  }
                   return;
                 }
               }
@@ -64558,11 +64855,15 @@
         if (typeof window.syncActiveCardMarquee === "function") {
           window.syncActiveCardMarquee(parentCard || el);
         }
-        if (el.closest && el.closest(".hero") && document.body && !state.heroHidden && !state.isSearchMode) {
+        if (el.closest && el.closest(".hero") && document.body && typeof isHeroStageAvailableForCurrentViewClient === "function" && isHeroStageAvailableForCurrentViewClient()) {
           document.body.classList.add("in-hero-slider");
           if (typeof syncSmartPageIndicatorDomClient === "function") {
             syncSmartPageIndicatorDomClient(false);
           }
+        }
+        // Rücksprung-Ziel für „Pfeil-oben-halten -> Suche“ zurücksetzen, sobald Fokus den Header/Suchbereich verlässt
+        if (searchShortcutReturnCardEl && el.id !== "wishlistSearchInp" && !(el.closest && (el.closest("#topUnifiedBar") || el.closest("#searchAutocompleteBox") || el.closest("#searchGenreDropdownOverlay")))) {
+          searchShortcutReturnCardEl = null;
         }
 
         if (scrollIntoView) {
@@ -65162,6 +65463,15 @@
           currentSpatialEl === sSub ||
           currentSpatialEl === topHideBtn
         );
+        if (currentSpatialEl && currentSpatialEl.id === "wishlistSearchInp" && dir === "down") {
+          if (searchShortcutReturnCardEl && document.body.contains(searchShortcutReturnCardEl) && list.includes(searchShortcutReturnCardEl)) {
+            const returnCard = searchShortcutReturnCardEl;
+            searchShortcutReturnCardEl = null;
+            setSpatialFocus(returnCard, true, "down");
+            return;
+          }
+        }
+
         if (inHeader) {
           if (dir === "left" || dir === "right") {
             const headerOrder = [
@@ -65216,6 +65526,13 @@
             const firstAc = document.querySelector("#searchAutocompleteBox.open .ac-item");
             if (firstAc && list.includes(firstAc)) {
               setSpatialFocus(firstAc, !suppressScroll);
+              return;
+            }
+            // Exakter Rücksprung zum ursprünglich gewählten Film, von dem aus „Pfeil oben halten -> Suche“ gestartet wurde
+            if (searchShortcutReturnCardEl && document.body.contains(searchShortcutReturnCardEl) && list.includes(searchShortcutReturnCardEl)) {
+              const returnCard = searchShortcutReturnCardEl;
+              searchShortcutReturnCardEl = null;
+              setSpatialFocus(returnCard, true, "down");
               return;
             }
             const isScrolledPastHero = Boolean(
@@ -65805,6 +66122,9 @@
           topBarUpHoldTriggered = true;
           cancelTopBarUpHold();
           closeAutocomplete();
+          if (verticalUpHoldOriginCardEl && document.body.contains(verticalUpHoldOriginCardEl)) {
+            searchShortcutReturnCardEl = verticalUpHoldOriginCardEl;
+          }
           window.scrollTo({ top: 0, behavior: "smooth" });
           const targetTopEl = document.getElementById("searchInput") || document.getElementById("sidebarToggleBtn");
           if (targetTopEl) {
@@ -65825,9 +66145,16 @@
       let verticalTurboExpressDone = false;
       let verticalHoldTimer = null;
       let verticalHoldShowTimer = null;
+      let verticalUpHoldOriginCardEl = null;
+      let searchShortcutReturnCardEl = null;
       const VERTICAL_HOLD_SHOW_DELAY_MS = 160;
       const VERTICAL_HOLD_DURATION_MS = 460;
       let controllerL2R2Mode = "page"; // "page" (Standard: 5-Zeilen / Seiten-Blättern) oder "zoom" (UI-Zoom)
+
+      function clearSearchShortcutReturnCardClient() {
+        searchShortcutReturnCardEl = null;
+        verticalUpHoldOriginCardEl = null;
+      }
 
       function resetVerticalTurboStreakClient() {
         if (verticalHoldTimer) {
@@ -66046,7 +66373,12 @@
         }
 
         // Normaler Druck: Immer exakt 1 Zeile wechseln (nie mehr als eine!)
+        // Ursprungs-Cover VOR dem ersten Schritt nach oben merken, damit Pfeil-nach-unten aus der Suche exakt dorthin zurückkehrt!
+        const originCardBeforeUpStep = (dir === "up" && currentSpatialEl && currentSpatialEl.closest)
+          ? currentSpatialEl.closest(".card")
+          : null;
         resetVerticalTurboStreakClient();
+        verticalUpHoldOriginCardEl = originCardBeforeUpStep;
         verticalTurboDir = dir;
         verticalTurboStreak = 1;
         verticalTurboLastStepAt = Date.now();
@@ -66091,7 +66423,11 @@
           if (modalBackdrop && document.getElementById("modalRoot")?.innerHTML.trim()) {
             const list = getVisibleFocusables();
             if (dir === "up") {
-              modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+              if (typeof scrollDetailModalToHeroStageTopClient === "function") {
+                scrollDetailModalToHeroStageTopClient();
+              } else {
+                modalBackdrop.scrollTo({ top: 0, behavior: "smooth" });
+              }
               const topModalBtn = document.querySelector("#detailHeroStageEl .detail-btn-play-white, #detailHeroStageEl .detail-btn-glass") || list[0];
               if (topModalBtn) jumpSpatialFocus(topModalBtn, false, "up");
               if (typeof showHudToast === "function") showHudToast("⬆️ Anfang der Detailansicht");
@@ -66105,10 +66441,13 @@
           }
 
           if (dir === "up") {
-            window.scrollTo({ top: 0, behavior: "smooth" });
+            const savedOriginCard = (verticalUpHoldOriginCardEl && document.body.contains(verticalUpHoldOriginCardEl))
+              ? verticalUpHoldOriginCardEl
+              : null;
             if (state.currentView === "wishlist") {
               const wlInp = document.getElementById("wishlistSearchInp");
               if (wlInp) {
+                searchShortcutReturnCardEl = savedOriginCard;
                 jumpSpatialFocus(wlInp, false, "up");
                 try { wlInp.focus({ preventScroll: true }); } catch (_we) {}
                 if (typeof showHudToast === "function") showHudToast("🔍 Merklisten-Suche aktiv");
@@ -66116,8 +66455,10 @@
               }
             }
             if (typeof focusSearchWithoutScrollClient === "function") {
+              searchShortcutReturnCardEl = savedOriginCard;
               focusSearchWithoutScrollClient();
             } else {
+              searchShortcutReturnCardEl = savedOriginCard;
               tvElevatorJumpClient("top", false);
             }
           } else {

@@ -1008,7 +1008,7 @@
         }
       }
 
-      .section { position: relative; z-index: 5; padding: 8px 14px; }
+      .section { position: relative; z-index: 5; padding: 8px 14px; overflow: visible; }
       .section-title { font-size: calc(13.5px * var(--scale-text)); font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; color: #e5e5e5; }
       .mode-bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 0; align-items: center; }
 
@@ -1239,6 +1239,8 @@
         column-gap: calc(12px * var(--scale-cover));
         row-gap: calc(18px * var(--scale-cover));
         align-items: start;
+        padding: 8px 6px 14px;
+        overflow: visible;
       }
       .card {
         background: transparent;
@@ -1251,8 +1253,6 @@
         flex-direction: column;
         position: relative;
         outline: none !important;
-        content-visibility: auto;
-        contain-intrinsic-size: 136px 248px;
         touch-action: pan-y;
         -webkit-touch-callout: none;
         -webkit-user-select: none;
@@ -4345,12 +4345,20 @@
         font-size: calc(12px * var(--scale-text));
         opacity: 0;
         pointer-events: none;
-        transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1), transform 170ms cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 280ms cubic-bezier(0.22, 1, 0.36, 1), transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
       }
       .catalog-focus-info-bar.visible {
         opacity: 1;
         transform: translate(-50%, 0);
         pointer-events: auto;
+      }
+      .catalog-focus-info-bar.is-title-only {
+        justify-content: center;
+        padding: 6px 16px;
+        max-width: min(90vw, 600px);
+      }
+      .catalog-focus-info-bar.is-title-only .cfi-title {
+        max-width: min(56vw, 380px);
       }
       body:has(#filterSidebarDrawer.open) .catalog-focus-info-bar,
       body:has(#tvQuickJumpElevator.has-subpanel) .catalog-focus-info-bar,

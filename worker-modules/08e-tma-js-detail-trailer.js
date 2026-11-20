@@ -953,6 +953,9 @@
         }
         state.openFilterDropdown = null;
         state.filtersCollapsedInSearch = false;
+        if (typeof clearSearchShortcutReturnCardClient === "function") {
+          clearSearchShortcutReturnCardClient();
+        }
         document.body.classList.remove("search-active-dim");
         updateMediaModeIndicatorDom();
         if (heroRotationTimer) clearInterval(heroRotationTimer);
@@ -978,6 +981,8 @@
           state.searchMatchedPersons = res.persons || [];
           state.searchMatchedStudios = res.studios || [];
           if ((res.items || []).length === 0 && res.filteredOutCount > 0 && !bypass) {
+            state.heroSlides = [];
+            if (typeof syncHeroExpandedBodyClass === "function") syncHeroExpandedBodyClass();
             root.innerHTML = '<div class="section"><div id="floatingFilterMount">' + buildFloatingFilterBarHtml() + '</div><div class="panel-box"><div class="section-title">⚠️ Keine Treffer wegen aktiver Filter (' + res.filteredOutCount + ' ausgeblendet)</div><button class="btn red" onclick="runSearch(true)">🔓 Filter temporär deaktivieren (Alle ' + res.filteredOutCount + ' zeigen)</button></div></div>';
             if (jumpToResults && typeof focusFirstResultCard === "function") focusFirstResultCard(false);
             syncSmartPageIndicatorDomClient();
@@ -988,9 +993,53 @@
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
           state.hasMorePages = Boolean(res.hasMore ?? (pageNum < state.totalPages));
           document.body.classList.remove("search-active-dim");
+
+          const detectedEntityCount =
+            state.searchMatchedCollections.length +
+            state.searchMatchedUniverses.length +
+            state.searchMatchedPersons.length +
+            state.searchMatchedStudios.length;
+
+          if (state.items.length >= 2) {
+            rebuildHeroSlides(state.items);
+            heroCurtainScrolledToCatalog = pageNum > 1 || Boolean(state.heroHidden);
+            if (!heroCurtainScrolledToCatalog) {
+              document.body.classList.remove("hero-scrolled-past", "page-scrolled");
+              if ((window.scrollY || window.pageYOffset || 0) !== 0) {
+                window.scrollTo(0, 0);
+              }
+            }
+          } else {
+            state.heroSlides = [];
+            heroCurtainScrolledToCatalog = true;
+          }
+
           renderDiscover("🔍 Suchergebnisse: " + q);
-          if (jumpToResults && typeof focusFirstResultCard === "function") {
-            focusFirstResultCard(false);
+          if (typeof preloadHeroSlidesAndUnlockCoversClient === "function") {
+            preloadHeroSlidesAndUnlockCoversClient();
+          }
+
+          // Exakt 1 Suchtreffer (ohne zusätzliche Entitäten) -> direkt Detailseite öffnen (Suchansicht bleibt für Zurück im Hintergrund)
+          if (pageNum === 1 && state.items.length === 1 && detectedEntityCount === 0) {
+            const onlyItem = state.items[0];
+            if (onlyItem && onlyItem.id) {
+              const onlyType = (onlyItem.media_type === "tv" || onlyItem.media_type === "s") ? "s" : "m";
+              if (typeof openDetails === "function") {
+                openDetails(onlyType, onlyItem.id);
+              }
+              return;
+            }
+          }
+
+          if (jumpToResults) {
+            if (!heroCurtainScrolledToCatalog && typeof isHeroStageAvailableForCurrentViewClient === "function" && isHeroStageAvailableForCurrentViewClient()) {
+              const heroFocusTarget = document.getElementById("heroBtnTrailer") || document.getElementById("heroBtnDetails");
+              if (heroFocusTarget && typeof jumpSpatialFocus === "function") {
+                jumpSpatialFocus(heroFocusTarget, false);
+              }
+            } else if (typeof focusFirstResultCard === "function") {
+              focusFirstResultCard(false);
+            }
           }
         } catch (err) {
           root.innerHTML = '<div class="section"><div class="panel-box">⚠️ Fehler bei der Suche: ' + esc(err.message) + '</div></div>';
@@ -1608,9 +1657,14 @@
         const root = document.getElementById("appRoot");
         const vipAllowed = isCurrentUserVip();
 
-        const heroSectionHtml = state.isSearchMode
-          ? ""
-          : '<div id="heroBannerSlot">' + buildHeroBannerInnerHtml() + '</div>';
+        const canRenderHeroSlot = Boolean(
+          Array.isArray(state.heroSlides) &&
+          state.heroSlides.length > 0 &&
+          (!state.isSearchMode || state.items.length >= 2)
+        );
+        const heroSectionHtml = canRenderHeroSlot
+          ? '<div id="heroBannerSlot">' + buildHeroBannerInnerHtml() + '</div>'
+          : (typeof syncHeroExpandedBodyClass === "function" ? (syncHeroExpandedBodyClass(), "") : "");
 
         const isColView = state.currentView === "collection" && state.currentCollectionId;
         const isUniView = state.currentView === "universe" && state.currentUniverseId;
@@ -2018,7 +2072,11 @@
           const backdropRect = modalBackdrop.getBoundingClientRect();
           const targetRect = targetEl.getBoundingClientRect();
           const offsetTop = modalBackdrop.scrollTop + (targetRect.top - backdropRect.top) - 12;
-          modalBackdrop.scrollTo({ top: Math.max(0, offsetTop), behavior: "smooth" });
+          if (typeof animateContainerScrollTopSmoothClient === "function") {
+            animateContainerScrollTopSmoothClient(modalBackdrop, Math.max(0, offsetTop), 380);
+          } else {
+            modalBackdrop.scrollTo({ top: Math.max(0, offsetTop), behavior: "smooth" });
+          }
           return;
         }
         if (targetEl && typeof targetEl.scrollIntoView === "function") {

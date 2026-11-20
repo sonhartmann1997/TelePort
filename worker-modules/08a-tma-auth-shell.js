@@ -2672,14 +2672,18 @@
         -webkit-backdrop-filter: blur(14px) saturate(165%);
         border: 1px solid rgba(255, 255, 255, 0.14);
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(56, 189, 248, 0.12);
-        opacity: 0.78;
+        opacity: 0;
         transition:
           width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-          opacity 0.22s ease,
+          opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1),
           color 0.22s ease,
           border-color 0.22s ease,
           box-shadow 0.22s ease,
           background 0.22s ease;
+      }
+      .catalog-edge-trigger-left.is-edge-hint-visible,
+      .catalog-edge-trigger-right.is-edge-hint-visible {
+        opacity: 0.82;
       }
       .catalog-edge-trigger-left {
         left: 0;

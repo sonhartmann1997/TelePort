@@ -476,7 +476,7 @@
               '<div class="detail-sticky-mini-actions">' +
                 '<button type="button" id="detailStickyPrimaryPlayBtn" class="detail-btn-play-white" style="padding:6px 14px;font-size:12.5px" onclick="' + primaryClickJs + '">' + esc(primaryPlayBtnLabel) + '</button>' +
                 '<button type="button" id="modalStickyWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" style="padding:6px 12px;font-size:12px" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')" title="Auf die Merkliste setzen / entfernen">' + (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") + '</button>' +
-                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="document.querySelector(\\'#modalRoot .modal-backdrop\\')?.scrollTo({top:0,behavior:\\'smooth\\'})" title="Nach oben zur Bühne">↑ Oben</button>' +
+                '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="scrollDetailModalToHeroStageTopClient()" title="Nach oben zur Bühne">↑ Oben</button>' +
                 '<button type="button" class="detail-btn-glass" style="padding:6px 11px;font-size:12px" onclick="closeDetailModal()" title="Detailansicht schließen (Esc)">✕</button>' +
               '</div>' +
             '</div>' +
@@ -502,20 +502,17 @@
                     /* 3. KOMPAKTE 1-ZEILIGE META-ZEILE (1:1 MIT SLIDER) */
                     '<div id="detailMetaCleanEl" class="hero-meta-clean">' + unboxedMetaHtml + '</div>' +
 
-                    /* 4. BESCHREIBUNG ÜBER DEN AKTIONS-BUTTONS (1:1 WIE IM SLIDER) */
-                    (function() {
-                      const ovText = String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim();
-                      const rawOrig = String(d._originalOverviewEn || d.overview || "").trim();
-                      const showTr = typeof isLikelyEnglishOverviewClient === "function" && isLikelyEnglishOverviewClient(rawOrig);
-                      const isTr = Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe);
-                      return '<div id="modalHeaderOverviewEl" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'modalHeaderOverviewEl\\');}">' +
-                        '<div id="modalHeaderOverviewTextEl" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrig) + '">' + esc(ovText) + '</div>' +
-                        '<div class="desc-actions-row">' +
-                          '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
-                          (showTr ? '<button type="button" id="modalHeaderTranslateBtn" class="desc-translate-btn' + (isTr ? " is-translated" : "") + '" onclick="translateOverviewTextClient(event,\\'activeDetails\\',\\'modalHeaderOverviewEl\\',\\'modalHeaderOverviewTextEl\\',\\'modalHeaderTranslateBtn\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' + (isTr ? "🇬🇧 Original anzeigen" : "🌐 Auf Deutsch übersetzen") + '</button>' : '') +
-                        '</div>' +
-                      '</div>';
-                    })() +
+                    /* 4. BESCHREIBUNG ÜBER DEN AKTIONS-BUTTONS (EINHEITLICHE STAGE-KOMPONENTE 1:1 WIE IM SLIDER) */
+                    buildUnifiedStageDescriptionBoxHtmlClient({
+                      boxId: "modalHeaderOverviewEl",
+                      textId: "modalHeaderOverviewTextEl",
+                      translateBtnId: "modalHeaderTranslateBtn",
+                      translateTargetKey: "activeDetails",
+                      overviewText: String(d._showTranslatedOverviewDe && d._translatedOverviewDe ? d._translatedOverviewDe : (d.overview || "Keine deutsche Beschreibung hinterlegt.")).trim(),
+                      rawOrigOverview: String(d._originalOverviewEn || d.overview || "").trim(),
+                      isTranslated: Boolean(d._showTranslatedOverviewDe && d._translatedOverviewDe),
+                      alwaysRenderTranslateBtn: false
+                    }) +
 
                     /* 5. AKTIONS-BUTTONS UNTER DER BESCHREIBUNG */
                     '<div class="detail-action-bar">' +

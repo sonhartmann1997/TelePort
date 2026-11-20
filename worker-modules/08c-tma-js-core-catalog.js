@@ -803,10 +803,14 @@
           } else if (typeof focusFirstResultCard === "function") {
             focusFirstResultCard(false);
           }
+          if (typeof triggerSideEdgeHintsAutoFadeClient === "function") {
+            triggerSideEdgeHintsAutoFadeClient(2500, "close");
+          }
         }
       }
 
-      function closeFilterSidebar() {
+      function closeFilterSidebar(suppressEdgeHint = false) {
+        const wasOpen = Boolean(state.sidebarOpen || document.getElementById("filterSidebarDrawer")?.classList.contains("open"));
         state.sidebarOpen = false;
         state.sidebarTab = null;
         state.sidebarDesignOpen = false;
@@ -822,6 +826,9 @@
           lastElevatorReturnEl = null;
         } else if (typeof focusFirstResultCard === "function") {
           focusFirstResultCard(false);
+        }
+        if (wasOpen && !suppressEdgeHint && typeof triggerSideEdgeHintsAutoFadeClient === "function") {
+          triggerSideEdgeHintsAutoFadeClient(2500, "close");
         }
       }
 
@@ -1779,7 +1786,7 @@
           lastModalTriggerKey = (typeCode && id) ? (typeCode + "_" + id) : "";
           lastModalTriggerEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : null;
           const activeEl = document.activeElement;
-          const inHeroSlider = !heroCurtainScrolledToCatalog && !state.heroHidden && !state.isSearchMode && (!state.currentView || state.currentView === "discover");
+          const inHeroSlider = !heroCurtainScrolledToCatalog && isHeroStageAvailableForCurrentViewClient();
           if (inHeroSlider) {
             if (
               (lastModalTriggerEl && lastModalTriggerEl.id === "heroBtnTrailer") ||
@@ -2231,6 +2238,34 @@
         document.documentElement.addEventListener("mouseleave", cancelSideMenuHoverTimersClient);
       }
 
+      let sideEdgeHintsFadeTimer = null;
+
+      function triggerSideEdgeHintsAutoFadeClient(durationMs = 2500, reason = "close") {
+        if (reason === "intro") {
+          if (window._sideEdgeIntroHintShown) return;
+          window._sideEdgeIntroHintShown = true;
+        }
+        const leftEdge = document.getElementById("catalogEdgeTriggerLeft");
+        const rightEdge = document.getElementById("catalogEdgeTriggerRight");
+        if (!leftEdge && !rightEdge) return;
+        if (document.body && document.body.classList.contains("in-hero-slider")) return;
+        if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+        if (leftEdge) leftEdge.classList.add("is-edge-hint-visible");
+        if (rightEdge) rightEdge.classList.add("is-edge-hint-visible");
+        if (sideEdgeHintsFadeTimer) {
+          clearTimeout(sideEdgeHintsFadeTimer);
+          sideEdgeHintsFadeTimer = null;
+        }
+        const safeMs = Math.max(800, Number(durationMs) || 2500);
+        sideEdgeHintsFadeTimer = setTimeout(() => {
+          sideEdgeHintsFadeTimer = null;
+          const lEl = document.getElementById("catalogEdgeTriggerLeft");
+          const rEl = document.getElementById("catalogEdgeTriggerRight");
+          if (lEl) lEl.classList.remove("is-edge-hint-visible");
+          if (rEl) rEl.classList.remove("is-edge-hint-visible");
+        }, safeMs);
+      }
+
       function openRightMenuOverlayClient(forceImmediate = false) {
         cancelRightEdgeHoverOpenClient();
         if (!forceImmediate && Date.now() < (window.__rmDismissedUntil || 0)) return;
@@ -2238,7 +2273,7 @@
         const elev = document.getElementById("tvQuickJumpElevator");
         if (!elev) return;
         if (state.sidebarOpen && typeof closeFilterSidebar === "function") {
-          closeFilterSidebar();
+          closeFilterSidebar(true);
         }
         window.__rmDismissedUntil = 0;
         elev.classList.remove("is-dismissed");
@@ -2250,8 +2285,15 @@
 
       function closeRightMenuOverlayClient(ev = null, suppressHoverUntilLeave = true) {
         if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
-        state.rightMenuTab = null;
         const elev = document.getElementById("tvQuickJumpElevator");
+        const wasOpen = Boolean(
+          elev && (
+            elev.classList.contains("has-subpanel") ||
+            elev.classList.contains("is-visible") ||
+            elev.classList.contains("is-hover-expanded")
+          )
+        );
+        state.rightMenuTab = null;
         if (elev) {
           elev.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
           if (suppressHoverUntilLeave) {
@@ -2275,6 +2317,9 @@
           }
         }
         syncRightMenuBadgesClient();
+        if (wasOpen && suppressHoverUntilLeave) {
+          triggerSideEdgeHintsAutoFadeClient(2500, "close");
+        }
       }
 
       function hasActiveRightMenuFiltersClient() {
@@ -3335,19 +3380,24 @@
 
       function rebuildHeroSlides(itemsList) {
         const withBackdrop = (itemsList || []).filter(i => i && (i.backdrop_path || i.poster_path));
-        const withOverview = withBackdrop.filter(i => i.overview && !isGenericPlaceholderOverviewClient(i.overview));
-        const withoutOverview = withBackdrop.filter(i => !i.overview || isGenericPlaceholderOverviewClient(i.overview));
-        const prioritizedPool = withOverview.concat(withoutOverview);
-        if (prioritizedPool.length <= 6) {
-          state.heroSlides = prioritizedPool.slice(0, 6);
+        if (state.isSearchMode) {
+          // Bei Suchergebnissen exakte Relevanz-Reihenfolge der besten Treffer (ab 2 Treffern, bis zu 6 Slides)
+          state.heroSlides = withBackdrop.length >= 2 ? withBackdrop.slice(0, 6) : [];
         } else {
-          const pool = prioritizedPool.slice(0, 14);
-          const picked = [];
-          while (picked.length < 6 && pool.length > 0) {
-            const idx = Math.floor(Math.random() * pool.length);
-            picked.push(pool.splice(idx, 1)[0]);
+          const withOverview = withBackdrop.filter(i => i.overview && !isGenericPlaceholderOverviewClient(i.overview));
+          const withoutOverview = withBackdrop.filter(i => !i.overview || isGenericPlaceholderOverviewClient(i.overview));
+          const prioritizedPool = withOverview.concat(withoutOverview);
+          if (prioritizedPool.length <= 6) {
+            state.heroSlides = prioritizedPool.slice(0, 6);
+          } else {
+            const pool = prioritizedPool.slice(0, 14);
+            const picked = [];
+            while (picked.length < 6 && pool.length > 0) {
+              const idx = Math.floor(Math.random() * pool.length);
+              picked.push(pool.splice(idx, 1)[0]);
+            }
+            state.heroSlides = picked;
           }
-          state.heroSlides = picked;
         }
         state.heroIndex = 0;
         state.heroActionsEngaged = false;
@@ -3570,11 +3620,8 @@
             for (const entry of entries) {
               if (entry.isIntersecting && state.hasMorePages && !state.loadingMore) {
                 const sliderBlocking = Boolean(
-                  !state.isSearchMode &&
-                  !state.heroHidden &&
-                  !heroCurtainScrolledToCatalog &&
-                  Array.isArray(state.heroSlides) &&
-                  state.heroSlides.length > 0
+                  isHeroStageAvailableForCurrentViewClient() &&
+                  !heroCurtainScrolledToCatalog
                 );
                 if (!sliderBlocking && typeof loadMoreResults === "function") {
                   loadMoreResults(true);
@@ -3640,7 +3687,7 @@
           totPages > 1 &&
           state.items.length > 0 &&
           !(document.body && document.body.classList.contains("in-hero-slider")) &&
-          (state.isSearchMode || state.heroHidden || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
+          (!isHeroStageAvailableForCurrentViewClient() || heroCurtainScrolledToCatalog || (window.scrollY || window.pageYOffset || 0) > 20)
         );
 
         let floatBtn = document.getElementById("smartPageIndicatorBtn");
@@ -3752,7 +3799,7 @@
         // Falls die Seite bereits im aktuellen Endlos-Grid geladen ist, direkt weich zur ersten Karte dieser Seite scrollen!
         const firstCardOnPage = document.querySelector('#resultsGridContainer .card[data-page-num="' + targetP + '"]');
         if (firstCardOnPage) {
-          if (!heroCurtainScrolledToCatalog && !state.heroHidden && !state.isSearchMode) {
+          if (!heroCurtainScrolledToCatalog && isHeroStageAvailableForCurrentViewClient()) {
             animateHeroCatalogSnapScrollClient(getHeroCatalogSnapScrollYClient());
           }
           state.visibleCatalogPage = targetP;
@@ -3865,11 +3912,7 @@
         syncSmartPageIndicatorDomClient(false);
 
         const sliderIsActiveFront = Boolean(
-          !state.isSearchMode &&
-          !state.heroHidden &&
-          (!state.currentView || state.currentView === "discover") &&
-          Array.isArray(state.heroSlides) &&
-          state.heroSlides.length > 0 &&
+          isHeroStageAvailableForCurrentViewClient() &&
           !heroCurtainScrolledToCatalog
         );
 
@@ -3945,14 +3988,69 @@
         return !(hdr && hdr.classList.contains("mobile-search-expanded"));
       }
 
-      function isUserInHeroSliderFront() {
-        if (!document.body) return false;
-        if (state.heroHidden || state.isSearchMode) return false;
-        if (state.currentView && state.currentView !== "discover") return false;
+      function isHeroStageAvailableForCurrentViewClient() {
+        if (!document.body || state.heroHidden) return false;
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return false;
+        if (state.isSearchMode) {
+          return Array.isArray(state.items) && state.items.length >= 2;
+        }
+        return !state.currentView || state.currentView === "discover";
+      }
+
+      function isUserInHeroSliderFront() {
+        if (!isHeroStageAvailableForCurrentViewClient()) return false;
         if (heroCurtainScrolledToCatalog || document.body.classList.contains("hero-scrolled-past")) return false;
         const y = window.scrollY || window.pageYOffset || 0;
         return y <= 20;
+      }
+
+      let smoothContainerScrollRafMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+
+      function animateContainerScrollTopSmoothClient(scrollEl, targetTop, durationMs = 380) {
+        if (!scrollEl) return;
+        const clampedTarget = Math.max(0, Number(targetTop) || 0);
+        const startTop = Number(scrollEl.scrollTop) || 0;
+        const delta = clampedTarget - startTop;
+        if (Math.abs(delta) < 2) {
+          scrollEl.scrollTop = clampedTarget;
+          return;
+        }
+        const prefersReduced = Boolean(
+          typeof window !== "undefined" &&
+          window.matchMedia &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        );
+        if (prefersReduced || durationMs <= 0) {
+          scrollEl.scrollTop = clampedTarget;
+          return;
+        }
+        if (smoothContainerScrollRafMap && smoothContainerScrollRafMap.has(scrollEl)) {
+          cancelAnimationFrame(smoothContainerScrollRafMap.get(scrollEl));
+          smoothContainerScrollRafMap.delete(scrollEl);
+        }
+        const startTime = performance.now();
+        const step = (now) => {
+          const elapsed = now - startTime;
+          const progress = Math.max(0, Math.min(1, elapsed / durationMs));
+          // Sanfte Kino-Vorhang-Kurve (easeOutQuint-inspiriert wie Hero-Slider)
+          const eased = 1 - Math.pow(1 - progress, 4);
+          scrollEl.scrollTop = startTop + delta * eased;
+          if (progress < 1) {
+            const rafId = requestAnimationFrame(step);
+            if (smoothContainerScrollRafMap) smoothContainerScrollRafMap.set(scrollEl, rafId);
+          } else {
+            scrollEl.scrollTop = clampedTarget;
+            if (smoothContainerScrollRafMap) smoothContainerScrollRafMap.delete(scrollEl);
+          }
+        };
+        const firstRaf = requestAnimationFrame(step);
+        if (smoothContainerScrollRafMap) smoothContainerScrollRafMap.set(scrollEl, firstRaf);
+      }
+
+      function scrollDetailModalToHeroStageTopClient() {
+        const modalBackdrop = document.querySelector("#modalRoot .modal-backdrop");
+        if (!modalBackdrop || modalBackdrop.scrollTop <= 1) return;
+        animateContainerScrollTopSmoothClient(modalBackdrop, 0, 380);
       }
 
       function syncHeroSearchPlaceholderAndToggleBtnClient() {
@@ -3979,8 +4077,8 @@
         const inp = document.getElementById("searchInput");
         if (!inp) return;
         const compactPill = isMobileCompactSearchPillActiveClient();
-        const onCatalogDiscover = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
-        if (showCompactSpotlightHint && onCatalogDiscover && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
+        const onHeroCapableView = (!state.currentView || state.currentView === "discover") && !state.isSearchMode;
+        if (showCompactSpotlightHint && onHeroCapableView && Array.isArray(state.heroSlides) && state.heroSlides.length > 0) {
           const hero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
           inp.placeholder = formatCollapsedHeroSearchPlaceholderClient(hero, compactPill);
           inp.classList.add("hero-placeholder-active");
@@ -4072,9 +4170,7 @@
       }, { passive: false });
 
       function isHeroScrollCouplingActiveClient() {
-        if (!document.body || state.heroHidden || state.isSearchMode) return false;
-        if (state.currentView && state.currentView !== "discover") return false;
-        if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return false;
+        if (!isHeroStageAvailableForCurrentViewClient()) return false;
         if (isAnySideMenuOpenClient()) return false;
         if (document.getElementById("modalRoot")?.innerHTML.trim()) return false;
         if (document.getElementById("lightboxRoot")?.innerHTML.trim()) return false;
@@ -4267,6 +4363,10 @@
               focusFirstResultCard(false);
             }
           }
+          // Beim ersten Betreten der Cover-Ansicht Seiten-Hinweise einmalig synchron für 5s anzeigen
+          if (!window._sideEdgeIntroHintShown && typeof triggerSideEdgeHintsAutoFadeClient === "function") {
+            setTimeout(() => triggerSideEdgeHintsAutoFadeClient(5000, "intro"), 120);
+          }
           // Sobald der Nutzer vom Slider nach unten zu den Covern scrollt, direkt die nächste Seite im Hintergrund vorladen!
           if (state.hasMorePages && !state.loadingMore && Number(state.page || 1) === Number(state.startPage || 1) && typeof loadMoreResults === "function") {
             setTimeout(() => {
@@ -4278,7 +4378,7 @@
         } else {
           if (document.body) {
             document.body.classList.remove("hero-scrolled-past", "page-scrolled");
-            if (!state.heroHidden && !state.isSearchMode && state.currentView === "discover") {
+            if (isHeroStageAvailableForCurrentViewClient()) {
               document.body.classList.add("in-hero-slider");
             }
           }
@@ -4543,7 +4643,7 @@
         const y = window.scrollY || window.pageYOffset || 0;
         document.body.classList.toggle("catalog-deep-scrolled", y > 420);
         const stageWrap = document.getElementById("heroStageWrapEl");
-        if (!stageWrap || state.heroHidden || state.isSearchMode) {
+        if (!stageWrap || !isHeroStageAvailableForCurrentViewClient()) {
           document.body.classList.toggle("page-scrolled", y > 10);
           if (stageWrap) {
             stageWrap.style.setProperty("--hero-scroll-fade", "0");
