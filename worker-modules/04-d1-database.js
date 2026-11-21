@@ -1350,7 +1350,7 @@
 
     const now = Date.now();
     const memKey = `d1_user_${tid}`;
-    const cur = (await getUserByTelegramIdFromD1(env, tid)) || {
+    const prevRow = (await getUserByTelegramIdFromD1(env, tid)) || {
       telegram_id: tid,
       tg_username: "",
       first_name: "",
@@ -1358,12 +1358,16 @@
       is_admin: isAuthorizedAdminId(env, tid) ? 1 : 0,
       created_at: now
     };
-    cur.custom_username = cleanUser;
-    cur.password_hash = passwordHash;
-    cur.password_salt = passwordSalt;
-    cur.last_seen_at = now;
-    memoryFallback.set(memKey, cur);
-    memoryFallback.set(`d1_username_${cleanUser.toLowerCase()}`, tid);
+    const prevUsernameLower = prevRow.custom_username ? String(prevRow.custom_username).toLowerCase() : "";
+    const nextRow = {
+      ...prevRow,
+      custom_username: cleanUser,
+      password_hash: passwordHash,
+      password_salt: passwordSalt,
+      last_seen_at: now,
+      _cachedAt: now,
+      _d1SyncedAt: now
+    };
 
     const db = await ensureD1Schema(env);
     if (db) {
@@ -1380,13 +1384,13 @@
             last_seen_at = excluded.last_seen_at`)
           .bind(
             tid,
-            cur.tg_username || "",
-            cur.first_name || "",
+            nextRow.tg_username || "",
+            nextRow.first_name || "",
             cleanUser,
             passwordHash,
             passwordSalt,
-            Number(cur.is_vip || 0),
-            Number(cur.is_admin || 0),
+            Number(nextRow.is_vip || 0),
+            Number(nextRow.is_admin || 0),
             now
           )
           .run();
@@ -1394,7 +1398,12 @@
         return { ok: false, error: "Datenbankfehler beim Speichern des Accounts (evtl. Username vergeben)." };
       }
     }
-    return { ok: true, user: formatUserRowForClient(cur, env) };
+    if (prevUsernameLower && prevUsernameLower !== cleanUser.toLowerCase()) {
+      memoryFallback.delete(`d1_username_${prevUsernameLower}`);
+    }
+    memoryFallback.set(memKey, nextRow);
+    memoryFallback.set(`d1_username_${cleanUser.toLowerCase()}`, tid);
+    return { ok: true, user: formatUserRowForClient(nextRow, env) };
   }
 
   async function saveUserTotpInD1(env, telegramId, totpSecret, totpEnabled) {

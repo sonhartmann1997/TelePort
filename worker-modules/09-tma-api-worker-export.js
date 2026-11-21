@@ -278,29 +278,39 @@
       const chatId = auth.isAuthenticated ? auth.chatId : "guest";
       // VIP-Zugriffsweiche: Qualitäten & Streams werden serverseitig ausschließlich für VIP-Mitglieder (oder Admins) ausgeliefert!
       const hasVipStreamAccess = Boolean(auth.isAuthenticated && (auth.user?.isVip || auth.user?.isAdmin));
+      const ALLOWED_CLIENT_SETTINGS_KEYS = [
+        "filtersActive", "showUnreleased", "onlyVipStreams",
+        "includedFsk", "excludedFsk",
+        "includedGenres", "excludedGenres",
+        "includedEras", "excludedEras",
+        "includedStudios", "excludedStudios",
+        "includedPlatforms", "excludedPlatforms",
+        "uiScale", "trailerProvider"
+      ];
+      const pickAllowedClientSettings = (rawObj) => {
+        if (!rawObj || typeof rawObj !== "object" || Array.isArray(rawObj)) return null;
+        const sanitized = {};
+        for (const k of ALLOWED_CLIENT_SETTINGS_KEYS) {
+          if (Object.prototype.hasOwnProperty.call(rawObj, k) && rawObj[k] !== undefined) {
+            sanitized[k] = rawObj[k];
+          }
+        }
+        return Object.keys(sanitized).length > 0 ? sanitized : null;
+      };
+      const sanitizeSettingsForClient = (sObj) => {
+        if (!sObj || typeof sObj !== "object") return sObj;
+        const copy = { ...sObj };
+        if (copy.tmdbSync && typeof copy.tmdbSync === "object") {
+          const { sessionId: _hiddenSessionId, ...safeSync } = copy.tmdbSync;
+          copy.tmdbSync = safeSync;
+        }
+        return copy;
+      };
       let clientHeaderSettings = null;
       try {
         const rawHdr = request.headers.get("X-Tma-Settings");
         if (rawHdr && rawHdr.length <= 4096) {
-          const parsedHdr = JSON.parse(decodeURIComponent(rawHdr));
-          if (parsedHdr && typeof parsedHdr === "object" && !Array.isArray(parsedHdr)) {
-            const ALLOWED_HDR_KEYS = [
-              "filtersActive", "showUnreleased", "onlyVip",
-              "includedFsk", "excludedFsk",
-              "includedGenres", "excludedGenres",
-              "includedEras", "excludedEras",
-              "includedStudios", "excludedStudios",
-              "includedPlatforms", "excludedPlatforms",
-              "uiScale"
-            ];
-            const sanitized = {};
-            for (const k of ALLOWED_HDR_KEYS) {
-              if (Object.prototype.hasOwnProperty.call(parsedHdr, k)) {
-                sanitized[k] = parsedHdr[k];
-              }
-            }
-            if (Object.keys(sanitized).length > 0) clientHeaderSettings = sanitized;
-          }
+          clientHeaderSettings = pickAllowedClientSettings(JSON.parse(decodeURIComponent(rawHdr)));
         }
       } catch (e) {}
       const isLocalSandboxRuntime = typeof window !== "undefined" && typeof document !== "undefined";
@@ -2846,7 +2856,7 @@
           filteredOutCount: lookahead.filteredOutCount || 0,
           genres: typeCode === "m" ? MOVIE_GENRES : SERIES_GENRES,
           genreEmojis: GENRE_EMOJIS,
-          settings,
+          settings: sanitizeSettingsForClient(settings),
           items
         }), {
           status: 200,
@@ -3227,7 +3237,10 @@
 
       if (path === "/api/tma/details" && request.method === "GET") {
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
-        const id = url.searchParams.get("id") || "";
+        const id = String(url.searchParams.get("id") || "").trim();
+        if (!/^\d+$/.test(id)) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültige Medien-ID." }), { status: 400, headers: corsHeaders });
+        }
         const isMovie = typeCode === "m";
         const details = isMovie ? await fetchMovieDetails(env, id) : await fetchSeriesDetails(env, id);
         if (!details) {
@@ -3544,8 +3557,11 @@
       }
 
       if (path === "/api/tma/season" && request.method === "GET") {
-        const seriesId = url.searchParams.get("seriesId") || "";
-        const seasonNum = parseInt(url.searchParams.get("season") || "1", 10);
+        const seriesId = String(url.searchParams.get("seriesId") || "").trim();
+        const seasonNum = parseInt(String(url.searchParams.get("season") || "1"), 10);
+        if (!/^\d+$/.test(seriesId) || !Number.isFinite(seasonNum) || seasonNum < 0) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültige Serien- oder Staffelnummer." }), { status: 400, headers: corsHeaders });
+        }
         // VIP-Regel: Episoden-Streams & Qualitäten werden ausschließlich für VIP-Mitglieder abgefragt und ausgeliefert!
         const [sDetails, seasonData, savedList, seasonFiles, d1SeasonMeta] = await Promise.all([
           fetchSeriesDetails(env, seriesId),
@@ -3606,7 +3622,10 @@
             season_number: seasonNum,
             name: ep.name || d1EpMeta?.title || (typeof d1EpMeta === "string" ? d1EpMeta : "") || `Folge ${eNum}`,
             overview: ep.overview || d1EpMeta?.overview || "",
-            vote_average: ep.vote_average || d1EpMeta?.vote_average || 0
+            vote_average: ep.vote_average || d1EpMeta?.vote_average || 0,
+            still_path: ep.still_path || "",
+            air_date: ep.air_date || "",
+            runtime: ep.runtime || ""
           });
         }
         for (const f of (seasonFiles || [])) {
@@ -3619,7 +3638,10 @@
               season_number: seasonNum,
               name: d1EpMeta?.title || (typeof d1EpMeta === "string" ? d1EpMeta : "") || f.episode_title || `Folge ${eNum}`,
               overview: d1EpMeta?.overview || "",
-              vote_average: d1EpMeta?.vote_average || 0
+              vote_average: d1EpMeta?.vote_average || 0,
+              still_path: "",
+              air_date: "",
+              runtime: ""
             });
           }
         }
@@ -3632,7 +3654,10 @@
               season_number: seasonNum,
               name: eMeta?.title || (typeof eMeta === "string" ? eMeta : "") || `Folge ${num}`,
               overview: eMeta?.overview || "",
-              vote_average: eMeta?.vote_average || 0
+              vote_average: eMeta?.vote_average || 0,
+              still_path: "",
+              air_date: "",
+              runtime: ""
             });
           }
         }
@@ -3667,6 +3692,9 @@
             name: ep.name || `Folge ${ep.episode_number}`,
             overview: ep.overview || "",
             vote_average: ep.vote_average || 0,
+            still_path: ep.still_path || "",
+            air_date: ep.air_date || "",
+            runtime: ep.runtime || "",
             isSaved,
             files: epFiles,
             versions: epVersions
@@ -4455,7 +4483,7 @@
         if (request.method === "GET") {
           return new Response(JSON.stringify({
             ok: true,
-            settings,
+            settings: sanitizeSettingsForClient(settings),
             fskOptions: FSK_OPTIONS,
             eraOptions: ERA_OPTIONS,
             studioOptions: STUDIO_OPTIONS,
@@ -4470,8 +4498,9 @@
           const serverCur = auth.isAuthenticated
             ? await getUserSettings(env, targetChatId)
             : (isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || { ...settings }) : { ...settings });
-          const cur = (body.clientSettings && typeof body.clientSettings === "object")
-            ? { ...serverCur, ...body.clientSettings }
+          const safeClientPatch = pickAllowedClientSettings(body.clientSettings);
+          const cur = safeClientPatch
+            ? { ...serverCur, ...safeClientPatch }
             : serverCur;
 
           if (body.action === "save_ui_scale" && body.uiScale) {
@@ -4645,7 +4674,7 @@
 
           return new Response(JSON.stringify({
             ok: true,
-            settings: cur,
+            settings: sanitizeSettingsForClient(cur),
             discover: discoverPayload,
             search: searchPayload
           }), { status: 200, headers: corsHeaders });
@@ -4704,7 +4733,8 @@
           await saveUserSettings(env, targetChatId, cur);
           const syncResult = await syncTmdbAccountWithBotWishlist(env, targetChatId);
           await flushUserSession(env, targetChatId);
-          return new Response(JSON.stringify({ ok: true, tmdbSync: cur.tmdbSync, syncResult }), { status: 200, headers: corsHeaders });
+          const { sessionId: _hiddenTmdbSid, ...safeTmdbSync } = cur.tmdbSync;
+          return new Response(JSON.stringify({ ok: true, tmdbSync: safeTmdbSync, syncResult }), { status: 200, headers: corsHeaders });
         }
 
         if (body.action === "sync_now") {

@@ -9177,7 +9177,7 @@
 
     const now = Date.now();
     const memKey = `d1_user_${tid}`;
-    const cur = (await getUserByTelegramIdFromD1(env, tid)) || {
+    const prevRow = (await getUserByTelegramIdFromD1(env, tid)) || {
       telegram_id: tid,
       tg_username: "",
       first_name: "",
@@ -9185,12 +9185,16 @@
       is_admin: isAuthorizedAdminId(env, tid) ? 1 : 0,
       created_at: now
     };
-    cur.custom_username = cleanUser;
-    cur.password_hash = passwordHash;
-    cur.password_salt = passwordSalt;
-    cur.last_seen_at = now;
-    memoryFallback.set(memKey, cur);
-    memoryFallback.set(`d1_username_${cleanUser.toLowerCase()}`, tid);
+    const prevUsernameLower = prevRow.custom_username ? String(prevRow.custom_username).toLowerCase() : "";
+    const nextRow = {
+      ...prevRow,
+      custom_username: cleanUser,
+      password_hash: passwordHash,
+      password_salt: passwordSalt,
+      last_seen_at: now,
+      _cachedAt: now,
+      _d1SyncedAt: now
+    };
 
     const db = await ensureD1Schema(env);
     if (db) {
@@ -9207,13 +9211,13 @@
             last_seen_at = excluded.last_seen_at`)
           .bind(
             tid,
-            cur.tg_username || "",
-            cur.first_name || "",
+            nextRow.tg_username || "",
+            nextRow.first_name || "",
             cleanUser,
             passwordHash,
             passwordSalt,
-            Number(cur.is_vip || 0),
-            Number(cur.is_admin || 0),
+            Number(nextRow.is_vip || 0),
+            Number(nextRow.is_admin || 0),
             now
           )
           .run();
@@ -9221,7 +9225,12 @@
         return { ok: false, error: "Datenbankfehler beim Speichern des Accounts (evtl. Username vergeben)." };
       }
     }
-    return { ok: true, user: formatUserRowForClient(cur, env) };
+    if (prevUsernameLower && prevUsernameLower !== cleanUser.toLowerCase()) {
+      memoryFallback.delete(`d1_username_${prevUsernameLower}`);
+    }
+    memoryFallback.set(memKey, nextRow);
+    memoryFallback.set(`d1_username_${cleanUser.toLowerCase()}`, tid);
+    return { ok: true, user: formatUserRowForClient(nextRow, env) };
   }
 
   async function saveUserTotpInD1(env, telegramId, totpSecret, totpEnabled) {
@@ -14450,6 +14459,10 @@
       memoryFallback.set("telegraph_access_token", d1TokenObj.access_token);
       return d1TokenObj.access_token;
     }
+    const lastFailTs = Number(memoryFallback.get("telegraph_token_fail_ts") || 0);
+    if (lastFailTs && (Date.now() - lastFailTs) < 300000) {
+      return null;
+    }
     try {
       const res = await fetchWithTimeout(
         "https://api.telegra.ph/createAccount?short_name=MovieSeriesBot&author_name=Film+%26+Serien+Bot",
@@ -14460,12 +14473,16 @@
         const json = await res.json();
         const token = json?.result?.access_token;
         if (token) {
+          memoryFallback.delete("telegraph_token_fail_ts");
           memoryFallback.set("telegraph_access_token", token);
           await saveEntityToD1(env, "telegraph_account", "telegraph", { access_token: token });
           return token;
         }
       }
-    } catch (e) {}
+      memoryFallback.set("telegraph_token_fail_ts", Date.now());
+    } catch (e) {
+      memoryFallback.set("telegraph_token_fail_ts", Date.now());
+    }
     return null;
   }
 
@@ -17478,11 +17495,12 @@
         episodes = (data.episodes || []).map(ep => ({
           id: ep.id,
           episode_number: ep.episode_number,
-          season_number: ep.season_number || sNum,
+          season_number: ep.season_number ?? sNum,
           name: ep.name || `Folge ${ep.episode_number}`,
           air_date: ep.air_date || "",
           runtime: ep.runtime ? `${ep.runtime} Min.` : "",
           vote_average: ep.vote_average || 0,
+          still_path: ep.still_path || "",
           overview: ep.overview || ""
         }));
       }
@@ -27271,7 +27289,7 @@
             if (!challengeObj) {
               challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             }
-            if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
+            if (challengeObj && challengeObj.status === "pending" && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
               challengeObj.user = {
                 id: Number(message.from?.id || chatId),
@@ -27280,11 +27298,16 @@
                 username: String(message.from?.username || "")
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              memoryFallback.delete(`webauth_code_${cleanCode}`);
               try {
                 if (hasD1 && typeof saveEntityToD1 === "function") {
                   await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
+                  if (typeof deleteEntityFromD1 === "function") {
+                    await deleteEntityFromD1(env, `webauth_code_${cleanCode}`).catch(() => {});
+                  }
                 } else {
                   await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+                  await kvStageDelete(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED").catch(() => {});
                 }
               } catch (e) {}
               await deleteMessage(chatId, message.message_id);
@@ -27326,7 +27349,7 @@
             if (!challengeObj) {
               challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             }
-            if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
+            if (challengeObj && challengeObj.status === "pending" && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
               challengeObj.user = {
                 id: Number(message.from?.id || chatId),
@@ -27335,16 +27358,23 @@
                 username: String(message.from?.username || "")
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              if (challengeObj.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
               try {
                 if (hasD1 && typeof saveEntityToD1 === "function") {
                   await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
+                  if (challengeObj.code && typeof deleteEntityFromD1 === "function") {
+                    await deleteEntityFromD1(env, `webauth_code_${challengeObj.code}`).catch(() => {});
+                  }
                 } else {
                   await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+                  if (challengeObj.code) {
+                    await kvStageDelete(env, `webauth_code_${challengeObj.code}`, "MOVIE_SAVED").catch(() => {});
+                  }
                 }
               } catch (e) {}
               await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
             } else {
-              await sendMessage(chatId, `⌛ *Dieser Login-Link ist abgelaufen.*\nBitte fordere im Login-Fenster der Mini-App einen neuen Code an.`);
+              await sendMessage(chatId, `⌛ *Dieser Login-Link wurde bereits verwendet oder ist abgelaufen.*\nBitte fordere im Login-Fenster der Mini-App einen neuen Code an.`);
             }
             return;
           }
@@ -47991,7 +48021,24 @@
         }
         if (state.settings && Object.keys(state.settings).length > 0) {
           try {
-            headers["X-Tma-Settings"] = encodeURIComponent(JSON.stringify(state.settings));
+            const hdrFilterObj = {
+              filtersActive: state.settings.filtersActive,
+              showUnreleased: state.settings.showUnreleased,
+              onlyVipStreams: state.settings.onlyVipStreams,
+              includedFsk: state.settings.includedFsk,
+              excludedFsk: state.settings.excludedFsk,
+              includedGenres: state.settings.includedGenres,
+              excludedGenres: state.settings.excludedGenres,
+              includedEras: state.settings.includedEras,
+              excludedEras: state.settings.excludedEras,
+              includedStudios: state.settings.includedStudios,
+              excludedStudios: state.settings.excludedStudios,
+              includedPlatforms: state.settings.includedPlatforms,
+              excludedPlatforms: state.settings.excludedPlatforms,
+              uiScale: state.settings.uiScale,
+              trailerProvider: state.settings.trailerProvider
+            };
+            headers["X-Tma-Settings"] = encodeURIComponent(JSON.stringify(hdrFilterObj));
           } catch (e) {}
         }
         const timeoutMs = isImportBatch ? 24000 : 12000;
@@ -69224,29 +69271,39 @@
       const chatId = auth.isAuthenticated ? auth.chatId : "guest";
       // VIP-Zugriffsweiche: Qualitäten & Streams werden serverseitig ausschließlich für VIP-Mitglieder (oder Admins) ausgeliefert!
       const hasVipStreamAccess = Boolean(auth.isAuthenticated && (auth.user?.isVip || auth.user?.isAdmin));
+      const ALLOWED_CLIENT_SETTINGS_KEYS = [
+        "filtersActive", "showUnreleased", "onlyVipStreams",
+        "includedFsk", "excludedFsk",
+        "includedGenres", "excludedGenres",
+        "includedEras", "excludedEras",
+        "includedStudios", "excludedStudios",
+        "includedPlatforms", "excludedPlatforms",
+        "uiScale", "trailerProvider"
+      ];
+      const pickAllowedClientSettings = (rawObj) => {
+        if (!rawObj || typeof rawObj !== "object" || Array.isArray(rawObj)) return null;
+        const sanitized = {};
+        for (const k of ALLOWED_CLIENT_SETTINGS_KEYS) {
+          if (Object.prototype.hasOwnProperty.call(rawObj, k) && rawObj[k] !== undefined) {
+            sanitized[k] = rawObj[k];
+          }
+        }
+        return Object.keys(sanitized).length > 0 ? sanitized : null;
+      };
+      const sanitizeSettingsForClient = (sObj) => {
+        if (!sObj || typeof sObj !== "object") return sObj;
+        const copy = { ...sObj };
+        if (copy.tmdbSync && typeof copy.tmdbSync === "object") {
+          const { sessionId: _hiddenSessionId, ...safeSync } = copy.tmdbSync;
+          copy.tmdbSync = safeSync;
+        }
+        return copy;
+      };
       let clientHeaderSettings = null;
       try {
         const rawHdr = request.headers.get("X-Tma-Settings");
         if (rawHdr && rawHdr.length <= 4096) {
-          const parsedHdr = JSON.parse(decodeURIComponent(rawHdr));
-          if (parsedHdr && typeof parsedHdr === "object" && !Array.isArray(parsedHdr)) {
-            const ALLOWED_HDR_KEYS = [
-              "filtersActive", "showUnreleased", "onlyVip",
-              "includedFsk", "excludedFsk",
-              "includedGenres", "excludedGenres",
-              "includedEras", "excludedEras",
-              "includedStudios", "excludedStudios",
-              "includedPlatforms", "excludedPlatforms",
-              "uiScale"
-            ];
-            const sanitized = {};
-            for (const k of ALLOWED_HDR_KEYS) {
-              if (Object.prototype.hasOwnProperty.call(parsedHdr, k)) {
-                sanitized[k] = parsedHdr[k];
-              }
-            }
-            if (Object.keys(sanitized).length > 0) clientHeaderSettings = sanitized;
-          }
+          clientHeaderSettings = pickAllowedClientSettings(JSON.parse(decodeURIComponent(rawHdr)));
         }
       } catch (e) {}
       const isLocalSandboxRuntime = typeof window !== "undefined" && typeof document !== "undefined";
@@ -71792,7 +71849,7 @@
           filteredOutCount: lookahead.filteredOutCount || 0,
           genres: typeCode === "m" ? MOVIE_GENRES : SERIES_GENRES,
           genreEmojis: GENRE_EMOJIS,
-          settings,
+          settings: sanitizeSettingsForClient(settings),
           items
         }), {
           status: 200,
@@ -72173,7 +72230,10 @@
 
       if (path === "/api/tma/details" && request.method === "GET") {
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
-        const id = url.searchParams.get("id") || "";
+        const id = String(url.searchParams.get("id") || "").trim();
+        if (!/^\d+$/.test(id)) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültige Medien-ID." }), { status: 400, headers: corsHeaders });
+        }
         const isMovie = typeCode === "m";
         const details = isMovie ? await fetchMovieDetails(env, id) : await fetchSeriesDetails(env, id);
         if (!details) {
@@ -72490,8 +72550,11 @@
       }
 
       if (path === "/api/tma/season" && request.method === "GET") {
-        const seriesId = url.searchParams.get("seriesId") || "";
-        const seasonNum = parseInt(url.searchParams.get("season") || "1", 10);
+        const seriesId = String(url.searchParams.get("seriesId") || "").trim();
+        const seasonNum = parseInt(String(url.searchParams.get("season") || "1"), 10);
+        if (!/^\d+$/.test(seriesId) || !Number.isFinite(seasonNum) || seasonNum < 0) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültige Serien- oder Staffelnummer." }), { status: 400, headers: corsHeaders });
+        }
         // VIP-Regel: Episoden-Streams & Qualitäten werden ausschließlich für VIP-Mitglieder abgefragt und ausgeliefert!
         const [sDetails, seasonData, savedList, seasonFiles, d1SeasonMeta] = await Promise.all([
           fetchSeriesDetails(env, seriesId),
@@ -72552,7 +72615,10 @@
             season_number: seasonNum,
             name: ep.name || d1EpMeta?.title || (typeof d1EpMeta === "string" ? d1EpMeta : "") || `Folge ${eNum}`,
             overview: ep.overview || d1EpMeta?.overview || "",
-            vote_average: ep.vote_average || d1EpMeta?.vote_average || 0
+            vote_average: ep.vote_average || d1EpMeta?.vote_average || 0,
+            still_path: ep.still_path || "",
+            air_date: ep.air_date || "",
+            runtime: ep.runtime || ""
           });
         }
         for (const f of (seasonFiles || [])) {
@@ -72565,7 +72631,10 @@
               season_number: seasonNum,
               name: d1EpMeta?.title || (typeof d1EpMeta === "string" ? d1EpMeta : "") || f.episode_title || `Folge ${eNum}`,
               overview: d1EpMeta?.overview || "",
-              vote_average: d1EpMeta?.vote_average || 0
+              vote_average: d1EpMeta?.vote_average || 0,
+              still_path: "",
+              air_date: "",
+              runtime: ""
             });
           }
         }
@@ -72578,7 +72647,10 @@
               season_number: seasonNum,
               name: eMeta?.title || (typeof eMeta === "string" ? eMeta : "") || `Folge ${num}`,
               overview: eMeta?.overview || "",
-              vote_average: eMeta?.vote_average || 0
+              vote_average: eMeta?.vote_average || 0,
+              still_path: "",
+              air_date: "",
+              runtime: ""
             });
           }
         }
@@ -72613,6 +72685,9 @@
             name: ep.name || `Folge ${ep.episode_number}`,
             overview: ep.overview || "",
             vote_average: ep.vote_average || 0,
+            still_path: ep.still_path || "",
+            air_date: ep.air_date || "",
+            runtime: ep.runtime || "",
             isSaved,
             files: epFiles,
             versions: epVersions
@@ -73401,7 +73476,7 @@
         if (request.method === "GET") {
           return new Response(JSON.stringify({
             ok: true,
-            settings,
+            settings: sanitizeSettingsForClient(settings),
             fskOptions: FSK_OPTIONS,
             eraOptions: ERA_OPTIONS,
             studioOptions: STUDIO_OPTIONS,
@@ -73416,8 +73491,9 @@
           const serverCur = auth.isAuthenticated
             ? await getUserSettings(env, targetChatId)
             : (isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || { ...settings }) : { ...settings });
-          const cur = (body.clientSettings && typeof body.clientSettings === "object")
-            ? { ...serverCur, ...body.clientSettings }
+          const safeClientPatch = pickAllowedClientSettings(body.clientSettings);
+          const cur = safeClientPatch
+            ? { ...serverCur, ...safeClientPatch }
             : serverCur;
 
           if (body.action === "save_ui_scale" && body.uiScale) {
@@ -73591,7 +73667,7 @@
 
           return new Response(JSON.stringify({
             ok: true,
-            settings: cur,
+            settings: sanitizeSettingsForClient(cur),
             discover: discoverPayload,
             search: searchPayload
           }), { status: 200, headers: corsHeaders });
@@ -73650,7 +73726,8 @@
           await saveUserSettings(env, targetChatId, cur);
           const syncResult = await syncTmdbAccountWithBotWishlist(env, targetChatId);
           await flushUserSession(env, targetChatId);
-          return new Response(JSON.stringify({ ok: true, tmdbSync: cur.tmdbSync, syncResult }), { status: 200, headers: corsHeaders });
+          const { sessionId: _hiddenTmdbSid, ...safeTmdbSync } = cur.tmdbSync;
+          return new Response(JSON.stringify({ ok: true, tmdbSync: safeTmdbSync, syncResult }), { status: 200, headers: corsHeaders });
         }
 
         if (body.action === "sync_now") {

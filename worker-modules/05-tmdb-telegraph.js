@@ -15,6 +15,10 @@
       memoryFallback.set("telegraph_access_token", d1TokenObj.access_token);
       return d1TokenObj.access_token;
     }
+    const lastFailTs = Number(memoryFallback.get("telegraph_token_fail_ts") || 0);
+    if (lastFailTs && (Date.now() - lastFailTs) < 300000) {
+      return null;
+    }
     try {
       const res = await fetchWithTimeout(
         "https://api.telegra.ph/createAccount?short_name=MovieSeriesBot&author_name=Film+%26+Serien+Bot",
@@ -25,12 +29,16 @@
         const json = await res.json();
         const token = json?.result?.access_token;
         if (token) {
+          memoryFallback.delete("telegraph_token_fail_ts");
           memoryFallback.set("telegraph_access_token", token);
           await saveEntityToD1(env, "telegraph_account", "telegraph", { access_token: token });
           return token;
         }
       }
-    } catch (e) {}
+      memoryFallback.set("telegraph_token_fail_ts", Date.now());
+    } catch (e) {
+      memoryFallback.set("telegraph_token_fail_ts", Date.now());
+    }
     return null;
   }
 
@@ -3043,11 +3051,12 @@
         episodes = (data.episodes || []).map(ep => ({
           id: ep.id,
           episode_number: ep.episode_number,
-          season_number: ep.season_number || sNum,
+          season_number: ep.season_number ?? sNum,
           name: ep.name || `Folge ${ep.episode_number}`,
           air_date: ep.air_date || "",
           runtime: ep.runtime ? `${ep.runtime} Min.` : "",
           vote_average: ep.vote_average || 0,
+          still_path: ep.still_path || "",
           overview: ep.overview || ""
         }));
       }

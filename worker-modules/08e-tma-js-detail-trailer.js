@@ -430,7 +430,24 @@
         }
         if (state.settings && Object.keys(state.settings).length > 0) {
           try {
-            headers["X-Tma-Settings"] = encodeURIComponent(JSON.stringify(state.settings));
+            const hdrFilterObj = {
+              filtersActive: state.settings.filtersActive,
+              showUnreleased: state.settings.showUnreleased,
+              onlyVipStreams: state.settings.onlyVipStreams,
+              includedFsk: state.settings.includedFsk,
+              excludedFsk: state.settings.excludedFsk,
+              includedGenres: state.settings.includedGenres,
+              excludedGenres: state.settings.excludedGenres,
+              includedEras: state.settings.includedEras,
+              excludedEras: state.settings.excludedEras,
+              includedStudios: state.settings.includedStudios,
+              excludedStudios: state.settings.excludedStudios,
+              includedPlatforms: state.settings.includedPlatforms,
+              excludedPlatforms: state.settings.excludedPlatforms,
+              uiScale: state.settings.uiScale,
+              trailerProvider: state.settings.trailerProvider
+            };
+            headers["X-Tma-Settings"] = encodeURIComponent(JSON.stringify(hdrFilterObj));
           } catch (e) {}
         }
         const timeoutMs = isImportBatch ? 24000 : 12000;
