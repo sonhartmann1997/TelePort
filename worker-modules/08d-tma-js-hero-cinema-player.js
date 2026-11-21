@@ -3802,6 +3802,8 @@
         if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) { closeSearchGenreDropdownOverlay(); return; }
         if (document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded")) { collapseMobileSearchBarClient(); return; }
         if (document.getElementById("customDialogRoot")?.innerHTML) { closeCustomDialog(null); return; }
+        const manual900mEl = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        if (manual900mEl && manual900mEl.style.display && manual900mEl.style.display !== "none" && typeof closeManualNoTmdbConfirmModalClient === "function") { closeManualNoTmdbConfirmModalClient(); return; }
         if (document.getElementById("subModalOverlayRoot")?.innerHTML && typeof closeSubModalOverlayClient === "function") { closeSubModalOverlayClient(); return; }
         if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML && typeof closePersonSpotlightOverlayClient === "function") { closePersonSpotlightOverlayClient(); return; }
         if (state.sidebarOpen) { closeFilterSidebar(); return; }
@@ -3830,6 +3832,8 @@
         closeSearchGenreDropdownOverlay();
         collapseMobileSearchBarClient();
         closeLightbox();
+        if (typeof closeManualNoTmdbConfirmModalClient === "function") closeManualNoTmdbConfirmModalClient();
+        if (typeof closeSubModalOverlayClient === "function") closeSubModalOverlayClient();
         document.getElementById("modalRoot").innerHTML = "";
         loadDiscover(state.type || "m", "all", "trend", "default");
       }
@@ -3864,6 +3868,8 @@
         closeSearchGenreDropdownOverlay();
         collapseMobileSearchBarClient();
         closeLightbox();
+        if (typeof closeManualNoTmdbConfirmModalClient === "function") closeManualNoTmdbConfirmModalClient();
+        if (typeof closeSubModalOverlayClient === "function") closeSubModalOverlayClient();
         document.getElementById("modalRoot").innerHTML = "";
         setBusyState(true, "🔄 Setze alle Filter zurück & starte Mini-App neu...");
         try {

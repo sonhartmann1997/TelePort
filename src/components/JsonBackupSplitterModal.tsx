@@ -124,10 +124,27 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const abortBatchRef = useRef<boolean>(false);
 
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isDraggingPanel, setIsDraggingPanel] = useState<boolean>(false);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const dragOriginRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+
+  const clampPanelDragPos = (nx: number, ny: number) => {
+    const vw = window.innerWidth || 1024;
+    const vh = window.innerHeight || 768;
+    const rect = panelRef.current?.getBoundingClientRect();
+    const panelW = rect ? rect.width : Math.min(vw - 32, isMinimized ? 576 : 896);
+    const panelH = rect ? rect.height : Math.min(vh - 32, isMinimized ? 60 : vh * 0.88);
+    // Keep at least 160px horizontally and the header vertically within viewport
+    const maxX = Math.max(0, Math.round((vw - Math.min(panelW, 180)) / 2));
+    const maxUpY = Math.max(0, Math.round((vh - panelH) / 2) - 8);
+    const maxDownY = Math.max(0, Math.round((vh - 64) / 2));
+    return {
+      x: Math.round(Math.max(-maxX, Math.min(maxX, nx))),
+      y: Math.round(Math.max(-maxUpY, Math.min(maxDownY, ny))),
+    };
+  };
 
   useEffect(() => {
     if (!isDraggingPanel) return;
@@ -135,29 +152,40 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
       if (!dragOriginRef.current) return;
       const dx = ev.clientX - dragOriginRef.current.startX;
       const dy = ev.clientY - dragOriginRef.current.startY;
-      const maxX = Math.max(240, window.innerWidth * 0.46);
-      const maxY = Math.max(180, window.innerHeight * 0.44);
-      setDragPos({
-        x: Math.max(-maxX, Math.min(maxX, dragOriginRef.current.baseX + dx)),
-        y: Math.max(-maxY, Math.min(maxY, dragOriginRef.current.baseY + dy)),
-      });
+      setDragPos(clampPanelDragPos(dragOriginRef.current.baseX + dx, dragOriginRef.current.baseY + dy));
     };
-    const onPointerUp = () => {
+    const onPointerEnd = () => {
       setIsDraggingPanel(false);
       dragOriginRef.current = null;
     };
     window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointerup', onPointerEnd);
+    window.addEventListener('pointercancel', onPointerEnd);
+    window.addEventListener('blur', onPointerEnd);
     return () => {
       window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
+      window.removeEventListener('blur', onPointerEnd);
     };
-  }, [isDraggingPanel]);
+  }, [isDraggingPanel, isMinimized]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onResize = () => {
+      setDragPos((prev) => {
+        if (prev.x === 0 && prev.y === 0) return prev;
+        return clampPanelDragPos(prev.x, prev.y);
+      });
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [isOpen, isMinimized]);
 
   const handleHeaderPointerDown = (ev: React.PointerEvent<HTMLDivElement>) => {
     if (ev.button !== 0) return;
     const target = ev.target as HTMLElement | null;
-    if (target && target.closest('button, input, select, a')) return;
+    if (target && target.closest('button, input, select, textarea, a, label, [role="button"]')) return;
     ev.preventDefault();
     dragOriginRef.current = {
       startX: ev.clientX,
@@ -528,7 +556,7 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
     }
   };
 
-  const handleImportAllChunksSequentially = async () => {
+  const runSequentialChunkImport = async (ignoreDone: boolean) => {
     if (!splitResult || isBatchImportingAll) return;
     setIsBatchImportingAll(true);
     abortBatchRef.current = false;
@@ -536,7 +564,7 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
     try {
       for (const chunk of splitResult.chunks) {
         if (abortBatchRef.current) break;
-        if (chunk.importedStatus === 'done') continue;
+        if (!ignoreDone && chunk.importedStatus === 'done') continue;
         const ok = await handleImportSingleChunk(chunk);
         if (!ok) break;
         await new Promise((r) => setTimeout(r, 250));
@@ -544,6 +572,10 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
     } finally {
       setIsBatchImportingAll(false);
     }
+  };
+
+  const handleImportAllChunksSequentially = async () => {
+    await runSequentialChunkImport(false);
   };
 
   const handleRestartAllFromZeroNoDuplicates = async () => {
@@ -561,13 +593,26 @@ export const JsonBackupSplitterModal: React.FC<JsonBackupSplitterModalProps> = (
           }
         : null
     );
-    setTimeout(() => {
-      handleImportAllChunksSequentially();
-    }, 60);
+    await runSequentialChunkImport(true);
   };
 
-  const handleCopyCode = (key: string, text: string) => {
-    navigator.clipboard.writeText(text);
+  const handleCopyCode = async (key: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      } catch {
+        // ignore fallback clipboard failure
+      }
+    }
     setCopiedSnippet(key);
     setTimeout(() => setCopiedSnippet(null), 1800);
   };
@@ -603,6 +648,7 @@ for idx in range(0, len(video_msgs), chunk_size):
   return (
     <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center p-4 font-sans tabular-nums">
       <div
+        ref={panelRef}
         style={{ transform: `translate3d(${dragPos.x}px, ${dragPos.y}px, 0)` }}
         className={`pointer-events-auto w-full ${
           isMinimized ? 'max-w-xl' : 'max-w-4xl max-h-[88vh]'
@@ -612,10 +658,15 @@ for idx in range(0, len(video_msgs), chunk_size):
         <div
           data-drag-handle="true"
           onPointerDown={handleHeaderPointerDown}
-          className={`flex items-center justify-between gap-3 px-4 py-3 bg-[#111827] border-b border-slate-800 select-none ${
+          onDoubleClick={(ev) => {
+            const target = ev.target as HTMLElement | null;
+            if (target && target.closest('button, input, select, textarea, a, label, [role="button"]')) return;
+            setDragPos({ x: 0, y: 0 });
+          }}
+          className={`flex items-center justify-between gap-3 px-4 py-3 bg-[#111827] border-b border-slate-800 select-none touch-none ${
             isDraggingPanel ? 'cursor-grabbing' : 'cursor-grab'
           }`}
-          title="Klicken & Ziehen zum freien Verschieben des Import-Panels"
+          title="Klicken & Ziehen zum Verschieben · Doppelklick zentriert"
         >
           <div className="flex items-center gap-2 min-w-0">
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800/90 border border-slate-700 text-slate-300 text-[10px] font-semibold shrink-0">

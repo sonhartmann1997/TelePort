@@ -450,6 +450,7 @@
 
       function restartBackupFromZeroNoDupesClient() {
         clearBackupCheckpointClient();
+        backupImportJob.savedCheckpoint = null;
         backupImportJob.cursor = 0;
         backupImportJob.moviesSaved = 0;
         backupImportJob.seriesSaved = 0;
@@ -458,6 +459,9 @@
         backupImportJob.uncertainCount = 0;
         backupImportJob.failedCount = 0;
         backupImportJob.startedAt = 0;
+        backupImportJob._freshLogsResetDone = false;
+        backupImportJob.cursorRetries = {};
+        backupImportJob._processedMsgIds = new Set();
         backupImportJob.recentLog = ["🔄 Neustart ab Index 0 (Duplikat-Schutz aktiv: bestehende Einträge werden sauber aktualisiert)."];
         showHudToast("🔄 Starte ab 0 neu (ohne Duplikate einzufügen)...");
         startOrResumeBackupImport();
@@ -654,8 +658,14 @@
         const eInp = document.getElementById("revEpInp_" + item.id);
         const qInp = document.getElementById("revSearchInp_" + item.id);
         const tSel = document.getElementById("revSearchType_" + item.id);
-        if (sInp && sInp.value) item.season = Math.max(1, parseInt(sInp.value, 10) || item.season || 1);
-        if (eInp && eInp.value) item.episode = Math.max(1, parseInt(eInp.value, 10) || item.episode || 1);
+        if (sInp && sInp.value !== "") {
+          const parsedS = parseInt(sInp.value, 10);
+          if (!Number.isNaN(parsedS)) item.season = Math.max(0, parsedS);
+        }
+        if (eInp && eInp.value !== "") {
+          const parsedE = parseInt(eInp.value, 10);
+          if (!Number.isNaN(parsedE)) item.episode = Math.max(1, parsedE);
+        }
         if (qInp) item.manualSearchQuery = qInp.value;
         if (tSel) item.manualSearchType = tSel.value;
       }
@@ -741,6 +751,10 @@
       };
 
       function closeManualNoTmdbConfirmModalClient() {
+        if (manualNoTmdbLivePreviewTimer) {
+          clearTimeout(manualNoTmdbLivePreviewTimer);
+          manualNoTmdbLivePreviewTimer = null;
+        }
         const el = document.getElementById("manualNoTmdbConfirmModalOverlay");
         if (el) el.style.display = "none";
         activeManualNoTmdbContext = null;
@@ -836,7 +850,7 @@
 
       function getOpenTmdbNotFoundQueueTargetsClient(source = "diag") {
         if (source === "review") {
-          return (backupImportJob.reviewItems || []).filter(it => !it.tmdbId || Number(it.tmdbId) >= 900000000 || it.status === "failed");
+          return (backupImportJob.reviewItems || []).filter(it => !it.resolvedByAdmin && (!it.tmdbId || it.status === "failed"));
         }
         loadClientDiagnosticLogsFromStorage();
         const logs = clientDiagnosticLogState.logs || [];
@@ -915,7 +929,7 @@
             closeManualNoTmdbConfirmModalClient();
             showHudToast("✅ Migration abgeschlossen: #" + oldSyntheticId + " → TMDb #" + newTmdbId + (r.officialTitle ? (" (" + r.officialTitle + ")") : ""));
             refreshDiagnosticLogMountDom();
-            if (state.view === "admin") loadAdminPanelView();
+            if (state.currentView === "admin") loadAdminPanelView(true);
           } else {
             showHudToast("⚠️ " + (r?.error || "Migration fehlgeschlagen"));
           }
@@ -934,6 +948,9 @@
           overlay.style.cssText =
             "position:fixed;inset:0;z-index:12000;background:rgba(5,6,12,0.84);backdrop-filter:blur(7px);" +
             "display:flex;align-items:center;justify-content:center;padding:14px;";
+          overlay.addEventListener("click", (ev) => {
+            if (ev.target === overlay) closeManualNoTmdbConfirmModalClient();
+          });
           document.body.appendChild(overlay);
         }
         if (!overlay) return;
@@ -1359,14 +1376,18 @@
         const rawTailMatch = String(rawFileName).replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, "").match(/(?:^|\\s|[-_])(?:teil\\s*|part\\s*|ep\\.?\\s*)?0*(\\d{1,2})\\s*$/i);
         const inferredTailEp = rawTailMatch ? parseInt(rawTailMatch[1], 10) : null;
 
-        const fallbackSeason = matchedCand?.inferredSeason || it.season || 1;
+        const fallbackSeason = matchedCand?.inferredSeason != null
+          ? Number(matchedCand.inferredSeason)
+          : (it.season != null ? Number(it.season) : 1);
         const fallbackEpisode = matchedCand?.inferredEpisode || it.episode || (inferredTailEp >= 1 && inferredTailEp <= 99 ? inferredTailEp : 1);
 
+        const rawSeasonParsed = seasonInp && seasonInp.value !== "" ? parseInt(seasonInp.value, 10) : NaN;
         const manualSeason = newTypeCode === "s"
-          ? Math.max(1, parseInt(seasonInp ? seasonInp.value : fallbackSeason, 10) || fallbackSeason)
+          ? Math.max(0, !Number.isNaN(rawSeasonParsed) ? rawSeasonParsed : fallbackSeason)
           : null;
+        const rawEpParsed = epInp && epInp.value !== "" ? parseInt(epInp.value, 10) : NaN;
         const manualEpisode = newTypeCode === "s"
-          ? Math.max(1, parseInt(epInp ? epInp.value : fallbackEpisode, 10) || fallbackEpisode)
+          ? Math.max(1, !Number.isNaN(rawEpParsed) ? rawEpParsed : fallbackEpisode)
           : null;
 
         const candidateMeta = options?.candidateMeta || (matchedCand ? {
@@ -1735,7 +1756,7 @@
       function renderSingleBackupReviewCardHtml(item, allItems) {
         const isFailed = item.status === "failed" || !item.tmdbId;
         const isResolved = Boolean(item.resolvedByAdmin);
-        const seTag = item.season
+        const seTag = (item.season != null && item.season !== "")
           ? (" • S" + String(item.season).padStart(2, "0") + "E" + String(item.episode || 1).padStart(2, "0") + (item.episodeTitle ? (" – " + item.episodeTitle) : ""))
           : "";
         const rawEntry = item.rawEntry || {};
@@ -1789,7 +1810,7 @@
         const rawTailMatch = rawBaseNoExt.match(/(?:^|\\s|[-_])(?:teil\\s*|part\\s*|ep\\.?\\s*)?0*(\\d{1,2})\\s*$/i);
         const rawMidMatch = !rawTailMatch ? rawBaseNoExt.match(/^(.{2,}?)\\s+(?:[-–]\\s*)?(?:teil\\s+|part\\s+|ep\\.?\\s*|folge\\s+)?0*(\\d{1,2})\\s+(?:[-–:]\\s*)?(.{3,})$/i) : null;
         const inferredEpNum = rawTailMatch ? parseInt(rawTailMatch[1], 10) : (rawMidMatch ? parseInt(rawMidMatch[2], 10) : null);
-        const defaultSeasonVal = item.season || cands[0]?.inferredSeason || 1;
+        const defaultSeasonVal = item.season != null ? Number(item.season) : (cands[0]?.inferredSeason != null ? Number(cands[0].inferredSeason) : 1);
         const defaultEpisodeVal = item.episode || cands[0]?.inferredEpisode || (inferredEpNum >= 1 && inferredEpNum <= 99 ? inferredEpNum : 1);
 
         // Prüfen, ob mehrere offene Folgen derselben Serie in der Prüfliste liegen (für 1-Klick Sammel-Bestätigung)
@@ -1899,9 +1920,9 @@
               '<option value="m"' + (item.manualSearchType === 'm' ? ' selected' : '') + '>🎬 Nur Filme</option>' +
               '<option value="s"' + (item.manualSearchType === 's' ? ' selected' : '') + '>📺 Nur Serien</option>' +
             '</select>' +
-            '<div class="admin-sub-box" style="display:flex;align-items:center;gap:4px;border-color:rgba(99,102,241,0.45);padding:3px 7px" title="Staffel & Folge für Serien-Zuordnung (z.B. S01E01)">' +
+            '<div class="admin-sub-box" style="display:flex;align-items:center;gap:4px;border-color:rgba(99,102,241,0.45);padding:3px 7px" title="Staffel & Folge für Serien-Zuordnung (z.B. S01E01, 0 = Special)">' +
               '<span style="font-size:10.5px;font-weight:800;color:#6366f1">S</span>' +
-              '<input id="revSeasonInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="99" value="' + (Number(defaultSeasonVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:44px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
+              '<input id="revSeasonInp_' + esc(item.id) + '" class="tma-input" type="number" min="0" max="99" value="' + Math.max(0, Number.isFinite(Number(defaultSeasonVal)) ? Number(defaultSeasonVal) : 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:44px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
               '<span style="font-size:10.5px;font-weight:800;color:#6366f1">E</span>' +
               '<input id="revEpInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="999" value="' + (Number(defaultEpisodeVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:48px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
             '</div>' +
@@ -2050,8 +2071,9 @@
           const minDx = -maxDx;
           // Basisposition: bottom: 14px -> Oberkante bei (vh - 14 - h)
           const baseTop = vh - 14 - h;
-          const minDy = Math.round(safeTop - baseTop);
+          const rawMinDy = Math.round(safeTop - baseTop);
           const maxDy = 6;
+          const minDy = Math.min(rawMinDy, maxDy);
           rx = Math.min(maxDx, Math.max(minDx, rx));
           ry = Math.min(maxDy, Math.max(minDy, ry));
           return { x: rx, y: ry };
@@ -2648,7 +2670,7 @@
                       '<div style="font-size:11.5px;font-weight:800;color:var(--muted);margin-bottom:6px">🎞️ Zuletzt zugeordnete Titel (Live-Feed):</div>' +
                       '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">' +
                         j.livePosterFeed.slice(0, 8).map(f => {
-                          const fSeCode = (f.typeCode === 's' && f.season)
+                          const fSeCode = (f.typeCode === 's' && f.season != null && f.season !== '')
                             ? ('S' + String(f.season).padStart(2, '0') + 'E' + String(f.episode || 1).padStart(2, '0'))
                             : '';
                           const fPoster = resolvePosterUrlClient(f.poster, 'w185', '');

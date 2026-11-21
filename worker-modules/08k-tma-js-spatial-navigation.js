@@ -29,6 +29,11 @@
         return Boolean(el && el.matches && el.matches(CARD_SUB_SELECTOR));
       }
 
+      function isManualNoTmdbModalOpenClient() {
+        const el = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        return Boolean(el && el.style.display && el.style.display !== "none");
+      }
+
       function isAnyBlockingOverlayOpenForCardBarClient() {
         const elev = document.getElementById("tvQuickJumpElevator");
         const isRightOverlayOpen = Boolean(
@@ -38,6 +43,8 @@
           getActiveForegroundCinemaContextClient() ||
           (state && state.sidebarOpen) ||
           isRightOverlayOpen ||
+          isManualNoTmdbModalOpenClient() ||
+          document.getElementById("subModalOverlayRoot")?.innerHTML.trim() ||
           document.getElementById("modalRoot")?.innerHTML.trim() ||
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
@@ -302,6 +309,8 @@
         const isBlockedByOverlay = Boolean(
           (state && state.sidebarOpen) ||
           isRightOverlayOpen ||
+          isManualNoTmdbModalOpenClient() ||
+          document.getElementById("subModalOverlayRoot")?.innerHTML.trim() ||
           document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
           document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
           document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
@@ -582,26 +591,34 @@
           return getCinemaFocusableElementsClient(activeCinemaCtx);
         }
         const dialogEl = document.getElementById("customDialogRoot");
+        const manual900mEl = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        const subModalEl = document.getElementById("subModalOverlayRoot");
         const spotlightEl = document.getElementById("personSpotlightOverlayRoot");
         const modalEl = document.getElementById("modalRoot");
         const topUnifiedHeader = document.getElementById("topUnifiedBar");
         const lbEl = document.getElementById("lightboxRoot");
         const sidebarEl = document.getElementById("filterSidebarDrawer");
+        const isManual900mActive = isManualNoTmdbModalOpenClient();
+        const isSubModalActive = Boolean(subModalEl && subModalEl.innerHTML.trim());
         const isSpotlightActive = Boolean(spotlightEl && spotlightEl.innerHTML.trim());
         const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
-          : (lbEl && lbEl.innerHTML.trim())
-              ? lbEl
-              : isSpotlightActive
-                ? spotlightEl
-                : (state.sidebarOpen && sidebarEl)
-                  ? sidebarEl
-                  : isModalActive
-                    ? modalEl
-                    : document.body;
+          : isManual900mActive
+            ? manual900mEl
+            : isSubModalActive
+              ? subModalEl
+              : (lbEl && lbEl.innerHTML.trim())
+                ? lbEl
+                : isSpotlightActive
+                  ? spotlightEl
+                  : (state.sidebarOpen && sidebarEl)
+                    ? sidebarEl
+                    : isModalActive
+                      ? modalEl
+                      : document.body;
         const rawNodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
-        if (isModalActive && !state.sidebarOpen && topUnifiedHeader) {
+        if (scopeRoot === modalEl && !state.sidebarOpen && topUnifiedHeader) {
           const headerNodes = Array.from(topUnifiedHeader.querySelectorAll(FOCUSABLE_SELECTOR));
           rawNodes.unshift(...headerNodes);
         }
@@ -2680,6 +2697,24 @@
           }
           if (document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")) {
             if (typeof closePageJumpModalClient === "function") closePageJumpModalClient();
+            ev.preventDefault();
+            return;
+          }
+          if (document.getElementById("customDialogRoot")?.innerHTML.trim()) {
+            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+            if (typeof closeCustomDialog === "function") closeCustomDialog(null);
+            ev.preventDefault();
+            return;
+          }
+          if (isManualNoTmdbModalOpenClient() && typeof closeManualNoTmdbConfirmModalClient === "function") {
+            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+            closeManualNoTmdbConfirmModalClient();
+            ev.preventDefault();
+            return;
+          }
+          if (document.getElementById("subModalOverlayRoot")?.innerHTML.trim() && typeof closeSubModalOverlayClient === "function") {
+            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+            closeSubModalOverlayClient();
             ev.preventDefault();
             return;
           }

@@ -47351,6 +47351,8 @@
         if (document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open")) { closeSearchGenreDropdownOverlay(); return; }
         if (document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded")) { collapseMobileSearchBarClient(); return; }
         if (document.getElementById("customDialogRoot")?.innerHTML) { closeCustomDialog(null); return; }
+        const manual900mEl = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        if (manual900mEl && manual900mEl.style.display && manual900mEl.style.display !== "none" && typeof closeManualNoTmdbConfirmModalClient === "function") { closeManualNoTmdbConfirmModalClient(); return; }
         if (document.getElementById("subModalOverlayRoot")?.innerHTML && typeof closeSubModalOverlayClient === "function") { closeSubModalOverlayClient(); return; }
         if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML && typeof closePersonSpotlightOverlayClient === "function") { closePersonSpotlightOverlayClient(); return; }
         if (state.sidebarOpen) { closeFilterSidebar(); return; }
@@ -47379,6 +47381,8 @@
         closeSearchGenreDropdownOverlay();
         collapseMobileSearchBarClient();
         closeLightbox();
+        if (typeof closeManualNoTmdbConfirmModalClient === "function") closeManualNoTmdbConfirmModalClient();
+        if (typeof closeSubModalOverlayClient === "function") closeSubModalOverlayClient();
         document.getElementById("modalRoot").innerHTML = "";
         loadDiscover(state.type || "m", "all", "trend", "default");
       }
@@ -47413,6 +47417,8 @@
         closeSearchGenreDropdownOverlay();
         collapseMobileSearchBarClient();
         closeLightbox();
+        if (typeof closeManualNoTmdbConfirmModalClient === "function") closeManualNoTmdbConfirmModalClient();
+        if (typeof closeSubModalOverlayClient === "function") closeSubModalOverlayClient();
         document.getElementById("modalRoot").innerHTML = "";
         setBusyState(true, "🔄 Setze alle Filter zurück & starte Mini-App neu...");
         try {
@@ -55619,7 +55625,8 @@
       function stepEpisodeCorrectionNumberClient(inputId, delta, minVal = 1, maxVal = 999) {
         const inp = document.getElementById(inputId);
         if (!inp) return;
-        const cur = Number(inp.value || minVal);
+        const parsedCur = Number(inp.value);
+        const cur = (inp.value !== "" && Number.isFinite(parsedCur)) ? parsedCur : minVal;
         const nextVal = Math.min(maxVal, Math.max(minVal, cur + Number(delta || 0)));
         inp.value = String(nextVal);
         updateEpisodeCorrectionLivePreviewClient();
@@ -55659,15 +55666,19 @@
         const st = activeEpisodeCorrectionState;
         if (!st) return;
         if (st.mode === "move_se") {
-          st.targetSeason = Math.max(1, Number(document.getElementById("epCorrNewSeasonInp")?.value || st.season));
-          st.targetEpisode = Math.max(1, Number(document.getElementById("epCorrNewEpisodeInp")?.value || st.episode));
+          const sValRaw = document.getElementById("epCorrNewSeasonInp")?.value;
+          const eValRaw = document.getElementById("epCorrNewEpisodeInp")?.value;
+          st.targetSeason = Math.max(0, (sValRaw !== undefined && sValRaw !== "") ? Number(sValRaw) : Number(st.season ?? 1));
+          st.targetEpisode = Math.max(1, (eValRaw !== undefined && eValRaw !== "") ? Number(eValRaw) : Number(st.episode ?? 1));
         } else if (st.mode === "change_version") {
           st.targetVersionLabel = String(document.getElementById("epCorrVersionInp")?.value || st.versionLabel || "Originalfassung").trim();
         } else if (st.mode === "relink_tmdb") {
           st.selectedNewTypeCode = document.getElementById("epCorrNewTypeSel")?.value === "m" ? "m" : "s";
           st.selectedNewTmdbId = Number(document.getElementById("epCorrNewTmdbIdInp")?.value || st.selectedNewTmdbId || 0);
-          st.targetSeason = Math.max(1, Number(document.getElementById("epCorrRelinkSeasonInp")?.value || st.season));
-          st.targetEpisode = Math.max(1, Number(document.getElementById("epCorrRelinkEpisodeInp")?.value || st.episode));
+          const rsValRaw = document.getElementById("epCorrRelinkSeasonInp")?.value;
+          const reValRaw = document.getElementById("epCorrRelinkEpisodeInp")?.value;
+          st.targetSeason = Math.max(0, (rsValRaw !== undefined && rsValRaw !== "") ? Number(rsValRaw) : Number(st.season ?? 1));
+          st.targetEpisode = Math.max(1, (reValRaw !== undefined && reValRaw !== "") ? Number(reValRaw) : Number(st.episode ?? 1));
         }
         const previewEl = document.getElementById("epCorrTargetPreviewCard");
         if (previewEl) {
@@ -55679,8 +55690,8 @@
       }
 
       function buildEpisodeCorrectionTargetCardInnerHtmlClient(st) {
-        const nextS = Number(st.targetSeason || st.season || 1);
-        const nextE = Number(st.targetEpisode || st.episode || 1);
+        const nextS = Number(st.targetSeason ?? st.season ?? 1);
+        const nextE = Number(st.targetEpisode ?? st.episode ?? 1);
         const nextCode = st.typeCode === "s" ? ("S" + String(nextS).padStart(2, "0") + "E" + String(nextE).padStart(2, "0")) : "🎬 Film";
         const nextVer = String(st.targetVersionLabel || st.versionLabel || "Originalfassung");
 
@@ -55880,11 +55891,11 @@
                   '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Wähle die korrekte <b>Ziel-Staffel</b> und <b>Ziel-Folge</b> für <b>' + esc(epCodeOnly + ' – ' + (st.episodeTitle || st.title)) + '</b>:</div>' +
                   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
                     '<div>' +
-                      '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Staffel</label>' +
+                      '<label style="font-size:11px;color:var(--muted);font-weight:700;display:block;margin-bottom:4px">Ziel-Staffel (0 = Special)</label>' +
                       '<div style="display:flex;gap:4px;align-items:center">' +
-                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',-1,1,99)" title="Staffel -1">−</button>' +
-                        '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800;text-align:center" />' +
-                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',1,1,99)" title="Staffel +1">＋</button>' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',-1,0,99)" title="Staffel -1">−</button>' +
+                        '<input id="epCorrNewSeasonInp" class="tma-input" type="number" min="0" max="99" value="' + Number(st.targetSeason ?? st.season ?? 1) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:8px 10px;font-size:13px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:7px 10px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrNewSeasonInp\\',1,0,99)" title="Staffel +1">＋</button>' +
                       '</div>' +
                     '</div>' +
                     '<div>' +
@@ -55939,11 +55950,11 @@
                       '<input id="epCorrNewTmdbIdInp" class="tma-input" type="number" value="' + st.selectedNewTmdbId + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px;font-size:12px;font-weight:800" />' +
                     '</div>' +
                     '<div>' +
-                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Staffel</label>' +
+                      '<label style="font-size:10.5px;color:var(--muted);display:block;margin-bottom:2px">Ziel-Staffel (0 = Special)</label>' +
                       '<div style="display:flex;gap:3px;align-items:center">' +
-                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',-1,1,99)">−</button>' +
-                        '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + Number(st.targetSeason || st.season) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px 4px;font-size:12px;font-weight:800;text-align:center" />' +
-                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',1,1,99)">＋</button>' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',-1,0,99)">−</button>' +
+                        '<input id="epCorrRelinkSeasonInp" class="tma-input" type="number" min="0" max="99" value="' + Number(st.targetSeason ?? st.season ?? 1) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" style="width:100%;padding:7px 4px;font-size:12px;font-weight:800;text-align:center" />' +
+                        '<button type="button" class="btn" style="padding:5px 7px;font-weight:900" onclick="stepEpisodeCorrectionNumberClient(\\'epCorrRelinkSeasonInp\\',1,0,99)">＋</button>' +
                       '</div>' +
                     '</div>' +
                     '<div>' +
@@ -56051,15 +56062,19 @@
         };
 
         if (st.mode === "move_se") {
-          payload.newSeason = Math.max(1, Number(document.getElementById("epCorrNewSeasonInp")?.value || st.season));
-          payload.newEpisode = Math.max(1, Number(document.getElementById("epCorrNewEpisodeInp")?.value || st.episode));
+          const sRaw = document.getElementById("epCorrNewSeasonInp")?.value;
+          const eRaw = document.getElementById("epCorrNewEpisodeInp")?.value;
+          payload.newSeason = Math.max(0, (sRaw !== undefined && sRaw !== "") ? Number(sRaw) : Number(st.season ?? 1));
+          payload.newEpisode = Math.max(1, (eRaw !== undefined && eRaw !== "") ? Number(eRaw) : Number(st.episode ?? 1));
         } else if (st.mode === "change_version") {
           payload.newVersionLabel = String(document.getElementById("epCorrVersionInp")?.value || st.versionLabel || "Originalfassung").trim();
         } else if (st.mode === "relink_tmdb") {
           payload.newTypeCode = document.getElementById("epCorrNewTypeSel")?.value === "m" ? "m" : "s";
           payload.newTmdbId = Number(document.getElementById("epCorrNewTmdbIdInp")?.value || st.selectedNewTmdbId || 0);
-          payload.newSeason = Math.max(1, Number(document.getElementById("epCorrRelinkSeasonInp")?.value || st.season));
-          payload.newEpisode = Math.max(1, Number(document.getElementById("epCorrRelinkEpisodeInp")?.value || st.episode));
+          const rsRaw = document.getElementById("epCorrRelinkSeasonInp")?.value;
+          const reRaw = document.getElementById("epCorrRelinkEpisodeInp")?.value;
+          payload.newSeason = Math.max(0, (rsRaw !== undefined && rsRaw !== "") ? Number(rsRaw) : Number(st.season ?? 1));
+          payload.newEpisode = Math.max(1, (reRaw !== undefined && reRaw !== "") ? Number(reRaw) : Number(st.episode ?? 1));
         }
 
         setBusyState(true, "💾 Speichere Korrektur in D1 & aktualisiere Episoden...");
@@ -56069,6 +56084,10 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "Korrektur konnte nicht gespeichert werden."));
+            return;
+          }
           if (st.reportId) {
             if (Array.isArray(window._adminReportsCache)) {
               window._adminReportsCache = window._adminReportsCache.map(rep =>
@@ -56082,21 +56101,14 @@
               window._lastAdminOverviewCache.openReportsCount = (window._adminReportsCache || []).filter(rep => rep && rep.status === "open").length;
             }
           }
-          if (!r || !r.ok) {
-            showHudToast("⚠️ " + (r?.error || "Korrektur konnte nicht gespeichert werden."));
-            if (st.reportId && state.currentView === "admin") {
-              await loadAdminPanelView(true);
-            }
-            return;
-          }
           clearClientMediaCaches();
           closeSubModalOverlayClient();
           showHudToast("✅ Folge erfolgreich korrigiert" + (st.reportId ? " & Fehlermeldung automatisch als gelöst markiert!" : "!"));
 
           if (st.mode === "relink_tmdb" && r.newTmdbId && (r.scope === "entire_series" || Number(r.newTmdbId) !== Number(st.tmdbId))) {
-            await openDetails(r.newTypeCode || "s", r.newTmdbId, false, "", "", r.newSeason || 1);
+            await openDetails(r.newTypeCode || "s", r.newTmdbId, false, "", "", r.newSeason ?? 1);
           } else if (st.typeCode === "s") {
-            const targetSeasonToLoad = st.mode === "move_se" ? Number(payload.newSeason || st.season) : st.season;
+            const targetSeasonToLoad = st.mode === "move_se" ? Number(payload.newSeason ?? st.season) : st.season;
             await openDetails("s", st.tmdbId, false, "", "", targetSeasonToLoad);
           } else {
             await openDetails("m", st.tmdbId, false);
@@ -56134,7 +56146,7 @@
           episodeTitle,
           telegramFileId,
           versionLabel,
-          reasonCode: typeCode === "s" && season ? "wrong_episode" : "wrong_media",
+          reasonCode: typeCode === "s" && season != null ? "wrong_episode" : "wrong_media",
           draftNote: ""
         };
 
@@ -56155,7 +56167,7 @@
         const st = activeMediaReportState;
         if (!st) return;
         const mount = ensureSubModalMountClient();
-        const epTag = st.typeCode === "s" && st.season
+        const epTag = st.typeCode === "s" && st.season != null
           ? (' • S' + String(st.season).padStart(2, '0') + 'E' + String(st.episode || 1).padStart(2, '0') + (st.episodeTitle ? (' (' + esc(st.episodeTitle) + ')') : ''))
           : '';
 
@@ -56275,7 +56287,11 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "resolve", reportId: Number(reportId) })
           });
-          if (r && Array.isArray(r.reports)) {
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "Meldung konnte nicht als gelöst markiert werden."));
+            return;
+          }
+          if (Array.isArray(r.reports)) {
             syncAdminReportsCacheClient(r.reports);
           } else if (Array.isArray(window._adminReportsCache)) {
             syncAdminReportsCacheClient(
@@ -56301,7 +56317,11 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "delete", reportId: Number(reportId) })
           });
-          if (r && Array.isArray(r.reports)) {
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "Meldung konnte nicht gelöscht werden."));
+            return;
+          }
+          if (Array.isArray(r.reports)) {
             syncAdminReportsCacheClient(r.reports);
           } else if (Array.isArray(window._adminReportsCache)) {
             syncAdminReportsCacheClient(
@@ -56326,7 +56346,11 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: onlyResolved ? "clear_resolved" : "clear_all" })
           });
-          if (r && Array.isArray(r.reports)) {
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "Fehlermeldungen konnten nicht bereinigt werden."));
+            return;
+          }
+          if (Array.isArray(r.reports)) {
             syncAdminReportsCacheClient(r.reports);
           } else {
             syncAdminReportsCacheClient(onlyResolved ? (window._adminReportsCache || []).filter(rep => rep && rep.status !== "resolved") : []);
@@ -56771,7 +56795,7 @@
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
             const subLeftHtml = folders.length > 0
-              ? ('<span class="card-wl-folder-link" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + escJs(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + escJs(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + mediaLabel + ' ▾')) + '</span>')
+              ? ('<span class="card-wl-folder-link" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + escJs(it.uid) + '\\',\\'' + escJs(it.title || 'Titel') + '\\',\\'' + escJs(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + mediaLabel + ' ▾')) + '</span>')
               : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : mediaLabel) + '</span>');
             const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
             return '<div class="card card-saved" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-type="' + tc + '" data-card-id="' + targetId + '" data-card-title="' + itemTitleSafe + '" data-card-year="' + yrStr + '" data-card-rating="' + esc(ratStr) + '" data-card-vip="" data-card-saved="1" data-card-media-label="' + mediaLabel + '" data-wl-uid="' + esc(it.uid || '') + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ')">' +
@@ -57068,22 +57092,30 @@
         if (!state.isAuthenticated) { openAccountModal(); return; }
         const name = await showCustomPrompt(isPlaylist ? "🎵 Custom Name für die neue Playlist:" : "📁 Name für den neuen Merklisten-Ordner:", "");
         if (!name || !name.trim()) return;
-        await apiFetchJson(API_BASE + "/wishlist", {
+        const r = await apiFetchJson(API_BASE + "/wishlist", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ chatId, action: "create_folder", name: name.trim(), isPlaylist: Boolean(isPlaylist) })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Konnte nicht erstellt werden."));
+          return;
+        }
         showHudToast("✅ " + (isPlaylist ? "Playlist" : "Ordner") + " „" + name.trim() + "“ erstellt");
         loadWishlist(state.wlFolder);
       }
 
       async function togglePlaylistFolderTma(folderId) {
         if (!state.isAuthenticated) return;
-        await apiFetchJson(API_BASE + "/wishlist", {
+        const r = await apiFetchJson(API_BASE + "/wishlist", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ chatId, action: "toggle_playlist", folderId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Status konnte nicht geändert werden."));
+          return;
+        }
         loadWishlist(state.wlFolder);
       }
 
@@ -57091,11 +57123,15 @@
         if (!state.isAuthenticated) return;
         const nextName = await showCustomPrompt("✏️ Neuer Custom Name für die Playlist / den Ordner:", currentName || "");
         if (!nextName || !nextName.trim()) return;
-        await apiFetchJson(API_BASE + "/wishlist", {
+        const r = await apiFetchJson(API_BASE + "/wishlist", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ chatId, action: "rename_playlist", folderId, name: nextName.trim() })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Umbenennen fehlgeschlagen."));
+          return;
+        }
         showHudToast("✅ Umbenannt in „" + nextName.trim() + "“");
         loadWishlist(state.wlFolder);
       }
@@ -57104,11 +57140,15 @@
         if (!state.isAuthenticated) return;
         const ok = await showCustomConfirm('Playlist "' + (currentName || folderId) + '" inklusive aller zugehörigen Einträge aus der Merkliste löschen?', '🗑️ Löschen');
         if (!ok) return;
-        await apiFetchJson(API_BASE + "/wishlist", {
+        const r = await apiFetchJson(API_BASE + "/wishlist", {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ chatId, action: "delete_playlist", folderId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist konnte nicht gelöscht werden."));
+          return;
+        }
         if (state.wlFolder === folderId) state.wlFolder = "root";
         showHudToast("🗑️ Playlist gelöscht");
         loadWishlist(state.wlFolder);
@@ -57116,7 +57156,11 @@
 
       async function deleteSavedUid(uid) {
         if (!state.isAuthenticated) return;
-        await apiFetchJson(API_BASE + "/wishlist", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "delete_uid", uid }) });
+        const r = await apiFetchJson(API_BASE + "/wishlist", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "delete_uid", uid }) });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Eintrag konnte nicht entfernt werden."));
+          return;
+        }
         loadWishlist(state.wlFolder);
       }
 
@@ -60366,6 +60410,7 @@
 
       function restartBackupFromZeroNoDupesClient() {
         clearBackupCheckpointClient();
+        backupImportJob.savedCheckpoint = null;
         backupImportJob.cursor = 0;
         backupImportJob.moviesSaved = 0;
         backupImportJob.seriesSaved = 0;
@@ -60374,6 +60419,9 @@
         backupImportJob.uncertainCount = 0;
         backupImportJob.failedCount = 0;
         backupImportJob.startedAt = 0;
+        backupImportJob._freshLogsResetDone = false;
+        backupImportJob.cursorRetries = {};
+        backupImportJob._processedMsgIds = new Set();
         backupImportJob.recentLog = ["🔄 Neustart ab Index 0 (Duplikat-Schutz aktiv: bestehende Einträge werden sauber aktualisiert)."];
         showHudToast("🔄 Starte ab 0 neu (ohne Duplikate einzufügen)...");
         startOrResumeBackupImport();
@@ -60570,8 +60618,14 @@
         const eInp = document.getElementById("revEpInp_" + item.id);
         const qInp = document.getElementById("revSearchInp_" + item.id);
         const tSel = document.getElementById("revSearchType_" + item.id);
-        if (sInp && sInp.value) item.season = Math.max(1, parseInt(sInp.value, 10) || item.season || 1);
-        if (eInp && eInp.value) item.episode = Math.max(1, parseInt(eInp.value, 10) || item.episode || 1);
+        if (sInp && sInp.value !== "") {
+          const parsedS = parseInt(sInp.value, 10);
+          if (!Number.isNaN(parsedS)) item.season = Math.max(0, parsedS);
+        }
+        if (eInp && eInp.value !== "") {
+          const parsedE = parseInt(eInp.value, 10);
+          if (!Number.isNaN(parsedE)) item.episode = Math.max(1, parsedE);
+        }
         if (qInp) item.manualSearchQuery = qInp.value;
         if (tSel) item.manualSearchType = tSel.value;
       }
@@ -60657,6 +60711,10 @@
       };
 
       function closeManualNoTmdbConfirmModalClient() {
+        if (manualNoTmdbLivePreviewTimer) {
+          clearTimeout(manualNoTmdbLivePreviewTimer);
+          manualNoTmdbLivePreviewTimer = null;
+        }
         const el = document.getElementById("manualNoTmdbConfirmModalOverlay");
         if (el) el.style.display = "none";
         activeManualNoTmdbContext = null;
@@ -60752,7 +60810,7 @@
 
       function getOpenTmdbNotFoundQueueTargetsClient(source = "diag") {
         if (source === "review") {
-          return (backupImportJob.reviewItems || []).filter(it => !it.tmdbId || Number(it.tmdbId) >= 900000000 || it.status === "failed");
+          return (backupImportJob.reviewItems || []).filter(it => !it.resolvedByAdmin && (!it.tmdbId || it.status === "failed"));
         }
         loadClientDiagnosticLogsFromStorage();
         const logs = clientDiagnosticLogState.logs || [];
@@ -60831,7 +60889,7 @@
             closeManualNoTmdbConfirmModalClient();
             showHudToast("✅ Migration abgeschlossen: #" + oldSyntheticId + " → TMDb #" + newTmdbId + (r.officialTitle ? (" (" + r.officialTitle + ")") : ""));
             refreshDiagnosticLogMountDom();
-            if (state.view === "admin") loadAdminPanelView();
+            if (state.currentView === "admin") loadAdminPanelView(true);
           } else {
             showHudToast("⚠️ " + (r?.error || "Migration fehlgeschlagen"));
           }
@@ -60850,6 +60908,9 @@
           overlay.style.cssText =
             "position:fixed;inset:0;z-index:12000;background:rgba(5,6,12,0.84);backdrop-filter:blur(7px);" +
             "display:flex;align-items:center;justify-content:center;padding:14px;";
+          overlay.addEventListener("click", (ev) => {
+            if (ev.target === overlay) closeManualNoTmdbConfirmModalClient();
+          });
           document.body.appendChild(overlay);
         }
         if (!overlay) return;
@@ -61275,14 +61336,18 @@
         const rawTailMatch = String(rawFileName).replace(/\\.(mp4|mkv|avi|m4v|ts|mov|webm)$/i, "").match(/(?:^|\\s|[-_])(?:teil\\s*|part\\s*|ep\\.?\\s*)?0*(\\d{1,2})\\s*$/i);
         const inferredTailEp = rawTailMatch ? parseInt(rawTailMatch[1], 10) : null;
 
-        const fallbackSeason = matchedCand?.inferredSeason || it.season || 1;
+        const fallbackSeason = matchedCand?.inferredSeason != null
+          ? Number(matchedCand.inferredSeason)
+          : (it.season != null ? Number(it.season) : 1);
         const fallbackEpisode = matchedCand?.inferredEpisode || it.episode || (inferredTailEp >= 1 && inferredTailEp <= 99 ? inferredTailEp : 1);
 
+        const rawSeasonParsed = seasonInp && seasonInp.value !== "" ? parseInt(seasonInp.value, 10) : NaN;
         const manualSeason = newTypeCode === "s"
-          ? Math.max(1, parseInt(seasonInp ? seasonInp.value : fallbackSeason, 10) || fallbackSeason)
+          ? Math.max(0, !Number.isNaN(rawSeasonParsed) ? rawSeasonParsed : fallbackSeason)
           : null;
+        const rawEpParsed = epInp && epInp.value !== "" ? parseInt(epInp.value, 10) : NaN;
         const manualEpisode = newTypeCode === "s"
-          ? Math.max(1, parseInt(epInp ? epInp.value : fallbackEpisode, 10) || fallbackEpisode)
+          ? Math.max(1, !Number.isNaN(rawEpParsed) ? rawEpParsed : fallbackEpisode)
           : null;
 
         const candidateMeta = options?.candidateMeta || (matchedCand ? {
@@ -61651,7 +61716,7 @@
       function renderSingleBackupReviewCardHtml(item, allItems) {
         const isFailed = item.status === "failed" || !item.tmdbId;
         const isResolved = Boolean(item.resolvedByAdmin);
-        const seTag = item.season
+        const seTag = (item.season != null && item.season !== "")
           ? (" • S" + String(item.season).padStart(2, "0") + "E" + String(item.episode || 1).padStart(2, "0") + (item.episodeTitle ? (" – " + item.episodeTitle) : ""))
           : "";
         const rawEntry = item.rawEntry || {};
@@ -61705,7 +61770,7 @@
         const rawTailMatch = rawBaseNoExt.match(/(?:^|\\s|[-_])(?:teil\\s*|part\\s*|ep\\.?\\s*)?0*(\\d{1,2})\\s*$/i);
         const rawMidMatch = !rawTailMatch ? rawBaseNoExt.match(/^(.{2,}?)\\s+(?:[-–]\\s*)?(?:teil\\s+|part\\s+|ep\\.?\\s*|folge\\s+)?0*(\\d{1,2})\\s+(?:[-–:]\\s*)?(.{3,})$/i) : null;
         const inferredEpNum = rawTailMatch ? parseInt(rawTailMatch[1], 10) : (rawMidMatch ? parseInt(rawMidMatch[2], 10) : null);
-        const defaultSeasonVal = item.season || cands[0]?.inferredSeason || 1;
+        const defaultSeasonVal = item.season != null ? Number(item.season) : (cands[0]?.inferredSeason != null ? Number(cands[0].inferredSeason) : 1);
         const defaultEpisodeVal = item.episode || cands[0]?.inferredEpisode || (inferredEpNum >= 1 && inferredEpNum <= 99 ? inferredEpNum : 1);
 
         // Prüfen, ob mehrere offene Folgen derselben Serie in der Prüfliste liegen (für 1-Klick Sammel-Bestätigung)
@@ -61815,9 +61880,9 @@
               '<option value="m"' + (item.manualSearchType === 'm' ? ' selected' : '') + '>🎬 Nur Filme</option>' +
               '<option value="s"' + (item.manualSearchType === 's' ? ' selected' : '') + '>📺 Nur Serien</option>' +
             '</select>' +
-            '<div class="admin-sub-box" style="display:flex;align-items:center;gap:4px;border-color:rgba(99,102,241,0.45);padding:3px 7px" title="Staffel & Folge für Serien-Zuordnung (z.B. S01E01)">' +
+            '<div class="admin-sub-box" style="display:flex;align-items:center;gap:4px;border-color:rgba(99,102,241,0.45);padding:3px 7px" title="Staffel & Folge für Serien-Zuordnung (z.B. S01E01, 0 = Special)">' +
               '<span style="font-size:10.5px;font-weight:800;color:#6366f1">S</span>' +
-              '<input id="revSeasonInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="99" value="' + (Number(defaultSeasonVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:44px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
+              '<input id="revSeasonInp_' + esc(item.id) + '" class="tma-input" type="number" min="0" max="99" value="' + Math.max(0, Number.isFinite(Number(defaultSeasonVal)) ? Number(defaultSeasonVal) : 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:44px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
               '<span style="font-size:10.5px;font-weight:800;color:#6366f1">E</span>' +
               '<input id="revEpInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="999" value="' + (Number(defaultEpisodeVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:48px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
             '</div>' +
@@ -61966,8 +62031,9 @@
           const minDx = -maxDx;
           // Basisposition: bottom: 14px -> Oberkante bei (vh - 14 - h)
           const baseTop = vh - 14 - h;
-          const minDy = Math.round(safeTop - baseTop);
+          const rawMinDy = Math.round(safeTop - baseTop);
           const maxDy = 6;
+          const minDy = Math.min(rawMinDy, maxDy);
           rx = Math.min(maxDx, Math.max(minDx, rx));
           ry = Math.min(maxDy, Math.max(minDy, ry));
           return { x: rx, y: ry };
@@ -62564,7 +62630,7 @@
                       '<div style="font-size:11.5px;font-weight:800;color:var(--muted);margin-bottom:6px">🎞️ Zuletzt zugeordnete Titel (Live-Feed):</div>' +
                       '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px">' +
                         j.livePosterFeed.slice(0, 8).map(f => {
-                          const fSeCode = (f.typeCode === 's' && f.season)
+                          const fSeCode = (f.typeCode === 's' && f.season != null && f.season !== '')
                             ? ('S' + String(f.season).padStart(2, '0') + 'E' + String(f.episode || 1).padStart(2, '0'))
                             : '';
                           const fPoster = resolvePosterUrlClient(f.poster, 'w185', '');
@@ -62849,6 +62915,7 @@
           let totalChecked = 0;
           let totalHealed = 0;
           let cursor = 0;
+          let firstErrorMsg = "";
           const maxRounds = 5;
           for (let round = 0; round < maxRounds; round++) {
             const slice = openProblems.slice(cursor, cursor + 10);
@@ -62860,7 +62927,10 @@
                 items: slice.length > 0 ? slice : undefined
               })
             });
-            if (!r || !r.ok) break;
+            if (!r || !r.ok) {
+              firstErrorMsg = r?.error || "Serverfehler bei der Konflikt-Nachprüfung";
+              break;
+            }
             totalChecked += Number(r.checkedCount || 0);
             totalHealed += Number(r.healedCount || 0);
             if (Array.isArray(r.healedItems) && r.healedItems.length > 0) {
@@ -62882,7 +62952,11 @@
           }
           clearClientMediaCaches();
           refreshDiagnosticLogMountDom();
-          showHudToast("🩺 Nachprüfung abgeschlossen: " + totalHealed + " von " + totalChecked + " geprüften Konflikten automatisch geheilt!");
+          if (firstErrorMsg && totalChecked === 0) {
+            showHudToast("⚠️ Konflikt-Nachprüfung fehlgeschlagen: " + firstErrorMsg);
+          } else {
+            showHudToast("🩺 Nachprüfung abgeschlossen: " + totalHealed + " von " + totalChecked + " geprüften Konflikten automatisch geheilt" + (firstErrorMsg ? (" (Hinweis: " + firstErrorMsg + ")") : "!"));
+          }
         } catch (e) {
           showHudToast("⚠️ Fehler bei der Konflikt-Nachprüfung: " + (e?.message || "Unbekannt"));
         } finally {
@@ -62942,7 +63016,13 @@
           const a = document.createElement("a");
           a.href = url;
           a.download = "diagnose-log-ki-export.json";
+          a.style.display = "none";
+          document.body.appendChild(a);
           a.click();
+          setTimeout(() => {
+            try { a.remove(); } catch (_re) {}
+            try { URL.revokeObjectURL(url); } catch (_ue) {}
+          }, 1500);
           showHudToast("💾 Diagnose-Log als JSON-Datei heruntergeladen!");
         }
       }
@@ -63899,7 +63979,10 @@
       }
 
       function resetBackupImport(clearSaved = false) {
-        if (clearSaved) clearBackupCheckpointClient();
+        if (clearSaved) {
+          clearBackupCheckpointClient();
+          backupImportJob.savedCheckpoint = null;
+        }
         backupImportJob.paused = true;
         backupImportJob.running = false;
         backupImportJob.cursor = 0;
@@ -63910,6 +63993,9 @@
         backupImportJob.uncertainCount = 0;
         backupImportJob.failedCount = 0;
         backupImportJob.startedAt = 0;
+        backupImportJob._freshLogsResetDone = false;
+        backupImportJob.cursorRetries = {};
+        backupImportJob._processedMsgIds = new Set();
         backupImportJob.recentLog = [];
         backupImportJob.livePosterFeed = [];
         backupImportJob.reviewItems = [];
@@ -63920,12 +64006,16 @@
       async function runServerD1QueueStepAdmin(rounds = 2) {
         setBusyState(true, "⏳ Verarbeite nächsten Batch aus der D1-Import-Warteschlange...");
         try {
-          await apiFetchJson(API_BASE + "/admin/import-queue", {
+          const r = await apiFetchJson(API_BASE + "/admin/import-queue", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "step", rounds })
           });
-          await loadAdminPanelView();
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "D1-Import-Batch konnte nicht ausgeführt werden."));
+            return;
+          }
+          await loadAdminPanelView(true);
         } finally {
           setBusyState(false);
         }
@@ -63934,13 +64024,22 @@
       async function clearServerD1QueueAdmin() {
         const ok = await showCustomConfirm("Gesamte D1-Import-Warteschlange wirklich leeren?", "🗑️ Queue leeren");
         if (!ok) return;
-        await apiFetchJson(API_BASE + "/admin/import-queue", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "clear" })
-        });
-        showHudToast("🗑️ D1-Warteschlange geleert");
-        loadAdminPanelView();
+        setBusyState(true, "🗑️ Leere D1-Import-Warteschlange...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/import-queue", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "clear" })
+          });
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "D1-Warteschlange konnte nicht geleert werden."));
+            return;
+          }
+          showHudToast("🗑️ D1-Warteschlange geleert");
+          await loadAdminPanelView(true);
+        } finally {
+          setBusyState(false);
+        }
       }
 
       async function adminCreatePlaylistPrompt() {
@@ -64400,10 +64499,7 @@
 
       async function adminSetWorkerSpeedProfileClient(profileKey) {
         const cleanProf = ["free_turbo", "balanced", "paid_pro"].includes(profileKey) ? profileKey : "free_turbo";
-        state.adminWorkerSpeedProfile = cleanProf;
-        try {
-          localStorage.setItem("tma_worker_speed_profile", cleanProf);
-        } catch (e) {}
+        const prevProf = state.adminWorkerSpeedProfile || "free_turbo";
         setBusyState(true, "⚡ Aktiviere Worker Geschwindigkeits-Profil (" + cleanProf + ")...");
         try {
           const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
@@ -64411,15 +64507,21 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "set_speed_profile", speedProfile: cleanProf })
           });
-          if (r && r.ok) {
-            state.adminWorkerSpeedProfile = r.speedProfile || cleanProf;
-            if (window._lastAdminOverviewCache) {
-              window._lastAdminOverviewCache.botSetup = {
-                ...(window._lastAdminOverviewCache.botSetup || {}),
-                speedProfile: state.adminWorkerSpeedProfile,
-                speedProfileConfig: r.speedProfileConfig || null
-              };
-            }
+          if (!r || !r.ok) {
+            state.adminWorkerSpeedProfile = prevProf;
+            showHudToast("⚠️ " + (r?.error || "Worker-Profil konnte nicht auf dem Server gespeichert werden."));
+            return;
+          }
+          state.adminWorkerSpeedProfile = r.speedProfile || cleanProf;
+          try {
+            localStorage.setItem("tma_worker_speed_profile", state.adminWorkerSpeedProfile);
+          } catch (e) {}
+          if (window._lastAdminOverviewCache) {
+            window._lastAdminOverviewCache.botSetup = {
+              ...(window._lastAdminOverviewCache.botSetup || {}),
+              speedProfile: state.adminWorkerSpeedProfile,
+              speedProfileConfig: r.speedProfileConfig || null
+            };
           }
           const labelMap = {
             free_turbo: "🛡️ Free-Tier Turbo (10ms CPU Schutz • 12er-Batch • 3.2s Guard • Smart-Notfall-Fallback)",
@@ -64976,6 +65078,15 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "get_webhook_info" })
           });
+          if (!r || !r.ok) {
+            const errTxt = r?.error || r?.message || "Webhook-Status konnte nicht abgefragt werden.";
+            showHudToast("⚠️ " + errTxt);
+            if (statusBox) {
+              statusBox.style.color = "#f87171";
+              statusBox.innerHTML = "❌ <b>" + esc(errTxt) + "</b>";
+            }
+            return;
+          }
           const info = r?.webhookInfo || {};
           const pending = Number(info.pending_update_count || 0);
           const lastErr = info.last_error_message ? String(info.last_error_message) : "Keine Fehler";
@@ -65010,6 +65121,15 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "drop_pending_updates" })
           });
+          if (!r || !r.ok) {
+            const errTxt = r?.error || r?.message || "Hängende Updates konnten nicht verworfen werden.";
+            showHudToast("⚠️ " + errTxt);
+            if (statusBox) {
+              statusBox.style.color = "#f87171";
+              statusBox.innerHTML = "❌ <b>" + esc(errTxt) + "</b>";
+            }
+            return;
+          }
           showHudToast("🧹 " + (r?.message || "Hängende Updates verworfen!"));
           if (statusBox) {
             statusBox.style.color = "#34d399";
@@ -65098,6 +65218,10 @@
                 (forceNetworkRefresh ? "&refresh=1" : "")
               );
               if (r && r.ok) {
+                const prevGaps = window._lastAdminOverviewCache?.seriesGaps;
+                if (!forceNetworkRefresh && r.seriesGaps?.lazyDeferred && prevGaps && !prevGaps.lazyDeferred) {
+                  r.seriesGaps = prevGaps;
+                }
                 window._lastAdminOverviewCache = r;
               }
             } catch (netErr) {
@@ -65699,7 +65823,7 @@
                   filteredReports.map(rep => {
                     const isOpen = rep.status === "open";
                     const tc = rep.type_code === "s" ? "s" : "m";
-                    const epStr = tc === "s" && rep.season_number
+                    const epStr = tc === "s" && rep.season_number != null
                       ? (' • <b style="color:#0284c7">S' + String(rep.season_number).padStart(2, '0') + 'E' + String(rep.episode_number || 1).padStart(2, '0') + '</b>' + (rep.episode_title ? (' (' + esc(rep.episode_title) + ')') : ''))
                       : '';
                     return '<div class="ep-row" style="' + (isOpen ? 'border-color:rgba(245,158,11,0.5);background:rgba(245,158,11,0.06);' : 'opacity:0.75;') + '">' +
@@ -66212,6 +66336,11 @@
         return Boolean(el && el.matches && el.matches(CARD_SUB_SELECTOR));
       }
 
+      function isManualNoTmdbModalOpenClient() {
+        const el = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        return Boolean(el && el.style.display && el.style.display !== "none");
+      }
+
       function isAnyBlockingOverlayOpenForCardBarClient() {
         const elev = document.getElementById("tvQuickJumpElevator");
         const isRightOverlayOpen = Boolean(
@@ -66221,6 +66350,8 @@
           getActiveForegroundCinemaContextClient() ||
           (state && state.sidebarOpen) ||
           isRightOverlayOpen ||
+          isManualNoTmdbModalOpenClient() ||
+          document.getElementById("subModalOverlayRoot")?.innerHTML.trim() ||
           document.getElementById("modalRoot")?.innerHTML.trim() ||
           document.getElementById("customDialogRoot")?.innerHTML.trim() ||
           document.getElementById("personSpotlightOverlayRoot")?.innerHTML.trim() ||
@@ -66485,6 +66616,8 @@
         const isBlockedByOverlay = Boolean(
           (state && state.sidebarOpen) ||
           isRightOverlayOpen ||
+          isManualNoTmdbModalOpenClient() ||
+          document.getElementById("subModalOverlayRoot")?.innerHTML.trim() ||
           document.getElementById("searchGenreDropdownOverlay")?.classList.contains("open") ||
           document.getElementById("searchAutocompleteBox")?.classList.contains("open") ||
           document.getElementById("topUnifiedBar")?.classList.contains("mobile-search-expanded") ||
@@ -66765,26 +66898,34 @@
           return getCinemaFocusableElementsClient(activeCinemaCtx);
         }
         const dialogEl = document.getElementById("customDialogRoot");
+        const manual900mEl = document.getElementById("manualNoTmdbConfirmModalOverlay");
+        const subModalEl = document.getElementById("subModalOverlayRoot");
         const spotlightEl = document.getElementById("personSpotlightOverlayRoot");
         const modalEl = document.getElementById("modalRoot");
         const topUnifiedHeader = document.getElementById("topUnifiedBar");
         const lbEl = document.getElementById("lightboxRoot");
         const sidebarEl = document.getElementById("filterSidebarDrawer");
+        const isManual900mActive = isManualNoTmdbModalOpenClient();
+        const isSubModalActive = Boolean(subModalEl && subModalEl.innerHTML.trim());
         const isSpotlightActive = Boolean(spotlightEl && spotlightEl.innerHTML.trim());
         const isModalActive = Boolean(modalEl && modalEl.innerHTML.trim());
         const scopeRoot = (dialogEl && dialogEl.innerHTML.trim())
           ? dialogEl
-          : (lbEl && lbEl.innerHTML.trim())
-              ? lbEl
-              : isSpotlightActive
-                ? spotlightEl
-                : (state.sidebarOpen && sidebarEl)
-                  ? sidebarEl
-                  : isModalActive
-                    ? modalEl
-                    : document.body;
+          : isManual900mActive
+            ? manual900mEl
+            : isSubModalActive
+              ? subModalEl
+              : (lbEl && lbEl.innerHTML.trim())
+                ? lbEl
+                : isSpotlightActive
+                  ? spotlightEl
+                  : (state.sidebarOpen && sidebarEl)
+                    ? sidebarEl
+                    : isModalActive
+                      ? modalEl
+                      : document.body;
         const rawNodes = Array.from(scopeRoot.querySelectorAll(FOCUSABLE_SELECTOR));
-        if (isModalActive && !state.sidebarOpen && topUnifiedHeader) {
+        if (scopeRoot === modalEl && !state.sidebarOpen && topUnifiedHeader) {
           const headerNodes = Array.from(topUnifiedHeader.querySelectorAll(FOCUSABLE_SELECTOR));
           rawNodes.unshift(...headerNodes);
         }
@@ -68863,6 +69004,24 @@
           }
           if (document.getElementById("customDialogRoot")?.querySelector(".page-jump-modal-backdrop")) {
             if (typeof closePageJumpModalClient === "function") closePageJumpModalClient();
+            ev.preventDefault();
+            return;
+          }
+          if (document.getElementById("customDialogRoot")?.innerHTML.trim()) {
+            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+            if (typeof closeCustomDialog === "function") closeCustomDialog(null);
+            ev.preventDefault();
+            return;
+          }
+          if (isManualNoTmdbModalOpenClient() && typeof closeManualNoTmdbConfirmModalClient === "function") {
+            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+            closeManualNoTmdbConfirmModalClient();
+            ev.preventDefault();
+            return;
+          }
+          if (document.getElementById("subModalOverlayRoot")?.innerHTML.trim() && typeof closeSubModalOverlayClient === "function") {
+            if (activeEl && activeEl !== document.body && typeof activeEl.blur === "function") activeEl.blur();
+            closeSubModalOverlayClient();
             ev.preventDefault();
             return;
           }

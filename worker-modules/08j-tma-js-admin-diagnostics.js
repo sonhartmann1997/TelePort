@@ -236,6 +236,7 @@
           let totalChecked = 0;
           let totalHealed = 0;
           let cursor = 0;
+          let firstErrorMsg = "";
           const maxRounds = 5;
           for (let round = 0; round < maxRounds; round++) {
             const slice = openProblems.slice(cursor, cursor + 10);
@@ -247,7 +248,10 @@
                 items: slice.length > 0 ? slice : undefined
               })
             });
-            if (!r || !r.ok) break;
+            if (!r || !r.ok) {
+              firstErrorMsg = r?.error || "Serverfehler bei der Konflikt-Nachprüfung";
+              break;
+            }
             totalChecked += Number(r.checkedCount || 0);
             totalHealed += Number(r.healedCount || 0);
             if (Array.isArray(r.healedItems) && r.healedItems.length > 0) {
@@ -269,7 +273,11 @@
           }
           clearClientMediaCaches();
           refreshDiagnosticLogMountDom();
-          showHudToast("🩺 Nachprüfung abgeschlossen: " + totalHealed + " von " + totalChecked + " geprüften Konflikten automatisch geheilt!");
+          if (firstErrorMsg && totalChecked === 0) {
+            showHudToast("⚠️ Konflikt-Nachprüfung fehlgeschlagen: " + firstErrorMsg);
+          } else {
+            showHudToast("🩺 Nachprüfung abgeschlossen: " + totalHealed + " von " + totalChecked + " geprüften Konflikten automatisch geheilt" + (firstErrorMsg ? (" (Hinweis: " + firstErrorMsg + ")") : "!"));
+          }
         } catch (e) {
           showHudToast("⚠️ Fehler bei der Konflikt-Nachprüfung: " + (e?.message || "Unbekannt"));
         } finally {
@@ -329,7 +337,13 @@
           const a = document.createElement("a");
           a.href = url;
           a.download = "diagnose-log-ki-export.json";
+          a.style.display = "none";
+          document.body.appendChild(a);
           a.click();
+          setTimeout(() => {
+            try { a.remove(); } catch (_re) {}
+            try { URL.revokeObjectURL(url); } catch (_ue) {}
+          }, 1500);
           showHudToast("💾 Diagnose-Log als JSON-Datei heruntergeladen!");
         }
       }
@@ -1286,7 +1300,10 @@
       }
 
       function resetBackupImport(clearSaved = false) {
-        if (clearSaved) clearBackupCheckpointClient();
+        if (clearSaved) {
+          clearBackupCheckpointClient();
+          backupImportJob.savedCheckpoint = null;
+        }
         backupImportJob.paused = true;
         backupImportJob.running = false;
         backupImportJob.cursor = 0;
@@ -1297,6 +1314,9 @@
         backupImportJob.uncertainCount = 0;
         backupImportJob.failedCount = 0;
         backupImportJob.startedAt = 0;
+        backupImportJob._freshLogsResetDone = false;
+        backupImportJob.cursorRetries = {};
+        backupImportJob._processedMsgIds = new Set();
         backupImportJob.recentLog = [];
         backupImportJob.livePosterFeed = [];
         backupImportJob.reviewItems = [];
@@ -1307,12 +1327,16 @@
       async function runServerD1QueueStepAdmin(rounds = 2) {
         setBusyState(true, "⏳ Verarbeite nächsten Batch aus der D1-Import-Warteschlange...");
         try {
-          await apiFetchJson(API_BASE + "/admin/import-queue", {
+          const r = await apiFetchJson(API_BASE + "/admin/import-queue", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "step", rounds })
           });
-          await loadAdminPanelView();
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "D1-Import-Batch konnte nicht ausgeführt werden."));
+            return;
+          }
+          await loadAdminPanelView(true);
         } finally {
           setBusyState(false);
         }
@@ -1321,13 +1345,22 @@
       async function clearServerD1QueueAdmin() {
         const ok = await showCustomConfirm("Gesamte D1-Import-Warteschlange wirklich leeren?", "🗑️ Queue leeren");
         if (!ok) return;
-        await apiFetchJson(API_BASE + "/admin/import-queue", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "clear" })
-        });
-        showHudToast("🗑️ D1-Warteschlange geleert");
-        loadAdminPanelView();
+        setBusyState(true, "🗑️ Leere D1-Import-Warteschlange...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/import-queue", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "clear" })
+          });
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "D1-Warteschlange konnte nicht geleert werden."));
+            return;
+          }
+          showHudToast("🗑️ D1-Warteschlange geleert");
+          await loadAdminPanelView(true);
+        } finally {
+          setBusyState(false);
+        }
       }
 
       async function adminCreatePlaylistPrompt() {
@@ -1787,10 +1820,7 @@
 
       async function adminSetWorkerSpeedProfileClient(profileKey) {
         const cleanProf = ["free_turbo", "balanced", "paid_pro"].includes(profileKey) ? profileKey : "free_turbo";
-        state.adminWorkerSpeedProfile = cleanProf;
-        try {
-          localStorage.setItem("tma_worker_speed_profile", cleanProf);
-        } catch (e) {}
+        const prevProf = state.adminWorkerSpeedProfile || "free_turbo";
         setBusyState(true, "⚡ Aktiviere Worker Geschwindigkeits-Profil (" + cleanProf + ")...");
         try {
           const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
@@ -1798,15 +1828,21 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "set_speed_profile", speedProfile: cleanProf })
           });
-          if (r && r.ok) {
-            state.adminWorkerSpeedProfile = r.speedProfile || cleanProf;
-            if (window._lastAdminOverviewCache) {
-              window._lastAdminOverviewCache.botSetup = {
-                ...(window._lastAdminOverviewCache.botSetup || {}),
-                speedProfile: state.adminWorkerSpeedProfile,
-                speedProfileConfig: r.speedProfileConfig || null
-              };
-            }
+          if (!r || !r.ok) {
+            state.adminWorkerSpeedProfile = prevProf;
+            showHudToast("⚠️ " + (r?.error || "Worker-Profil konnte nicht auf dem Server gespeichert werden."));
+            return;
+          }
+          state.adminWorkerSpeedProfile = r.speedProfile || cleanProf;
+          try {
+            localStorage.setItem("tma_worker_speed_profile", state.adminWorkerSpeedProfile);
+          } catch (e) {}
+          if (window._lastAdminOverviewCache) {
+            window._lastAdminOverviewCache.botSetup = {
+              ...(window._lastAdminOverviewCache.botSetup || {}),
+              speedProfile: state.adminWorkerSpeedProfile,
+              speedProfileConfig: r.speedProfileConfig || null
+            };
           }
           const labelMap = {
             free_turbo: "🛡️ Free-Tier Turbo (10ms CPU Schutz • 12er-Batch • 3.2s Guard • Smart-Notfall-Fallback)",
@@ -2363,6 +2399,15 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "get_webhook_info" })
           });
+          if (!r || !r.ok) {
+            const errTxt = r?.error || r?.message || "Webhook-Status konnte nicht abgefragt werden.";
+            showHudToast("⚠️ " + errTxt);
+            if (statusBox) {
+              statusBox.style.color = "#f87171";
+              statusBox.innerHTML = "❌ <b>" + esc(errTxt) + "</b>";
+            }
+            return;
+          }
           const info = r?.webhookInfo || {};
           const pending = Number(info.pending_update_count || 0);
           const lastErr = info.last_error_message ? String(info.last_error_message) : "Keine Fehler";
@@ -2397,6 +2442,15 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "drop_pending_updates" })
           });
+          if (!r || !r.ok) {
+            const errTxt = r?.error || r?.message || "Hängende Updates konnten nicht verworfen werden.";
+            showHudToast("⚠️ " + errTxt);
+            if (statusBox) {
+              statusBox.style.color = "#f87171";
+              statusBox.innerHTML = "❌ <b>" + esc(errTxt) + "</b>";
+            }
+            return;
+          }
           showHudToast("🧹 " + (r?.message || "Hängende Updates verworfen!"));
           if (statusBox) {
             statusBox.style.color = "#34d399";
@@ -2485,6 +2539,10 @@
                 (forceNetworkRefresh ? "&refresh=1" : "")
               );
               if (r && r.ok) {
+                const prevGaps = window._lastAdminOverviewCache?.seriesGaps;
+                if (!forceNetworkRefresh && r.seriesGaps?.lazyDeferred && prevGaps && !prevGaps.lazyDeferred) {
+                  r.seriesGaps = prevGaps;
+                }
                 window._lastAdminOverviewCache = r;
               }
             } catch (netErr) {
@@ -3086,7 +3144,7 @@
                   filteredReports.map(rep => {
                     const isOpen = rep.status === "open";
                     const tc = rep.type_code === "s" ? "s" : "m";
-                    const epStr = tc === "s" && rep.season_number
+                    const epStr = tc === "s" && rep.season_number != null
                       ? (' • <b style="color:#0284c7">S' + String(rep.season_number).padStart(2, '0') + 'E' + String(rep.episode_number || 1).padStart(2, '0') + '</b>' + (rep.episode_title ? (' (' + esc(rep.episode_title) + ')') : ''))
                       : '';
                     return '<div class="ep-row" style="' + (isOpen ? 'border-color:rgba(245,158,11,0.5);background:rgba(245,158,11,0.06);' : 'opacity:0.75;') + '">' +
