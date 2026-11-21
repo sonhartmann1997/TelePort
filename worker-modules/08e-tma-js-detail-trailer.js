@@ -865,6 +865,7 @@
         state.isSearchMode = false;
         state.searchFocused = false;
         state.currentView = "discover";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         state.currentCollectionId = null;
         state.currentUniverseId = null;
         state.currentPersonId = null;
@@ -1854,6 +1855,7 @@
       async function loadFranchisesHub(tab) {
         if (tab) state.franchiseTab = tab;
         state.currentView = "franchises";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         const root = document.getElementById("appRoot");
         setBusyState(true, "⏳ Lade Filmreihen & Filmuniversen...");
         try {
@@ -1932,6 +1934,7 @@
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "collection";
+          if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
           state.currentCollectionId = r.id || colId;
           state.currentCollectionName = r.name || "Filmreihe";
           state.currentUniverseId = null;
@@ -1954,6 +1957,7 @@
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "universe";
+          if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
           state.currentUniverseId = r.id || uniId;
           state.currentUniverseName = r.name || "Filmuniversum";
           state.currentCollectionId = null;

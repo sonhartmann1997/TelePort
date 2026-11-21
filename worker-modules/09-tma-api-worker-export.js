@@ -952,7 +952,7 @@
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
             listAllUsersFromD1(env).catch(() => []),
             listAllMediaFromD1(env, mediaType).catch(() => []),
-            getImportQueueStatsFromD1(env).catch(() => ({ pending: 0, processing: 0, done: 0, failed: 0, total: 0 })),
+            getImportQueueStatsFromD1(env).catch(() => ({ pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 })),
             getFolders(env, playlistChatId).catch(() => []),
             getSavedList(env, playlistChatId).catch(() => []),
             listMediaReportsFromD1(env, "all").catch(() => []),
@@ -2270,17 +2270,27 @@
             cached.external_poster_url = externalPosterUrl;
             setCachedTmdb(cacheKey, cached);
           }
-          const memKey = `d1_${typeCode === "s" ? "series" : "movie"}_${tmdbId}`;
-          const memObj = memoryFallback.get(memKey);
-          if (memObj) {
-            memObj.poster_path = posterPath;
-            memObj.external_poster_url = externalPosterUrl;
-            memoryFallback.set(memKey, memObj);
+          for (const mk of [`d1_${typeCode === "s" ? "series" : "movie"}_${tmdbId}`, `d1_catalog_${typeCode === "s" ? "series" : "movie"}_${tmdbId}`]) {
+            const memObj = memoryFallback.get(mk);
+            if (memObj) {
+              memObj.poster_path = posterPath;
+              memObj.external_poster_url = externalPosterUrl;
+              memoryFallback.set(mk, memObj);
+            }
+          }
+          const posterLookup = memoryFallback.get("d1_poster_lookup_cache");
+          if (posterLookup instanceof Map) {
+            const resolvedNewPoster = resolvePosterUrl(posterPath, "w185", externalPosterUrl);
+            if (resolvedNewPoster) {
+              posterLookup.set(`${typeCode}_${tmdbId}`, resolvedNewPoster);
+            } else {
+              posterLookup.delete(`${typeCode}_${tmdbId}`);
+            }
           }
           memoryFallback.delete(`d1_vip_discover_rows_${typeCode}`);
           memoryFallback.delete(`d1_admin_media_list_cache_${typeCode}`);
 
-          await backfillMediaPosterInLists(env, typeCode, tmdbId, posterPath, externalPosterUrl, auth.chatId || null);
+          await backfillMediaPosterInLists(env, typeCode, tmdbId, posterPath, externalPosterUrl, auth.chatId || null, true);
           return new Response(JSON.stringify({
             ok: true,
             tmdbId,
@@ -4220,7 +4230,7 @@
           try {
             const setWebhookPayload = {
               url: webhookUrl,
-              allowed_updates: ["message", "callback_query", "inline_query"]
+              allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
             };
             if (customSecretToken) {
               setWebhookPayload.secret_token = customSecretToken;
@@ -4989,7 +4999,14 @@
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
-            if (env.TELEGRAM_BOT_TOKEN && customToken === String(env.TELEGRAM_BOT_TOKEN).trim()) {
+            const mainBotToken = String(env.TELEGRAM_BOT_TOKEN || "").trim();
+            const matchesMainBot = Boolean(
+              mainBotToken &&
+              (typeof timingSafeEqualStr === "function"
+                ? timingSafeEqualStr(customToken, mainBotToken)
+                : customToken === mainBotToken)
+            );
+            if (matchesMainBot) {
               return new Response(JSON.stringify({ ok: false, error: "Bitte nutze /webhook mit Secret-Header für den Haupt-Bot." }), {
                 status: 403,
                 headers: { "Content-Type": "application/json; charset=utf-8" }

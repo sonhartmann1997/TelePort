@@ -124,6 +124,23 @@
         -webkit-user-select: none;
         -moz-user-select: none;
       }
+      .admin-drag-handle {
+        cursor: grab;
+        touch-action: none;
+      }
+      .admin-drag-handle:hover {
+        filter: brightness(1.06);
+      }
+      .admin-panel-dragging {
+        box-shadow: 0 20px 54px rgba(0, 0, 0, 0.85), 0 0 0 1.5px rgba(56, 189, 248, 0.72) !important;
+        transition: none !important;
+      }
+      #floatingImportStatusWidget.is-compact {
+        width: auto !important;
+        max-width: min(92vw, 340px) !important;
+        padding: 6px 10px !important;
+        border-radius: 999px !important;
+      }
       .hero {
         position: relative;
         z-index: 1;

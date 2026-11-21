@@ -2200,11 +2200,26 @@
         return true;
       }
 
+      if (typeof document !== "undefined" && !window._heroVisibilityGuardBound) {
+        window._heroVisibilityGuardBound = true;
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) {
+            try { stopHeroBackgroundVideoTeaserClient(); } catch (_e) {}
+            try {
+              if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
+                stopDetailBackgroundVideoTeaserClient();
+              }
+            } catch (_e) {}
+          }
+        });
+      }
+
       function startHeroRotationTimer() {
         if (heroRotationTimer) clearInterval(heroRotationTimer);
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
         const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
+          if (typeof document !== "undefined" && document.hidden) return;
           if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
           if (
             document.getElementById("modalRoot")?.innerHTML.trim() ||
@@ -3802,6 +3817,7 @@
         state.searchQuery = "";
         state.filtersCollapsedInSearch = false;
         state.currentView = "discover";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         state.currentCollectionId = null;
         state.currentUniverseId = null;
         state.currentPersonId = null;

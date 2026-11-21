@@ -2058,19 +2058,32 @@
         return requestTelegramStream(fileId, cleanTitle, "Untertitel", { ...(extraMeta || {}), subtitleOnly: true });
       }
 
+      function validateDeliveryTargetBeforeSendClient(prefs) {
+        if (!prefs || typeof prefs !== "object") return true;
+        if (prefs.targetMode === "group" && !prefs.targetGroupChatId) {
+          modalDeliveryConfigExpanded = true;
+          const mount = document.getElementById("modalDeliveryTargetMount");
+          if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+          showHudToast("👥 Bitte gib oben deine Ziel-Gruppen Chat-ID ein (Tipp: /id in deiner Gruppe senden).");
+          return false;
+        }
+        if (prefs.targetMode === "custom_bot" && !prefs.customBotToken) {
+          modalDeliveryConfigExpanded = true;
+          const mount = document.getElementById("modalDeliveryTargetMount");
+          if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+          showHudToast("🤖 Bitte trage oben dein eigenes Bot-Token ein (oder wechsle auf Bot-Chat).");
+          return false;
+        }
+        return true;
+      }
+
       async function requestTelegramStream(fileId, cleanTitle, quality, extraMeta = null) {
         if (!isCurrentUserVip()) {
           showHudToast("🔒 Streams & Qualitäten sind exklusiv für VIP-Mitglieder verfügbar.");
           return;
         }
         const prefs = getDeliveryPreferencesClient();
-        if (prefs.targetMode === "group" && !prefs.targetGroupChatId) {
-          modalDeliveryConfigExpanded = true;
-          const mount = document.getElementById("modalDeliveryTargetMount");
-          if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
-          showHudToast("👥 Bitte gib oben deine Ziel-Gruppen Chat-ID ein (Tipp: /id in deiner Gruppe senden).");
-          return;
-        }
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const metaObj = extraMeta && typeof extraMeta === "object" ? extraMeta : {};
         const isSubtitleOnly = Boolean(metaObj.subtitleOnly);
         if (!isSubtitleOnly && metaObj.seriesId && metaObj.season && metaObj.episode) {
@@ -2100,6 +2113,7 @@
               targetTopicId: prefs.targetTopicId || "",
               sourceBridgeChatId: prefs.sourceBridgeChatId || "",
               customBotToken: prefs.customBotToken || "",
+              customBotUsername: prefs.customBotUsername || "",
               typeCode: state.activeDetails?.typeCode || (metaObj.seriesId ? "s" : "m"),
               tmdbId: metaObj.seriesId || state.activeDetails?.id || null,
               posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
@@ -2262,6 +2276,7 @@
           return;
         }
         const prefs = getDeliveryPreferencesClient();
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const isSeriesModal = Array.isArray(d.seasons) && d.seasons.length > 0;
         let sentCount = 0;
         let queuedCount = 0;
@@ -2294,6 +2309,7 @@
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
                 customBotToken: prefs.customBotToken || "",
+                customBotUsername: prefs.customBotUsername || "",
                 typeCode: isSeriesModal ? "s" : "m",
                 tmdbId: d.id || null,
                 posterUrl: d.poster || d.poster_path || "",
@@ -2481,6 +2497,7 @@
         const d = state.activeDetails;
         if (!d || !Array.isArray(d.files)) return;
         const prefs = getDeliveryPreferencesClient();
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const partFiles = d.files
           .filter(f => {
             if (!f || !f.telegram_file_id) return false;
@@ -2527,6 +2544,7 @@
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
                 customBotToken: prefs.customBotToken || "",
+                customBotUsername: prefs.customBotUsername || "",
                 typeCode: "m",
                 tmdbId: d.id || null,
                 posterUrl: d.poster || d.poster_path || "",
@@ -2582,6 +2600,7 @@
           return;
         }
         const prefs = getDeliveryPreferencesClient();
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const episodesWithStreams = (activeSeasonCacheEpisodes || []).filter(ep => Array.isArray(ep.files) && ep.files.length > 0);
         if (episodesWithStreams.length === 0) {
           showHudToast("⚠️ Keine Episoden-Streams in dieser Staffel hinterlegt.");
@@ -2616,6 +2635,7 @@
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
                 customBotToken: prefs.customBotToken || "",
+                customBotUsername: prefs.customBotUsername || "",
                 typeCode: "s",
                 tmdbId: seriesId || state.activeDetails?.id || null,
                 posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",

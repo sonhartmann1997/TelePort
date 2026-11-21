@@ -2553,7 +2553,7 @@
     return epMap;
   }
 
-  async function backfillMediaPosterInLists(env, typeCode, tmdbId, posterPathOrUrl, fallbackUrl = "", targetChatId = null) {
+  async function backfillMediaPosterInLists(env, typeCode, tmdbId, posterPathOrUrl, fallbackUrl = "", targetChatId = null, forceOverwrite = false) {
     const cleanPoster = resolvePosterUrl(posterPathOrUrl, "w185", fallbackUrl);
     const tid = Number(tmdbId);
     if (!cleanPoster || !tid) return false;
@@ -2572,7 +2572,10 @@
           if (!item) continue;
           const itemMatches = (Number(item.tmdbId) === tid && ((isSer && item.contentType === "series") || (!isSer && item.contentType === "movie"))) ||
                               (isSer && item.contentType === "episode" && Number(item.seriesId) === tid);
-          if (itemMatches && (!item.poster || String(item.poster).includes("placeholder"))) {
+          const shouldReplace = forceOverwrite
+            ? (item.poster !== cleanPoster)
+            : (!item.poster || String(item.poster).includes("placeholder"));
+          if (itemMatches && shouldReplace) {
             item.poster = cleanPoster;
             listChanged = true;
             anyUpdated = true;

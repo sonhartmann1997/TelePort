@@ -1445,6 +1445,7 @@
         }
         if (folderFilter !== undefined) state.wlFolder = folderFilter;
         state.currentView = "wishlist";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         const root = document.getElementById("appRoot");
         if (!state.isAuthenticated) {
           root.innerHTML = '<div class="section">' +
@@ -1554,6 +1555,7 @@
 
       async function loadSettingsView() {
         state.currentView = "settings";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         updateMediaModeIndicatorDom();
         setBusyState(true, "⚙️ Lade Einstellungen...");
         try {

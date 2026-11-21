@@ -1233,6 +1233,10 @@
           clearInterval(activeBotCodePollTimer);
           activeBotCodePollTimer = null;
         }
+        if (typeof document !== "undefined" && window._activeBotCodeVisHandler) {
+          document.removeEventListener("visibilitychange", window._activeBotCodeVisHandler);
+          window._activeBotCodeVisHandler = null;
+        }
       }
 
       function switchLoginModalTabClient(tabName) {
@@ -1342,18 +1346,36 @@
               '</div>';
           }
           let botCodePollAttempts = 0;
+          const activeChallengeId = r.challengeId;
+          const onBotCodeReturnVisible = () => {
+            if (typeof document !== "undefined" && !document.hidden && activeBotCodePollTimer) {
+              pollBotCodeChallengeClient(activeChallengeId);
+            }
+          };
+          if (typeof document !== "undefined") {
+            if (window._activeBotCodeVisHandler) {
+              document.removeEventListener("visibilitychange", window._activeBotCodeVisHandler);
+            }
+            window._activeBotCodeVisHandler = onBotCodeReturnVisible;
+            document.addEventListener("visibilitychange", onBotCodeReturnVisible);
+          }
           activeBotCodePollTimer = setInterval(() => {
-            botCodePollAttempts++;
             const statusNode = document.getElementById("botCodePollStatusText");
             if (!statusNode || botCodePollAttempts > 45) {
               stopBotCodePollClient();
+              if (typeof document !== "undefined" && window._activeBotCodeVisHandler) {
+                document.removeEventListener("visibilitychange", window._activeBotCodeVisHandler);
+                window._activeBotCodeVisHandler = null;
+              }
               if (statusNode && botCodePollAttempts > 45) {
                 statusNode.style.color = "#f87171";
                 statusNode.textContent = "⌛ Zeitlimit erreicht. Bitte Code bei Bedarf neu anfordern.";
               }
               return;
             }
-            pollBotCodeChallengeClient(r.challengeId);
+            if (typeof document !== "undefined" && document.hidden) return;
+            botCodePollAttempts++;
+            pollBotCodeChallengeClient(activeChallengeId);
           }, 3500);
         } catch (err) {
           if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
@@ -1730,11 +1752,20 @@
       function logoutWebSession() {
         sessionToken = "";
         try { localStorage.removeItem("tma_session_token"); } catch (e) {}
+        if (typeof backupImportJob === "object" && backupImportJob && backupImportJob.running) {
+          backupImportJob.running = false;
+          backupImportJob.paused = true;
+        }
         if (!rawInitData) {
           state.isAuthenticated = false;
           state.authUser = null;
           chatId = "guest";
         }
+        window._lastAdminOverviewCache = null;
+        window._adminReportsCache = [];
+        window._adminBackupPlaylistsByChatId = {};
+        if (typeof stopFloatingImportStatusPolling === "function") stopFloatingImportStatusPolling();
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         clearClientMediaCaches();
         updateSyncBadge();
         document.getElementById("modalRoot").innerHTML = "";

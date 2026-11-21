@@ -1984,6 +1984,9 @@
           ) : (
             '<div id="backupReviewScrollContainer" style="display:flex;flex-direction:column;gap:12px;max-height:640px;overflow-y:auto;padding-right:4px">' +
               visibleList.slice(0, 80).map(item => renderSingleBackupReviewCardHtml(item, allItems)).join("") +
+              (visibleList.length > 80
+                ? '<div class="admin-sub-box" style="text-align:center;font-size:11.5px;color:var(--muted);padding:10px">ℹ️ Zeige die ersten <b>80</b> von <b>' + visibleList.length + '</b> Einträgen — nutze die Filter oben, um gezielt einzugrenzen.</div>'
+                : '') +
             '</div>'
           )) +
         '</div>';
@@ -1995,67 +1998,206 @@
       }
 
       let adminJsonImportPanelCollapsed = false;
+      let floatingImportWidgetCompact = false;
+      const FLOATING_IMPORT_POS_STORAGE_KEY = "tma_floating_import_pos_v1";
       const adminPanelDragOffsets = new Map();
       let activeAdminDragState = null;
+
+      try {
+        const savedFloatRaw = sessionStorage.getItem(FLOATING_IMPORT_POS_STORAGE_KEY);
+        if (savedFloatRaw) {
+          const parsedFloat = JSON.parse(savedFloatRaw);
+          if (parsedFloat && typeof parsedFloat === "object") {
+            if (Number.isFinite(Number(parsedFloat.x)) && Number.isFinite(Number(parsedFloat.y))) {
+              adminPanelDragOffsets.set("floatingImportStatusWidget", {
+                x: Math.round(Number(parsedFloat.x)),
+                y: Math.round(Number(parsedFloat.y))
+              });
+            }
+            if (typeof parsedFloat.compact === "boolean") {
+              floatingImportWidgetCompact = parsedFloat.compact;
+            }
+          }
+        }
+      } catch (_e) {}
+
+      function persistFloatingImportWidgetPrefsClient() {
+        try {
+          const off = adminPanelDragOffsets.get("floatingImportStatusWidget") || { x: 0, y: 0 };
+          sessionStorage.setItem(FLOATING_IMPORT_POS_STORAGE_KEY, JSON.stringify({
+            x: Math.round(Number(off.x) || 0),
+            y: Math.round(Number(off.y) || 0),
+            compact: Boolean(floatingImportWidgetCompact)
+          }));
+        } catch (_e) {}
+      }
+
+      function clampAdminPanelDragOffsetClient(panelEl, nx, ny) {
+        let rx = Math.round(Number(nx) || 0);
+        let ry = Math.round(Number(ny) || 0);
+        if (!panelEl || typeof window === "undefined") return { x: rx, y: ry };
+        const vw = Math.max(320, window.innerWidth || document.documentElement?.clientWidth || 1024);
+        const vh = Math.max(320, window.innerHeight || document.documentElement?.clientHeight || 768);
+        const headerEl = document.querySelector(".topbar, header");
+        const safeTop = Math.max(8, Math.min(96, Math.round((headerEl ? headerEl.getBoundingClientRect().height : 54) + 8)));
+        const rect = panelEl.getBoundingClientRect();
+        const cur = adminPanelDragOffsets.get(panelEl.id || "default_admin_panel") || { x: 0, y: 0 };
+
+        if (panelEl.id === "floatingImportStatusWidget") {
+          const w = Math.max(120, Math.min(vw - 16, rect.width || (floatingImportWidgetCompact ? 240 : Math.min(vw * 0.94, 680))));
+          const h = Math.max(40, Math.min(vh - safeTop - 16, rect.height || (floatingImportWidgetCompact ? 42 : 76)));
+          const maxDx = Math.max(0, Math.floor((vw - w) / 2) - 8);
+          const minDx = -maxDx;
+          // Basisposition: bottom: 14px -> Oberkante bei (vh - 14 - h)
+          const baseTop = vh - 14 - h;
+          const minDy = Math.round(safeTop - baseTop);
+          const maxDy = 6;
+          rx = Math.min(maxDx, Math.max(minDx, rx));
+          ry = Math.min(maxDy, Math.max(minDy, ry));
+          return { x: rx, y: ry };
+        }
+
+        // In-Flow Admin-Panel (#adminJsonImportPanelBox): Drag-Handle immer im sichtbaren Bereich halten
+        const naturalLeft = rect.left - (Number(cur.x) || 0);
+        const naturalTop = rect.top - (Number(cur.y) || 0);
+        const panelW = Math.max(240, rect.width || vw - 32);
+        const minVisibleX = Math.min(180, Math.round(panelW * 0.4));
+        const rawMinRx = Math.round(minVisibleX - panelW - naturalLeft);
+        const rawMaxRx = Math.round(vw - minVisibleX - naturalLeft);
+        const loRx = Math.min(rawMinRx, rawMaxRx);
+        const hiRx = Math.max(rawMinRx, rawMaxRx);
+        const rawMinRy = Math.round(safeTop - naturalTop);
+        const rawMaxRy = Math.round(vh - 72 - naturalTop);
+        const loRy = Math.min(rawMinRy, rawMaxRy);
+        const hiRy = Math.max(rawMinRy, rawMaxRy);
+        rx = Math.min(hiRx, Math.max(loRx, rx));
+        ry = Math.min(hiRy, Math.max(loRy, ry));
+        return { x: rx, y: ry };
+      }
 
       function applyAdminPanelDragOffsetClient(panelEl, nx, ny) {
         if (!panelEl) return;
         const key = panelEl.id || "default_admin_panel";
-        const rx = Math.round(Number(nx) || 0);
-        const ry = Math.round(Number(ny) || 0);
+        const isExplicitReset = (Number(nx) || 0) === 0 && (Number(ny) || 0) === 0;
+        const clamped = isExplicitReset ? { x: 0, y: 0 } : clampAdminPanelDragOffsetClient(panelEl, nx, ny);
+        const rx = clamped.x;
+        const ry = clamped.y;
         adminPanelDragOffsets.set(key, { x: rx, y: ry });
         if (panelEl.id === "floatingImportStatusWidget") {
           panelEl.style.transform = "translate3d(calc(-50% + " + rx + "px), " + ry + "px, 0)";
+          persistFloatingImportWidgetPrefsClient();
+        } else if (rx === 0 && ry === 0) {
+          panelEl.style.transform = "";
+          panelEl.style.position = "";
+          panelEl.style.zIndex = "";
         } else {
           panelEl.style.transform = "translate3d(" + rx + "px, " + ry + "px, 0)";
           panelEl.style.position = "relative";
-          panelEl.style.zIndex = "75";
+          panelEl.style.zIndex = "210";
+        }
+      }
+
+      function clampAllAdminDraggedPanelsToViewportClient() {
+        const floatEl = document.getElementById("floatingImportStatusWidget");
+        if (floatEl && floatEl.style.display !== "none") {
+          const curFloat = adminPanelDragOffsets.get("floatingImportStatusWidget") || { x: 0, y: 0 };
+          applyAdminPanelDragOffsetClient(floatEl, curFloat.x, curFloat.y);
+        }
+        const adminBox = document.getElementById("adminJsonImportPanelBox");
+        if (adminBox) {
+          const curBox = adminPanelDragOffsets.get("adminJsonImportPanelBox");
+          if (curBox && (curBox.x !== 0 || curBox.y !== 0)) {
+            applyAdminPanelDragOffsetClient(adminBox, curBox.x, curBox.y);
+          }
         }
       }
 
       if (typeof window !== "undefined" && !window._adminGlobalDragListenersBound) {
         window._adminGlobalDragListenersBound = true;
+        const extractClientPoint = (ev, fallbackX, fallbackY) => {
+          if (typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+            return { x: ev.clientX, y: ev.clientY };
+          }
+          const t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]);
+          if (t) return { x: t.clientX, y: t.clientY };
+          return { x: fallbackX, y: fallbackY };
+        };
         const onMove = (ev) => {
           if (!activeAdminDragState) return;
-          if (ev.buttons !== undefined && ev.buttons === 0 && ev.type === "mousemove") {
-            endGlobalAdminDrag();
-            return;
+          // Nur Events der aktiven Quelle/Pointer-ID verarbeiten (verhindert Doppel-Feuern von pointermove + mousemove + touchmove)
+          if (activeAdminDragState.source === "pointer") {
+            if (ev.type !== "pointermove") return;
+            if (activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) return;
+          } else if (activeAdminDragState.source === "mouse") {
+            if (ev.type !== "mousemove") return;
+            if (ev.buttons !== undefined && ev.buttons === 0) {
+              endGlobalAdminDrag();
+              return;
+            }
+          } else if (activeAdminDragState.source === "touch") {
+            if (ev.type !== "touchmove") return;
+            if (ev.cancelable) ev.preventDefault();
           }
           try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
-          const clientX = typeof ev.clientX === "number" ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : activeAdminDragState.startX);
-          const clientY = typeof ev.clientY === "number" ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : activeAdminDragState.startY);
-          const dx = clientX - activeAdminDragState.startX;
-          const dy = clientY - activeAdminDragState.startY;
-          const livePanel = document.getElementById(activeAdminDragState.panelId) || activeAdminDragState.panelEl;
+          const pt = extractClientPoint(ev, activeAdminDragState.startX, activeAdminDragState.startY);
+          const dx = pt.x - activeAdminDragState.startX;
+          const dy = pt.y - activeAdminDragState.startY;
+          const livePanel = (activeAdminDragState.panelId ? document.getElementById(activeAdminDragState.panelId) : null) || activeAdminDragState.panelEl;
           if (livePanel) {
             applyAdminPanelDragOffsetClient(livePanel, activeAdminDragState.baseX + dx, activeAdminDragState.baseY + dy);
           }
         };
-        const endGlobalAdminDrag = () => {
+        const endGlobalAdminDrag = (ev) => {
           if (!activeAdminDragState) return;
-          const liveHandle = document.getElementById(activeAdminDragState.handleId) || activeAdminDragState.handleEl;
+          if (ev && activeAdminDragState.source === "pointer" && activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) {
+            return;
+          }
+          const dragRef = activeAdminDragState;
+          activeAdminDragState = null;
+          const liveHandle = (dragRef.handleId ? document.getElementById(dragRef.handleId) : null) || dragRef.handleEl;
+          const livePanel = (dragRef.panelId ? document.getElementById(dragRef.panelId) : null) || dragRef.panelEl;
           if (liveHandle) {
             liveHandle.style.cursor = "grab";
+            if (dragRef.pointerId !== null && typeof liveHandle.releasePointerCapture === "function") {
+              try {
+                if (typeof liveHandle.hasPointerCapture !== "function" || liveHandle.hasPointerCapture(dragRef.pointerId)) {
+                  liveHandle.releasePointerCapture(dragRef.pointerId);
+                }
+              } catch (_e) {}
+            }
+          }
+          if (livePanel) {
+            livePanel.classList.remove("admin-panel-dragging");
           }
           if (document.body) {
             document.body.classList.remove("is-gesture-dragging");
             document.body.style.userSelect = "";
           }
-          activeAdminDragState = null;
         };
         window.addEventListener("selectstart", (ev) => {
-          if (activeAdminDragState) {
-            if (ev.cancelable) ev.preventDefault();
+          if (activeAdminDragState && ev.cancelable) {
+            ev.preventDefault();
           }
         });
         window.addEventListener("pointermove", onMove, { passive: true });
         window.addEventListener("mousemove", onMove, { passive: true });
-        window.addEventListener("touchmove", onMove, { passive: true });
+        window.addEventListener("touchmove", onMove, { passive: false });
         window.addEventListener("pointerup", endGlobalAdminDrag, { passive: true });
         window.addEventListener("mouseup", endGlobalAdminDrag, { passive: true });
         window.addEventListener("touchend", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("touchcancel", endGlobalAdminDrag, { passive: true });
         window.addEventListener("pointercancel", endGlobalAdminDrag, { passive: true });
-        window.addEventListener("blur", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("blur", () => endGlobalAdminDrag(null), { passive: true });
+        window.addEventListener("keydown", (ev) => {
+          if (ev.key === "Escape" && activeAdminDragState) {
+            endGlobalAdminDrag(null);
+          }
+        });
+        let _adminDragResizeTimer = null;
+        window.addEventListener("resize", () => {
+          if (_adminDragResizeTimer) clearTimeout(_adminDragResizeTimer);
+          _adminDragResizeTimer = setTimeout(clampAllAdminDraggedPanelsToViewportClient, 120);
+        }, { passive: true });
       }
 
       function bindDraggableAdminPanelClient(panelEl, handleEl) {
@@ -2076,11 +2218,12 @@
           const targetEl = rawTarget && typeof rawTarget.closest === "function"
             ? rawTarget
             : (rawTarget && rawTarget.parentElement && typeof rawTarget.parentElement.closest === "function" ? rawTarget.parentElement : null);
-          return Boolean(targetEl && targetEl.closest("button, input, select, a"));
+          return Boolean(targetEl && targetEl.closest("button, input, select, textarea, a, label, [role=\\'button\\']"));
         };
 
-        const startDrag = (ev) => {
-          if (ev.button !== undefined && ev.button !== 0) return;
+        const startDrag = (ev, source) => {
+          if (activeAdminDragState) return;
+          if (source !== "touch" && ev.button !== undefined && ev.button !== 0) return;
           if (isInteractiveChild(ev.target)) return;
           if (ev.cancelable) ev.preventDefault();
           ev.stopPropagation();
@@ -2088,7 +2231,10 @@
           const cur = adminPanelDragOffsets.get(key) || { x: 0, y: 0 };
           const clientX = typeof ev.clientX === "number" ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : 0);
           const clientY = typeof ev.clientY === "number" ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : 0);
+          const pointerId = source === "pointer" && ev.pointerId !== undefined ? ev.pointerId : null;
           activeAdminDragState = {
+            source,
+            pointerId,
             panelId: panelEl.id || "",
             handleId: handleEl.id || "",
             panelEl,
@@ -2099,16 +2245,32 @@
             baseY: cur.y
           };
           handleEl.style.cursor = "grabbing";
+          panelEl.classList.add("admin-panel-dragging");
           if (document.body) {
             document.body.classList.add("is-gesture-dragging");
             document.body.style.userSelect = "none";
           }
-          if (ev.pointerId !== undefined && typeof handleEl.setPointerCapture === "function") {
-            try { handleEl.setPointerCapture(ev.pointerId); } catch (_e) {}
+          if (pointerId !== null && typeof handleEl.setPointerCapture === "function") {
+            try { handleEl.setPointerCapture(pointerId); } catch (_e) {}
           }
         };
 
-        handleEl.addEventListener("pointerdown", startDrag);
+        if (typeof window !== "undefined" && "PointerEvent" in window) {
+          handleEl.addEventListener("pointerdown", (ev) => startDrag(ev, "pointer"));
+          handleEl.addEventListener("lostpointercapture", () => {
+            if (activeAdminDragState && activeAdminDragState.handleEl === handleEl) {
+              handleEl.style.cursor = "grab";
+              panelEl.classList.remove("admin-panel-dragging");
+              if (document.body) {
+                document.body.classList.remove("is-gesture-dragging");
+                document.body.style.userSelect = "";
+              }
+              activeAdminDragState = null;
+            }
+          });
+        } else {
+          handleEl.addEventListener("touchstart", (ev) => startDrag(ev, "touch"), { passive: false });
+        }
         // WICHTIG für Linux Firefox: mousedown muss AUCH dann ev.preventDefault() aufrufen, wenn pointerdown bereits gefeuert hat, da Firefox sonst Text markiert!
         handleEl.addEventListener("mousedown", (ev) => {
           if (ev.button !== undefined && ev.button !== 0) return;
@@ -2116,7 +2278,11 @@
           if (ev.cancelable) ev.preventDefault();
           ev.stopPropagation();
           try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
-          if (!activeAdminDragState) startDrag(ev);
+          if (!activeAdminDragState) startDrag(ev, "mouse");
+        });
+        handleEl.addEventListener("dblclick", (ev) => {
+          if (isInteractiveChild(ev.target)) return;
+          applyAdminPanelDragOffsetClient(panelEl, 0, 0);
         });
         handleEl.addEventListener("dragstart", (ev) => ev.preventDefault());
       }
@@ -2138,6 +2304,20 @@
         if (panelEl) {
           applyAdminPanelDragOffsetClient(panelEl, 0, 0);
         }
+      }
+
+      function resetFloatingImportDragClient() {
+        const widgetEl = document.getElementById("floatingImportStatusWidget");
+        if (widgetEl) {
+          applyAdminPanelDragOffsetClient(widgetEl, 0, 0);
+        }
+      }
+
+      function toggleFloatingImportCompactClient() {
+        floatingImportWidgetCompact = !floatingImportWidgetCompact;
+        persistFloatingImportWidgetPrefsClient();
+        updateFloatingImportStatusBarDom();
+        clampAllAdminDraggedPanelsToViewportClient();
       }
 
       function updateFloatingImportStatusBarDom() {
@@ -2162,21 +2342,23 @@
             widgetEl = document.createElement("div");
             widgetEl.id = "floatingImportStatusWidget";
             widgetEl.style.cssText =
-              "position:fixed;bottom:14px;left:50%;transform:translate3d(-50%,0,0);z-index:9500;" +
+              "position:fixed;bottom:14px;left:50%;transform:translate3d(-50%,0,0);z-index:1540;" +
               "width:min(94vw,680px);background:rgba(15,23,42,0.96);border:1px solid rgba(56,189,248,0.55);" +
               "border-radius:12px;padding:9px 12px;box-shadow:0 12px 32px rgba(0,0,0,0.8);backdrop-filter:blur(10px);";
             document.body.appendChild(widgetEl);
           }
           if (!widgetEl) return;
 
+          const wasHidden = widgetEl.style.display === "none" || !widgetEl.style.display;
           const pct = total > 0 ? ((done / total) * 100).toFixed(1) : "0.0";
           const issuesCount = Number(j.failedCount || 0) + Number(j.uncertainCount || 0);
           widgetEl.style.display = "block";
+          widgetEl.classList.toggle("is-compact", Boolean(floatingImportWidgetCompact));
 
           // WICHTIG: Niemals alle 600ms das komplette innerHTML überschreiben, damit #floatingImportDragHandle beim Ziehen nicht zerstört wird!
           if (!document.getElementById("floatingImportDragHandle")) {
             widgetEl.innerHTML =
-              '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben">' +
+              '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben · Doppelklick = Position zurücksetzen">' +
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc;pointer-events:none">' +
                   '<span style="font-size:11px;padding:2px 6px;border-radius:5px;background:rgba(30,41,59,0.9);border:1px solid rgba(148,163,184,0.28);color:#94a3b8">⠿</span>' +
                   '<span id="floatingImportStateLbl" style="font-weight:900"></span>' +
@@ -2185,13 +2367,15 @@
                   '<span id="floatingImportSeriesTxt" style="color:#38bdf8;font-size:11.5px"></span>' +
                   '<span id="floatingImportIssuesTxt" style="color:#fbbf24;font-size:11.5px;display:none"></span>' +
                 '</div>' +
-                '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                '<div id="floatingImportActionBtns" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                   '<button type="button" id="floatingImportToggleRunBtn" class="btn amber" style="padding:4px 9px;font-size:11px"></button>' +
-                  '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
-                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
+                  '<button type="button" id="floatingImportOpenBtn" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
+                  '<button type="button" id="floatingImportLogsBtn" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
+                  '<button type="button" id="floatingImportResetPosBtn" class="btn" style="padding:4px 7px;font-size:11px" onclick="resetFloatingImportDragClient()" title="Position zurücksetzen">↺</button>' +
+                  '<button type="button" id="floatingImportCompactBtn" class="btn" style="padding:4px 7px;font-size:11px" onclick="toggleFloatingImportCompactClient()" title="Kompakt umschalten">▾</button>' +
                 '</div>' +
               '</div>' +
-              '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px;pointer-events:none">' +
+              '<div id="floatingImportProgressBarWrap" style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px;pointer-events:none">' +
                 '<div id="floatingImportProgressBarFill" style="width:0%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
               '</div>';
             const dragHandle = document.getElementById("floatingImportDragHandle");
@@ -2200,37 +2384,60 @@
             }
           }
 
+          const isCompact = Boolean(floatingImportWidgetCompact);
           const stateLbl = document.getElementById("floatingImportStateLbl");
           if (stateLbl) {
             stateLbl.style.color = j.running ? "#38bdf8" : "#fbbf24";
-            stateLbl.textContent = j.running ? "⚡ Backup-Import läuft:" : "⏸️ Import pausiert:";
+            stateLbl.textContent = isCompact
+              ? (j.running ? "⚡" : "⏸️")
+              : (j.running ? "⚡ Backup-Import läuft:" : "⏸️ Import pausiert:");
           }
           const progTxt = document.getElementById("floatingImportProgressTxt");
           if (progTxt) {
-            progTxt.textContent = done.toLocaleString("de-DE") + " / " + total.toLocaleString("de-DE") + " (" + pct + "%)";
+            progTxt.textContent = isCompact
+              ? (pct + "%")
+              : (done.toLocaleString("de-DE") + " / " + total.toLocaleString("de-DE") + " (" + pct + "%)");
           }
           const movTxt = document.getElementById("floatingImportMoviesTxt");
           if (movTxt) {
+            movTxt.style.display = isCompact ? "none" : "inline";
             movTxt.textContent = "🎬 " + Number(j.moviesSaved || 0).toLocaleString("de-DE");
           }
           const serTxt = document.getElementById("floatingImportSeriesTxt");
           if (serTxt) {
+            serTxt.style.display = isCompact ? "none" : "inline";
             serTxt.textContent = "📺 " + Number(j.seriesSaved || 0).toLocaleString("de-DE");
           }
           const issTxt = document.getElementById("floatingImportIssuesTxt");
           if (issTxt) {
-            if (issuesCount > 0) {
+            if (!isCompact && issuesCount > 0) {
               issTxt.style.display = "inline";
               issTxt.textContent = "⚠️ " + issuesCount;
             } else {
               issTxt.style.display = "none";
             }
           }
+          const openBtn = document.getElementById("floatingImportOpenBtn");
+          if (openBtn) openBtn.style.display = isCompact ? "none" : "";
+          const logsBtn = document.getElementById("floatingImportLogsBtn");
+          if (logsBtn) logsBtn.style.display = isCompact ? "none" : "";
+          const resetBtn = document.getElementById("floatingImportResetPosBtn");
+          if (resetBtn) resetBtn.style.display = isCompact ? "none" : "";
+          const progWrap = document.getElementById("floatingImportProgressBarWrap");
+          if (progWrap) progWrap.style.display = isCompact ? "none" : "block";
+          const compactBtn = document.getElementById("floatingImportCompactBtn");
+          if (compactBtn) {
+            compactBtn.textContent = isCompact ? "▴" : "▾";
+            compactBtn.title = isCompact ? "Vollansicht anzeigen" : "Kompakt minimieren";
+          }
           const toggleBtn = document.getElementById("floatingImportToggleRunBtn");
-          if (toggleBtn && toggleBtn._lastRunningState !== Boolean(j.running)) {
+          if (toggleBtn && (toggleBtn._lastRunningState !== Boolean(j.running) || toggleBtn._lastCompactState !== isCompact)) {
             toggleBtn._lastRunningState = Boolean(j.running);
+            toggleBtn._lastCompactState = isCompact;
             toggleBtn.className = "btn " + (j.running ? "amber" : "green");
-            toggleBtn.textContent = j.running ? "⏸️ Pause" : "▶️ Weiter";
+            toggleBtn.textContent = isCompact
+              ? (j.running ? "⏸️" : "▶️")
+              : (j.running ? "⏸️ Pause" : "▶️ Weiter");
             toggleBtn.onclick = () => {
               if (backupImportJob.running) pauseBackupImport();
               else startOrResumeBackupImport();
@@ -2240,13 +2447,57 @@
           if (barFill) {
             barFill.style.width = Math.min(100, Number(pct)) + "%";
           }
+          if (wasHidden) {
+            const curOff = adminPanelDragOffsets.get("floatingImportStatusWidget") || { x: 0, y: 0 };
+            applyAdminPanelDragOffsetClient(widgetEl, curOff.x, curOff.y);
+          }
         } catch (e) {}
       }
 
-      setInterval(updateFloatingImportStatusBarDom, 600);
+      let floatingImportPollTimer = null;
+      function stopFloatingImportStatusPolling() {
+        if (floatingImportPollTimer) {
+          clearInterval(floatingImportPollTimer);
+          floatingImportPollTimer = null;
+        }
+      }
+      function ensureFloatingImportStatusPolling() {
+        const j = backupImportJob;
+        const total = Array.isArray(j?.entries) ? j.entries.length : 0;
+        const done = Number(j?.cursor || 0);
+        const hasActiveOrPausedJob = Boolean(
+          state.isAuthenticated &&
+          state.authUser?.isAdmin &&
+          total > 0 &&
+          (j.running || (done > 0 && done < total))
+        );
+        if (!hasActiveOrPausedJob) {
+          stopFloatingImportStatusPolling();
+          return;
+        }
+        if (!floatingImportPollTimer) {
+          floatingImportPollTimer = setInterval(() => {
+            if (typeof document !== "undefined" && document.hidden) return;
+            const cur = backupImportJob;
+            const curTotal = Array.isArray(cur?.entries) ? cur.entries.length : 0;
+            const curDone = Number(cur?.cursor || 0);
+            const stillActive = Boolean(
+              state.isAuthenticated &&
+              state.authUser?.isAdmin &&
+              curTotal > 0 &&
+              (cur.running || (curDone > 0 && curDone < curTotal))
+            );
+            updateFloatingImportStatusBarDom();
+            if (!stillActive) {
+              stopFloatingImportStatusPolling();
+            }
+          }, 600);
+        }
+      }
 
       function renderBackupImportBoxDom() {
         updateFloatingImportStatusBarDom();
+        ensureFloatingImportStatusPolling();
         const adminPanelBox = document.getElementById("adminJsonImportPanelBox");
         const adminDragHandle = document.getElementById("adminJsonImportDragHandle");
         if (adminPanelBox && adminDragHandle) {

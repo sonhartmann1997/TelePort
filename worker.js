@@ -6423,7 +6423,7 @@
     return epMap;
   }
 
-  async function backfillMediaPosterInLists(env, typeCode, tmdbId, posterPathOrUrl, fallbackUrl = "", targetChatId = null) {
+  async function backfillMediaPosterInLists(env, typeCode, tmdbId, posterPathOrUrl, fallbackUrl = "", targetChatId = null, forceOverwrite = false) {
     const cleanPoster = resolvePosterUrl(posterPathOrUrl, "w185", fallbackUrl);
     const tid = Number(tmdbId);
     if (!cleanPoster || !tid) return false;
@@ -6442,7 +6442,10 @@
           if (!item) continue;
           const itemMatches = (Number(item.tmdbId) === tid && ((isSer && item.contentType === "series") || (!isSer && item.contentType === "movie"))) ||
                               (isSer && item.contentType === "episode" && Number(item.seriesId) === tid);
-          if (itemMatches && (!item.poster || String(item.poster).includes("placeholder"))) {
+          const shouldReplace = forceOverwrite
+            ? (item.poster !== cleanPoster)
+            : (!item.poster || String(item.poster).includes("placeholder"));
+          if (itemMatches && shouldReplace) {
             item.poster = cleanPoster;
             listChanged = true;
             anyUpdated = true;
@@ -11077,34 +11080,72 @@
         }
       }
     }
+    const candidateSeriesEntries = [];
+    const candidateMovieEntries = [];
     for (const [k, v] of Array.from(memoryFallback.entries())) {
       if ((k.startsWith("d1_catalog_series_") || k.startsWith("d1_series_")) && v && v.id) {
         const sid = Number(v.id);
         if (sid && !validSeriesIdsInMem.has(sid)) {
-          let hasDbEps = false;
-          if (db) {
-            const row = await db.prepare("SELECT 1 AS ok FROM episode_files WHERE series_id = ?1 AND telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 1").bind(sid).first().catch(() => null);
-            hasDbEps = Boolean(row?.ok);
-          }
-          if (!hasDbEps) {
-            memoryFallback.delete(k);
-            memoryFallback.delete(`d1_series_best_quality_${sid}`);
-            removedSeriesCount++;
-          }
+          candidateSeriesEntries.push({ key: k, id: sid });
         }
       } else if ((k.startsWith("d1_catalog_movie_") || k.startsWith("d1_movie_")) && !k.startsWith("d1_movie_files_") && v && v.id) {
         const mid = Number(v.id);
         if (mid && !validMovieIdsInMem.has(mid)) {
-          let hasDbMov = false;
-          if (db) {
-            const row = await db.prepare("SELECT 1 AS ok FROM movie_files WHERE movie_id = ?1 AND telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 1").bind(mid).first().catch(() => null);
-            hasDbMov = Boolean(row?.ok);
-          }
-          if (!hasDbMov) {
-            memoryFallback.delete(k);
-            removedSeriesCount++;
+          candidateMovieEntries.push({ key: k, id: mid });
+        }
+      }
+    }
+
+    const dbExistingSeriesIds = new Set();
+    const dbExistingMovieIds = new Set();
+    if (db && candidateSeriesEntries.length > 0) {
+      const uniqSids = [...new Set(candidateSeriesEntries.map(e => e.id))];
+      for (let i = 0; i < uniqSids.length; i += 80) {
+        const chunk = uniqSids.slice(i, i + 80);
+        const ph = chunk.map((_, idx) => `?${idx + 1}`).join(",");
+        trackStat("d1Reads");
+        const res = await db
+          .prepare(`SELECT DISTINCT series_id FROM episode_files WHERE series_id IN (${ph}) AND telegram_file_id IS NOT NULL AND telegram_file_id != ''`)
+          .bind(...chunk)
+          .all()
+          .catch(() => null);
+        if (Array.isArray(res?.results)) {
+          for (const r of res.results) {
+            if (r?.series_id) dbExistingSeriesIds.add(Number(r.series_id));
           }
         }
+      }
+    }
+    if (db && candidateMovieEntries.length > 0) {
+      const uniqMids = [...new Set(candidateMovieEntries.map(e => e.id))];
+      for (let i = 0; i < uniqMids.length; i += 80) {
+        const chunk = uniqMids.slice(i, i + 80);
+        const ph = chunk.map((_, idx) => `?${idx + 1}`).join(",");
+        trackStat("d1Reads");
+        const res = await db
+          .prepare(`SELECT DISTINCT movie_id FROM movie_files WHERE movie_id IN (${ph}) AND telegram_file_id IS NOT NULL AND telegram_file_id != ''`)
+          .bind(...chunk)
+          .all()
+          .catch(() => null);
+        if (Array.isArray(res?.results)) {
+          for (const r of res.results) {
+            if (r?.movie_id) dbExistingMovieIds.add(Number(r.movie_id));
+          }
+        }
+      }
+    }
+
+    for (const item of candidateSeriesEntries) {
+      if (!dbExistingSeriesIds.has(item.id)) {
+        memoryFallback.delete(item.key);
+        memoryFallback.delete(`d1_series_best_quality_${item.id}`);
+        removedSeriesCount++;
+      }
+    }
+    for (const item of candidateMovieEntries) {
+      if (!dbExistingMovieIds.has(item.id)) {
+        memoryFallback.delete(item.key);
+        removedSeriesCount++;
       }
     }
     return removedSeriesCount;
@@ -27135,7 +27176,7 @@
   // --- Haupt-Router für Telegram Webhook Updates ---
   async function handleUpdate(env, update) {
     const { sendMessage, editMessageText, answerCallbackQuery, deleteMessage, editMessageReplyMarkup, editInlineMessageText, getChatMember } = tgApi(env);
-    const activeSessionChatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id || null;
+    const activeSessionChatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id || update?.callback_query?.from?.id || null;
 
     try {
       // 0. Inline-Queries (für Gruppen & Kanäle: @BotName Suchbegriff / @BotName f / @BotName s)
@@ -33378,6 +33419,23 @@
         user-select: none;
         -webkit-user-select: none;
         -moz-user-select: none;
+      }
+      .admin-drag-handle {
+        cursor: grab;
+        touch-action: none;
+      }
+      .admin-drag-handle:hover {
+        filter: brightness(1.06);
+      }
+      .admin-panel-dragging {
+        box-shadow: 0 20px 54px rgba(0, 0, 0, 0.85), 0 0 0 1.5px rgba(56, 189, 248, 0.72) !important;
+        transition: none !important;
+      }
+      #floatingImportStatusWidget.is-compact {
+        width: auto !important;
+        max-width: min(92vw, 340px) !important;
+        padding: 6px 10px !important;
+        border-radius: 999px !important;
       }
       .hero {
         position: relative;
@@ -39945,6 +40003,10 @@
           clearInterval(activeBotCodePollTimer);
           activeBotCodePollTimer = null;
         }
+        if (typeof document !== "undefined" && window._activeBotCodeVisHandler) {
+          document.removeEventListener("visibilitychange", window._activeBotCodeVisHandler);
+          window._activeBotCodeVisHandler = null;
+        }
       }
 
       function switchLoginModalTabClient(tabName) {
@@ -40054,18 +40116,36 @@
               '</div>';
           }
           let botCodePollAttempts = 0;
+          const activeChallengeId = r.challengeId;
+          const onBotCodeReturnVisible = () => {
+            if (typeof document !== "undefined" && !document.hidden && activeBotCodePollTimer) {
+              pollBotCodeChallengeClient(activeChallengeId);
+            }
+          };
+          if (typeof document !== "undefined") {
+            if (window._activeBotCodeVisHandler) {
+              document.removeEventListener("visibilitychange", window._activeBotCodeVisHandler);
+            }
+            window._activeBotCodeVisHandler = onBotCodeReturnVisible;
+            document.addEventListener("visibilitychange", onBotCodeReturnVisible);
+          }
           activeBotCodePollTimer = setInterval(() => {
-            botCodePollAttempts++;
             const statusNode = document.getElementById("botCodePollStatusText");
             if (!statusNode || botCodePollAttempts > 45) {
               stopBotCodePollClient();
+              if (typeof document !== "undefined" && window._activeBotCodeVisHandler) {
+                document.removeEventListener("visibilitychange", window._activeBotCodeVisHandler);
+                window._activeBotCodeVisHandler = null;
+              }
               if (statusNode && botCodePollAttempts > 45) {
                 statusNode.style.color = "#f87171";
                 statusNode.textContent = "⌛ Zeitlimit erreicht. Bitte Code bei Bedarf neu anfordern.";
               }
               return;
             }
-            pollBotCodeChallengeClient(r.challengeId);
+            if (typeof document !== "undefined" && document.hidden) return;
+            botCodePollAttempts++;
+            pollBotCodeChallengeClient(activeChallengeId);
           }, 3500);
         } catch (err) {
           if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
@@ -40442,11 +40522,20 @@
       function logoutWebSession() {
         sessionToken = "";
         try { localStorage.removeItem("tma_session_token"); } catch (e) {}
+        if (typeof backupImportJob === "object" && backupImportJob && backupImportJob.running) {
+          backupImportJob.running = false;
+          backupImportJob.paused = true;
+        }
         if (!rawInitData) {
           state.isAuthenticated = false;
           state.authUser = null;
           chatId = "guest";
         }
+        window._lastAdminOverviewCache = null;
+        window._adminReportsCache = [];
+        window._adminBackupPlaylistsByChatId = {};
+        if (typeof stopFloatingImportStatusPolling === "function") stopFloatingImportStatusPolling();
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         clearClientMediaCaches();
         updateSyncBadge();
         document.getElementById("modalRoot").innerHTML = "";
@@ -45660,11 +45749,26 @@
         return true;
       }
 
+      if (typeof document !== "undefined" && !window._heroVisibilityGuardBound) {
+        window._heroVisibilityGuardBound = true;
+        document.addEventListener("visibilitychange", () => {
+          if (document.hidden) {
+            try { stopHeroBackgroundVideoTeaserClient(); } catch (_e) {}
+            try {
+              if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
+                stopDetailBackgroundVideoTeaserClient();
+              }
+            } catch (_e) {}
+          }
+        });
+      }
+
       function startHeroRotationTimer() {
         if (heroRotationTimer) clearInterval(heroRotationTimer);
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
         const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
+          if (typeof document !== "undefined" && document.hidden) return;
           if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
           if (
             document.getElementById("modalRoot")?.innerHTML.trim() ||
@@ -47262,6 +47366,7 @@
         state.searchQuery = "";
         state.filtersCollapsedInSearch = false;
         state.currentView = "discover";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         state.currentCollectionId = null;
         state.currentUniverseId = null;
         state.currentPersonId = null;
@@ -48558,6 +48663,7 @@
         state.isSearchMode = false;
         state.searchFocused = false;
         state.currentView = "discover";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         state.currentCollectionId = null;
         state.currentUniverseId = null;
         state.currentPersonId = null;
@@ -49547,6 +49653,7 @@
       async function loadFranchisesHub(tab) {
         if (tab) state.franchiseTab = tab;
         state.currentView = "franchises";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         const root = document.getElementById("appRoot");
         setBusyState(true, "⏳ Lade Filmreihen & Filmuniversen...");
         try {
@@ -49625,6 +49732,7 @@
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "collection";
+          if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
           state.currentCollectionId = r.id || colId;
           state.currentCollectionName = r.name || "Filmreihe";
           state.currentUniverseId = null;
@@ -49647,6 +49755,7 @@
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "universe";
+          if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
           state.currentUniverseId = r.id || uniId;
           state.currentUniverseName = r.name || "Filmuniversum";
           state.currentCollectionId = null;
@@ -54494,19 +54603,32 @@
         return requestTelegramStream(fileId, cleanTitle, "Untertitel", { ...(extraMeta || {}), subtitleOnly: true });
       }
 
+      function validateDeliveryTargetBeforeSendClient(prefs) {
+        if (!prefs || typeof prefs !== "object") return true;
+        if (prefs.targetMode === "group" && !prefs.targetGroupChatId) {
+          modalDeliveryConfigExpanded = true;
+          const mount = document.getElementById("modalDeliveryTargetMount");
+          if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+          showHudToast("👥 Bitte gib oben deine Ziel-Gruppen Chat-ID ein (Tipp: /id in deiner Gruppe senden).");
+          return false;
+        }
+        if (prefs.targetMode === "custom_bot" && !prefs.customBotToken) {
+          modalDeliveryConfigExpanded = true;
+          const mount = document.getElementById("modalDeliveryTargetMount");
+          if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+          showHudToast("🤖 Bitte trage oben dein eigenes Bot-Token ein (oder wechsle auf Bot-Chat).");
+          return false;
+        }
+        return true;
+      }
+
       async function requestTelegramStream(fileId, cleanTitle, quality, extraMeta = null) {
         if (!isCurrentUserVip()) {
           showHudToast("🔒 Streams & Qualitäten sind exklusiv für VIP-Mitglieder verfügbar.");
           return;
         }
         const prefs = getDeliveryPreferencesClient();
-        if (prefs.targetMode === "group" && !prefs.targetGroupChatId) {
-          modalDeliveryConfigExpanded = true;
-          const mount = document.getElementById("modalDeliveryTargetMount");
-          if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
-          showHudToast("👥 Bitte gib oben deine Ziel-Gruppen Chat-ID ein (Tipp: /id in deiner Gruppe senden).");
-          return;
-        }
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const metaObj = extraMeta && typeof extraMeta === "object" ? extraMeta : {};
         const isSubtitleOnly = Boolean(metaObj.subtitleOnly);
         if (!isSubtitleOnly && metaObj.seriesId && metaObj.season && metaObj.episode) {
@@ -54536,6 +54658,7 @@
               targetTopicId: prefs.targetTopicId || "",
               sourceBridgeChatId: prefs.sourceBridgeChatId || "",
               customBotToken: prefs.customBotToken || "",
+              customBotUsername: prefs.customBotUsername || "",
               typeCode: state.activeDetails?.typeCode || (metaObj.seriesId ? "s" : "m"),
               tmdbId: metaObj.seriesId || state.activeDetails?.id || null,
               posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
@@ -54698,6 +54821,7 @@
           return;
         }
         const prefs = getDeliveryPreferencesClient();
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const isSeriesModal = Array.isArray(d.seasons) && d.seasons.length > 0;
         let sentCount = 0;
         let queuedCount = 0;
@@ -54730,6 +54854,7 @@
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
                 customBotToken: prefs.customBotToken || "",
+                customBotUsername: prefs.customBotUsername || "",
                 typeCode: isSeriesModal ? "s" : "m",
                 tmdbId: d.id || null,
                 posterUrl: d.poster || d.poster_path || "",
@@ -54917,6 +55042,7 @@
         const d = state.activeDetails;
         if (!d || !Array.isArray(d.files)) return;
         const prefs = getDeliveryPreferencesClient();
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const partFiles = d.files
           .filter(f => {
             if (!f || !f.telegram_file_id) return false;
@@ -54963,6 +55089,7 @@
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
                 customBotToken: prefs.customBotToken || "",
+                customBotUsername: prefs.customBotUsername || "",
                 typeCode: "m",
                 tmdbId: d.id || null,
                 posterUrl: d.poster || d.poster_path || "",
@@ -55018,6 +55145,7 @@
           return;
         }
         const prefs = getDeliveryPreferencesClient();
+        if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const episodesWithStreams = (activeSeasonCacheEpisodes || []).filter(ep => Array.isArray(ep.files) && ep.files.length > 0);
         if (episodesWithStreams.length === 0) {
           showHudToast("⚠️ Keine Episoden-Streams in dieser Staffel hinterlegt.");
@@ -55052,6 +55180,7 @@
                 targetTopicId: prefs.targetTopicId || "",
                 sourceBridgeChatId: prefs.sourceBridgeChatId || "",
                 customBotToken: prefs.customBotToken || "",
+                customBotUsername: prefs.customBotUsername || "",
                 typeCode: "s",
                 tmdbId: seriesId || state.activeDetails?.id || null,
                 posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
@@ -56897,6 +57026,7 @@
         }
         if (folderFilter !== undefined) state.wlFolder = folderFilter;
         state.currentView = "wishlist";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         const root = document.getElementById("appRoot");
         if (!state.isAuthenticated) {
           root.innerHTML = '<div class="section">' +
@@ -57006,6 +57136,7 @@
 
       async function loadSettingsView() {
         state.currentView = "settings";
+        if (typeof updateFloatingImportStatusBarDom === "function") updateFloatingImportStatusBarDom();
         updateMediaModeIndicatorDom();
         setBusyState(true, "⚙️ Lade Einstellungen...");
         try {
@@ -61769,6 +61900,9 @@
           ) : (
             '<div id="backupReviewScrollContainer" style="display:flex;flex-direction:column;gap:12px;max-height:640px;overflow-y:auto;padding-right:4px">' +
               visibleList.slice(0, 80).map(item => renderSingleBackupReviewCardHtml(item, allItems)).join("") +
+              (visibleList.length > 80
+                ? '<div class="admin-sub-box" style="text-align:center;font-size:11.5px;color:var(--muted);padding:10px">ℹ️ Zeige die ersten <b>80</b> von <b>' + visibleList.length + '</b> Einträgen — nutze die Filter oben, um gezielt einzugrenzen.</div>'
+                : '') +
             '</div>'
           )) +
         '</div>';
@@ -61780,67 +61914,206 @@
       }
 
       let adminJsonImportPanelCollapsed = false;
+      let floatingImportWidgetCompact = false;
+      const FLOATING_IMPORT_POS_STORAGE_KEY = "tma_floating_import_pos_v1";
       const adminPanelDragOffsets = new Map();
       let activeAdminDragState = null;
+
+      try {
+        const savedFloatRaw = sessionStorage.getItem(FLOATING_IMPORT_POS_STORAGE_KEY);
+        if (savedFloatRaw) {
+          const parsedFloat = JSON.parse(savedFloatRaw);
+          if (parsedFloat && typeof parsedFloat === "object") {
+            if (Number.isFinite(Number(parsedFloat.x)) && Number.isFinite(Number(parsedFloat.y))) {
+              adminPanelDragOffsets.set("floatingImportStatusWidget", {
+                x: Math.round(Number(parsedFloat.x)),
+                y: Math.round(Number(parsedFloat.y))
+              });
+            }
+            if (typeof parsedFloat.compact === "boolean") {
+              floatingImportWidgetCompact = parsedFloat.compact;
+            }
+          }
+        }
+      } catch (_e) {}
+
+      function persistFloatingImportWidgetPrefsClient() {
+        try {
+          const off = adminPanelDragOffsets.get("floatingImportStatusWidget") || { x: 0, y: 0 };
+          sessionStorage.setItem(FLOATING_IMPORT_POS_STORAGE_KEY, JSON.stringify({
+            x: Math.round(Number(off.x) || 0),
+            y: Math.round(Number(off.y) || 0),
+            compact: Boolean(floatingImportWidgetCompact)
+          }));
+        } catch (_e) {}
+      }
+
+      function clampAdminPanelDragOffsetClient(panelEl, nx, ny) {
+        let rx = Math.round(Number(nx) || 0);
+        let ry = Math.round(Number(ny) || 0);
+        if (!panelEl || typeof window === "undefined") return { x: rx, y: ry };
+        const vw = Math.max(320, window.innerWidth || document.documentElement?.clientWidth || 1024);
+        const vh = Math.max(320, window.innerHeight || document.documentElement?.clientHeight || 768);
+        const headerEl = document.querySelector(".topbar, header");
+        const safeTop = Math.max(8, Math.min(96, Math.round((headerEl ? headerEl.getBoundingClientRect().height : 54) + 8)));
+        const rect = panelEl.getBoundingClientRect();
+        const cur = adminPanelDragOffsets.get(panelEl.id || "default_admin_panel") || { x: 0, y: 0 };
+
+        if (panelEl.id === "floatingImportStatusWidget") {
+          const w = Math.max(120, Math.min(vw - 16, rect.width || (floatingImportWidgetCompact ? 240 : Math.min(vw * 0.94, 680))));
+          const h = Math.max(40, Math.min(vh - safeTop - 16, rect.height || (floatingImportWidgetCompact ? 42 : 76)));
+          const maxDx = Math.max(0, Math.floor((vw - w) / 2) - 8);
+          const minDx = -maxDx;
+          // Basisposition: bottom: 14px -> Oberkante bei (vh - 14 - h)
+          const baseTop = vh - 14 - h;
+          const minDy = Math.round(safeTop - baseTop);
+          const maxDy = 6;
+          rx = Math.min(maxDx, Math.max(minDx, rx));
+          ry = Math.min(maxDy, Math.max(minDy, ry));
+          return { x: rx, y: ry };
+        }
+
+        // In-Flow Admin-Panel (#adminJsonImportPanelBox): Drag-Handle immer im sichtbaren Bereich halten
+        const naturalLeft = rect.left - (Number(cur.x) || 0);
+        const naturalTop = rect.top - (Number(cur.y) || 0);
+        const panelW = Math.max(240, rect.width || vw - 32);
+        const minVisibleX = Math.min(180, Math.round(panelW * 0.4));
+        const rawMinRx = Math.round(minVisibleX - panelW - naturalLeft);
+        const rawMaxRx = Math.round(vw - minVisibleX - naturalLeft);
+        const loRx = Math.min(rawMinRx, rawMaxRx);
+        const hiRx = Math.max(rawMinRx, rawMaxRx);
+        const rawMinRy = Math.round(safeTop - naturalTop);
+        const rawMaxRy = Math.round(vh - 72 - naturalTop);
+        const loRy = Math.min(rawMinRy, rawMaxRy);
+        const hiRy = Math.max(rawMinRy, rawMaxRy);
+        rx = Math.min(hiRx, Math.max(loRx, rx));
+        ry = Math.min(hiRy, Math.max(loRy, ry));
+        return { x: rx, y: ry };
+      }
 
       function applyAdminPanelDragOffsetClient(panelEl, nx, ny) {
         if (!panelEl) return;
         const key = panelEl.id || "default_admin_panel";
-        const rx = Math.round(Number(nx) || 0);
-        const ry = Math.round(Number(ny) || 0);
+        const isExplicitReset = (Number(nx) || 0) === 0 && (Number(ny) || 0) === 0;
+        const clamped = isExplicitReset ? { x: 0, y: 0 } : clampAdminPanelDragOffsetClient(panelEl, nx, ny);
+        const rx = clamped.x;
+        const ry = clamped.y;
         adminPanelDragOffsets.set(key, { x: rx, y: ry });
         if (panelEl.id === "floatingImportStatusWidget") {
           panelEl.style.transform = "translate3d(calc(-50% + " + rx + "px), " + ry + "px, 0)";
+          persistFloatingImportWidgetPrefsClient();
+        } else if (rx === 0 && ry === 0) {
+          panelEl.style.transform = "";
+          panelEl.style.position = "";
+          panelEl.style.zIndex = "";
         } else {
           panelEl.style.transform = "translate3d(" + rx + "px, " + ry + "px, 0)";
           panelEl.style.position = "relative";
-          panelEl.style.zIndex = "75";
+          panelEl.style.zIndex = "210";
+        }
+      }
+
+      function clampAllAdminDraggedPanelsToViewportClient() {
+        const floatEl = document.getElementById("floatingImportStatusWidget");
+        if (floatEl && floatEl.style.display !== "none") {
+          const curFloat = adminPanelDragOffsets.get("floatingImportStatusWidget") || { x: 0, y: 0 };
+          applyAdminPanelDragOffsetClient(floatEl, curFloat.x, curFloat.y);
+        }
+        const adminBox = document.getElementById("adminJsonImportPanelBox");
+        if (adminBox) {
+          const curBox = adminPanelDragOffsets.get("adminJsonImportPanelBox");
+          if (curBox && (curBox.x !== 0 || curBox.y !== 0)) {
+            applyAdminPanelDragOffsetClient(adminBox, curBox.x, curBox.y);
+          }
         }
       }
 
       if (typeof window !== "undefined" && !window._adminGlobalDragListenersBound) {
         window._adminGlobalDragListenersBound = true;
+        const extractClientPoint = (ev, fallbackX, fallbackY) => {
+          if (typeof ev.clientX === "number" && typeof ev.clientY === "number") {
+            return { x: ev.clientX, y: ev.clientY };
+          }
+          const t = (ev.touches && ev.touches[0]) || (ev.changedTouches && ev.changedTouches[0]);
+          if (t) return { x: t.clientX, y: t.clientY };
+          return { x: fallbackX, y: fallbackY };
+        };
         const onMove = (ev) => {
           if (!activeAdminDragState) return;
-          if (ev.buttons !== undefined && ev.buttons === 0 && ev.type === "mousemove") {
-            endGlobalAdminDrag();
-            return;
+          // Nur Events der aktiven Quelle/Pointer-ID verarbeiten (verhindert Doppel-Feuern von pointermove + mousemove + touchmove)
+          if (activeAdminDragState.source === "pointer") {
+            if (ev.type !== "pointermove") return;
+            if (activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) return;
+          } else if (activeAdminDragState.source === "mouse") {
+            if (ev.type !== "mousemove") return;
+            if (ev.buttons !== undefined && ev.buttons === 0) {
+              endGlobalAdminDrag();
+              return;
+            }
+          } else if (activeAdminDragState.source === "touch") {
+            if (ev.type !== "touchmove") return;
+            if (ev.cancelable) ev.preventDefault();
           }
           try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
-          const clientX = typeof ev.clientX === "number" ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : activeAdminDragState.startX);
-          const clientY = typeof ev.clientY === "number" ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : activeAdminDragState.startY);
-          const dx = clientX - activeAdminDragState.startX;
-          const dy = clientY - activeAdminDragState.startY;
-          const livePanel = document.getElementById(activeAdminDragState.panelId) || activeAdminDragState.panelEl;
+          const pt = extractClientPoint(ev, activeAdminDragState.startX, activeAdminDragState.startY);
+          const dx = pt.x - activeAdminDragState.startX;
+          const dy = pt.y - activeAdminDragState.startY;
+          const livePanel = (activeAdminDragState.panelId ? document.getElementById(activeAdminDragState.panelId) : null) || activeAdminDragState.panelEl;
           if (livePanel) {
             applyAdminPanelDragOffsetClient(livePanel, activeAdminDragState.baseX + dx, activeAdminDragState.baseY + dy);
           }
         };
-        const endGlobalAdminDrag = () => {
+        const endGlobalAdminDrag = (ev) => {
           if (!activeAdminDragState) return;
-          const liveHandle = document.getElementById(activeAdminDragState.handleId) || activeAdminDragState.handleEl;
+          if (ev && activeAdminDragState.source === "pointer" && activeAdminDragState.pointerId !== null && ev.pointerId !== undefined && ev.pointerId !== activeAdminDragState.pointerId) {
+            return;
+          }
+          const dragRef = activeAdminDragState;
+          activeAdminDragState = null;
+          const liveHandle = (dragRef.handleId ? document.getElementById(dragRef.handleId) : null) || dragRef.handleEl;
+          const livePanel = (dragRef.panelId ? document.getElementById(dragRef.panelId) : null) || dragRef.panelEl;
           if (liveHandle) {
             liveHandle.style.cursor = "grab";
+            if (dragRef.pointerId !== null && typeof liveHandle.releasePointerCapture === "function") {
+              try {
+                if (typeof liveHandle.hasPointerCapture !== "function" || liveHandle.hasPointerCapture(dragRef.pointerId)) {
+                  liveHandle.releasePointerCapture(dragRef.pointerId);
+                }
+              } catch (_e) {}
+            }
+          }
+          if (livePanel) {
+            livePanel.classList.remove("admin-panel-dragging");
           }
           if (document.body) {
             document.body.classList.remove("is-gesture-dragging");
             document.body.style.userSelect = "";
           }
-          activeAdminDragState = null;
         };
         window.addEventListener("selectstart", (ev) => {
-          if (activeAdminDragState) {
-            if (ev.cancelable) ev.preventDefault();
+          if (activeAdminDragState && ev.cancelable) {
+            ev.preventDefault();
           }
         });
         window.addEventListener("pointermove", onMove, { passive: true });
         window.addEventListener("mousemove", onMove, { passive: true });
-        window.addEventListener("touchmove", onMove, { passive: true });
+        window.addEventListener("touchmove", onMove, { passive: false });
         window.addEventListener("pointerup", endGlobalAdminDrag, { passive: true });
         window.addEventListener("mouseup", endGlobalAdminDrag, { passive: true });
         window.addEventListener("touchend", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("touchcancel", endGlobalAdminDrag, { passive: true });
         window.addEventListener("pointercancel", endGlobalAdminDrag, { passive: true });
-        window.addEventListener("blur", endGlobalAdminDrag, { passive: true });
+        window.addEventListener("blur", () => endGlobalAdminDrag(null), { passive: true });
+        window.addEventListener("keydown", (ev) => {
+          if (ev.key === "Escape" && activeAdminDragState) {
+            endGlobalAdminDrag(null);
+          }
+        });
+        let _adminDragResizeTimer = null;
+        window.addEventListener("resize", () => {
+          if (_adminDragResizeTimer) clearTimeout(_adminDragResizeTimer);
+          _adminDragResizeTimer = setTimeout(clampAllAdminDraggedPanelsToViewportClient, 120);
+        }, { passive: true });
       }
 
       function bindDraggableAdminPanelClient(panelEl, handleEl) {
@@ -61861,11 +62134,12 @@
           const targetEl = rawTarget && typeof rawTarget.closest === "function"
             ? rawTarget
             : (rawTarget && rawTarget.parentElement && typeof rawTarget.parentElement.closest === "function" ? rawTarget.parentElement : null);
-          return Boolean(targetEl && targetEl.closest("button, input, select, a"));
+          return Boolean(targetEl && targetEl.closest("button, input, select, textarea, a, label, [role=\\'button\\']"));
         };
 
-        const startDrag = (ev) => {
-          if (ev.button !== undefined && ev.button !== 0) return;
+        const startDrag = (ev, source) => {
+          if (activeAdminDragState) return;
+          if (source !== "touch" && ev.button !== undefined && ev.button !== 0) return;
           if (isInteractiveChild(ev.target)) return;
           if (ev.cancelable) ev.preventDefault();
           ev.stopPropagation();
@@ -61873,7 +62147,10 @@
           const cur = adminPanelDragOffsets.get(key) || { x: 0, y: 0 };
           const clientX = typeof ev.clientX === "number" ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : 0);
           const clientY = typeof ev.clientY === "number" ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : 0);
+          const pointerId = source === "pointer" && ev.pointerId !== undefined ? ev.pointerId : null;
           activeAdminDragState = {
+            source,
+            pointerId,
             panelId: panelEl.id || "",
             handleId: handleEl.id || "",
             panelEl,
@@ -61884,16 +62161,32 @@
             baseY: cur.y
           };
           handleEl.style.cursor = "grabbing";
+          panelEl.classList.add("admin-panel-dragging");
           if (document.body) {
             document.body.classList.add("is-gesture-dragging");
             document.body.style.userSelect = "none";
           }
-          if (ev.pointerId !== undefined && typeof handleEl.setPointerCapture === "function") {
-            try { handleEl.setPointerCapture(ev.pointerId); } catch (_e) {}
+          if (pointerId !== null && typeof handleEl.setPointerCapture === "function") {
+            try { handleEl.setPointerCapture(pointerId); } catch (_e) {}
           }
         };
 
-        handleEl.addEventListener("pointerdown", startDrag);
+        if (typeof window !== "undefined" && "PointerEvent" in window) {
+          handleEl.addEventListener("pointerdown", (ev) => startDrag(ev, "pointer"));
+          handleEl.addEventListener("lostpointercapture", () => {
+            if (activeAdminDragState && activeAdminDragState.handleEl === handleEl) {
+              handleEl.style.cursor = "grab";
+              panelEl.classList.remove("admin-panel-dragging");
+              if (document.body) {
+                document.body.classList.remove("is-gesture-dragging");
+                document.body.style.userSelect = "";
+              }
+              activeAdminDragState = null;
+            }
+          });
+        } else {
+          handleEl.addEventListener("touchstart", (ev) => startDrag(ev, "touch"), { passive: false });
+        }
         // WICHTIG für Linux Firefox: mousedown muss AUCH dann ev.preventDefault() aufrufen, wenn pointerdown bereits gefeuert hat, da Firefox sonst Text markiert!
         handleEl.addEventListener("mousedown", (ev) => {
           if (ev.button !== undefined && ev.button !== 0) return;
@@ -61901,7 +62194,11 @@
           if (ev.cancelable) ev.preventDefault();
           ev.stopPropagation();
           try { window.getSelection()?.removeAllRanges(); } catch (_e) {}
-          if (!activeAdminDragState) startDrag(ev);
+          if (!activeAdminDragState) startDrag(ev, "mouse");
+        });
+        handleEl.addEventListener("dblclick", (ev) => {
+          if (isInteractiveChild(ev.target)) return;
+          applyAdminPanelDragOffsetClient(panelEl, 0, 0);
         });
         handleEl.addEventListener("dragstart", (ev) => ev.preventDefault());
       }
@@ -61923,6 +62220,20 @@
         if (panelEl) {
           applyAdminPanelDragOffsetClient(panelEl, 0, 0);
         }
+      }
+
+      function resetFloatingImportDragClient() {
+        const widgetEl = document.getElementById("floatingImportStatusWidget");
+        if (widgetEl) {
+          applyAdminPanelDragOffsetClient(widgetEl, 0, 0);
+        }
+      }
+
+      function toggleFloatingImportCompactClient() {
+        floatingImportWidgetCompact = !floatingImportWidgetCompact;
+        persistFloatingImportWidgetPrefsClient();
+        updateFloatingImportStatusBarDom();
+        clampAllAdminDraggedPanelsToViewportClient();
       }
 
       function updateFloatingImportStatusBarDom() {
@@ -61947,21 +62258,23 @@
             widgetEl = document.createElement("div");
             widgetEl.id = "floatingImportStatusWidget";
             widgetEl.style.cssText =
-              "position:fixed;bottom:14px;left:50%;transform:translate3d(-50%,0,0);z-index:9500;" +
+              "position:fixed;bottom:14px;left:50%;transform:translate3d(-50%,0,0);z-index:1540;" +
               "width:min(94vw,680px);background:rgba(15,23,42,0.96);border:1px solid rgba(56,189,248,0.55);" +
               "border-radius:12px;padding:9px 12px;box-shadow:0 12px 32px rgba(0,0,0,0.8);backdrop-filter:blur(10px);";
             document.body.appendChild(widgetEl);
           }
           if (!widgetEl) return;
 
+          const wasHidden = widgetEl.style.display === "none" || !widgetEl.style.display;
           const pct = total > 0 ? ((done / total) * 100).toFixed(1) : "0.0";
           const issuesCount = Number(j.failedCount || 0) + Number(j.uncertainCount || 0);
           widgetEl.style.display = "block";
+          widgetEl.classList.toggle("is-compact", Boolean(floatingImportWidgetCompact));
 
           // WICHTIG: Niemals alle 600ms das komplette innerHTML überschreiben, damit #floatingImportDragHandle beim Ziehen nicht zerstört wird!
           if (!document.getElementById("floatingImportDragHandle")) {
             widgetEl.innerHTML =
-              '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben">' +
+              '<div id="floatingImportDragHandle" class="admin-drag-handle" data-drag-handle="true" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap" title="Ziehen zum Verschieben · Doppelklick = Position zurücksetzen">' +
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:#f8fafc;pointer-events:none">' +
                   '<span style="font-size:11px;padding:2px 6px;border-radius:5px;background:rgba(30,41,59,0.9);border:1px solid rgba(148,163,184,0.28);color:#94a3b8">⠿</span>' +
                   '<span id="floatingImportStateLbl" style="font-weight:900"></span>' +
@@ -61970,13 +62283,15 @@
                   '<span id="floatingImportSeriesTxt" style="color:#38bdf8;font-size:11.5px"></span>' +
                   '<span id="floatingImportIssuesTxt" style="color:#fbbf24;font-size:11.5px;display:none"></span>' +
                 '</div>' +
-                '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                '<div id="floatingImportActionBtns" style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                   '<button type="button" id="floatingImportToggleRunBtn" class="btn amber" style="padding:4px 9px;font-size:11px"></button>' +
-                  '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
-                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
+                  '<button type="button" id="floatingImportOpenBtn" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'backup\\')">📂 Zum Import</button>' +
+                  '<button type="button" id="floatingImportLogsBtn" class="btn" style="padding:4px 9px;font-size:11px" onclick="openAdminTabDirectClient(\\'diaglog\\')">🛠️ Logs</button>' +
+                  '<button type="button" id="floatingImportResetPosBtn" class="btn" style="padding:4px 7px;font-size:11px" onclick="resetFloatingImportDragClient()" title="Position zurücksetzen">↺</button>' +
+                  '<button type="button" id="floatingImportCompactBtn" class="btn" style="padding:4px 7px;font-size:11px" onclick="toggleFloatingImportCompactClient()" title="Kompakt umschalten">▾</button>' +
                 '</div>' +
               '</div>' +
-              '<div style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px;pointer-events:none">' +
+              '<div id="floatingImportProgressBarWrap" style="width:100%;height:5px;background:#1e293b;border-radius:999px;overflow:hidden;margin-top:6px;pointer-events:none">' +
                 '<div id="floatingImportProgressBarFill" style="width:0%;height:100%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
               '</div>';
             const dragHandle = document.getElementById("floatingImportDragHandle");
@@ -61985,37 +62300,60 @@
             }
           }
 
+          const isCompact = Boolean(floatingImportWidgetCompact);
           const stateLbl = document.getElementById("floatingImportStateLbl");
           if (stateLbl) {
             stateLbl.style.color = j.running ? "#38bdf8" : "#fbbf24";
-            stateLbl.textContent = j.running ? "⚡ Backup-Import läuft:" : "⏸️ Import pausiert:";
+            stateLbl.textContent = isCompact
+              ? (j.running ? "⚡" : "⏸️")
+              : (j.running ? "⚡ Backup-Import läuft:" : "⏸️ Import pausiert:");
           }
           const progTxt = document.getElementById("floatingImportProgressTxt");
           if (progTxt) {
-            progTxt.textContent = done.toLocaleString("de-DE") + " / " + total.toLocaleString("de-DE") + " (" + pct + "%)";
+            progTxt.textContent = isCompact
+              ? (pct + "%")
+              : (done.toLocaleString("de-DE") + " / " + total.toLocaleString("de-DE") + " (" + pct + "%)");
           }
           const movTxt = document.getElementById("floatingImportMoviesTxt");
           if (movTxt) {
+            movTxt.style.display = isCompact ? "none" : "inline";
             movTxt.textContent = "🎬 " + Number(j.moviesSaved || 0).toLocaleString("de-DE");
           }
           const serTxt = document.getElementById("floatingImportSeriesTxt");
           if (serTxt) {
+            serTxt.style.display = isCompact ? "none" : "inline";
             serTxt.textContent = "📺 " + Number(j.seriesSaved || 0).toLocaleString("de-DE");
           }
           const issTxt = document.getElementById("floatingImportIssuesTxt");
           if (issTxt) {
-            if (issuesCount > 0) {
+            if (!isCompact && issuesCount > 0) {
               issTxt.style.display = "inline";
               issTxt.textContent = "⚠️ " + issuesCount;
             } else {
               issTxt.style.display = "none";
             }
           }
+          const openBtn = document.getElementById("floatingImportOpenBtn");
+          if (openBtn) openBtn.style.display = isCompact ? "none" : "";
+          const logsBtn = document.getElementById("floatingImportLogsBtn");
+          if (logsBtn) logsBtn.style.display = isCompact ? "none" : "";
+          const resetBtn = document.getElementById("floatingImportResetPosBtn");
+          if (resetBtn) resetBtn.style.display = isCompact ? "none" : "";
+          const progWrap = document.getElementById("floatingImportProgressBarWrap");
+          if (progWrap) progWrap.style.display = isCompact ? "none" : "block";
+          const compactBtn = document.getElementById("floatingImportCompactBtn");
+          if (compactBtn) {
+            compactBtn.textContent = isCompact ? "▴" : "▾";
+            compactBtn.title = isCompact ? "Vollansicht anzeigen" : "Kompakt minimieren";
+          }
           const toggleBtn = document.getElementById("floatingImportToggleRunBtn");
-          if (toggleBtn && toggleBtn._lastRunningState !== Boolean(j.running)) {
+          if (toggleBtn && (toggleBtn._lastRunningState !== Boolean(j.running) || toggleBtn._lastCompactState !== isCompact)) {
             toggleBtn._lastRunningState = Boolean(j.running);
+            toggleBtn._lastCompactState = isCompact;
             toggleBtn.className = "btn " + (j.running ? "amber" : "green");
-            toggleBtn.textContent = j.running ? "⏸️ Pause" : "▶️ Weiter";
+            toggleBtn.textContent = isCompact
+              ? (j.running ? "⏸️" : "▶️")
+              : (j.running ? "⏸️ Pause" : "▶️ Weiter");
             toggleBtn.onclick = () => {
               if (backupImportJob.running) pauseBackupImport();
               else startOrResumeBackupImport();
@@ -62025,13 +62363,57 @@
           if (barFill) {
             barFill.style.width = Math.min(100, Number(pct)) + "%";
           }
+          if (wasHidden) {
+            const curOff = adminPanelDragOffsets.get("floatingImportStatusWidget") || { x: 0, y: 0 };
+            applyAdminPanelDragOffsetClient(widgetEl, curOff.x, curOff.y);
+          }
         } catch (e) {}
       }
 
-      setInterval(updateFloatingImportStatusBarDom, 600);
+      let floatingImportPollTimer = null;
+      function stopFloatingImportStatusPolling() {
+        if (floatingImportPollTimer) {
+          clearInterval(floatingImportPollTimer);
+          floatingImportPollTimer = null;
+        }
+      }
+      function ensureFloatingImportStatusPolling() {
+        const j = backupImportJob;
+        const total = Array.isArray(j?.entries) ? j.entries.length : 0;
+        const done = Number(j?.cursor || 0);
+        const hasActiveOrPausedJob = Boolean(
+          state.isAuthenticated &&
+          state.authUser?.isAdmin &&
+          total > 0 &&
+          (j.running || (done > 0 && done < total))
+        );
+        if (!hasActiveOrPausedJob) {
+          stopFloatingImportStatusPolling();
+          return;
+        }
+        if (!floatingImportPollTimer) {
+          floatingImportPollTimer = setInterval(() => {
+            if (typeof document !== "undefined" && document.hidden) return;
+            const cur = backupImportJob;
+            const curTotal = Array.isArray(cur?.entries) ? cur.entries.length : 0;
+            const curDone = Number(cur?.cursor || 0);
+            const stillActive = Boolean(
+              state.isAuthenticated &&
+              state.authUser?.isAdmin &&
+              curTotal > 0 &&
+              (cur.running || (curDone > 0 && curDone < curTotal))
+            );
+            updateFloatingImportStatusBarDom();
+            if (!stillActive) {
+              stopFloatingImportStatusPolling();
+            }
+          }, 600);
+        }
+      }
 
       function renderBackupImportBoxDom() {
         updateFloatingImportStatusBarDom();
+        ensureFloatingImportStatusPolling();
         const adminPanelBox = document.getElementById("adminJsonImportPanelBox");
         const adminDragHandle = document.getElementById("adminJsonImportDragHandle");
         if (adminPanelBox && adminDragHandle) {
@@ -62302,12 +62684,13 @@
         if (!clientDiagnosticLogState.summaryCounts) {
           clientDiagnosticLogState.summaryCounts = { SUBREQUEST_PAUSE: 0, SKIPPED_HEADER: 0, SKIPPED_JUNK: 0 };
         }
-        const existingIndexByKey = new Map();
-        (clientDiagnosticLogState.logs || []).forEach((l, idx) => {
+        const existingByKey = new Map();
+        (clientDiagnosticLogState.logs || []).forEach((l) => {
           const k = String(l.msgId || "") + "|" + String(l.fileName || "");
-          if (!existingIndexByKey.has(k)) existingIndexByKey.set(k, idx);
+          if (!existingByKey.has(k)) existingByKey.set(k, l);
         });
         const added = [];
+        const prepended = [];
         for (const raw of newEntries) {
           if (!raw) continue;
           const rawMsgVal = raw.msgId ?? raw.msg_id ?? null;
@@ -62348,20 +62731,21 @@
             createdAt: Number(raw.createdAt || raw.created_at || Date.now())
           };
           const dedupeKey = String(entry.msgId || "") + "|" + entry.fileName;
-          if (existingIndexByKey.has(dedupeKey)) {
-            const existingIdx = existingIndexByKey.get(dedupeKey);
-            clientDiagnosticLogState.logs[existingIdx] = {
-              ...clientDiagnosticLogState.logs[existingIdx],
-              ...entry,
-              matchedTitle: isUnmatchedStatus ? null : (entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || null),
-              tmdbId: isUnmatchedStatus ? null : (entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null)
-            };
-            added.push(clientDiagnosticLogState.logs[existingIdx]);
+          const existingRef = existingByKey.get(dedupeKey);
+          if (existingRef) {
+            Object.assign(existingRef, entry, {
+              matchedTitle: isUnmatchedStatus ? null : (entry.matchedTitle || existingRef.matchedTitle || null),
+              tmdbId: isUnmatchedStatus ? null : (entry.tmdbId ?? existingRef.tmdbId ?? null)
+            });
+            added.push(existingRef);
           } else {
-            existingIndexByKey.set(dedupeKey, 0);
-            clientDiagnosticLogState.logs.unshift(entry);
+            existingByKey.set(dedupeKey, entry);
+            prepended.push(entry);
             added.push(entry);
           }
+        }
+        if (prepended.length > 0) {
+          clientDiagnosticLogState.logs = [...prepended.reverse(), ...(clientDiagnosticLogState.logs || [])];
         }
         // Fehler-Priorität im Log-Buffer – OK und SKIPPED_DUPLICATE dürfen niemals echte Problem-Einträge verdrängen
         if (clientDiagnosticLogState.logs.length > 1200) {
@@ -62412,15 +62796,28 @@
 
       function setDiagLogSearchClient(qVal) {
         clientDiagnosticLogState.searchQuery = String(qVal || "");
-        refreshDiagnosticLogMountDom();
+        refreshDiagnosticLogMountDom(true);
       }
 
-      function refreshDiagnosticLogMountDom() {
+      function refreshDiagnosticLogMountDom(preserveSearchFocus = false) {
+        const oldSearchInp = document.getElementById("diagLogSearchInp");
+        const hadFocus = Boolean(preserveSearchFocus || (oldSearchInp && document.activeElement === oldSearchInp));
+        const selStart = oldSearchInp && typeof oldSearchInp.selectionStart === "number" ? oldSearchInp.selectionStart : null;
+        const selEnd = oldSearchInp && typeof oldSearchInp.selectionEnd === "number" ? oldSearchInp.selectionEnd : null;
         const mount = document.getElementById("diagLogStandaloneMount");
         if (mount) {
           mount.outerHTML = renderImportDiagnosticLogBoxHtml();
         } else {
           renderBackupImportBoxDom();
+        }
+        if (hadFocus) {
+          const nextSearchInp = document.getElementById("diagLogSearchInp");
+          if (nextSearchInp) {
+            nextSearchInp.focus();
+            if (selStart !== null && selEnd !== null && typeof nextSearchInp.setSelectionRange === "function") {
+              try { nextSearchInp.setSelectionRange(selStart, selEnd); } catch (_e) {}
+            }
+          }
         }
       }
 
@@ -62710,7 +63107,7 @@
           '</div>' +
 
           '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
-            '<input value="' + esc(clientDiagnosticLogState.searchQuery || "") + '" oninput="setDiagLogSearchClient(this.value)" placeholder="🔍 Suche nach Message-ID (z.B. 118, 303), Dateiname, Suchtitel, TMDb-Match..." style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;background:#161620;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+            '<input id="diagLogSearchInp" value="' + esc(clientDiagnosticLogState.searchQuery || "") + '" oninput="setDiagLogSearchClient(this.value)" placeholder="🔍 Suche nach Message-ID (z.B. 118, 303), Dateiname, Suchtitel, TMDb-Match..." style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;background:#161620;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
           '</div>' +
 
           (filtered.length === 0 ? (
@@ -62720,7 +63117,7 @@
           ) : (
             '<div style="max-height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">' +
               filtered.slice(0, 180).map((item) => {
-                const origIdx = logs.indexOf(item);
+                const origIdx = (clientDiagnosticLogState.logs || []).indexOf(item);
                 const badge = statusBadgeMap[item.status] || { bg: "rgba(148,163,184,0.2)", col: "#cbd5e1", label: item.status };
                 const isFixable = item.status === "TMDB_NOT_FOUND" || item.status === "CONFLICT_?" || item.status === "CONFLICT" || item.status === "API_ERROR";
                 const isSynthetic900m = Number(item.tmdbId || 0) >= 900000000;
@@ -63556,6 +63953,10 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "create", targetChatId: targetUid, name: name.trim(), playlistMode: defaultMode })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist konnte nicht angelegt werden."));
+          return;
+        }
         if (r?.folder?.id) {
           state.adminEditingFolderId = r.folder.id;
         }
@@ -63564,11 +63965,15 @@
       }
 
       async function adminTogglePlaylist(targetUid, folderId) {
-        await apiFetchJson(API_BASE + "/admin/playlists", {
+        const r = await apiFetchJson(API_BASE + "/admin/playlists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "toggle", targetChatId: targetUid, folderId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist-Status konnte nicht geändert werden."));
+          return;
+        }
         loadAdminPanelView();
       }
 
@@ -63578,6 +63983,7 @@
         const limit = 25;
         let hasMore = true;
         let totalSynced = 0;
+        let abortedOnError = false;
 
         if (progBox) {
           progBox.style.display = "block";
@@ -63597,7 +64003,11 @@
                 limit
               })
             });
-            if (!r || !r.ok) break;
+            if (!r || !r.ok) {
+              abortedOnError = true;
+              showHudToast("⚠️ Modus-Wechsel abgebrochen: " + (r?.error || "Serverfehler"));
+              break;
+            }
             totalSynced += Number(r.syncedVipCount || 0);
             hasMore = Boolean(r.hasMore);
             offset = Number(r.nextOffset || (offset + limit));
@@ -63615,8 +64025,10 @@
             }
           }
           clearClientMediaCaches();
-          const modeLabel = nextMode === "vip_stream" ? "🌟 VIP-Stream-Playlist" : nextMode === "watchlist" ? "🔖 Merkliste" : "⚡ VIP-Stream + Merkliste";
-          showHudToast("✅ Modus gesetzt: " + modeLabel + " (" + totalSynced + " Einträge in 25er-Batches verarbeitet)");
+          if (!abortedOnError) {
+            const modeLabel = nextMode === "vip_stream" ? "🌟 VIP-Stream-Playlist" : nextMode === "watchlist" ? "🔖 Merkliste" : "⚡ VIP-Stream + Merkliste";
+            showHudToast("✅ Modus gesetzt: " + modeLabel + " (" + totalSynced + " Einträge in 25er-Batches verarbeitet)");
+          }
           await loadAdminPanelView();
         } finally {
           setBusyState(false);
@@ -63633,6 +64045,7 @@
         const limit = 25;
         let hasMore = true;
         let totalCopied = 0;
+        let abortedOnError = false;
 
         if (progBox) {
           progBox.style.display = "block";
@@ -63655,6 +64068,7 @@
             })
           });
           if (!r || !r.ok) {
+            abortedOnError = true;
             showHudToast("⚠️ Batch-Kopie gestoppt bei #" + offset + ": " + (r?.error || "Fehler"));
             break;
           }
@@ -63677,7 +64091,9 @@
         }
 
         clearClientMediaCaches();
-        showHudToast("✅ Playlist komplett kopiert (" + totalCopied + " Titel in 25er-Batches übertragen)!");
+        if (!abortedOnError) {
+          showHudToast("✅ Playlist komplett kopiert (" + totalCopied + " Titel in 25er-Batches übertragen)!");
+        }
         await loadAdminPanelView();
       }
 
@@ -63703,6 +64119,8 @@
         });
         if (r && r.ok) {
           loadAdminPanelView();
+        } else {
+          showHudToast("⚠️ " + (r?.error || "Reihenfolge konnte nicht geändert werden."));
         }
       }
 
@@ -63715,6 +64133,8 @@
         if (r && r.ok) {
           showHudToast("➖ Titel nur aus Playlist entfernt (bleibt in D1 erhalten)");
           loadAdminPanelView();
+        } else {
+          showHudToast("⚠️ " + (r?.error || "Titel konnte nicht aus Playlist entfernt werden."));
         }
       }
 
@@ -63768,6 +64188,7 @@
         let hasMore = true;
         let totalAdded = 0;
         let lastTotalInPlaylist = 0;
+        let abortedOnError = false;
 
         if (progBox) {
           progBox.style.display = "block";
@@ -63788,6 +64209,7 @@
               })
             });
             if (!r || !r.ok) {
+              abortedOnError = true;
               showHudToast("⚠️ " + (r?.error || "D1-Synchronisation fehlgeschlagen."));
               break;
             }
@@ -63810,7 +64232,9 @@
           }
           clearClientMediaCaches();
           state.adminPlaylistTargetChatId = "bot_vip";
-          showHudToast("✅ D1-Bot-Sync abgeschlossen: " + lastTotalInPlaylist + " Titel in Bot-VIP-Playlist (" + totalAdded + " neu in 25er-Batches verknüpft)");
+          if (!abortedOnError) {
+            showHudToast("✅ D1-Bot-Sync abgeschlossen: " + lastTotalInPlaylist + " Titel in Bot-VIP-Playlist (" + totalAdded + " neu in 25er-Batches verknüpft)");
+          }
           await loadAdminPanelView();
         } finally {
           setBusyState(false);
@@ -63875,11 +64299,15 @@
       async function adminRenamePlaylist(targetUid, folderId, currentName) {
         const nextName = await showCustomPrompt("✏️ Neuer Custom Name für diese Playlist:", currentName || "");
         if (!nextName || !nextName.trim()) return;
-        await apiFetchJson(API_BASE + "/admin/playlists", {
+        const r = await apiFetchJson(API_BASE + "/admin/playlists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "rename", targetChatId: targetUid, folderId, name: nextName.trim() })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist konnte nicht umbenannt werden."));
+          return;
+        }
         showHudToast("✅ Playlist umbenannt");
         loadAdminPanelView();
       }
@@ -63887,14 +64315,18 @@
       async function adminDeletePlaylist(targetUid, folderId, currentName) {
         const ok = await showCustomConfirm('Playlist "' + (currentName || folderId) + '" (User ' + targetUid + ') samt aller Einträge wirklich löschen?', '🗑️ Löschen');
         if (!ok) return;
-        if (String(state.adminEditingFolderId) === String(folderId)) {
-          state.adminEditingFolderId = "";
-        }
-        await apiFetchJson(API_BASE + "/admin/playlists", {
+        const r = await apiFetchJson(API_BASE + "/admin/playlists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "delete", targetChatId: targetUid, folderId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist konnte nicht gelöscht werden."));
+          return;
+        }
+        if (String(state.adminEditingFolderId) === String(folderId)) {
+          state.adminEditingFolderId = "";
+        }
         showHudToast("🗑️ Playlist gelöscht");
         loadAdminPanelView();
       }
@@ -64022,6 +64454,12 @@
           });
           const statusEl = document.getElementById("adminBotSetupStatusMsg");
           if (r && r.ok) {
+            if (window._lastAdminOverviewCache) {
+              window._lastAdminOverviewCache.botSetup = {
+                ...(window._lastAdminOverviewCache.botSetup || {}),
+                webAppUrl: r.webAppUrl || webAppUrl
+              };
+            }
             if (statusEl) {
               statusEl.style.display = "block";
               statusEl.style.color = "#34d399";
@@ -64606,11 +65044,13 @@
         }
       }
 
+      let _adminPanelLoadSeq = 0;
       async function loadAdminPanelView(forceNetworkRefresh = false) {
         if (!state.isAuthenticated || !state.authUser?.isAdmin) {
           showHudToast("⛔ Zugriff verweigert: Nur für autorisierte Administratoren.");
           return;
         }
+        const myLoadSeq = ++_adminPanelLoadSeq;
         const wasAlreadyInAdmin = state.currentView === "admin";
         state.currentView = "admin";
         updateFloatingImportStatusBarDom();
@@ -64665,6 +65105,10 @@
             } finally {
               window._adminPriorityRequestInFlight = false;
             }
+          }
+          // Veraltete Antworten nach schnellem Tab-Wechsel oder Verlassen des Admin-Bereichs verwerfen
+          if (myLoadSeq !== _adminPanelLoadSeq || state.currentView !== "admin") {
+            return;
           }
 
           if (!r || !r.ok) {
@@ -65530,7 +65974,11 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ telegramId: targetTelegramId, isVip: Boolean(nextVipState) })
         });
-        if (r && r.user && state.authUser && String(state.authUser.telegramId) === String(targetTelegramId)) {
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "VIP-Status konnte nicht gespeichert werden."));
+          return;
+        }
+        if (r.user && state.authUser && String(state.authUser.telegramId) === String(targetTelegramId)) {
           state.authUser = r.user;
           updateSyncBadge();
         }
@@ -65572,11 +66020,15 @@
       async function deleteAdminMediaCrud(typeCode, tmdbId) {
         const ok = await showCustomConfirm("Diesen Titel (#" + tmdbId + ") wirklich aus D1 löschen?", "🗑️ Löschen");
         if (!ok) return;
-        await apiFetchJson(API_BASE + "/admin/media", {
+        const r = await apiFetchJson(API_BASE + "/admin/media", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "delete", typeCode, tmdbId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Löschen aus D1 fehlgeschlagen."));
+          return;
+        }
         clearClientMediaCaches();
         showHudToast("🗑️ Eintrag #" + tmdbId + " gelöscht");
         loadAdminPanelView();
@@ -70197,7 +70649,7 @@
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
             listAllUsersFromD1(env).catch(() => []),
             listAllMediaFromD1(env, mediaType).catch(() => []),
-            getImportQueueStatsFromD1(env).catch(() => ({ pending: 0, processing: 0, done: 0, failed: 0, total: 0 })),
+            getImportQueueStatsFromD1(env).catch(() => ({ pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 })),
             getFolders(env, playlistChatId).catch(() => []),
             getSavedList(env, playlistChatId).catch(() => []),
             listMediaReportsFromD1(env, "all").catch(() => []),
@@ -71515,17 +71967,27 @@
             cached.external_poster_url = externalPosterUrl;
             setCachedTmdb(cacheKey, cached);
           }
-          const memKey = `d1_${typeCode === "s" ? "series" : "movie"}_${tmdbId}`;
-          const memObj = memoryFallback.get(memKey);
-          if (memObj) {
-            memObj.poster_path = posterPath;
-            memObj.external_poster_url = externalPosterUrl;
-            memoryFallback.set(memKey, memObj);
+          for (const mk of [`d1_${typeCode === "s" ? "series" : "movie"}_${tmdbId}`, `d1_catalog_${typeCode === "s" ? "series" : "movie"}_${tmdbId}`]) {
+            const memObj = memoryFallback.get(mk);
+            if (memObj) {
+              memObj.poster_path = posterPath;
+              memObj.external_poster_url = externalPosterUrl;
+              memoryFallback.set(mk, memObj);
+            }
+          }
+          const posterLookup = memoryFallback.get("d1_poster_lookup_cache");
+          if (posterLookup instanceof Map) {
+            const resolvedNewPoster = resolvePosterUrl(posterPath, "w185", externalPosterUrl);
+            if (resolvedNewPoster) {
+              posterLookup.set(`${typeCode}_${tmdbId}`, resolvedNewPoster);
+            } else {
+              posterLookup.delete(`${typeCode}_${tmdbId}`);
+            }
           }
           memoryFallback.delete(`d1_vip_discover_rows_${typeCode}`);
           memoryFallback.delete(`d1_admin_media_list_cache_${typeCode}`);
 
-          await backfillMediaPosterInLists(env, typeCode, tmdbId, posterPath, externalPosterUrl, auth.chatId || null);
+          await backfillMediaPosterInLists(env, typeCode, tmdbId, posterPath, externalPosterUrl, auth.chatId || null, true);
           return new Response(JSON.stringify({
             ok: true,
             tmdbId,
@@ -73465,7 +73927,7 @@
           try {
             const setWebhookPayload = {
               url: webhookUrl,
-              allowed_updates: ["message", "callback_query", "inline_query"]
+              allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
             };
             if (customSecretToken) {
               setWebhookPayload.secret_token = customSecretToken;
@@ -74234,7 +74696,14 @@
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
-            if (env.TELEGRAM_BOT_TOKEN && customToken === String(env.TELEGRAM_BOT_TOKEN).trim()) {
+            const mainBotToken = String(env.TELEGRAM_BOT_TOKEN || "").trim();
+            const matchesMainBot = Boolean(
+              mainBotToken &&
+              (typeof timingSafeEqualStr === "function"
+                ? timingSafeEqualStr(customToken, mainBotToken)
+                : customToken === mainBotToken)
+            );
+            if (matchesMainBot) {
               return new Response(JSON.stringify({ ok: false, error: "Bitte nutze /webhook mit Secret-Header für den Haupt-Bot." }), {
                 status: 403,
                 headers: { "Content-Type": "application/json; charset=utf-8" }

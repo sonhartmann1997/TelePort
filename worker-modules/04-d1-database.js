@@ -3244,34 +3244,72 @@
         }
       }
     }
+    const candidateSeriesEntries = [];
+    const candidateMovieEntries = [];
     for (const [k, v] of Array.from(memoryFallback.entries())) {
       if ((k.startsWith("d1_catalog_series_") || k.startsWith("d1_series_")) && v && v.id) {
         const sid = Number(v.id);
         if (sid && !validSeriesIdsInMem.has(sid)) {
-          let hasDbEps = false;
-          if (db) {
-            const row = await db.prepare("SELECT 1 AS ok FROM episode_files WHERE series_id = ?1 AND telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 1").bind(sid).first().catch(() => null);
-            hasDbEps = Boolean(row?.ok);
-          }
-          if (!hasDbEps) {
-            memoryFallback.delete(k);
-            memoryFallback.delete(`d1_series_best_quality_${sid}`);
-            removedSeriesCount++;
-          }
+          candidateSeriesEntries.push({ key: k, id: sid });
         }
       } else if ((k.startsWith("d1_catalog_movie_") || k.startsWith("d1_movie_")) && !k.startsWith("d1_movie_files_") && v && v.id) {
         const mid = Number(v.id);
         if (mid && !validMovieIdsInMem.has(mid)) {
-          let hasDbMov = false;
-          if (db) {
-            const row = await db.prepare("SELECT 1 AS ok FROM movie_files WHERE movie_id = ?1 AND telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 1").bind(mid).first().catch(() => null);
-            hasDbMov = Boolean(row?.ok);
-          }
-          if (!hasDbMov) {
-            memoryFallback.delete(k);
-            removedSeriesCount++;
+          candidateMovieEntries.push({ key: k, id: mid });
+        }
+      }
+    }
+
+    const dbExistingSeriesIds = new Set();
+    const dbExistingMovieIds = new Set();
+    if (db && candidateSeriesEntries.length > 0) {
+      const uniqSids = [...new Set(candidateSeriesEntries.map(e => e.id))];
+      for (let i = 0; i < uniqSids.length; i += 80) {
+        const chunk = uniqSids.slice(i, i + 80);
+        const ph = chunk.map((_, idx) => `?${idx + 1}`).join(",");
+        trackStat("d1Reads");
+        const res = await db
+          .prepare(`SELECT DISTINCT series_id FROM episode_files WHERE series_id IN (${ph}) AND telegram_file_id IS NOT NULL AND telegram_file_id != ''`)
+          .bind(...chunk)
+          .all()
+          .catch(() => null);
+        if (Array.isArray(res?.results)) {
+          for (const r of res.results) {
+            if (r?.series_id) dbExistingSeriesIds.add(Number(r.series_id));
           }
         }
+      }
+    }
+    if (db && candidateMovieEntries.length > 0) {
+      const uniqMids = [...new Set(candidateMovieEntries.map(e => e.id))];
+      for (let i = 0; i < uniqMids.length; i += 80) {
+        const chunk = uniqMids.slice(i, i + 80);
+        const ph = chunk.map((_, idx) => `?${idx + 1}`).join(",");
+        trackStat("d1Reads");
+        const res = await db
+          .prepare(`SELECT DISTINCT movie_id FROM movie_files WHERE movie_id IN (${ph}) AND telegram_file_id IS NOT NULL AND telegram_file_id != ''`)
+          .bind(...chunk)
+          .all()
+          .catch(() => null);
+        if (Array.isArray(res?.results)) {
+          for (const r of res.results) {
+            if (r?.movie_id) dbExistingMovieIds.add(Number(r.movie_id));
+          }
+        }
+      }
+    }
+
+    for (const item of candidateSeriesEntries) {
+      if (!dbExistingSeriesIds.has(item.id)) {
+        memoryFallback.delete(item.key);
+        memoryFallback.delete(`d1_series_best_quality_${item.id}`);
+        removedSeriesCount++;
+      }
+    }
+    for (const item of candidateMovieEntries) {
+      if (!dbExistingMovieIds.has(item.id)) {
+        memoryFallback.delete(item.key);
+        removedSeriesCount++;
       }
     }
     return removedSeriesCount;

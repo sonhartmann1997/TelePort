@@ -3567,7 +3567,7 @@
   // --- Haupt-Router für Telegram Webhook Updates ---
   async function handleUpdate(env, update) {
     const { sendMessage, editMessageText, answerCallbackQuery, deleteMessage, editMessageReplyMarkup, editInlineMessageText, getChatMember } = tgApi(env);
-    const activeSessionChatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id || null;
+    const activeSessionChatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id || update?.callback_query?.from?.id || null;
 
     try {
       // 0. Inline-Queries (für Gruppen & Kanäle: @BotName Suchbegriff / @BotName f / @BotName s)

@@ -71,12 +71,13 @@
         if (!clientDiagnosticLogState.summaryCounts) {
           clientDiagnosticLogState.summaryCounts = { SUBREQUEST_PAUSE: 0, SKIPPED_HEADER: 0, SKIPPED_JUNK: 0 };
         }
-        const existingIndexByKey = new Map();
-        (clientDiagnosticLogState.logs || []).forEach((l, idx) => {
+        const existingByKey = new Map();
+        (clientDiagnosticLogState.logs || []).forEach((l) => {
           const k = String(l.msgId || "") + "|" + String(l.fileName || "");
-          if (!existingIndexByKey.has(k)) existingIndexByKey.set(k, idx);
+          if (!existingByKey.has(k)) existingByKey.set(k, l);
         });
         const added = [];
+        const prepended = [];
         for (const raw of newEntries) {
           if (!raw) continue;
           const rawMsgVal = raw.msgId ?? raw.msg_id ?? null;
@@ -117,20 +118,21 @@
             createdAt: Number(raw.createdAt || raw.created_at || Date.now())
           };
           const dedupeKey = String(entry.msgId || "") + "|" + entry.fileName;
-          if (existingIndexByKey.has(dedupeKey)) {
-            const existingIdx = existingIndexByKey.get(dedupeKey);
-            clientDiagnosticLogState.logs[existingIdx] = {
-              ...clientDiagnosticLogState.logs[existingIdx],
-              ...entry,
-              matchedTitle: isUnmatchedStatus ? null : (entry.matchedTitle || clientDiagnosticLogState.logs[existingIdx]?.matchedTitle || null),
-              tmdbId: isUnmatchedStatus ? null : (entry.tmdbId ?? clientDiagnosticLogState.logs[existingIdx]?.tmdbId ?? null)
-            };
-            added.push(clientDiagnosticLogState.logs[existingIdx]);
+          const existingRef = existingByKey.get(dedupeKey);
+          if (existingRef) {
+            Object.assign(existingRef, entry, {
+              matchedTitle: isUnmatchedStatus ? null : (entry.matchedTitle || existingRef.matchedTitle || null),
+              tmdbId: isUnmatchedStatus ? null : (entry.tmdbId ?? existingRef.tmdbId ?? null)
+            });
+            added.push(existingRef);
           } else {
-            existingIndexByKey.set(dedupeKey, 0);
-            clientDiagnosticLogState.logs.unshift(entry);
+            existingByKey.set(dedupeKey, entry);
+            prepended.push(entry);
             added.push(entry);
           }
+        }
+        if (prepended.length > 0) {
+          clientDiagnosticLogState.logs = [...prepended.reverse(), ...(clientDiagnosticLogState.logs || [])];
         }
         // Fehler-Priorität im Log-Buffer – OK und SKIPPED_DUPLICATE dürfen niemals echte Problem-Einträge verdrängen
         if (clientDiagnosticLogState.logs.length > 1200) {
@@ -181,15 +183,28 @@
 
       function setDiagLogSearchClient(qVal) {
         clientDiagnosticLogState.searchQuery = String(qVal || "");
-        refreshDiagnosticLogMountDom();
+        refreshDiagnosticLogMountDom(true);
       }
 
-      function refreshDiagnosticLogMountDom() {
+      function refreshDiagnosticLogMountDom(preserveSearchFocus = false) {
+        const oldSearchInp = document.getElementById("diagLogSearchInp");
+        const hadFocus = Boolean(preserveSearchFocus || (oldSearchInp && document.activeElement === oldSearchInp));
+        const selStart = oldSearchInp && typeof oldSearchInp.selectionStart === "number" ? oldSearchInp.selectionStart : null;
+        const selEnd = oldSearchInp && typeof oldSearchInp.selectionEnd === "number" ? oldSearchInp.selectionEnd : null;
         const mount = document.getElementById("diagLogStandaloneMount");
         if (mount) {
           mount.outerHTML = renderImportDiagnosticLogBoxHtml();
         } else {
           renderBackupImportBoxDom();
+        }
+        if (hadFocus) {
+          const nextSearchInp = document.getElementById("diagLogSearchInp");
+          if (nextSearchInp) {
+            nextSearchInp.focus();
+            if (selStart !== null && selEnd !== null && typeof nextSearchInp.setSelectionRange === "function") {
+              try { nextSearchInp.setSelectionRange(selStart, selEnd); } catch (_e) {}
+            }
+          }
         }
       }
 
@@ -479,7 +494,7 @@
           '</div>' +
 
           '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
-            '<input value="' + esc(clientDiagnosticLogState.searchQuery || "") + '" oninput="setDiagLogSearchClient(this.value)" placeholder="🔍 Suche nach Message-ID (z.B. 118, 303), Dateiname, Suchtitel, TMDb-Match..." style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;background:#161620;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
+            '<input id="diagLogSearchInp" value="' + esc(clientDiagnosticLogState.searchQuery || "") + '" oninput="setDiagLogSearchClient(this.value)" placeholder="🔍 Suche nach Message-ID (z.B. 118, 303), Dateiname, Suchtitel, TMDb-Match..." style="flex:1;min-width:240px;padding:8px 10px;border-radius:6px;background:#161620;color:#fff;border:1px solid rgba(255,255,255,0.2);font-size:12px" />' +
           '</div>' +
 
           (filtered.length === 0 ? (
@@ -489,7 +504,7 @@
           ) : (
             '<div style="max-height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:6px">' +
               filtered.slice(0, 180).map((item) => {
-                const origIdx = logs.indexOf(item);
+                const origIdx = (clientDiagnosticLogState.logs || []).indexOf(item);
                 const badge = statusBadgeMap[item.status] || { bg: "rgba(148,163,184,0.2)", col: "#cbd5e1", label: item.status };
                 const isFixable = item.status === "TMDB_NOT_FOUND" || item.status === "CONFLICT_?" || item.status === "CONFLICT" || item.status === "API_ERROR";
                 const isSynthetic900m = Number(item.tmdbId || 0) >= 900000000;
@@ -1325,6 +1340,10 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "create", targetChatId: targetUid, name: name.trim(), playlistMode: defaultMode })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist konnte nicht angelegt werden."));
+          return;
+        }
         if (r?.folder?.id) {
           state.adminEditingFolderId = r.folder.id;
         }
@@ -1333,11 +1352,15 @@
       }
 
       async function adminTogglePlaylist(targetUid, folderId) {
-        await apiFetchJson(API_BASE + "/admin/playlists", {
+        const r = await apiFetchJson(API_BASE + "/admin/playlists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "toggle", targetChatId: targetUid, folderId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist-Status konnte nicht geändert werden."));
+          return;
+        }
         loadAdminPanelView();
       }
 
@@ -1347,6 +1370,7 @@
         const limit = 25;
         let hasMore = true;
         let totalSynced = 0;
+        let abortedOnError = false;
 
         if (progBox) {
           progBox.style.display = "block";
@@ -1366,7 +1390,11 @@
                 limit
               })
             });
-            if (!r || !r.ok) break;
+            if (!r || !r.ok) {
+              abortedOnError = true;
+              showHudToast("⚠️ Modus-Wechsel abgebrochen: " + (r?.error || "Serverfehler"));
+              break;
+            }
             totalSynced += Number(r.syncedVipCount || 0);
             hasMore = Boolean(r.hasMore);
             offset = Number(r.nextOffset || (offset + limit));
@@ -1384,8 +1412,10 @@
             }
           }
           clearClientMediaCaches();
-          const modeLabel = nextMode === "vip_stream" ? "🌟 VIP-Stream-Playlist" : nextMode === "watchlist" ? "🔖 Merkliste" : "⚡ VIP-Stream + Merkliste";
-          showHudToast("✅ Modus gesetzt: " + modeLabel + " (" + totalSynced + " Einträge in 25er-Batches verarbeitet)");
+          if (!abortedOnError) {
+            const modeLabel = nextMode === "vip_stream" ? "🌟 VIP-Stream-Playlist" : nextMode === "watchlist" ? "🔖 Merkliste" : "⚡ VIP-Stream + Merkliste";
+            showHudToast("✅ Modus gesetzt: " + modeLabel + " (" + totalSynced + " Einträge in 25er-Batches verarbeitet)");
+          }
           await loadAdminPanelView();
         } finally {
           setBusyState(false);
@@ -1402,6 +1432,7 @@
         const limit = 25;
         let hasMore = true;
         let totalCopied = 0;
+        let abortedOnError = false;
 
         if (progBox) {
           progBox.style.display = "block";
@@ -1424,6 +1455,7 @@
             })
           });
           if (!r || !r.ok) {
+            abortedOnError = true;
             showHudToast("⚠️ Batch-Kopie gestoppt bei #" + offset + ": " + (r?.error || "Fehler"));
             break;
           }
@@ -1446,7 +1478,9 @@
         }
 
         clearClientMediaCaches();
-        showHudToast("✅ Playlist komplett kopiert (" + totalCopied + " Titel in 25er-Batches übertragen)!");
+        if (!abortedOnError) {
+          showHudToast("✅ Playlist komplett kopiert (" + totalCopied + " Titel in 25er-Batches übertragen)!");
+        }
         await loadAdminPanelView();
       }
 
@@ -1472,6 +1506,8 @@
         });
         if (r && r.ok) {
           loadAdminPanelView();
+        } else {
+          showHudToast("⚠️ " + (r?.error || "Reihenfolge konnte nicht geändert werden."));
         }
       }
 
@@ -1484,6 +1520,8 @@
         if (r && r.ok) {
           showHudToast("➖ Titel nur aus Playlist entfernt (bleibt in D1 erhalten)");
           loadAdminPanelView();
+        } else {
+          showHudToast("⚠️ " + (r?.error || "Titel konnte nicht aus Playlist entfernt werden."));
         }
       }
 
@@ -1537,6 +1575,7 @@
         let hasMore = true;
         let totalAdded = 0;
         let lastTotalInPlaylist = 0;
+        let abortedOnError = false;
 
         if (progBox) {
           progBox.style.display = "block";
@@ -1557,6 +1596,7 @@
               })
             });
             if (!r || !r.ok) {
+              abortedOnError = true;
               showHudToast("⚠️ " + (r?.error || "D1-Synchronisation fehlgeschlagen."));
               break;
             }
@@ -1579,7 +1619,9 @@
           }
           clearClientMediaCaches();
           state.adminPlaylistTargetChatId = "bot_vip";
-          showHudToast("✅ D1-Bot-Sync abgeschlossen: " + lastTotalInPlaylist + " Titel in Bot-VIP-Playlist (" + totalAdded + " neu in 25er-Batches verknüpft)");
+          if (!abortedOnError) {
+            showHudToast("✅ D1-Bot-Sync abgeschlossen: " + lastTotalInPlaylist + " Titel in Bot-VIP-Playlist (" + totalAdded + " neu in 25er-Batches verknüpft)");
+          }
           await loadAdminPanelView();
         } finally {
           setBusyState(false);
@@ -1644,11 +1686,15 @@
       async function adminRenamePlaylist(targetUid, folderId, currentName) {
         const nextName = await showCustomPrompt("✏️ Neuer Custom Name für diese Playlist:", currentName || "");
         if (!nextName || !nextName.trim()) return;
-        await apiFetchJson(API_BASE + "/admin/playlists", {
+        const r = await apiFetchJson(API_BASE + "/admin/playlists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "rename", targetChatId: targetUid, folderId, name: nextName.trim() })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist konnte nicht umbenannt werden."));
+          return;
+        }
         showHudToast("✅ Playlist umbenannt");
         loadAdminPanelView();
       }
@@ -1656,14 +1702,18 @@
       async function adminDeletePlaylist(targetUid, folderId, currentName) {
         const ok = await showCustomConfirm('Playlist "' + (currentName || folderId) + '" (User ' + targetUid + ') samt aller Einträge wirklich löschen?', '🗑️ Löschen');
         if (!ok) return;
-        if (String(state.adminEditingFolderId) === String(folderId)) {
-          state.adminEditingFolderId = "";
-        }
-        await apiFetchJson(API_BASE + "/admin/playlists", {
+        const r = await apiFetchJson(API_BASE + "/admin/playlists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "delete", targetChatId: targetUid, folderId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Playlist konnte nicht gelöscht werden."));
+          return;
+        }
+        if (String(state.adminEditingFolderId) === String(folderId)) {
+          state.adminEditingFolderId = "";
+        }
         showHudToast("🗑️ Playlist gelöscht");
         loadAdminPanelView();
       }
@@ -1791,6 +1841,12 @@
           });
           const statusEl = document.getElementById("adminBotSetupStatusMsg");
           if (r && r.ok) {
+            if (window._lastAdminOverviewCache) {
+              window._lastAdminOverviewCache.botSetup = {
+                ...(window._lastAdminOverviewCache.botSetup || {}),
+                webAppUrl: r.webAppUrl || webAppUrl
+              };
+            }
             if (statusEl) {
               statusEl.style.display = "block";
               statusEl.style.color = "#34d399";
@@ -2375,11 +2431,13 @@
         }
       }
 
+      let _adminPanelLoadSeq = 0;
       async function loadAdminPanelView(forceNetworkRefresh = false) {
         if (!state.isAuthenticated || !state.authUser?.isAdmin) {
           showHudToast("⛔ Zugriff verweigert: Nur für autorisierte Administratoren.");
           return;
         }
+        const myLoadSeq = ++_adminPanelLoadSeq;
         const wasAlreadyInAdmin = state.currentView === "admin";
         state.currentView = "admin";
         updateFloatingImportStatusBarDom();
@@ -2434,6 +2492,10 @@
             } finally {
               window._adminPriorityRequestInFlight = false;
             }
+          }
+          // Veraltete Antworten nach schnellem Tab-Wechsel oder Verlassen des Admin-Bereichs verwerfen
+          if (myLoadSeq !== _adminPanelLoadSeq || state.currentView !== "admin") {
+            return;
           }
 
           if (!r || !r.ok) {
@@ -3299,7 +3361,11 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ telegramId: targetTelegramId, isVip: Boolean(nextVipState) })
         });
-        if (r && r.user && state.authUser && String(state.authUser.telegramId) === String(targetTelegramId)) {
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "VIP-Status konnte nicht gespeichert werden."));
+          return;
+        }
+        if (r.user && state.authUser && String(state.authUser.telegramId) === String(targetTelegramId)) {
           state.authUser = r.user;
           updateSyncBadge();
         }
@@ -3341,11 +3407,15 @@
       async function deleteAdminMediaCrud(typeCode, tmdbId) {
         const ok = await showCustomConfirm("Diesen Titel (#" + tmdbId + ") wirklich aus D1 löschen?", "🗑️ Löschen");
         if (!ok) return;
-        await apiFetchJson(API_BASE + "/admin/media", {
+        const r = await apiFetchJson(API_BASE + "/admin/media", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "delete", typeCode, tmdbId })
         });
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Löschen aus D1 fehlgeschlagen."));
+          return;
+        }
         clearClientMediaCaches();
         showHudToast("🗑️ Eintrag #" + tmdbId + " gelöscht");
         loadAdminPanelView();
