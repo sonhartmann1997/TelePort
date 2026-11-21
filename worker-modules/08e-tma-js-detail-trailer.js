@@ -834,7 +834,10 @@
         return html;
       }
 
+      let catalogViewReqSeq = 0;
+
       async function loadDiscover(type, genreId, mode, sort, bypass = false, jumpToCards = false, targetPage = 1) {
+        const myReqSeq = ++catalogViewReqSeq;
         state.type = type; state.genreId = genreId; state.mode = mode; state.sort = sort;
         const pageNum = Math.max(1, Number(targetPage) || 1);
         state.startPage = pageNum;
@@ -867,6 +870,7 @@
         }
         try {
           const res = await apiFetchJson(discoverUrl);
+          if (myReqSeq !== catalogViewReqSeq) return;
           state.items = (res.items || []).map(it => ({ ...it, _pageNum: pageNum }));
           state.totalPages = Math.max(1, Number(res.totalPages) || 1);
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
@@ -890,7 +894,7 @@
           if (state.sidebarOpen) renderFilterSidebarContent(false);
           if (pageNum === 1) rebuildHeroSlides(state.items);
           if (state.items.length === 0 && res.rawCount > 0 && !bypass) {
-            root.innerHTML = '<div class="section">' + buildFloatingFilterBarHtml() + '<div class="panel-box"><div class="section-title">⚠️ Alle ' + res.rawCount + ' Treffer wurden durch deine aktiven Filter ausgeblendet</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn red" onclick="loadDiscover(\\''+type+'\\',\\''+genreId+'\\',\\''+mode+'\\',\\''+sort+'\\',true,false)">🔓 Filter hier temporär deaktivieren</button><button class="btn" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')">🗑️ Alle Filter zurücksetzen</button></div></div></div>';
+            root.innerHTML = '<div class="section">' + buildFloatingFilterBarHtml() + '<div class="panel-box"><div class="section-title">⚠️ Alle ' + res.rawCount + ' Treffer wurden durch deine aktiven Filter ausgeblendet</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn red" onclick="loadDiscover(\\''+escJs(type)+'\\',\\''+escJs(genreId)+'\\',\\''+escJs(mode)+'\\',\\''+escJs(sort)+'\\',true,false)">🔓 Filter hier temporär deaktivieren</button><button class="btn" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')">🗑️ Alle Filter zurücksetzen</button></div></div></div>';
             syncSmartPageIndicatorDomClient();
             return;
           }
@@ -899,9 +903,10 @@
             focusFirstResultCard(false);
           }
         } catch (err) {
-          root.innerHTML = '<div class="section"><div class="panel-box"><div class="section-title">⚠️ Fehler beim Laden</div><p style="font-size:12px;color:#ccc;margin-bottom:8px">' + esc(err.message) + '</p><button class="btn red" onclick="loadDiscover(\\''+type+'\\',\\''+genreId+'\\',\\''+mode+'\\',\\''+sort+'\\')">🔄 Erneut versuchen</button></div></div>';
+          if (myReqSeq !== catalogViewReqSeq) return;
+          root.innerHTML = '<div class="section"><div class="panel-box"><div class="section-title">⚠️ Fehler beim Laden</div><p style="font-size:12px;color:#ccc;margin-bottom:8px">' + esc(err.message) + '</p><button class="btn red" onclick="loadDiscover(\\''+escJs(type)+'\\',\\''+escJs(genreId)+'\\',\\''+escJs(mode)+'\\',\\''+escJs(sort)+'\\')">🔄 Erneut versuchen</button></div></div>';
         } finally {
-          if (!isInstantFromCache) setBusyState(false);
+          if (myReqSeq === catalogViewReqSeq && !isInstantFromCache) setBusyState(false);
         }
       }
 
@@ -921,6 +926,7 @@
         }
         const q = (overrideQuery !== null ? overrideQuery : (inp ? inp.value : "")).trim();
         if (!q) return;
+        const myReqSeq = ++catalogViewReqSeq;
         if (inp && document.activeElement === inp) {
           inp.blur();
         }
@@ -976,6 +982,7 @@
         }
         try {
           const res = await apiFetchJson(searchUrl);
+          if (myReqSeq !== catalogViewReqSeq) return;
           state.searchMatchedCollections = res.collections || [];
           state.searchMatchedUniverses = res.universes || [];
           state.searchMatchedPersons = res.persons || [];
@@ -1042,10 +1049,13 @@
             }
           }
         } catch (err) {
+          if (myReqSeq !== catalogViewReqSeq) return;
           root.innerHTML = '<div class="section"><div class="panel-box">⚠️ Fehler bei der Suche: ' + esc(err.message) + '</div></div>';
         } finally {
-          document.body.classList.remove("search-active-dim");
-          if (!isInstantSearchCache) setBusyState(false);
+          if (myReqSeq === catalogViewReqSeq) {
+            document.body.classList.remove("search-active-dim");
+            if (!isInstantSearchCache) setBusyState(false);
+          }
         }
       }
 
@@ -1261,11 +1271,11 @@
         const stateCls = isInc ? "state-inc" : isExc ? "state-exc" : "";
         const dfBaseId = esc(category + ":" + itemValue);
         const incBtnHtml = isInc
-          ? '<button class="df-btn inc active is-neutral-on-select" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'neutral\\')" title="Aktiviert – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✓</span><span class="df-ico-sel">○</span></button>'
-          : '<button class="df-btn inc" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'include\\')" title="Positiv aktivieren (✓)">✓</button>';
+          ? '<button class="df-btn inc active is-neutral-on-select" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'neutral\\')" title="Aktiviert – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✓</span><span class="df-ico-sel">○</span></button>'
+          : '<button class="df-btn inc" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'include\\')" title="Positiv aktivieren (✓)">✓</button>';
         const excBtnHtml = isExc
-          ? '<button class="df-btn exc active is-neutral-on-select" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'neutral\\')" title="Gesperrt – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✕</span><span class="df-ico-sel">○</span></button>'
-          : '<button class="df-btn exc" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'exclude\\')" title="Negativ ausschließen (✕)">✕</button>';
+          ? '<button class="df-btn exc active is-neutral-on-select" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'neutral\\')" title="Gesperrt – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✕</span><span class="df-ico-sel">○</span></button>'
+          : '<button class="df-btn exc" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'exclude\\')" title="Negativ ausschließen (✕)">✕</button>';
         return '<div class="direct-filter-card ' + stateCls + '">' +
           '<span class="df-label">' +
             displayLabel +
@@ -1312,48 +1322,48 @@
         }
 
         (s.includedGenres || []).forEach(g => {
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+esc(g)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+escJs(g)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
         });
         (s.excludedGenres || []).forEach(g => {
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+esc(g)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+escJs(g)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
         });
 
         if (incPlatforms.length > 1) {
           incPlatforms.forEach(pid => {
             const label = getPlatformDisplayLabelClient(pid);
-            pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+esc(pid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
+            pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+escJs(pid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
           });
         }
         excPlatforms.forEach(pid => {
           const label = getPlatformDisplayLabelClient(pid);
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+esc(pid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+escJs(pid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
         });
 
         (s.includedEras || []).forEach(eid => {
           const er = ERA_OPTIONS_CLIENT.find(e => e.id === eid);
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+esc(eid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+escJs(eid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
         });
         (s.excludedEras || []).forEach(eid => {
           const er = ERA_OPTIONS_CLIENT.find(e => e.id === eid);
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+esc(eid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+escJs(eid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
         });
 
         (s.includedStudios || []).forEach(sid => {
           const st = STUDIO_OPTIONS_CLIENT.find(x => x.id === sid);
           const label = st ? (st.icon + " " + st.label) : sid;
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+esc(sid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+escJs(sid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
         });
         (s.excludedStudios || []).forEach(sid => {
           const st = STUDIO_OPTIONS_CLIENT.find(x => x.id === sid);
           const label = st ? (st.icon + " " + st.label) : sid;
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+esc(sid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+escJs(sid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
         });
 
         (s.includedFsk || []).forEach(f => {
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+esc(f)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">🔞 ' + esc(f) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+escJs(f)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">🔞 ' + esc(f) + ' ✕</span>');
         });
         (s.excludedFsk || []).forEach(f => {
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+esc(f)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">🔞 ' + esc(f) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+escJs(f)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">🔞 ' + esc(f) + ' ✕</span>');
         });
 
         if (s.showUnreleased) {
@@ -1562,7 +1572,7 @@
 
         if (!isColsTab && !q) {
           return (CINEMATIC_UNIVERSES_CLIENT || []).map(u =>
-            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + esc(u.id) + '\\')">' +
+            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + escJs(u.id) + '\\')">' +
               '<div class="world-portal-icon">' + esc(u.icon || '🌌') + '</div>' +
               '<div class="world-portal-info">' +
                 '<div class="world-portal-name">' + esc(u.name) + '</div>' +
@@ -1596,7 +1606,7 @@
 
         const cards = [
           ...matchedUnis.map(u =>
-            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + esc(u.id) + '\\')">' +
+            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + escJs(u.id) + '\\')">' +
               '<div class="world-portal-icon">' + esc(u.icon || '🌌') + '</div>' +
               '<div class="world-portal-info">' +
                 '<div class="world-portal-name">' + esc(u.name) + '</div>' +
@@ -1679,7 +1689,7 @@
                 '<div style="font-size:11px;color:var(--text-muted)">Komplette ' + (isColView ? 'Filmreihe' : 'Welt') + ' speichern, teilen oder weitere Reihen entdecken:</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
+                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + escJs(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
                 '<button class="btn purple" data-kind="' + (isColView ? 'col' : 'uni') + '" data-id="' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '" data-title="' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '" onclick="shareCollectionOrUniverseFromBtn(this)">📤 Teilen</button>' +
                 '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🌌 Alle ' + (isColView ? 'Reihen' : 'Welten') + '</button>' +
                 '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
@@ -1718,7 +1728,7 @@
                 '<button class="btn" style="background:rgba(245,158,11,0.2);border-color:#f59e0b" data-cid="' + esc(st.companyIds || st.id) + '" data-cname="' + esc(st.name) + '" onclick="openStudioView(this.dataset.cid,this.dataset.cname)">' + esc(st.icon || '🏢') + ' Studio: ' + esc(st.name) + '</button>'
               ).join("") +
               (state.searchMatchedUniverses || []).map(u =>
-                '<button class="btn" style="background:rgba(16,185,129,0.2);border-color:#10b981" onclick="openUniverseView(\\'' + esc(u.id) + '\\')">' + esc(u.icon || '🌌') + ' Universum: ' + esc(u.name) + '</button>'
+                '<button class="btn" style="background:rgba(16,185,129,0.2);border-color:#10b981" onclick="openUniverseView(\\'' + escJs(u.id) + '\\')">' + esc(u.icon || '🌌') + ' Universum: ' + esc(u.name) + '</button>'
               ).join("") +
               (state.searchMatchedCollections || []).map(c =>
                 '<button class="btn" style="background:rgba(91,70,245,0.22);border-color:#7c69ff" onclick="openCollectionView(' + Number(c.id) + ')">🍿 Filmreihe: ' + esc(c.name) + '</button>'
@@ -1857,7 +1867,7 @@
               '</div>'
             ) : (
               '<div id="uniHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:4px">' +
-                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px;padding:12px" onclick="openUniverseView(\\''+esc(u.id)+'\\')"><div style="font-size:14px;font-weight:800;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted);line-height:1.4">' + esc(u.description || '') + '</div></div>').join("") +
+                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px;padding:12px" onclick="openUniverseView(\\''+escJs(u.id)+'\\')"><div style="font-size:14px;font-weight:800;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted);line-height:1.4">' + esc(u.description || '') + '</div></div>').join("") +
               '</div>'
             )) +
           '</div>';
@@ -3894,7 +3904,7 @@
           '<div class="person-spotlight-card" role="dialog" aria-label="' + esc(cleanName) + '">' +
             '<div class="person-spotlight-header">' +
               '<div class="person-spotlight-profile">' +
-                '<img id="personSpotlightAvatarEl" class="person-spotlight-avatar" src="' + esc(initialAvatar) + '" alt="' + esc(cleanName) + '" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
+                '<img id="personSpotlightAvatarEl" class="person-spotlight-avatar" src="' + esc(initialAvatar) + '" alt="' + esc(cleanName) + '" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
                 '<div>' +
                   '<h3 class="person-spotlight-name">' + esc(cleanName) + '</h3>' +
                   '<div id="personSpotlightSubEl" class="person-spotlight-sub">' + esc(subText) + '</div>' +

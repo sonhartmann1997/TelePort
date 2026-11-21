@@ -347,8 +347,8 @@
       Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}`
     };
 
-    // Gold-Master Stufe 1: Direkte TMDb-ID aus Steckbrief / Link
-    if (parsed?.tmdbId) {
+    // Gold-Master Stufe 1: Direkte TMDb-ID aus Steckbrief / Link (nur echte TMDb-IDs < 8.000.000!)
+    if (isRealTmdbId(parsed?.tmdbId)) {
       const endpoint = primaryType === "s" ? "tv" : "movie";
       const directData = await cachedExternalFetchJson(`https://api.themoviedb.org/3/${endpoint}/${parsed.tmdbId}?language=de-DE`, { headers });
       if (directData && directData.id) {
@@ -841,7 +841,7 @@
       if (fbHit && fbHit.id && (!strictMovieWithYearLock || fbHit.typeCode !== "s")) {
         // Brücke: Wenn Wikipedia/Wikidata/TVMaze die korrekte Schreibweise mit Satzzeichen liefert (z. B. "Axel! will's wissen" statt "Axel will's wissen"),
         // direkt mit diesem kanonischen Titel erneut bei TMDb anfragen, um die offizielle TMDb-Serie samt Episoden zu erhalten!
-        if (Number(fbHit.id) >= 8000000 && fbHit.title && env.TMDB_BEARER_TOKEN) {
+        if (Number(fbHit.id) >= 8000000 && fbHit.title && hasTmdbCredentials(env)) {
           const bridgeTc = strictMovieWithYearLock ? "m" : (fbHit.typeCode === "s" ? "s" : primaryType);
           let bridgeHits = await runTmdbQuery(bridgeTc, fbHit.title, parsed.year || null);
           if (bridgeHits === 0 && parsed.year) {
@@ -937,7 +937,7 @@
     // Falls Top-Kandidaten in de-DE kein Poster haben, direkt EN/Internationales Poster über /images nachladen
     if (!isBatchImport) {
       for (const cand of sortedCandidates.slice(0, 3)) {
-        if (!cand.poster && cand.tmdbId && cand.tmdbId < 8000000 && env.TMDB_BEARER_TOKEN) {
+        if (!cand.poster && isRealTmdbId(cand.tmdbId) && hasTmdbCredentials(env)) {
           const ep = cand.typeCode === "s" ? "tv" : "movie";
           const imgData = await cachedExternalFetchJson(
             `https://api.themoviedb.org/3/${ep}/${cand.tmdbId}/images?include_image_language=de,en,null`,
@@ -1382,7 +1382,7 @@
               metadataSource = "TMDb";
             }
           }
-          if (Number(seriesDetails.id) >= 8000000 && env.TMDB_BEARER_TOKEN && normalizeCompareString(seriesDetails.title) !== normalizeCompareString(searchTitle)) {
+          if (Number(seriesDetails.id) >= 8000000 && hasTmdbCredentials(env) && normalizeCompareString(seriesDetails.title) !== normalizeCompareString(searchTitle)) {
             const qTitle = String(seriesDetails.title || "").trim();
             const tvRes = await cachedExternalFetchJson(
               `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(qTitle)}&language=de-DE&page=1`,
@@ -2700,6 +2700,7 @@
     if (typeof beginD1BatchBuffer === "function") {
       beginD1BatchBuffer();
     }
+    try {
     const moviesAdded = [];
     const seriesAdded = [];
     const failedItems = [];
@@ -3106,14 +3107,14 @@
       }
     }
 
+    // Alle gepufferten D1-Writes des gesamten Batches ZUERST committen, damit neue Episoden vor dem Leere-Serien-Cleanup in D1 liegen!
+    if (typeof flushD1BatchBuffer === "function") {
+      await flushD1BatchBuffer(env);
+    }
+
     // Automatische DB-Bereinigung nur am Ende des gesamten Imports (oder bei Einzel-Läufen): Entfernt Serien mit 0 gültigen Episoden-Videos
     if (!partialBatch && (!playlistContext || playlistContext.isFinalBatch !== false)) {
       await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
-    }
-
-    // Alle gepufferten D1-Writes des gesamten Batches in einer einzigen db.batch()-Transaktion committen (nur 1 D1-Subrequest!)
-    if (typeof flushD1BatchBuffer === "function") {
-      await flushD1BatchBuffer(env);
     }
 
     return {
@@ -3133,6 +3134,11 @@
       uncertainCount,
       batchItems
     };
+    } finally {
+      if (typeof flushD1BatchBuffer === "function") {
+        await flushD1BatchBuffer(env).catch(() => {});
+      }
+    }
   }
 
   async function processNextD1QueueStepAndEditMessage(env, chatId, messageId, rounds = 1) {
@@ -3145,7 +3151,10 @@
       if (pendingBatch.length === 0) break;
 
       const firstEntryMeta = pendingBatch[0]?.entry?._playlistMeta || null;
-      const meta = memoryFallback.get("import_queue_meta") || {
+      const savedMeta = typeof getImportQueueMetaFromD1 === "function"
+        ? await getImportQueueMetaFromD1(env)
+        : memoryFallback.get("import_queue_meta");
+      const meta = savedMeta || {
         sourceLabel: pendingBatch[0]?.sourceLabel || "Backup",
         initialTotal: pendingBatch.length,
         processedCount: 0,
@@ -3175,11 +3184,15 @@
       meta.duplicatesCount = Number(meta.duplicatesCount || 0) + Number(duplicatesCount || 0);
       meta.mergedQualitiesCount = Number(meta.mergedQualitiesCount || 0) + Number(mergedQualitiesCount || 0);
       meta.uncertainCount = Number(meta.uncertainCount || 0) + Number(uncertainCount || 0);
-      memoryFallback.set("import_queue_meta", meta);
+      if (typeof saveImportQueueMetaInD1 === "function") {
+        await saveImportQueueMetaInD1(env, meta);
+      } else {
+        memoryFallback.set("import_queue_meta", meta);
+      }
     }
 
     const stats = await getImportQueueStatsFromD1(env);
-    const metaInfo = memoryFallback.get("import_queue_meta") || {};
+    const metaInfo = (typeof getImportQueueMetaFromD1 === "function" ? await getImportQueueMetaFromD1(env) : null) || memoryFallback.get("import_queue_meta") || {};
     const totalAll = Math.max(1, stats.processedCount + stats.pendingCount);
     const bar = buildVisualProgressBar(stats.processedCount, totalAll, 14);
     const isFinished = stats.pendingCount === 0;
@@ -3241,11 +3254,31 @@
   async function handleIncomingMediaOrJson(env, message) {
     const { sendMessage, editMessageText, getFileText } = tgApi(env);
     const chatId = message.chat.id;
+    const senderId = message.from?.id || chatId;
     const videoObj = message.video || (message.document && /^video\//i.test(message.document.mime_type || "") ? message.document : null);
     const docObj = message.document;
+    const isJsonDoc = Boolean(docObj && (String(docObj.file_name || "").toLowerCase().endsWith(".json") || docObj.mime_type === "application/json"));
+    const isSubDoc = Boolean(docObj && SUBTITLE_EXTENSIONS.test(String(docObj.file_name || "")));
+
+    if (!isJsonDoc && !isSubDoc && !videoObj) return false;
+
+    // Sicherheits-Weiche: Nur autorisierte Admins über den Haupt-Bot dürfen globale D1-Medien, Backups oder Untertitel einspeisen!
+    const isAdminSender = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+      ? await isTelegramBotAdmin(env, senderId)
+      : false;
+    if (!isAdminSender) {
+      if (!isGroupOrChannelChat(chatId)) {
+        await sendMessage(
+          chatId,
+          `🔒 *NUR FÜR ADMINISTRATOREN*\n${SEP}\nDas direkte Einspeisen von Videodateien, JSON-Backups oder Untertiteln in die globale Mediathek ist ausschließlich für autorisierte Administratoren freigeschaltet.`,
+          { reply_markup: { inline_keyboard: [buildFooterRow(chatId, true)] } }
+        );
+      }
+      return true;
+    }
 
     // A) Eingehende .json Datei (Telegram Chat-Backup result.json ODER Titelliste) erkennen & mit Auto-Repair + Live-Progress + Custom Playlist verarbeiten
-    if (docObj && (String(docObj.file_name || "").toLowerCase().endsWith(".json") || docObj.mime_type === "application/json")) {
+    if (isJsonDoc) {
       const fileSizeBytes = Number(docObj.file_size || 0);
       if (fileSizeBytes > 20 * 1024 * 1024) {
         await sendMessage(
@@ -3365,7 +3398,7 @@
       );
 
       if (remainingSlice.length > 0) {
-        memoryFallback.set("import_queue_meta", {
+        const nextQueueMeta = {
           sourceLabel,
           initialTotal: totalExtracted,
           processedCount: immediateSlice.length,
@@ -3378,7 +3411,12 @@
           targetChatId: chatId,
           playlistFolderId: playlistFolder.id,
           playlistName: playlistFolder.name
-        });
+        };
+        if (typeof saveImportQueueMetaInD1 === "function") {
+          await saveImportQueueMetaInD1(env, nextQueueMeta);
+        } else {
+          memoryFallback.set("import_queue_meta", nextQueueMeta);
+        }
         const remainingWithPlaylist = remainingSlice.map(item =>
           typeof item === "object" && item !== null
             ? { ...item, _playlistMeta: { chatId, folderId: playlistFolder.id, playlistName: playlistFolder.name } }
@@ -3448,7 +3486,10 @@
         lang: "de",
         message_id: message.message_id || null
       };
-      const lastTarget = memoryFallback.get(`last_ingested_media_${chatId}`);
+      let lastTarget = memoryFallback.get(`last_ingested_media_${chatId}`);
+      if (!lastTarget && typeof getEntityFromD1 === "function") {
+        lastTarget = await getEntityFromD1(env, `last_ingested_media_${chatId}`, 3600000).catch(() => null);
+      }
       if (lastTarget && lastTarget.tmdbId) {
         const boundOk = await attachSubtitleToMediaInD1(env, lastTarget, subItem);
         if (boundOk) {
@@ -3496,14 +3537,18 @@
         return true;
       }
 
-      memoryFallback.set(`last_ingested_media_${chatId}`, {
+      const ingestedRef = {
         typeCode: resolved.typeCode,
         tmdbId: resolved.tmdbId,
         season: resolved.season || 1,
         episode: resolved.episode || 1,
         fileId: videoObj.file_id,
         title: resolved.cleanTitle
-      });
+      };
+      memoryFallback.set(`last_ingested_media_${chatId}`, ingestedRef);
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, `last_ingested_media_${chatId}`, "last_ingested_media", ingestedRef).catch(() => {});
+      }
 
       try {
         const botVipFolder = await ensureBotVipDefaultPlaylist(env);
@@ -3528,6 +3573,19 @@
       // 0. Inline-Queries (für Gruppen & Kanäle: @BotName Suchbegriff / @BotName f / @BotName s)
       if (update.inline_query) {
         await handleInlineQuery(env, update.inline_query);
+        return;
+      }
+
+      // 0b. Kanal-Beiträge (channel_post): Ernte automatisch echte file_id für passende tg_export_<channelId>_<msgId> Einträge in D1
+      if (update.channel_post && !env._isCustomBotWebhook) {
+        const chPost = update.channel_post;
+        const chId = chPost.chat?.id;
+        const chMedia = chPost.video || (chPost.document && /^video\//i.test(chPost.document.mime_type || "") ? chPost.document : null);
+        if (chId && Number(chId) < 0 && chPost.message_id && chMedia?.file_id) {
+          const rawChannelId = String(chId).replace(/^-100/, "").replace(/^-/, "");
+          const candidateExportId = `tg_export_${rawChannelId}_${chPost.message_id}`;
+          await replaceExportFileIdInD1(env, candidateExportId, chMedia.file_id, chMedia.file_unique_id || null);
+        }
         return;
       }
 
@@ -3629,9 +3687,16 @@
           return;
         }
 
-        // GEHEIMES ADMIN-PANEL: /stats xyz
+        // GEHEIMES ADMIN-PANEL: /stats xyz (nur für autorisierte Admins über den Haupt-Bot)
         if (text.toLowerCase() === ADMIN_SECRET_COMMAND) {
           await deleteMessage(chatId, message.message_id);
+          const canOpenAdmin = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, message.from?.id || chatId)
+            : false;
+          if (!canOpenAdmin) {
+            await sendMessage(chatId, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
+            return;
+          }
           await showAdminStatsPanel(env, chatId);
           return;
         }
@@ -3686,20 +3751,36 @@
           }
         }
 
-        // 6-stelliger Web-/Smart-TV-Login-Code direkt im Bot-Chat eingegeben (z.B. "482915" oder "482 915")
-        const sixDigitMatch = text.trim().match(/^(\d{3})\s*(\d{3})$/);
+        // 6-stelliger Web-/Smart-TV-Login-Code direkt im privaten Haupt-Bot-Chat eingegeben (z.B. "482915" oder "482 915")
+        const sixDigitMatch = (!env._isCustomBotWebhook && !isGroupOrChannelChat(chatId))
+          ? text.trim().match(/^(\d{3})\s*(\d{3})$/)
+          : null;
         if (sixDigitMatch) {
           const cleanCode = `${sixDigitMatch[1]}${sixDigitMatch[2]}`;
-          let mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
+          const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+          let mappedChallengeId = null;
+          if (hasD1 && typeof getEntityFromD1 === "function") {
+            const d1CodeObj = await getEntityFromD1(env, `webauth_code_${cleanCode}`, 360000, { bypassMemoryCache: true }).catch(() => null);
+            if (d1CodeObj) mappedChallengeId = typeof d1CodeObj === "string" ? d1CodeObj : d1CodeObj.challengeId;
+          }
           if (!mappedChallengeId) {
-            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED").catch(() => null);
+            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
+          }
+          if (!mappedChallengeId) {
+            mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
           }
           if (mappedChallengeId) {
             const cId = String(mappedChallengeId).replace(/^"|"$/g, "").trim();
-            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            let challengeObj = null;
+            if (hasD1 && typeof getEntityFromD1 === "function") {
+              challengeObj = await getEntityFromD1(env, `webauth_id_${cId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
+            }
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (!challengeObj) {
+              challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
@@ -3711,7 +3792,11 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+                if (hasD1 && typeof saveEntityToD1 === "function") {
+                  await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
+                } else {
+                  await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+                }
               } catch (e) {}
               await deleteMessage(chatId, message.message_id);
               await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
@@ -3735,11 +3820,22 @@
           await deleteMessage(chatId, message.message_id);
 
           if (startParam.startsWith("webauth_")) {
+            if (env._isCustomBotWebhook || isGroupOrChannelChat(chatId)) {
+              await sendMessage(chatId, `🔒 *Web-Login-Bestätigung ist nur im privaten Chat mit dem Haupt-Bot möglich.*`);
+              return;
+            }
             const cId = startParam.replace(/^webauth_/i, "").trim();
-            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+            let challengeObj = null;
+            if (hasD1 && typeof getEntityFromD1 === "function") {
+              challengeObj = await getEntityFromD1(env, `webauth_id_${cId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
+            }
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (!challengeObj) {
+              challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
@@ -3751,7 +3847,11 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+                if (hasD1 && typeof saveEntityToD1 === "function") {
+                  await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
+                } else {
+                  await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+                }
               } catch (e) {}
               await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
             } else {
@@ -4024,6 +4124,13 @@
           }
 
           if (startParam === "admin") {
+            const canOpenAdmin = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+              ? await isTelegramBotAdmin(env, message.from?.id || chatId)
+              : false;
+            if (!canOpenAdmin) {
+              await sendMessage(chatId, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
+              return;
+            }
             await showAdminStatsPanel(env, chatId);
             return;
           }
@@ -4031,7 +4138,7 @@
           if (startParam.startsWith("search_")) {
             const rawQ = decodeURIComponent(startParam.replace("search_", "")).trim();
             if (rawQ) {
-              await saveSearchState(env, chatId, rawQ, 1, "pop_desc", false);
+              await saveSearchState(env, chatId, rawQ, 1, 0, 0, 0, "pop_desc", false);
               await displaySearchResults(env, chatId, rawQ, 1, null, "pop_desc", false);
               return;
             }
@@ -4253,7 +4360,7 @@
           const queryText = text.replace(/^\/search(?:@\w+)?/i, "").trim().slice(0, 150);
           if (queryText.length > 0) {
             trackStat("searchQueries", queryText);
-            await saveSearchState(env, chatId, queryText, 1, "pop_desc", false);
+            await saveSearchState(env, chatId, queryText, 1, 0, 0, 0, "pop_desc", false);
             const waitMsg = await sendMessage(
               chatId,
               `🔍 *SUCHE LÄUFT*\n${SEP}\n⚡ Begriff: *"${escapeMd(queryText)}"*`,
@@ -4280,7 +4387,7 @@
           await clearAllTempMessages(env, chatId, deleteMessage);
           const cleanQuery = text.slice(0, 150);
           trackStat("searchQueries", cleanQuery);
-          await saveSearchState(env, chatId, cleanQuery, 1, "pop_desc", false);
+          await saveSearchState(env, chatId, cleanQuery, 1, 0, 0, 0, "pop_desc", false);
           const waitMsg = await sendMessage(
             chatId,
             `🔍 *SUCHE LÄUFT*\n${SEP}\n⚡ Begriff: *"${escapeMd(cleanQuery)}"*`,
@@ -4396,8 +4503,15 @@
           return;
         }
 
-        // --- D1 IMPORT-QUEUE BATCH CALLBACKS (für große JSON- & Telegram Chat-Backups) ---
+        // --- D1 IMPORT-QUEUE BATCH CALLBACKS (nur für autorisierte Admins über den Haupt-Bot) ---
         if (data === "impq_step_1" || data === "impq_step_3") {
+          const canManageQueue = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, cq.from?.id || chatId)
+            : false;
+          if (!canManageQueue) {
+            await answerCallbackQuery(cq.id, "🔒 Nur für Administratoren erlaubt.", true);
+            return;
+          }
           const rounds = data === "impq_step_3" ? 3 : 1;
           await answerCallbackQuery(cq.id, `⏳ Verarbeite nächsten Batch (${rounds * 12} Einträge)...`);
           await processNextD1QueueStepAndEditMessage(env, chatId, msgId, rounds);
@@ -4405,6 +4519,13 @@
         }
 
         if (data === "impq_clear") {
+          const canManageQueue = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, cq.from?.id || chatId)
+            : false;
+          if (!canManageQueue) {
+            await answerCallbackQuery(cq.id, "🔒 Nur für Administratoren erlaubt.", true);
+            return;
+          }
           await clearImportQueueInD1(env);
           await answerCallbackQuery(cq.id, "🗑️ Import-Warteschlange geleert!", true);
           await editMessageText(
@@ -4444,7 +4565,17 @@
           await clearExtraMessage(env, chatId, deleteMessage);
         }
 
-        // --- ADMIN PANEL CALLBACKS (/stats xyz) ---
+        // --- ADMIN PANEL CALLBACKS (/stats xyz — strikt nur für autorisierte Admins über den Haupt-Bot) ---
+        if (data === "adm_refresh" || data === "adm_reset" || data.startsWith("adm_tier_")) {
+          const canUseAdminCb = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, cq.from?.id || chatId)
+            : false;
+          if (!canUseAdminCb) {
+            await answerCallbackQuery(cq.id, "🔒 Zugriff verweigert: Nur für Administratoren.", true);
+            return;
+          }
+        }
+
         if (data === "adm_refresh") {
           await answerCallbackQuery(cq.id, "🔄 Statistiken aktualisiert!");
           await showAdminStatsPanel(env, chatId, msgId);
@@ -4471,6 +4602,11 @@
 
         if (data.startsWith("adm_tier_")) {
           const serviceKey = data.replace("adm_tier_", "");
+          const ALLOWED_TIER_KEYS = ["tmdb", "cloudflare", "telegram", "translator"];
+          if (!ALLOWED_TIER_KEYS.includes(serviceKey)) {
+            await answerCallbackQuery(cq.id, "⚠️ Ungültiger Dienst-Schlüssel.", true);
+            return;
+          }
           const currentTiers = await getActiveTiers(env);
           const nextLevel = (currentTiers[serviceKey] || "free") === "free" ? "paid" : "free";
           currentTiers[serviceKey] = nextLevel;

@@ -84,7 +84,7 @@
             '</button>'
           ) : "",
           d.universe ? (
-            '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
+            '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + escJs(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
               '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
             '</button>'
           ) : "",
@@ -97,39 +97,39 @@
         const heroStyleGenresHtml = genresListClean.length > 0
           ? ('<span class="hero-meta-sep">·</span><span class="hero-meta-genres">' +
               genresListClean.slice(0, 3).map((gName, idx, arr) =>
-                '<span class="hero-meta-genre" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>' +
+                '<span class="hero-meta-genre" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + escJs(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>' +
                 (idx < arr.length - 1 ? '<span>, </span>' : '')
               ).join("") +
             '</span>')
           : "";
         const unboxedMetaHtml = [
           (d.vote && d.vote !== "0.0") ? ('<span><span class="hero-meta-star">★</span> ' + esc(d.vote) + '</span>') : "",
-          hasValidYear ? ('<span class="hero-meta-year" tabindex="0" onclick="searchByYearFromModal(\\'' + esc(d.year) + '\\')" title="Alle Titel aus dem Jahr ' + esc(d.year) + '">' + esc(d.year) + '</span>') : "",
+          hasValidYear ? ('<span class="hero-meta-year" tabindex="0" onclick="searchByYearFromModal(\\'' + escJs(d.year) + '\\')" title="Alle Titel aus dem Jahr ' + esc(d.year) + '">' + esc(d.year) + '</span>') : "",
           (d.runtime && d.runtime !== "Keine Angabe") ? ('<span>' + esc(d.runtime) + '</span>') : "",
           (type === "s" && d.numberOfSeasons) ? ('<span>' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? " Staffel" : " Staffeln") + '</span>') : "",
-          hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
+          hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + escJs(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
           '<span class="hero-meta-hd" title="Im Katalog in HD verfügbar">HD</span>'
         ].filter(Boolean).join('<span class="hero-meta-sep">·</span>') + heroStyleGenresHtml;
 
         const creditsPillsArr = [
           ...directorsArr.slice(0, 2).map(p => {
             const pPhoto = p.profile_path ? resolvePosterUrlClient(p.profile_path, "w185", "") : "";
-            return '<button type="button" class="detail-credit-pill" onclick="openPersonSpotlightOverlayClient(' + (p.id ? Number(p.id) : 'null') + ',\\'' + esc(p.name) + '\\',\\'Regie\\',\\'' + esc(pPhoto) + '\\')" title="Spotlight & Filmografie von ' + esc(p.name) + ' öffnen">🎬 <b>Regie:</b> ' + esc(p.name) + '</button>';
+            return '<button type="button" class="detail-credit-pill" onclick="openPersonSpotlightOverlayClient(' + (p.id ? Number(p.id) : 'null') + ',\\'' + escJs(p.name) + '\\',\\'Regie\\',\\'' + escJs(pPhoto) + '\\')" title="Spotlight & Filmografie von ' + esc(p.name) + ' öffnen">🎬 <b>Regie:</b> ' + esc(p.name) + '</button>';
           }),
           ...studiosArr.slice(0, 3).map(sObj =>
-            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || "") + '\\')" title="Alle Titel von ' + esc(sObj.name) + '">🏢 <b>Studio:</b> ' + esc(sObj.name) + '</button>'
+            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchStudioFromModal(\\'' + escJs(sObj.name) + '\\',\\'' + escJs(sObj.id || "") + '\\')" title="Alle Titel von ' + esc(sObj.name) + '">🏢 <b>Studio:</b> ' + esc(sObj.name) + '</button>'
           ),
           (d.country && d.country !== "k.A." && d.country !== "Keine Angabe")
-            ? ('<button type="button" class="detail-credit-pill" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">🌍 <b>Land:</b> ' + esc(d.country) + '</button>')
+            ? ('<button type="button" class="detail-credit-pill" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + escJs(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">🌍 <b>Land:</b> ' + esc(d.country) + '</button>')
             : "",
           cleanStatusLabel
             ? ('<span class="detail-credit-pill" style="cursor:default">📡 <b>Status:</b> ' + esc(cleanStatusLabel) + (d.numberOfEpisodes ? (' · ' + Number(d.numberOfEpisodes) + ' Folgen') : '') + '</span>')
             : "",
           ...dedupedProvidersList.slice(0, 3).map(pName =>
-            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
+            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchProviderFromModal(\\'' + escJs(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
           ),
           ...((d.providerButtons && d.providerButtons.length > 0) ? d.providerButtons.map(pb =>
-            '<a class="detail-credit-pill" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="border-color:' + esc(pb.border || "#0284c7") + '">' + esc(pb.buttonText) + '</a>'
+            '<a class="detail-credit-pill" href="' + esc(safeHttpUrl(pb.url)) + '" target="_blank" rel="noopener noreferrer" style="border-color:' + esc(pb.border || "#0284c7") + '">' + esc(pb.buttonText) + '</a>'
           ) : [])
         ].filter(Boolean);
         const creditsGlassStripHtml = creditsPillsArr.length > 0
@@ -225,10 +225,10 @@
                   const cRole = String(c.character || "Darsteller").trim();
                   const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
                   const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w342", "") : fbAvatar;
-                  const spotlightCall = 'openPersonSpotlightOverlayClient(' + (c.id ? Number(c.id) : 'null') + ',\\'' + esc(cName) + '\\',\\'' + esc(cRole) + '\\',\\'' + esc(photoUrl) + '\\')';
+                  const spotlightCall = 'openPersonSpotlightOverlayClient(' + (c.id ? Number(c.id) : 'null') + ',\\'' + escJs(cName) + '\\',\\'' + escJs(cRole) + '\\',\\'' + escJs(photoUrl) + '\\')';
                   return '<div class="detail-cast-card" tabindex="0" onclick="' + spotlightCall + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + spotlightCall + ';}" title="Spotlight & Filme mit ' + esc(cName) + ' anzeigen">' +
                     '<div class="detail-cast-photo-wrap">' +
-                      '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
+                      '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
                     '</div>' +
                     '<div class="detail-cast-info">' +
                       '<div class="detail-cast-name">' + esc(cName) + '</div>' +
@@ -289,14 +289,14 @@
           '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
           '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
           '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
-          (canReportMedia ? '<button class="btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Defekten Stream oder falsche Zuordnung melden">⚠️ Fehler melden</button>' : '') +
+          (canReportMedia ? '<button class="btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + escJs(d.title) + '\\',versionLabel:\\'' + escJs(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Defekten Stream oder falsche Zuordnung melden">⚠️ Fehler melden</button>' : '') +
           (isAdminUser ? '<button class="btn" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern (Admin)">🖼️ Cover ändern</button>' : '') +
           (isAdminUser ? '<button class="btn" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen (Admin)">🔄 Neu zuordnen</button>' : '') +
-          (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
-          (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(posterOrig) + '\\',\\'' + esc(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
-          (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(backdropOrig) + '\\',\\'' + esc(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
-          (d.tmdbDeUrl ? '<a class="btn" href="' + esc(d.tmdbDeUrl) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
-          (!tr ? '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '');
+          (d.telegraphUrl ? '<a class="btn" href="' + esc(safeHttpUrl(d.telegraphUrl)) + '" target="_blank" rel="noopener noreferrer">📖 Telegraph-Guide</a>' : '') +
+          (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + escJs(posterOrig) + '\\',\\'' + escJs(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
+          (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + escJs(backdropOrig) + '\\',\\'' + escJs(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
+          (d.tmdbDeUrl ? '<a class="btn" href="' + esc(safeHttpUrl(d.tmdbDeUrl)) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
+          (!tr ? '<a class="btn blue" href="' + esc(safeHttpUrl(ytSearchUrl)) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '');
 
         const similarSectionHtml =
           '<section id="detailSimilarSectionWrap" class="detail-section-block" style="display:flex">' +
@@ -872,7 +872,7 @@
 
               return '<div class="ep-row ' + (isFilledFromOther ? 'ep-autofilled' : '') + '" style="margin-bottom:5px;padding:8px 10px">' +
                 '<div class="ep-row-top">' +
-                  '<div class="ep-title" tabindex="0" onclick="openEpisodeStory(' + Number(d.id) + ',' + sn + ',' + en + ',\\'' + esc(epTitleStr) + '\\')" title="' + esc(epCode + ' – ' + epTitleStr) + '">' +
+                  '<div class="ep-title" tabindex="0" onclick="openEpisodeStory(' + Number(d.id) + ',' + sn + ',' + en + ',\\'' + escJs(epTitleStr) + '\\')" title="' + esc(epCode + ' – ' + epTitleStr) + '">' +
                     '<span class="ep-code-badge">' + esc(epCode) + '</span>' +
                     '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(epTitleStr) + '</span></div>' +
                   '</div>' +
@@ -901,7 +901,7 @@
                 '<span style="font-size:11px;color:#94a3b8;font-weight:700">Bevorzugte Basis-Qualität (fehlende Folgen werden automatisch ergänzt):</span>' +
                 sortedProfiles.map(prof => {
                   const isAct = prof === dominantProfile;
-                  return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 8px;font-size:11px" onclick="setVersionsTabPreferredProfileClient(\\'' + esc(prof) + '\\')">' + esc(prof) + '</button>';
+                  return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 8px;font-size:11px" onclick="setVersionsTabPreferredProfileClient(\\'' + escJs(prof) + '\\')">' + esc(prof) + '</button>';
                 }).join("") +
               '</div>'
             ) : '';
@@ -960,7 +960,7 @@
                   const cleanVer = String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung";
                   return '<div class="ep-row" style="margin-bottom:0;padding:8px 10px">' +
                     '<div class="ep-row-top">' +
-                      '<div class="ep-title" tabindex="0" ' + (type === 's' ? ('onclick="openEpisodeStory(' + Number(d.id) + ',' + sNum + ',' + eNum + ',\\'' + esc(epTitleStr) + '\\')"') : '') + '>' +
+                      '<div class="ep-title" tabindex="0" ' + (type === 's' ? ('onclick="openEpisodeStory(' + Number(d.id) + ',' + sNum + ',' + eNum + ',\\'' + escJs(epTitleStr) + '\\')"') : '') + '>' +
                         '<span class="ep-code-badge">' + (epCode ? esc(epCode) : (isRar ? '📦 RAR' : '🎬 Film')) + '</span>' +
                         '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(type === 's' ? epTitleStr : (partStr || cleanVer || d.title)) + '</span></div>' +
                       '</div>' +
@@ -1020,12 +1020,12 @@
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
               '<input id="customPosterUrlInp" class="tma-input" placeholder="Eigene Bild-URL (https://...jpg/png) oder TMDb /path.jpg" style="flex:1;min-width:210px;padding:6px 9px;border-color:rgba(168,85,247,0.4);font-size:12px" />' +
-              '<button type="button" class="btn purple" onclick="applyCustomModalPoster(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">💾 URL als Cover speichern</button>' +
+              '<button type="button" class="btn purple" onclick="applyCustomModalPoster(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">💾 URL als Cover speichern</button>' +
             '</div>' +
             (posters.length > 0 ? (
               '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:10px;max-height:360px;overflow-y:auto;padding:4px">' +
                 posters.map(p =>
-                  '<div style="display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,0.04);padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);cursor:pointer" onclick="selectModalPosterOption(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ',\\'' + esc(p.poster_path || '') + '\\',\\'' + esc(p.external_poster_url || p.url || '') + '\\')">' +
+                  '<div style="display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,0.04);padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);cursor:pointer" onclick="selectModalPosterOption(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ',\\'' + escJs(p.poster_path || '') + '\\',\\'' + escJs(p.external_poster_url || p.url || '') + '\\')">' +
                     '<img src="' + esc(p.thumb || p.url) + '" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px;background:#111" />' +
                     '<div style="font-size:10.5px;font-weight:700;color:#e2e8f0;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(p.label || p.source || 'Poster') + '</div>' +
                     '<button type="button" class="btn green" style="padding:3px 6px;font-size:10px;width:100%">✓ Wählen</button>' +
@@ -1164,7 +1164,7 @@
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
               '<span style="font-weight:800;color:#7dd3fc">📂 1. Welche Folge / Datei soll neu zugeordnet werden? (' + allFiles.length + ' vorhanden)</span>' +
               (allFiles.length > 1 ? (
-                '<button type="button" class="season-tab-btn ' + (modalRemapSelectedFileIndex === -1 ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectModalRemapSourceFileClient(-1,\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">📦 Alle ' + allFiles.length + ' Dateien gemeinsam</button>'
+                '<button type="button" class="season-tab-btn ' + (modalRemapSelectedFileIndex === -1 ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectModalRemapSourceFileClient(-1,\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">📦 Alle ' + allFiles.length + ' Dateien gemeinsam</button>'
               ) : '') +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:5px;max-height:165px;overflow-y:auto;padding-right:2px">' +
@@ -1176,7 +1176,7 @@
                 const eNum = Number(f.episode_number ?? 1);
                 const epCodeStr = typeCode === "s" ? ("S" + String(sNum).padStart(2, "0") + "E" + String(eNum).padStart(2, "0")) : "🎬 Film";
                 const epNameStr = typeCode === "s" ? resolveClientEpisodeTitle(d.id, sNum, eNum, f) : (d.title || "Film");
-                return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-radius:7px;background:' + (isSelected ? 'rgba(14,165,233,0.18)' : 'rgba(2,6,23,0.45)') + ';border:1px solid ' + (isSelected ? 'rgba(56,189,248,0.65)' : 'rgba(148,163,184,0.14)') + ';cursor:pointer" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">' +
+                return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-radius:7px;background:' + (isSelected ? 'rgba(14,165,233,0.18)' : 'rgba(2,6,23,0.45)') + ';border:1px solid ' + (isSelected ? 'rgba(56,189,248,0.65)' : 'rgba(148,163,184,0.14)') + ';cursor:pointer" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">' +
                   '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0">' +
                     '<span class="ep-code-badge">' + esc(epCodeStr) + '</span>' +
                     '<b style="color:var(--text);font-size:11.5px">' + esc(epNameStr) + '</b>' +
@@ -1184,9 +1184,9 @@
                     '<code style="font-size:10.5px;color:#94a3b8;word-break:break-all">📄 ' + esc(fn) + '</code>' +
                   '</div>' +
                   '<div style="display:flex;gap:5px;align-items:center" onclick="event.stopPropagation()">' +
-                    '<button type="button" class="season-tab-btn ' + (isSelected ? 'active' : '') + '" style="padding:2px 8px;font-size:10.5px" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">' + (isSelected ? '✓ Ausgewählt' : 'Auswählen') + '</button>' +
-                    '<button type="button" class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" onclick="openEpisodeCorrectionModal({typeCode:\\'' + esc(typeCode) + '\\',tmdbId:' + Number(mediaId) + ',title:\\'' + esc(d.title || '') + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + esc(epNameStr) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id || '') + '\\',versionLabel:\\'' + esc(f.versionLabel || f.version_label || 'Originalfassung') + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(fn) + '\\',messageLink:\\'' + esc(mLink) + '\\'})">✏️ Detail-Korrektur</button>' +
-                    (mLink ? '<a class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" href="' + esc(mLink) + '" target="_blank" rel="noopener noreferrer">🔗 Post</a>' : '') +
+                    '<button type="button" class="season-tab-btn ' + (isSelected ? 'active' : '') + '" style="padding:2px 8px;font-size:10.5px" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">' + (isSelected ? '✓ Ausgewählt' : 'Auswählen') + '</button>' +
+                    '<button type="button" class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" onclick="openEpisodeCorrectionModal({typeCode:\\'' + escJs(typeCode) + '\\',tmdbId:' + Number(mediaId) + ',title:\\'' + escJs(d.title || '') + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + escJs(epNameStr) + '\\',telegramFileId:\\'' + escJs(f.telegram_file_id || '') + '\\',versionLabel:\\'' + escJs(f.versionLabel || f.version_label || 'Originalfassung') + '\\',quality:\\'' + escJs(f.quality || '1080p') + '\\',rawFilename:\\'' + escJs(fn) + '\\',messageLink:\\'' + escJs(mLink) + '\\'})">✏️ Detail-Korrektur</button>' +
+                    (mLink ? '<a class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" href="' + esc(safeHttpUrl(mLink)) + '" target="_blank" rel="noopener noreferrer">🔗 Post</a>' : '') +
                   '</div>' +
                 '</div>';
               }).join("") +
@@ -1202,7 +1202,7 @@
           activeSourceBannerHtml +
           filesMetaHtml +
           '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' +
-            '<input id="modalRemapSearchInp" class="tma-input" value="' + esc(origSeedQuery) + '" placeholder="Suchbegriff oder TMDb-ID (z.B. Zur See, Pippi Langstrumpf, tmdb:40964)..." style="flex:1;min-width:190px;padding:6px 9px;font-size:12px" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ');}" />' +
+            '<input id="modalRemapSearchInp" class="tma-input" value="' + esc(origSeedQuery) + '" placeholder="Suchbegriff oder TMDb-ID (z.B. Zur See, Pippi Langstrumpf, tmdb:40964)..." style="flex:1;min-width:190px;padding:6px 9px;font-size:12px" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchModalRemapCandidates(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ');}" />' +
             '<select id="modalRemapTypeSel" class="tma-select" style="padding:6px 8px;font-size:12px">' +
               '<option value="">Alle (Film & Serie)</option>' +
               '<option value="m">🎬 Nur Filme</option>' +
@@ -1211,7 +1211,7 @@
             '<span style="font-size:11px;color:var(--muted);font-weight:700">Ziel-Staffel / Folge:</span>' +
             '<input id="modalRemapSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + activeS + '" title="Ziel-Staffel" style="width:52px;padding:5px;font-size:12px;font-weight:800;text-align:center" />' +
             '<input id="modalRemapEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + activeE + '" title="Ziel-Folge" style="width:58px;padding:5px;font-size:12px;font-weight:800;text-align:center" />' +
-            '<button type="button" class="btn blue" onclick="searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Suchen (8 APIs)</button>' +
+            '<button type="button" class="btn blue" onclick="searchModalRemapCandidates(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Suchen (8 APIs)</button>' +
           '</div>' +
           '<div id="modalRemapResultsBox" style="display:flex;flex-direction:column;gap:6px"></div>';
 
@@ -1269,7 +1269,7 @@
                   epHint +
                 '</div>' +
               '</div>' +
-              '<button type="button" class="btn green" style="padding:5px 10px;font-size:11px;flex-shrink:0" onclick="executeModalRemapMedia(\\'' + esc(oldTypeCode) + '\\',' + Number(oldMediaId) + ',\\'' + esc(c.typeCode) + '\\',' + Number(c.tmdbId) + ',' + Number(c.inferredSeason || 0) + ',' + Number(c.inferredEpisode || 0) + ')">✓ ' + esc(btnTargetBadge) + '</button>' +
+              '<button type="button" class="btn green" style="padding:5px 10px;font-size:11px;flex-shrink:0" onclick="executeModalRemapMedia(\\'' + escJs(oldTypeCode) + '\\',' + Number(oldMediaId) + ',\\'' + escJs(c.typeCode) + '\\',' + Number(c.tmdbId) + ',' + Number(c.inferredSeason || 0) + ',' + Number(c.inferredEpisode || 0) + ')">✓ ' + esc(btnTargetBadge) + '</button>' +
             '</div>';
           }).join("");
         } catch (e) {
@@ -2289,7 +2289,7 @@
                       '<span class="stream-meta-pill size">' + parts.length + ' ' + partWord + (totalSizeStr ? (' · Gesamt ' + esc(totalSizeStr)) : '') + '</span>' +
                     '</div>' +
                     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-                      '<button type="button" class="btn-action-glass" style="padding:4px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllMoviePartsToTelegram(\\'' + esc(blk.key) + '\\')" title="Alle ' + parts.length + ' ' + partWord + ' geordnet von 1 bis ' + parts.length + ' an dein gewähltes Ziel senden">' +
+                      '<button type="button" class="btn-action-glass" style="padding:4px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllMoviePartsToTelegram(\\'' + escJs(blk.key) + '\\')" title="Alle ' + parts.length + ' ' + partWord + ' geordnet von 1 bis ' + parts.length + ' an dein gewähltes Ziel senden">' +
                         '📦 Alle ' + parts.length + ' ' + partWord + ' senden' +
                       '</button>' +
                       (canReportMedia ? '<button type="button" class="ep-ghost-btn" data-type="m" data-tmdb-id="' + Number(d.id) + '" data-fid="' + esc(first.telegram_file_id) + '" data-ver="' + esc(tagsLabel || 'Originalfassung') + '" onclick="openMediaReportFromBtn(this)" title="Fehler zu diesem Mehrteiler-Release melden">⚠️</button>' : '') +
@@ -2538,22 +2538,7 @@
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
         }
-        // Nächste Staffel im Hintergrund vorwärmen (für 0ms Wechsel zur Folge-Staffel)
-        if (s && Array.isArray(s.seasons) && s.seasons.includes(Number(seasonNum) + 1)) {
-          const nextS = Number(seasonNum) + 1;
-          const nextKey = seriesId + "_" + nextS + "_" + (vipAllowed ? "vip" : "std");
-          if (!clientSeasonCache.has(nextKey)) {
-            setTimeout(() => {
-              if (state.activeDetails && String(state.activeDetails.id) === String(seriesId) && !clientSeasonCache.has(nextKey)) {
-                apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + nextS)
-                  .then(ns => {
-                    if (ns && ns.ok !== false) clientSeasonCache.set(nextKey, { data: ns, ts: Date.now() });
-                  })
-                  .catch(() => {});
-              }
-            }, 320);
-          }
-        }
+        // Free-Plan Schutz: Folge-Staffel erst bei explizitem Staffel-Klick laden (kein automatischer Hintergrund-Prefetch)
         const box = document.getElementById("seasonBox");
         if (!box) return;
         const maxAllowedEpisodes = Number(s.seasonEpisodeCount || 0);
@@ -2826,7 +2811,7 @@
               sortedSeasonProfiles.map(prof => {
                 const isAct = userPrefProfile === prof.key;
                 const missingCnt = Math.max(0, seasonStreamableCount - prof.count);
-                return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectSeasonPreferredProfileClient(' + seriesId + ',' + seasonNum + ',\\'' + esc(prof.key) + '\\')">' +
+                return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectSeasonPreferredProfileClient(' + seriesId + ',' + seasonNum + ',\\'' + escJs(prof.key) + '\\')">' +
                   esc(prof.key) + ' (' + prof.count + '/' + seasonStreamableCount + (missingCnt > 0 ? (' + ' + missingCnt + ' ergänzt') : '') + ')' +
                 '</button>';
               }).join("") +

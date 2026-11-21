@@ -160,8 +160,8 @@
       id: "dcu",
       name: "DC Universe (DCEU & Dark Knight)",
       icon: "🦇",
-      description: "The Dark Knight, Man of Steel, Justice League, Wonder Woman, Aquaman, Suicide Squad, The Batman & Joker",
-      collectionIds: [263, 209131, 468552, 531242, 477962, 531244],
+      description: "The Dark Knight, Man of Steel, Justice League, Wonder Woman, Aquaman, Suicide Squad, Shazam, The Batman & Joker",
+      collectionIds: [263, 209131, 468552, 531242, 573693, 724848],
       movieIds: [414906, 475557, 791373, 436270, 298618]
     },
     {
@@ -602,19 +602,44 @@
     return PLATFORM_ID_ALIASES[clean] || clean;
   }
 
+  const VALID_MOVIE_GENRE_IDS = new Set(Object.values(MOVIE_GENRES).map(Number));
+  const VALID_SERIES_GENRE_IDS = new Set(Object.values(SERIES_GENRES).map(Number));
+
+  // Verhindert ungültige TMDb /discover-Abfragen (z.B. Film-Genre-ID 28 an /discover/tv -> immer 0 Treffer!)
+  function mapExplicitGenreIdForMedia(rawGenreId, isMovie = true) {
+    const clean = String(rawGenreId || "").trim();
+    if (!clean || clean === "all" || clean === "random_all") return [];
+    const num = Number(clean);
+    if (!Number.isFinite(num) || num <= 0) return [];
+    if (isMovie) {
+      if (VALID_MOVIE_GENRE_IDS.has(num)) return [num];
+      if (num === 10759) return [28, 12]; // Action & Adventure -> Action | Abenteuer
+      if (num === 10765) return [878, 14]; // Sci-Fi & Fantasy -> Sci-Fi | Fantasy
+      if (num === 10768) return [10752]; // War & Politics -> Kriegsfilm
+      if (num === 10762) return [10751, 16]; // Kids -> Familie | Animation
+      return [];
+    } else {
+      if (VALID_SERIES_GENRE_IDS.has(num)) return [num];
+      if (num === 28 || num === 12) return [10759]; // Action / Abenteuer -> Action & Adventure
+      if (num === 878 || num === 14) return [10765]; // Sci-Fi / Fantasy -> Sci-Fi & Fantasy
+      if (num === 10752) return [10768]; // Kriegsfilm -> War & Politics
+      if (num === 27 || num === 53) return [9648]; // Horror / Thriller -> Mystery (nächste gültige TV-Genre-ID)
+      if (num === 10749 || num === 36) return [18]; // Liebesfilm / Historie -> Drama
+      return [];
+    }
+  }
+
   function buildTmdbStudioAndPlatformParams(userSettings, isMovie = true, explicitGenreId = "all") {
     let params = "";
     const todayStr = new Date().toISOString().slice(0, 10);
     const showUnreleased = Boolean(userSettings && userSettings.showUnreleased);
-    const cleanExplicitGenre = (explicitGenreId && explicitGenreId !== "all" && explicitGenreId !== "random_all")
-      ? String(explicitGenreId)
-      : "";
+    const mappedExplicitGenreIds = mapExplicitGenreIdForMedia(explicitGenreId, isMovie);
     const explicitCompanyId = userSettings && userSettings.explicitCompanyId
       ? String(userSettings.explicitCompanyId).trim()
       : "";
 
     if (!userSettings || userSettings.filtersActive === false) {
-      if (cleanExplicitGenre) params += `&with_genres=${cleanExplicitGenre}`;
+      if (mappedExplicitGenreIds.length > 0) params += `&with_genres=${mappedExplicitGenreIds.join("|")}`;
       if (explicitCompanyId) params += `&with_companies=${encodeURIComponent(explicitCompanyId)}`;
       if (!showUnreleased) {
         params += isMovie ? `&primary_release_date.lte=${todayStr}` : `&first_air_date.lte=${todayStr}`;
@@ -635,13 +660,14 @@
 
     const targetMedia = isMovie ? "m" : "s";
     const resolvedIncGenreIds = resolveGenreIdsFromNames(incGenres, targetMedia);
-    if (cleanExplicitGenre) resolvedIncGenreIds.add(Number(cleanExplicitGenre) || cleanExplicitGenre);
+    for (const mgid of mappedExplicitGenreIds) resolvedIncGenreIds.add(mgid);
     if (resolvedIncGenreIds.size > 0) {
       params += `&with_genres=${Array.from(resolvedIncGenreIds).join("|")}`;
     }
     const resolvedExcGenreIds = resolveGenreIdsFromNames(excGenres, targetMedia);
     if (resolvedExcGenreIds.size > 0) {
-      params += `&without_genres=${Array.from(resolvedExcGenreIds).join(",")}`;
+      // TMDb v3: Pipe (|) = OR (jedes einzelne ausgeschlossene Genre blockieren; Komma wäre AND!)
+      params += `&without_genres=${Array.from(resolvedExcGenreIds).join("|")}`;
     }
     if (incStudios.length > 0 || explicitCompanyId) {
       const ids = STUDIO_OPTIONS.filter(s => incStudios.includes(s.id)).flatMap(s => s.companyIds);
@@ -649,8 +675,9 @@
       if (ids.length > 0) params += `&with_companies=${Array.from(new Set(ids)).join("|")}`;
     }
     if (excStudios.length > 0) {
-      const ids = STUDIO_OPTIONS.filter(s => excStudios.includes(s.id)).flatMap(s => s.companyIds);
-      if (ids.length > 0) params += `&without_companies=${ids.join(",")}`;
+      const ids = Array.from(new Set(STUDIO_OPTIONS.filter(s => excStudios.includes(s.id)).flatMap(s => s.companyIds)));
+      // TMDb v3: Pipe (|) = OR (jedes Studio/Sub-Label einzeln ausschließen; Komma würde erfordern, dass ALLE IDs gleichzeitig im Film vorkommen!)
+      if (ids.length > 0) params += `&without_companies=${ids.join("|")}`;
     }
     if (incPlatforms.length > 0 || excPlatforms.length > 0) {
       params += `&watch_region=DE`;
@@ -755,7 +782,32 @@
   const memoryFallback = (() => {
     const map = new Map();
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
-    if (!isBrowserSandbox) return map;
+    if (!isBrowserSandbox) {
+      // Free-Plan RAM-Schutz (128MB Limit): Begrenze Isolate-Cache auf max. 1400 Einträge (verhindert Error 1102!)
+      const MAX_WORKER_MEM_ENTRIES = 1400;
+      const PROTECTED_KEYS = new Set([
+        "TG_WEBHOOK_SECURITY_CONFIG_V1",
+        "TG_VIDEO_COVER_MODE",
+        "TG_WORKER_SPEED_PROFILE",
+        "bot_username"
+      ]);
+      const origSetWorker = map.set.bind(map);
+      map.set = (k, v) => {
+        if (map.has(k)) {
+          map.delete(k);
+        } else if (map.size >= MAX_WORKER_MEM_ENTRIES) {
+          let evicted = 0;
+          for (const existingKey of map.keys()) {
+            if (PROTECTED_KEYS.has(existingKey)) continue;
+            map.delete(existingKey);
+            evicted++;
+            if (evicted >= 150) break;
+          }
+        }
+        return origSetWorker(k, v);
+      };
+      return map;
+    }
 
     const shouldPersistKey = (k) => {
       const s = String(k || "");
@@ -987,29 +1039,59 @@
     return null;
   }
 
-  async function kvCachedGetRaw(env, key, bindingName = "MOVIE_SAVED") {
+  function stableJsonStringify(val) {
+    if (val === null || val === undefined) return "null";
+    if (typeof val !== "object") return JSON.stringify(val);
+    if (Array.isArray(val)) return `[${val.map(stableJsonStringify).join(",")}]`;
+    const keys = Object.keys(val).sort();
+    return `{${keys.map(k => `${JSON.stringify(k)}:${stableJsonStringify(val[k])}`).join(",")}}`;
+  }
+
+  function countKvSubrequest() {
+    if (typeof currentInvocationSubrequests === "number") {
+      currentInvocationSubrequests++;
+    }
+  }
+
+  async function kvCachedGetRaw(env, key, bindingName = "MOVIE_SAVED", options = {}) {
     const cleanKey = String(key || "");
     if (!cleanKey) return null;
-    if (kvDirtyBuffer.has(cleanKey)) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const bypassMemoryCache = Boolean(options?.bypassMemoryCache);
+    if (!bypassMemoryCache && kvDirtyBuffer.has(cleanKey)) {
       return kvDirtyBuffer.get(cleanKey).valueStr;
     }
     const cacheKey = `kv_raw_${cleanKey}`;
-    if (memoryFallback.has(cacheKey)) {
+    const cacheTsKey = `kv_raw_ts_${cleanKey}`;
+    const kv = resolveKvBinding(env, bindingName);
+    const hasRealKv = Boolean(kv && typeof kv.get === "function");
+    if (!bypassMemoryCache && memoryFallback.has(cacheKey)) {
       const cached = memoryFallback.get(cacheKey);
-      return cached === KV_EMPTY_SENTINEL ? null : cached;
+      if (isBrowserSandbox || !hasRealKv) {
+        return cached === KV_EMPTY_SENTINEL ? null : cached;
+      }
+      const cachedAt = Number(memoryFallback.get(cacheTsKey) || 0);
+      const defaultTtl = cached === KV_EMPTY_SENTINEL ? 5000 : 15000;
+      const ttlMs = Number.isFinite(Number(options?.ttlMs)) ? Math.max(0, Number(options.ttlMs)) : defaultTtl;
+      if (ttlMs > 0 && cachedAt > 0 && (Date.now() - cachedAt) < ttlMs) {
+        return cached === KV_EMPTY_SENTINEL ? null : cached;
+      }
     }
     try {
-      const kv = resolveKvBinding(env, bindingName);
-      if (kv && typeof kv.get === "function") {
+      if (hasRealKv) {
         trackStat("kvReads");
+        countKvSubrequest();
         const raw = await kv.get(cleanKey);
+        const now = Date.now();
         if (raw !== null && raw !== undefined) {
           const strVal = typeof raw === "string" ? raw : JSON.stringify(raw);
           memoryFallback.set(cacheKey, strVal);
+          memoryFallback.set(cacheTsKey, now);
           memoryFallback.set(`kv_last_saved_${cleanKey}`, strVal);
           return strVal;
         }
         memoryFallback.set(cacheKey, KV_EMPTY_SENTINEL);
+        memoryFallback.set(cacheTsKey, now);
         return null;
       }
     } catch (e) {}
@@ -1021,8 +1103,10 @@
     if (!cleanKey) return false;
     const valueStr = typeof rawOrObj === "string" ? rawOrObj : JSON.stringify(rawOrObj);
     const cacheKey = `kv_raw_${cleanKey}`;
+    const cacheTsKey = `kv_raw_ts_${cleanKey}`;
     const lastSavedKey = `kv_last_saved_${cleanKey}`;
     memoryFallback.set(cacheKey, valueStr);
+    memoryFallback.set(cacheTsKey, Date.now());
 
     const forceWrite = Boolean(options.forceKvWrite || options.flushNow);
     if (!forceWrite && memoryFallback.get(lastSavedKey) === valueStr) {
@@ -1055,10 +1139,12 @@
     if (!cleanKey) return;
     kvDirtyBuffer.delete(cleanKey);
     memoryFallback.set(`kv_raw_${cleanKey}`, KV_EMPTY_SENTINEL);
+    memoryFallback.set(`kv_raw_ts_${cleanKey}`, Date.now());
     memoryFallback.delete(`kv_last_saved_${cleanKey}`);
     try {
       const kv = resolveKvBinding(env, bindingName);
       if (kv && typeof kv.delete === "function") {
+        countKvSubrequest();
         await kv.delete(cleanKey).catch(() => {});
       }
     } catch (e) {}
@@ -1097,6 +1183,7 @@
         ? { expirationTtl: Number(entry.expirationTtl) }
         : undefined;
       trackStat("kvWrites");
+      countKvSubrequest();
       if (putOpts) {
         await kv.put(entry.key, entry.valueStr, putOpts);
       } else {
@@ -1110,25 +1197,30 @@
   }
 
   async function getActiveTiers(env) {
-    if (memoryFallback.has("admin_active_tiers")) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const cachedTs = Number(memoryFallback.get("admin_active_tiers_ts") || 0);
+    if (memoryFallback.has("admin_active_tiers") && (isBrowserSandbox || (Date.now() - cachedTs) < 60000)) {
       return memoryFallback.get("admin_active_tiers");
     }
     try {
-      const raw = await kvCachedGetRaw(env, "admin_active_tiers", "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, "admin_active_tiers", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const parsed = { ...DEFAULT_ACTIVE_TIERS, ...JSON.parse(raw) };
         memoryFallback.set("admin_active_tiers", parsed);
+        memoryFallback.set("admin_active_tiers_ts", Date.now());
         return parsed;
       }
     } catch (e) {}
     const fallbackTiers = { ...DEFAULT_ACTIVE_TIERS };
     memoryFallback.set("admin_active_tiers", fallbackTiers);
+    memoryFallback.set("admin_active_tiers_ts", Date.now());
     return fallbackTiers;
   }
 
   async function saveActiveTiers(env, tiersObj) {
     const merged = { ...DEFAULT_ACTIVE_TIERS, ...tiersObj };
     memoryFallback.set("admin_active_tiers", merged);
+    memoryFallback.set("admin_active_tiers_ts", Date.now());
     await kvStageWrite(env, "admin_active_tiers", merged, { bindingName: "MOVIE_SAVED", flushNow: true });
     return merged;
   }
@@ -3389,6 +3481,23 @@
     return s;
   }
 
+  // Prüft die sichtbare Textlänge nach HTML-Parsing (Telegram-Limit: 4096 für Nachrichten, 1024 für Captions)
+  // und schneidet NIEMALS mitten durch offene HTML-Tags (<a href=...>, <b>, <blockquote>)!
+  function prepareTelegramHtmlPayload(rawMarkdown, maxVisibleLen = 4090) {
+    const rawStr = String(rawMarkdown || "");
+    const html = mdToHtml(rawStr);
+    const visibleLen = html.replace(/<[^>]+>/g, "").replace(/&[a-z#0-9]+;/gi, "x").length;
+    if (visibleLen <= maxVisibleLen) {
+      return { text: html, parse_mode: "HTML" };
+    }
+    const plain = unescapeMdChars(rawStr.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+    const safeLimit = Math.max(20, Number(maxVisibleLen) || 4090);
+    return {
+      text: plain.length > safeLimit ? (plain.slice(0, safeLimit - 3) + "…") : plain,
+      parse_mode: undefined
+    };
+  }
+
   function normalizeToken(str) {
     return String(str || "")
       .toLowerCase()
@@ -3548,12 +3657,26 @@
   function buildEdgeCacheKeyRequest(rawUrl) {
     try {
       const u = new URL(String(rawUrl || ""));
-      // Geheimnisse (api_key) niemals im öffentlichen Edge-Cache-Key speichern
+      // Geheimnisse (api_key, session_id) niemals im öffentlichen Edge-Cache-Key speichern
       u.searchParams.delete("api_key");
+      u.searchParams.delete("session_id");
       return new Request(u.toString(), { method: "GET" });
     } catch (_e) {
       return null;
     }
+  }
+
+  function hasTmdbCredentials(env) {
+    const activeEnv = env || (typeof globalThis !== "undefined" ? globalThis._activeWorkerEnv : null);
+    return Boolean(
+      String(activeEnv?.TMDB_BEARER_TOKEN || activeEnv?.TMDB_API_KEY || activeEnv?.TMDB_KEY || "").trim()
+    );
+  }
+
+  // Synthetische Fallback-IDs (OMDb 100M+, TVMaze 200M+, Wikidata 500M+, Manuell 900M+, >= 8M) existieren NICHT bei TMDb!
+  function isRealTmdbId(rawId) {
+    const num = Number(rawId);
+    return Number.isInteger(num) && num > 0 && num < 8000000;
   }
 
   function resolveExternalEdgeCacheTtl(rawUrl) {
@@ -3562,6 +3685,10 @@
       return 86400; // 24 Stunden
     }
     if (u.includes("api.themoviedb.org/3/")) {
+      // Private/einmalige Auth- & Account-Endpunkte (request_token, session_id, watchlist, favorite) NIEMALS im Edge-Cache speichern!
+      if (u.includes("/authentication/") || u.includes("/account") || u.includes("session_id=")) {
+        return 0;
+      }
       if (u.includes("/discover/") || u.includes("/trending/") || u.includes("/search/")) {
         return 900; // 15 Minuten
       }
@@ -3684,12 +3811,33 @@
     }
   }
 
-  // Normalisiert Reply-Markup inkl. nativer Telegram Bot API 8.0+ copy_text Buttons (CopyTextButton)
+  // Kürzt callback_data sicher auf max. 64 UTF-8-Bytes (hartes Telegram Bot API Limit -> verhindert 400 BUTTON_DATA_INVALID!)
+  function clampTelegramCallbackData(rawData) {
+    const str = String(rawData || "");
+    if (!str) return "wl_noop";
+    try {
+      const enc = new TextEncoder();
+      if (enc.encode(str).length <= 64) return str;
+      let out = "";
+      let usedBytes = 0;
+      for (const ch of str) {
+        const bLen = enc.encode(ch).length;
+        if (usedBytes + bLen > 64) break;
+        out += ch;
+        usedBytes += bLen;
+      }
+      return out || "wl_noop";
+    } catch (_e) {
+      return str.slice(0, 60);
+    }
+  }
+
+  // Normalisiert Reply-Markup inkl. nativer Telegram Bot API 8.0+ copy_text Buttons (CopyTextButton) & 64-Byte callback_data Schutz
   function sanitizeReplyMarkup(replyMarkup) {
     if (!replyMarkup || !Array.isArray(replyMarkup.inline_keyboard)) return replyMarkup;
     return {
       inline_keyboard: replyMarkup.inline_keyboard.map(row =>
-        row.map(btn => {
+        (Array.isArray(row) ? row : []).map(btn => {
           if (btn && btn.copy_text) {
             const rawCopyText = typeof btn.copy_text === "object" && btn.copy_text !== null
               ? String(btn.copy_text.text || "").trim()
@@ -3701,6 +3849,12 @@
               };
             }
             return { text: btn.text, callback_data: "info_copy_fallback" };
+          }
+          if (btn && typeof btn.callback_data === "string") {
+            const safeCb = clampTelegramCallbackData(btn.callback_data);
+            if (safeCb !== btn.callback_data) {
+              return { ...btn, callback_data: safeCb };
+            }
           }
           return btn;
         })
@@ -3918,6 +4072,12 @@
       recentProcessed: antiSpamState.recentProcessed.slice(0, 20)
     };
     memoryFallback.set("TG_ANTI_SPAM_STATE_JSON", snapshot);
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      // D1-first schont Cloudflare KV Free-Plan Limit (1.000 Writes/Tag & max 1 Write/s pro Key!)
+      await saveEntityToD1(env, "TG_ANTI_SPAM_STATE_JSON", "anti_spam", snapshot);
+      return;
+    }
     await kvStageWrite(env, "TG_ANTI_SPAM_STATE_JSON", snapshot, {
       bindingName: "MOVIE_SAVED",
       expirationTtl: 7 * 86400,
@@ -3929,24 +4089,29 @@
     if (antiSpamState.hydratedFromStorage) return;
     antiSpamState.hydratedFromStorage = true;
     try {
-      const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MOVIE_SAVED");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") {
-          if (Array.isArray(parsed.queue) && antiSpamState.queue.length === 0) {
-            antiSpamState.queue = parsed.queue.filter(q => q && q.status === "queued");
-          }
-          if (Array.isArray(parsed.recentProcessed) && antiSpamState.recentProcessed.length === 0) {
-            antiSpamState.recentProcessed = parsed.recentProcessed.slice(0, 20);
-          }
-          antiSpamState.totalEvaluated = Math.max(antiSpamState.totalEvaluated, Number(parsed.totalEvaluated) || 0);
-          antiSpamState.totalSentImmediate = Math.max(antiSpamState.totalSentImmediate, Number(parsed.totalSentImmediate) || 0);
-          antiSpamState.totalQueued = Math.max(antiSpamState.totalQueued, Number(parsed.totalQueued) || 0);
-          antiSpamState.totalDrained = Math.max(antiSpamState.totalDrained, Number(parsed.totalDrained) || 0);
-          antiSpamState.total429Hits = Math.max(antiSpamState.total429Hits, Number(parsed.total429Hits) || 0);
-          if (Number(parsed.floodWaitUntil) > Date.now()) {
-            antiSpamState.floodWaitUntil = Number(parsed.floodWaitUntil);
-          }
+      let parsed = null;
+      const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+      if (hasD1 && typeof getEntityFromD1 === "function") {
+        parsed = await getEntityFromD1(env, "TG_ANTI_SPAM_STATE_JSON", 7 * 86400000, { ramTtlMs: 30000 }).catch(() => null);
+      }
+      if (!parsed) {
+        const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MOVIE_SAVED");
+        if (raw) parsed = JSON.parse(raw);
+      }
+      if (parsed && typeof parsed === "object") {
+        if (Array.isArray(parsed.queue) && antiSpamState.queue.length === 0) {
+          antiSpamState.queue = parsed.queue.filter(q => q && q.status === "queued");
+        }
+        if (Array.isArray(parsed.recentProcessed) && antiSpamState.recentProcessed.length === 0) {
+          antiSpamState.recentProcessed = parsed.recentProcessed.slice(0, 20);
+        }
+        antiSpamState.totalEvaluated = Math.max(antiSpamState.totalEvaluated, Number(parsed.totalEvaluated) || 0);
+        antiSpamState.totalSentImmediate = Math.max(antiSpamState.totalSentImmediate, Number(parsed.totalSentImmediate) || 0);
+        antiSpamState.totalQueued = Math.max(antiSpamState.totalQueued, Number(parsed.totalQueued) || 0);
+        antiSpamState.totalDrained = Math.max(antiSpamState.totalDrained, Number(parsed.totalDrained) || 0);
+        antiSpamState.total429Hits = Math.max(antiSpamState.total429Hits, Number(parsed.total429Hits) || 0);
+        if (Number(parsed.floodWaitUntil) > Date.now()) {
+          antiSpamState.floodWaitUntil = Number(parsed.floodWaitUntil);
         }
       }
     } catch (e) {}
@@ -4160,18 +4325,22 @@
     if (fallbackFromSettings && (Number(fallbackFromSettings) === 7 || Number(fallbackFromSettings) === 30 || Number(fallbackFromSettings) === 90)) {
       return Number(fallbackFromSettings);
     }
-    if (memoryFallback.has("TG_LOG_RETENTION_DAYS")) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const retTs = Number(memoryFallback.get("TG_LOG_RETENTION_DAYS_ts") || 0);
+    if (memoryFallback.has("TG_LOG_RETENTION_DAYS") && (isBrowserSandbox || (Date.now() - retTs) < 60000)) {
       return normalizeWorkerRetentionDays(memoryFallback.get("TG_LOG_RETENTION_DAYS"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const norm = normalizeWorkerRetentionDays(raw);
         memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
+        memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
         return norm;
       }
     } catch (e) {}
     memoryFallback.set("TG_LOG_RETENTION_DAYS", 30);
+    memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
     return 30;
   }
 
@@ -4182,16 +4351,27 @@
     const ttlSeconds = retentionDays * 86400;
     const cutoffMs = Date.now() - (retentionDays * 86400 * 1000);
 
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     let rawList = [];
+    const memListTs = Number(memoryFallback.get("TG_ACTIVITY_LOG_JSON_ts") || 0);
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     const memList = memoryFallback.get("TG_ACTIVITY_LOG_JSON");
-    if (Array.isArray(memList)) {
+    if (Array.isArray(memList) && (isBrowserSandbox || (Date.now() - memListTs) < 20000)) {
       rawList = memList;
     } else {
       try {
-        const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MOVIE_SAVED");
-        if (str) {
-          const parsed = JSON.parse(str);
-          if (Array.isArray(parsed)) rawList = parsed;
+        let loaded = null;
+        if (hasD1 && typeof getEntityFromD1 === "function") {
+          loaded = await getEntityFromD1(env, "TG_ACTIVITY_LOG_JSON", 365 * 86400000, { ramTtlMs: 20000 }).catch(() => null);
+        }
+        if (Array.isArray(loaded)) {
+          rawList = loaded;
+        } else {
+          const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MOVIE_SAVED");
+          if (str) {
+            const parsed = JSON.parse(str);
+            if (Array.isArray(parsed)) rawList = parsed;
+          }
         }
       } catch (e) {}
     }
@@ -4214,18 +4394,26 @@
 
     const finalEntries = kept.slice(0, 100);
     memoryFallback.set("TG_ACTIVITY_LOG_JSON", finalEntries);
+    memoryFallback.set("TG_ACTIVITY_LOG_JSON_ts", Date.now());
     memoryFallback.set("TG_LOG_RETENTION_DAYS", retentionDays);
+    memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
 
     if (newEntry || retentionDaysOverride !== null || prunedCount > 0) {
-      await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", finalEntries, {
-        bindingName: "MOVIE_SAVED",
-        expirationTtl: ttlSeconds,
-        periodicOnly: retentionDaysOverride === null
-      });
+      if (hasD1 && typeof saveEntityToD1 === "function") {
+        // D1-first: 0 KV-Writes pro Stream/Event (schont 1.000 KV-Writes/Tag Free-Plan Limit!)
+        await saveEntityToD1(env, "TG_ACTIVITY_LOG_JSON", "activity_log", finalEntries);
+      } else {
+        await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", finalEntries, {
+          bindingName: "MOVIE_SAVED",
+          expirationTtl: ttlSeconds,
+          periodicOnly: retentionDaysOverride === null
+        });
+      }
       if (retentionDaysOverride !== null) {
         await kvStageWrite(env, "TG_LOG_RETENTION_DAYS", String(retentionDays), {
           bindingName: "MOVIE_SAVED",
-          periodicOnly: false
+          periodicOnly: false,
+          flushNow: true
         });
       }
     }
@@ -4387,28 +4575,34 @@
   }
 
   async function getVideoCoverMode(env) {
-    if (memoryFallback.has("TG_VIDEO_COVER_MODE")) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const coverTs = Number(memoryFallback.get("TG_VIDEO_COVER_MODE_ts") || 0);
+    if (memoryFallback.has("TG_VIDEO_COVER_MODE") && (isBrowserSandbox || (Date.now() - coverTs) < 60000)) {
       return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const mode = normalizeVideoCoverMode(raw);
         memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+        memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
         return mode;
       }
     } catch (e) {}
     memoryFallback.set("TG_VIDEO_COVER_MODE", "backdrop");
+    memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
     return "backdrop";
   }
 
   async function setVideoCoverMode(env, modeInput) {
     const mode = normalizeVideoCoverMode(modeInput);
     memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+    memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
     try {
       await kvStageWrite(env, "TG_VIDEO_COVER_MODE", mode, {
         bindingName: "MOVIE_SAVED",
-        periodicOnly: false
+        periodicOnly: false,
+        flushNow: true
       });
     } catch (e) {}
     return mode;
@@ -4591,38 +4785,45 @@
 
   function sanitizeWebhookSecretToken(rawSecret) {
     // Offizielle Telegram setWebhook secret_token Vorgabe: 1-256 Zeichen, nur A-Z, a-z, 0-9, _ und -
-    return String(rawSecret || "")
+    if (rawSecret === null || rawSecret === undefined || typeof rawSecret === "object") {
+      return "";
+    }
+    const clean = String(rawSecret)
       .trim()
       .replace(/[^A-Za-z0-9_-]/g, "_")
       .slice(0, 128);
+    // Selbstheilung gegen frühere Objekt-Serialisierung ("[object Object]" -> "_object_Object_")
+    if (clean === "_object_Object_" || clean === "object_Object") return "";
+    return clean;
   }
 
   async function getWebhookSecurityConfig(env) {
-    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 600000) {
+    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 60000) {
       return globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
     }
     let secretToken = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
-    let maxConnections = 10;
+    let maxConnections = 8;
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     try {
-      const memCfg = memoryFallback.get("TG_WEBHOOK_SECURITY_CONFIG_V1");
+      const memCfg = isBrowserSandbox ? memoryFallback.get("TG_WEBHOOK_SECURITY_CONFIG_V1") : null;
       if (memCfg && typeof memCfg === "object") {
         if (memCfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(memCfg.secretToken);
-        if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 10));
+        if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 8));
       } else {
-        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED");
+        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", { ttlMs: 60000 });
         if (rawKv) {
           const parsed = JSON.parse(rawKv);
           if (parsed && typeof parsed === "object") {
             if (parsed.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(parsed.secretToken);
-            if (parsed.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(parsed.maxConnections) || 10));
-            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", parsed);
+            if (parsed.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(parsed.maxConnections) || 8));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", { ...parsed, secretToken, maxConnections });
           }
         } else if (typeof getEntityFromD1 === "function") {
           const d1Cfg = await getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000).catch(() => null);
           if (d1Cfg && typeof d1Cfg === "object") {
             if (d1Cfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(d1Cfg.secretToken);
-            if (d1Cfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(d1Cfg.maxConnections) || 10));
-            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", d1Cfg);
+            if (d1Cfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(d1Cfg.maxConnections) || 8));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", { ...d1Cfg, secretToken, maxConnections });
           }
         }
       }
@@ -4637,12 +4838,18 @@
     return cfg;
   }
 
-  async function saveWebhookSecurityConfig(env, newSecretToken, maxConnections = 10) {
-    const cleanToken = sanitizeWebhookSecretToken(newSecretToken);
-    const cleanMaxConn = Math.min(40, Math.max(1, Number(maxConnections) || 10));
+  async function saveWebhookSecurityConfig(env, secretOrConfig, maxConnectionsArg = 8) {
+    // Unterstützt sowohl Objekt-Signatur ({ secretToken, maxConnections, dropPendingDefault }) als auch Legacy-Parameter (env, token, maxConnections)
+    const isConfigObj = Boolean(secretOrConfig && typeof secretOrConfig === "object");
+    const rawToken = isConfigObj ? secretOrConfig.secretToken : secretOrConfig;
+    const rawMaxConn = isConfigObj ? secretOrConfig.maxConnections : maxConnectionsArg;
+    const dropPendingDefault = isConfigObj ? Boolean(secretOrConfig.dropPendingDefault) : true;
+    const cleanToken = sanitizeWebhookSecretToken(rawToken);
+    const cleanMaxConn = Math.min(40, Math.max(1, Number(rawMaxConn) || 8));
     const payload = {
       secretToken: cleanToken,
       maxConnections: cleanMaxConn,
+      dropPendingDefault,
       updatedAt: Date.now(),
       loadedAt: Date.now()
     };
@@ -4675,19 +4882,25 @@
     if (explicit) return WORKER_SPEED_PROFILES[explicit];
 
     const memKey = "TG_WORKER_SPEED_PROFILE";
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const speedTs = Number(memoryFallback.get("TG_WORKER_SPEED_PROFILE_ts") || 0);
     const cached = normalizeKey(memoryFallback.get(memKey));
-    if (cached) return WORKER_SPEED_PROFILES[cached];
+    if (cached && (isBrowserSandbox || (Date.now() - speedTs) < 60000)) {
+      return WORKER_SPEED_PROFILES[cached];
+    }
 
     try {
-      const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED", { ttlMs: 60000 });
       const kvVal = normalizeKey(raw);
       if (kvVal) {
         memoryFallback.set(memKey, kvVal);
+        memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
         return WORKER_SPEED_PROFILES[kvVal];
       }
     } catch (e) {}
 
     memoryFallback.set(memKey, "free_turbo");
+    memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
     return WORKER_SPEED_PROFILES.free_turbo;
   }
 
@@ -4695,6 +4908,7 @@
     const clean = String(profileKey || "").trim().toLowerCase();
     const valid = (clean === "balanced" || clean === "paid_pro") ? clean : "free_turbo";
     memoryFallback.set("TG_WORKER_SPEED_PROFILE", valid);
+    memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
     await kvStageWrite(env, "TG_WORKER_SPEED_PROFILE", valid, {
       bindingName: "MOVIE_SAVED",
       flushNow: true
@@ -4713,7 +4927,10 @@
         exp: Date.now() + (Number(ttlMs) > 0 ? Number(ttlMs) : 24 * 60 * 60 * 1000)
       };
       const payloadHex = Array.from(enc.encode(JSON.stringify(dataObj))).map(b => b.toString(16).padStart(2, "0")).join("");
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
+      const secret = typeof getSessionSigningSecret === "function"
+        ? await getSessionSigningSecret(env)
+        : String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+      if (!secret) return "";
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),
@@ -4736,7 +4953,10 @@
       const [payloadHex, sigHex] = raw.split(".");
       if (!payloadHex || !sigHex || payloadHex.length % 2 !== 0) return { ok: false, error: "Formatfehler im Launch-Token" };
       const enc = new TextEncoder();
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
+      const secret = typeof getSessionSigningSecret === "function"
+        ? await getSessionSigningSecret(env)
+        : String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+      if (!secret) return { ok: false, error: "Signatur-Schlüssel nicht konfiguriert" };
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),
@@ -4746,7 +4966,10 @@
       );
       const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`tglaunch:${payloadHex}`));
       const expectedSigHex = Array.from(new Uint8Array(expectedSigBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
-      if (expectedSigHex.toLowerCase() !== sigHex.toLowerCase()) {
+      const sigMatches = typeof timingSafeEqualStr === "function"
+        ? timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())
+        : (expectedSigHex.toLowerCase() === sigHex.toLowerCase());
+      if (!sigMatches) {
         return { ok: false, error: "Ungültige Launch-Token Signatur" };
       }
       const bytes = new Uint8Array(payloadHex.length / 2);
@@ -4766,8 +4989,23 @@
     }
   }
 
+  function resolveDefaultWebAppBaseUrl(env, explicitBase = "") {
+    const raw = String(
+      explicitBase ||
+      env?.WEBAPP_URL ||
+      env?.WEBHOOK_URL ||
+      (typeof globalThis !== "undefined" ? globalThis._activeWorkerOrigin : "") ||
+      "https://teleport.sonhartmann-1997.workers.dev"
+    ).trim();
+    if (!raw) return "";
+    if (typeof resolveCleanWorkerOrigin === "function" && !explicitBase && !env?.WEBAPP_URL) {
+      return resolveCleanWorkerOrigin(env, raw).replace(/\/$/, "");
+    }
+    return raw.replace(/\/$/, "");
+  }
+
   async function buildSignedWebAppUrl(env, baseUrl, chatId = null, extraParams = {}) {
-    const base = String(baseUrl || env?.WEBAPP_URL || env?.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    const base = resolveDefaultWebAppBaseUrl(env, baseUrl);
     if (!base) return "";
     try {
       const u = new URL(base);
@@ -4816,7 +5054,7 @@
               reply_markup: r.reply_markup ? sanitizeReplyMarkup(r.reply_markup) : undefined
             };
           });
-          const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const effectiveWebAppBase = resolveDefaultWebAppBaseUrl(env);
           const cleanInlineOpts = { ...options };
           const switchPmText = cleanInlineOpts.switch_pm_text;
           const switchPmParam = cleanInlineOpts.switch_pm_parameter;
@@ -4852,7 +5090,7 @@
       async setChatMenuButton(chatId = null, webAppUrl = "", buttonText = "🍿 Mediathek") {
         try {
           trackStat("telegramCalls");
-          const base = String(webAppUrl || env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const base = resolveDefaultWebAppBaseUrl(env, webAppUrl);
           const finalUrl = chatId
             ? await buildSignedWebAppUrl(env, base, chatId)
             : base;
@@ -4935,20 +5173,21 @@
           const { _fromAntiSpamQueue, ...cleanOptions } = options || {};
           recordActualTelegramSendSlot(chatId);
           const safeMarkup = cleanOptions.reply_markup ? sanitizeReplyMarkup(cleanOptions.reply_markup) : undefined;
-          const htmlText = mdToHtml(text);
+          const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
             chat_id: chatId,
-            text: htmlText,
-            parse_mode: "HTML",
+            text: prepared.text,
+            parse_mode: prepared.parse_mode,
             disable_web_page_preview: true,
             ...cleanOptions,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 6000);
 
           if (res.status === 429) {
             const errData = await res.json().catch(() => ({}));
@@ -4971,13 +5210,15 @@
           }
 
           if (!res.ok) {
-            const plainText = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
             const plainBody = { ...body, text: plainText, parse_mode: undefined, reply_markup: safeMarkup };
-            res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+            res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(plainBody),
-            });
+              _criticalSubrequest: true
+            }, 6000);
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -4988,21 +5229,30 @@
       async sendPhoto(chatId, photoUrl, caption, options = {}) {
         try {
           trackStat("telegramCalls");
+          recordActualTelegramSendSlot(chatId);
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
-          const htmlCaption = mdToHtml(caption || "");
+          const prepared = prepareTelegramHtmlPayload(caption || "", 1020);
           const body = {
             chat_id: chatId,
             photo: photoUrl,
-            caption: htmlCaption,
-            parse_mode: "HTML",
+            caption: prepared.text,
+            parse_mode: prepared.parse_mode,
             ...options,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/sendPhoto`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 7000);
+
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retrySec = Number(err429?.parameters?.retry_after) || 5;
+            registerAntiSpam429FloodWait(retrySec, chatId);
+            return null;
+          }
 
           if (!res.ok) {
             const plainCaption = unescapeMdChars(
@@ -5014,11 +5264,12 @@
               parse_mode: undefined,
               reply_markup: safeMarkup
             };
-            res = await fetch(`${TELEGRAM_API}/sendPhoto`, {
+            res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(fallbackBody),
-            });
+              _criticalSubrequest: true
+            }, 7000);
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -5030,11 +5281,12 @@
         try {
           trackStat("telegramCalls");
           const body = { chat_id: chatId, message_id: messageId, reply_markup: sanitizeReplyMarkup(replyMarkup) };
-          let res = await fetch(`${TELEGRAM_API}/editMessageReplyMarkup`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageReplyMarkup`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 5000);
           return res.ok ? await res.json() : null;
         } catch (e) {
           return null;
@@ -5045,18 +5297,20 @@
         try {
           trackStat("telegramCalls");
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
+          const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
             inline_message_id: inlineMessageId,
-            text: mdToHtml(text),
-            parse_mode: "HTML",
+            text: prepared.text,
+            parse_mode: prepared.parse_mode,
             ...options,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/editMessageText`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 5000);
           return res.ok ? await res.json() : null;
         } catch (e) {
           return null;
@@ -5067,20 +5321,28 @@
         try {
           trackStat("telegramCalls");
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
+          const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
             chat_id: chatId,
             message_id: messageId,
-            text: mdToHtml(text),
-            parse_mode: "HTML",
+            text: prepared.text,
+            parse_mode: prepared.parse_mode,
             disable_web_page_preview: true,
             ...options,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/editMessageText`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 6000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retrySec = Number(err429?.parameters?.retry_after) || 5;
+            registerAntiSpam429FloodWait(retrySec, chatId);
+            return null;
+          }
           if (!res.ok) {
             const errJson = await res.clone().json().catch(() => null);
             const errDesc = String(errJson?.description || "").toLowerCase();
@@ -5089,18 +5351,20 @@
             if (errDesc.includes("message is not modified")) {
               return { ok: true, notModified: true };
             }
-            const plainText = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
             const fallbackBody = {
               ...body,
               text: plainText,
               parse_mode: undefined,
               reply_markup: safeMarkup
             };
-            res = await fetch(`${TELEGRAM_API}/editMessageText`, {
+            res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(fallbackBody),
-            });
+              _criticalSubrequest: true
+            }, 6000);
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -5112,12 +5376,15 @@
         if (!callbackQueryId) return;
         try {
           trackStat("telegramCalls");
-          const body = { callback_query_id: callbackQueryId, text, show_alert: showAlert };
-          await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
+          // Telegram-Limit: max. 200 Zeichen für answerCallbackQuery-Text
+          const safeText = String(text || "").length > 198 ? (String(text).slice(0, 195) + "…") : String(text || "");
+          const body = { callback_query_id: callbackQueryId, text: safeText, show_alert: showAlert };
+          await fetchWithTimeout(`${TELEGRAM_API}/answerCallbackQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 4000);
         } catch (e) {}
       },
 
@@ -5126,28 +5393,38 @@
         try {
           trackStat("telegramCalls");
           const body = { chat_id: chatId, message_id: messageId };
-          await fetch(`${TELEGRAM_API}/deleteMessage`, {
+          await fetchWithTimeout(`${TELEGRAM_API}/deleteMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 4000);
         } catch (e) {}
       },
 
       async getBotUsername(env) {
-        if (env.BOT_USERNAME) return String(env.BOT_USERNAME).replace(/^@/, "");
+        if (env?.BOT_USERNAME) return String(env.BOT_USERNAME).replace(/^@/, "");
         if (memoryFallback.has("bot_username")) return memoryFallback.get("bot_username");
+        if (!env?.TELEGRAM_BOT_TOKEN) return "";
+        const lastFailTs = Number(memoryFallback.get("bot_username_fail_ts") || 0);
+        if (lastFailTs && (Date.now() - lastFailTs) < 60000) return "";
         try {
           trackStat("telegramCalls");
-          const res = await fetch(`${TELEGRAM_API}/getMe`);
+          const res = typeof fetchWithTimeout === "function"
+            ? await fetchWithTimeout(`${TELEGRAM_API}/getMe`, {}, 3000)
+            : await fetch(`${TELEGRAM_API}/getMe`);
           if (res.ok) {
             const data = await res.json();
-            if (data.result && data.result.username) {
+            if (data?.result?.username) {
+              memoryFallback.delete("bot_username_fail_ts");
               memoryFallback.set("bot_username", data.result.username);
               return data.result.username;
             }
           }
-        } catch (e) {}
+          memoryFallback.set("bot_username_fail_ts", Date.now());
+        } catch (e) {
+          memoryFallback.set("bot_username_fail_ts", Date.now());
+        }
         return "";
       },
 
@@ -5182,7 +5459,9 @@
           const apiBase = (customToken && /^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken))
             ? `https://api.telegram.org/bot${customToken}`
             : TELEGRAM_API;
-          const htmlCaption = mdToHtml(caption || "");
+          const preparedCap = prepareTelegramHtmlPayload(caption || "", 1020);
+          const htmlCaption = preparedCap.text;
+          const captionParseMode = preparedCap.parse_mode;
           const threadId = extraOpts.messageThreadId && /^\d+$/.test(String(extraOpts.messageThreadId).trim())
             ? parseInt(String(extraOpts.messageThreadId).trim(), 10)
             : undefined;
@@ -5192,27 +5471,34 @@
           // 1. Prüfe auf Quellgruppen-Referenz aus Telegram Desktop Chat-Backup (tg_export_<channelId>_<msgId>)
           const exportMatch = String(fileIdOrExportRef).trim().match(/^tg_export_(-?\d+)_(\d+)$/i);
           if (exportMatch) {
+            recordActualTelegramSendSlot(targetChatId);
             const rawChannelId = exportMatch[1];
             const sourceMsgId = parseInt(exportMatch[2], 10);
             const overrideBridge = String(extraOpts.sourceBridgeChatId || env.SOURCE_GROUP_CHAT_ID || "").trim();
             const fromChatId = overrideBridge || (rawChannelId.startsWith("-100") || rawChannelId.startsWith("-") ? rawChannelId : `-100${rawChannelId}`);
 
-            // Versuch A: Kopiere Nachricht sauber per copyMessage
+            // Versuch A: Kopiere Nachricht sauber per copyMessage (Hinweis: Telegram copyMessage unterstützt keinen cover-Parameter -> Cover wird direkt danach via editMessageMedia gesetzt!)
             const copyPayload = {
               chat_id: targetChatId,
               from_chat_id: fromChatId,
               message_id: sourceMsgId,
               caption: htmlCaption,
-              parse_mode: "HTML"
+              parse_mode: captionParseMode
             };
             if (threadId) copyPayload.message_thread_id = threadId;
-            if (resolvedCoverUrl) copyPayload.cover = resolvedCoverUrl;
 
-            let copyRes = await fetch(`${apiBase}/copyMessage`, {
+            let copyRes = await fetchWithTimeout(`${apiBase}/copyMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(copyPayload)
-            });
+              body: JSON.stringify(copyPayload),
+              _criticalSubrequest: true
+            }, 7000);
+
+            if (copyRes.status === 429) {
+              const err429Copy = await copyRes.json().catch(() => ({}));
+              registerAntiSpam429FloodWait(Number(err429Copy?.parameters?.retry_after) || 5, targetChatId);
+              return null;
+            }
 
             if (!copyRes.ok) {
               // Fallback ohne HTML parse_mode falls Sonderzeichen im Caption-Text
@@ -5224,11 +5510,17 @@
                 caption: plainCaption.slice(0, 1020)
               };
               if (threadId) fallbackCopyPayload.message_thread_id = threadId;
-              copyRes = await fetch(`${apiBase}/copyMessage`, {
+              copyRes = await fetchWithTimeout(`${apiBase}/copyMessage`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(fallbackCopyPayload)
-              });
+                body: JSON.stringify(fallbackCopyPayload),
+                _criticalSubrequest: true
+              }, 7000);
+              if (copyRes.status === 429) {
+                const err429Copy2 = await copyRes.json().catch(() => ({}));
+                registerAntiSpam429FloodWait(Number(err429Copy2?.parameters?.retry_after) || 5, targetChatId);
+                return null;
+              }
             }
 
             if (copyRes.ok) {
@@ -5256,11 +5548,12 @@
                       disable_notification: true
                     };
                     if (shouldDeleteTempForward && threadId) fwdPayload.message_thread_id = threadId;
-                    const fwdRes = await fetch(`${apiBase}/forwardMessage`, {
+                    const fwdRes = await fetchWithTimeout(`${apiBase}/forwardMessage`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify(fwdPayload)
-                    });
+                      body: JSON.stringify(fwdPayload),
+                      _criticalSubrequest: true
+                    }, 6000);
                     if (fwdRes.ok) {
                       const fwdJson = await fwdRes.json().catch(() => null);
                       const fwdMsgId = fwdJson?.result?.message_id;
@@ -5271,11 +5564,13 @@
                         await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, mediaObj.file_unique_id || null);
                       }
                       if (shouldDeleteTempForward && fwdMsgId) {
-                        fetch(`${apiBase}/deleteMessage`, {
+                        // Awaiten (mit Timeout), damit Cloudflare Workers die Löschung nicht vorzeitig abbricht (verhindert doppelte Videos!)
+                        await fetchWithTimeout(`${apiBase}/deleteMessage`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ chat_id: harvestTargetChat, message_id: fwdMsgId })
-                        }).catch(() => {});
+                          body: JSON.stringify({ chat_id: harvestTargetChat, message_id: fwdMsgId }),
+                          _criticalSubrequest: true
+                        }, 4000).catch(() => {});
                       }
                     }
                   } catch (e) {}
@@ -5294,15 +5589,16 @@
                       media: harvestedFileId,
                       cover: resolvedCoverUrl,
                       caption: htmlCaption,
-                      parse_mode: "HTML",
+                      parse_mode: captionParseMode,
                       supports_streaming: true
                     }
                   };
-                  const editRes = await fetch(`${apiBase}/editMessageMedia`, {
+                  const editRes = await fetchWithTimeout(`${apiBase}/editMessageMedia`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(editMediaPayload)
-                  });
+                    body: JSON.stringify(editMediaPayload),
+                    _criticalSubrequest: true
+                  }, 6000);
                   if (editRes.ok) {
                     coverEmbedded = true;
                   }
@@ -5329,7 +5625,7 @@
             chat_id: targetChatId,
             video: fileIdOrExportRef,
             caption: htmlCaption,
-            parse_mode: "HTML",
+            parse_mode: captionParseMode,
             supports_streaming: true
           };
           if (threadId) videoBody.message_thread_id = threadId;
@@ -5337,11 +5633,12 @@
           if (startTimestamp !== undefined) videoBody.start_timestamp = startTimestamp;
 
           let usedCover = Boolean(resolvedCoverUrl);
-          let res = await fetch(`${apiBase}/sendVideo`, {
+          let res = await fetchWithTimeout(`${apiBase}/sendVideo`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(videoBody)
-          });
+            body: JSON.stringify(videoBody),
+            _criticalSubrequest: true
+          }, 8000);
           if (res.status === 429) {
             const err429 = await res.json().catch(() => ({}));
             const retrySec = Number(err429?.parameters?.retry_after) || 5;
@@ -5353,11 +5650,12 @@
             usedCover = false;
             const fallbackVideoBody = { ...videoBody };
             delete fallbackVideoBody.cover;
-            res = await fetch(`${apiBase}/sendVideo`, {
+            res = await fetchWithTimeout(`${apiBase}/sendVideo`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(fallbackVideoBody)
-            });
+              body: JSON.stringify(fallbackVideoBody),
+              _criticalSubrequest: true
+            }, 8000);
             if (res.status === 429) {
               const err429Retry = await res.json().catch(() => ({}));
               registerAntiSpam429FloodWait(Number(err429Retry?.parameters?.retry_after) || 5, targetChatId);
@@ -5370,14 +5668,15 @@
               chat_id: targetChatId,
               document: fileIdOrExportRef,
               caption: htmlCaption,
-              parse_mode: "HTML"
+              parse_mode: captionParseMode
             };
             if (threadId) docBody.message_thread_id = threadId;
-            res = await fetch(`${apiBase}/sendDocument`, {
+            res = await fetchWithTimeout(`${apiBase}/sendDocument`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(docBody)
-            });
+              body: JSON.stringify(docBody),
+              _criticalSubrequest: true
+            }, 8000);
             if (res.status === 429) {
               const err429Doc = await res.json().catch(() => ({}));
               registerAntiSpam429FloodWait(Number(err429Doc?.parameters?.retry_after) || 5, targetChatId);
@@ -5422,6 +5721,7 @@
   function syncUserBundleToMemoryMirrors(chatId, bundle) {
     if (!chatId || !bundle) return;
     memoryFallback.set(`u_bundle_${chatId}`, bundle);
+    memoryFallback.set(`u_bundle_ts_${chatId}`, Date.now());
     memoryFallback.set(`user_${chatId}`, bundle.savedList || []);
     memoryFallback.set(`folders_${chatId}`, bundle.folders || []);
     memoryFallback.set(`settings_${chatId}`, bundle.settings || { ...DEFAULT_USER_SETTINGS_TEMPLATE });
@@ -5442,7 +5742,8 @@
 
     const forceKv = Boolean(options?.forceKvWrite || options?.flushNow);
     const contentSigKey = `u_bundle_sig_${chatId}`;
-    const nextSig = JSON.stringify({
+    const serializeForSig = typeof stableJsonStringify === "function" ? stableJsonStringify : JSON.stringify;
+    const nextSig = serializeForSig({
       savedList: normSavedList,
       folders: normFolders,
       settings: normSettings,
@@ -5463,19 +5764,35 @@
       settings: normSettings,
       session: cleanSession
     };
-    const deferKv = Boolean(options?.deferKvWrite);
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      // D1-first für User-Bundles (100.000 Writes/Tag statt KV 1.000/Tag, 0s globale Edge-Konsistenz, kein 1-Write/s-Limit!)
+      await saveEntityToD1(env, `u_bundle_${chatId}`, "user_bundle", payloadToPersist);
+      return;
+    }
+    // Fallback ohne D1-Binding: KV-Write am Request-Ende via flushDirtyKvBatch
     await kvStageWrite(env, `u_bundle_${chatId}`, payloadToPersist, {
       bindingName: "MOVIE_SAVED",
-      periodicOnly: deferKv && !forceKv,
+      periodicOnly: false,
       forceKvWrite: forceKv,
       flushNow: Boolean(options?.flushNow)
     });
   }
 
-  async function getUserBundle(env, chatId) {
+  async function getUserBundle(env, chatId, options = {}) {
     const cleanId = String(chatId || "guest");
     const bundleKey = `u_bundle_${cleanId}`;
-    if (memoryFallback.has(bundleKey)) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const bundleTs = Number(memoryFallback.get(`u_bundle_ts_${cleanId}`) || 0);
+    const hasPendingDirtyWrite = typeof kvDirtyBuffer !== "undefined" && kvDirtyBuffer.has(bundleKey);
+    const canUseMemBundle = !options?.forceRefresh && memoryFallback.has(bundleKey) && (
+      isBrowserSandbox ||
+      cleanId === "guest" ||
+      cleanId === "bot_vip" ||
+      hasPendingDirtyWrite ||
+      (bundleTs > 0 && (Date.now() - bundleTs) < 15000)
+    );
+    if (canUseMemBundle) {
       const memBundle = memoryFallback.get(bundleKey);
       if (memBundle && typeof memBundle === "object") {
         if (memoryFallback.has(`user_${cleanId}`)) {
@@ -5508,6 +5825,30 @@
       return botVipBundle;
     }
 
+    // 1. D1-first (sofortige globale Edge-Konsistenz, 0 KV-Reads/Writes!)
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function" && cleanId !== "guest") {
+      try {
+        const d1Bundle = await getEntityFromD1(env, bundleKey, 3650 * 86400000, {
+          ramTtlMs: 15000,
+          bypassMemoryCache: Boolean(options?.forceRefresh)
+        });
+        if (d1Bundle && typeof d1Bundle === "object") {
+          const hydrated = {
+            v: 2,
+            updatedAt: d1Bundle.updatedAt || Date.now(),
+            savedList: normalizeSavedItems(d1Bundle.savedList || []),
+            folders: Array.isArray(d1Bundle.folders) ? d1Bundle.folders : [],
+            settings: { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...(d1Bundle.settings || {}) },
+            session: d1Bundle.session && typeof d1Bundle.session === "object" ? d1Bundle.session : {}
+          };
+          syncUserBundleToMemoryMirrors(cleanId, hydrated);
+          return hydrated;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Fallback & automatische 1x-Migration bestehender KV-User-Bundles nach D1
     try {
       const rawBundle = await kvCachedGetRaw(env, bundleKey, "MOVIE_SAVED");
       if (rawBundle) {
@@ -5522,6 +5863,9 @@
             session: parsed.session && typeof parsed.session === "object" ? parsed.session : {}
           };
           syncUserBundleToMemoryMirrors(cleanId, hydrated);
+          if (hasD1 && typeof saveEntityToD1 === "function" && cleanId !== "guest") {
+            scheduleBackgroundWork(() => saveEntityToD1(env, bundleKey, "user_bundle", hydrated));
+          }
           return hydrated;
         }
       }
@@ -5863,21 +6207,36 @@
 
   async function getBotVipHiddenKeys(env) {
     const key = "bot_vip_hidden_keys";
-    if (memoryFallback.has(key)) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const hiddenTs = Number(memoryFallback.get(`${key}_ts`) || 0);
+    if (memoryFallback.has(key) && (isBrowserSandbox || (Date.now() - hiddenTs) < 60000)) {
       const mem = memoryFallback.get(key);
       if (Array.isArray(mem)) return new Set(mem);
     }
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function") {
+      try {
+        const fromD1 = await getEntityFromD1(env, key, 3650 * 86400000, { ramTtlMs: 60000 });
+        if (Array.isArray(fromD1)) {
+          memoryFallback.set(key, fromD1);
+          memoryFallback.set(`${key}_ts`, Date.now());
+          return new Set(fromD1);
+        }
+      } catch (e) {}
+    }
     try {
-      const raw = await kvCachedGetRaw(env, key, "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, key, "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           memoryFallback.set(key, parsed);
+          memoryFallback.set(`${key}_ts`, Date.now());
           return new Set(parsed);
         }
       }
     } catch (e) {}
     memoryFallback.set(key, []);
+    memoryFallback.set(`${key}_ts`, Date.now());
     return new Set();
   }
 
@@ -5885,6 +6244,12 @@
     const key = "bot_vip_hidden_keys";
     const arr = Array.from(keySet || []);
     memoryFallback.set(key, arr);
+    memoryFallback.set(`${key}_ts`, Date.now());
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      await saveEntityToD1(env, key, "config", arr);
+      return;
+    }
     await kvStageWrite(env, key, arr, { bindingName: "MOVIE_SAVED" });
   }
 
@@ -5940,36 +6305,81 @@
     return Array.from(map.values()).sort((a, b) => (a.season !== b.season ? a.season - b.season : a.episode - b.episode));
   }
 
-  async function getAllSeriesEpisodesMapFromD1(env) {
+  async function getAllSeriesEpisodesMapFromD1(env, targetSeriesIds = null) {
     const epMap = new Map();
+    const hasFilter = Array.isArray(targetSeriesIds);
+    const cleanTargetIds = hasFilter
+      ? Array.from(new Set(targetSeriesIds.map(x => Number(x)).filter(n => Number.isFinite(n) && n > 0)))
+      : null;
+    if (hasFilter && cleanTargetIds.length === 0) {
+      return epMap;
+    }
+    const targetIdSet = cleanTargetIds ? new Set(cleanTargetIds) : null;
     const db = await ensureD1Schema(env);
     if (db) {
       try {
-        const res = await db.prepare(
-          `SELECT ef.series_id, ef.season_number, ef.episode_number, ef.quality, ef.codec, ef.telegram_file_id, ef.file_size, ef.tags,
-                  se.title AS episode_title
-           FROM episode_files ef
-           LEFT JOIN series_episodes se
-             ON se.series_id = ef.series_id AND se.season_number = ef.season_number AND se.episode_number = ef.episode_number
-           WHERE ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
-             AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
-           ORDER BY ef.series_id ASC, ef.season_number ASC, ef.episode_number ASC, ef.updated_at DESC`
-        ).all().catch(() => ({ results: [] }));
-        for (const r of (res?.results || [])) {
-          const sid = Number(r.series_id);
-          if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
-          const prevList = epMap.get(sid) || [];
-          prevList.push({
-            season: Number(r.season_number ?? 1),
-            episode: Number(r.episode_number ?? 1),
-            title: r.episode_title || `Folge ${Number(r.episode_number ?? 1)}`,
-            quality: r.quality || "1080p",
-            codec: r.codec || "x264",
-            fileId: r.telegram_file_id || null,
-            fileSize: r.file_size || null,
-            tags: r.tags || ""
-          });
-          epMap.set(sid, prevList);
+        if (cleanTargetIds) {
+          // Free-Plan Schutz: Gezielter IN-Lookup NUR für die tatsächlich benötigten Serien-IDs (kein Full-Table-Scan!)
+          for (let i = 0; i < cleanTargetIds.length; i += 45) {
+            const chunk = cleanTargetIds.slice(i, i + 45);
+            const ph = chunk.map((_, idx) => `?${idx + 1}`).join(",");
+            const res = await db.prepare(
+              `SELECT ef.series_id, ef.season_number, ef.episode_number, ef.quality, ef.codec, ef.telegram_file_id, ef.file_size, ef.tags,
+                      se.title AS episode_title
+               FROM episode_files ef
+               LEFT JOIN series_episodes se
+                 ON se.series_id = ef.series_id AND se.season_number = ef.season_number AND se.episode_number = ef.episode_number
+               WHERE ef.series_id IN (${ph})
+                 AND ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
+                 AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+               ORDER BY ef.series_id ASC, ef.season_number ASC, ef.episode_number ASC, ef.updated_at DESC
+               LIMIT 4000`
+            ).bind(...chunk).all().catch(() => ({ results: [] }));
+            for (const r of (res?.results || [])) {
+              const sid = Number(r.series_id);
+              if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
+              const prevList = epMap.get(sid) || [];
+              prevList.push({
+                season: Number(r.season_number ?? 1),
+                episode: Number(r.episode_number ?? 1),
+                title: r.episode_title || `Folge ${Number(r.episode_number ?? 1)}`,
+                quality: r.quality || "1080p",
+                codec: r.codec || "x264",
+                fileId: r.telegram_file_id || null,
+                fileSize: r.file_size || null,
+                tags: r.tags || ""
+              });
+              epMap.set(sid, prevList);
+            }
+          }
+        } else {
+          const res = await db.prepare(
+            `SELECT ef.series_id, ef.season_number, ef.episode_number, ef.quality, ef.codec, ef.telegram_file_id, ef.file_size, ef.tags,
+                    se.title AS episode_title
+             FROM episode_files ef
+             LEFT JOIN series_episodes se
+               ON se.series_id = ef.series_id AND se.season_number = ef.season_number AND se.episode_number = ef.episode_number
+             WHERE ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
+               AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+             ORDER BY ef.series_id ASC, ef.season_number ASC, ef.episode_number ASC, ef.updated_at DESC
+             LIMIT 4000`
+          ).all().catch(() => ({ results: [] }));
+          for (const r of (res?.results || [])) {
+            const sid = Number(r.series_id);
+            if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
+            const prevList = epMap.get(sid) || [];
+            prevList.push({
+              season: Number(r.season_number ?? 1),
+              episode: Number(r.episode_number ?? 1),
+              title: r.episode_title || `Folge ${Number(r.episode_number ?? 1)}`,
+              quality: r.quality || "1080p",
+              codec: r.codec || "x264",
+              fileId: r.telegram_file_id || null,
+              fileSize: r.file_size || null,
+              tags: r.tags || ""
+            });
+            epMap.set(sid, prevList);
+          }
         }
       } catch (e) {}
     }
@@ -5978,7 +6388,7 @@
       if (k.startsWith("d1_ep_files_") && Array.isArray(v)) {
         for (const r of v) {
           const sid = Number(r?.series_id);
-          if (!sid || scoreTelegramFileIdValidity(r?.telegram_file_id) === 0) continue;
+          if (!sid || (targetIdSet && !targetIdSet.has(sid)) || scoreTelegramFileIdValidity(r?.telegram_file_id) === 0) continue;
           const prevList = epMap.get(sid) || [];
           prevList.push({
             season: Number(r.season_number ?? 1),
@@ -6039,12 +6449,30 @@
     if (!Array.isArray(list) || list.length === 0) return [];
     let changed = false;
     const now = Date.now();
+
+    // Gezielter Serien-Episoden-Lookup: Nur die Serien-IDs aus der aktuellen Liste nachladen (0 D1-Reads wenn keine Serien in der Liste!)
     let epMap = memoryFallback.get("d1_all_series_ep_map_cache");
     const epMapTs = Number(memoryFallback.get("d1_all_series_ep_map_cache_ts") || 0);
-    if (!(epMap instanceof Map) || (now - epMapTs) > 90000) {
-      epMap = await getAllSeriesEpisodesMapFromD1(env);
+    if (!(epMap instanceof Map) || (now - epMapTs) > 120000) {
+      epMap = new Map();
       memoryFallback.set("d1_all_series_ep_map_cache", epMap);
       memoryFallback.set("d1_all_series_ep_map_cache_ts", now);
+    }
+    const neededSeriesIds = [];
+    for (const item of list) {
+      if (!item) continue;
+      if (item.contentType === "series" || item.contentType === "episode") {
+        const sid = Number(item.contentType === "episode" ? item.seriesId : item.tmdbId);
+        if (sid > 0 && !epMap.has(sid)) {
+          neededSeriesIds.push(sid);
+        }
+      }
+    }
+    if (neededSeriesIds.length > 0) {
+      const fetchedEpMap = await getAllSeriesEpisodesMapFromD1(env, neededSeriesIds);
+      for (const sid of neededSeriesIds) {
+        epMap.set(sid, fetchedEpMap.get(sid) || []);
+      }
     }
 
     // Gezielter D1-Lookup NUR für die tatsächlich in der Liste vorhandenen IDs (keine LIMIT 1500 Full-Table-Scans!)
@@ -7401,14 +7829,35 @@
   let d1SchemaInitialized = false;
   let d1SchemaInitPromise = null;
   let activeD1WriteBuffer = null;
-  const D1_SCHEMA_VERSION = "20261120_v1";
+  let activeD1WriteBufferStartedAt = 0;
+  const D1_SCHEMA_VERSION = "20261121_v2";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
-  function countD1Subrequest() {
-    if (typeof currentInvocationSubrequests === "number") {
-      currentInvocationSubrequests++;
+  function isD1BufferEligibleWrite(sqlStr) {
+    const s = String(sqlStr || "");
+    if (!/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(s)) return false;
+    // Kritische Nutzer-, Auth-, Meldungs-, Anti-Spam- & Konfig-Tabellen NIEMALS im Import-Batch-Puffer verzögern (verhindert Cross-Request-Hijacking!)
+    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue)\b/i.test(s)) {
+      return false;
     }
+    return true;
+  }
+
+  function hasLiveD1WriteBuffer() {
+    if (!Array.isArray(activeD1WriteBuffer)) return false;
+    // Sicherheits-Timeout: falls ein vorheriger Batch abgestürzt ist, nach 25s automatisch abbrechen statt für immer zu schlucken
+    if (activeD1WriteBufferStartedAt > 0 && (Date.now() - activeD1WriteBufferStartedAt) > 25000) {
+      activeD1WriteBuffer = null;
+      activeD1WriteBufferStartedAt = 0;
+      return false;
+    }
+    return true;
+  }
+
+  function countD1Subrequest() {
+    // D1-Queries zählen bei Cloudflare Workers NICHT gegen das 50-fetch/KV-Subrequest-Limit,
+    // werden aber sauber als d1OpsCount für Telemetrie & CPU-Budget gezählt!
     if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
       activeWorkerTelemetry.d1OpsCount = (activeWorkerTelemetry.d1OpsCount || 0) + 1;
     }
@@ -7427,9 +7876,11 @@
   function wrapD1Stmt(rawStmt, sqlStr) {
     if (!rawStmt) return rawStmt;
     const isWriteStmt = /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(String(sqlStr || ""));
+    const bufferEligible = isD1BufferEligibleWrite(sqlStr);
     return {
       _rawStmt: rawStmt,
       _isWriteStmt: isWriteStmt,
+      _bufferEligible: bufferEligible,
       _sql: sqlStr,
       bind(...args) {
         const boundRaw = rawStmt.bind(...args);
@@ -7448,7 +7899,7 @@
         return await rawStmt.raw(...args);
       },
       async run(...args) {
-        if (Array.isArray(activeD1WriteBuffer) && isWriteStmt) {
+        if (hasLiveD1WriteBuffer() && bufferEligible) {
           activeD1WriteBuffer.push(rawStmt);
           return { success: true, buffered: true, meta: { changes: 1 } };
         }
@@ -7469,9 +7920,9 @@
       },
       async batch(stmts) {
         if (!Array.isArray(stmts) || stmts.length === 0) return [];
-        const allWrites = stmts.every(s => Boolean(s && s._isWriteStmt));
+        const allBufferEligible = stmts.every(s => Boolean(s && s._bufferEligible));
         const rawStmts = unwrapRawD1Statements(stmts);
-        if (Array.isArray(activeD1WriteBuffer) && allWrites) {
+        if (hasLiveD1WriteBuffer() && allBufferEligible) {
           for (const rs of rawStmts) {
             activeD1WriteBuffer.push(rs);
           }
@@ -7495,15 +7946,21 @@
     if (!Array.isArray(activeD1WriteBuffer)) {
       activeD1WriteBuffer = [];
     }
+    activeD1WriteBufferStartedAt = Date.now();
   }
 
   async function flushD1BatchBuffer(env) {
     const pending = activeD1WriteBuffer;
     activeD1WriteBuffer = null;
+    activeD1WriteBufferStartedAt = 0;
     if (!Array.isArray(pending) || pending.length === 0) return 0;
     memoryFallback.delete("d1_series_gaps_cache");
     memoryFallback.delete("d1_vip_discover_cache_m");
     memoryFallback.delete("d1_vip_discover_cache_s");
+    memoryFallback.delete("d1_vip_discover_rows_m");
+    memoryFallback.delete("d1_vip_discover_rows_s");
+    memoryFallback.delete("d1_catalog_preseed_cache");
+    memoryFallback.delete("d1_all_series_ep_map_cache");
     memoryFallback.delete("d1_admin_media_list_cache_m");
     memoryFallback.delete("d1_admin_media_list_cache_s");
     memoryFallback.delete("d1_db_stats_cache");
@@ -7830,7 +8287,10 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_msg ON import_diagnostic_logs(msg_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlists_chat ON d1_playlists(chat_id, created_at)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_folder ON d1_playlist_items(chat_id, folder_id, added_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_chat_added ON d1_playlist_items(chat_id, added_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_tmdb ON d1_playlist_items(tmdb_id, content_type)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_tg_anti_spam_queue_status_sched ON tg_anti_spam_queue(status, scheduled_at ASC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_movies_updated_at ON movies(updated_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_series_updated_at ON series(updated_at DESC)")
         ]));
@@ -7958,8 +8418,9 @@
         kinds.push("s");
         for (const id of uniqS) entityKeys.push(`tv_${id}`);
       }
-      if (entityKeys.length > 0) {
-        stmts.push(rawDb.prepare(`SELECT cache_key, data_json FROM entity_cache WHERE cache_key IN (${entityKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...entityKeys));
+      const safeEntityKeys = entityKeys.slice(0, 80);
+      if (safeEntityKeys.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT cache_key, data_json FROM entity_cache WHERE cache_key IN (${safeEntityKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...safeEntityKeys));
         kinds.push("ent");
       }
       trackStat("d1Reads");
@@ -8428,14 +8889,35 @@
     return { queued, totalPending: stats.pendingCount };
   }
 
+  const IMPORT_QUEUE_META_KEY = "import_queue_meta_v1";
+
+  async function getImportQueueMetaFromD1(env) {
+    try {
+      const fromD1 = await getEntityFromD1(env, IMPORT_QUEUE_META_KEY, 7 * 86400000);
+      if (fromD1 && typeof fromD1 === "object") {
+        memoryFallback.set("import_queue_meta", fromD1);
+        return fromD1;
+      }
+    } catch (_e) {}
+    return memoryFallback.get("import_queue_meta") || null;
+  }
+
+  async function saveImportQueueMetaInD1(env, meta) {
+    if (!meta || typeof meta !== "object") return;
+    memoryFallback.set("import_queue_meta", meta);
+    try {
+      await saveEntityToD1(env, IMPORT_QUEUE_META_KEY, "import_queue_meta", meta);
+    } catch (_e) {}
+  }
+
   async function getImportQueueStatsFromD1(env) {
     const db = await ensureD1Schema(env);
+    const totalMeta = (await getImportQueueMetaFromD1(env)) || {};
     if (db) {
       try {
         trackStat("d1Reads");
         const row = await db.prepare("SELECT COUNT(*) AS cnt, MIN(source_label) AS src FROM import_queue").first();
         const pendingCount = Number(row?.cnt || 0);
-        const totalMeta = memoryFallback.get("import_queue_meta") || {};
         return {
           pendingCount,
           sourceLabel: row?.src || totalMeta.sourceLabel || "",
@@ -8448,7 +8930,6 @@
       } catch (e) {}
     }
     const memQueue = memoryFallback.get("d1_import_queue") || [];
-    const totalMeta = memoryFallback.get("import_queue_meta") || {};
     return {
       pendingCount: memQueue.length,
       sourceLabel: memQueue[0]?.source_label || totalMeta.sourceLabel || "",
@@ -8512,6 +8993,9 @@
     }
     memoryFallback.delete("d1_import_queue");
     memoryFallback.delete("import_queue_meta");
+    try {
+      await deleteEntityFromD1(env, IMPORT_QUEUE_META_KEY);
+    } catch (_e) {}
     return true;
   }
 
@@ -8521,6 +9005,17 @@
     if (!rawList) return false;
     const allowed = rawList.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
     return allowed.includes(String(telegramId));
+  }
+
+  async function isTelegramBotAdmin(env, telegramId) {
+    if (!telegramId) return false;
+    if (isAuthorizedAdminId(env, telegramId)) return true;
+    try {
+      const userRow = await getUserByTelegramIdFromD1(env, String(telegramId));
+      return Boolean(userRow && Number(userRow.is_admin) === 1);
+    } catch (_e) {
+      return false;
+    }
   }
 
   function formatUserRowForClient(row, env) {
@@ -8882,7 +9377,11 @@
     memoryFallback.delete(`${typeCode === "s" ? "d1_catalog_series_" : "d1_catalog_movie_"}${idNum}`);
     memoryFallback.delete(`d1_vip_summary_${typeCode === "s" ? "s" : "m"}_${idNum}`);
     memoryFallback.delete(`d1_vip_discover_cache_${typeCode === "s" ? "s" : "m"}`);
+    memoryFallback.delete(`d1_vip_discover_rows_${typeCode === "s" ? "s" : "m"}`);
     memoryFallback.delete(`d1_admin_media_list_cache_${typeCode === "s" ? "s" : "m"}`);
+    memoryFallback.delete("d1_catalog_preseed_cache");
+    memoryFallback.delete("d1_series_gaps_cache");
+    memoryFallback.delete("d1_all_series_ep_map_cache");
     memoryFallback.delete("d1_db_stats_cache");
     if (typeCode === "s") {
       memoryFallback.delete(`d1_series_best_quality_${idNum}`);
@@ -10327,9 +10826,27 @@
       ]);
       removedBrokenRows += Number(delM?.meta?.changes || 0) + Number(delE?.meta?.changes || 0);
 
+      // Free-Plan RAM/CPU-Schutz: Lade NUR Gruppen mit echten Duplikaten (COUNT(*) > 1) statt 100% der Tabellen!
       const [allMoviesRes, allEpsRes] = await Promise.all([
-        db.prepare("SELECT id, movie_id, telegram_file_id, telegram_unique_id, quality, codec, part, file_size, updated_at FROM movie_files ORDER BY updated_at DESC").all().catch(() => ({ results: [] })),
-        db.prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, file_size, updated_at FROM episode_files ORDER BY updated_at DESC").all().catch(() => ({ results: [] }))
+        db.prepare(`
+          SELECT id, movie_id, telegram_file_id, telegram_unique_id, quality, codec, part, file_size, updated_at
+          FROM movie_files
+          WHERE movie_id IN (SELECT movie_id FROM movie_files GROUP BY movie_id HAVING COUNT(*) > 1)
+          ORDER BY updated_at DESC
+          LIMIT 2500
+        `).all().catch(() => ({ results: [] })),
+        db.prepare(`
+          SELECT ef.id, ef.series_id, ef.season_number, ef.episode_number, ef.telegram_file_id, ef.telegram_unique_id, ef.quality, ef.codec, ef.part, ef.file_size, ef.updated_at
+          FROM episode_files ef
+          INNER JOIN (
+            SELECT series_id, season_number, episode_number
+            FROM episode_files
+            GROUP BY series_id, season_number, episode_number
+            HAVING COUNT(*) > 1
+          ) dup ON dup.series_id = ef.series_id AND dup.season_number = ef.season_number AND dup.episode_number = ef.episode_number
+          ORDER BY ef.updated_at DESC
+          LIMIT 4000
+        `).all().catch(() => ({ results: [] }))
       ]);
 
       const movieGroups = new Map();
@@ -10539,27 +11056,55 @@
       if (!oldSid || !newSid || Number(oldSid) === Number(newSid)) return false;
       try {
         const oldEps = await db.prepare("SELECT * FROM episode_files WHERE series_id = ?1").bind(Number(oldSid)).all().catch(() => ({ results: [] }));
-        for (const ep of (oldEps?.results || [])) {
-          await db.prepare(`
-            INSERT INTO episode_files (series_id, season_number, episode_number, quality, telegram_file_id, file_size, caption, message_id, channel_id, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            ON CONFLICT(series_id, season_number, episode_number, quality) DO UPDATE SET
-              telegram_file_id = CASE WHEN excluded.telegram_file_id != '' THEN excluded.telegram_file_id ELSE episode_files.telegram_file_id END,
-              message_id = COALESCE(excluded.message_id, episode_files.message_id),
-              channel_id = CASE WHEN excluded.channel_id != '' THEN excluded.channel_id ELSE episode_files.channel_id END,
+        const epRows = Array.isArray(oldEps?.results) ? oldEps.results : [];
+        let migratedOk = 0;
+        for (const ep of epRows) {
+          if (!ep || !ep.telegram_file_id) continue;
+          const insRes = await db.prepare(`
+            INSERT INTO episode_files (
+              series_id, season_number, episode_number, telegram_file_id, telegram_unique_id,
+              file_fingerprint, quality, codec, part, part_number, edition_label,
+              is_bonus, is_download_only, tags, version_label, file_size, mime_type,
+              raw_filename, raw_caption, message_link, subtitles_json, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+            ON CONFLICT(series_id, season_number, episode_number, telegram_file_id) DO UPDATE SET
+              quality = COALESCE(NULLIF(excluded.quality, ''), episode_files.quality),
+              file_size = COALESCE(excluded.file_size, episode_files.file_size),
+              raw_filename = COALESCE(NULLIF(excluded.raw_filename, ''), episode_files.raw_filename),
+              raw_caption = COALESCE(NULLIF(excluded.raw_caption, ''), episode_files.raw_caption),
+              message_link = COALESCE(NULLIF(excluded.message_link, ''), episode_files.message_link),
               updated_at = excluded.updated_at
           `).bind(
             Number(newSid),
             Number(ep.season_number || 1),
             Number(ep.episode_number || 1),
+            String(ep.telegram_file_id),
+            ep.telegram_unique_id || null,
+            ep.file_fingerprint || null,
             ep.quality || "1080p",
-            ep.telegram_file_id || "",
-            Number(ep.file_size || 0),
-            ep.caption || "",
-            ep.message_id || null,
-            ep.channel_id || "",
+            ep.codec || "x264",
+            ep.part || null,
+            Number(ep.part_number || 1),
+            ep.edition_label || null,
+            Number(ep.is_bonus || 0),
+            Number(ep.is_download_only || 0),
+            ep.tags || null,
+            ep.version_label || "Originalfassung",
+            ep.file_size != null ? Number(ep.file_size) : null,
+            ep.mime_type || null,
+            ep.raw_filename || null,
+            ep.raw_caption || null,
+            ep.message_link || null,
+            ep.subtitles_json || "[]",
             now
           ).run().catch(() => null);
+          if (insRes) migratedOk++;
+        }
+        // Datenverlust-Schutz: Alte Episoden NUR löschen, wenn alle vorhandenen Episoden erfolgreich migriert wurden!
+        const expectedCount = epRows.filter(ep => ep && ep.telegram_file_id).length;
+        if (expectedCount > 0 && migratedOk < expectedCount) {
+          return false;
         }
         await db.batch([
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1").bind(Number(oldSid)),
@@ -10569,6 +11114,10 @@
         ]).catch(() => null);
         memoryFallback.delete(`d1_series_${oldSid}`);
         memoryFallback.delete(`d1_catalog_series_${oldSid}`);
+        memoryFallback.delete(`d1_series_best_quality_${oldSid}`);
+        memoryFallback.delete("d1_vip_discover_rows_s");
+        memoryFallback.delete("d1_admin_media_list_cache_s");
+        memoryFallback.delete("d1_series_gaps_cache");
         tmdbCache.delete(`tv_${oldSid}`);
         return true;
       } catch (e) {
@@ -10814,7 +11363,7 @@
     };
   }
 
-  async function getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNumber = null) {
+  async function getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNumber = null, includeFileCounts = true) {
     const sid = Number(seriesId);
     if (!sid) return { seasonCounts: {}, episodeTitleMap: new Map() };
     const seasonCounts = {};
@@ -10823,10 +11372,12 @@
     if (db) {
       try {
         const [sRes, epRes] = await Promise.all([
-          db.prepare("SELECT season_number, COUNT(DISTINCT episode_number) AS ep_cnt FROM episode_files WHERE series_id = ?1 GROUP BY season_number ORDER BY season_number ASC")
-            .bind(sid)
-            .all()
-            .catch(() => ({ results: [] })),
+          includeFileCounts
+            ? db.prepare("SELECT season_number, COUNT(DISTINCT episode_number) AS ep_cnt FROM episode_files WHERE series_id = ?1 GROUP BY season_number ORDER BY season_number ASC")
+                .bind(sid)
+                .all()
+                .catch(() => ({ results: [] }))
+            : Promise.resolve({ results: [] }),
           seasonNumber !== null
             ? db.prepare("SELECT episode_number, title, overview, vote_average, versions_json FROM series_episodes WHERE series_id = ?1 AND season_number = ?2")
                 .bind(sid, Number(seasonNumber))
@@ -10874,7 +11425,7 @@
   // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03 sowie komplett fehlende Zwischen-Staffeln; Priorität 2: Fehlende Folgen bis Staffelende)
   async function computeSeriesGapsOverview(env, forceRefresh = false) {
     const cachedGaps = memoryFallback.get("d1_series_gaps_cache");
-    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 60000) {
+    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 180000) {
       return cachedGaps.data;
     }
     const db = await ensureD1Schema(env);
@@ -10888,40 +11439,68 @@
       try {
         trackStat("d1Reads");
         if (typeof countD1Subrequest === "function") countD1Subrequest();
+        // Free-Plan Schutz: Nur Serien mit tatsächlich vorhandenen episode_files prüfen + json_extract statt Full-details_json / Full-episodes_json!
         const [sRes, ssRes, seCountRes, efRes] = await rawDb.batch([
-          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, number_of_seasons, number_of_episodes, details_json FROM series"),
-          rawDb.prepare("SELECT series_id, season_number, episodes_json FROM series_seasons"),
-          rawDb.prepare("SELECT series_id, season_number, COUNT(*) AS ep_count, MAX(episode_number) AS max_ep FROM series_episodes GROUP BY series_id, season_number"),
-          rawDb.prepare("SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags FROM episode_files")
+          rawDb.prepare(`
+            SELECT s.tmdb_id, s.title, s.release_year, s.poster_path, s.number_of_seasons, s.number_of_episodes,
+                   json_extract(s.details_json, '$.seasons') AS seasons_json,
+                   json_extract(s.details_json, '$.external_poster_url') AS ext_poster
+            FROM series s
+            WHERE EXISTS (SELECT 1 FROM episode_files ef WHERE ef.series_id = s.tmdb_id)
+            LIMIT 1000
+          `),
+          rawDb.prepare(`
+            SELECT ss.series_id, ss.season_number,
+                   COALESCE(
+                     json_extract(ss.episodes_json, '$.seasonEpisodeCount'),
+                     CASE WHEN json_type(ss.episodes_json) = 'array' THEN json_array_length(ss.episodes_json) ELSE json_array_length(json_extract(ss.episodes_json, '$.episodes')) END,
+                     0
+                   ) AS ep_count
+            FROM series_seasons ss
+            WHERE EXISTS (SELECT 1 FROM episode_files ef WHERE ef.series_id = ss.series_id)
+            LIMIT 2500
+          `),
+          rawDb.prepare(`
+            SELECT se.series_id, se.season_number, COUNT(*) AS ep_count, MAX(se.episode_number) AS max_ep
+            FROM series_episodes se
+            WHERE EXISTS (SELECT 1 FROM episode_files ef WHERE ef.series_id = se.series_id)
+            GROUP BY se.series_id, se.season_number
+            LIMIT 2500
+          `),
+          rawDb.prepare(`
+            SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags
+            FROM episode_files
+            WHERE telegram_file_id IS NOT NULL AND telegram_file_id != ''
+              AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'
+            LIMIT 8000
+          `)
         ]);
         for (const r of (sRes?.results || [])) {
           if (!r || !r.tmdb_id) continue;
           const sid = Number(r.tmdb_id);
           allCheckedSeriesIds.add(sid);
-          let details = null;
-          try { details = r.details_json ? JSON.parse(r.details_json) : null; } catch (_) {}
+          let parsedSeasons = [];
+          try {
+            const p = r.seasons_json ? JSON.parse(r.seasons_json) : null;
+            if (Array.isArray(p)) parsedSeasons = p;
+          } catch (_) {}
           seriesMap.set(sid, {
             tmdbId: sid,
-            title: r.title || details?.title || `Serie #${sid}`,
-            year: r.release_year || (details?.releaseDate ? String(details.releaseDate).split("-")[0] : "k.A."),
-            poster: resolvePosterUrl(r.poster_path || details?.poster_path, "w185", details?.external_poster_url || ""),
-            numberOfSeasons: Number(r.number_of_seasons || details?.numberOfSeasons || 1),
-            detailsSeasons: Array.isArray(details?.seasons) ? details.seasons : []
+            title: r.title || `Serie #${sid}`,
+            year: r.release_year || "k.A.",
+            poster: resolvePosterUrl(r.poster_path, "w185", r.ext_poster || ""),
+            numberOfSeasons: Number(r.number_of_seasons || parsedSeasons.length || 1),
+            detailsSeasons: parsedSeasons
           });
         }
         for (const sr of (ssRes?.results || [])) {
           const sid = Number(sr?.series_id || 0);
           const sNum = Number(sr?.season_number || 0);
-          if (!sid || !sNum) continue;
+          const epCount = Number(sr?.ep_count || 0);
+          if (!sid || !sNum || epCount <= 0) continue;
           allCheckedSeriesIds.add(sid);
-          let epCount = 0;
-          try {
-            const parsed = JSON.parse(sr.episodes_json || "{}");
-            const arr = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.episodes) ? parsed.episodes : []);
-            epCount = Number(parsed?.seasonEpisodeCount || arr.length || 0);
-          } catch (_) {}
           if (!seasonMetaBySeries.has(sid)) seasonMetaBySeries.set(sid, new Map());
-          if (epCount > 0) seasonMetaBySeries.get(sid).set(sNum, epCount);
+          seasonMetaBySeries.get(sid).set(sNum, epCount);
         }
         for (const secRow of (seCountRes?.results || [])) {
           const sid = Number(secRow?.series_id || 0);
@@ -11669,7 +12248,7 @@
         }).slice(0, 2)
       : [];
 
-    if (missingPosterItems.length > 0 && env?.TMDB_BEARER_TOKEN) {
+    if (missingPosterItems.length > 0 && hasTmdbCredentials(env)) {
       await Promise.all(missingPosterItems.map(async (it) => {
         if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(32)) return;
         const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
@@ -11781,20 +12360,35 @@
     if (db && results.length < limit) {
       try {
         if (!wantSeries) {
+          // Index-gestützte 2-Stufen-Abfrage (nutzt idx_movies_updated_at + idx_movie_files_movie_id):
+          // Scannt nur Top-60 statt 100% aller movie_files (schont 5M D1 Rows Read/Tag Limit massiv!)
           const mRes = await db.prepare(`
-            SELECT m.tmdb_id, m.title, m.release_date, m.vote_average, m.poster_path, m.backdrop_path, m.overview,
-                   json_extract(m.details_json, '$.external_poster_url') AS ext_poster,
+            WITH top_movies AS (
+              SELECT m.tmdb_id, m.title, m.release_date, m.vote_average, m.poster_path, m.backdrop_path, m.overview, m.details_json, m.updated_at
+              FROM movies m
+              WHERE EXISTS (
+                SELECT 1 FROM movie_files mf
+                WHERE mf.movie_id = m.tmdb_id
+                  AND mf.telegram_file_id IS NOT NULL
+                  AND mf.telegram_file_id != ''
+                  AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
+                  AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
+              )
+              ORDER BY m.updated_at DESC
+              LIMIT 60
+            )
+            SELECT tm.tmdb_id, tm.title, tm.release_date, tm.vote_average, tm.poster_path, tm.backdrop_path, tm.overview,
+                   json_extract(tm.details_json, '$.external_poster_url') AS ext_poster,
                    MAX(mf.quality) AS quality, MAX(mf.codec) AS codec,
                    MAX(mf.telegram_file_id) AS telegram_file_id, COUNT(mf.id) AS stream_cnt
-            FROM movies m
-            INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+            FROM top_movies tm
+            INNER JOIN movie_files mf ON mf.movie_id = tm.tmdb_id
             WHERE mf.telegram_file_id IS NOT NULL
               AND mf.telegram_file_id != ''
               AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
               AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
-            GROUP BY m.tmdb_id
-            ORDER BY m.updated_at DESC
-            LIMIT 60
+            GROUP BY tm.tmdb_id
+            ORDER BY tm.updated_at DESC
           `).all();
           for (const row of (mRes?.results || [])) {
             const mid = Number(row.tmdb_id);
@@ -11817,20 +12411,35 @@
             if (results.length >= limit) break;
           }
         } else {
+          // Index-gestützte 2-Stufen-Abfrage (nutzt idx_series_updated_at + idx_episode_files_series_ep):
+          // Verhindert 50.000+ Rows-Full-Scan über alle Episoden bei jedem Discover-Aufruf!
           const sRes = await db.prepare(`
-            SELECT s.tmdb_id, s.title, s.release_date, s.vote_average, s.poster_path, s.backdrop_path, s.overview,
-                   json_extract(s.details_json, '$.external_poster_url') AS ext_poster,
+            WITH top_series AS (
+              SELECT s.tmdb_id, s.title, s.release_date, s.vote_average, s.poster_path, s.backdrop_path, s.overview, s.details_json, s.updated_at
+              FROM series s
+              WHERE EXISTS (
+                SELECT 1 FROM episode_files ef
+                WHERE ef.series_id = s.tmdb_id
+                  AND ef.telegram_file_id IS NOT NULL
+                  AND ef.telegram_file_id != ''
+                  AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
+                  AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+              )
+              ORDER BY s.updated_at DESC
+              LIMIT 60
+            )
+            SELECT ts.tmdb_id, ts.title, ts.release_date, ts.vote_average, ts.poster_path, ts.backdrop_path, ts.overview,
+                   json_extract(ts.details_json, '$.external_poster_url') AS ext_poster,
                    MAX(ef.quality) AS quality, MAX(ef.codec) AS codec,
                    MAX(ef.telegram_file_id) AS telegram_file_id, COUNT(ef.id) AS stream_cnt
-            FROM series s
-            INNER JOIN episode_files ef ON ef.series_id = s.tmdb_id
+            FROM top_series ts
+            INNER JOIN episode_files ef ON ef.series_id = ts.tmdb_id
             WHERE ef.telegram_file_id IS NOT NULL
               AND ef.telegram_file_id != ''
               AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
               AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
-            GROUP BY s.tmdb_id
-            ORDER BY s.updated_at DESC
-            LIMIT 60
+            GROUP BY ts.tmdb_id
+            ORDER BY ts.updated_at DESC
           `).all();
           for (const row of (sRes?.results || [])) {
             const sid = Number(row.tmdb_id);
@@ -12560,13 +13169,28 @@
     } catch (e) {}
   }
 
-  async function getEntityFromD1(env, cacheKey, ttlMs = D1_SEARCH_TTL_MS) {
+  async function getEntityFromD1(env, cacheKey, ttlMs = D1_SEARCH_TTL_MS, options = {}) {
     if (!cacheKey) return null;
     const memKey = `d1_entity_${cacheKey}`;
-    const memEntry = memoryFallback.get(memKey);
-    if (memEntry && (Date.now() - Number(memEntry.ts || 0) <= ttlMs)) {
-      if (memEntry.notInD1) return null;
-      if (memEntry.data) return memEntry.data;
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const bypassMemoryCache = Boolean(options?.bypassMemoryCache);
+    if (!bypassMemoryCache) {
+      const memEntry = memoryFallback.get(memKey);
+      if (memEntry) {
+        const ageMs = Date.now() - Number(memEntry.ramTs || memEntry.ts || 0);
+        // Negative Cache-Einträge (notInD1) im Live-Worker max. 10s im RAM halten (verhindert 365-Tage-Stale-Misses!)
+        if (memEntry.notInD1) {
+          if (isBrowserSandbox || ageMs <= 10000) return null;
+        } else if (memEntry.data !== undefined) {
+          const effectiveRamTtl = Number.isFinite(Number(options?.ramTtlMs))
+            ? Math.max(0, Number(options.ramTtlMs))
+            : ttlMs;
+          const dbAgeMs = Date.now() - Number(memEntry.ts || 0);
+          if (dbAgeMs <= ttlMs && (isBrowserSandbox || ageMs <= effectiveRamTtl)) {
+            return memEntry.data;
+          }
+        }
+      }
     }
     const db = await ensureD1Schema(env);
     if (!db) return null;
@@ -12576,14 +13200,15 @@
         .prepare("SELECT data_json, updated_at FROM entity_cache WHERE cache_key = ?1")
         .bind(String(cacheKey))
         .first();
+      const now = Date.now();
       if (!row || !row.data_json) {
-        memoryFallback.set(memKey, { notInD1: true, ts: Date.now() });
+        memoryFallback.set(memKey, { notInD1: true, ts: now, ramTs: now });
         return null;
       }
-      if (Date.now() - Number(row.updated_at || 0) > ttlMs) return null;
+      if (now - Number(row.updated_at || 0) > ttlMs) return null;
       const parsed = JSON.parse(row.data_json);
-      if (parsed) {
-        memoryFallback.set(memKey, { data: parsed, ts: Number(row.updated_at || Date.now()) });
+      if (parsed !== undefined && parsed !== null) {
+        memoryFallback.set(memKey, { data: parsed, ts: Number(row.updated_at || now), ramTs: now });
         trackStat("d1Hits");
         return parsed;
       }
@@ -12592,9 +13217,9 @@
   }
 
   async function saveEntityToD1(env, cacheKey, entityType, dataObj) {
-    if (!cacheKey || !dataObj) return;
+    if (!cacheKey || dataObj === undefined || dataObj === null) return;
     const now = Date.now();
-    memoryFallback.set(`d1_entity_${cacheKey}`, { data: dataObj, ts: now });
+    memoryFallback.set(`d1_entity_${cacheKey}`, { data: dataObj, ts: now, ramTs: now });
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -12604,6 +13229,20 @@
           cache_key, entity_type, data_json, updated_at
         ) VALUES (?1, ?2, ?3, ?4)`)
         .bind(String(cacheKey), String(entityType || "misc"), JSON.stringify(dataObj), now)
+        .run();
+    } catch (e) {}
+  }
+
+  async function deleteEntityFromD1(env, cacheKey) {
+    if (!cacheKey) return;
+    memoryFallback.delete(`d1_entity_${cacheKey}`);
+    const db = await ensureD1Schema(env);
+    if (!db) return;
+    try {
+      trackStat("d1Writes");
+      await db
+        .prepare("DELETE FROM entity_cache WHERE cache_key = ?1")
+        .bind(String(cacheKey))
         .run();
     } catch (e) {}
   }
@@ -13122,16 +13761,36 @@
       return cachedStats.data;
     }
     try {
-      const [mRow, sRow, qRow] = await Promise.all([
-        db.prepare("SELECT COUNT(*) AS cnt FROM movies").first(),
-        db.prepare("SELECT COUNT(*) AS cnt FROM series").first(),
-        db.prepare("SELECT COUNT(*) AS cnt FROM search_cache").first()
-      ]);
+      const rawDb = getRawD1Binding(env);
+      let mCnt = 0;
+      let sCnt = 0;
+      let qCnt = 0;
+      if (rawDb && typeof rawDb.batch === "function") {
+        trackStat("d1Reads");
+        countD1Subrequest();
+        const [mRes, sRes, qRes] = await rawDb.batch([
+          rawDb.prepare("SELECT COUNT(*) AS cnt FROM movies"),
+          rawDb.prepare("SELECT COUNT(*) AS cnt FROM series"),
+          rawDb.prepare("SELECT COUNT(*) AS cnt FROM search_cache")
+        ]);
+        mCnt = Number(mRes?.results?.[0]?.cnt || 0);
+        sCnt = Number(sRes?.results?.[0]?.cnt || 0);
+        qCnt = Number(qRes?.results?.[0]?.cnt || 0);
+      } else {
+        const [mRow, sRow, qRow] = await Promise.all([
+          db.prepare("SELECT COUNT(*) AS cnt FROM movies").first(),
+          db.prepare("SELECT COUNT(*) AS cnt FROM series").first(),
+          db.prepare("SELECT COUNT(*) AS cnt FROM search_cache").first()
+        ]);
+        mCnt = Number(mRow?.cnt || 0);
+        sCnt = Number(sRow?.cnt || 0);
+        qCnt = Number(qRow?.cnt || 0);
+      }
       const data = {
         enabled: true,
-        moviesCount: Number(mRow?.cnt || 0),
-        seriesCount: Number(sRow?.cnt || 0),
-        searchesCount: Number(qRow?.cnt || 0)
+        moviesCount: mCnt,
+        seriesCount: sCnt,
+        searchesCount: qCnt
       };
       memoryFallback.set("d1_db_stats_cache", { data, ts: Date.now() });
       return data;
@@ -14187,6 +14846,7 @@
   // @ANCHOR: TMDB_FETCH
   // --- TMDB API & Multi-API Fallback (TMDb -> OMDb -> Wikidata -> MediaWiki DE/EN) mit 24h Cloudflare Edge-Cache ---
   async function fetchSimilarMedia(env, typeCode, sourceItemId, page = 1) {
+    if (!isRealTmdbId(sourceItemId)) return { results: [] };
     const typePath = typeCode === "s" ? "tv" : "movie";
     const simCacheKey = `sim_list_${typePath}_${sourceItemId}`;
     let results = getCachedTmdb(simCacheKey);
@@ -14278,7 +14938,7 @@
   // damit Serien und Filme wann immer möglich ihre echte TMDb-ID statt einer Fallback-ID erhalten!
   async function resolveExternalIdToTmdb(env, externalId, externalSource = "imdb_id", preferredTypeCode = null) {
     const extId = String(externalId || "").trim();
-    if (!extId || !env?.TMDB_BEARER_TOKEN) return null;
+    if (!extId || !hasTmdbCredentials(env)) return null;
     const findUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(extId)}?external_source=${encodeURIComponent(externalSource)}&language=de-DE`;
     const findData = await cachedExternalFetchJson(findUrl, {
       headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` }
@@ -14443,6 +15103,7 @@
    * und überschreibt seriesData.seasons mit den korrekten Folgenzahlen der jeweiligen Fassung!
    */
   async function resolveSeriesVersionOnTMDb(tmdbSeriesId, parsedItem, tmdbApiKeyOrEnv, customCachedFetchJson = null) {
+    if (!isRealTmdbId(tmdbSeriesId)) return null;
     const baseUrl = "https://api.themoviedb.org/3";
     const targetSeason  = Number(parsedItem?.season || 1);
     const targetEpisode = Number(parsedItem?.episode || 1);
@@ -14451,7 +15112,7 @@
 
     const isEnvObj = tmdbApiKeyOrEnv && typeof tmdbApiKeyOrEnv === "object";
     const bearerToken = isEnvObj ? tmdbApiKeyOrEnv.TMDB_BEARER_TOKEN : null;
-    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || "") : "");
+    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || tmdbApiKeyOrEnv.TMDB_KEY || "") : "");
 
     const cachedFetchJson = typeof customCachedFetchJson === "function"
       ? customCachedFetchJson
@@ -14463,7 +15124,11 @@
         };
 
     const buildUrl = (pathWithLang) => {
-      return apiKeyStr ? `${baseUrl}${pathWithLang}&api_key=${apiKeyStr}` : `${baseUrl}${pathWithLang}`;
+      if (!bearerToken && apiKeyStr) {
+        const sep = pathWithLang.includes("?") ? "&" : "?";
+        return `${baseUrl}${pathWithLang}${sep}api_key=${encodeURIComponent(apiKeyStr)}`;
+      }
+      return `${baseUrl}${pathWithLang}`;
     };
 
     // 1. Serien-Hauptdaten abrufen (Kopie erstellen, damit wir seasons sauber überschreiben können)
@@ -14762,7 +15427,7 @@
 
     const isEnvObj = tmdbApiKeyOrEnv && typeof tmdbApiKeyOrEnv === "object";
     const bearerToken = isEnvObj ? tmdbApiKeyOrEnv.TMDB_BEARER_TOKEN : null;
-    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || "") : "");
+    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || tmdbApiKeyOrEnv.TMDB_KEY || "") : "");
 
     const cachedFetchJson = typeof customCachedFetchJson === "function"
       ? customCachedFetchJson
@@ -14774,7 +15439,11 @@
         };
 
     const buildUrl = (pathWithLang) => {
-      return apiKeyStr ? `${baseUrl}${pathWithLang}&api_key=${apiKeyStr}` : `${baseUrl}${pathWithLang}`;
+      if (!bearerToken && apiKeyStr) {
+        const sep = pathWithLang.includes("?") ? "&" : "?";
+        return `${baseUrl}${pathWithLang}${sep}api_key=${encodeURIComponent(apiKeyStr)}`;
+      }
+      return `${baseUrl}${pathWithLang}`;
     };
 
     let tmdbHit = null;
@@ -14796,8 +15465,8 @@
       }
     };
 
-    // 1. Direkte ID
-    if (parsedItem.tmdbId) {
+    // 1. Direkte ID (nur echte TMDb-IDs < 8.000.000!)
+    if (isRealTmdbId(parsedItem.tmdbId)) {
       tmdbHit = await cachedFetchJson(buildUrl(`/${type}/${parsedItem.tmdbId}?language=de-DE`));
     }
 
@@ -15005,8 +15674,8 @@
       Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}`
     };
 
-    // STUFE 1: Direkte ID-Abfrage
-    if (parsedItem.tmdbId) {
+    // STUFE 1: Direkte ID-Abfrage (nur echte TMDb-IDs < 8.000.000!)
+    if (isRealTmdbId(parsedItem.tmdbId)) {
       const directHit = await cachedExternalFetchJson(`${baseUrl}/${type}/${parsedItem.tmdbId}?language=de-DE`, { headers });
       if (directHit && directHit.id) return { ...directHit, _resolvedType: type, _stage: "stage1_id" };
     }
@@ -15217,7 +15886,7 @@
 
     const resolvedTc = data.Type === "series" ? "s" : typeCode;
     // Zuerst versuchen, die gefundene IMDb-ID direkt in eine echte TMDb-ID (1..99.999.999) aufzulösen!
-    if (data.imdbID && env?.TMDB_BEARER_TOKEN) {
+    if (data.imdbID && hasTmdbCredentials(env)) {
       const tmdbBridged = await resolveExternalIdToTmdb(env, data.imdbID, "imdb_id", resolvedTc).catch(() => null);
       if (tmdbBridged && tmdbBridged.id && tmdbBridged.id < 8000000) {
         return tmdbBridged;
@@ -15376,7 +16045,7 @@
 
         // Prüfe P345 (IMDb-ID in Wikidata) -> Brücke auf echte TMDb-ID!
         const imdbClaim = claims.P345?.[0]?.mainsnak?.datavalue?.value;
-        if (imdbClaim && /^tt\d+$/i.test(String(imdbClaim).trim()) && env?.TMDB_BEARER_TOKEN) {
+        if (imdbClaim && /^tt\d+$/i.test(String(imdbClaim).trim()) && hasTmdbCredentials(env)) {
           const isTvDescPrelim = /(?:serie|fernsehserie|miniserie|staffel|tv series|television series)/i.test(descDe);
           const bridged = await resolveExternalIdToTmdb(env, String(imdbClaim).trim(), "imdb_id", isTvDescPrelim ? "s" : typeCode).catch(() => null);
           if (bridged && bridged.id && bridged.id < 8000000) {
@@ -15718,7 +16387,7 @@
         if (tc !== "s" && forceTypeCode) return null;
         const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
         if (!maze || !maze.tvmazeId) return null;
-        if (env?.TMDB_BEARER_TOKEN && hasSubrequestBudget(19)) {
+        if (hasTmdbCredentials(env) && hasSubrequestBudget(19)) {
           if (maze.imdbId) {
             const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
             if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
@@ -15783,7 +16452,7 @@
     if (tc === "s" || !forceTypeCode) {
       const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
       if (maze && maze.tvmazeId) {
-        if (env?.TMDB_BEARER_TOKEN) {
+        if (hasTmdbCredentials(env)) {
           if (maze.imdbId) {
             const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
             if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
@@ -16227,7 +16896,8 @@
       return setCachedTmdb(cacheKey, d1EntityMovie);
     }
 
-    // 3. Bei Cache-Miss: TMDB API abfragen (Videos direkt in append_to_response gebündelt)
+    // 3. Bei Cache-Miss: Synthetische Fallback-IDs (>= 8.000.000) niemals an TMDb senden (immer 404!)
+    if (!isRealTmdbId(movieId)) return null;
     if (!hasSubrequestBudget(42)) {
       subrequestBudgetExhausted = true;
       return null;
@@ -16443,7 +17113,43 @@
       return setCachedTmdb(cacheKey, d1EntitySeries);
     }
 
-    // 3. Bei Cache-Miss: TMDB API abfragen (+ automatischer TVMaze API Fallback für fehlende Serieninfos)
+    // 3. Bei Cache-Miss: Synthetische Fallback-IDs (>= 8.000.000) direkt über TVMaze statt 404-TMDb-Request auflösen
+    if (!isRealTmdbId(seriesId)) {
+      const knownTitle = memoryFallback.get(`title_cache_s_${seriesId}`) || "";
+      const tvMazeOnly = knownTitle ? await fetchTvMazeSeriesFallback(knownTitle).catch(() => null) : null;
+      if (!tvMazeOnly) return null;
+      return setCachedTmdb(cacheKey, {
+        id: seriesId,
+        directors: "Keine Angabe",
+        directorsList: [],
+        casts: tvMazeOnly.casts || "Keine Angabe",
+        castList: [],
+        genres: tvMazeOnly.genres || "Keine Angabe",
+        genresList: [],
+        studios: tvMazeOnly.studios || "Keine Angabe",
+        studiosList: [],
+        runtime: tvMazeOnly.runtime || "Keine Angabe",
+        country: "k.A.",
+        releaseDate: tvMazeOnly.releaseDate || "Keine Angabe",
+        fsk: "FSK Keine Angabe",
+        statusText: tvMazeOnly.statusText || "Unbekannt",
+        overview: tvMazeOnly.overview || "Keine Beschreibung verfügbar.",
+        isEnglishFallback: true,
+        providers: null,
+        allProviders: "",
+        providerIds: [],
+        poster_path: null,
+        external_poster_url: tvMazeOnly.imageOriginal || "",
+        backdrop_path: null,
+        vote_average: tvMazeOnly.vote_average || 0,
+        title: tvMazeOnly.title || knownTitle || "Unbekannt",
+        trailerKey: null,
+        numberOfSeasons: tvMazeOnly.seasons.length || 1,
+        numberOfEpisodes: tvMazeOnly.episodes.length || 0,
+        seasons: tvMazeOnly.seasons.length > 0 ? tvMazeOnly.seasons : [{ season_number: 1, name: "Staffel 1", episode_count: tvMazeOnly.episodes.length, air_date: "" }],
+        sourceFallback: "TVMaze"
+      });
+    }
     if (!hasSubrequestBudget(42)) {
       subrequestBudgetExhausted = true;
       return null;
@@ -16733,15 +17439,19 @@
 
     const url = `https://api.themoviedb.org/3/tv/${seriesId}/season/${sNum}?language=de-DE`;
     try {
-      const res = await fetchWithTimeout(url, {
-        headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-      }, 4500);
+      // Synthetische Fallback-IDs (>= 8.000.000) niemals an TMDb /season senden (immer 404!) -> direkt TVMaze Fallback nutzen
+      let res = null;
+      if (isRealTmdbId(sidNum)) {
+        res = await fetchWithTimeout(url, {
+          headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
+        }, 4500);
+      }
 
       let episodes = [];
       let seasonName = `Staffel ${sNum}`;
       let seasonId = `${seriesId}_${sNum}`;
 
-      if (res.ok) {
+      if (res && res.ok) {
         const data = await res.json();
         seasonId = data.id || seasonId;
         seasonName = data.name || seasonName;
@@ -16784,7 +17494,7 @@
         }
       }
 
-      if (episodes.length === 0 && !res.ok) return null;
+      if (episodes.length === 0 && (!res || !res.ok)) return null;
 
       const result = {
         id: seasonId,
@@ -16805,6 +17515,7 @@
   }
 
   async function fetchCollectionDetails(env, collectionId) {
+    if (!isRealTmdbId(collectionId)) return null;
     const cacheKey = `col_${collectionId}`;
     const cached = getCachedTmdb(cacheKey);
     if (cached) return cached;
@@ -17039,7 +17750,7 @@
     return { visibleItems: sorted, isFiltered };
   }
 
-  // Lädt alle Filme eines Filmuniversums (aus Kollektionen + Einzelfilmen kombiniert)
+  // Lädt alle Filme eines Filmuniversums (aus Kollektionen + Einzelfilmen kombiniert, D1-gecacht & Free-Plan-sicher gebündelt)
   async function fetchUniverseDetails(env, universeId) {
     const uni = CINEMATIC_UNIVERSES.find(u => u.id === universeId);
     if (!uni) return null;
@@ -17049,14 +17760,47 @@
     if (cached) return cached;
 
     try {
-      const colPromises = (uni.collectionIds || []).map(cid => fetchCollectionDetails(env, cid));
-      const movIds = uni.movieIds || uni.extraMovieIds || [];
-      const movPromises = movIds.map(mid => fetchMovieDetails(env, mid));
+      // 1. D1 entity_cache zuerst prüfen (7 Tage TTL -> 0 TMDb-Subrequests bei Cache-Treffer!)
+      if (typeof getEntityFromD1 === "function") {
+        const d1Uni = await getEntityFromD1(env, cacheKey, 7 * 86400000).catch(() => null);
+        if (d1Uni && Array.isArray(d1Uni.parts) && d1Uni.parts.length > 0) {
+          memoryFallback.set(`uni_name_${uni.id}`, uni.name);
+          return setCachedTmdb(cacheKey, d1Uni);
+        }
+      }
 
-      const [cols, movs] = await Promise.all([
-        Promise.all(colPromises),
-        Promise.all(movPromises)
-      ]);
+      const colIds = Array.isArray(uni.collectionIds) ? uni.collectionIds : [];
+      const movIds = Array.isArray(uni.movieIds || uni.extraMovieIds) ? (uni.movieIds || uni.extraMovieIds) : [];
+
+      // 2. Kollektionen in sicheren 4er-Blöcken innerhalb des Subrequest-Budgets laden
+      const cols = [];
+      for (let i = 0; i < colIds.length; i += 4) {
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(34)) break;
+        const batch = colIds.slice(i, i + 4);
+        const batchRes = await Promise.all(batch.map(cid => fetchCollectionDetails(env, cid).catch(() => null)));
+        cols.push(...batchRes);
+      }
+
+      // 3. Einzelfilme zuerst als 1 einzigen D1-Batch prüfen, dann nur fehlende von TMDb nachladen
+      const d1MovBatch = (movIds.length > 0 && typeof getMediaMetaBatchFromD1 === "function")
+        ? await getMediaMetaBatchFromD1(env, movIds.map(id => ({ id, media_type: "movie" })), "m").catch(() => new Map())
+        : new Map();
+      const movs = [];
+      const missingMovIds = [];
+      for (const mid of movIds) {
+        const cachedMov = d1MovBatch.get(`m_${Number(mid)}`);
+        if (cachedMov && cachedMov.id) {
+          movs.push(cachedMov);
+        } else {
+          missingMovIds.push(mid);
+        }
+      }
+      for (let i = 0; i < missingMovIds.length; i += 4) {
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(36)) break;
+        const batch = missingMovIds.slice(i, i + 4);
+        const batchRes = await Promise.all(batch.map(mid => fetchMovieDetails(env, mid).catch(() => null)));
+        movs.push(...batchRes);
+      }
 
       const seenIds = new Set();
       const parts = [];
@@ -17076,10 +17820,14 @@
         parts.push({
           id: m.id,
           title: m.title,
-          release_date: m.releaseDate !== "Keine Angabe" ? m.releaseDate : "",
+          release_date: m.releaseDate && m.releaseDate !== "Keine Angabe" ? m.releaseDate : "",
           vote_average: m.vote_average || 0,
           popularity: m.popularity || 50,
-          genre_ids: (m.genresList || []).map(g => g.id).filter(Boolean),
+          poster_path: m.poster_path || m.posterPath || null,
+          external_poster_url: m.external_poster_url || "",
+          backdrop_path: m.backdrop_path || m.backdropPath || null,
+          overview: m.overview || "",
+          genre_ids: (m.genresList || []).map(g => Number(g?.id || g)).filter(Boolean),
           fsk: m.fsk,
           media_type: "movie"
         });
@@ -17099,6 +17847,10 @@
         desc: uni.description || uni.desc || "",
         parts
       };
+      if (parts.length > 0 && typeof saveEntityToD1 === "function") {
+        const saveTask = () => saveEntityToD1(env, cacheKey, "universe", result).catch(() => {});
+        if (typeof scheduleBackgroundWork === "function") scheduleBackgroundWork(saveTask);
+      }
       return setCachedTmdb(cacheKey, result);
     } catch (e) {
       return null;
@@ -17168,10 +17920,20 @@
           headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
         }, 4500)
       ];
-      const hasPlatformOrStudioFilter = extraFilterParams.includes("with_watch_providers=") || extraFilterParams.includes("with_companies=") || extraFilterParams.includes("certification=");
-      if (mode === "new" && (!genreId || genreId === "all") && !hasPlatformOrStudioFilter && (!sortBy || sortBy === "default" || sortBy === "added_desc" || sortBy === "year_desc") && pageNum <= 3) {
-        const liveEndpoint = isMovie ? "movie/now_playing" : "tv/on_the_air";
-        const liveUrl = `https://api.themoviedb.org/3/${liveEndpoint}?language=de-DE&region=DE&page=${pageNum}`;
+      const hasRestrictiveUserFilter =
+        extraFilterParams.includes("with_watch_providers=") ||
+        extraFilterParams.includes("without_watch_providers=") ||
+        extraFilterParams.includes("with_companies=") ||
+        extraFilterParams.includes("without_companies=") ||
+        extraFilterParams.includes("with_genres=") ||
+        extraFilterParams.includes("without_genres=") ||
+        extraFilterParams.includes("certification=") ||
+        extraFilterParams.includes("primary_release_date.gte=") ||
+        extraFilterParams.includes("first_air_date.gte=");
+      if (mode === "new" && (!genreId || genreId === "all") && !hasRestrictiveUserFilter && (!sortBy || sortBy === "default" || sortBy === "added_desc" || sortBy === "year_desc") && pageNum <= 3) {
+        const liveUrl = isMovie
+          ? `https://api.themoviedb.org/3/movie/now_playing?language=de-DE&region=DE&page=${pageNum}`
+          : `https://api.themoviedb.org/3/tv/on_the_air?language=de-DE&timezone=Europe%2FBerlin&page=${pageNum}`;
         fetchPromises.push(
           fetchWithTimeout(liveUrl, {
             headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
@@ -17231,34 +17993,58 @@
     const db = await ensureD1Schema(env);
     const isMovie = typeCode === "m";
     try {
-      const lastDedupeTs = Number(memoryFallback.get("last_series_dedupe_ts") || 0);
-      if (!isMovie && db && (Date.now() - lastDedupeTs > 10 * 60 * 1000)) {
-        memoryFallback.set("last_series_dedupe_ts", Date.now());
-        await healAndDeduplicateSeriesInD1(env, false).catch(() => null);
-      }
+      // Free-Plan Schutz: 120s Isolate-RAM-Cache + INNER JOIN + LIMIT 300 + kein Full-details_json JSON.parse pro Zeile + kein synchrones healAndDeduplicateSeriesInD1 im Discover-GET!
+      const rowsCacheKey = isMovie ? "d1_vip_discover_rows_m" : "d1_vip_discover_rows_s";
+      const cachedRowsEntry = memoryFallback.get(rowsCacheKey);
       let rows = [];
-      if (db) {
+      if (cachedRowsEntry && Array.isArray(cachedRowsEntry.rows) && (Date.now() - Number(cachedRowsEntry.ts || 0)) < 120000) {
+        rows = cachedRowsEntry.rows.slice();
+      } else if (db) {
         const rowsRes = isMovie
           ? await db.prepare(`
-              SELECT m.tmdb_id, m.title, m.release_date, m.release_year, m.fsk, m.vote_average, m.poster_path, m.backdrop_path, m.details_json, m.updated_at AS item_updated_at,
+              SELECT m.tmdb_id, m.title, m.release_date, m.release_year, m.fsk, m.vote_average, m.poster_path, m.backdrop_path, m.overview, m.updated_at AS item_updated_at,
+                     json_extract(m.details_json, '$.popularity') AS ext_popularity,
+                     json_extract(m.details_json, '$.external_poster_url') AS ext_poster,
+                     json_extract(m.details_json, '$.genresList') AS ext_genres_json,
+                     json_extract(m.details_json, '$.studiosList') AS ext_studios_json,
+                     json_extract(m.details_json, '$.studios') AS ext_studios_text,
+                     json_extract(m.details_json, '$.providerIds') AS ext_providers_json,
                      MAX(mf.updated_at) AS latest_stream_at,
                      COUNT(mf.id) AS stream_count,
                      MAX(mf.quality) AS best_quality
               FROM movies m
-              LEFT JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+              INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+              WHERE mf.telegram_file_id IS NOT NULL
+                AND mf.telegram_file_id != ''
+                AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
+                AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
               GROUP BY m.tmdb_id
+              ORDER BY latest_stream_at DESC
+              LIMIT 300
             `).all()
           : await db.prepare(`
-              SELECT s.tmdb_id, s.title, s.release_date, s.release_year, s.fsk, s.vote_average, s.poster_path, s.backdrop_path, s.details_json, s.updated_at AS item_updated_at,
+              SELECT s.tmdb_id, s.title, s.release_date, s.release_year, s.fsk, s.vote_average, s.poster_path, s.backdrop_path, s.overview, s.updated_at AS item_updated_at,
+                     json_extract(s.details_json, '$.popularity') AS ext_popularity,
+                     json_extract(s.details_json, '$.external_poster_url') AS ext_poster,
+                     json_extract(s.details_json, '$.genresList') AS ext_genres_json,
+                     json_extract(s.details_json, '$.studiosList') AS ext_studios_json,
+                     json_extract(s.details_json, '$.studios') AS ext_studios_text,
+                     json_extract(s.details_json, '$.providerIds') AS ext_providers_json,
                      MAX(ef.updated_at) AS latest_stream_at,
                      COUNT(ef.id) AS stream_count,
-                     (SELECT COUNT(*) FROM series_episodes se WHERE se.series_id = s.tmdb_id) AS ep_count,
                      MAX(ef.quality) AS best_quality
               FROM series s
-              LEFT JOIN episode_files ef ON ef.series_id = s.tmdb_id
+              INNER JOIN episode_files ef ON ef.series_id = s.tmdb_id
+              WHERE ef.telegram_file_id IS NOT NULL
+                AND ef.telegram_file_id != ''
+                AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
+                AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
               GROUP BY s.tmdb_id
+              ORDER BY latest_stream_at DESC
+              LIMIT 300
             `).all();
         rows = Array.isArray(rowsRes?.results) ? rowsRes.results : [];
+        memoryFallback.set(rowsCacheKey, { rows, ts: Date.now() });
       }
 
       // Ergänze Einträge aus Memory-Fallback (falls D1 nicht gebunden oder im selben Isolate frisch importiert)
@@ -17267,6 +18053,10 @@
       for (const [k, v] of memoryFallback.entries()) {
         if (k.startsWith(memPrefix) && v && v.id && !seenIds.has(Number(v.id))) {
           const tid = Number(v.id);
+          const hasMemStream = isMovie
+            ? Boolean(Array.isArray(memoryFallback.get(`d1_movie_files_${tid}`)) && memoryFallback.get(`d1_movie_files_${tid}`).length > 0)
+            : Boolean(memoryFallback.get(`d1_series_best_quality_${tid}`));
+          if (!hasMemStream) continue;
           seenIds.add(tid);
           const memQual = isMovie
             ? (memoryFallback.get(`d1_movie_files_${tid}`)?.[0]?.quality || "1080p")
@@ -17279,43 +18069,42 @@
             vote_average: Number(v.vote_average || 0),
             poster_path: v.poster_path || null,
             backdrop_path: v.backdrop_path || null,
-            details_json: JSON.stringify(v),
+            overview: v.overview || "",
+            ext_popularity: Number(v.popularity || 0),
+            ext_poster: v.external_poster_url || "",
+            ext_genres_json: Array.isArray(v.genresList) ? JSON.stringify(v.genresList) : null,
+            ext_studios_json: Array.isArray(v.studiosList) ? JSON.stringify(v.studiosList) : null,
+            ext_studios_text: v.studios || "",
+            ext_providers_json: Array.isArray(v.providerIds) ? JSON.stringify(v.providerIds) : null,
             item_updated_at: Date.now(),
             latest_stream_at: Date.now(),
             stream_count: 1,
-            ep_count: 1,
             best_quality: memQual
           });
         }
       }
 
-      // Prüfe zusätzlich die globale "bot_vip"-Playlist auf importierte VIP-Titel
-      const vipList = await getSavedList(env, "bot_vip").catch(() => []);
-      const vipPlaylistIds = new Set();
-      const targetContentType = isMovie ? "movie" : "series";
-      for (const item of (vipList || [])) {
-        if (item && item.tmdbId && item.contentType === targetContentType) {
-          vipPlaylistIds.add(Number(item.tmdbId));
-        }
-      }
-
-      if (!rows.length && vipPlaylistIds.size === 0) return null;
-
-      // Nur Einträge mit echten verknüpften Datei-Streams in movie_files / episode_files (oder explizit mit Datei in der VIP-Playlist) anzeigen!
-      // Keine 0-Datei-Serien (wie 夢で見たあの子のために (2023)) über bloße series_episodes-Metadaten durchlassen!
-      const verifiedRows = rows.filter(r =>
-        Number(r.stream_count || 0) > 0
-      );
-      const effectiveRows = verifiedRows;
+      const effectiveRows = rows.filter(r => Number(r.stream_count || 0) > 0);
       if (!effectiveRows.length) return null;
 
+      const parseSmallJsonArr = (raw) => {
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        try {
+          const p = JSON.parse(String(raw));
+          return Array.isArray(p) ? p : [];
+        } catch (e) {
+          return [];
+        }
+      };
+
       const candidates = effectiveRows.map(r => {
-        let parsed = {};
-        try { parsed = JSON.parse(r.details_json || "{}"); } catch (e) {}
-        const gIds = Array.isArray(parsed.genresList) ? parsed.genresList.map(g => Number(g.id)).filter(Boolean) : [];
-        const rawRelDate = (r.release_date && r.release_date !== "Keine Angabe")
-          ? r.release_date
-          : (parsed.releaseDate && parsed.releaseDate !== "Keine Angabe" ? parsed.releaseDate : "");
+        const genresArr = parseSmallJsonArr(r.ext_genres_json);
+        const gIds = genresArr.map(g => Number(typeof g === "object" ? g?.id : g)).filter(Boolean);
+        const studiosList = parseSmallJsonArr(r.ext_studios_json);
+        const companyIds = studiosList.map(s => Number(typeof s === "object" ? s?.id : s)).filter(Boolean);
+        const providerIds = parseSmallJsonArr(r.ext_providers_json).map(Number).filter(Boolean);
+        const rawRelDate = (r.release_date && r.release_date !== "Keine Angabe") ? r.release_date : "";
         const streamTs = Number(r.latest_stream_at) || Number(r.item_updated_at) || Date.now();
         const bestQual = String(r.best_quality || memoryFallback.get(`d1_series_best_quality_${Number(r.tmdb_id)}`) || "1080p").trim();
         return {
@@ -17325,19 +18114,22 @@
           release_date: isMovie ? rawRelDate : undefined,
           first_air_date: !isMovie ? rawRelDate : undefined,
           vote_average: Number(r.vote_average) || 0,
-          popularity: Number(parsed.popularity) || Number(r.vote_average || 5) * 10,
-          poster_path: r.poster_path || parsed.posterPath || parsed.external_poster_url || null,
-          external_poster_url: parsed.external_poster_url || "",
-          backdrop_path: r.backdrop_path || parsed.backdropPath || null,
-          fsk: r.fsk || parsed.fsk || null,
+          popularity: Number(r.ext_popularity) || Number(r.vote_average || 5) * 10,
+          poster_path: r.poster_path || r.ext_poster || null,
+          external_poster_url: r.ext_poster || "",
+          backdrop_path: r.backdrop_path || null,
+          overview: r.overview || "",
+          fsk: r.fsk || null,
           genre_ids: gIds,
-          companyIds: Array.isArray(parsed.companyIds) ? parsed.companyIds : [],
-          providerIds: Array.isArray(parsed.providerIds) ? parsed.providerIds : [],
+          companyIds,
+          studiosList,
+          studios: r.ext_studios_text || "",
+          providerIds,
           media_type: isMovie ? "movie" : "tv",
           latest_stream_at: streamTs,
           hasLocalStream: true,
           vipQuality: bestQual,
-          vipStreamCount: Math.max(1, Number(r.stream_count || r.ep_count || 1))
+          vipStreamCount: Math.max(1, Number(r.stream_count || 1))
         };
       });
 
@@ -17484,6 +18276,7 @@
   }
 
   async function fetchPersonDetails(env, personId) {
+    if (!isRealTmdbId(personId)) return null;
     const cacheKey = `per_${personId}`;
     const cached = getCachedTmdb(cacheKey);
     if (cached) return cached;
@@ -17682,26 +18475,19 @@
     }
     const cached = getCachedTmdb(contentType === "movie" ? `movie_${itemId}` : `tv_${itemId}`);
     if (cached && cached.trailerKey !== undefined) return cached.trailerKey;
+    if (!isRealTmdbId(itemId)) return null;
 
     const typePath = contentType === "movie" ? "movie" : "tv";
-    const urlDe = `https://api.themoviedb.org/3/${typePath}/${itemId}/videos?language=de-DE`;
+    // Ein einziger gebündelter TMDb-Call (de, en & sprachneutral) statt 2 sequentieller Calls!
+    const urlAll = `https://api.themoviedb.org/3/${typePath}/${itemId}/videos?language=de-DE&include_video_language=de,en,null`;
     try {
-      let res = await fetchWithTimeout(urlDe, {
+      const res = await fetchWithTimeout(urlAll, {
         headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
       }, 3200);
       if (res.ok) {
         const data = await res.json();
         const key = extractYoutubeTrailerFromVideos(data);
         if (key) return key;
-      }
-      const urlEn = `https://api.themoviedb.org/3/${typePath}/${itemId}/videos?language=en-US`;
-      let resEn = await fetchWithTimeout(urlEn, {
-        headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-      }, 3200);
-      if (resEn.ok) {
-        const dataEn = await resEn.json();
-        const keyEn = extractYoutubeTrailerFromVideos(dataEn);
-        if (keyEn) return keyEn;
       }
     } catch (e) {}
     return null;
@@ -18763,7 +19549,7 @@
         const isInc = (settings.includedStudios || []).includes(st.id);
         const isExc = (settings.excludedStudios || []).includes(st.id);
         const icon = isInc ? "🟢" : isExc ? "❌" : "⚪";
-        row.push({ text: `${icon} ${st.emoji} ${st.label}`, callback_data: `toggle_studio_${st.id}` });
+        row.push({ text: `${icon} ${st.icon || st.emoji || "🏢"} ${st.label}`, callback_data: `toggle_studio_${st.id}` });
       }
       keyboard.push(row);
     }
@@ -18804,7 +19590,7 @@
         const isInc = (settings.includedPlatforms || []).includes(pl.id);
         const isExc = (settings.excludedPlatforms || []).includes(pl.id);
         const icon = isInc ? "🟢" : isExc ? "❌" : "⚪";
-        row.push({ text: `${icon} ${pl.emoji} ${pl.label}`, callback_data: `toggle_platform_${pl.id}` });
+        row.push({ text: `${icon} ${pl.icon || pl.emoji || "📺"} ${pl.label}`, callback_data: `toggle_platform_${pl.id}` });
       }
       keyboard.push(row);
     }
@@ -19695,14 +20481,19 @@
     const currentPage = Math.min(Math.max(1, page), totalPages);
     const slice = episodesToDisplay.slice((currentPage - 1) * perPage, currentPage * perPage);
 
-    // Für alle sichtbaren Episoden der aktuellen Seite die Telegraph-Story vorab sicherstellen,
-    // damit ein Tipp auf den Episoden-Titel sofort die Story im Instant-View öffnet!
+    // Free-Plan Schutz: Maximal 2 noch nicht gecachte Episoden-Telegraph-Seiten pro Bot-Klick vorwärmen (statt 8x Parallel-Sturm!)
     if (slice.length > 0) {
-      await Promise.all(
-        slice.map(ep =>
-          ensureEpisodeTelegraphUrl(env, seriesId, seriesDetails, ep.season_number || activeSeasonNum, ep)
-        )
-      );
+      let generatedNow = 0;
+      for (const ep of slice) {
+        const epNum = Number(ep?.episode_number || 0);
+        const sNum = Number(ep?.season_number || activeSeasonNum);
+        const memKey = `tg_ep_url_${seriesId}_${sNum}_${epNum}`;
+        if (ep?.telegraph_url || memoryFallback.get(memKey)) continue;
+        if (generatedNow >= 2) break;
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(24)) break;
+        generatedNow++;
+        await ensureEpisodeTelegraphUrl(env, seriesId, seriesDetails, sNum, ep).catch(() => null);
+      }
     }
 
     memoryFallback.set(`active_list_ctx_${chatId}`, {
@@ -21773,16 +22564,15 @@
       const userSettings = await getUserSettings(env, chatId);
       const isFilterOn = userSettings.filtersActive !== false;
 
-      const excludedGenreIds = new Set();
-      if (isFilterOn && Array.isArray(userSettings.excludedGenres)) {
-        for (const gName of userSettings.excludedGenres) {
-          if (MOVIE_GENRES[gName]) excludedGenreIds.add(MOVIE_GENRES[gName]);
-          if (SERIES_GENRES[gName]) excludedGenreIds.add(SERIES_GENRES[gName]);
-        }
-      }
+      const excludedGenreIds = (isFilterOn && Array.isArray(userSettings.excludedGenres))
+        ? resolveGenreIdsFromNames(userSettings.excludedGenres, isMovie ? "m" : "s")
+        : new Set();
+      // TMDb v3: Pipe (|) = OR-Ausschluss und nur gültige Genre-IDs für das gewählte Medium!
       const withoutGenresParam = excludedGenreIds.size > 0
-        ? `&without_genres=${Array.from(excludedGenreIds).join(",")}`
+        ? `&without_genres=${Array.from(excludedGenreIds).join("|")}`
         : "";
+      const mappedExplicitIds = genreId === "random_all" ? [] : mapExplicitGenreIdForMedia(genreId, isMovie);
+      const withGenresParam = mappedExplicitIds.length > 0 ? `with_genres=${mappedExplicitIds.join("|")}&` : "";
 
       let validItem = null;
       let validDetails = null;
@@ -21797,12 +22587,12 @@
         if (validItem || (Date.now() - startTime > 6500)) break;
 
         let tmdbUrl = contentType === "movie"
-          ? (genreId === "random_all"
-              ? `https://api.themoviedb.org/3/discover/movie?language=de-DE&sort_by=popularity.desc&vote_count.gte=20${withoutGenresParam}&page=${page}`
-              : `https://api.themoviedb.org/3/discover/movie?with_genres=${genreId}${withoutGenresParam}&language=de-DE&sort_by=popularity.desc&vote_count.gte=10&page=${page}`)
-          : (genreId === "random_all"
-              ? `https://api.themoviedb.org/3/discover/tv?language=de-DE&sort_by=popularity.desc&vote_count.gte=15${withoutGenresParam}&page=${page}`
-              : `https://api.themoviedb.org/3/discover/tv?with_genres=${genreId}${withoutGenresParam}&language=de-DE&sort_by=popularity.desc&vote_count.gte=5&page=${page}`);
+          ? (withGenresParam
+              ? `https://api.themoviedb.org/3/discover/movie?${withGenresParam}language=de-DE&sort_by=popularity.desc&vote_count.gte=10${withoutGenresParam}&page=${page}`
+              : `https://api.themoviedb.org/3/discover/movie?language=de-DE&sort_by=popularity.desc&vote_count.gte=20${withoutGenresParam}&page=${page}`)
+          : (withGenresParam
+              ? `https://api.themoviedb.org/3/discover/tv?${withGenresParam}language=de-DE&sort_by=popularity.desc&vote_count.gte=5${withoutGenresParam}&page=${page}`
+              : `https://api.themoviedb.org/3/discover/tv?language=de-DE&sort_by=popularity.desc&vote_count.gte=15${withoutGenresParam}&page=${page}`);
 
         let res = null;
         try {
@@ -22266,12 +23056,14 @@
       } else {
         const randPage = Math.floor(Math.random() * 5) + 1;
         if (filterMediaType === "movie") {
-          url = randomGenreId
-            ? `https://api.themoviedb.org/3/discover/movie?with_genres=${randomGenreId}&language=de-DE&sort_by=popularity.desc&vote_count.gte=15&page=${randPage}`
+          const mappedInlineIds = mapExplicitGenreIdForMedia(randomGenreId, true);
+          url = mappedInlineIds.length > 0
+            ? `https://api.themoviedb.org/3/discover/movie?with_genres=${mappedInlineIds.join("|")}&language=de-DE&sort_by=popularity.desc&vote_count.gte=15&page=${randPage}`
             : `https://api.themoviedb.org/3/discover/movie?language=de-DE&sort_by=popularity.desc&vote_count.gte=25&page=${randPage}`;
         } else if (filterMediaType === "tv") {
-          url = randomGenreId
-            ? `https://api.themoviedb.org/3/discover/tv?with_genres=${randomGenreId}&language=de-DE&sort_by=popularity.desc&vote_count.gte=10&page=${randPage}`
+          const mappedInlineIds = mapExplicitGenreIdForMedia(randomGenreId, false);
+          url = mappedInlineIds.length > 0
+            ? `https://api.themoviedb.org/3/discover/tv?with_genres=${mappedInlineIds.join("|")}&language=de-DE&sort_by=popularity.desc&vote_count.gte=10&page=${randPage}`
             : `https://api.themoviedb.org/3/discover/tv?language=de-DE&sort_by=popularity.desc&vote_count.gte=20&page=${randPage}`;
         } else {
           url = `https://api.themoviedb.org/3/trending/all/week?language=de-DE&page=${randPage}`;
@@ -22598,7 +23390,8 @@
 
       if (!results) {
         results = [];
-        const urlRec = `https://api.themoviedb.org/3/${typePath}/${sourceItemId}/recommendations?language=de-DE&page=1`;
+        if (isRealTmdbId(sourceItemId)) {
+          const urlRec = `https://api.themoviedb.org/3/${typePath}/${sourceItemId}/recommendations?language=de-DE&page=1`;
         const res = await fetchWithTimeout(urlRec, {
           headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
         }, 4500);
@@ -22620,6 +23413,7 @@
         if (results.length > 0) {
           setCachedTmdb(simCacheKey, results);
           await saveEntityToD1(env, simCacheKey, "similar", results);
+        }
         }
       }
 
@@ -23022,8 +23816,8 @@
       Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}`
     };
 
-    // Gold-Master Stufe 1: Direkte TMDb-ID aus Steckbrief / Link
-    if (parsed?.tmdbId) {
+    // Gold-Master Stufe 1: Direkte TMDb-ID aus Steckbrief / Link (nur echte TMDb-IDs < 8.000.000!)
+    if (isRealTmdbId(parsed?.tmdbId)) {
       const endpoint = primaryType === "s" ? "tv" : "movie";
       const directData = await cachedExternalFetchJson(`https://api.themoviedb.org/3/${endpoint}/${parsed.tmdbId}?language=de-DE`, { headers });
       if (directData && directData.id) {
@@ -23516,7 +24310,7 @@
       if (fbHit && fbHit.id && (!strictMovieWithYearLock || fbHit.typeCode !== "s")) {
         // Brücke: Wenn Wikipedia/Wikidata/TVMaze die korrekte Schreibweise mit Satzzeichen liefert (z. B. "Axel! will's wissen" statt "Axel will's wissen"),
         // direkt mit diesem kanonischen Titel erneut bei TMDb anfragen, um die offizielle TMDb-Serie samt Episoden zu erhalten!
-        if (Number(fbHit.id) >= 8000000 && fbHit.title && env.TMDB_BEARER_TOKEN) {
+        if (Number(fbHit.id) >= 8000000 && fbHit.title && hasTmdbCredentials(env)) {
           const bridgeTc = strictMovieWithYearLock ? "m" : (fbHit.typeCode === "s" ? "s" : primaryType);
           let bridgeHits = await runTmdbQuery(bridgeTc, fbHit.title, parsed.year || null);
           if (bridgeHits === 0 && parsed.year) {
@@ -23612,7 +24406,7 @@
     // Falls Top-Kandidaten in de-DE kein Poster haben, direkt EN/Internationales Poster über /images nachladen
     if (!isBatchImport) {
       for (const cand of sortedCandidates.slice(0, 3)) {
-        if (!cand.poster && cand.tmdbId && cand.tmdbId < 8000000 && env.TMDB_BEARER_TOKEN) {
+        if (!cand.poster && isRealTmdbId(cand.tmdbId) && hasTmdbCredentials(env)) {
           const ep = cand.typeCode === "s" ? "tv" : "movie";
           const imgData = await cachedExternalFetchJson(
             `https://api.themoviedb.org/3/${ep}/${cand.tmdbId}/images?include_image_language=de,en,null`,
@@ -24057,7 +24851,7 @@
               metadataSource = "TMDb";
             }
           }
-          if (Number(seriesDetails.id) >= 8000000 && env.TMDB_BEARER_TOKEN && normalizeCompareString(seriesDetails.title) !== normalizeCompareString(searchTitle)) {
+          if (Number(seriesDetails.id) >= 8000000 && hasTmdbCredentials(env) && normalizeCompareString(seriesDetails.title) !== normalizeCompareString(searchTitle)) {
             const qTitle = String(seriesDetails.title || "").trim();
             const tvRes = await cachedExternalFetchJson(
               `https://api.themoviedb.org/3/search/tv?query=${encodeURIComponent(qTitle)}&language=de-DE&page=1`,
@@ -25375,6 +26169,7 @@
     if (typeof beginD1BatchBuffer === "function") {
       beginD1BatchBuffer();
     }
+    try {
     const moviesAdded = [];
     const seriesAdded = [];
     const failedItems = [];
@@ -25781,14 +26576,14 @@
       }
     }
 
+    // Alle gepufferten D1-Writes des gesamten Batches ZUERST committen, damit neue Episoden vor dem Leere-Serien-Cleanup in D1 liegen!
+    if (typeof flushD1BatchBuffer === "function") {
+      await flushD1BatchBuffer(env);
+    }
+
     // Automatische DB-Bereinigung nur am Ende des gesamten Imports (oder bei Einzel-Läufen): Entfernt Serien mit 0 gültigen Episoden-Videos
     if (!partialBatch && (!playlistContext || playlistContext.isFinalBatch !== false)) {
       await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
-    }
-
-    // Alle gepufferten D1-Writes des gesamten Batches in einer einzigen db.batch()-Transaktion committen (nur 1 D1-Subrequest!)
-    if (typeof flushD1BatchBuffer === "function") {
-      await flushD1BatchBuffer(env);
     }
 
     return {
@@ -25808,6 +26603,11 @@
       uncertainCount,
       batchItems
     };
+    } finally {
+      if (typeof flushD1BatchBuffer === "function") {
+        await flushD1BatchBuffer(env).catch(() => {});
+      }
+    }
   }
 
   async function processNextD1QueueStepAndEditMessage(env, chatId, messageId, rounds = 1) {
@@ -25820,7 +26620,10 @@
       if (pendingBatch.length === 0) break;
 
       const firstEntryMeta = pendingBatch[0]?.entry?._playlistMeta || null;
-      const meta = memoryFallback.get("import_queue_meta") || {
+      const savedMeta = typeof getImportQueueMetaFromD1 === "function"
+        ? await getImportQueueMetaFromD1(env)
+        : memoryFallback.get("import_queue_meta");
+      const meta = savedMeta || {
         sourceLabel: pendingBatch[0]?.sourceLabel || "Backup",
         initialTotal: pendingBatch.length,
         processedCount: 0,
@@ -25850,11 +26653,15 @@
       meta.duplicatesCount = Number(meta.duplicatesCount || 0) + Number(duplicatesCount || 0);
       meta.mergedQualitiesCount = Number(meta.mergedQualitiesCount || 0) + Number(mergedQualitiesCount || 0);
       meta.uncertainCount = Number(meta.uncertainCount || 0) + Number(uncertainCount || 0);
-      memoryFallback.set("import_queue_meta", meta);
+      if (typeof saveImportQueueMetaInD1 === "function") {
+        await saveImportQueueMetaInD1(env, meta);
+      } else {
+        memoryFallback.set("import_queue_meta", meta);
+      }
     }
 
     const stats = await getImportQueueStatsFromD1(env);
-    const metaInfo = memoryFallback.get("import_queue_meta") || {};
+    const metaInfo = (typeof getImportQueueMetaFromD1 === "function" ? await getImportQueueMetaFromD1(env) : null) || memoryFallback.get("import_queue_meta") || {};
     const totalAll = Math.max(1, stats.processedCount + stats.pendingCount);
     const bar = buildVisualProgressBar(stats.processedCount, totalAll, 14);
     const isFinished = stats.pendingCount === 0;
@@ -25916,11 +26723,31 @@
   async function handleIncomingMediaOrJson(env, message) {
     const { sendMessage, editMessageText, getFileText } = tgApi(env);
     const chatId = message.chat.id;
+    const senderId = message.from?.id || chatId;
     const videoObj = message.video || (message.document && /^video\//i.test(message.document.mime_type || "") ? message.document : null);
     const docObj = message.document;
+    const isJsonDoc = Boolean(docObj && (String(docObj.file_name || "").toLowerCase().endsWith(".json") || docObj.mime_type === "application/json"));
+    const isSubDoc = Boolean(docObj && SUBTITLE_EXTENSIONS.test(String(docObj.file_name || "")));
+
+    if (!isJsonDoc && !isSubDoc && !videoObj) return false;
+
+    // Sicherheits-Weiche: Nur autorisierte Admins über den Haupt-Bot dürfen globale D1-Medien, Backups oder Untertitel einspeisen!
+    const isAdminSender = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+      ? await isTelegramBotAdmin(env, senderId)
+      : false;
+    if (!isAdminSender) {
+      if (!isGroupOrChannelChat(chatId)) {
+        await sendMessage(
+          chatId,
+          `🔒 *NUR FÜR ADMINISTRATOREN*\n${SEP}\nDas direkte Einspeisen von Videodateien, JSON-Backups oder Untertiteln in die globale Mediathek ist ausschließlich für autorisierte Administratoren freigeschaltet.`,
+          { reply_markup: { inline_keyboard: [buildFooterRow(chatId, true)] } }
+        );
+      }
+      return true;
+    }
 
     // A) Eingehende .json Datei (Telegram Chat-Backup result.json ODER Titelliste) erkennen & mit Auto-Repair + Live-Progress + Custom Playlist verarbeiten
-    if (docObj && (String(docObj.file_name || "").toLowerCase().endsWith(".json") || docObj.mime_type === "application/json")) {
+    if (isJsonDoc) {
       const fileSizeBytes = Number(docObj.file_size || 0);
       if (fileSizeBytes > 20 * 1024 * 1024) {
         await sendMessage(
@@ -26040,7 +26867,7 @@
       );
 
       if (remainingSlice.length > 0) {
-        memoryFallback.set("import_queue_meta", {
+        const nextQueueMeta = {
           sourceLabel,
           initialTotal: totalExtracted,
           processedCount: immediateSlice.length,
@@ -26053,7 +26880,12 @@
           targetChatId: chatId,
           playlistFolderId: playlistFolder.id,
           playlistName: playlistFolder.name
-        });
+        };
+        if (typeof saveImportQueueMetaInD1 === "function") {
+          await saveImportQueueMetaInD1(env, nextQueueMeta);
+        } else {
+          memoryFallback.set("import_queue_meta", nextQueueMeta);
+        }
         const remainingWithPlaylist = remainingSlice.map(item =>
           typeof item === "object" && item !== null
             ? { ...item, _playlistMeta: { chatId, folderId: playlistFolder.id, playlistName: playlistFolder.name } }
@@ -26123,7 +26955,10 @@
         lang: "de",
         message_id: message.message_id || null
       };
-      const lastTarget = memoryFallback.get(`last_ingested_media_${chatId}`);
+      let lastTarget = memoryFallback.get(`last_ingested_media_${chatId}`);
+      if (!lastTarget && typeof getEntityFromD1 === "function") {
+        lastTarget = await getEntityFromD1(env, `last_ingested_media_${chatId}`, 3600000).catch(() => null);
+      }
       if (lastTarget && lastTarget.tmdbId) {
         const boundOk = await attachSubtitleToMediaInD1(env, lastTarget, subItem);
         if (boundOk) {
@@ -26171,14 +27006,18 @@
         return true;
       }
 
-      memoryFallback.set(`last_ingested_media_${chatId}`, {
+      const ingestedRef = {
         typeCode: resolved.typeCode,
         tmdbId: resolved.tmdbId,
         season: resolved.season || 1,
         episode: resolved.episode || 1,
         fileId: videoObj.file_id,
         title: resolved.cleanTitle
-      });
+      };
+      memoryFallback.set(`last_ingested_media_${chatId}`, ingestedRef);
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, `last_ingested_media_${chatId}`, "last_ingested_media", ingestedRef).catch(() => {});
+      }
 
       try {
         const botVipFolder = await ensureBotVipDefaultPlaylist(env);
@@ -26203,6 +27042,19 @@
       // 0. Inline-Queries (für Gruppen & Kanäle: @BotName Suchbegriff / @BotName f / @BotName s)
       if (update.inline_query) {
         await handleInlineQuery(env, update.inline_query);
+        return;
+      }
+
+      // 0b. Kanal-Beiträge (channel_post): Ernte automatisch echte file_id für passende tg_export_<channelId>_<msgId> Einträge in D1
+      if (update.channel_post && !env._isCustomBotWebhook) {
+        const chPost = update.channel_post;
+        const chId = chPost.chat?.id;
+        const chMedia = chPost.video || (chPost.document && /^video\//i.test(chPost.document.mime_type || "") ? chPost.document : null);
+        if (chId && Number(chId) < 0 && chPost.message_id && chMedia?.file_id) {
+          const rawChannelId = String(chId).replace(/^-100/, "").replace(/^-/, "");
+          const candidateExportId = `tg_export_${rawChannelId}_${chPost.message_id}`;
+          await replaceExportFileIdInD1(env, candidateExportId, chMedia.file_id, chMedia.file_unique_id || null);
+        }
         return;
       }
 
@@ -26304,9 +27156,16 @@
           return;
         }
 
-        // GEHEIMES ADMIN-PANEL: /stats xyz
+        // GEHEIMES ADMIN-PANEL: /stats xyz (nur für autorisierte Admins über den Haupt-Bot)
         if (text.toLowerCase() === ADMIN_SECRET_COMMAND) {
           await deleteMessage(chatId, message.message_id);
+          const canOpenAdmin = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, message.from?.id || chatId)
+            : false;
+          if (!canOpenAdmin) {
+            await sendMessage(chatId, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
+            return;
+          }
           await showAdminStatsPanel(env, chatId);
           return;
         }
@@ -26361,20 +27220,36 @@
           }
         }
 
-        // 6-stelliger Web-/Smart-TV-Login-Code direkt im Bot-Chat eingegeben (z.B. "482915" oder "482 915")
-        const sixDigitMatch = text.trim().match(/^(\d{3})\s*(\d{3})$/);
+        // 6-stelliger Web-/Smart-TV-Login-Code direkt im privaten Haupt-Bot-Chat eingegeben (z.B. "482915" oder "482 915")
+        const sixDigitMatch = (!env._isCustomBotWebhook && !isGroupOrChannelChat(chatId))
+          ? text.trim().match(/^(\d{3})\s*(\d{3})$/)
+          : null;
         if (sixDigitMatch) {
           const cleanCode = `${sixDigitMatch[1]}${sixDigitMatch[2]}`;
-          let mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
+          const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+          let mappedChallengeId = null;
+          if (hasD1 && typeof getEntityFromD1 === "function") {
+            const d1CodeObj = await getEntityFromD1(env, `webauth_code_${cleanCode}`, 360000, { bypassMemoryCache: true }).catch(() => null);
+            if (d1CodeObj) mappedChallengeId = typeof d1CodeObj === "string" ? d1CodeObj : d1CodeObj.challengeId;
+          }
           if (!mappedChallengeId) {
-            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED").catch(() => null);
+            mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
+          }
+          if (!mappedChallengeId) {
+            mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
           }
           if (mappedChallengeId) {
             const cId = String(mappedChallengeId).replace(/^"|"$/g, "").trim();
-            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            let challengeObj = null;
+            if (hasD1 && typeof getEntityFromD1 === "function") {
+              challengeObj = await getEntityFromD1(env, `webauth_id_${cId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
+            }
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (!challengeObj) {
+              challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
@@ -26386,7 +27261,11 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+                if (hasD1 && typeof saveEntityToD1 === "function") {
+                  await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
+                } else {
+                  await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+                }
               } catch (e) {}
               await deleteMessage(chatId, message.message_id);
               await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
@@ -26410,11 +27289,22 @@
           await deleteMessage(chatId, message.message_id);
 
           if (startParam.startsWith("webauth_")) {
+            if (env._isCustomBotWebhook || isGroupOrChannelChat(chatId)) {
+              await sendMessage(chatId, `🔒 *Web-Login-Bestätigung ist nur im privaten Chat mit dem Haupt-Bot möglich.*`);
+              return;
+            }
             const cId = startParam.replace(/^webauth_/i, "").trim();
-            let challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+            const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+            let challengeObj = null;
+            if (hasD1 && typeof getEntityFromD1 === "function") {
+              challengeObj = await getEntityFromD1(env, `webauth_id_${cId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
+            }
             if (!challengeObj) {
-              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED").catch(() => null);
+              const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+            if (!challengeObj) {
+              challengeObj = memoryFallback.get(`webauth_id_${cId}`);
             }
             if (challengeObj && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
@@ -26426,7 +27316,11 @@
               };
               memoryFallback.set(`webauth_id_${cId}`, challengeObj);
               try {
-                await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+                if (hasD1 && typeof saveEntityToD1 === "function") {
+                  await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
+                } else {
+                  await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+                }
               } catch (e) {}
               await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
             } else {
@@ -26699,6 +27593,13 @@
           }
 
           if (startParam === "admin") {
+            const canOpenAdmin = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+              ? await isTelegramBotAdmin(env, message.from?.id || chatId)
+              : false;
+            if (!canOpenAdmin) {
+              await sendMessage(chatId, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
+              return;
+            }
             await showAdminStatsPanel(env, chatId);
             return;
           }
@@ -26706,7 +27607,7 @@
           if (startParam.startsWith("search_")) {
             const rawQ = decodeURIComponent(startParam.replace("search_", "")).trim();
             if (rawQ) {
-              await saveSearchState(env, chatId, rawQ, 1, "pop_desc", false);
+              await saveSearchState(env, chatId, rawQ, 1, 0, 0, 0, "pop_desc", false);
               await displaySearchResults(env, chatId, rawQ, 1, null, "pop_desc", false);
               return;
             }
@@ -26928,7 +27829,7 @@
           const queryText = text.replace(/^\/search(?:@\w+)?/i, "").trim().slice(0, 150);
           if (queryText.length > 0) {
             trackStat("searchQueries", queryText);
-            await saveSearchState(env, chatId, queryText, 1, "pop_desc", false);
+            await saveSearchState(env, chatId, queryText, 1, 0, 0, 0, "pop_desc", false);
             const waitMsg = await sendMessage(
               chatId,
               `🔍 *SUCHE LÄUFT*\n${SEP}\n⚡ Begriff: *"${escapeMd(queryText)}"*`,
@@ -26955,7 +27856,7 @@
           await clearAllTempMessages(env, chatId, deleteMessage);
           const cleanQuery = text.slice(0, 150);
           trackStat("searchQueries", cleanQuery);
-          await saveSearchState(env, chatId, cleanQuery, 1, "pop_desc", false);
+          await saveSearchState(env, chatId, cleanQuery, 1, 0, 0, 0, "pop_desc", false);
           const waitMsg = await sendMessage(
             chatId,
             `🔍 *SUCHE LÄUFT*\n${SEP}\n⚡ Begriff: *"${escapeMd(cleanQuery)}"*`,
@@ -27071,8 +27972,15 @@
           return;
         }
 
-        // --- D1 IMPORT-QUEUE BATCH CALLBACKS (für große JSON- & Telegram Chat-Backups) ---
+        // --- D1 IMPORT-QUEUE BATCH CALLBACKS (nur für autorisierte Admins über den Haupt-Bot) ---
         if (data === "impq_step_1" || data === "impq_step_3") {
+          const canManageQueue = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, cq.from?.id || chatId)
+            : false;
+          if (!canManageQueue) {
+            await answerCallbackQuery(cq.id, "🔒 Nur für Administratoren erlaubt.", true);
+            return;
+          }
           const rounds = data === "impq_step_3" ? 3 : 1;
           await answerCallbackQuery(cq.id, `⏳ Verarbeite nächsten Batch (${rounds * 12} Einträge)...`);
           await processNextD1QueueStepAndEditMessage(env, chatId, msgId, rounds);
@@ -27080,6 +27988,13 @@
         }
 
         if (data === "impq_clear") {
+          const canManageQueue = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, cq.from?.id || chatId)
+            : false;
+          if (!canManageQueue) {
+            await answerCallbackQuery(cq.id, "🔒 Nur für Administratoren erlaubt.", true);
+            return;
+          }
           await clearImportQueueInD1(env);
           await answerCallbackQuery(cq.id, "🗑️ Import-Warteschlange geleert!", true);
           await editMessageText(
@@ -27119,7 +28034,17 @@
           await clearExtraMessage(env, chatId, deleteMessage);
         }
 
-        // --- ADMIN PANEL CALLBACKS (/stats xyz) ---
+        // --- ADMIN PANEL CALLBACKS (/stats xyz — strikt nur für autorisierte Admins über den Haupt-Bot) ---
+        if (data === "adm_refresh" || data === "adm_reset" || data.startsWith("adm_tier_")) {
+          const canUseAdminCb = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
+            ? await isTelegramBotAdmin(env, cq.from?.id || chatId)
+            : false;
+          if (!canUseAdminCb) {
+            await answerCallbackQuery(cq.id, "🔒 Zugriff verweigert: Nur für Administratoren.", true);
+            return;
+          }
+        }
+
         if (data === "adm_refresh") {
           await answerCallbackQuery(cq.id, "🔄 Statistiken aktualisiert!");
           await showAdminStatsPanel(env, chatId, msgId);
@@ -27146,6 +28071,11 @@
 
         if (data.startsWith("adm_tier_")) {
           const serviceKey = data.replace("adm_tier_", "");
+          const ALLOWED_TIER_KEYS = ["tmdb", "cloudflare", "telegram", "translator"];
+          if (!ALLOWED_TIER_KEYS.includes(serviceKey)) {
+            await answerCallbackQuery(cq.id, "⚠️ Ungültiger Dienst-Schlüssel.", true);
+            return;
+          }
           const currentTiers = await getActiveTiers(env);
           const nextLevel = (currentTiers[serviceKey] || "free") === "free" ? "paid" : "free";
           currentTiers[serviceKey] = nextLevel;
@@ -28744,6 +29674,33 @@
     return out;
   }
 
+  function timingSafeEqualStr(a, b) {
+    const strA = String(a || "");
+    const strB = String(b || "");
+    if (!strA || !strB || strA.length !== strB.length) return false;
+    let diff = 0;
+    for (let i = 0; i < strA.length; i++) {
+      diff |= (strA.charCodeAt(i) ^ strB.charCodeAt(i));
+    }
+    return diff === 0;
+  }
+
+  async function computeCustomBotWebhookSecret(env, botToken) {
+    const cleanToken = String(botToken || "").trim();
+    if (!cleanToken) return "";
+    const enc = new TextEncoder();
+    const signingSecret = await getSessionSigningSecret(env);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(signingSecret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`custom-wh-v1:${cleanToken}`));
+    return bytesToHex(sigBuf).slice(0, 48);
+  }
+
   // Offizielle Telegram Mini App HMAC-SHA256 Validierung von initData (Web Crypto API)
   async function verifyTelegramInitDataHmac(rawInitData, botToken, env = null) {
     if (!rawInitData) return { ok: false, error: "Fehlende initData" };
@@ -28800,7 +29757,7 @@
       const sigBuf = await crypto.subtle.sign("HMAC", validationKey, enc.encode(dataCheckString));
       const calculatedHash = bytesToHex(sigBuf);
 
-      if (calculatedHash.toLowerCase() !== String(receivedHash).toLowerCase()) {
+      if (!timingSafeEqualStr(calculatedHash.toLowerCase(), String(receivedHash).toLowerCase())) {
         return { ok: false, error: "Ungültige Telegram initData Signatur" };
       }
 
@@ -28849,8 +29806,8 @@
       }
 
       const authDate = Number(widgetData.auth_date || 0);
-      if (authDate > 0 && Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
-        return { ok: false, error: "Telegram Login-Widget Sitzung abgelaufen (> 24h). Bitte erneut anmelden." };
+      if (!authDate || Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
+        return { ok: false, error: "Telegram Login-Widget Sitzung fehlt oder ist abgelaufen (> 24h). Bitte erneut anmelden." };
       }
 
       const checkFields = ["auth_date", "first_name", "id", "last_name", "photo_url", "username"];
@@ -28876,7 +29833,7 @@
       const sigBuf = await crypto.subtle.sign("HMAC", validationKey, enc.encode(dataCheckString));
       const calculatedHash = bytesToHex(sigBuf);
 
-      if (calculatedHash.toLowerCase() !== receivedHash.toLowerCase()) {
+      if (!timingSafeEqualStr(calculatedHash.toLowerCase(), receivedHash.toLowerCase())) {
         return { ok: false, error: "Ungültige Telegram Login-Widget Signatur (HMAC-SHA256)" };
       }
 
@@ -28931,7 +29888,7 @@
   async function verifyPasswordPbkdf2(password, saltHex, expectedHashHex) {
     if (!password || !saltHex || !expectedHashHex) return false;
     const { hashHex } = await hashPasswordPbkdf2(password, saltHex);
-    return hashHex.toLowerCase() === String(expectedHashHex).toLowerCase();
+    return timingSafeEqualStr(hashHex.toLowerCase(), String(expectedHashHex).toLowerCase());
   }
 
   // RFC 6238 TOTP (Google Authenticator / Authy kompatibel) via Web Crypto API (HMAC-SHA1)
@@ -29014,15 +29971,42 @@
     return { otpauthUrl, qrCodeUrl: "" };
   }
 
-  function getSessionSigningSecret(env) {
+  async function getSessionSigningSecret(env) {
     const configured = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
     if (configured) return configured;
-    if (!globalThis.__ephemeralTmaSessionSecret) {
-      const randBytes = new Uint8Array(32);
-      crypto.getRandomValues(randBytes);
-      globalThis.__ephemeralTmaSessionSecret = bytesToHex(randBytes);
+    if (globalThis.__persistentTmaSessionSecret) {
+      return globalThis.__persistentTmaSessionSecret;
     }
-    return globalThis.__ephemeralTmaSessionSecret;
+    const secretKey = "TMA_PERSISTENT_SESSION_SECRET_V1";
+    try {
+      const fromKv = typeof kvCachedGetRaw === "function"
+        ? await kvCachedGetRaw(env, secretKey, "MOVIE_SAVED", { ttlMs: 3600000 }).catch(() => null)
+        : null;
+      if (fromKv && String(fromKv).trim().length >= 32) {
+        globalThis.__persistentTmaSessionSecret = String(fromKv).trim();
+        return globalThis.__persistentTmaSessionSecret;
+      }
+      if (typeof getEntityFromD1 === "function") {
+        const fromD1 = await getEntityFromD1(env, secretKey, 3650 * 86400000).catch(() => null);
+        if (fromD1 && typeof fromD1.secret === "string" && fromD1.secret.length >= 32) {
+          globalThis.__persistentTmaSessionSecret = fromD1.secret;
+          return globalThis.__persistentTmaSessionSecret;
+        }
+      }
+    } catch (_e) {}
+    const randBytes = new Uint8Array(32);
+    crypto.getRandomValues(randBytes);
+    const generated = bytesToHex(randBytes);
+    globalThis.__persistentTmaSessionSecret = generated;
+    try {
+      if (typeof kvStageWrite === "function") {
+        await kvStageWrite(env, secretKey, generated, { bindingName: "MOVIE_SAVED", flushNow: true });
+      }
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, secretKey, "config", { secret: generated, createdAt: Date.now() });
+      }
+    } catch (_e) {}
+    return generated;
   }
 
   async function signTmaSessionToken(payload, env) {
@@ -29034,9 +30018,10 @@
     };
     const jsonBytes = enc.encode(JSON.stringify(dataObj));
     const payloadHex = bytesToHex(jsonBytes);
+    const signingSecret = await getSessionSigningSecret(env);
     const key = await crypto.subtle.importKey(
       "raw",
-      enc.encode(getSessionSigningSecret(env)),
+      enc.encode(signingSecret),
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"]
@@ -29051,16 +30036,17 @@
       const [payloadHex, sigHex] = token.split(".");
       if (!payloadHex || !sigHex) return null;
       const enc = new TextEncoder();
+      const signingSecret = await getSessionSigningSecret(env);
       const key = await crypto.subtle.importKey(
         "raw",
-        enc.encode(getSessionSigningSecret(env)),
+        enc.encode(signingSecret),
         { name: "HMAC", hash: "SHA-256" },
         false,
         ["sign"]
       );
       const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(payloadHex));
       const expectedSigHex = bytesToHex(expectedSigBuf);
-      if (expectedSigHex.toLowerCase() !== sigHex.toLowerCase()) return null;
+      if (!timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())) return null;
 
       const jsonStr = new TextDecoder().decode(hexToBytes(payloadHex));
       const data = JSON.parse(jsonStr);
@@ -29164,7 +30150,7 @@
     try {
       const settings = await getUserSettings(env, chatId);
       const sync = settings?.tmdbSync;
-      if (!sync || !sync.enabled || !sync.sessionId || !sync.accountId || !tmdbId) return false;
+      if (!sync || !sync.enabled || !sync.sessionId || !sync.accountId || !isRealTmdbId(tmdbId)) return false;
       const mediaType = typeCode === "s" || typeCode === "series" ? "tv" : "movie";
       const res = await fetchWithTimeout(
         `https://api.themoviedb.org/3/account/${sync.accountId}/watchlist?session_id=${encodeURIComponent(sync.sessionId)}`,
@@ -29284,7 +30270,7 @@
       ...remoteMovies.map(m => `movie_${m.id}`),
       ...remoteSeries.map(s => `tv_${s.id}`)
     ]);
-    const localMedia = list.filter(i => (i.contentType === "movie" || i.contentType === "series") && i.tmdbId).slice(-15);
+    const localMedia = list.filter(i => (i.contentType === "movie" || i.contentType === "series") && isRealTmdbId(i.tmdbId)).slice(-15);
     let pushedCount = 0;
     for (const item of localMedia) {
       const mType = item.contentType === "series" ? "tv" : "movie";
@@ -37972,8 +38958,8 @@
         if (state && state.sidebarOpen) renderFilterSidebarContent();
         const found = TRAILER_PROVIDERS_CLIENT.find(p => p.id === trailerProvider);
         showHudToast("🎬 Standard-Trailer Quelle: " + (found ? found.label : "▶️ YouTube"));
-        if (persistRemote) {
-          fetch(API_BASE + "/settings", {
+        if (persistRemote && state && state.isAuthenticated && chatId && chatId !== "guest") {
+          apiFetchJson(API_BASE + "/settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chatId, action: "save_trailer_provider", trailerProvider })
@@ -38299,7 +39285,25 @@
         applyUiScaleToDom();
       }
       detectClientDeviceAndAdapt();
-      window.addEventListener("resize", detectClientDeviceAndAdapt);
+      let _clientResizeDebounceTimer = null;
+      window.addEventListener("resize", () => {
+        if (_clientResizeDebounceTimer) clearTimeout(_clientResizeDebounceTimer);
+        _clientResizeDebounceTimer = setTimeout(detectClientDeviceAndAdapt, 150);
+      });
+
+      let _uiScalePersistDebounceTimer = null;
+      function schedulePersistUiScaleRemoteClient() {
+        if (!state || !state.isAuthenticated || !chatId || chatId === "guest") return;
+        if (_uiScalePersistDebounceTimer) clearTimeout(_uiScalePersistDebounceTimer);
+        _uiScalePersistDebounceTimer = setTimeout(() => {
+          _uiScalePersistDebounceTimer = null;
+          apiFetchJson(API_BASE + "/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chatId, action: "save_ui_scale", uiScale })
+          }).catch(() => {});
+        }, 700);
+      }
 
       function setUiScaleValue(key, val, persistRemote = true) {
         const clamped = Math.min(160, Math.max(65, Number(val) || 100));
@@ -38310,11 +39314,7 @@
         const labelPrefix = key === "all" ? "🔍 Zoom" : key === "text" ? "🔤 Textgröße" : key === "cover" ? "🖼️ Covergröße" : "🎛️ Menügröße";
         showLiveZoomBadgeClient(labelPrefix + ": " + clamped + "%");
         if (persistRemote) {
-          fetch(API_BASE + "/settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chatId, action: "save_ui_scale", uiScale })
-          }).catch(() => {});
+          schedulePersistUiScaleRemoteClient();
         }
       }
 
@@ -38329,11 +39329,7 @@
         applyUiScaleToDom();
         if (state && state.sidebarOpen) renderFilterSidebarContent(false);
         showLiveZoomBadgeClient("🔍 Zoom: 100% (Standard)");
-        fetch(API_BASE + "/settings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chatId, action: "save_ui_scale", uiScale })
-        }).catch(() => {});
+        schedulePersistUiScaleRemoteClient();
       }
 
       function focusFirstSidebarFilterOption() {
@@ -38896,20 +39892,33 @@
                 '</div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
                   (r.deepLink ? (
-                    '<a href="' + esc(r.deepLink) + '" target="_blank" rel="noopener" class="btn blue" style="text-decoration:none;font-weight:800">' +
+                    '<a href="' + esc(safeHttpUrl(r.deepLink)) + '" target="_blank" rel="noopener noreferrer" class="btn blue" style="text-decoration:none;font-weight:800">' +
                       '🚀 1-Klick: Direkt in Telegram bestätigen' +
                     '</a>'
                   ) : '') +
-                  '<button type="button" class="btn" onclick="simulateBotCodeConfirmClient(\\'' + esc(r.challengeId) + '\\')" title="Bestätigt den Code im lokalen Simulator / Vorschau-Modus">' +
-                    '🧪 Im Simulator bestätigen' +
-                  '</button>' +
+                  (r.canSimulateConfirm ? (
+                    '<button type="button" class="btn" onclick="simulateBotCodeConfirmClient(\\'' + escJs(r.challengeId) + '\\')" title="Bestätigt den Code im lokalen Simulator / Vorschau-Modus">' +
+                      '🧪 Im Simulator bestätigen' +
+                    '</button>'
+                  ) : '') +
                 '</div>' +
-                '<div id="botCodePollStatusText" style="font-size:11.5px;color:#fbbf24">⏳ Warte auf Bestätigung in Telegram (automatischer Abgleich alle 2s)...</div>' +
+                '<div id="botCodePollStatusText" style="font-size:11.5px;color:#fbbf24">⏳ Warte auf Bestätigung in Telegram (automatischer Abgleich alle 3,5s)...</div>' +
               '</div>';
           }
+          let botCodePollAttempts = 0;
           activeBotCodePollTimer = setInterval(() => {
+            botCodePollAttempts++;
+            const statusNode = document.getElementById("botCodePollStatusText");
+            if (!statusNode || botCodePollAttempts > 45) {
+              stopBotCodePollClient();
+              if (statusNode && botCodePollAttempts > 45) {
+                statusNode.style.color = "#f87171";
+                statusNode.textContent = "⌛ Zeitlimit erreicht. Bitte Code bei Bedarf neu anfordern.";
+              }
+              return;
+            }
             pollBotCodeChallengeClient(r.challengeId);
-          }, 2000);
+          }, 3500);
         } catch (err) {
           if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
         }
@@ -38917,6 +39926,11 @@
 
       async function pollBotCodeChallengeClient(challengeId) {
         if (!challengeId) return;
+        const stElPre = document.getElementById("botCodePollStatusText");
+        if (!stElPre) {
+          stopBotCodePollClient();
+          return;
+        }
         try {
           const r = await apiFetchJson(API_BASE + "/auth/bot-code", {
             method: "POST",
@@ -39125,7 +40139,7 @@
           if (fb) fb.textContent = "";
           if (mount) {
             const otpUriHtml = r.otpauthUrl
-              ? ('<a href="' + esc(r.otpauthUrl) + '" class="btn blue" style="text-decoration:none">🔐 Direkt in Authenticator-App öffnen</a>')
+              ? ('<a href="' + esc(safeHttpUrl(r.otpauthUrl, true)) + '" class="btn blue" style="text-decoration:none">🔐 Direkt in Authenticator-App öffnen</a>')
               : '';
             mount.innerHTML = '<div class="admin-sub-box" style="padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center">' +
               '<div style="font-size:12px;color:var(--text);font-weight:700">1. Richte 2FA sicher lokal in deiner Authenticator-App (Google Authenticator, Authy, 1Password) ein:</div>' +
@@ -39295,6 +40309,30 @@
         return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       }
 
+      function escJs(str) {
+        return String(str == null ? "" : str)
+          .replace(/\\\\/g, "\\\\\\\\")
+          .replace(/'/g, "\\\\x27")
+          .replace(/"/g, "\\\\x22")
+          .replace(/</g, "\\\\x3c")
+          .replace(/>/g, "\\\\x3e")
+          .replace(/&/g, "\\\\x26")
+          .replace(/\\r/g, "\\\\r")
+          .replace(/\\n/g, "\\\\n")
+          .replace(/\\u2028/g, "\\\\u2028")
+          .replace(/\\u2029/g, "\\\\u2029");
+      }
+
+      function safeHttpUrl(url, allowOtpAuth = false) {
+        const s = String(url == null ? "" : url).replace(/^[\\u0000-\\u0020]+|[\\u0000-\\u0020]+$/g, "");
+        if (!s) return "#";
+        const lower = s.toLowerCase();
+        if (lower.startsWith("https://") || lower.startsWith("http://")) return s;
+        if (s.startsWith("/") && !s.startsWith("//") && !s.startsWith("/\\\\")) return s;
+        if (allowOtpAuth && lower.startsWith("otpauth://")) return s;
+        return "#";
+      }
+
       let lastLightboxTriggerEl = null;
       function toggleLightboxZoomClient() {
         const im = document.getElementById("lbImg");
@@ -39305,7 +40343,8 @@
       }
 
       function openLightbox(imgUrl, titleText) {
-        if (!imgUrl) return;
+        const safeImgUrl = safeHttpUrl(imgUrl);
+        if (!safeImgUrl || safeImgUrl === "#") return;
         const lb = document.getElementById("lightboxRoot");
         if (!lb) return;
         const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
@@ -39317,11 +40356,11 @@
             '<div style="font-size:13.5px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(titleText || 'Großansicht') + '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0">' +
               '<button type="button" id="lbZoomToggleBtn" class="btn" onclick="toggleLightboxZoomClient()">🔍 Vergrößern</button>' +
-              '<a href="' + esc(imgUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Originalbild in voller Auflösung öffnen">🔗 Original ↗</a>' +
+              '<a href="' + esc(safeImgUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Originalbild in voller Auflösung öffnen">🔗 Original ↗</a>' +
               '<button type="button" id="lbCloseBtn" class="btn close-slate" onclick="closeLightbox()">✖ Schließen</button>' +
             '</div>' +
           '</div>' +
-          '<img id="lbImg" class="lightbox-img" src="' + esc(imgUrl) + '" onclick="toggleLightboxZoomClient()" alt="' + esc(titleText || 'Poster') + '" />' +
+          '<img id="lbImg" class="lightbox-img" src="' + esc(safeImgUrl) + '" onclick="toggleLightboxZoomClient()" alt="' + esc(titleText || 'Poster') + '" />' +
           '<div style="position:relative;z-index:5;font-size:11px;color:#94a3b8;margin-top:10px;background:rgba(7,12,26,0.75);padding:4px 12px;border-radius:999px">💡 Auf das Bild tippen zum Vergrößern / Verkleinern · ESC zum Schließen</div>' +
         '</div>';
         setTimeout(() => {
@@ -40037,9 +41076,9 @@
           const fskBadge = it.fskLabel ? ('<span style="padding:1px 5px;border-radius:4px;background:rgba(148,163,184,0.18);border:1px solid rgba(148,163,184,0.3);font-size:10px">' + esc(it.fskLabel) + '</span>') : '';
           const epBadge = it.epCount > 0 ? ('<span style="color:#38bdf8;font-size:10.5px;font-weight:700">• ' + it.epCount + ' Flg.</span>') : '';
           const delActionHtml = tabMode === "wishlist"
-            ? ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="deleteWishlistItemFromRightMenuClient(event,\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>')
-            : ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="removeRecentViewedItem(event,\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')" title="Aus Verlauf entfernen">✕</button>');
-          return '<div class="rm-entry-card" tabindex="0" onclick="openItemFromRightMenuClient(\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')">' +
+            ? ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="deleteWishlistItemFromRightMenuClient(event,\\'' + escJs(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>')
+            : ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="removeRecentViewedItem(event,\\'' + escJs(it.tc) + '\\',' + Number(it.targetId) + ')" title="Aus Verlauf entfernen">✕</button>');
+          return '<div class="rm-entry-card" tabindex="0" onclick="openItemFromRightMenuClient(\\'' + escJs(it.tc) + '\\',' + Number(it.targetId) + ')">' +
             '<div style="display:flex;align-items:center;gap:9px;min-width:0;flex:1">' +
               (thumbUrl
                 ? '<img src="' + esc(thumbUrl) + '" alt="" loading="lazy" style="width:36px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#0f172a" />'
@@ -40056,7 +41095,7 @@
               '</div>' +
             '</div>' +
             '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0">' +
-              '<button type="button" class="btn" style="padding:4px 7px;font-size:11px" onclick="event.stopPropagation();playInstantTrailerFromCard(event,\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')" title="Trailer direkt abspielen">▶</button>' +
+              '<button type="button" class="btn" style="padding:4px 7px;font-size:11px" onclick="event.stopPropagation();playInstantTrailerFromCard(event,\\'' + escJs(it.tc) + '\\',' + Number(it.targetId) + ')" title="Trailer direkt abspielen">▶</button>' +
               delActionHtml +
             '</div>' +
           '</div>';
@@ -45135,14 +46174,14 @@
           ? '<span class="hero-meta-sep">·</span><span class="hero-meta-genres">' +
               genres.map((g, idx) =>
                 (g.id
-                  ? '<span class="hero-meta-genre" onclick="selectHeroGenreFilter(\\'' + esc(g.id) + '\\')" title="Nach Genre ' + esc(g.name) + ' filtern">' + esc(g.name) + '</span>'
+                  ? '<span class="hero-meta-genre" onclick="selectHeroGenreFilter(\\'' + escJs(g.id) + '\\')" title="Nach Genre ' + esc(g.name) + ' filtern">' + esc(g.name) + '</span>'
                   : '<span>' + esc(g.name) + '</span>') +
                 (idx < genres.length - 1 ? '<span>, </span>' : '')
               ).join("") +
             '</span>'
           : '';
         return '<span><span class="hero-meta-star">★</span> ' + voteStr + '</span>' +
-          (yearStr ? '<span class="hero-meta-sep">·</span><span class="hero-meta-year" onclick="runSearch(false,\\'(' + esc(yearStr) + ')\\')" title="Alle Titel aus dem Jahr ' + esc(yearStr) + ' suchen">' + esc(yearStr) + '</span>' : '') +
+          (yearStr ? '<span class="hero-meta-sep">·</span><span class="hero-meta-year" onclick="runSearch(false,\\'(' + escJs(yearStr) + ')\\')" title="Alle Titel aus dem Jahr ' + esc(yearStr) + ' suchen">' + esc(yearStr) + '</span>' : '') +
           '<span class="hero-meta-sep">·</span><span>' + (isMovie ? 'Film' : 'Serie') + '</span>' +
           '<span class="hero-meta-sep">·</span><span class="hero-meta-hd" title="Im Katalog in HD verfügbar">HD</span>' +
           genresHtml;
@@ -45424,11 +46463,11 @@
         const transBtnHtml = (alwaysRenderBtn || showTransBtn)
           ? '<button type="button" id="' + esc(translateBtnId) + '" class="desc-translate-btn' + (isTranslated ? ' is-translated' : '') + '"' +
               (alwaysRenderBtn ? (' style="display:' + (showTransBtn ? 'inline-flex' : 'none') + '"') : '') +
-              ' onclick="translateOverviewTextClient(event,\\'' + esc(translateTargetKey) + '\\',\\'' + esc(boxId) + '\\',\\'' + esc(textId) + '\\',\\'' + esc(translateBtnId) + '\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' +
+              ' onclick="translateOverviewTextClient(event,\\'' + escJs(translateTargetKey) + '\\',\\'' + escJs(boxId) + '\\',\\'' + escJs(textId) + '\\',\\'' + escJs(translateBtnId) + '\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' +
               (isTranslated ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') +
             '</button>'
           : '';
-        return '<div id="' + esc(boxId) + '" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\');}">' +
+        return '<div id="' + esc(boxId) + '" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'' + escJs(boxId) + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'' + escJs(boxId) + '\\');}">' +
           '<div id="' + esc(textId) + '" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrigOverview) + '">' + esc(overviewText) + '</div>' +
           '<div class="desc-actions-row">' +
             '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
@@ -45893,7 +46932,7 @@
         Object.entries(gMap || {}).forEach(([gName, gId]) => {
           const idStr = String(gId);
           const em = genreEmoji(gName);
-          chipsHtml += '<button type="button" class="genre-overlay-chip ' + (curGenreId === idStr ? "active" : "") + '" onclick="selectGenreFromSearchOverlay(\\'' + esc(idStr) + '\\')">' +
+          chipsHtml += '<button type="button" class="genre-overlay-chip ' + (curGenreId === idStr ? "active" : "") + '" onclick="selectGenreFromSearchOverlay(\\'' + escJs(idStr) + '\\')">' +
             '<span>' + em + '</span><span>' + esc(gName) + '</span>' +
           '</button>';
         });
@@ -46463,7 +47502,7 @@
         if (cols.length || unis.length || studs.length) {
           html += '<div class="ac-group-title">🍿 Reihen, 🌌 Universen & 🏢 Filmstudios</div>';
           unis.forEach(u => {
-            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openUniverseView(\\'' + esc(u.id) + '\\')">' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openUniverseView(\\'' + escJs(u.id) + '\\')">' +
               '<div class="ac-item-left"><span class="ac-item-icon-box">' + esc(u.icon || '🌌') + '</span><span class="ac-item-text"><b>' + esc(u.name) + '</b></span></div>' +
               '<span class="ac-item-action" style="color:#34d399;border-color:rgba(52,211,153,0.35)">Universum ➔</span>' +
             '</div>';
@@ -47336,7 +48375,10 @@
         return html;
       }
 
+      let catalogViewReqSeq = 0;
+
       async function loadDiscover(type, genreId, mode, sort, bypass = false, jumpToCards = false, targetPage = 1) {
+        const myReqSeq = ++catalogViewReqSeq;
         state.type = type; state.genreId = genreId; state.mode = mode; state.sort = sort;
         const pageNum = Math.max(1, Number(targetPage) || 1);
         state.startPage = pageNum;
@@ -47369,6 +48411,7 @@
         }
         try {
           const res = await apiFetchJson(discoverUrl);
+          if (myReqSeq !== catalogViewReqSeq) return;
           state.items = (res.items || []).map(it => ({ ...it, _pageNum: pageNum }));
           state.totalPages = Math.max(1, Number(res.totalPages) || 1);
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
@@ -47392,7 +48435,7 @@
           if (state.sidebarOpen) renderFilterSidebarContent(false);
           if (pageNum === 1) rebuildHeroSlides(state.items);
           if (state.items.length === 0 && res.rawCount > 0 && !bypass) {
-            root.innerHTML = '<div class="section">' + buildFloatingFilterBarHtml() + '<div class="panel-box"><div class="section-title">⚠️ Alle ' + res.rawCount + ' Treffer wurden durch deine aktiven Filter ausgeblendet</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn red" onclick="loadDiscover(\\''+type+'\\',\\''+genreId+'\\',\\''+mode+'\\',\\''+sort+'\\',true,false)">🔓 Filter hier temporär deaktivieren</button><button class="btn" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')">🗑️ Alle Filter zurücksetzen</button></div></div></div>';
+            root.innerHTML = '<div class="section">' + buildFloatingFilterBarHtml() + '<div class="panel-box"><div class="section-title">⚠️ Alle ' + res.rawCount + ' Treffer wurden durch deine aktiven Filter ausgeblendet</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn red" onclick="loadDiscover(\\''+escJs(type)+'\\',\\''+escJs(genreId)+'\\',\\''+escJs(mode)+'\\',\\''+escJs(sort)+'\\',true,false)">🔓 Filter hier temporär deaktivieren</button><button class="btn" onclick="setDirectFilter(\\'reset_all\\',\\'\\',\\'neutral\\')">🗑️ Alle Filter zurücksetzen</button></div></div></div>';
             syncSmartPageIndicatorDomClient();
             return;
           }
@@ -47401,9 +48444,10 @@
             focusFirstResultCard(false);
           }
         } catch (err) {
-          root.innerHTML = '<div class="section"><div class="panel-box"><div class="section-title">⚠️ Fehler beim Laden</div><p style="font-size:12px;color:#ccc;margin-bottom:8px">' + esc(err.message) + '</p><button class="btn red" onclick="loadDiscover(\\''+type+'\\',\\''+genreId+'\\',\\''+mode+'\\',\\''+sort+'\\')">🔄 Erneut versuchen</button></div></div>';
+          if (myReqSeq !== catalogViewReqSeq) return;
+          root.innerHTML = '<div class="section"><div class="panel-box"><div class="section-title">⚠️ Fehler beim Laden</div><p style="font-size:12px;color:#ccc;margin-bottom:8px">' + esc(err.message) + '</p><button class="btn red" onclick="loadDiscover(\\''+escJs(type)+'\\',\\''+escJs(genreId)+'\\',\\''+escJs(mode)+'\\',\\''+escJs(sort)+'\\')">🔄 Erneut versuchen</button></div></div>';
         } finally {
-          if (!isInstantFromCache) setBusyState(false);
+          if (myReqSeq === catalogViewReqSeq && !isInstantFromCache) setBusyState(false);
         }
       }
 
@@ -47423,6 +48467,7 @@
         }
         const q = (overrideQuery !== null ? overrideQuery : (inp ? inp.value : "")).trim();
         if (!q) return;
+        const myReqSeq = ++catalogViewReqSeq;
         if (inp && document.activeElement === inp) {
           inp.blur();
         }
@@ -47478,6 +48523,7 @@
         }
         try {
           const res = await apiFetchJson(searchUrl);
+          if (myReqSeq !== catalogViewReqSeq) return;
           state.searchMatchedCollections = res.collections || [];
           state.searchMatchedUniverses = res.universes || [];
           state.searchMatchedPersons = res.persons || [];
@@ -47544,10 +48590,13 @@
             }
           }
         } catch (err) {
+          if (myReqSeq !== catalogViewReqSeq) return;
           root.innerHTML = '<div class="section"><div class="panel-box">⚠️ Fehler bei der Suche: ' + esc(err.message) + '</div></div>';
         } finally {
-          document.body.classList.remove("search-active-dim");
-          if (!isInstantSearchCache) setBusyState(false);
+          if (myReqSeq === catalogViewReqSeq) {
+            document.body.classList.remove("search-active-dim");
+            if (!isInstantSearchCache) setBusyState(false);
+          }
         }
       }
 
@@ -47763,11 +48812,11 @@
         const stateCls = isInc ? "state-inc" : isExc ? "state-exc" : "";
         const dfBaseId = esc(category + ":" + itemValue);
         const incBtnHtml = isInc
-          ? '<button class="df-btn inc active is-neutral-on-select" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'neutral\\')" title="Aktiviert – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✓</span><span class="df-ico-sel">○</span></button>'
-          : '<button class="df-btn inc" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'include\\')" title="Positiv aktivieren (✓)">✓</button>';
+          ? '<button class="df-btn inc active is-neutral-on-select" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'neutral\\')" title="Aktiviert – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✓</span><span class="df-ico-sel">○</span></button>'
+          : '<button class="df-btn inc" data-df-id="' + dfBaseId + ':inc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'include\\')" title="Positiv aktivieren (✓)">✓</button>';
         const excBtnHtml = isExc
-          ? '<button class="df-btn exc active is-neutral-on-select" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'neutral\\')" title="Gesperrt – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✕</span><span class="df-ico-sel">○</span></button>'
-          : '<button class="df-btn exc" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + esc(itemValue) + '\\',\\'exclude\\')" title="Negativ ausschließen (✕)">✕</button>';
+          ? '<button class="df-btn exc active is-neutral-on-select" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'neutral\\')" title="Gesperrt – Auswählen setzt auf Neutral (○)"><span class="df-ico-cur">✕</span><span class="df-ico-sel">○</span></button>'
+          : '<button class="df-btn exc" data-df-id="' + dfBaseId + ':exc" onclick="setDirectFilter(\\'' + category + '\\',\\'' + escJs(itemValue) + '\\',\\'exclude\\')" title="Negativ ausschließen (✕)">✕</button>';
         return '<div class="direct-filter-card ' + stateCls + '">' +
           '<span class="df-label">' +
             displayLabel +
@@ -47814,48 +48863,48 @@
         }
 
         (s.includedGenres || []).forEach(g => {
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+esc(g)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+escJs(g)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
         });
         (s.excludedGenres || []).forEach(g => {
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+esc(g)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'genre\\',\\''+escJs(g)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + genreEmoji(g) + ' ' + esc(g) + ' ✕</span>');
         });
 
         if (incPlatforms.length > 1) {
           incPlatforms.forEach(pid => {
             const label = getPlatformDisplayLabelClient(pid);
-            pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+esc(pid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
+            pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+escJs(pid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
           });
         }
         excPlatforms.forEach(pid => {
           const label = getPlatformDisplayLabelClient(pid);
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+esc(pid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'platform\\',\\''+escJs(pid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
         });
 
         (s.includedEras || []).forEach(eid => {
           const er = ERA_OPTIONS_CLIENT.find(e => e.id === eid);
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+esc(eid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+escJs(eid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
         });
         (s.excludedEras || []).forEach(eid => {
           const er = ERA_OPTIONS_CLIENT.find(e => e.id === eid);
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+esc(eid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'era\\',\\''+escJs(eid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">📅 ' + esc(er ? er.label : eid) + ' ✕</span>');
         });
 
         (s.includedStudios || []).forEach(sid => {
           const st = STUDIO_OPTIONS_CLIENT.find(x => x.id === sid);
           const label = st ? (st.icon + " " + st.label) : sid;
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+esc(sid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+escJs(sid)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">' + esc(label) + ' ✕</span>');
         });
         (s.excludedStudios || []).forEach(sid => {
           const st = STUDIO_OPTIONS_CLIENT.find(x => x.id === sid);
           const label = st ? (st.icon + " " + st.label) : sid;
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+esc(sid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'studio\\',\\''+escJs(sid)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">' + esc(label) + ' ✕</span>');
         });
 
         (s.includedFsk || []).forEach(f => {
-          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+esc(f)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">🔞 ' + esc(f) + ' ✕</span>');
+          pills.push('<span class="f-pill inc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+escJs(f)+'\\',\\'neutral\\')" title="Aktiver Filter – Antippen zum Entfernen">🔞 ' + esc(f) + ' ✕</span>');
         });
         (s.excludedFsk || []).forEach(f => {
-          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+esc(f)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">🔞 ' + esc(f) + ' ✕</span>');
+          pills.push('<span class="f-pill exc" tabindex="0" onclick="setDirectFilter(\\'fsk\\',\\''+escJs(f)+'\\',\\'neutral\\')" title="Gesperrter Filter – Antippen zum Aufheben">🔞 ' + esc(f) + ' ✕</span>');
         });
 
         if (s.showUnreleased) {
@@ -48064,7 +49113,7 @@
 
         if (!isColsTab && !q) {
           return (CINEMATIC_UNIVERSES_CLIENT || []).map(u =>
-            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + esc(u.id) + '\\')">' +
+            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + escJs(u.id) + '\\')">' +
               '<div class="world-portal-icon">' + esc(u.icon || '🌌') + '</div>' +
               '<div class="world-portal-info">' +
                 '<div class="world-portal-name">' + esc(u.name) + '</div>' +
@@ -48098,7 +49147,7 @@
 
         const cards = [
           ...matchedUnis.map(u =>
-            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + esc(u.id) + '\\')">' +
+            '<button type="button" class="world-portal-card" onclick="state.worldsTrayOpen=false;openUniverseView(\\'' + escJs(u.id) + '\\')">' +
               '<div class="world-portal-icon">' + esc(u.icon || '🌌') + '</div>' +
               '<div class="world-portal-info">' +
                 '<div class="world-portal-name">' + esc(u.name) + '</div>' +
@@ -48181,7 +49230,7 @@
                 '<div style="font-size:11px;color:var(--text-muted)">Komplette ' + (isColView ? 'Filmreihe' : 'Welt') + ' speichern, teilen oder weitere Reihen entdecken:</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
+                '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + escJs(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
                 '<button class="btn purple" data-kind="' + (isColView ? 'col' : 'uni') + '" data-id="' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '" data-title="' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '" onclick="shareCollectionOrUniverseFromBtn(this)">📤 Teilen</button>' +
                 '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🌌 Alle ' + (isColView ? 'Reihen' : 'Welten') + '</button>' +
                 '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
@@ -48220,7 +49269,7 @@
                 '<button class="btn" style="background:rgba(245,158,11,0.2);border-color:#f59e0b" data-cid="' + esc(st.companyIds || st.id) + '" data-cname="' + esc(st.name) + '" onclick="openStudioView(this.dataset.cid,this.dataset.cname)">' + esc(st.icon || '🏢') + ' Studio: ' + esc(st.name) + '</button>'
               ).join("") +
               (state.searchMatchedUniverses || []).map(u =>
-                '<button class="btn" style="background:rgba(16,185,129,0.2);border-color:#10b981" onclick="openUniverseView(\\'' + esc(u.id) + '\\')">' + esc(u.icon || '🌌') + ' Universum: ' + esc(u.name) + '</button>'
+                '<button class="btn" style="background:rgba(16,185,129,0.2);border-color:#10b981" onclick="openUniverseView(\\'' + escJs(u.id) + '\\')">' + esc(u.icon || '🌌') + ' Universum: ' + esc(u.name) + '</button>'
               ).join("") +
               (state.searchMatchedCollections || []).map(c =>
                 '<button class="btn" style="background:rgba(91,70,245,0.22);border-color:#7c69ff" onclick="openCollectionView(' + Number(c.id) + ')">🍿 Filmreihe: ' + esc(c.name) + '</button>'
@@ -48359,7 +49408,7 @@
               '</div>'
             ) : (
               '<div id="uniHubGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:4px">' +
-                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px;padding:12px" onclick="openUniverseView(\\''+esc(u.id)+'\\')"><div style="font-size:14px;font-weight:800;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted);line-height:1.4">' + esc(u.description || '') + '</div></div>').join("") +
+                unis.map(u => '<div class="panel-box f-pill neutral" tabindex="0" style="cursor:pointer;margin-bottom:0;display:block;border-radius:10px;padding:12px" onclick="openUniverseView(\\''+escJs(u.id)+'\\')"><div style="font-size:14px;font-weight:800;margin-bottom:4px">' + esc(u.icon || '🌌') + ' ' + esc(u.name) + '</div><div style="font-size:11.5px;color:var(--muted);line-height:1.4">' + esc(u.description || '') + '</div></div>').join("") +
               '</div>'
             )) +
           '</div>';
@@ -50396,7 +51445,7 @@
           '<div class="person-spotlight-card" role="dialog" aria-label="' + esc(cleanName) + '">' +
             '<div class="person-spotlight-header">' +
               '<div class="person-spotlight-profile">' +
-                '<img id="personSpotlightAvatarEl" class="person-spotlight-avatar" src="' + esc(initialAvatar) + '" alt="' + esc(cleanName) + '" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
+                '<img id="personSpotlightAvatarEl" class="person-spotlight-avatar" src="' + esc(initialAvatar) + '" alt="' + esc(cleanName) + '" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
                 '<div>' +
                   '<h3 class="person-spotlight-name">' + esc(cleanName) + '</h3>' +
                   '<div id="personSpotlightSubEl" class="person-spotlight-sub">' + esc(subText) + '</div>' +
@@ -51302,7 +52351,7 @@
             '</button>'
           ) : "",
           d.universe ? (
-            '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + esc(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
+            '<button type="button" class="detail-kicker-link" onclick="saveLastClosedDetailItemClient();closeDetailModal();openUniverseView(\\'' + escJs(d.universe.id) + '\\')" title="Universum öffnen: ' + esc(d.universe.name) + '">' +
               '<span>' + esc(d.universe.icon || "🌌") + '</span><span>' + esc(d.universe.name) + '</span>' +
             '</button>'
           ) : "",
@@ -51315,39 +52364,39 @@
         const heroStyleGenresHtml = genresListClean.length > 0
           ? ('<span class="hero-meta-sep">·</span><span class="hero-meta-genres">' +
               genresListClean.slice(0, 3).map((gName, idx, arr) =>
-                '<span class="hero-meta-genre" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + esc(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>' +
+                '<span class="hero-meta-genre" tabindex="0" onclick="filterByCategoryFromModal(\\'genre\\',\\'' + escJs(gName) + '\\')" title="Nach Genre filtern: ' + esc(gName) + '">' + esc(gName) + '</span>' +
                 (idx < arr.length - 1 ? '<span>, </span>' : '')
               ).join("") +
             '</span>')
           : "";
         const unboxedMetaHtml = [
           (d.vote && d.vote !== "0.0") ? ('<span><span class="hero-meta-star">★</span> ' + esc(d.vote) + '</span>') : "",
-          hasValidYear ? ('<span class="hero-meta-year" tabindex="0" onclick="searchByYearFromModal(\\'' + esc(d.year) + '\\')" title="Alle Titel aus dem Jahr ' + esc(d.year) + '">' + esc(d.year) + '</span>') : "",
+          hasValidYear ? ('<span class="hero-meta-year" tabindex="0" onclick="searchByYearFromModal(\\'' + escJs(d.year) + '\\')" title="Alle Titel aus dem Jahr ' + esc(d.year) + '">' + esc(d.year) + '</span>') : "",
           (d.runtime && d.runtime !== "Keine Angabe") ? ('<span>' + esc(d.runtime) + '</span>') : "",
           (type === "s" && d.numberOfSeasons) ? ('<span>' + Number(d.numberOfSeasons) + (Number(d.numberOfSeasons) === 1 ? " Staffel" : " Staffeln") + '</span>') : "",
-          hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + esc(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
+          hasValidFsk ? ('<span class="detail-meta-link" tabindex="0" onclick="filterByCategoryFromModal(\\'fsk\\',\\'' + escJs(fskFilterTarget) + '\\')" title="Nach ' + esc(fskFilterTarget) + ' filtern">' + esc(fskFilterTarget) + '</span>') : "",
           '<span class="hero-meta-hd" title="Im Katalog in HD verfügbar">HD</span>'
         ].filter(Boolean).join('<span class="hero-meta-sep">·</span>') + heroStyleGenresHtml;
 
         const creditsPillsArr = [
           ...directorsArr.slice(0, 2).map(p => {
             const pPhoto = p.profile_path ? resolvePosterUrlClient(p.profile_path, "w185", "") : "";
-            return '<button type="button" class="detail-credit-pill" onclick="openPersonSpotlightOverlayClient(' + (p.id ? Number(p.id) : 'null') + ',\\'' + esc(p.name) + '\\',\\'Regie\\',\\'' + esc(pPhoto) + '\\')" title="Spotlight & Filmografie von ' + esc(p.name) + ' öffnen">🎬 <b>Regie:</b> ' + esc(p.name) + '</button>';
+            return '<button type="button" class="detail-credit-pill" onclick="openPersonSpotlightOverlayClient(' + (p.id ? Number(p.id) : 'null') + ',\\'' + escJs(p.name) + '\\',\\'Regie\\',\\'' + escJs(pPhoto) + '\\')" title="Spotlight & Filmografie von ' + esc(p.name) + ' öffnen">🎬 <b>Regie:</b> ' + esc(p.name) + '</button>';
           }),
           ...studiosArr.slice(0, 3).map(sObj =>
-            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchStudioFromModal(\\'' + esc(sObj.name) + '\\',\\'' + esc(sObj.id || "") + '\\')" title="Alle Titel von ' + esc(sObj.name) + '">🏢 <b>Studio:</b> ' + esc(sObj.name) + '</button>'
+            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchStudioFromModal(\\'' + escJs(sObj.name) + '\\',\\'' + escJs(sObj.id || "") + '\\')" title="Alle Titel von ' + esc(sObj.name) + '">🏢 <b>Studio:</b> ' + esc(sObj.name) + '</button>'
           ),
           (d.country && d.country !== "k.A." && d.country !== "Keine Angabe")
-            ? ('<button type="button" class="detail-credit-pill" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + esc(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">🌍 <b>Land:</b> ' + esc(d.country) + '</button>')
+            ? ('<button type="button" class="detail-credit-pill" onclick="saveLastClosedDetailItemClient();closeDetailModal();runSearch(false,\\'' + escJs(d.country) + '\\')" title="Alle Titel aus ' + esc(d.country) + '">🌍 <b>Land:</b> ' + esc(d.country) + '</button>')
             : "",
           cleanStatusLabel
             ? ('<span class="detail-credit-pill" style="cursor:default">📡 <b>Status:</b> ' + esc(cleanStatusLabel) + (d.numberOfEpisodes ? (' · ' + Number(d.numberOfEpisodes) + ' Folgen') : '') + '</span>')
             : "",
           ...dedupedProvidersList.slice(0, 3).map(pName =>
-            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchProviderFromModal(\\'' + esc(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
+            '<button type="button" class="detail-credit-pill" onclick="filterOrSearchProviderFromModal(\\'' + escJs(pName) + '\\')" title="Nach Streaming-Anbieter filtern: ' + esc(pName) + '">📺 ' + esc(pName) + '</button>'
           ),
           ...((d.providerButtons && d.providerButtons.length > 0) ? d.providerButtons.map(pb =>
-            '<a class="detail-credit-pill" href="' + esc(pb.url) + '" target="_blank" rel="noopener noreferrer" style="border-color:' + esc(pb.border || "#0284c7") + '">' + esc(pb.buttonText) + '</a>'
+            '<a class="detail-credit-pill" href="' + esc(safeHttpUrl(pb.url)) + '" target="_blank" rel="noopener noreferrer" style="border-color:' + esc(pb.border || "#0284c7") + '">' + esc(pb.buttonText) + '</a>'
           ) : [])
         ].filter(Boolean);
         const creditsGlassStripHtml = creditsPillsArr.length > 0
@@ -51443,10 +52492,10 @@
                   const cRole = String(c.character || "Darsteller").trim();
                   const fbAvatar = buildActorAvatarFallbackSvgClient(cName);
                   const photoUrl = c.profile_path ? resolvePosterUrlClient(c.profile_path, "w342", "") : fbAvatar;
-                  const spotlightCall = 'openPersonSpotlightOverlayClient(' + (c.id ? Number(c.id) : 'null') + ',\\'' + esc(cName) + '\\',\\'' + esc(cRole) + '\\',\\'' + esc(photoUrl) + '\\')';
+                  const spotlightCall = 'openPersonSpotlightOverlayClient(' + (c.id ? Number(c.id) : 'null') + ',\\'' + escJs(cName) + '\\',\\'' + escJs(cRole) + '\\',\\'' + escJs(photoUrl) + '\\')';
                   return '<div class="detail-cast-card" tabindex="0" onclick="' + spotlightCall + '" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();' + spotlightCall + ';}" title="Spotlight & Filme mit ' + esc(cName) + ' anzeigen">' +
                     '<div class="detail-cast-photo-wrap">' +
-                      '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + esc(fbAvatar) + '\\';" />' +
+                      '<img class="detail-cast-photo lazy-cover-img is-loading" src="' + LAZY_POSTER_PLACEHOLDER_SVG + '" data-lazy-src="' + esc(photoUrl) + '" alt="' + esc(cName) + '" draggable="false" onerror="this.onerror=null;this.src=\\'' + escJs(fbAvatar) + '\\';" />' +
                     '</div>' +
                     '<div class="detail-cast-info">' +
                       '<div class="detail-cast-name">' + esc(cName) + '</div>' +
@@ -51507,14 +52556,14 @@
           '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
           '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
           '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
-          (canReportMedia ? '<button class="btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + esc(d.title) + '\\',versionLabel:\\'' + esc(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Defekten Stream oder falsche Zuordnung melden">⚠️ Fehler melden</button>' : '') +
+          (canReportMedia ? '<button class="btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + escJs(d.title) + '\\',versionLabel:\\'' + escJs(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Defekten Stream oder falsche Zuordnung melden">⚠️ Fehler melden</button>' : '') +
           (isAdminUser ? '<button class="btn" onclick="toggleModalPosterPicker(\\'' + type + '\\',' + Number(d.id) + ')" title="Cover ändern (Admin)">🖼️ Cover ändern</button>' : '') +
           (isAdminUser ? '<button class="btn" onclick="toggleModalRemapBox(\\'' + type + '\\',' + Number(d.id) + ')" title="Neu zuordnen (Admin)">🔄 Neu zuordnen</button>' : '') +
-          (d.telegraphUrl ? '<a class="btn" href="' + esc(d.telegraphUrl) + '" target="_blank">📖 Telegraph-Guide</a>' : '') +
-          (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(posterOrig) + '\\',\\'' + esc(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
-          (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + esc(backdropOrig) + '\\',\\'' + esc(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
-          (d.tmdbDeUrl ? '<a class="btn" href="' + esc(d.tmdbDeUrl) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
-          (!tr ? '<a class="btn blue" href="' + esc(ytSearchUrl) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '');
+          (d.telegraphUrl ? '<a class="btn" href="' + esc(safeHttpUrl(d.telegraphUrl)) + '" target="_blank" rel="noopener noreferrer">📖 Telegraph-Guide</a>' : '') +
+          (posterOrig ? '<button class="btn" onclick="openLightbox(\\'' + escJs(posterOrig) + '\\',\\'' + escJs(d.title) + ' – Original-Poster\\')">🖼️ Original-Poster</button>' : '') +
+          (backdropOrig ? '<button class="btn" onclick="openLightbox(\\'' + escJs(backdropOrig) + '\\',\\'' + escJs(d.title) + ' – Szenenbild\\')">🏞️ Szenenbild</button>' : '') +
+          (d.tmdbDeUrl ? '<a class="btn" href="' + esc(safeHttpUrl(d.tmdbDeUrl)) + '" target="_blank" rel="noopener noreferrer">🌐 Auf TMDb ansehen</a>' : '') +
+          (!tr ? '<a class="btn blue" href="' + esc(safeHttpUrl(ytSearchUrl)) + '" target="_blank" rel="noopener noreferrer">🔎 Trailer auf YouTube suchen</a>' : '');
 
         const similarSectionHtml =
           '<section id="detailSimilarSectionWrap" class="detail-section-block" style="display:flex">' +
@@ -52090,7 +53139,7 @@
 
               return '<div class="ep-row ' + (isFilledFromOther ? 'ep-autofilled' : '') + '" style="margin-bottom:5px;padding:8px 10px">' +
                 '<div class="ep-row-top">' +
-                  '<div class="ep-title" tabindex="0" onclick="openEpisodeStory(' + Number(d.id) + ',' + sn + ',' + en + ',\\'' + esc(epTitleStr) + '\\')" title="' + esc(epCode + ' – ' + epTitleStr) + '">' +
+                  '<div class="ep-title" tabindex="0" onclick="openEpisodeStory(' + Number(d.id) + ',' + sn + ',' + en + ',\\'' + escJs(epTitleStr) + '\\')" title="' + esc(epCode + ' – ' + epTitleStr) + '">' +
                     '<span class="ep-code-badge">' + esc(epCode) + '</span>' +
                     '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(epTitleStr) + '</span></div>' +
                   '</div>' +
@@ -52119,7 +53168,7 @@
                 '<span style="font-size:11px;color:#94a3b8;font-weight:700">Bevorzugte Basis-Qualität (fehlende Folgen werden automatisch ergänzt):</span>' +
                 sortedProfiles.map(prof => {
                   const isAct = prof === dominantProfile;
-                  return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 8px;font-size:11px" onclick="setVersionsTabPreferredProfileClient(\\'' + esc(prof) + '\\')">' + esc(prof) + '</button>';
+                  return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 8px;font-size:11px" onclick="setVersionsTabPreferredProfileClient(\\'' + escJs(prof) + '\\')">' + esc(prof) + '</button>';
                 }).join("") +
               '</div>'
             ) : '';
@@ -52178,7 +53227,7 @@
                   const cleanVer = String(f.versionLabel || f.version_label || f.tags || "Originalfassung").trim() || "Originalfassung";
                   return '<div class="ep-row" style="margin-bottom:0;padding:8px 10px">' +
                     '<div class="ep-row-top">' +
-                      '<div class="ep-title" tabindex="0" ' + (type === 's' ? ('onclick="openEpisodeStory(' + Number(d.id) + ',' + sNum + ',' + eNum + ',\\'' + esc(epTitleStr) + '\\')"') : '') + '>' +
+                      '<div class="ep-title" tabindex="0" ' + (type === 's' ? ('onclick="openEpisodeStory(' + Number(d.id) + ',' + sNum + ',' + eNum + ',\\'' + escJs(epTitleStr) + '\\')"') : '') + '>' +
                         '<span class="ep-code-badge">' + (epCode ? esc(epCode) : (isRar ? '📦 RAR' : '🎬 Film')) + '</span>' +
                         '<div class="ep-name-wrap"><span class="ep-name-text">' + esc(type === 's' ? epTitleStr : (partStr || cleanVer || d.title)) + '</span></div>' +
                       '</div>' +
@@ -52238,12 +53287,12 @@
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
               '<input id="customPosterUrlInp" class="tma-input" placeholder="Eigene Bild-URL (https://...jpg/png) oder TMDb /path.jpg" style="flex:1;min-width:210px;padding:6px 9px;border-color:rgba(168,85,247,0.4);font-size:12px" />' +
-              '<button type="button" class="btn purple" onclick="applyCustomModalPoster(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">💾 URL als Cover speichern</button>' +
+              '<button type="button" class="btn purple" onclick="applyCustomModalPoster(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">💾 URL als Cover speichern</button>' +
             '</div>' +
             (posters.length > 0 ? (
               '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:10px;max-height:360px;overflow-y:auto;padding:4px">' +
                 posters.map(p =>
-                  '<div style="display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,0.04);padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);cursor:pointer" onclick="selectModalPosterOption(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ',\\'' + esc(p.poster_path || '') + '\\',\\'' + esc(p.external_poster_url || p.url || '') + '\\')">' +
+                  '<div style="display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,0.04);padding:6px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);cursor:pointer" onclick="selectModalPosterOption(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ',\\'' + escJs(p.poster_path || '') + '\\',\\'' + escJs(p.external_poster_url || p.url || '') + '\\')">' +
                     '<img src="' + esc(p.thumb || p.url) + '" loading="lazy" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:6px;background:#111" />' +
                     '<div style="font-size:10.5px;font-weight:700;color:#e2e8f0;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(p.label || p.source || 'Poster') + '</div>' +
                     '<button type="button" class="btn green" style="padding:3px 6px;font-size:10px;width:100%">✓ Wählen</button>' +
@@ -52382,7 +53431,7 @@
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
               '<span style="font-weight:800;color:#7dd3fc">📂 1. Welche Folge / Datei soll neu zugeordnet werden? (' + allFiles.length + ' vorhanden)</span>' +
               (allFiles.length > 1 ? (
-                '<button type="button" class="season-tab-btn ' + (modalRemapSelectedFileIndex === -1 ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectModalRemapSourceFileClient(-1,\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">📦 Alle ' + allFiles.length + ' Dateien gemeinsam</button>'
+                '<button type="button" class="season-tab-btn ' + (modalRemapSelectedFileIndex === -1 ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectModalRemapSourceFileClient(-1,\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">📦 Alle ' + allFiles.length + ' Dateien gemeinsam</button>'
               ) : '') +
             '</div>' +
             '<div style="display:flex;flex-direction:column;gap:5px;max-height:165px;overflow-y:auto;padding-right:2px">' +
@@ -52394,7 +53443,7 @@
                 const eNum = Number(f.episode_number ?? 1);
                 const epCodeStr = typeCode === "s" ? ("S" + String(sNum).padStart(2, "0") + "E" + String(eNum).padStart(2, "0")) : "🎬 Film";
                 const epNameStr = typeCode === "s" ? resolveClientEpisodeTitle(d.id, sNum, eNum, f) : (d.title || "Film");
-                return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-radius:7px;background:' + (isSelected ? 'rgba(14,165,233,0.18)' : 'rgba(2,6,23,0.45)') + ';border:1px solid ' + (isSelected ? 'rgba(56,189,248,0.65)' : 'rgba(148,163,184,0.14)') + ';cursor:pointer" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">' +
+                return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border-radius:7px;background:' + (isSelected ? 'rgba(14,165,233,0.18)' : 'rgba(2,6,23,0.45)') + ';border:1px solid ' + (isSelected ? 'rgba(56,189,248,0.65)' : 'rgba(148,163,184,0.14)') + ';cursor:pointer" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">' +
                   '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0">' +
                     '<span class="ep-code-badge">' + esc(epCodeStr) + '</span>' +
                     '<b style="color:var(--text);font-size:11.5px">' + esc(epNameStr) + '</b>' +
@@ -52402,9 +53451,9 @@
                     '<code style="font-size:10.5px;color:#94a3b8;word-break:break-all">📄 ' + esc(fn) + '</code>' +
                   '</div>' +
                   '<div style="display:flex;gap:5px;align-items:center" onclick="event.stopPropagation()">' +
-                    '<button type="button" class="season-tab-btn ' + (isSelected ? 'active' : '') + '" style="padding:2px 8px;font-size:10.5px" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">' + (isSelected ? '✓ Ausgewählt' : 'Auswählen') + '</button>' +
-                    '<button type="button" class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" onclick="openEpisodeCorrectionModal({typeCode:\\'' + esc(typeCode) + '\\',tmdbId:' + Number(mediaId) + ',title:\\'' + esc(d.title || '') + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + esc(epNameStr) + '\\',telegramFileId:\\'' + esc(f.telegram_file_id || '') + '\\',versionLabel:\\'' + esc(f.versionLabel || f.version_label || 'Originalfassung') + '\\',quality:\\'' + esc(f.quality || '1080p') + '\\',rawFilename:\\'' + esc(fn) + '\\',messageLink:\\'' + esc(mLink) + '\\'})">✏️ Detail-Korrektur</button>' +
-                    (mLink ? '<a class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" href="' + esc(mLink) + '" target="_blank" rel="noopener noreferrer">🔗 Post</a>' : '') +
+                    '<button type="button" class="season-tab-btn ' + (isSelected ? 'active' : '') + '" style="padding:2px 8px;font-size:10.5px" onclick="selectModalRemapSourceFileClient(' + fIdx + ',\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">' + (isSelected ? '✓ Ausgewählt' : 'Auswählen') + '</button>' +
+                    '<button type="button" class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" onclick="openEpisodeCorrectionModal({typeCode:\\'' + escJs(typeCode) + '\\',tmdbId:' + Number(mediaId) + ',title:\\'' + escJs(d.title || '') + '\\',season:' + sNum + ',episode:' + eNum + ',episodeTitle:\\'' + escJs(epNameStr) + '\\',telegramFileId:\\'' + escJs(f.telegram_file_id || '') + '\\',versionLabel:\\'' + escJs(f.versionLabel || f.version_label || 'Originalfassung') + '\\',quality:\\'' + escJs(f.quality || '1080p') + '\\',rawFilename:\\'' + escJs(fn) + '\\',messageLink:\\'' + escJs(mLink) + '\\'})">✏️ Detail-Korrektur</button>' +
+                    (mLink ? '<a class="btn-tool-quiet" style="padding:2px 7px;font-size:10.5px" href="' + esc(safeHttpUrl(mLink)) + '" target="_blank" rel="noopener noreferrer">🔗 Post</a>' : '') +
                   '</div>' +
                 '</div>';
               }).join("") +
@@ -52420,7 +53469,7 @@
           activeSourceBannerHtml +
           filesMetaHtml +
           '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px">' +
-            '<input id="modalRemapSearchInp" class="tma-input" value="' + esc(origSeedQuery) + '" placeholder="Suchbegriff oder TMDb-ID (z.B. Zur See, Pippi Langstrumpf, tmdb:40964)..." style="flex:1;min-width:190px;padding:6px 9px;font-size:12px" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ');}" />' +
+            '<input id="modalRemapSearchInp" class="tma-input" value="' + esc(origSeedQuery) + '" placeholder="Suchbegriff oder TMDb-ID (z.B. Zur See, Pippi Langstrumpf, tmdb:40964)..." style="flex:1;min-width:190px;padding:6px 9px;font-size:12px" onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchModalRemapCandidates(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ');}" />' +
             '<select id="modalRemapTypeSel" class="tma-select" style="padding:6px 8px;font-size:12px">' +
               '<option value="">Alle (Film & Serie)</option>' +
               '<option value="m">🎬 Nur Filme</option>' +
@@ -52429,7 +53478,7 @@
             '<span style="font-size:11px;color:var(--muted);font-weight:700">Ziel-Staffel / Folge:</span>' +
             '<input id="modalRemapSeasonInp" class="tma-input" type="number" min="1" max="99" value="' + activeS + '" title="Ziel-Staffel" style="width:52px;padding:5px;font-size:12px;font-weight:800;text-align:center" />' +
             '<input id="modalRemapEpisodeInp" class="tma-input" type="number" min="1" max="999" value="' + activeE + '" title="Ziel-Folge" style="width:58px;padding:5px;font-size:12px;font-weight:800;text-align:center" />' +
-            '<button type="button" class="btn blue" onclick="searchModalRemapCandidates(\\'' + esc(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Suchen (8 APIs)</button>' +
+            '<button type="button" class="btn blue" onclick="searchModalRemapCandidates(\\'' + escJs(typeCode) + '\\',' + Number(mediaId) + ')">🔎 Suchen (8 APIs)</button>' +
           '</div>' +
           '<div id="modalRemapResultsBox" style="display:flex;flex-direction:column;gap:6px"></div>';
 
@@ -52487,7 +53536,7 @@
                   epHint +
                 '</div>' +
               '</div>' +
-              '<button type="button" class="btn green" style="padding:5px 10px;font-size:11px;flex-shrink:0" onclick="executeModalRemapMedia(\\'' + esc(oldTypeCode) + '\\',' + Number(oldMediaId) + ',\\'' + esc(c.typeCode) + '\\',' + Number(c.tmdbId) + ',' + Number(c.inferredSeason || 0) + ',' + Number(c.inferredEpisode || 0) + ')">✓ ' + esc(btnTargetBadge) + '</button>' +
+              '<button type="button" class="btn green" style="padding:5px 10px;font-size:11px;flex-shrink:0" onclick="executeModalRemapMedia(\\'' + escJs(oldTypeCode) + '\\',' + Number(oldMediaId) + ',\\'' + escJs(c.typeCode) + '\\',' + Number(c.tmdbId) + ',' + Number(c.inferredSeason || 0) + ',' + Number(c.inferredEpisode || 0) + ')">✓ ' + esc(btnTargetBadge) + '</button>' +
             '</div>';
           }).join("");
         } catch (e) {
@@ -53507,7 +54556,7 @@
                       '<span class="stream-meta-pill size">' + parts.length + ' ' + partWord + (totalSizeStr ? (' · Gesamt ' + esc(totalSizeStr)) : '') + '</span>' +
                     '</div>' +
                     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
-                      '<button type="button" class="btn-action-glass" style="padding:4px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllMoviePartsToTelegram(\\'' + esc(blk.key) + '\\')" title="Alle ' + parts.length + ' ' + partWord + ' geordnet von 1 bis ' + parts.length + ' an dein gewähltes Ziel senden">' +
+                      '<button type="button" class="btn-action-glass" style="padding:4px 10px;font-size:11.5px;border-color:rgba(245,158,11,0.45);color:#fde68a" onclick="sendAllMoviePartsToTelegram(\\'' + escJs(blk.key) + '\\')" title="Alle ' + parts.length + ' ' + partWord + ' geordnet von 1 bis ' + parts.length + ' an dein gewähltes Ziel senden">' +
                         '📦 Alle ' + parts.length + ' ' + partWord + ' senden' +
                       '</button>' +
                       (canReportMedia ? '<button type="button" class="ep-ghost-btn" data-type="m" data-tmdb-id="' + Number(d.id) + '" data-fid="' + esc(first.telegram_file_id) + '" data-ver="' + esc(tagsLabel || 'Originalfassung') + '" onclick="openMediaReportFromBtn(this)" title="Fehler zu diesem Mehrteiler-Release melden">⚠️</button>' : '') +
@@ -53756,22 +54805,7 @@
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
         }
-        // Nächste Staffel im Hintergrund vorwärmen (für 0ms Wechsel zur Folge-Staffel)
-        if (s && Array.isArray(s.seasons) && s.seasons.includes(Number(seasonNum) + 1)) {
-          const nextS = Number(seasonNum) + 1;
-          const nextKey = seriesId + "_" + nextS + "_" + (vipAllowed ? "vip" : "std");
-          if (!clientSeasonCache.has(nextKey)) {
-            setTimeout(() => {
-              if (state.activeDetails && String(state.activeDetails.id) === String(seriesId) && !clientSeasonCache.has(nextKey)) {
-                apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + nextS)
-                  .then(ns => {
-                    if (ns && ns.ok !== false) clientSeasonCache.set(nextKey, { data: ns, ts: Date.now() });
-                  })
-                  .catch(() => {});
-              }
-            }, 320);
-          }
-        }
+        // Free-Plan Schutz: Folge-Staffel erst bei explizitem Staffel-Klick laden (kein automatischer Hintergrund-Prefetch)
         const box = document.getElementById("seasonBox");
         if (!box) return;
         const maxAllowedEpisodes = Number(s.seasonEpisodeCount || 0);
@@ -54044,7 +55078,7 @@
               sortedSeasonProfiles.map(prof => {
                 const isAct = userPrefProfile === prof.key;
                 const missingCnt = Math.max(0, seasonStreamableCount - prof.count);
-                return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectSeasonPreferredProfileClient(' + seriesId + ',' + seasonNum + ',\\'' + esc(prof.key) + '\\')">' +
+                return '<button type="button" class="delivery-pill-btn ' + (isAct ? 'active' : '') + '" style="padding:3px 9px;font-size:11px" onclick="selectSeasonPreferredProfileClient(' + seriesId + ',' + seasonNum + ',\\'' + escJs(prof.key) + '\\')">' +
                   esc(prof.key) + ' (' + prof.count + '/' + seasonStreamableCount + (missingCnt > 0 ? (' + ' + missingCnt + ' ergänzt') : '') + ')' +
                 '</button>';
               }).join("") +
@@ -54384,7 +55418,7 @@
                     (st.reportId ? '<span class="stream-meta-pill" style="border-color:#10b981;color:#34d399">🚨 Meldung #' + st.reportId + '</span>' : '') +
                   '</div>' +
                   (st.rawFilename ? '<div style="margin-top:4px;font-family:monospace;font-size:10.5px;color:var(--text);word-break:break-all">📄 ' + esc(st.rawFilename) + '</div>' : '<div style="margin-top:4px;font-size:10.5px;color:var(--muted)">Serie: <b>' + esc(st.title) + '</b></div>') +
-                  (st.messageLink ? '<div style="margin-top:2px"><a href="' + esc(st.messageLink) + '" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;font-size:11px;text-decoration:underline">🔗 Original-Nachricht in Telegram öffnen</a></div>' : '') +
+                  (st.messageLink ? '<div style="margin-top:2px"><a href="' + esc(safeHttpUrl(st.messageLink)) + '" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;font-size:11px;text-decoration:underline">🔗 Original-Nachricht in Telegram öffnen</a></div>' : '') +
                 '</div>' +
                 '<div class="ep-remap-compare-arrow">➔</div>' +
                 '<div id="epCorrTargetPreviewCard" class="ep-remap-card target">' +
@@ -54432,7 +55466,7 @@
                   '<div style="font-size:12px;color:var(--text);margin-bottom:8px">Ordne <b>' + esc(epCodeOnly + ' – ' + (st.episodeTitle || st.title)) + '</b> einer Schnittfassung / Version zu:</div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">' +
                     VERSION_PRESETS.map(vp =>
-                      '<button type="button" class="season-tab-btn ' + ((st.targetVersionLabel || st.versionLabel) === vp ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="document.getElementById(\\'epCorrVersionInp\\').value=\\'' + esc(vp) + '\\';updateEpisodeCorrectionLivePreviewClient()">' + esc(vp) + '</button>'
+                      '<button type="button" class="season-tab-btn ' + ((st.targetVersionLabel || st.versionLabel) === vp ? 'active' : '') + '" style="padding:4px 9px;font-size:11.5px" onclick="document.getElementById(\\'epCorrVersionInp\\').value=\\'' + escJs(vp) + '\\';updateEpisodeCorrectionLivePreviewClient()">' + esc(vp) + '</button>'
                     ).join("") +
                   '</div>' +
                   '<input id="epCorrVersionInp" class="tma-input" value="' + esc(st.targetVersionLabel || st.versionLabel) + '" oninput="updateEpisodeCorrectionLivePreviewClient()" placeholder="Eigene Versions-Bezeichnung (z.B. Netflix-Fassung)..." style="width:100%;padding:8px 10px;font-size:12.5px" />' +
@@ -54527,7 +55561,7 @@
                   '<div style="font-size:10.5px;color:#38bdf8">TMDb #' + Number(item.id) + '</div>' +
                 '</div>' +
               '</div>' +
-              '<button type="button" class="season-tab-btn ' + (isSel ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="selectEpisodeCorrectionTmdbCandidateClient(\\'' + tc + '\\',' + Number(item.id) + ',\\'' + esc(tName) + '\\')">' + (isSel ? '✓ Gewählt' : 'Auswählen') + '</button>' +
+              '<button type="button" class="season-tab-btn ' + (isSel ? 'active' : '') + '" style="padding:4px 9px;font-size:11px" onclick="selectEpisodeCorrectionTmdbCandidateClient(\\'' + tc + '\\',' + Number(item.id) + ',\\'' + escJs(tName) + '\\')">' + (isSel ? '✓ Gewählt' : 'Auswählen') + '</button>' +
             '</div>';
           }).join("");
         } catch (e) {
@@ -54939,7 +55973,7 @@
                       (isSavedEp ? '✓ Gemerkt' : '🔖 Folge merken') +
                     '</button>' +
                     (st.telegraphUrl ? (
-                      '<a href="' + esc(st.telegraphUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Ausführlichen Telegraph-Guide im Browser/Telegram öffnen">📖 Telegraph ↗</a>'
+                      '<a href="' + esc(safeHttpUrl(st.telegraphUrl)) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Ausführlichen Telegraph-Guide im Browser/Telegram öffnen">📖 Telegraph ↗</a>'
                     ) : '') +
                   '</div>' +
 
@@ -55170,14 +56204,14 @@
               '</div>' +
               '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Wähle den Ziel-Ordner für <b style="color:var(--text)">' + esc(title) + '</b>:</div>' +
               '<div style="display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto;margin-bottom:12px">' +
-                '<button type="button" class="btn ' + ((curFolder === "cat_movies" || curFolder === "cat_series" || !curFolder) ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + esc(uid) + '\\',\\'' + defaultCat + '\\')">' +
+                '<button type="button" class="btn ' + ((curFolder === "cat_movies" || curFolder === "cat_series" || !curFolder) ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + escJs(uid) + '\\',\\'' + defaultCat + '\\')">' +
                   '<span>' + (isSer ? '📺 Standard (Serien)' : '🎬 Standard (Filme)') + '</span>' +
                   '<span>' + ((curFolder === "cat_movies" || curFolder === "cat_series" || !curFolder) ? "✓ Aktiv" : "Wählen") + '</span>' +
                 '</button>' +
                 folders.map(f => {
                   const isAct = curFolder === f.id;
                   const fIcon = (f.type === "playlist" || f.isJsonPlaylist) ? "🎵" : "📁";
-                  return '<button type="button" class="btn ' + (isAct ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + esc(uid) + '\\',\\'' + esc(f.id) + '\\')">' +
+                  return '<button type="button" class="btn ' + (isAct ? "blue" : "") + '" style="justify-content:space-between;padding:8px 12px" onclick="moveWishlistItemToFolderClient(\\'' + escJs(uid) + '\\',\\'' + escJs(f.id) + '\\')">' +
                     '<span>' + fIcon + ' ' + esc(f.name) + '</span>' +
                     '<span>' + (isAct ? "✓ Aktiv" : "Wählen") + '</span>' +
                   '</button>';
@@ -55298,7 +56332,7 @@
               ? ('<span class="card-type-badge" title="' + epsList.length + ' gespeicherte Folge(n) – Tipp für Liste" onclick="event.stopPropagation();setWishlistViewMode(\\'list\\')">📺 ' + epsList.length + ' Flg.</span>')
               : '';
             const subLeftHtml = folders.length > 0
-              ? ('<span class="card-wl-folder-link" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + esc(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + esc(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + mediaLabel + ' ▾')) + '</span>')
+              ? ('<span class="card-wl-folder-link" title="Antippen, um Playlist / Ordner zuzuweisen" onclick="event.stopPropagation();openWishlistFolderAssignPopupClient(\\'' + escJs(it.uid) + '\\',\\'' + itemTitleSafe + '\\',\\'' + escJs(it.folderId || '') + '\\',' + (isSer ? 'true' : 'false') + ')">' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 11)) + ' ▾') : ('📁 ' + mediaLabel + ' ▾')) + '</span>')
               : ('<span>' + (plObj ? ('📁 ' + esc(plObj.name.slice(0, 12))) : mediaLabel) + '</span>');
             const wlPosterSrc = resolvedCardPoster ? esc(resolvedCardPoster) : buildPosterFallbackSvg(it.title, isSer ? 'SERIE' : 'FILM');
             return '<div class="card card-saved" tabindex="0" data-card-key="' + esc(cardKey) + '" data-card-type="' + tc + '" data-card-id="' + targetId + '" data-card-title="' + itemTitleSafe + '" data-card-year="' + yrStr + '" data-card-rating="' + esc(ratStr) + '" data-card-vip="" data-card-saved="1" data-card-media-label="' + mediaLabel + '" data-wl-uid="' + esc(it.uid || '') + '" onclick="openDetails(\\'' + tc + '\\',' + targetId + ')">' +
@@ -55306,7 +56340,7 @@
                 '<div class="card-top-left-stack">' +
                   epCountBadgeHtml +
                 '</div>' +
-                '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
+                '<button type="button" class="card-quick-save saved" onclick="event.stopPropagation();deleteSavedUid(\\'' + escJs(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>' +
                 '<button type="button" class="card-hover-play-btn" onclick="playInstantTrailerFromCard(event,\\'' + tc + '\\',' + targetId + ')" aria-label="Trailer abspielen" title="Instant-Trailer abspielen">' +
                   '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.2 2.6a.9.9 0 0 1 1.37-.77l8.2 5.4a.9.9 0 0 1 0 1.54l-8.2 5.4A.9.9 0 0 1 4.2 13.4V2.6z"/></svg>' +
                 '</button>' +
@@ -55340,7 +56374,7 @@
           const defaultFolderVal = isSer ? "cat_series" : "cat_movies";
           const curFolderVal = (it.folderId && folders.some(f => f.id === it.folderId)) ? it.folderId : defaultFolderVal;
           const folderSelectHtml = folders.length > 0 ? (
-            '<select class="mode-filter-select" style="padding:3px 7px;font-size:11px;max-width:155px" onchange="moveWishlistItemToFolderClient(\\'' + esc(it.uid) + '\\',this.value)" title="In Playlist oder Ordner verschieben">' +
+            '<select class="mode-filter-select" style="padding:3px 7px;font-size:11px;max-width:155px" onchange="moveWishlistItemToFolderClient(\\'' + escJs(it.uid) + '\\',this.value)" title="In Playlist oder Ordner verschieben">' +
               '<option value="' + defaultFolderVal + '"' + (curFolderVal === defaultFolderVal ? ' selected' : '') + '>📁 Standard (' + (isSer ? 'Serien' : 'Filme') + ')</option>' +
               folders.map(f => {
                 const fIcon = (f.type === 'playlist' || f.isJsonPlaylist) ? '🎵' : '📁';
@@ -55379,7 +56413,7 @@
               '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">' +
                 folderSelectHtml +
                 epSummaryBtnHtml +
-                '<button class="btn danger" onclick="deleteSavedUid(\\''+esc(it.uid)+'\\')" title="Aus Merkliste entfernen">🗑️</button>' +
+                '<button class="btn danger" onclick="deleteSavedUid(\\''+escJs(it.uid)+'\\')" title="Aus Merkliste entfernen">🗑️</button>' +
               '</div>' +
             '</div>' +
             epDrawerHtml +
@@ -55418,7 +56452,7 @@
             const isEn = f.enabled !== false;
             const fCount = allItems.filter(i => i.folderId === f.id).length;
             const fIcon = (f.type === 'playlist' || f.isJsonPlaylist) ? (isEn ? '🎵' : '⚪') : (isEn ? '📁' : '⚪');
-            return '<button class="btn '+(cur===f.id?'active':'')+'" style="'+(isEn?'':'opacity:0.65;border-style:dashed')+'" onclick="loadWishlist(\\''+esc(f.id)+'\\')">' + fIcon + ' ' + esc(f.name) + ' (' + fCount + ')</button>';
+            return '<button class="btn '+(cur===f.id?'active':'')+'" style="'+(isEn?'':'opacity:0.65;border-style:dashed')+'" onclick="loadWishlist(\\''+escJs(f.id)+'\\')">' + fIcon + ' ' + esc(f.name) + ' (' + fCount + ')</button>';
           })
         ].join(" ");
 
@@ -55437,17 +56471,17 @@
               const count = allItems.filter(i => i.folderId === f.id).length;
               const badgeType = (f.type === 'playlist' || f.isJsonPlaylist) ? '📦 Playlist' : '📁 Ordner';
               return '<div class="ep-row" style="' + (isEn ? '' : 'opacity:0.68;') + '">' +
-                '<div class="ep-title" tabindex="0" onclick="loadWishlist(\\'' + esc(f.id) + '\\')">' +
+                '<div class="ep-title" tabindex="0" onclick="loadWishlist(\\'' + escJs(f.id) + '\\')">' +
                   '<span style="font-size:11px;padding:2px 7px;border-radius:999px;margin-right:6px;background:' + (isEn ? 'rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4)' : 'rgba(148,163,184,0.18);color:var(--text-muted);border:1px solid rgba(148,163,184,0.3)') + '">' +
                     (isEn ? '🟢 Aktiv' : '⚪ Pausiert') +
                   '</span>' +
                   '<b style="color:var(--text)">' + esc(f.name) + '</b> <span style="color:var(--text-muted);font-size:11px">(' + count + ' Titel • ' + badgeType + ')</span>' +
                 '</div>' +
                 '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-                  '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="togglePlaylistFolderTma(\\'' + esc(f.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
-                  '<button class="btn" onclick="loadWishlist(\\'' + esc(f.id) + '\\')">📂 Öffnen</button>' +
-                  '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">✏️ Name</button>' +
-                  '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(f.id) + '\\',\\'' + esc(f.name) + '\\')">🗑️</button>' +
+                  '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="togglePlaylistFolderTma(\\'' + escJs(f.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
+                  '<button class="btn" onclick="loadWishlist(\\'' + escJs(f.id) + '\\')">📂 Öffnen</button>' +
+                  '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + escJs(f.id) + '\\',\\'' + escJs(f.name) + '\\')">✏️ Name</button>' +
+                  '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + escJs(f.id) + '\\',\\'' + escJs(f.name) + '\\')">🗑️</button>' +
                 '</div>' +
               '</div>';
             }).join("") : '<div style="font-size:12px;color:var(--text-muted)">Noch keine eigenen Playlisten oder Ordner angelegt.</div>') +
@@ -55469,11 +56503,11 @@
                   ? '<button class="btn purple" onclick="openCollectionView(' + Number(activeFolderObj.tmdbRefId) + ')">🍿 Komplette Filmreihe</button>'
                   : '') +
                 (activeFolderObj.linked && activeFolderObj.tmdbRefId && activeFolderObj.type === 'universe'
-                  ? '<button class="btn purple" onclick="openUniverseView(\\'' + esc(activeFolderObj.tmdbRefId) + '\\')">🌌 Komplettes Universum</button>'
+                  ? '<button class="btn purple" onclick="openUniverseView(\\'' + escJs(activeFolderObj.tmdbRefId) + '\\')">🌌 Komplettes Universum</button>'
                   : '') +
-                '<button class="btn ' + (activeFolderObj.enabled !== false ? 'green' : 'blue') + '" onclick="togglePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\')">' + (activeFolderObj.enabled !== false ? '🟢 Ausschalten' : '⚪ Einschalten') + '</button>' +
-                '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">✏️ Umbenennen</button>' +
-                '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(activeFolderObj.name) + '\\')">🗑️ Löschen</button>' +
+                '<button class="btn ' + (activeFolderObj.enabled !== false ? 'green' : 'blue') + '" onclick="togglePlaylistFolderTma(\\'' + escJs(activeFolderObj.id) + '\\')">' + (activeFolderObj.enabled !== false ? '🟢 Ausschalten' : '⚪ Einschalten') + '</button>' +
+                '<button class="btn" onclick="renamePlaylistFolderTma(\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(activeFolderObj.name) + '\\')">✏️ Umbenennen</button>' +
+                '<button class="btn danger" onclick="deletePlaylistFolderTma(\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(activeFolderObj.name) + '\\')">🗑️ Löschen</button>' +
               '</div>' +
             '</div>' +
           '</div>'
@@ -55835,7 +56869,7 @@
               '<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Wähle deinen bevorzugten Video-Anbieter, wenn du auf einer Film-/Serienkarte direkt auf <b>▶ Trailer</b> tippst:</p>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 TRAILER_PROVIDERS_CLIENT.map(tp =>
-                  '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" onclick="setTrailerProvider(\\'' + esc(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
+                  '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" onclick="setTrailerProvider(\\'' + escJs(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
                 ).join("") +
               '</div>' +
             '</div>' +
@@ -59256,7 +60290,7 @@
                     const sTitle = String(s.title || "");
                     const sYear = String(s.year || "");
                     const activeSel = (forcedReuseId === sId || Number(r.existingMatch?.id || 0) === sId);
-                    return '<button type="button" class="btn ' + (activeSel ? 'blue' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="selectExisting900mSeriesInModalClient(' + sId + ',\\'' + esc(sTitle) + '\\',\\'' + esc(sYear) + '\\')">📺 ' + esc(sTitle) + ' (#' + sId + ')</button>';
+                    return '<button type="button" class="btn ' + (activeSel ? 'blue' : '') + '" style="padding:3px 8px;font-size:10.5px" onclick="selectExisting900mSeriesInModalClient(' + sId + ',\\'' + escJs(sTitle) + '\\',\\'' + escJs(sYear) + '\\')">📺 ' + esc(sTitle) + ' (#' + sId + ')</button>';
                   }).join("") +
                 '</div>';
             } else {
@@ -60192,7 +61226,7 @@
             '</div>' +
             '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
               (item.tmdbId ? '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="openDetails(\\'' + (item.typeCode || 'm') + '\\',' + Number(item.tmdbId) + ',false)">👁️ Vorschau</button>' : '') +
-              '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="reopenResolvedReviewCard(\\'' + esc(item.id) + '\\')">✏️ Bearbeiten</button>' +
+              '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="reopenResolvedReviewCard(\\'' + escJs(item.id) + '\\')">✏️ Bearbeiten</button>' +
             '</div>' +
           '</div>';
         }
@@ -60249,7 +61283,7 @@
                 '<span style="font-size:10.5px;background:rgba(14,165,233,0.16);color:#0284c7;padding:2px 7px;border-radius:5px;font-weight:700">🔎 Quelle: ' + esc(parsedFrom) + '</span>' +
                 '<span style="font-size:10.5px;background:rgba(99,102,241,0.16);color:#6366f1;padding:2px 7px;border-radius:5px;font-weight:700">🌐 Audio: ' + esc(langs) + '</span>' +
                 (msgId ? '<span style="font-size:10.5px;background:rgba(148,163,184,0.16);color:var(--muted);padding:2px 7px;border-radius:5px">💬 Msg #' + esc(String(msgId)) + '</span>' : '') +
-                (msgLink ? '<a href="' + esc(msgLink) + '" target="_blank" rel="noopener noreferrer" style="font-size:10.5px;background:rgba(14,165,233,0.18);color:#0284c7;border:1px solid rgba(14,165,233,0.4);padding:2px 8px;border-radius:5px;text-decoration:none;font-weight:800">🔗 Nachricht in Telegram öffnen ↗</a>' : '') +
+                (msgLink ? '<a href="' + esc(safeHttpUrl(msgLink)) + '" target="_blank" rel="noopener noreferrer" style="font-size:10.5px;background:rgba(14,165,233,0.18);color:#0284c7;border:1px solid rgba(14,165,233,0.4);padding:2px 8px;border-radius:5px;text-decoration:none;font-weight:800">🔗 Nachricht in Telegram öffnen ↗</a>' : '') +
               '</div>' +
               '<div style="font-size:12.5px;font-weight:800;color:var(--text);margin-top:4px">' +
                 (item.tmdbId
@@ -60259,11 +61293,11 @@
             '</div>' +
             '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
               '<span style="font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;background:' + badgeBg + '">' + badgeLabel + '</span>' +
-              (item.tmdbId && !isResolved ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="confirmBackupReviewItem(\\'' + esc(item.id) + '\\')">✓ Passt so</button>' : '') +
-              (seriesSiblings.length >= 2 && batchTmdbId > 0 ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px;background:linear-gradient(90deg,#059669,#0284c7);border-color:#38bdf8;color:#fff" onclick="confirmAllSeriesEpisodesInReview(\\'' + esc(item.id) + '\\',' + batchTmdbId + ',\\'s\\')" title="Speichert alle ' + seriesSiblings.length + ' offenen Folgen dieser Serie jeweils mit ihrer eigenen Staffel/Folge (z.B. S01E09, S01E10, S01E12) in D1">⚡ Alle ' + seriesSiblings.length + ' Folgen bestätigen</button>' : '') +
-              '<button type="button" class="btn purple" style="padding:4px 9px;font-size:11px" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + esc(item.id) + '\\')" title="Titel existiert nicht auf TMDb? Hier manuell mit eigener kollisionsfreier 900M-ID bestätigen">✨ Ohne TMDb-ID bestätigen</button>' +
+              (item.tmdbId && !isResolved ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px" onclick="confirmBackupReviewItem(\\'' + escJs(item.id) + '\\')">✓ Passt so</button>' : '') +
+              (seriesSiblings.length >= 2 && batchTmdbId > 0 ? '<button type="button" class="btn green" style="padding:4px 9px;font-size:11px;background:linear-gradient(90deg,#059669,#0284c7);border-color:#38bdf8;color:#fff" onclick="confirmAllSeriesEpisodesInReview(\\'' + escJs(item.id) + '\\',' + batchTmdbId + ',\\'s\\')" title="Speichert alle ' + seriesSiblings.length + ' offenen Folgen dieser Serie jeweils mit ihrer eigenen Staffel/Folge (z.B. S01E09, S01E10, S01E12) in D1">⚡ Alle ' + seriesSiblings.length + ' Folgen bestätigen</button>' : '') +
+              '<button type="button" class="btn purple" style="padding:4px 9px;font-size:11px" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + escJs(item.id) + '\\')" title="Titel existiert nicht auf TMDb? Hier manuell mit eigener kollisionsfreier 900M-ID bestätigen">✨ Ohne TMDb-ID bestätigen</button>' +
               (item.tmdbId ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="openDetails(\\'' + (item.typeCode || 'm') + '\\',' + Number(item.tmdbId) + ',false)">👁️ Vorschau</button>' : '') +
-              (isResolved ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="collapseResolvedReviewCard(\\'' + esc(item.id) + '\\')">🔼 Einklappen</button>' : '') +
+              (isResolved ? '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="collapseResolvedReviewCard(\\'' + escJs(item.id) + '\\')">🔼 Einklappen</button>' : '') +
             '</div>' +
           '</div>' +
           '<div style="' + reasonMeta.boxStyle + ';border-radius:8px;padding:7px 10px;margin-bottom:8px;font-size:11.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;line-height:1.35">' +
@@ -60285,8 +61319,8 @@
                         esc(pm.text || '(Kein Text)') +
                       '</div>' +
                       '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-                        (pm.titleGuess ? '<button type="button" class="btn amber" style="padding:3px 8px;font-size:10.5px" onclick="usePrevMessageForReviewSearch(\\'' + esc(item.id) + '\\',\\'' + esc(pm.titleGuess) + '\\')">🔍 „' + esc(pm.titleGuess.slice(0, 28)) + '“ suchen</button>' : '') +
-                        (pm.tmdbId ? '<button type="button" class="btn green" style="padding:3px 8px;font-size:10.5px" onclick="applyBackupCandidateRemap(\\'' + esc(item.id) + '\\',' + Number(pm.tmdbId) + ',\\'' + (pm.mediaType === 'tv' ? 's' : 'm') + '\\')">🎯 TMDb #' + Number(pm.tmdbId) + ' direkt zuweisen</button>' : '') +
+                        (pm.titleGuess ? '<button type="button" class="btn amber" style="padding:3px 8px;font-size:10.5px" onclick="usePrevMessageForReviewSearch(\\'' + escJs(item.id) + '\\',\\'' + escJs(pm.titleGuess) + '\\')">🔍 „' + esc(pm.titleGuess.slice(0, 28)) + '“ suchen</button>' : '') +
+                        (pm.tmdbId ? '<button type="button" class="btn green" style="padding:3px 8px;font-size:10.5px" onclick="applyBackupCandidateRemap(\\'' + escJs(item.id) + '\\',' + Number(pm.tmdbId) + ',\\'' + (pm.mediaType === 'tv' ? 's' : 'm') + '\\')">🎯 TMDb #' + Number(pm.tmdbId) + ' direkt zuweisen</button>' : '') +
                       '</div>' +
                     '</div>';
                   }).join("") +
@@ -60314,10 +61348,10 @@
                         (c.typeCode === 's' ? '📺 Serie' : '🎬 Film') + seBadge + ' • ' + esc(c.year || 'k.A.') + ' • <b style="color:#0284c7">' + esc(srcLabel) + '</b> (' + Number(c.confidence || 0) + '%)' +
                       '</div>' +
                       '<div style="display:flex;gap:4px;margin-top:5px">' +
-                        '<button type="button" class="btn ' + (isCurrent ? 'green' : 'amber') + '" style="padding:3px 8px;font-size:10.5px;flex:1" onclick="applyBackupCandidateRemap(\\'' + esc(item.id) + '\\',' + Number(c.tmdbId) + ',\\'' + (c.typeCode === 's' ? 's' : 'm') + '\\')">' +
+                        '<button type="button" class="btn ' + (isCurrent ? 'green' : 'amber') + '" style="padding:3px 8px;font-size:10.5px;flex:1" onclick="applyBackupCandidateRemap(\\'' + escJs(item.id) + '\\',' + Number(c.tmdbId) + ',\\'' + (c.typeCode === 's' ? 's' : 'm') + '\\')">' +
                           (isCurrent ? '✓ Aktiv (Speichern)' : '✓ Auswählen') +
                         '</button>' +
-                        (c.typeCode === 's' && seriesSiblings.length >= 2 ? '<button type="button" class="btn green" style="padding:3px 6px;font-size:10px" title="Alle ' + seriesSiblings.length + ' Folgen dieser Serie auf diesen Kandidaten zuweisen" onclick="confirmAllSeriesEpisodesInReview(\\'' + esc(item.id) + '\\',' + Number(c.tmdbId) + ',\\'s\\')">⚡ Alle ' + seriesSiblings.length + '</button>' : '') +
+                        (c.typeCode === 's' && seriesSiblings.length >= 2 ? '<button type="button" class="btn green" style="padding:3px 6px;font-size:10px" title="Alle ' + seriesSiblings.length + ' Folgen dieser Serie auf diesen Kandidaten zuweisen" onclick="confirmAllSeriesEpisodesInReview(\\'' + escJs(item.id) + '\\',' + Number(c.tmdbId) + ',\\'s\\')">⚡ Alle ' + seriesSiblings.length + '</button>' : '') +
                       '</div>' +
                     '</div>' +
                   '</div>';
@@ -60333,13 +61367,13 @@
             '</select>' +
             '<div class="admin-sub-box" style="display:flex;align-items:center;gap:4px;border-color:rgba(99,102,241,0.45);padding:3px 7px" title="Staffel & Folge für Serien-Zuordnung (z.B. S01E01)">' +
               '<span style="font-size:10.5px;font-weight:800;color:#6366f1">S</span>' +
-              '<input id="revSeasonInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="99" value="' + (Number(defaultSeasonVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + esc(item.id) + '\\'))" style="width:44px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
+              '<input id="revSeasonInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="99" value="' + (Number(defaultSeasonVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:44px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
               '<span style="font-size:10.5px;font-weight:800;color:#6366f1">E</span>' +
-              '<input id="revEpInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="999" value="' + (Number(defaultEpisodeVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + esc(item.id) + '\\'))" style="width:48px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
+              '<input id="revEpInp_' + esc(item.id) + '" class="tma-input" type="number" min="1" max="999" value="' + (Number(defaultEpisodeVal) || 1) + '" onchange="syncReviewCardDomInputsToItemState((backupImportJob.reviewItems||[]).find(x=>String(x.id)===\\'' + escJs(item.id) + '\\'))" style="width:48px;padding:2px 4px;border-radius:4px;font-size:11.5px;font-weight:800;text-align:center" />' +
             '</div>' +
-            '<input id="revSearchInp_' + esc(item.id) + '" class="tma-input" value="' + esc(item.manualSearchQuery || item.cleanTitle || '') + '" placeholder="Manueller Titel oder TMDb-ID (z.B. 603)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchManualCandidatesForReviewItem(\\'' + esc(item.id) + '\\')}" style="flex:1;min-width:160px;padding:5px 9px;font-size:11.5px" />' +
-            '<button type="button" class="btn" style="padding:5px 10px;font-size:11.5px" onclick="searchManualCandidatesForReviewItem(\\'' + esc(item.id) + '\\')">🔍 Alle 8 APIs durchsuchen</button>' +
-            '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + esc(item.id) + '\\')">✨ Ohne TMDb-ID zuweisen</button>' +
+            '<input id="revSearchInp_' + esc(item.id) + '" class="tma-input" value="' + esc(item.manualSearchQuery || item.cleanTitle || '') + '" placeholder="Manueller Titel oder TMDb-ID (z.B. 603)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();searchManualCandidatesForReviewItem(\\'' + escJs(item.id) + '\\')}" style="flex:1;min-width:160px;padding:5px 9px;font-size:11.5px" />' +
+            '<button type="button" class="btn" style="padding:5px 10px;font-size:11.5px" onclick="searchManualCandidatesForReviewItem(\\'' + escJs(item.id) + '\\')">🔍 Alle 8 APIs durchsuchen</button>' +
+            '<button type="button" class="btn purple" style="padding:5px 10px;font-size:11.5px" onclick="openManualNoTmdbConfirmForReviewItem(\\'' + escJs(item.id) + '\\')">✨ Ohne TMDb-ID zuweisen</button>' +
           '</div>' +
         '</div>';
       }
@@ -63036,16 +64070,79 @@
           inp.type = "text";
           inp.value = token;
         }
+        refreshManualWebhookLinksUiClient();
         showHudToast("🔑 Sicheres Webhook-Passwort generiert – jetzt auf 'Speichern & bei Telegram registrieren' klicken!");
       }
 
-      async function adminSaveAndRegisterWebhookClient() {
+      function computeManualWebhookLinksClient() {
+        const urlInp = document.getElementById("adminWebhookUrlInp");
+        const pwInp = document.getElementById("adminWebhookPasswordInp");
+        const maxConnSel = document.getElementById("adminWebhookMaxConnSel");
+        const dropChk = document.getElementById("adminWebhookDropPendingChk");
+        const cachedSetup = window._lastAdminOverviewCache?.botSetup || {};
+        const fallbackOrigin = String(location.origin || "").replace(/\\/$/, "");
+        const webhookUrl = (urlInp && urlInp.value.trim()) ? urlInp.value.trim() : String(cachedSetup.webhookUrl || (fallbackOrigin + "/webhook"));
+        let originBase = fallbackOrigin;
+        try {
+          originBase = new URL(webhookUrl).origin.replace(/\\/$/, "");
+        } catch (e) {}
+        const typedSecret = pwInp ? String(pwInp.value || "").trim().replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 128) : "";
+        const effectiveSecret = typedSecret || String(cachedSetup.activeWebhookSecret || "").trim();
+        const maxConnections = maxConnSel ? Math.min(40, Math.max(1, Number(maxConnSel.value) || 8)) : (Number(cachedSetup.webhookMaxConnections) || 8);
+        const dropPending = dropChk ? Boolean(dropChk.checked) : true;
+
+        const workerParams = new URLSearchParams();
+        if (effectiveSecret) workerParams.set("secret", effectiveSecret);
+        if (dropPending) workerParams.set("drop_pending_updates", "1");
+        workerParams.set("max_connections", String(maxConnections));
+        const workerSetWebhookUrl = originBase + "/setwebhook?" + workerParams.toString();
+
+        const tgParams = new URLSearchParams();
+        tgParams.set("url", webhookUrl);
+        tgParams.set("max_connections", String(maxConnections));
+        tgParams.set("drop_pending_updates", dropPending ? "true" : "false");
+        if (effectiveSecret) tgParams.set("secret_token", effectiveSecret);
+        const telegramDirectApiUrl = "https://api.telegram.org/bot<DEIN_BOT_TOKEN>/setWebhook?" + tgParams.toString();
+
+        return {
+          webhookUrl,
+          workerSetWebhookUrl,
+          telegramDirectApiUrl,
+          hasSecret: Boolean(effectiveSecret)
+        };
+      }
+
+      function refreshManualWebhookLinksUiClient() {
+        const links = computeManualWebhookLinksClient();
+        const workerInp = document.getElementById("adminManualWorkerWebhookLinkInp");
+        const tgApiInp = document.getElementById("adminManualTelegramApiLinkInp");
+        const openWorkerLink = document.getElementById("adminManualWorkerOpenAnchor");
+        const secretHint = document.getElementById("adminManualWorkerSecretHint");
+        if (workerInp) workerInp.value = links.workerSetWebhookUrl;
+        if (tgApiInp) tgApiInp.value = links.telegramDirectApiUrl;
+        if (openWorkerLink) openWorkerLink.href = safeHttpUrl(links.workerSetWebhookUrl);
+        if (secretHint) {
+          secretHint.style.display = links.hasSecret ? "none" : "block";
+        }
+      }
+
+      function copyAdminInputValueClient(inputId, label) {
+        const el = document.getElementById(inputId);
+        const val = el ? String(el.value || "").trim() : "";
+        if (!val) {
+          showHudToast("⚠️ Kein Link zum Kopieren vorhanden.");
+          return;
+        }
+        copyAdminTextToClipboardClient(val, label || "Link");
+      }
+
+      async function adminSaveAndRegisterWebhookClient(clearPassword = false) {
         const pwInp = document.getElementById("adminWebhookPasswordInp");
         const maxConnSel = document.getElementById("adminWebhookMaxConnSel");
         const dropChk = document.getElementById("adminWebhookDropPendingChk");
         const urlInp = document.getElementById("adminWebhookUrlInp");
         const statusBox = document.getElementById("adminWebhookStatusBox");
-        const webhookPassword = pwInp ? String(pwInp.value || "").trim() : "";
+        const webhookPassword = clearPassword ? "" : (pwInp ? String(pwInp.value || "").trim() : "");
         const maxConnections = maxConnSel ? Number(maxConnSel.value || 8) : 8;
         const dropPendingUpdates = Boolean(dropChk && dropChk.checked);
         const webhookUrl = urlInp ? String(urlInp.value || "").trim() : "";
@@ -63053,7 +64150,9 @@
         if (statusBox) {
           statusBox.style.display = "block";
           statusBox.style.color = "#38bdf8";
-          statusBox.innerHTML = "⏳ Speichere Webhook-Passwort & registriere Webhook bei Telegram (<code>setWebhook</code>)...";
+          statusBox.innerHTML = clearPassword
+            ? "⏳ Entferne Webhook-Passwort & aktualisiere Webhook bei Telegram (<code>setWebhook</code>)..."
+            : "⏳ Speichere Webhook-Konfiguration & registriere Webhook bei Telegram (<code>setWebhook</code>)...";
         }
         try {
           const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
@@ -63062,6 +64161,7 @@
             body: JSON.stringify({
               action: "save_webhook_and_register",
               webhookPassword,
+              clearPassword: Boolean(clearPassword),
               maxConnections,
               dropPendingUpdates,
               webhookUrl
@@ -63069,15 +64169,26 @@
           });
           if (r && r.ok) {
             if (window._lastAdminOverviewCache && window._lastAdminOverviewCache.botSetup) {
+              window._lastAdminOverviewCache.botSetup.webhookUrl = r.webhookUrl || webhookUrl;
               window._lastAdminOverviewCache.botSetup.hasWebhookPassword = Boolean(r.hasWebhookPassword);
               window._lastAdminOverviewCache.botSetup.webhookPasswordPreview = r.webhookPasswordPreview || "";
+              window._lastAdminOverviewCache.botSetup.activeWebhookSecret = String(r.activeWebhookSecret || "");
               window._lastAdminOverviewCache.botSetup.webhookMaxConnections = r.maxConnections || maxConnections;
+              window._lastAdminOverviewCache.botSetup.manualSetWebhookWorkerUrl = r.manualSetWebhookWorkerUrl || "";
+              window._lastAdminOverviewCache.botSetup.manualTelegramApiTemplateUrl = r.manualTelegramApiTemplateUrl || "";
             }
-            showHudToast("🔒 Webhook & Passwort erfolgreich bei Telegram registriert!");
+            if (clearPassword && pwInp) pwInp.value = "";
+            refreshManualWebhookLinksUiClient();
+            showHudToast(r.simulated ? "💾 Webhook-Konfiguration im Simulator gespeichert!" : "🔒 Webhook erfolgreich bei Telegram registriert & verifiziert!");
             if (statusBox) {
-              statusBox.style.color = "#34d399";
-              statusBox.innerHTML = "✅ <b>" + esc(r.message || "Webhook registriert!") + "</b>" +
-                (r.webhookPasswordPreview ? (" • Aktives Passwort: <code>" + esc(r.webhookPasswordPreview) + "</code>") : "");
+              const info = r.webhookInfo || null;
+              const liveLine = info
+                ? ('<br/>📡 <b>Telegram-Bestätigung (<code>getWebhookInfo</code>):</b> URL <code>' + esc(info.url || "-") + '</code> • Wartende Updates: <b>' + Number(info.pending_update_count || 0) + '</b> • max_connections: <code>' + Number(info.max_connections || maxConnections) + '</code>' + (info.last_error_message ? (' • ⚠️ Letzter Fehler: <code>' + esc(info.last_error_message) + '</code>') : ' • ✅ Keine Fehler'))
+                : '';
+              statusBox.style.color = r.simulated ? "#fbbf24" : "#34d399";
+              statusBox.innerHTML = (r.simulated ? "⚠️ <b>" : "✅ <b>") + esc(r.message || "Webhook registriert!") + "</b>" +
+                (r.webhookPasswordPreview ? (" • Aktives Passwort: <code>" + esc(r.webhookPasswordPreview) + "</code>") : " • Passwort: <code>deaktiviert</code>") +
+                liveLine;
             }
           } else {
             const errTxt = (r && (r.message || r.error)) || "Registrierung fehlgeschlagen";
@@ -63305,9 +64416,9 @@
                   (String(state.adminPlaylistTargetChatId) === "bot_vip"
                     ? '<button class="btn amber" onclick="adminSyncBotVipFromD1Client(true)" title="Synchronisiert alle vom Telegram-Bot in D1 gespeicherten Filme & Serien in 25er-Batches">🔄 Alle D1-Bot-Filme & -Serien (25er-Batches) synchronisieren</button>'
                     : '') +
-                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'vip_stream' ? 'amber' : '') + '" onclick="adminSetPlaylistMode(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'vip_stream\\')">🌟 Als VIP-Stream-Playlist</button>' +
-                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'watchlist' ? 'blue' : '') + '" onclick="adminSetPlaylistMode(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'watchlist\\')">🔖 Als Merkliste</button>' +
-                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'both' ? 'green' : '') + '" onclick="adminSetPlaylistMode(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'both\\')">⚡ Beides (VIP + Merkliste)</button>' +
+                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'vip_stream' ? 'amber' : '') + '" onclick="adminSetPlaylistMode(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'vip_stream\\')">🌟 Als VIP-Stream-Playlist</button>' +
+                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'watchlist' ? 'blue' : '') + '" onclick="adminSetPlaylistMode(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'watchlist\\')">🔖 Als Merkliste</button>' +
+                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'both' ? 'green' : '') + '" onclick="adminSetPlaylistMode(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'both\\')">⚡ Beides (VIP + Merkliste)</button>' +
                 '</div>' +
               '</div>' +
               '<div class="admin-sub-box" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
@@ -63316,9 +64427,9 @@
                   '<option value="m">🎬 Film</option>' +
                   '<option value="s">📺 Serie</option>' +
                 '</select>' +
-                '<input id="plEditorAddQueryInp" class="tma-input" placeholder="Titel oder TMDb-ID zur Playlist hinzufügen (z.B. Inception oder 27205)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();adminAddPlaylistItemClient(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\')}" style="flex:1;min-width:210px;padding:7px 10px;font-size:12px" />' +
+                '<input id="plEditorAddQueryInp" class="tma-input" placeholder="Titel oder TMDb-ID zur Playlist hinzufügen (z.B. Inception oder 27205)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();adminAddPlaylistItemClient(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\')}" style="flex:1;min-width:210px;padding:7px 10px;font-size:12px" />' +
                 '<input id="plEditorAddQualInp" class="tma-input" value="1080p" placeholder="Qualität (1080p/4K)" style="width:95px;padding:7px 9px;font-size:12px" />' +
-                '<button class="btn green" onclick="adminAddPlaylistItemClient(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\')">➕ Titel hinzufügen</button>' +
+                '<button class="btn green" onclick="adminAddPlaylistItemClient(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\')">➕ Titel hinzufügen</button>' +
               '</div>' +
               (activeFolderItems.length === 0 ? (
                 '<div class="admin-sub-box" style="font-size:12px;color:var(--muted);padding:12px;text-align:center">Diese Playlist enthält noch keine Titel. Klicke oben auf <b>🔄 Alle D1-Bot-Filme & -Serien synchronisieren</b>, füge einen Titel per Name/TMDb-ID hinzu oder importiere ein JSON-Backup.</div>'
@@ -63372,11 +64483,11 @@
                         '</div>' +
                         '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' +
                           epDrawerToggleHtml +
-                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Nach ganz oben" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'top\\')">⏫</button>' : '') +
-                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach oben" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'up\\')">⬆️</button>' : '') +
-                          (idx < activeFolderItems.length - 1 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach unten" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'down\\')">⬇️</button>' : '') +
+                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Nach ganz oben" onclick="adminReorderPlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\',\\'top\\')">⏫</button>' : '') +
+                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach oben" onclick="adminReorderPlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\',\\'up\\')">⬆️</button>' : '') +
+                          (idx < activeFolderItems.length - 1 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach unten" onclick="adminReorderPlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\',\\'down\\')">⬇️</button>' : '') +
                           '<button class="btn" style="padding:4px 8px;font-size:11px" title="Details & Streams öffnen" onclick="openDetails(\\'' + tc + '\\',' + Number(it.tmdbId) + ',false)">👁️</button>' +
-                          '<button class="btn" style="padding:4px 8px;font-size:11px;border-color:rgba(245,158,11,0.45);color:#fbbf24" title="Nur aus dieser Playlist entfernen (Film/Serie bleibt in D1 erhalten)" onclick="adminRemovePlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\')">➖ Aus Playlist</button>' +
+                          '<button class="btn" style="padding:4px 8px;font-size:11px;border-color:rgba(245,158,11,0.45);color:#fbbf24" title="Nur aus dieser Playlist entfernen (Film/Serie bleibt in D1 erhalten)" onclick="adminRemovePlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\')">➖ Aus Playlist</button>' +
                           '<button class="btn danger" style="padding:4px 8px;font-size:11px" title="Komplett aus D1-Datenbank + Telegram-Bot UND aus Playlist löschen" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(activeFolderObj.id) + '" data-item-uid="' + esc(it.uid) + '" data-type="' + esc(tc) + '" data-tmdb-id="' + Number(it.tmdbId) + '" data-title="' + esc(it.title) + '" onclick="adminDeletePlaylistItemFromBtn(this)">🗑️ Aus D1 + Bot</button>' +
                         '</div>' +
                       '</div>' +
@@ -63429,9 +64540,9 @@
                         '</div>' +
                       '</div>' +
                       '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-                        '<button class="btn ' + (isEditingThis ? 'amber' : 'blue') + '" onclick="adminOpenPlaylistEditor(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\')">📂 Öffnen & Bearbeiten</button>' +
+                        '<button class="btn ' + (isEditingThis ? 'amber' : 'blue') + '" onclick="adminOpenPlaylistEditor(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(pl.id) + '\\')">📂 Öffnen & Bearbeiten</button>' +
                         '<button class="btn green" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminCopyPlaylistBatchFromBtn(this)" title="Kopiert diese Playlist in 25er-Batches ohne API-Limit">📋 25er-Batch Kopie</button>' +
-                        '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="adminTogglePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
+                        '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="adminTogglePlaylist(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(pl.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
                         '<button class="btn" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminRenamePlaylistFromBtn(this)">✏️</button>' +
                         '<button class="btn danger" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminDeletePlaylistFromBtn(this)">🗑️</button>' +
                       '</div>' +
@@ -63609,7 +64720,7 @@
                       '3. <b>Main Mini App & Farben:</b> <i>Bot Settings ▸ Configure Mini App</i> ▸ URL einfügen, das <b>640×360 PNG</b> sowie Header <code>#0B1021</code> & Background <code>#070B19</code> eintragen.<br/>' +
                       '4. <b>Telegram Login Widget im Browser:</b> Sende <code>/setdomain</code> an @BotFather und hinterlege deine Worker-Domain:' +
                       '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">' +
-                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + esc(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
+                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + escJs(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
                         '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(' + JSON.stringify(botFatherCommandsBlock).replace(/"/g, '&quot;') + ',\\'BotFather Befehlsliste\\')">📋 Befehlsliste kopieren</button>' +
                       '</div>' +
                     '</div>' +
@@ -63618,10 +64729,13 @@
               ) : '') +
             '</div>';
 
-          const officialWebhookUrl = String(botSetup.webhookUrl || (effMiniAppUrl + "/webhook"));
+          const officialWebhookUrl = String(botSetup.webhookUrl || (String(effMiniAppUrl || "").replace(/\\/app$/i, "") + "/webhook"));
           const hasWebhookPw = Boolean(botSetup.hasWebhookPassword);
           const webhookPwPreview = String(botSetup.webhookPasswordPreview || "");
           const webhookMaxConn = Number(botSetup.webhookMaxConnections || 8);
+          const activeWhSecretRaw = String(botSetup.activeWebhookSecret || "");
+          const fallbackWorkerSetUrl = String(botSetup.manualSetWebhookWorkerUrl || (officialWebhookUrl.replace(/\\/webhook$/i, "") + "/setwebhook?" + (activeWhSecretRaw ? ("secret=" + encodeURIComponent(activeWhSecretRaw) + "&") : "") + "drop_pending_updates=1&max_connections=" + webhookMaxConn));
+          const fallbackTgApiSetUrl = String(botSetup.manualTelegramApiTemplateUrl || ("https://api.telegram.org/bot<DEIN_BOT_TOKEN>/setWebhook?url=" + encodeURIComponent(officialWebhookUrl) + "&max_connections=" + webhookMaxConn + "&drop_pending_updates=true" + (activeWhSecretRaw ? ("&secret_token=" + encodeURIComponent(activeWhSecretRaw)) : "")));
 
           const botAndSettingsDedicatedPageHtml =
             '<div class="golden-grid">' +
@@ -63647,19 +64761,20 @@
                   '<div style="display:flex;flex-direction:column;gap:8px">' +
                     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
                       '<span style="font-size:11.5px;font-weight:800;color:#0284c7;min-width:130px">🌐 Webhook-URL:</span>' +
-                      '<input id="adminWebhookUrlInp" class="tma-input" value="' + esc(officialWebhookUrl) + '" readonly style="flex:1;min-width:220px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
-                      '<button type="button" class="btn" onclick="copyAdminTextToClipboardClient(\\'' + esc(officialWebhookUrl) + '\\',\\'Telegram Webhook-URL\\')">📋 Link kopieren</button>' +
+                      '<input id="adminWebhookUrlInp" class="tma-input" value="' + esc(officialWebhookUrl) + '" oninput="refreshManualWebhookLinksUiClient()" style="flex:1;min-width:220px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
+                      '<button type="button" class="btn" onclick="copyAdminInputValueClient(\\'adminWebhookUrlInp\\',\\'Telegram Webhook-URL\\')">📋 Link kopieren</button>' +
                     '</div>' +
                     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
                       '<span style="font-size:11.5px;font-weight:800;color:#10b981;min-width:130px">🔑 Webhook-Passwort:</span>' +
-                      '<input id="adminWebhookPasswordInp" class="tma-input" type="password" placeholder="' + (hasWebhookPw ? ('Aktives Passwort (' + esc(webhookPwPreview) + ') – neu eingeben zum Ändern') : 'Sicheres Passwort (A-Z, 0-9, _, -) eingeben oder generieren...') + '" style="flex:1;min-width:210px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
+                      '<input id="adminWebhookPasswordInp" class="tma-input" type="password" oninput="refreshManualWebhookLinksUiClient()" placeholder="' + (hasWebhookPw ? ('Aktives Passwort (' + esc(webhookPwPreview) + ') – leer lassen zum Behalten') : 'Sicheres Passwort (A-Z, 0-9, _, -) eingeben oder generieren...') + '" style="flex:1;min-width:210px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
                       '<button type="button" class="btn" onclick="const el=document.getElementById(\\'adminWebhookPasswordInp\\');if(el)el.type=el.type===\\'password\\'?\\'text\\':\\'password\\'">👁️</button>' +
                       '<button type="button" class="btn purple" onclick="generateRandomWebhookPasswordClient()">🎲 Passwort generieren</button>' +
+                      (hasWebhookPw ? '<button type="button" class="btn red" onclick="adminSaveAndRegisterWebhookClient(true)" title="Entfernt das Webhook-Passwort und aktualisiert den Webhook">🗑️ Entfernen</button>' : '') +
                     '</div>' +
                     '<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding-top:4px">' +
                       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--text)">' +
                         '<label style="display:flex;align-items:center;gap:5px">⚡ Max. parallele Verbindungen:' +
-                          '<select id="adminWebhookMaxConnSel" class="tma-select" style="padding:4px 8px;font-size:11.5px">' +
+                          '<select id="adminWebhookMaxConnSel" class="tma-select" onchange="refreshManualWebhookLinksUiClient()" style="padding:4px 8px;font-size:11.5px">' +
                             '<option value="6" ' + (webhookMaxConn === 6 ? 'selected' : '') + '>6 (Ultra-Safe Free-Tier)</option>' +
                             '<option value="8" ' + (webhookMaxConn === 8 ? 'selected' : '') + '>8 (Empfohlen Free-Tier)</option>' +
                             '<option value="16" ' + (webhookMaxConn === 16 ? 'selected' : '') + '>16 (Balanced)</option>' +
@@ -63667,12 +64782,34 @@
                           '</select>' +
                         '</label>' +
                         '<label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
-                          '<input id="adminWebhookDropPendingChk" type="checkbox" checked /> 🧹 Alte hängende Updates beim Setzen verwerfen' +
+                          '<input id="adminWebhookDropPendingChk" type="checkbox" checked onchange="refreshManualWebhookLinksUiClient()" /> 🧹 Alte hängende Updates beim Setzen verwerfen' +
                         '</label>' +
                       '</div>' +
-                      '<button type="button" class="btn green" onclick="adminSaveAndRegisterWebhookClient()">🔒 Passwort speichern & Webhook bei Telegram registrieren</button>' +
+                      '<button type="button" class="btn green" onclick="adminSaveAndRegisterWebhookClient(false)">🔒 Speichern & Webhook automatisch bei Telegram registrieren</button>' +
                     '</div>' +
                     '<div id="adminWebhookStatusBox" class="admin-sub-box" style="display:none;margin-top:6px;padding:8px 10px;font-size:11.5px;line-height:1.5"></div>' +
+                    /* Manueller Webhook-Eintrag (Direktlinks zum Kopieren / Aufrufen) */
+                    '<div class="admin-sub-box" style="margin-top:6px;padding:10px 12px;border-color:rgba(56,189,248,0.35);background:rgba(15,23,42,0.55)">' +
+                      '<div style="font-size:11.5px;font-weight:900;color:#38bdf8;margin-bottom:6px">📋 Manueller Webhook-Eintrag (Direktlinks – passen sich live an deine Eingaben an)</div>' +
+                      '<div style="display:flex;flex-direction:column;gap:7px">' +
+                        '<div>' +
+                          '<div style="font-size:10.5px;color:#cbd5e1;margin-bottom:3px"><b>Option A – Worker-Direktlink (<code>/setwebhook</code>):</b> Im Browser öffnen, damit dein Worker den Webhook inkl. Secret-Token setzt:</div>' +
+                          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                            '<input id="adminManualWorkerWebhookLinkInp" class="tma-input" value="' + esc(fallbackWorkerSetUrl) + '" readonly style="flex:1;min-width:220px;padding:6px 9px;font-family:monospace;font-size:11px;color:#93c5fd" />' +
+                            '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="copyAdminInputValueClient(\\'adminManualWorkerWebhookLinkInp\\',\\'Worker /setwebhook Link\\')">📋 Kopieren</button>' +
+                            '<a id="adminManualWorkerOpenAnchor" href="' + esc(safeHttpUrl(fallbackWorkerSetUrl)) + '" target="_blank" rel="noopener noreferrer" class="btn blue" style="padding:5px 9px;font-size:11px;text-decoration:none">🌐 Öffnen</a>' +
+                          '</div>' +
+                          '<div id="adminManualWorkerSecretHint" style="display:' + (hasWebhookPw ? 'none' : 'block') + ';font-size:10px;color:#fbbf24;margin-top:3px">ℹ️ Ohne gespeichertes Webhook-Passwort erfordert <code>/setwebhook</code> eine aktive Admin-Session – oder nutze Option B direkt über die Telegram API.</div>' +
+                        '</div>' +
+                        '<div>' +
+                          '<div style="font-size:10.5px;color:#cbd5e1;margin-bottom:3px"><b>Option B – Direkter Telegram Bot API Link:</b> Ersetze <code>&lt;DEIN_BOT_TOKEN&gt;</code> durch dein BotFather-Token und öffne die URL im Browser:</div>' +
+                          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                            '<input id="adminManualTelegramApiLinkInp" class="tma-input" value="' + esc(fallbackTgApiSetUrl) + '" readonly style="flex:1;min-width:220px;padding:6px 9px;font-family:monospace;font-size:11px;color:#86efac" />' +
+                            '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="copyAdminInputValueClient(\\'adminManualTelegramApiLinkInp\\',\\'Telegram API setWebhook Link\\')">📋 Kopieren</button>' +
+                          '</div>' +
+                        '</div>' +
+                      '</div>' +
+                    '</div>' +
                   '</div>' +
                 '</div>' +
 
@@ -63773,8 +64910,8 @@
                     '</div>' +
                   '</div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                    '<button class="btn" onclick="state.adminPlaylistTargetChatId=\\'' + esc(u.telegramId) + '\\';state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten</button>' +
-                    '<button class="btn ' + (u.isVip ? 'amber' : '') + '" onclick="toggleUserVipAdmin(\\'' + esc(u.telegramId) + '\\',' + (!u.isVip) + ')">' +
+                    '<button class="btn" onclick="state.adminPlaylistTargetChatId=\\'' + escJs(u.telegramId) + '\\';state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten</button>' +
+                    '<button class="btn ' + (u.isVip ? 'amber' : '') + '" onclick="toggleUserVipAdmin(\\'' + escJs(u.telegramId) + '\\',' + (!u.isVip) + ')">' +
                       (u.isVip ? '🌟 VIP AKTIV (Entziehen)' : '⚪ Kein VIP (VIP vergeben)') +
                     '</button>' +
                   '</div>' +
@@ -67824,6 +68961,49 @@
     }
   }
 
+  function resolveCleanWorkerOrigin(env, fallbackOrigin = "") {
+    const candidates = [env?.WEBHOOK_URL, env?.WEBAPP_URL, fallbackOrigin, "https://teleport.sonhartmann-1997.workers.dev"];
+    for (const raw of candidates) {
+      const s = String(raw || "").trim();
+      if (!s) continue;
+      try {
+        const parsed = new URL(s.startsWith("http") ? s : `https://${s}`);
+        if (parsed.origin && parsed.origin !== "null") return parsed.origin.replace(/\/$/, "");
+      } catch (_e) {}
+    }
+    return String(fallbackOrigin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\/$/, "");
+  }
+
+  function buildManualWebhookLinks(origin, webhookUrl, secretToken = "", maxConnections = 8, dropPending = true) {
+    const cleanOrigin = String(origin || "").replace(/\/$/, "");
+    const cleanWebhookUrl = String(webhookUrl || `${cleanOrigin}/webhook`).trim();
+    const cleanSecret = String(secretToken || "").trim();
+    const cleanMaxConn = Math.min(40, Math.max(1, Number(maxConnections) || 8));
+    const dropBool = Boolean(dropPending);
+    const workerParams = new URLSearchParams();
+    if (cleanSecret) {
+      workerParams.set("secret", cleanSecret);
+    }
+    if (dropBool) {
+      workerParams.set("drop_pending_updates", "1");
+    }
+    workerParams.set("max_connections", String(cleanMaxConn));
+    const manualSetWebhookWorkerUrl = `${cleanOrigin}/setwebhook?${workerParams.toString()}`;
+    const tgParams = new URLSearchParams();
+    tgParams.set("url", cleanWebhookUrl);
+    tgParams.set("max_connections", String(cleanMaxConn));
+    tgParams.set("drop_pending_updates", dropBool ? "true" : "false");
+    if (cleanSecret) {
+      tgParams.set("secret_token", cleanSecret);
+    }
+    const manualTelegramApiTemplateUrl = `https://api.telegram.org/bot<DEIN_BOT_TOKEN>/setWebhook?${tgParams.toString()}`;
+    return {
+      webhookUrl: cleanWebhookUrl,
+      manualSetWebhookWorkerUrl,
+      manualTelegramApiTemplateUrl
+    };
+  }
+
   async function handleTmaRequest(request, env, ctx = null) {
     globalThis._activeWorkerEnv = env;
     if (ctx) globalThis._activeWorkerCtx = ctx;
@@ -67897,7 +69077,7 @@
     }
 
     if (path === "/sw.js" || path === "/service-worker.js") {
-      const swCode = `const CACHE_NAME="teleport-v1";const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname.startsWith("/assets/")||u.pathname==="/favicon.svg")){e.respondWith(caches.match(r).then(cached=>{const fp=fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>cached);return cached||fp}));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
+      const swCode = `const CACHE_NAME="teleport-v2";const IMG_CACHE="teleport-img-v2";const MAX_IMG=150;const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME&&x!==IMG_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});async function putImgCapped(req,res){try{const c=await caches.open(IMG_CACHE);await c.put(req,res);const ks=await c.keys();if(ks.length>MAX_IMG){await Promise.all(ks.slice(0,ks.length-MAX_IMG).map(k=>c.delete(k)))}}catch(_e){}}self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname==="/favicon.svg"||u.pathname==="/manifest.json")){e.respondWith(fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match(r)));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&(nr.status===200||nr.type==="opaque")){putImgCapped(r,nr.clone())}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
       return new Response(swCode, {
         status: 200,
         headers: {
@@ -67951,7 +69131,10 @@
         } catch (_e) {}
       }
       const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
-      const id = url.searchParams.get("id") || "";
+      const id = String(url.searchParams.get("id") || "").trim();
+      if (!/^\d+$/.test(id)) {
+        return new Response(JSON.stringify({ ok: false, error: "Ungültige Medien-ID." }), { status: 400, headers: corsHeaders });
+      }
       const logoPath = await resolveMediaClearLogoPath(env, typeCode, id, "");
       const res = new Response(JSON.stringify({ ok: true, id: Number(id), typeCode, logo_path: logoPath || "" }), {
         status: 200,
@@ -68026,7 +69209,8 @@
         const rawHdr = request.headers.get("X-Tma-Settings");
         if (rawHdr) clientHeaderSettings = JSON.parse(decodeURIComponent(rawHdr));
       } catch (e) {}
-      const guestMemSettings = memoryFallback.get("settings_guest") || {};
+      const isLocalSandboxRuntime = typeof window !== "undefined" && typeof document !== "undefined";
+      const guestMemSettings = isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || {}) : {};
       const baseUserSettings = auth.isAuthenticated
         ? await getUserSettings(env, chatId)
         : { filtersActive: true, showUnreleased: false, ...guestMemSettings };
@@ -68034,12 +69218,13 @@
         ? { ...baseUserSettings, ...clientHeaderSettings }
         : baseUserSettings;
       if (clientHeaderSettings && typeof clientHeaderSettings === "object" && path === "/api/tma/discover") {
-        // Nur schreiben, wenn sich die Einstellungen tatsächlich geändert haben (eliminiert blinde KV-Writes pro Seitenaufruf!)
-        const settingsChanged = JSON.stringify(settings) !== JSON.stringify(baseUserSettings);
+        // Key-reihenfolge-unabhängiger Vergleich (verhindert blinde Writes bei jedem Discover-Aufruf!)
+        const cmpSer = typeof stableJsonStringify === "function" ? stableJsonStringify : JSON.stringify;
+        const settingsChanged = cmpSer(settings) !== cmpSer(baseUserSettings);
         if (settingsChanged) {
           if (auth.isAuthenticated) {
             scheduleBackgroundWork(() => saveUserSettings(env, chatId, settings));
-          } else {
+          } else if (isLocalSandboxRuntime) {
             memoryFallback.set("settings_guest", settings);
           }
         }
@@ -68155,6 +69340,8 @@
       if (path === "/api/tma/auth/bot-code" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const action = String(body.action || "create").trim();
+        const isLocalSandbox = typeof window !== "undefined" && typeof document !== "undefined";
+        const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
 
         if (action === "create") {
           const challengeId = `wac_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -68172,8 +69359,16 @@
           memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
           memoryFallback.set(`webauth_code_${code}`, challengeId);
           try {
-            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
-            await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+            if (hasD1 && typeof saveEntityToD1 === "function") {
+              // D1-first: 0 KV-Writes & sofortige starke Konsistenz über alle Edge-Server (kein 60s KV-Lag!)
+              await Promise.all([
+                saveEntityToD1(env, `webauth_id_${challengeId}`, "webauth", challengeObj),
+                saveEntityToD1(env, `webauth_code_${code}`, "webauth", { challengeId, expiresAt })
+              ]);
+            } else {
+              await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+              await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+            }
           } catch (e) {}
           const deepLink = botUsername
             ? `https://t.me/${botUsername.replace(/^@/, "")}?start=webauth_${challengeId}`
@@ -68184,15 +69379,23 @@
             code,
             botUsername: botUsername.replace(/^@/, ""),
             deepLink,
-            expiresAt
+            expiresAt,
+            canSimulateConfirm: isLocalSandbox
           }), { status: 200, headers: corsHeaders });
         }
 
         if (action === "simulate_confirm") {
+          // Kritische Sicherheitssperre: Simulator-Auto-Login darf NIEMALS auf dem Live-Cloudflare-Worker laufen!
+          if (!isLocalSandbox) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: "Simulator-Bestätigung ist im Produktiv-Worker aus Sicherheitsgründen deaktiviert."
+            }), { status: 403, headers: corsHeaders });
+          }
           const challengeId = String(body.challengeId || "").trim();
           let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
           if (!challengeObj) {
-            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => null);
+            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
             if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
           }
           if (!challengeObj) {
@@ -68206,7 +69409,7 @@
           };
           memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
           try {
-            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false });
+            await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
           } catch (e) {}
           return new Response(JSON.stringify({ ok: true, status: "confirmed" }), { status: 200, headers: corsHeaders });
         }
@@ -68216,10 +69419,19 @@
           if (!challengeId) {
             return new Response(JSON.stringify({ ok: false, error: "challengeId fehlt" }), { status: 400, headers: corsHeaders });
           }
-          let challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
+          // Auf Edge-Servern IMMER frisch aus D1 (stark konsistent!) bzw. KV lesen
+          let challengeObj = null;
+          if (!isLocalSandbox) {
+            if (hasD1 && typeof getEntityFromD1 === "function") {
+              challengeObj = await getEntityFromD1(env, `webauth_id_${challengeId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
+            }
+            if (!challengeObj) {
+              const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
+              if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            }
+          }
           if (!challengeObj) {
-            const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => null);
-            if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
+            challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
           }
           if (!challengeObj || Date.now() > Number(challengeObj.expiresAt || 0)) {
             return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
@@ -68237,6 +69449,18 @@
             }, env);
             memoryFallback.delete(`webauth_id_${challengeId}`);
             if (challengeObj.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
+            // Einmal-Verwendung: Challenge nach erfolgreichem Login sofort löschen (Replay-Schutz!)
+            if (hasD1 && typeof deleteEntityFromD1 === "function") {
+              await deleteEntityFromD1(env, `webauth_id_${challengeId}`).catch(() => {});
+              if (challengeObj.code) {
+                await deleteEntityFromD1(env, `webauth_code_${challengeObj.code}`).catch(() => {});
+              }
+            } else {
+              await kvStageDelete(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => {});
+              if (challengeObj.code) {
+                await kvStageDelete(env, `webauth_code_${challengeObj.code}`, "MOVIE_SAVED").catch(() => {});
+              }
+            }
             return new Response(JSON.stringify({
               ok: true,
               status: "confirmed",
@@ -68420,16 +69644,17 @@
           const isSimulatedToken = !effBotToken || effBotToken.startsWith("123456:");
           if (effBotToken && !isSimulatedToken) {
             try {
-              const chatRes = await fetch(`https://api.telegram.org/bot${effBotToken}/getChat`, {
+              const chatRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/getChat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ chat_id: channelId })
-              }).then(r => r.json()).catch(() => null);
+                body: JSON.stringify({ chat_id: channelId }),
+                _criticalSubrequest: true
+              }, 5000).then(r => r.json()).catch(() => null);
               if (chatRes && chatRes.ok && chatRes.result) {
                 chatTitle = chatRes.result.title || chatRes.result.username || channelId;
                 readable = true;
                 if (sampleMsgId && auth.chatId && /^\d+$/.test(String(auth.chatId))) {
-                  const copyRes = await fetch(`https://api.telegram.org/bot${effBotToken}/copyMessage`, {
+                  const copyRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/copyMessage`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
@@ -68437,15 +69662,16 @@
                       from_chat_id: channelId,
                       message_id: sampleMsgId,
                       disable_notification: true
-                    })
-                  }).then(r => r.json()).catch(() => null);
+                    }),
+                    _criticalSubrequest: true
+                  }, 5000).then(r => r.json()).catch(() => null);
                   if (copyRes && copyRes.ok && copyRes.result?.message_id) {
                     copyTestPassed = true;
-                    fetch(`https://api.telegram.org/bot${effBotToken}/deleteMessage`, {
+                    scheduleBackgroundWork(() => fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/deleteMessage`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ chat_id: auth.chatId, message_id: copyRes.result.message_id })
-                    }).catch(() => {});
+                    }, 4000));
                   }
                 }
                 diagnosticSummary = `✅ Kanal "${chatTitle}" (${channelId}) verifiziert${copyTestPassed ? ` • Test-Kopie Msg #${sampleMsgId} erfolgreich` : ""}.`;
@@ -68543,18 +69769,21 @@
             await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
           }
           const shouldComputeSeriesGapsNow = isFullRefresh || activeTab === "gaps";
-          const cachedSeriesGaps = memoryFallback.get("d1_series_gaps_cache") || {
-            totalSeriesChecked: 0,
-            seriesWithGapsCount: 0,
-            seriesWithInternalGapsCount: 0,
-            totalMissingInternal: 0,
-            totalMissingTrailing: 0,
-            totalPrereleaseOnly: 0,
-            items: [],
-            totalSeriesWithGaps: 0,
-            series: [],
-            lazyDeferred: !shouldComputeSeriesGapsNow
-          };
+          const cachedSeriesGapsRaw = memoryFallback.get("d1_series_gaps_cache");
+          const cachedSeriesGaps = (cachedSeriesGapsRaw && cachedSeriesGapsRaw.data)
+            ? cachedSeriesGapsRaw.data
+            : {
+                totalSeriesChecked: 0,
+                seriesWithGapsCount: 0,
+                seriesWithInternalGapsCount: 0,
+                totalMissingInternal: 0,
+                totalMissingTrailing: 0,
+                totalPrereleaseOnly: 0,
+                items: [],
+                totalSeriesWithGaps: 0,
+                series: [],
+                lazyDeferred: !shouldComputeSeriesGapsNow
+              };
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
             listAllUsersFromD1(env).catch(() => []),
             listAllMediaFromD1(env, mediaType).catch(() => []),
@@ -68586,9 +69815,12 @@
             getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo),
             typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
           ]);
-          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\/$/, "");
-          const officialWebhookUrl = `${effectiveWebAppUrl}/webhook`;
+          const cleanWorkerOrigin = resolveCleanWorkerOrigin(env, url.origin);
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || cleanWorkerOrigin).replace(/\/$/, "");
+          const officialWebhookUrl = `${cleanWorkerOrigin}/webhook`;
           const activeSecret = String(webhookSecurity?.secretToken || "");
+          const activeMaxConn = Number(webhookSecurity?.maxConnections || 8);
+          const manualWebhookLinks = buildManualWebhookLinks(cleanWorkerOrigin, officialWebhookUrl, activeSecret, activeMaxConn, true);
           return new Response(JSON.stringify({
             ok: true,
             users,
@@ -68608,17 +69840,22 @@
               speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
               webhookUrl: officialWebhookUrl,
+              manualSetWebhookWorkerUrl: manualWebhookLinks.manualSetWebhookWorkerUrl,
+              manualTelegramApiTemplateUrl: manualWebhookLinks.manualTelegramApiTemplateUrl,
+              activeWebhookSecret: activeSecret,
               hasWebhookPassword: Boolean(activeSecret),
               webhookPasswordLength: activeSecret.length,
               webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
-              webhookMaxConnections: Number(webhookSecurity?.maxConnections || 8),
+              webhookMaxConnections: activeMaxConn,
+              hasBotToken: Boolean(env.TELEGRAM_BOT_TOKEN),
               botUsername: botUsername || "DeinBot"
             }
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/bot-setup") {
-          const effectiveWebAppUrl = String(env.WEBAPP_URL || env.WEBHOOK_URL || url.origin || "https://teleport.sonhartmann-1997.workers.dev").replace(/\/$/, "");
-          const officialWebhookUrl = `${effectiveWebAppUrl}/webhook`;
+          const cleanWorkerOrigin = resolveCleanWorkerOrigin(env, url.origin);
+          const effectiveWebAppUrl = String(env.WEBAPP_URL || cleanWorkerOrigin).replace(/\/$/, "");
+          const officialWebhookUrl = `${cleanWorkerOrigin}/webhook`;
           if (request.method === "GET") {
             const [videoCoverMode, botUsername, speedProfileConfig, webhookSecurity] = await Promise.all([
               getVideoCoverMode(env).catch(() => "backdrop"),
@@ -68627,6 +69864,8 @@
               typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
             ]);
             const activeSecret = String(webhookSecurity?.secretToken || "");
+            const activeMaxConn = Number(webhookSecurity?.maxConnections || 8);
+            const manualWebhookLinks = buildManualWebhookLinks(cleanWorkerOrigin, officialWebhookUrl, activeSecret, activeMaxConn, true);
             return new Response(JSON.stringify({
               ok: true,
               videoCoverMode,
@@ -68634,10 +69873,14 @@
               speedProfileConfig,
               webAppUrl: effectiveWebAppUrl,
               webhookUrl: officialWebhookUrl,
+              manualSetWebhookWorkerUrl: manualWebhookLinks.manualSetWebhookWorkerUrl,
+              manualTelegramApiTemplateUrl: manualWebhookLinks.manualTelegramApiTemplateUrl,
+              activeWebhookSecret: activeSecret,
               hasWebhookPassword: Boolean(activeSecret),
               webhookPasswordLength: activeSecret.length,
               webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
-              webhookMaxConnections: Number(webhookSecurity?.maxConnections || 8),
+              webhookMaxConnections: activeMaxConn,
+              hasBotToken: Boolean(env.TELEGRAM_BOT_TOKEN),
               botUsername: botUsername || "DeinBot",
               _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
             }), { status: 200, headers: corsHeaders });
@@ -68665,29 +69908,48 @@
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "save_webhook_and_register") {
+              const existingCfg = typeof getWebhookSecurityConfig === "function"
+                ? await getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 }))
+                : { secretToken: "", maxConnections: 8 };
+              const clearPassword = Boolean(body.clearPassword);
               const rawPassword = String(body.webhookPassword ?? "").trim();
-              const sanitizedSecret = typeof sanitizeWebhookSecretToken === "function"
+              const sanitizedInputSecret = typeof sanitizeWebhookSecretToken === "function"
                 ? sanitizeWebhookSecretToken(rawPassword)
-                : rawPassword.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128);
-              const maxConnections = Math.min(40, Math.max(1, Number(body.maxConnections) || 8));
+                : rawPassword.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 128);
+              // Bestehendes Passwort behalten, wenn das Eingabefeld leer gelassen wurde (außer explizites clearPassword: true)
+              const effectiveSecret = clearPassword
+                ? ""
+                : (sanitizedInputSecret || String(existingCfg?.secretToken || ""));
+              const maxConnections = Math.min(40, Math.max(1, Number(body.maxConnections) || Number(existingCfg?.maxConnections) || 8));
               const dropPending = Boolean(body.dropPendingUpdates);
               const customWebhookUrl = String(body.webhookUrl || officialWebhookUrl).trim() || officialWebhookUrl;
+              if (!/^https:\/\/[^\s]+$/i.test(customWebhookUrl)) {
+                return new Response(JSON.stringify({
+                  ok: false,
+                  error: "Ungültige Webhook-URL: Muss mit https:// beginnen.",
+                  message: "Ungültige Webhook-URL: Telegram akzeptiert nur HTTPS-URLs (z. B. https://dein-worker.workers.dev/webhook)."
+                }), { status: 400, headers: corsHeaders });
+              }
               const savedCfg = typeof saveWebhookSecurityConfig === "function"
                 ? await saveWebhookSecurityConfig(env, {
-                    secretToken: sanitizedSecret,
+                    secretToken: effectiveSecret,
                     maxConnections,
                     dropPendingDefault: dropPending
                   })
-                : { secretToken: sanitizedSecret, maxConnections };
+                : { secretToken: effectiveSecret, maxConnections };
+              const manualLinks = buildManualWebhookLinks(cleanWorkerOrigin, customWebhookUrl, savedCfg.secretToken, savedCfg.maxConnections, dropPending);
               if (!env.TELEGRAM_BOT_TOKEN) {
                 return new Response(JSON.stringify({
                   ok: true,
                   simulated: true,
                   webhookUrl: customWebhookUrl,
+                  manualSetWebhookWorkerUrl: manualLinks.manualSetWebhookWorkerUrl,
+                  manualTelegramApiTemplateUrl: manualLinks.manualTelegramApiTemplateUrl,
+                  activeWebhookSecret: savedCfg.secretToken,
                   hasWebhookPassword: Boolean(savedCfg.secretToken),
                   webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
                   maxConnections: savedCfg.maxConnections,
-                  message: "Webhook-Passwort (secret_token) gespeichert & im Simulator registriert.",
+                  message: "Webhook-Konfiguration gespeichert (Hinweis: TELEGRAM_BOT_TOKEN ist in dieser Umgebung nicht gesetzt – bitte im echten Cloudflare Worker oder über den manuellen Telegram-API-Link unten registrieren).",
                   _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
                 }), { status: 200, headers: corsHeaders });
               }
@@ -68695,26 +69957,38 @@
                 url: customWebhookUrl,
                 max_connections: savedCfg.maxConnections,
                 drop_pending_updates: dropPending,
-                allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+                allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
               };
               if (savedCfg.secretToken) {
                 whPayload.secret_token = savedCfg.secretToken;
               }
-              const whRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+              const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(whPayload)
-              });
+              }, 6000);
               const whJson = await whRes.json().catch(() => ({}));
+              let liveWebhookInfo = null;
+              if (whJson?.ok) {
+                try {
+                  const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`, {}, 4500);
+                  const infoJson = await infoRes.json().catch(() => ({}));
+                  if (infoJson?.ok && infoJson?.result) liveWebhookInfo = infoJson.result;
+                } catch (_infoErr) {}
+              }
               return new Response(JSON.stringify({
                 ok: Boolean(whJson?.ok),
                 webhookUrl: customWebhookUrl,
+                manualSetWebhookWorkerUrl: manualLinks.manualSetWebhookWorkerUrl,
+                manualTelegramApiTemplateUrl: manualLinks.manualTelegramApiTemplateUrl,
+                activeWebhookSecret: savedCfg.secretToken,
                 hasWebhookPassword: Boolean(savedCfg.secretToken),
                 webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
                 maxConnections: savedCfg.maxConnections,
+                webhookInfo: liveWebhookInfo,
                 telegramResponse: whJson,
                 message: whJson?.ok
-                  ? `Webhook inkl. Passwort-Schutz (${savedCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${savedCfg.maxConnections}) erfolgreich bei Telegram registriert!`
+                  ? `Webhook inkl. Passwort-Schutz (${savedCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${savedCfg.maxConnections}) erfolgreich bei Telegram registriert & verifiziert!`
                   : (whJson?.description || "Telegram setWebhook fehlgeschlagen."),
                 _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
@@ -68739,7 +70013,7 @@
                   _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
                 }), { status: 200, headers: corsHeaders });
               }
-              const infoRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`);
+              const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`, {}, 5000);
               const infoJson = await infoRes.json().catch(() => ({}));
               return new Response(JSON.stringify({
                 ok: Boolean(infoJson?.ok),
@@ -68764,16 +70038,16 @@
                 url: officialWebhookUrl,
                 max_connections: webhookSecurity.maxConnections || 8,
                 drop_pending_updates: true,
-                allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+                allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
               };
               if (webhookSecurity.secretToken) {
                 whPayload.secret_token = webhookSecurity.secretToken;
               }
-              const dropRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+              const dropRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(whPayload)
-              });
+              }, 6000);
               const dropJson = await dropRes.json().catch(() => ({}));
               return new Response(JSON.stringify({
                 ok: Boolean(dropJson?.ok),
@@ -68911,6 +70185,11 @@
           return new Response(JSON.stringify({ ok: false, error: "Unbekannte Playlist-Aktion." }), { status: 400, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/catalog-preseed" && (request.method === "GET" || request.method === "POST")) {
+          const forcePreseedRefresh = url.searchParams.get("refresh") === "1";
+          const cachedPreseed = memoryFallback.get("d1_catalog_preseed_cache");
+          if (!forcePreseedRefresh && cachedPreseed && cachedPreseed.payload && (Date.now() - Number(cachedPreseed.ts || 0)) < 60000) {
+            return new Response(JSON.stringify(cachedPreseed.payload), { status: 200, headers: corsHeaders });
+          }
           const items = [];
           const existingFileIds = [];
           const existingFingerprints = [];
@@ -68921,12 +70200,13 @@
             if (rawDb) {
               trackStat("d1Reads");
               if (typeof countD1Subrequest === "function") countD1Subrequest();
+              // Free-Plan Schutz: Begrenzte LIMIT-Werte verhindern >50.000-Row-Scans und 10ms-CPU-Timeouts
               const [mRows, sRows, mfRows, efRows, entRows] = await rawDb.batch([
-                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM movies"),
-                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series"),
-                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 25000"),
-                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' LIMIT 25000"),
-                rawDb.prepare("SELECT cache_key, data_json FROM entity_cache WHERE entity_type = 'title_res' ORDER BY updated_at DESC LIMIT 2500")
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM movies ORDER BY updated_at DESC LIMIT 4000"),
+                rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series ORDER BY updated_at DESC LIMIT 4000"),
+                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' ORDER BY updated_at DESC LIMIT 6000"),
+                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' ORDER BY updated_at DESC LIMIT 6000"),
+                rawDb.prepare("SELECT cache_key, data_json FROM entity_cache WHERE entity_type = 'title_res' ORDER BY updated_at DESC LIMIT 1000")
               ]);
               for (const r of (mRows?.results || [])) {
                 if (r?.tmdb_id && r?.title) {
@@ -68982,14 +70262,16 @@
               }
             }
           } catch (e) {}
-          return new Response(JSON.stringify({
+          const preseedPayload = {
             ok: true,
             count: items.length,
             items,
             existingFileIds,
             existingFingerprints,
             entityMappings
-          }), { status: 200, headers: corsHeaders });
+          };
+          memoryFallback.set("d1_catalog_preseed_cache", { payload: preseedPayload, ts: Date.now() });
+          return new Response(JSON.stringify(preseedPayload), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
@@ -69544,7 +70826,10 @@
             const pendingBatch = await fetchPendingImportBatchFromD1(env, 12);
             if (pendingBatch.length === 0) break;
             const firstEntryMeta = pendingBatch[0]?.entry?._playlistMeta || null;
-            const meta = memoryFallback.get("import_queue_meta") || {
+            const savedMeta = typeof getImportQueueMetaFromD1 === "function"
+              ? await getImportQueueMetaFromD1(env)
+              : memoryFallback.get("import_queue_meta");
+            const meta = savedMeta || {
               sourceLabel: pendingBatch[0]?.sourceLabel || "Backup",
               initialTotal: pendingBatch.length,
               processedCount: 0,
@@ -69566,7 +70851,11 @@
             meta.moviesSaved = Number(meta.moviesSaved || 0) + moviesAdded.length;
             meta.seriesSaved = Number(meta.seriesSaved || 0) + seriesAdded.length;
             meta.failedCount = Number(meta.failedCount || 0) + failedItems.length;
-            memoryFallback.set("import_queue_meta", meta);
+            if (typeof saveImportQueueMetaInD1 === "function") {
+              await saveImportQueueMetaInD1(env, meta);
+            } else {
+              memoryFallback.set("import_queue_meta", meta);
+            }
           }
           const queueStats = await getImportQueueStatsFromD1(env);
           return new Response(JSON.stringify({ ok: true, queueStats }), { status: 200, headers: corsHeaders });
@@ -69676,7 +70965,7 @@
             posters.push(pObj);
           };
 
-          if (tmdbId > 0 && tmdbId < 8000000 && env.TMDB_BEARER_TOKEN) {
+          if (isRealTmdbId(tmdbId) && hasTmdbCredentials(env)) {
             const ep = typeCode === "s" ? "tv" : "movie";
             const imgData = await cachedExternalFetchJson(
               `https://api.themoviedb.org/3/${ep}/${tmdbId}/images?include_image_language=de,en,null`,
@@ -69760,8 +71049,18 @@
           if (db) {
             try {
               const table = typeCode === "s" ? "series" : "movies";
-              await db.prepare(`UPDATE ${table} SET poster_path = ?1, external_poster_url = ?2, updated_at = ?3 WHERE tmdb_id = ?4`)
-                .bind(posterPath, externalPosterUrl || null, Date.now(), tmdbId)
+              // movies/series haben keine eigene Spalte external_poster_url -> wird in details_json per json_set gespeichert!
+              await db.prepare(
+                `UPDATE ${table}
+                 SET poster_path = ?1,
+                     details_json = CASE
+                       WHEN json_valid(details_json) THEN json_set(details_json, '$.poster_path', ?1, '$.external_poster_url', ?2)
+                       ELSE details_json
+                     END,
+                     updated_at = ?3
+                 WHERE tmdb_id = ?4`
+              )
+                .bind(posterPath, externalPosterUrl || "", Date.now(), tmdbId)
                 .run();
             } catch (e) {}
           }
@@ -69780,6 +71079,8 @@
             memObj.external_poster_url = externalPosterUrl;
             memoryFallback.set(memKey, memObj);
           }
+          memoryFallback.delete(`d1_vip_discover_rows_${typeCode}`);
+          memoryFallback.delete(`d1_admin_media_list_cache_${typeCode}`);
 
           await backfillMediaPosterInLists(env, typeCode, tmdbId, posterPath, externalPosterUrl, auth.chatId || null);
           return new Response(JSON.stringify({
@@ -70326,7 +71627,6 @@
         let items = mode === "random" && visibleItems.length > 0
           ? [visibleItems[Math.floor(Math.random() * visibleItems.length)]]
           : visibleItems;
-        items = await attachVipQualitiesToMediaList(env, items, typeCode, hasVipStreamAccess);
 
         // Seite 1: Gecachte ClearLogos & Beschreibungen gebündelt aus RAM + D1-Batch anreichern; max. 3 fehlende Overviews per TMDb
         if (page === 1 && Array.isArray(items) && items.length > 0) {
@@ -70433,10 +71733,28 @@
         if (!textToTranslate) {
           return new Response(JSON.stringify({ ok: false, error: "Kein Text übergeben." }), { status: 400, headers: corsHeaders });
         }
-        const clippedText = textToTranslate.slice(0, 2200);
-        const cacheKey = `tr_${targetLang}_${clippedText.slice(0, 120)}_${clippedText.length}`;
+        if (!/^[a-z]{2}(?:-[A-Za-z]{2})?$/.test(targetLang)) {
+          targetLang = "de";
+        }
+        const clippedText = textToTranslate.slice(0, 1800);
+        const trHash = computeLightweightEtag(`${targetLang}|${clippedText}`).replace(/[^a-zA-Z0-9_-]/g, "");
+        const cacheKey = `tr_${targetLang}_${trHash}`;
         if (typeof memoryFallback !== "undefined" && memoryFallback && memoryFallback.has(cacheKey)) {
           return new Response(JSON.stringify({ ok: true, translatedText: memoryFallback.get(cacheKey), cached: true }), { status: 200, headers: corsHeaders });
+        }
+        const edgeCacheTr = (typeof caches !== "undefined" && caches?.default) ? caches.default : null;
+        const trCacheReq = edgeCacheTr ? new Request(`https://teleport-edge-cache.internal/translate/${encodeURIComponent(targetLang)}/${trHash}`, { method: "GET" }) : null;
+        if (edgeCacheTr && trCacheReq) {
+          try {
+            const hitTr = await edgeCacheTr.match(trCacheReq);
+            if (hitTr) {
+              const hitJson = await hitTr.json().catch(() => null);
+              if (hitJson?.translatedText) {
+                if (typeof memoryFallback !== "undefined" && memoryFallback) memoryFallback.set(cacheKey, hitJson.translatedText);
+                return new Response(JSON.stringify({ ok: true, translatedText: hitJson.translatedText, cached: true }), { status: 200, headers: corsHeaders });
+              }
+            }
+          } catch (_e) {}
         }
         let translatedText = "";
         try {
@@ -70450,19 +71768,12 @@
         if (!translatedText) {
           try {
             const gUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(clippedText)}`;
-            const gRes = typeof fetchWithTimeout === "function"
-              ? await fetchWithTimeout(gUrl, {
-                  headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    "Accept": "application/json, text/plain, */*"
-                  }
-                }, 3800)
-              : await fetch(gUrl, {
-                  headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    "Accept": "application/json, text/plain, */*"
-                  }
-                });
+            const gRes = await fetchWithTimeout(gUrl, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*"
+              }
+            }, 3800);
             if (gRes.ok) {
               const gData = await gRes.json();
               if (Array.isArray(gData) && Array.isArray(gData[0])) {
@@ -70474,9 +71785,7 @@
         if (!translatedText) {
           try {
             const mUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clippedText.slice(0, 490))}&langpair=en|${encodeURIComponent(targetLang)}`;
-            const mRes = typeof fetchWithTimeout === "function"
-              ? await fetchWithTimeout(mUrl, {}, 3800)
-              : await fetch(mUrl);
+            const mRes = await fetchWithTimeout(mUrl, {}, 3800);
             if (mRes.ok) {
               const mData = await mRes.json();
               if (mData?.responseData?.translatedText) {
@@ -70489,7 +71798,14 @@
           if (typeof memoryFallback !== "undefined" && memoryFallback) {
             memoryFallback.set(cacheKey, translatedText);
           }
-          return new Response(JSON.stringify({ ok: true, translatedText }), { status: 200, headers: corsHeaders });
+          const trRes = new Response(JSON.stringify({ ok: true, translatedText }), {
+            status: 200,
+            headers: { ...corsHeaders, "Cache-Control": "public, max-age=604800" }
+          });
+          if (edgeCacheTr && trCacheReq && typeof scheduleBackgroundWork === "function") {
+            scheduleBackgroundWork(() => edgeCacheTr.put(trCacheReq, trRes.clone()));
+          }
+          return trRes;
         }
         return new Response(JSON.stringify({ ok: false, error: "Übersetzungsdienst vorübergehend nicht erreichbar." }), { status: 502, headers: corsHeaders });
       }
@@ -70562,7 +71878,6 @@
           const rawCredits = pData?.credits || [];
           let { visibleItems } = await filterAndSortMediaList(env, rawCredits, effectiveSettings, sortBy, true);
           visibleItems = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, "m", effectiveSettings, hasVipStreamAccess);
-          visibleItems = await attachVipQualitiesToMediaList(env, visibleItems, "m", hasVipStreamAccess);
           return new Response(JSON.stringify({
             ok: true,
             query: pData?.name || q,
@@ -70614,7 +71929,7 @@
         const matchedUniverses = CINEMATIC_UNIVERSES.filter(u =>
           u.name.toLowerCase().includes(qEntityLow) ||
           u.id.toLowerCase().includes(qEntityLow) ||
-          (u.desc && u.desc.toLowerCase().includes(qEntityLow))
+          (String(u.description || u.desc || "").toLowerCase().includes(qEntityLow))
         ).slice(0, 5);
 
         // 2. Passende Filmreihen, Personen & Filmstudios (Edge- & RAM-gecacht via cachedExternalFetchJson) parallel abrufen
@@ -70729,7 +72044,6 @@
         }
 
         visibleItems = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, "m", effectiveSettings, hasVipStreamAccess);
-        visibleItems = await attachVipQualitiesToMediaList(env, visibleItems, "m", hasVipStreamAccess);
 
         // Für den Such-Hero-Slider (Seite 1) bereits gecachte ClearLogos direkt aus RAM/D1-Batch mitliefern
         if (page === 1 && Array.isArray(visibleItems) && visibleItems.length >= 2 && typeof getClearLogosBatchFromD1 === "function") {
@@ -71097,7 +72411,7 @@
           fetchSeasonDetails(env, seriesId, seasonNum),
           auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([]),
           hasVipStreamAccess ? getEpisodeFilesFromD1(env, seriesId, seasonNum, null) : Promise.resolve([]),
-          getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum)
+          getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum, hasVipStreamAccess)
         ]);
         const seasonCounts = d1SeasonMeta?.seasonCounts || {};
         const epTitleMap = d1SeasonMeta?.episodeTitleMap || new Map();
@@ -71126,9 +72440,16 @@
           ? rawSeasonEpisodeCount
           : Math.max(rawSeasonEpisodeCount, highestUploadedEp);
 
-        // Bereinige bestehende Karteileichen in D1 (Episoden > seasonEpisodeCount, schneidet niemals echte Dateien ab!)
+        // Free-Plan Schutz: Karteileichen-Bereinigung nur asynchron im Hintergrund (ctx.waitUntil) und max. 1x pro Isolate & Staffel!
         if (seasonEpisodeCount > 0) {
-          await pruneGhostEpisodesInD1(env, seriesId, seasonNum, seasonEpisodeCount);
+          const pruneKey = `pruned_ghost_ep_${seriesId}_${seasonNum}`;
+          if (!memoryFallback.get(pruneKey)) {
+            memoryFallback.set(pruneKey, Date.now());
+            const pruneTask = () => pruneGhostEpisodesInD1(env, seriesId, seasonNum, seasonEpisodeCount).catch(() => {});
+            if (typeof scheduleBackgroundWork === "function") {
+              scheduleBackgroundWork(pruneTask);
+            }
+          }
         }
 
         // Kombiniere Episoden der aktiven Fassung mit verknüpften Dateien unter strikter Beachtung von seasonEpisodeCount
@@ -71237,7 +72558,7 @@
 
       if (path === "/api/tma/stream" && request.method === "POST") {
         const reqStartMs = Date.now();
-        const body = await request.json();
+        const body = await request.json().catch(() => ({}));
         const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED")) || "").trim();
         const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")) || "").trim();
         const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
@@ -71567,8 +72888,11 @@
       }
 
       if (path === "/api/tma/custom-bot/verify" && request.method === "POST") {
+        if (!auth.isAuthenticated || (!auth.user?.isAdmin && !hasVipStreamAccess)) {
+          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur für angemeldete VIP-Nutzer oder Administratoren." }), { status: 403, headers: corsHeaders });
+        }
         const reqStartMs = Date.now();
-        const body = await request.json();
+        const body = await request.json().catch(() => ({}));
         const botToken = String(body.botToken || "").trim();
         if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
           return new Response(JSON.stringify({ ok: false, error: "Ungültiges Telegram Bot-Token Format." }), { status: 400, headers: corsHeaders });
@@ -71590,21 +72914,36 @@
         }
         const botUsername = meJson.result.username || "";
         const firstName = meJson.result.first_name || "CustomBot";
-        const baseWebhookOrigin = String(env.WEBHOOK_URL || url.origin).replace(/\/$/, "");
+        const baseWebhookOrigin = resolveCleanWorkerOrigin(env, url.origin);
         const webhookUrl = `${baseWebhookOrigin}/api/telegram/custom-webhook?botToken=${encodeURIComponent(botToken)}`;
+        const customSecretToken = typeof computeCustomBotWebhookSecret === "function"
+          ? await computeCustomBotWebhookSecret(env, botToken)
+          : "";
         let webhookRegistered = false;
         if (body.registerWebhook) {
           try {
+            const setWebhookPayload = {
+              url: webhookUrl,
+              allowed_updates: ["message", "callback_query", "inline_query"]
+            };
+            if (customSecretToken) {
+              setWebhookPayload.secret_token = customSecretToken;
+            }
             const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${botToken}/setWebhook`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                url: webhookUrl,
-                allowed_updates: ["message", "callback_query", "inline_query"]
-              })
+              body: JSON.stringify(setWebhookPayload)
             }, 4500);
             const whJson = whRes.ok ? await whRes.json() : null;
             webhookRegistered = Boolean(whJson && whJson.ok);
+            if (webhookRegistered && customSecretToken && typeof saveEntityToD1 === "function") {
+              await saveEntityToD1(env, `custom_bot_reg_${customSecretToken.slice(0, 24)}`, "custom_bot_reg", {
+                ownerChatId: String(auth.chatId || ""),
+                botId: Number(meJson.result.id || 0),
+                botUsername,
+                registeredAt: Date.now()
+              }).catch(() => {});
+            }
           } catch (e) {}
         }
         await recordAndPruneWorkerActivityLog(env, {
@@ -71614,7 +72953,7 @@
           method: webhookRegistered ? "getMe + setWebhook" : "getMe",
           title: `@${botUsername || firstName}`,
           durationMs: Date.now() - reqStartMs,
-          summary: `Custom Bot @${botUsername || firstName} verifiziert${webhookRegistered ? " & Webhook verbunden" : ""}`
+          summary: `Custom Bot @${botUsername || firstName} verifiziert${webhookRegistered ? " & Webhook mit Secret-Token verbunden" : ""}`
         });
         return new Response(JSON.stringify({
           ok: true,
@@ -71622,11 +72961,15 @@
           botUsername,
           firstName,
           webhookUrl,
-          webhookRegistered
+          webhookRegistered,
+          hasSecretToken: Boolean(customSecretToken)
         }), { status: 200, headers: corsHeaders });
       }
 
       if (path === "/api/tma/activity-log") {
+        if (!auth.isAuthenticated || (!auth.user?.isAdmin && !hasVipStreamAccess)) {
+          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Anmeldung erforderlich." }), { status: 403, headers: corsHeaders });
+        }
         if (request.method === "GET") {
           const result = await recordAndPruneWorkerActivityLog(env, null, null);
           return new Response(JSON.stringify({
@@ -71638,15 +72981,24 @@
           }), { status: 200, headers: corsHeaders });
         }
         if (request.method === "POST") {
-          const body = await request.json();
+          if (!auth.user?.isAdmin) {
+            return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur Administratoren dürfen das Activity-Log ändern." }), { status: 403, headers: corsHeaders });
+          }
+          const body = await request.json().catch(() => ({}));
           if (body.action === "clear_log") {
             const retentionDays = await getWorkerRetentionDays(env, settings?.deliveryConfig?.retentionDays);
             memoryFallback.set("TG_ACTIVITY_LOG_JSON", []);
-            await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", [], {
-              bindingName: "MOVIE_SAVED",
-              expirationTtl: retentionDays * 86400,
-              flushNow: true
-            });
+            memoryFallback.set("TG_ACTIVITY_LOG_JSON_ts", Date.now());
+            const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+            if (hasD1 && typeof saveEntityToD1 === "function") {
+              await saveEntityToD1(env, "TG_ACTIVITY_LOG_JSON", "activity_log", []);
+            } else {
+              await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", [], {
+                bindingName: "MOVIE_SAVED",
+                expirationTtl: retentionDays * 86400,
+                flushNow: true
+              });
+            }
             return new Response(JSON.stringify({ ok: true, entries: [], retentionDays }), { status: 200, headers: corsHeaders });
           }
           if (body.action === "set_retention") {
@@ -71665,6 +73017,9 @@
       }
 
       if (path === "/api/tma/anti-spam-queue") {
+        if (!auth.isAuthenticated || (!auth.user?.isAdmin && !hasVipStreamAccess)) {
+          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Anmeldung erforderlich." }), { status: 403, headers: corsHeaders });
+        }
         if (!antiSpamState.hydratedFromStorage) {
           await hydrateAntiSpamStateFromStorage(env);
         }
@@ -71688,6 +73043,9 @@
           }), { status: 200, headers: corsHeaders });
         }
         if (request.method === "POST") {
+          if (!auth.user?.isAdmin) {
+            return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur Administratoren dürfen die Anti-Spam-Warteschlange steuern." }), { status: 403, headers: corsHeaders });
+          }
           const body = await request.json().catch(() => ({}));
           const action = String(body.action || "drain").trim();
           if (action === "drain") {
@@ -71782,30 +73140,37 @@
       }
 
       if (path === "/api/tma/episode-story" && request.method === "POST") {
-        const body = await request.json();
-        const { seriesId, season, episode } = body;
+        const body = await request.json().catch(() => ({}));
+        const seriesIdNum = parseInt(String(body.seriesId || "0"), 10);
+        const seasonNum = parseInt(String(body.season ?? "1"), 10);
+        const episodeNum = parseInt(String(body.episode || "0"), 10);
+        if (!Number.isFinite(seriesIdNum) || seriesIdNum <= 0 || !Number.isFinite(seasonNum) || seasonNum < 0 || !Number.isFinite(episodeNum) || episodeNum <= 0) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültige Serien-, Staffel- oder Episodennummer." }), { status: 400, headers: corsHeaders });
+        }
         const [sDetails, seasonData] = await Promise.all([
-          fetchSeriesDetails(env, seriesId),
-          fetchSeasonDetails(env, seriesId, season)
+          fetchSeriesDetails(env, seriesIdNum),
+          fetchSeasonDetails(env, seriesIdNum, seasonNum)
         ]);
-        const epObj = (seasonData?.episodes || []).find(e => Number(e.episode_number) === Number(episode)) || {
-          episode_number: episode,
-          season_number: season,
-          name: `Folge ${episode}`
+        const epObj = (seasonData?.episodes || []).find(e => Number(e.episode_number) === episodeNum) || {
+          episode_number: episodeNum,
+          season_number: seasonNum,
+          name: `Folge ${episodeNum}`
         };
-        const telegraphUrl = await ensureEpisodeTelegraphUrl(env, seriesId, sDetails, season, epObj);
+        const telegraphUrl = sDetails?.id
+          ? await ensureEpisodeTelegraphUrl(env, seriesIdNum, sDetails, seasonNum, epObj)
+          : "";
         return new Response(JSON.stringify({
           ok: true,
           telegraphUrl,
           episode: {
-            episode_number: Number(epObj.episode_number || episode),
-            season_number: Number(epObj.season_number || season),
-            name: epObj.name || `Folge ${episode}`,
+            episode_number: Number(epObj.episode_number || episodeNum),
+            season_number: Number(epObj.season_number || seasonNum),
+            name: epObj.name || `Folge ${episodeNum}`,
             overview: epObj.overview || "",
             air_date: epObj.air_date || "",
             still_path: epObj.still_path || "",
             vote_average: Number(epObj.vote_average || 0),
-            runtime: Number(epObj.runtime || 0)
+            runtime: parseInt(String(epObj.runtime || ""), 10) || 0
           }
         }), { status: 200, headers: corsHeaders });
       }
@@ -71827,7 +73192,7 @@
           return new Response(JSON.stringify({ ok: true, items, folders }), { status: 200, headers: corsHeaders });
         }
         if (request.method === "POST") {
-          const body = await request.json();
+          const body = await request.json().catch(() => ({}));
           const targetChatId = auth.chatId;
           if (body.action === "create_folder") {
             const folder = await createCustomFolder(env, targetChatId, body.name || "Neue Playlist", {
@@ -71948,11 +73313,11 @@
           }), { status: 200, headers: corsHeaders });
         }
         if (request.method === "POST") {
-          const body = await request.json();
+          const body = await request.json().catch(() => ({}));
           const targetChatId = auth.isAuthenticated ? auth.chatId : "guest";
           const serverCur = auth.isAuthenticated
             ? await getUserSettings(env, targetChatId)
-            : (memoryFallback.get("settings_guest") || { ...settings });
+            : (isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || { ...settings }) : { ...settings });
           const cur = (body.clientSettings && typeof body.clientSettings === "object")
             ? { ...serverCur, ...body.clientSettings }
             : serverCur;
@@ -71965,6 +73330,9 @@
               menu: Number(body.uiScale.menu || 100)
             };
           } else if (body.action === "save_delivery_config" && body.deliveryConfig && typeof body.deliveryConfig === "object") {
+            if (!auth.isAuthenticated) {
+              return new Response(JSON.stringify({ ok: false, error: "Bitte zuerst einloggen, um Versand-Einstellungen zu speichern." }), { status: 403, headers: corsHeaders });
+            }
             const dc = body.deliveryConfig;
             const retentionDays = normalizeWorkerRetentionDays(dc.retentionDays);
             cur.deliveryConfig = {
@@ -71976,7 +73344,9 @@
               customBotUsername: String(dc.customBotUsername || "").trim(),
               retentionDays
             };
-            await recordAndPruneWorkerActivityLog(env, null, retentionDays);
+            if (auth.user?.isAdmin) {
+              await recordAndPruneWorkerActivityLog(env, null, retentionDays);
+            }
           } else if (body.action === "save_trailer_provider" && body.trailerProvider) {
             cur.trailerProvider = String(body.trailerProvider);
           } else if (body.action === "reset_all_filters") {
@@ -72063,7 +73433,7 @@
           if (auth.isAuthenticated) {
             await saveUserSettings(env, targetChatId, cur);
             await flushUserSession(env, targetChatId);
-          } else {
+          } else if (isLocalSandboxRuntime) {
             memoryFallback.set("settings_guest", cur);
           }
 
@@ -72074,8 +73444,7 @@
             const sortBy = body.sort || "pop_desc";
             const searchData = await searchTMDBPage(env, String(body.searchQuery), cur, 1, sortBy, false);
             let rawSearchItems = searchData?.results || [];
-            rawSearchItems = await applyVipStreamsOnlyFilterIfActive(env, rawSearchItems, "m", cur, hasVipStreamAccess);
-            const searchItemsWithVip = await attachVipQualitiesToMediaList(env, rawSearchItems, "m", hasVipStreamAccess);
+            const searchItemsWithVip = await applyVipStreamsOnlyFilterIfActive(env, rawSearchItems, "m", cur, hasVipStreamAccess);
             const rawCount = searchData?.rawUnfilteredCount || 0;
             const rawTotalPages = Math.max(1, Number(searchData?.total_pages || 1));
             const hasMoreSearch = searchItemsWithVip.length > 0 && rawTotalPages > 1;
@@ -72105,8 +73474,7 @@
               false
             );
             let visibleItems = lookahead.items || [];
-            visibleItems = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, typeCode, cur, hasVipStreamAccess);
-            const itemsWithVip = await attachVipQualitiesToMediaList(env, visibleItems, typeCode, hasVipStreamAccess);
+            const itemsWithVip = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, typeCode, cur, hasVipStreamAccess);
             const rawTotalPages = mode === "random" ? 1 : Math.max(1, Number(lookahead.total_pages || 1));
             const hasMoreDiscover = mode !== "random" && Boolean(lookahead.hasMore) && itemsWithVip.length > 0 && rawTotalPages > 1;
             const totalPagesDiscover = hasMoreDiscover ? rawTotalPages : 1;
@@ -72136,7 +73504,7 @@
         if (!auth.isAuthenticated) {
           return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 403, headers: corsHeaders });
         }
-        const body = await request.json();
+        const body = await request.json().catch(() => ({}));
         const targetChatId = auth.chatId;
         const cur = await getUserSettings(env, targetChatId);
         const headers = {
@@ -72169,12 +73537,15 @@
           if (!data || !data.session_id) {
             return new Response(JSON.stringify({ ok: false, error: "TMDB-Token wurde noch nicht im Browser freigegeben." }), { status: 200, headers: corsHeaders });
           }
-          const accRes = await fetchWithTimeout(`https://api.themoviedb.org/3/account?session_id=${encodeURIComponent(data.session_id)}`, { headers }, 4500);
-          const acc = accRes.ok ? await accRes.json() : {};
+          const accRes = await fetchWithTimeout(`https://api.themoviedb.org/3/account?session_id=${encodeURIComponent(data.session_id)}`, { headers, _skipEdgeCache: true }, 4500);
+          const acc = accRes.ok ? await accRes.json() : null;
+          if (!acc || !Number(acc.id)) {
+            return new Response(JSON.stringify({ ok: false, error: "TMDB-Konto-Details konnten nicht geladen werden. Bitte erneut versuchen." }), { status: 200, headers: corsHeaders });
+          }
           cur.tmdbSync = {
             enabled: true,
             sessionId: data.session_id,
-            accountId: acc.id || 0,
+            accountId: Number(acc.id),
             username: acc.username || acc.name || "TMDB-User",
             lastSyncAt: Date.now()
           };
@@ -72263,6 +73634,7 @@
       resetSubrequestBudget();
       try {
         const url = new URL(request.url);
+        globalThis._activeWorkerOrigin = url.origin;
 
         // Statische Assets & Worker Studio UI (/studio, /assets/*, /favicon.svg, /worker.js) über Cloudflare Workers Assets Binding
         if (request.method === "GET" && env && env.ASSETS && typeof env.ASSETS.fetch === "function") {
@@ -72314,6 +73686,32 @@
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
+            const incomingCustomSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+            const expectedCustomSecret = typeof computeCustomBotWebhookSecret === "function"
+              ? await computeCustomBotWebhookSecret(env, customToken)
+              : "";
+            const secretOk = Boolean(
+              incomingCustomSecret &&
+              expectedCustomSecret &&
+              (typeof timingSafeEqualStr === "function"
+                ? timingSafeEqualStr(incomingCustomSecret, expectedCustomSecret)
+                : incomingCustomSecret === expectedCustomSecret)
+            );
+            if (!secretOk) {
+              return new Response(JSON.stringify({ ok: false, error: "Ungültiger oder fehlender X-Telegram-Bot-Api-Secret-Token für Custom-Bot-Webhook. Bitte Custom-Bot in den Einstellungen neu verbinden." }), {
+                status: 403,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
+            if (typeof getEntityFromD1 === "function") {
+              const regRec = await getEntityFromD1(env, `custom_bot_reg_${expectedCustomSecret.slice(0, 24)}`, 3650 * 86400000).catch(() => null);
+              if (!regRec || !regRec.ownerChatId) {
+                return new Response(JSON.stringify({ ok: false, error: "Dieser Custom-Bot-Webhook ist nicht registriert." }), {
+                  status: 403,
+                  headers: { "Content-Type": "application/json; charset=utf-8" }
+                });
+              }
+            }
             const update = await request.json().catch(() => null);
             if (!update || typeof update !== "object") {
               return new Response(JSON.stringify({ ok: false, error: "Ungültiges oder leeres JSON im Request-Body." }), {
@@ -72321,7 +73719,7 @@
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
-            const scopedEnv = { ...env, TELEGRAM_BOT_TOKEN: customToken };
+            const scopedEnv = { ...env, TELEGRAM_BOT_TOKEN: customToken, _isCustomBotWebhook: true };
             const runCustomHook = async () => {
               try {
                 await handleUpdate(scopedEnv, update);
@@ -72338,6 +73736,8 @@
         if (
           url.pathname === "/app" ||
           url.pathname === "/miniapp" ||
+          url.pathname === "/favicon.ico" ||
+          url.pathname === "/favicon.svg" ||
           url.pathname === "/botfather-splash.svg" ||
           url.pathname === "/manifest.json" ||
           url.pathname === "/manifest.webmanifest" ||
@@ -72352,42 +73752,74 @@
         }
 
         if (request.method === "GET") {
-          const configuredWebhookBase = String(env.WEBHOOK_URL || url.origin).replace(/\/$/, "");
+          const configuredWebhookBase = resolveCleanWorkerOrigin(env, url.origin);
           const officialWebhookEndpoint = `${configuredWebhookBase}/webhook`;
-          if ((url.pathname === "/setwebhook" || url.searchParams.get("setwebhook") === "1") && env.TELEGRAM_BOT_TOKEN) {
+          if (url.pathname === "/setwebhook" || url.searchParams.get("setwebhook") === "1") {
+            if (!env.TELEGRAM_BOT_TOKEN) {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: "TELEGRAM_BOT_TOKEN ist in diesem Worker nicht als Secret hinterlegt.",
+                webhookUrl: officialWebhookEndpoint
+              }, null, 2), {
+                status: 400,
+                headers: { "Content-Type": "application/json; charset=utf-8" }
+              });
+            }
             const webhookSecurity = typeof getWebhookSecurityConfig === "function"
               ? await getWebhookSecurityConfig(env)
               : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || ""), maxConnections: 8 };
             const activeSetWhSecret = String(webhookSecurity?.secretToken || "").trim();
             const incomingWhHeader = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
             const incomingWhQuery = String(url.searchParams.get("secret") || "").trim();
-            const hasValidWhSecret = Boolean(activeSetWhSecret && (incomingWhHeader === activeSetWhSecret || incomingWhQuery === activeSetWhSecret));
+            const eqSecret = typeof timingSafeEqualStr === "function" ? timingSafeEqualStr : ((a, b) => a === b);
+            const hasValidWhSecret = Boolean(activeSetWhSecret && (eqSecret(incomingWhHeader, activeSetWhSecret) || eqSecret(incomingWhQuery, activeSetWhSecret)));
             const whAdminAuth = hasValidWhSecret ? null : await resolveTmaAuthContext(request, env).catch(() => null);
             if (!hasValidWhSecret && !(whAdminAuth?.isAuthenticated && whAdminAuth?.user?.isAdmin)) {
-              return new Response(JSON.stringify({ ok: false, error: "Unauthorized: Admin-Authentifizierung oder gültiges Webhook-Secret erforderlich." }), {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: "Unauthorized: Admin-Authentifizierung oder gültiges Webhook-Secret (?secret=...) erforderlich."
+              }, null, 2), {
                 status: 403,
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
+            const dropPendingParam = url.searchParams.get("drop_pending_updates");
+            const dropPendingFlag = dropPendingParam === "1" || dropPendingParam === "true";
+            const maxConnParam = parseInt(url.searchParams.get("max_connections") || "", 10);
+            const effectiveMaxConn = (Number.isFinite(maxConnParam) && maxConnParam >= 1 && maxConnParam <= 40)
+              ? maxConnParam
+              : (webhookSecurity.maxConnections || 8);
             const whPayload = {
               url: officialWebhookEndpoint,
-              max_connections: webhookSecurity.maxConnections || 8,
-              allowed_updates: ["message", "edited_message", "channel_post", "edited_channel_post", "callback_query", "inline_query"]
+              max_connections: effectiveMaxConn,
+              drop_pending_updates: dropPendingFlag,
+              allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
             };
-            if (webhookSecurity.secretToken) {
-              whPayload.secret_token = String(webhookSecurity.secretToken);
+            if (activeSetWhSecret) {
+              whPayload.secret_token = activeSetWhSecret;
             }
-            const whRes = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+            const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(whPayload)
-            });
+            }, 6000);
             const whJson = await whRes.json().catch(() => ({}));
+            let liveInfo = null;
+            if (whJson?.ok) {
+              try {
+                const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`, {}, 4500);
+                const infoJson = await infoRes.json().catch(() => ({}));
+                if (infoJson?.ok && infoJson?.result) liveInfo = infoJson.result;
+              } catch (_e) {}
+            }
             return new Response(JSON.stringify({
               ok: Boolean(whJson?.ok),
               webhookUrl: officialWebhookEndpoint,
-              hasWebhookPassword: Boolean(webhookSecurity.secretToken),
-              telegramResponse: whJson
+              hasWebhookPassword: Boolean(activeSetWhSecret),
+              maxConnections: effectiveMaxConn,
+              dropPendingUpdates: dropPendingFlag,
+              telegramResponse: whJson,
+              webhookInfo: liveInfo
             }, null, 2), {
               status: 200,
               headers: { "Content-Type": "application/json; charset=utf-8" }
@@ -72426,7 +73858,8 @@
           if (activeSecret) {
             const incomingHeaderSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
             const incomingQuerySecret = String(url.searchParams.get("secret") || "").trim();
-            if (incomingHeaderSecret !== activeSecret && incomingQuerySecret !== activeSecret) {
+            const eqSecret = typeof timingSafeEqualStr === "function" ? timingSafeEqualStr : ((a, b) => a === b);
+            if (!eqSecret(incomingHeaderSecret, activeSecret) && !eqSecret(incomingQuerySecret, activeSecret)) {
               return new Response("Unauthorized: Invalid Telegram Webhook Secret Password", { status: 401 });
             }
           }
@@ -72456,6 +73889,14 @@
         return new Response("Method not allowed", { status: 405 });
       } catch (err) {
         console.error("[Worker Root Error]:", err);
+        let reqPath = "";
+        try { reqPath = new URL(request.url).pathname; } catch (_e) {}
+        if (reqPath.startsWith("/api/")) {
+          return new Response(JSON.stringify({ ok: false, error: "Interner Serverfehler im Worker." }), {
+            status: 500,
+            headers: { "Content-Type": "application/json; charset=utf-8" }
+          });
+        }
         return new Response("OK", { status: 200 });
       } finally {
         if (ctx && typeof ctx.waitUntil === "function") {

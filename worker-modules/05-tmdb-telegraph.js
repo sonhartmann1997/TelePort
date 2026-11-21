@@ -431,6 +431,7 @@
   // @ANCHOR: TMDB_FETCH
   // --- TMDB API & Multi-API Fallback (TMDb -> OMDb -> Wikidata -> MediaWiki DE/EN) mit 24h Cloudflare Edge-Cache ---
   async function fetchSimilarMedia(env, typeCode, sourceItemId, page = 1) {
+    if (!isRealTmdbId(sourceItemId)) return { results: [] };
     const typePath = typeCode === "s" ? "tv" : "movie";
     const simCacheKey = `sim_list_${typePath}_${sourceItemId}`;
     let results = getCachedTmdb(simCacheKey);
@@ -522,7 +523,7 @@
   // damit Serien und Filme wann immer möglich ihre echte TMDb-ID statt einer Fallback-ID erhalten!
   async function resolveExternalIdToTmdb(env, externalId, externalSource = "imdb_id", preferredTypeCode = null) {
     const extId = String(externalId || "").trim();
-    if (!extId || !env?.TMDB_BEARER_TOKEN) return null;
+    if (!extId || !hasTmdbCredentials(env)) return null;
     const findUrl = `https://api.themoviedb.org/3/find/${encodeURIComponent(extId)}?external_source=${encodeURIComponent(externalSource)}&language=de-DE`;
     const findData = await cachedExternalFetchJson(findUrl, {
       headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` }
@@ -687,6 +688,7 @@
    * und überschreibt seriesData.seasons mit den korrekten Folgenzahlen der jeweiligen Fassung!
    */
   async function resolveSeriesVersionOnTMDb(tmdbSeriesId, parsedItem, tmdbApiKeyOrEnv, customCachedFetchJson = null) {
+    if (!isRealTmdbId(tmdbSeriesId)) return null;
     const baseUrl = "https://api.themoviedb.org/3";
     const targetSeason  = Number(parsedItem?.season || 1);
     const targetEpisode = Number(parsedItem?.episode || 1);
@@ -695,7 +697,7 @@
 
     const isEnvObj = tmdbApiKeyOrEnv && typeof tmdbApiKeyOrEnv === "object";
     const bearerToken = isEnvObj ? tmdbApiKeyOrEnv.TMDB_BEARER_TOKEN : null;
-    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || "") : "");
+    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || tmdbApiKeyOrEnv.TMDB_KEY || "") : "");
 
     const cachedFetchJson = typeof customCachedFetchJson === "function"
       ? customCachedFetchJson
@@ -707,7 +709,11 @@
         };
 
     const buildUrl = (pathWithLang) => {
-      return apiKeyStr ? `${baseUrl}${pathWithLang}&api_key=${apiKeyStr}` : `${baseUrl}${pathWithLang}`;
+      if (!bearerToken && apiKeyStr) {
+        const sep = pathWithLang.includes("?") ? "&" : "?";
+        return `${baseUrl}${pathWithLang}${sep}api_key=${encodeURIComponent(apiKeyStr)}`;
+      }
+      return `${baseUrl}${pathWithLang}`;
     };
 
     // 1. Serien-Hauptdaten abrufen (Kopie erstellen, damit wir seasons sauber überschreiben können)
@@ -1006,7 +1012,7 @@
 
     const isEnvObj = tmdbApiKeyOrEnv && typeof tmdbApiKeyOrEnv === "object";
     const bearerToken = isEnvObj ? tmdbApiKeyOrEnv.TMDB_BEARER_TOKEN : null;
-    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || "") : "");
+    const apiKeyStr = typeof tmdbApiKeyOrEnv === "string" ? tmdbApiKeyOrEnv : (isEnvObj ? (tmdbApiKeyOrEnv.TMDB_API_KEY || tmdbApiKeyOrEnv.TMDB_KEY || "") : "");
 
     const cachedFetchJson = typeof customCachedFetchJson === "function"
       ? customCachedFetchJson
@@ -1018,7 +1024,11 @@
         };
 
     const buildUrl = (pathWithLang) => {
-      return apiKeyStr ? `${baseUrl}${pathWithLang}&api_key=${apiKeyStr}` : `${baseUrl}${pathWithLang}`;
+      if (!bearerToken && apiKeyStr) {
+        const sep = pathWithLang.includes("?") ? "&" : "?";
+        return `${baseUrl}${pathWithLang}${sep}api_key=${encodeURIComponent(apiKeyStr)}`;
+      }
+      return `${baseUrl}${pathWithLang}`;
     };
 
     let tmdbHit = null;
@@ -1040,8 +1050,8 @@
       }
     };
 
-    // 1. Direkte ID
-    if (parsedItem.tmdbId) {
+    // 1. Direkte ID (nur echte TMDb-IDs < 8.000.000!)
+    if (isRealTmdbId(parsedItem.tmdbId)) {
       tmdbHit = await cachedFetchJson(buildUrl(`/${type}/${parsedItem.tmdbId}?language=de-DE`));
     }
 
@@ -1249,8 +1259,8 @@
       Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}`
     };
 
-    // STUFE 1: Direkte ID-Abfrage
-    if (parsedItem.tmdbId) {
+    // STUFE 1: Direkte ID-Abfrage (nur echte TMDb-IDs < 8.000.000!)
+    if (isRealTmdbId(parsedItem.tmdbId)) {
       const directHit = await cachedExternalFetchJson(`${baseUrl}/${type}/${parsedItem.tmdbId}?language=de-DE`, { headers });
       if (directHit && directHit.id) return { ...directHit, _resolvedType: type, _stage: "stage1_id" };
     }
@@ -1461,7 +1471,7 @@
 
     const resolvedTc = data.Type === "series" ? "s" : typeCode;
     // Zuerst versuchen, die gefundene IMDb-ID direkt in eine echte TMDb-ID (1..99.999.999) aufzulösen!
-    if (data.imdbID && env?.TMDB_BEARER_TOKEN) {
+    if (data.imdbID && hasTmdbCredentials(env)) {
       const tmdbBridged = await resolveExternalIdToTmdb(env, data.imdbID, "imdb_id", resolvedTc).catch(() => null);
       if (tmdbBridged && tmdbBridged.id && tmdbBridged.id < 8000000) {
         return tmdbBridged;
@@ -1620,7 +1630,7 @@
 
         // Prüfe P345 (IMDb-ID in Wikidata) -> Brücke auf echte TMDb-ID!
         const imdbClaim = claims.P345?.[0]?.mainsnak?.datavalue?.value;
-        if (imdbClaim && /^tt\d+$/i.test(String(imdbClaim).trim()) && env?.TMDB_BEARER_TOKEN) {
+        if (imdbClaim && /^tt\d+$/i.test(String(imdbClaim).trim()) && hasTmdbCredentials(env)) {
           const isTvDescPrelim = /(?:serie|fernsehserie|miniserie|staffel|tv series|television series)/i.test(descDe);
           const bridged = await resolveExternalIdToTmdb(env, String(imdbClaim).trim(), "imdb_id", isTvDescPrelim ? "s" : typeCode).catch(() => null);
           if (bridged && bridged.id && bridged.id < 8000000) {
@@ -1962,7 +1972,7 @@
         if (tc !== "s" && forceTypeCode) return null;
         const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
         if (!maze || !maze.tvmazeId) return null;
-        if (env?.TMDB_BEARER_TOKEN && hasSubrequestBudget(19)) {
+        if (hasTmdbCredentials(env) && hasSubrequestBudget(19)) {
           if (maze.imdbId) {
             const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
             if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
@@ -2027,7 +2037,7 @@
     if (tc === "s" || !forceTypeCode) {
       const maze = await fetchTvMazeSeriesFallback(searchTitle, yr || "").catch(() => null);
       if (maze && maze.tvmazeId) {
-        if (env?.TMDB_BEARER_TOKEN) {
+        if (hasTmdbCredentials(env)) {
           if (maze.imdbId) {
             const bridgedImdb = await resolveExternalIdToTmdb(env, maze.imdbId, "imdb_id", "s").catch(() => null);
             if (bridgedImdb && bridgedImdb.id && bridgedImdb.id < 8000000) return bridgedImdb;
@@ -2471,7 +2481,8 @@
       return setCachedTmdb(cacheKey, d1EntityMovie);
     }
 
-    // 3. Bei Cache-Miss: TMDB API abfragen (Videos direkt in append_to_response gebündelt)
+    // 3. Bei Cache-Miss: Synthetische Fallback-IDs (>= 8.000.000) niemals an TMDb senden (immer 404!)
+    if (!isRealTmdbId(movieId)) return null;
     if (!hasSubrequestBudget(42)) {
       subrequestBudgetExhausted = true;
       return null;
@@ -2687,7 +2698,43 @@
       return setCachedTmdb(cacheKey, d1EntitySeries);
     }
 
-    // 3. Bei Cache-Miss: TMDB API abfragen (+ automatischer TVMaze API Fallback für fehlende Serieninfos)
+    // 3. Bei Cache-Miss: Synthetische Fallback-IDs (>= 8.000.000) direkt über TVMaze statt 404-TMDb-Request auflösen
+    if (!isRealTmdbId(seriesId)) {
+      const knownTitle = memoryFallback.get(`title_cache_s_${seriesId}`) || "";
+      const tvMazeOnly = knownTitle ? await fetchTvMazeSeriesFallback(knownTitle).catch(() => null) : null;
+      if (!tvMazeOnly) return null;
+      return setCachedTmdb(cacheKey, {
+        id: seriesId,
+        directors: "Keine Angabe",
+        directorsList: [],
+        casts: tvMazeOnly.casts || "Keine Angabe",
+        castList: [],
+        genres: tvMazeOnly.genres || "Keine Angabe",
+        genresList: [],
+        studios: tvMazeOnly.studios || "Keine Angabe",
+        studiosList: [],
+        runtime: tvMazeOnly.runtime || "Keine Angabe",
+        country: "k.A.",
+        releaseDate: tvMazeOnly.releaseDate || "Keine Angabe",
+        fsk: "FSK Keine Angabe",
+        statusText: tvMazeOnly.statusText || "Unbekannt",
+        overview: tvMazeOnly.overview || "Keine Beschreibung verfügbar.",
+        isEnglishFallback: true,
+        providers: null,
+        allProviders: "",
+        providerIds: [],
+        poster_path: null,
+        external_poster_url: tvMazeOnly.imageOriginal || "",
+        backdrop_path: null,
+        vote_average: tvMazeOnly.vote_average || 0,
+        title: tvMazeOnly.title || knownTitle || "Unbekannt",
+        trailerKey: null,
+        numberOfSeasons: tvMazeOnly.seasons.length || 1,
+        numberOfEpisodes: tvMazeOnly.episodes.length || 0,
+        seasons: tvMazeOnly.seasons.length > 0 ? tvMazeOnly.seasons : [{ season_number: 1, name: "Staffel 1", episode_count: tvMazeOnly.episodes.length, air_date: "" }],
+        sourceFallback: "TVMaze"
+      });
+    }
     if (!hasSubrequestBudget(42)) {
       subrequestBudgetExhausted = true;
       return null;
@@ -2977,15 +3024,19 @@
 
     const url = `https://api.themoviedb.org/3/tv/${seriesId}/season/${sNum}?language=de-DE`;
     try {
-      const res = await fetchWithTimeout(url, {
-        headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-      }, 4500);
+      // Synthetische Fallback-IDs (>= 8.000.000) niemals an TMDb /season senden (immer 404!) -> direkt TVMaze Fallback nutzen
+      let res = null;
+      if (isRealTmdbId(sidNum)) {
+        res = await fetchWithTimeout(url, {
+          headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
+        }, 4500);
+      }
 
       let episodes = [];
       let seasonName = `Staffel ${sNum}`;
       let seasonId = `${seriesId}_${sNum}`;
 
-      if (res.ok) {
+      if (res && res.ok) {
         const data = await res.json();
         seasonId = data.id || seasonId;
         seasonName = data.name || seasonName;
@@ -3028,7 +3079,7 @@
         }
       }
 
-      if (episodes.length === 0 && !res.ok) return null;
+      if (episodes.length === 0 && (!res || !res.ok)) return null;
 
       const result = {
         id: seasonId,
@@ -3049,6 +3100,7 @@
   }
 
   async function fetchCollectionDetails(env, collectionId) {
+    if (!isRealTmdbId(collectionId)) return null;
     const cacheKey = `col_${collectionId}`;
     const cached = getCachedTmdb(cacheKey);
     if (cached) return cached;
@@ -3283,7 +3335,7 @@
     return { visibleItems: sorted, isFiltered };
   }
 
-  // Lädt alle Filme eines Filmuniversums (aus Kollektionen + Einzelfilmen kombiniert)
+  // Lädt alle Filme eines Filmuniversums (aus Kollektionen + Einzelfilmen kombiniert, D1-gecacht & Free-Plan-sicher gebündelt)
   async function fetchUniverseDetails(env, universeId) {
     const uni = CINEMATIC_UNIVERSES.find(u => u.id === universeId);
     if (!uni) return null;
@@ -3293,14 +3345,47 @@
     if (cached) return cached;
 
     try {
-      const colPromises = (uni.collectionIds || []).map(cid => fetchCollectionDetails(env, cid));
-      const movIds = uni.movieIds || uni.extraMovieIds || [];
-      const movPromises = movIds.map(mid => fetchMovieDetails(env, mid));
+      // 1. D1 entity_cache zuerst prüfen (7 Tage TTL -> 0 TMDb-Subrequests bei Cache-Treffer!)
+      if (typeof getEntityFromD1 === "function") {
+        const d1Uni = await getEntityFromD1(env, cacheKey, 7 * 86400000).catch(() => null);
+        if (d1Uni && Array.isArray(d1Uni.parts) && d1Uni.parts.length > 0) {
+          memoryFallback.set(`uni_name_${uni.id}`, uni.name);
+          return setCachedTmdb(cacheKey, d1Uni);
+        }
+      }
 
-      const [cols, movs] = await Promise.all([
-        Promise.all(colPromises),
-        Promise.all(movPromises)
-      ]);
+      const colIds = Array.isArray(uni.collectionIds) ? uni.collectionIds : [];
+      const movIds = Array.isArray(uni.movieIds || uni.extraMovieIds) ? (uni.movieIds || uni.extraMovieIds) : [];
+
+      // 2. Kollektionen in sicheren 4er-Blöcken innerhalb des Subrequest-Budgets laden
+      const cols = [];
+      for (let i = 0; i < colIds.length; i += 4) {
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(34)) break;
+        const batch = colIds.slice(i, i + 4);
+        const batchRes = await Promise.all(batch.map(cid => fetchCollectionDetails(env, cid).catch(() => null)));
+        cols.push(...batchRes);
+      }
+
+      // 3. Einzelfilme zuerst als 1 einzigen D1-Batch prüfen, dann nur fehlende von TMDb nachladen
+      const d1MovBatch = (movIds.length > 0 && typeof getMediaMetaBatchFromD1 === "function")
+        ? await getMediaMetaBatchFromD1(env, movIds.map(id => ({ id, media_type: "movie" })), "m").catch(() => new Map())
+        : new Map();
+      const movs = [];
+      const missingMovIds = [];
+      for (const mid of movIds) {
+        const cachedMov = d1MovBatch.get(`m_${Number(mid)}`);
+        if (cachedMov && cachedMov.id) {
+          movs.push(cachedMov);
+        } else {
+          missingMovIds.push(mid);
+        }
+      }
+      for (let i = 0; i < missingMovIds.length; i += 4) {
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(36)) break;
+        const batch = missingMovIds.slice(i, i + 4);
+        const batchRes = await Promise.all(batch.map(mid => fetchMovieDetails(env, mid).catch(() => null)));
+        movs.push(...batchRes);
+      }
 
       const seenIds = new Set();
       const parts = [];
@@ -3320,10 +3405,14 @@
         parts.push({
           id: m.id,
           title: m.title,
-          release_date: m.releaseDate !== "Keine Angabe" ? m.releaseDate : "",
+          release_date: m.releaseDate && m.releaseDate !== "Keine Angabe" ? m.releaseDate : "",
           vote_average: m.vote_average || 0,
           popularity: m.popularity || 50,
-          genre_ids: (m.genresList || []).map(g => g.id).filter(Boolean),
+          poster_path: m.poster_path || m.posterPath || null,
+          external_poster_url: m.external_poster_url || "",
+          backdrop_path: m.backdrop_path || m.backdropPath || null,
+          overview: m.overview || "",
+          genre_ids: (m.genresList || []).map(g => Number(g?.id || g)).filter(Boolean),
           fsk: m.fsk,
           media_type: "movie"
         });
@@ -3343,6 +3432,10 @@
         desc: uni.description || uni.desc || "",
         parts
       };
+      if (parts.length > 0 && typeof saveEntityToD1 === "function") {
+        const saveTask = () => saveEntityToD1(env, cacheKey, "universe", result).catch(() => {});
+        if (typeof scheduleBackgroundWork === "function") scheduleBackgroundWork(saveTask);
+      }
       return setCachedTmdb(cacheKey, result);
     } catch (e) {
       return null;
@@ -3412,10 +3505,20 @@
           headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
         }, 4500)
       ];
-      const hasPlatformOrStudioFilter = extraFilterParams.includes("with_watch_providers=") || extraFilterParams.includes("with_companies=") || extraFilterParams.includes("certification=");
-      if (mode === "new" && (!genreId || genreId === "all") && !hasPlatformOrStudioFilter && (!sortBy || sortBy === "default" || sortBy === "added_desc" || sortBy === "year_desc") && pageNum <= 3) {
-        const liveEndpoint = isMovie ? "movie/now_playing" : "tv/on_the_air";
-        const liveUrl = `https://api.themoviedb.org/3/${liveEndpoint}?language=de-DE&region=DE&page=${pageNum}`;
+      const hasRestrictiveUserFilter =
+        extraFilterParams.includes("with_watch_providers=") ||
+        extraFilterParams.includes("without_watch_providers=") ||
+        extraFilterParams.includes("with_companies=") ||
+        extraFilterParams.includes("without_companies=") ||
+        extraFilterParams.includes("with_genres=") ||
+        extraFilterParams.includes("without_genres=") ||
+        extraFilterParams.includes("certification=") ||
+        extraFilterParams.includes("primary_release_date.gte=") ||
+        extraFilterParams.includes("first_air_date.gte=");
+      if (mode === "new" && (!genreId || genreId === "all") && !hasRestrictiveUserFilter && (!sortBy || sortBy === "default" || sortBy === "added_desc" || sortBy === "year_desc") && pageNum <= 3) {
+        const liveUrl = isMovie
+          ? `https://api.themoviedb.org/3/movie/now_playing?language=de-DE&region=DE&page=${pageNum}`
+          : `https://api.themoviedb.org/3/tv/on_the_air?language=de-DE&timezone=Europe%2FBerlin&page=${pageNum}`;
         fetchPromises.push(
           fetchWithTimeout(liveUrl, {
             headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
@@ -3475,34 +3578,58 @@
     const db = await ensureD1Schema(env);
     const isMovie = typeCode === "m";
     try {
-      const lastDedupeTs = Number(memoryFallback.get("last_series_dedupe_ts") || 0);
-      if (!isMovie && db && (Date.now() - lastDedupeTs > 10 * 60 * 1000)) {
-        memoryFallback.set("last_series_dedupe_ts", Date.now());
-        await healAndDeduplicateSeriesInD1(env, false).catch(() => null);
-      }
+      // Free-Plan Schutz: 120s Isolate-RAM-Cache + INNER JOIN + LIMIT 300 + kein Full-details_json JSON.parse pro Zeile + kein synchrones healAndDeduplicateSeriesInD1 im Discover-GET!
+      const rowsCacheKey = isMovie ? "d1_vip_discover_rows_m" : "d1_vip_discover_rows_s";
+      const cachedRowsEntry = memoryFallback.get(rowsCacheKey);
       let rows = [];
-      if (db) {
+      if (cachedRowsEntry && Array.isArray(cachedRowsEntry.rows) && (Date.now() - Number(cachedRowsEntry.ts || 0)) < 120000) {
+        rows = cachedRowsEntry.rows.slice();
+      } else if (db) {
         const rowsRes = isMovie
           ? await db.prepare(`
-              SELECT m.tmdb_id, m.title, m.release_date, m.release_year, m.fsk, m.vote_average, m.poster_path, m.backdrop_path, m.details_json, m.updated_at AS item_updated_at,
+              SELECT m.tmdb_id, m.title, m.release_date, m.release_year, m.fsk, m.vote_average, m.poster_path, m.backdrop_path, m.overview, m.updated_at AS item_updated_at,
+                     json_extract(m.details_json, '$.popularity') AS ext_popularity,
+                     json_extract(m.details_json, '$.external_poster_url') AS ext_poster,
+                     json_extract(m.details_json, '$.genresList') AS ext_genres_json,
+                     json_extract(m.details_json, '$.studiosList') AS ext_studios_json,
+                     json_extract(m.details_json, '$.studios') AS ext_studios_text,
+                     json_extract(m.details_json, '$.providerIds') AS ext_providers_json,
                      MAX(mf.updated_at) AS latest_stream_at,
                      COUNT(mf.id) AS stream_count,
                      MAX(mf.quality) AS best_quality
               FROM movies m
-              LEFT JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+              INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+              WHERE mf.telegram_file_id IS NOT NULL
+                AND mf.telegram_file_id != ''
+                AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
+                AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
               GROUP BY m.tmdb_id
+              ORDER BY latest_stream_at DESC
+              LIMIT 300
             `).all()
           : await db.prepare(`
-              SELECT s.tmdb_id, s.title, s.release_date, s.release_year, s.fsk, s.vote_average, s.poster_path, s.backdrop_path, s.details_json, s.updated_at AS item_updated_at,
+              SELECT s.tmdb_id, s.title, s.release_date, s.release_year, s.fsk, s.vote_average, s.poster_path, s.backdrop_path, s.overview, s.updated_at AS item_updated_at,
+                     json_extract(s.details_json, '$.popularity') AS ext_popularity,
+                     json_extract(s.details_json, '$.external_poster_url') AS ext_poster,
+                     json_extract(s.details_json, '$.genresList') AS ext_genres_json,
+                     json_extract(s.details_json, '$.studiosList') AS ext_studios_json,
+                     json_extract(s.details_json, '$.studios') AS ext_studios_text,
+                     json_extract(s.details_json, '$.providerIds') AS ext_providers_json,
                      MAX(ef.updated_at) AS latest_stream_at,
                      COUNT(ef.id) AS stream_count,
-                     (SELECT COUNT(*) FROM series_episodes se WHERE se.series_id = s.tmdb_id) AS ep_count,
                      MAX(ef.quality) AS best_quality
               FROM series s
-              LEFT JOIN episode_files ef ON ef.series_id = s.tmdb_id
+              INNER JOIN episode_files ef ON ef.series_id = s.tmdb_id
+              WHERE ef.telegram_file_id IS NOT NULL
+                AND ef.telegram_file_id != ''
+                AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
+                AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
               GROUP BY s.tmdb_id
+              ORDER BY latest_stream_at DESC
+              LIMIT 300
             `).all();
         rows = Array.isArray(rowsRes?.results) ? rowsRes.results : [];
+        memoryFallback.set(rowsCacheKey, { rows, ts: Date.now() });
       }
 
       // Ergänze Einträge aus Memory-Fallback (falls D1 nicht gebunden oder im selben Isolate frisch importiert)
@@ -3511,6 +3638,10 @@
       for (const [k, v] of memoryFallback.entries()) {
         if (k.startsWith(memPrefix) && v && v.id && !seenIds.has(Number(v.id))) {
           const tid = Number(v.id);
+          const hasMemStream = isMovie
+            ? Boolean(Array.isArray(memoryFallback.get(`d1_movie_files_${tid}`)) && memoryFallback.get(`d1_movie_files_${tid}`).length > 0)
+            : Boolean(memoryFallback.get(`d1_series_best_quality_${tid}`));
+          if (!hasMemStream) continue;
           seenIds.add(tid);
           const memQual = isMovie
             ? (memoryFallback.get(`d1_movie_files_${tid}`)?.[0]?.quality || "1080p")
@@ -3523,43 +3654,42 @@
             vote_average: Number(v.vote_average || 0),
             poster_path: v.poster_path || null,
             backdrop_path: v.backdrop_path || null,
-            details_json: JSON.stringify(v),
+            overview: v.overview || "",
+            ext_popularity: Number(v.popularity || 0),
+            ext_poster: v.external_poster_url || "",
+            ext_genres_json: Array.isArray(v.genresList) ? JSON.stringify(v.genresList) : null,
+            ext_studios_json: Array.isArray(v.studiosList) ? JSON.stringify(v.studiosList) : null,
+            ext_studios_text: v.studios || "",
+            ext_providers_json: Array.isArray(v.providerIds) ? JSON.stringify(v.providerIds) : null,
             item_updated_at: Date.now(),
             latest_stream_at: Date.now(),
             stream_count: 1,
-            ep_count: 1,
             best_quality: memQual
           });
         }
       }
 
-      // Prüfe zusätzlich die globale "bot_vip"-Playlist auf importierte VIP-Titel
-      const vipList = await getSavedList(env, "bot_vip").catch(() => []);
-      const vipPlaylistIds = new Set();
-      const targetContentType = isMovie ? "movie" : "series";
-      for (const item of (vipList || [])) {
-        if (item && item.tmdbId && item.contentType === targetContentType) {
-          vipPlaylistIds.add(Number(item.tmdbId));
-        }
-      }
-
-      if (!rows.length && vipPlaylistIds.size === 0) return null;
-
-      // Nur Einträge mit echten verknüpften Datei-Streams in movie_files / episode_files (oder explizit mit Datei in der VIP-Playlist) anzeigen!
-      // Keine 0-Datei-Serien (wie 夢で見たあの子のために (2023)) über bloße series_episodes-Metadaten durchlassen!
-      const verifiedRows = rows.filter(r =>
-        Number(r.stream_count || 0) > 0
-      );
-      const effectiveRows = verifiedRows;
+      const effectiveRows = rows.filter(r => Number(r.stream_count || 0) > 0);
       if (!effectiveRows.length) return null;
 
+      const parseSmallJsonArr = (raw) => {
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        try {
+          const p = JSON.parse(String(raw));
+          return Array.isArray(p) ? p : [];
+        } catch (e) {
+          return [];
+        }
+      };
+
       const candidates = effectiveRows.map(r => {
-        let parsed = {};
-        try { parsed = JSON.parse(r.details_json || "{}"); } catch (e) {}
-        const gIds = Array.isArray(parsed.genresList) ? parsed.genresList.map(g => Number(g.id)).filter(Boolean) : [];
-        const rawRelDate = (r.release_date && r.release_date !== "Keine Angabe")
-          ? r.release_date
-          : (parsed.releaseDate && parsed.releaseDate !== "Keine Angabe" ? parsed.releaseDate : "");
+        const genresArr = parseSmallJsonArr(r.ext_genres_json);
+        const gIds = genresArr.map(g => Number(typeof g === "object" ? g?.id : g)).filter(Boolean);
+        const studiosList = parseSmallJsonArr(r.ext_studios_json);
+        const companyIds = studiosList.map(s => Number(typeof s === "object" ? s?.id : s)).filter(Boolean);
+        const providerIds = parseSmallJsonArr(r.ext_providers_json).map(Number).filter(Boolean);
+        const rawRelDate = (r.release_date && r.release_date !== "Keine Angabe") ? r.release_date : "";
         const streamTs = Number(r.latest_stream_at) || Number(r.item_updated_at) || Date.now();
         const bestQual = String(r.best_quality || memoryFallback.get(`d1_series_best_quality_${Number(r.tmdb_id)}`) || "1080p").trim();
         return {
@@ -3569,19 +3699,22 @@
           release_date: isMovie ? rawRelDate : undefined,
           first_air_date: !isMovie ? rawRelDate : undefined,
           vote_average: Number(r.vote_average) || 0,
-          popularity: Number(parsed.popularity) || Number(r.vote_average || 5) * 10,
-          poster_path: r.poster_path || parsed.posterPath || parsed.external_poster_url || null,
-          external_poster_url: parsed.external_poster_url || "",
-          backdrop_path: r.backdrop_path || parsed.backdropPath || null,
-          fsk: r.fsk || parsed.fsk || null,
+          popularity: Number(r.ext_popularity) || Number(r.vote_average || 5) * 10,
+          poster_path: r.poster_path || r.ext_poster || null,
+          external_poster_url: r.ext_poster || "",
+          backdrop_path: r.backdrop_path || null,
+          overview: r.overview || "",
+          fsk: r.fsk || null,
           genre_ids: gIds,
-          companyIds: Array.isArray(parsed.companyIds) ? parsed.companyIds : [],
-          providerIds: Array.isArray(parsed.providerIds) ? parsed.providerIds : [],
+          companyIds,
+          studiosList,
+          studios: r.ext_studios_text || "",
+          providerIds,
           media_type: isMovie ? "movie" : "tv",
           latest_stream_at: streamTs,
           hasLocalStream: true,
           vipQuality: bestQual,
-          vipStreamCount: Math.max(1, Number(r.stream_count || r.ep_count || 1))
+          vipStreamCount: Math.max(1, Number(r.stream_count || 1))
         };
       });
 
@@ -3728,6 +3861,7 @@
   }
 
   async function fetchPersonDetails(env, personId) {
+    if (!isRealTmdbId(personId)) return null;
     const cacheKey = `per_${personId}`;
     const cached = getCachedTmdb(cacheKey);
     if (cached) return cached;
@@ -3926,26 +4060,19 @@
     }
     const cached = getCachedTmdb(contentType === "movie" ? `movie_${itemId}` : `tv_${itemId}`);
     if (cached && cached.trailerKey !== undefined) return cached.trailerKey;
+    if (!isRealTmdbId(itemId)) return null;
 
     const typePath = contentType === "movie" ? "movie" : "tv";
-    const urlDe = `https://api.themoviedb.org/3/${typePath}/${itemId}/videos?language=de-DE`;
+    // Ein einziger gebündelter TMDb-Call (de, en & sprachneutral) statt 2 sequentieller Calls!
+    const urlAll = `https://api.themoviedb.org/3/${typePath}/${itemId}/videos?language=de-DE&include_video_language=de,en,null`;
     try {
-      let res = await fetchWithTimeout(urlDe, {
+      const res = await fetchWithTimeout(urlAll, {
         headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
       }, 3200);
       if (res.ok) {
         const data = await res.json();
         const key = extractYoutubeTrailerFromVideos(data);
         if (key) return key;
-      }
-      const urlEn = `https://api.themoviedb.org/3/${typePath}/${itemId}/videos?language=en-US`;
-      let resEn = await fetchWithTimeout(urlEn, {
-        headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
-      }, 3200);
-      if (resEn.ok) {
-        const dataEn = await resEn.json();
-        const keyEn = extractYoutubeTrailerFromVideos(dataEn);
-        if (keyEn) return keyEn;
       }
     } catch (e) {}
     return null;

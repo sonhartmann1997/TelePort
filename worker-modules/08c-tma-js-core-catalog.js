@@ -374,8 +374,8 @@
         if (state && state.sidebarOpen) renderFilterSidebarContent();
         const found = TRAILER_PROVIDERS_CLIENT.find(p => p.id === trailerProvider);
         showHudToast("🎬 Standard-Trailer Quelle: " + (found ? found.label : "▶️ YouTube"));
-        if (persistRemote) {
-          fetch(API_BASE + "/settings", {
+        if (persistRemote && state && state.isAuthenticated && chatId && chatId !== "guest") {
+          apiFetchJson(API_BASE + "/settings", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chatId, action: "save_trailer_provider", trailerProvider })
@@ -701,7 +701,25 @@
         applyUiScaleToDom();
       }
       detectClientDeviceAndAdapt();
-      window.addEventListener("resize", detectClientDeviceAndAdapt);
+      let _clientResizeDebounceTimer = null;
+      window.addEventListener("resize", () => {
+        if (_clientResizeDebounceTimer) clearTimeout(_clientResizeDebounceTimer);
+        _clientResizeDebounceTimer = setTimeout(detectClientDeviceAndAdapt, 150);
+      });
+
+      let _uiScalePersistDebounceTimer = null;
+      function schedulePersistUiScaleRemoteClient() {
+        if (!state || !state.isAuthenticated || !chatId || chatId === "guest") return;
+        if (_uiScalePersistDebounceTimer) clearTimeout(_uiScalePersistDebounceTimer);
+        _uiScalePersistDebounceTimer = setTimeout(() => {
+          _uiScalePersistDebounceTimer = null;
+          apiFetchJson(API_BASE + "/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chatId, action: "save_ui_scale", uiScale })
+          }).catch(() => {});
+        }, 700);
+      }
 
       function setUiScaleValue(key, val, persistRemote = true) {
         const clamped = Math.min(160, Math.max(65, Number(val) || 100));
@@ -712,11 +730,7 @@
         const labelPrefix = key === "all" ? "🔍 Zoom" : key === "text" ? "🔤 Textgröße" : key === "cover" ? "🖼️ Covergröße" : "🎛️ Menügröße";
         showLiveZoomBadgeClient(labelPrefix + ": " + clamped + "%");
         if (persistRemote) {
-          fetch(API_BASE + "/settings", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chatId, action: "save_ui_scale", uiScale })
-          }).catch(() => {});
+          schedulePersistUiScaleRemoteClient();
         }
       }
 
@@ -731,11 +745,7 @@
         applyUiScaleToDom();
         if (state && state.sidebarOpen) renderFilterSidebarContent(false);
         showLiveZoomBadgeClient("🔍 Zoom: 100% (Standard)");
-        fetch(API_BASE + "/settings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chatId, action: "save_ui_scale", uiScale })
-        }).catch(() => {});
+        schedulePersistUiScaleRemoteClient();
       }
 
       function focusFirstSidebarFilterOption() {
@@ -1298,20 +1308,33 @@
                 '</div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
                   (r.deepLink ? (
-                    '<a href="' + esc(r.deepLink) + '" target="_blank" rel="noopener" class="btn blue" style="text-decoration:none;font-weight:800">' +
+                    '<a href="' + esc(safeHttpUrl(r.deepLink)) + '" target="_blank" rel="noopener noreferrer" class="btn blue" style="text-decoration:none;font-weight:800">' +
                       '🚀 1-Klick: Direkt in Telegram bestätigen' +
                     '</a>'
                   ) : '') +
-                  '<button type="button" class="btn" onclick="simulateBotCodeConfirmClient(\\'' + esc(r.challengeId) + '\\')" title="Bestätigt den Code im lokalen Simulator / Vorschau-Modus">' +
-                    '🧪 Im Simulator bestätigen' +
-                  '</button>' +
+                  (r.canSimulateConfirm ? (
+                    '<button type="button" class="btn" onclick="simulateBotCodeConfirmClient(\\'' + escJs(r.challengeId) + '\\')" title="Bestätigt den Code im lokalen Simulator / Vorschau-Modus">' +
+                      '🧪 Im Simulator bestätigen' +
+                    '</button>'
+                  ) : '') +
                 '</div>' +
-                '<div id="botCodePollStatusText" style="font-size:11.5px;color:#fbbf24">⏳ Warte auf Bestätigung in Telegram (automatischer Abgleich alle 2s)...</div>' +
+                '<div id="botCodePollStatusText" style="font-size:11.5px;color:#fbbf24">⏳ Warte auf Bestätigung in Telegram (automatischer Abgleich alle 3,5s)...</div>' +
               '</div>';
           }
+          let botCodePollAttempts = 0;
           activeBotCodePollTimer = setInterval(() => {
+            botCodePollAttempts++;
+            const statusNode = document.getElementById("botCodePollStatusText");
+            if (!statusNode || botCodePollAttempts > 45) {
+              stopBotCodePollClient();
+              if (statusNode && botCodePollAttempts > 45) {
+                statusNode.style.color = "#f87171";
+                statusNode.textContent = "⌛ Zeitlimit erreicht. Bitte Code bei Bedarf neu anfordern.";
+              }
+              return;
+            }
             pollBotCodeChallengeClient(r.challengeId);
-          }, 2000);
+          }, 3500);
         } catch (err) {
           if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
         }
@@ -1319,6 +1342,11 @@
 
       async function pollBotCodeChallengeClient(challengeId) {
         if (!challengeId) return;
+        const stElPre = document.getElementById("botCodePollStatusText");
+        if (!stElPre) {
+          stopBotCodePollClient();
+          return;
+        }
         try {
           const r = await apiFetchJson(API_BASE + "/auth/bot-code", {
             method: "POST",
@@ -1527,7 +1555,7 @@
           if (fb) fb.textContent = "";
           if (mount) {
             const otpUriHtml = r.otpauthUrl
-              ? ('<a href="' + esc(r.otpauthUrl) + '" class="btn blue" style="text-decoration:none">🔐 Direkt in Authenticator-App öffnen</a>')
+              ? ('<a href="' + esc(safeHttpUrl(r.otpauthUrl, true)) + '" class="btn blue" style="text-decoration:none">🔐 Direkt in Authenticator-App öffnen</a>')
               : '';
             mount.innerHTML = '<div class="admin-sub-box" style="padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center;text-align:center">' +
               '<div style="font-size:12px;color:var(--text);font-weight:700">1. Richte 2FA sicher lokal in deiner Authenticator-App (Google Authenticator, Authy, 1Password) ein:</div>' +
@@ -1697,6 +1725,30 @@
         return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       }
 
+      function escJs(str) {
+        return String(str == null ? "" : str)
+          .replace(/\\\\/g, "\\\\\\\\")
+          .replace(/'/g, "\\\\x27")
+          .replace(/"/g, "\\\\x22")
+          .replace(/</g, "\\\\x3c")
+          .replace(/>/g, "\\\\x3e")
+          .replace(/&/g, "\\\\x26")
+          .replace(/\\r/g, "\\\\r")
+          .replace(/\\n/g, "\\\\n")
+          .replace(/\\u2028/g, "\\\\u2028")
+          .replace(/\\u2029/g, "\\\\u2029");
+      }
+
+      function safeHttpUrl(url, allowOtpAuth = false) {
+        const s = String(url == null ? "" : url).replace(/^[\\u0000-\\u0020]+|[\\u0000-\\u0020]+$/g, "");
+        if (!s) return "#";
+        const lower = s.toLowerCase();
+        if (lower.startsWith("https://") || lower.startsWith("http://")) return s;
+        if (s.startsWith("/") && !s.startsWith("//") && !s.startsWith("/\\\\")) return s;
+        if (allowOtpAuth && lower.startsWith("otpauth://")) return s;
+        return "#";
+      }
+
       let lastLightboxTriggerEl = null;
       function toggleLightboxZoomClient() {
         const im = document.getElementById("lbImg");
@@ -1707,7 +1759,8 @@
       }
 
       function openLightbox(imgUrl, titleText) {
-        if (!imgUrl) return;
+        const safeImgUrl = safeHttpUrl(imgUrl);
+        if (!safeImgUrl || safeImgUrl === "#") return;
         const lb = document.getElementById("lightboxRoot");
         if (!lb) return;
         const curEl = (typeof currentSpatialEl !== "undefined" && currentSpatialEl) ? currentSpatialEl : document.activeElement;
@@ -1719,11 +1772,11 @@
             '<div style="font-size:13.5px;font-weight:800;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(titleText || 'Großansicht') + '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0">' +
               '<button type="button" id="lbZoomToggleBtn" class="btn" onclick="toggleLightboxZoomClient()">🔍 Vergrößern</button>' +
-              '<a href="' + esc(imgUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Originalbild in voller Auflösung öffnen">🔗 Original ↗</a>' +
+              '<a href="' + esc(safeImgUrl) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none" title="Originalbild in voller Auflösung öffnen">🔗 Original ↗</a>' +
               '<button type="button" id="lbCloseBtn" class="btn close-slate" onclick="closeLightbox()">✖ Schließen</button>' +
             '</div>' +
           '</div>' +
-          '<img id="lbImg" class="lightbox-img" src="' + esc(imgUrl) + '" onclick="toggleLightboxZoomClient()" alt="' + esc(titleText || 'Poster') + '" />' +
+          '<img id="lbImg" class="lightbox-img" src="' + esc(safeImgUrl) + '" onclick="toggleLightboxZoomClient()" alt="' + esc(titleText || 'Poster') + '" />' +
           '<div style="position:relative;z-index:5;font-size:11px;color:#94a3b8;margin-top:10px;background:rgba(7,12,26,0.75);padding:4px 12px;border-radius:999px">💡 Auf das Bild tippen zum Vergrößern / Verkleinern · ESC zum Schließen</div>' +
         '</div>';
         setTimeout(() => {
@@ -2439,9 +2492,9 @@
           const fskBadge = it.fskLabel ? ('<span style="padding:1px 5px;border-radius:4px;background:rgba(148,163,184,0.18);border:1px solid rgba(148,163,184,0.3);font-size:10px">' + esc(it.fskLabel) + '</span>') : '';
           const epBadge = it.epCount > 0 ? ('<span style="color:#38bdf8;font-size:10.5px;font-weight:700">• ' + it.epCount + ' Flg.</span>') : '';
           const delActionHtml = tabMode === "wishlist"
-            ? ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="deleteWishlistItemFromRightMenuClient(event,\\'' + esc(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>')
-            : ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="removeRecentViewedItem(event,\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')" title="Aus Verlauf entfernen">✕</button>');
-          return '<div class="rm-entry-card" tabindex="0" onclick="openItemFromRightMenuClient(\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')">' +
+            ? ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="deleteWishlistItemFromRightMenuClient(event,\\'' + escJs(it.uid) + '\\')" title="Aus Merkliste entfernen">🗑️</button>')
+            : ('<button type="button" class="btn danger" style="padding:4px 7px;font-size:11px" onclick="removeRecentViewedItem(event,\\'' + escJs(it.tc) + '\\',' + Number(it.targetId) + ')" title="Aus Verlauf entfernen">✕</button>');
+          return '<div class="rm-entry-card" tabindex="0" onclick="openItemFromRightMenuClient(\\'' + escJs(it.tc) + '\\',' + Number(it.targetId) + ')">' +
             '<div style="display:flex;align-items:center;gap:9px;min-width:0;flex:1">' +
               (thumbUrl
                 ? '<img src="' + esc(thumbUrl) + '" alt="" loading="lazy" style="width:36px;height:52px;object-fit:cover;border-radius:6px;flex-shrink:0;background:#0f172a" />'
@@ -2458,7 +2511,7 @@
               '</div>' +
             '</div>' +
             '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0">' +
-              '<button type="button" class="btn" style="padding:4px 7px;font-size:11px" onclick="event.stopPropagation();playInstantTrailerFromCard(event,\\'' + esc(it.tc) + '\\',' + Number(it.targetId) + ')" title="Trailer direkt abspielen">▶</button>' +
+              '<button type="button" class="btn" style="padding:4px 7px;font-size:11px" onclick="event.stopPropagation();playInstantTrailerFromCard(event,\\'' + escJs(it.tc) + '\\',' + Number(it.targetId) + ')" title="Trailer direkt abspielen">▶</button>' +
               delActionHtml +
             '</div>' +
           '</div>';

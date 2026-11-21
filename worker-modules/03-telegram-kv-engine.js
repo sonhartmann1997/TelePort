@@ -208,6 +208,12 @@
       recentProcessed: antiSpamState.recentProcessed.slice(0, 20)
     };
     memoryFallback.set("TG_ANTI_SPAM_STATE_JSON", snapshot);
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      // D1-first schont Cloudflare KV Free-Plan Limit (1.000 Writes/Tag & max 1 Write/s pro Key!)
+      await saveEntityToD1(env, "TG_ANTI_SPAM_STATE_JSON", "anti_spam", snapshot);
+      return;
+    }
     await kvStageWrite(env, "TG_ANTI_SPAM_STATE_JSON", snapshot, {
       bindingName: "MOVIE_SAVED",
       expirationTtl: 7 * 86400,
@@ -219,24 +225,29 @@
     if (antiSpamState.hydratedFromStorage) return;
     antiSpamState.hydratedFromStorage = true;
     try {
-      const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MOVIE_SAVED");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") {
-          if (Array.isArray(parsed.queue) && antiSpamState.queue.length === 0) {
-            antiSpamState.queue = parsed.queue.filter(q => q && q.status === "queued");
-          }
-          if (Array.isArray(parsed.recentProcessed) && antiSpamState.recentProcessed.length === 0) {
-            antiSpamState.recentProcessed = parsed.recentProcessed.slice(0, 20);
-          }
-          antiSpamState.totalEvaluated = Math.max(antiSpamState.totalEvaluated, Number(parsed.totalEvaluated) || 0);
-          antiSpamState.totalSentImmediate = Math.max(antiSpamState.totalSentImmediate, Number(parsed.totalSentImmediate) || 0);
-          antiSpamState.totalQueued = Math.max(antiSpamState.totalQueued, Number(parsed.totalQueued) || 0);
-          antiSpamState.totalDrained = Math.max(antiSpamState.totalDrained, Number(parsed.totalDrained) || 0);
-          antiSpamState.total429Hits = Math.max(antiSpamState.total429Hits, Number(parsed.total429Hits) || 0);
-          if (Number(parsed.floodWaitUntil) > Date.now()) {
-            antiSpamState.floodWaitUntil = Number(parsed.floodWaitUntil);
-          }
+      let parsed = null;
+      const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+      if (hasD1 && typeof getEntityFromD1 === "function") {
+        parsed = await getEntityFromD1(env, "TG_ANTI_SPAM_STATE_JSON", 7 * 86400000, { ramTtlMs: 30000 }).catch(() => null);
+      }
+      if (!parsed) {
+        const raw = await kvCachedGetRaw(env, "TG_ANTI_SPAM_STATE_JSON", "MOVIE_SAVED");
+        if (raw) parsed = JSON.parse(raw);
+      }
+      if (parsed && typeof parsed === "object") {
+        if (Array.isArray(parsed.queue) && antiSpamState.queue.length === 0) {
+          antiSpamState.queue = parsed.queue.filter(q => q && q.status === "queued");
+        }
+        if (Array.isArray(parsed.recentProcessed) && antiSpamState.recentProcessed.length === 0) {
+          antiSpamState.recentProcessed = parsed.recentProcessed.slice(0, 20);
+        }
+        antiSpamState.totalEvaluated = Math.max(antiSpamState.totalEvaluated, Number(parsed.totalEvaluated) || 0);
+        antiSpamState.totalSentImmediate = Math.max(antiSpamState.totalSentImmediate, Number(parsed.totalSentImmediate) || 0);
+        antiSpamState.totalQueued = Math.max(antiSpamState.totalQueued, Number(parsed.totalQueued) || 0);
+        antiSpamState.totalDrained = Math.max(antiSpamState.totalDrained, Number(parsed.totalDrained) || 0);
+        antiSpamState.total429Hits = Math.max(antiSpamState.total429Hits, Number(parsed.total429Hits) || 0);
+        if (Number(parsed.floodWaitUntil) > Date.now()) {
+          antiSpamState.floodWaitUntil = Number(parsed.floodWaitUntil);
         }
       }
     } catch (e) {}
@@ -450,18 +461,22 @@
     if (fallbackFromSettings && (Number(fallbackFromSettings) === 7 || Number(fallbackFromSettings) === 30 || Number(fallbackFromSettings) === 90)) {
       return Number(fallbackFromSettings);
     }
-    if (memoryFallback.has("TG_LOG_RETENTION_DAYS")) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const retTs = Number(memoryFallback.get("TG_LOG_RETENTION_DAYS_ts") || 0);
+    if (memoryFallback.has("TG_LOG_RETENTION_DAYS") && (isBrowserSandbox || (Date.now() - retTs) < 60000)) {
       return normalizeWorkerRetentionDays(memoryFallback.get("TG_LOG_RETENTION_DAYS"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, "TG_LOG_RETENTION_DAYS", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const norm = normalizeWorkerRetentionDays(raw);
         memoryFallback.set("TG_LOG_RETENTION_DAYS", norm);
+        memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
         return norm;
       }
     } catch (e) {}
     memoryFallback.set("TG_LOG_RETENTION_DAYS", 30);
+    memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
     return 30;
   }
 
@@ -472,16 +487,27 @@
     const ttlSeconds = retentionDays * 86400;
     const cutoffMs = Date.now() - (retentionDays * 86400 * 1000);
 
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     let rawList = [];
+    const memListTs = Number(memoryFallback.get("TG_ACTIVITY_LOG_JSON_ts") || 0);
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     const memList = memoryFallback.get("TG_ACTIVITY_LOG_JSON");
-    if (Array.isArray(memList)) {
+    if (Array.isArray(memList) && (isBrowserSandbox || (Date.now() - memListTs) < 20000)) {
       rawList = memList;
     } else {
       try {
-        const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MOVIE_SAVED");
-        if (str) {
-          const parsed = JSON.parse(str);
-          if (Array.isArray(parsed)) rawList = parsed;
+        let loaded = null;
+        if (hasD1 && typeof getEntityFromD1 === "function") {
+          loaded = await getEntityFromD1(env, "TG_ACTIVITY_LOG_JSON", 365 * 86400000, { ramTtlMs: 20000 }).catch(() => null);
+        }
+        if (Array.isArray(loaded)) {
+          rawList = loaded;
+        } else {
+          const str = await kvCachedGetRaw(env, "TG_ACTIVITY_LOG_JSON", "MOVIE_SAVED");
+          if (str) {
+            const parsed = JSON.parse(str);
+            if (Array.isArray(parsed)) rawList = parsed;
+          }
         }
       } catch (e) {}
     }
@@ -504,18 +530,26 @@
 
     const finalEntries = kept.slice(0, 100);
     memoryFallback.set("TG_ACTIVITY_LOG_JSON", finalEntries);
+    memoryFallback.set("TG_ACTIVITY_LOG_JSON_ts", Date.now());
     memoryFallback.set("TG_LOG_RETENTION_DAYS", retentionDays);
+    memoryFallback.set("TG_LOG_RETENTION_DAYS_ts", Date.now());
 
     if (newEntry || retentionDaysOverride !== null || prunedCount > 0) {
-      await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", finalEntries, {
-        bindingName: "MOVIE_SAVED",
-        expirationTtl: ttlSeconds,
-        periodicOnly: retentionDaysOverride === null
-      });
+      if (hasD1 && typeof saveEntityToD1 === "function") {
+        // D1-first: 0 KV-Writes pro Stream/Event (schont 1.000 KV-Writes/Tag Free-Plan Limit!)
+        await saveEntityToD1(env, "TG_ACTIVITY_LOG_JSON", "activity_log", finalEntries);
+      } else {
+        await kvStageWrite(env, "TG_ACTIVITY_LOG_JSON", finalEntries, {
+          bindingName: "MOVIE_SAVED",
+          expirationTtl: ttlSeconds,
+          periodicOnly: retentionDaysOverride === null
+        });
+      }
       if (retentionDaysOverride !== null) {
         await kvStageWrite(env, "TG_LOG_RETENTION_DAYS", String(retentionDays), {
           bindingName: "MOVIE_SAVED",
-          periodicOnly: false
+          periodicOnly: false,
+          flushNow: true
         });
       }
     }
@@ -677,28 +711,34 @@
   }
 
   async function getVideoCoverMode(env) {
-    if (memoryFallback.has("TG_VIDEO_COVER_MODE")) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const coverTs = Number(memoryFallback.get("TG_VIDEO_COVER_MODE_ts") || 0);
+    if (memoryFallback.has("TG_VIDEO_COVER_MODE") && (isBrowserSandbox || (Date.now() - coverTs) < 60000)) {
       return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
     }
     try {
-      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const mode = normalizeVideoCoverMode(raw);
         memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+        memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
         return mode;
       }
     } catch (e) {}
     memoryFallback.set("TG_VIDEO_COVER_MODE", "backdrop");
+    memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
     return "backdrop";
   }
 
   async function setVideoCoverMode(env, modeInput) {
     const mode = normalizeVideoCoverMode(modeInput);
     memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+    memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
     try {
       await kvStageWrite(env, "TG_VIDEO_COVER_MODE", mode, {
         bindingName: "MOVIE_SAVED",
-        periodicOnly: false
+        periodicOnly: false,
+        flushNow: true
       });
     } catch (e) {}
     return mode;
@@ -881,38 +921,45 @@
 
   function sanitizeWebhookSecretToken(rawSecret) {
     // Offizielle Telegram setWebhook secret_token Vorgabe: 1-256 Zeichen, nur A-Z, a-z, 0-9, _ und -
-    return String(rawSecret || "")
+    if (rawSecret === null || rawSecret === undefined || typeof rawSecret === "object") {
+      return "";
+    }
+    const clean = String(rawSecret)
       .trim()
       .replace(/[^A-Za-z0-9_-]/g, "_")
       .slice(0, 128);
+    // Selbstheilung gegen frühere Objekt-Serialisierung ("[object Object]" -> "_object_Object_")
+    if (clean === "_object_Object_" || clean === "object_Object") return "";
+    return clean;
   }
 
   async function getWebhookSecurityConfig(env) {
-    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 600000) {
+    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 60000) {
       return globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
     }
     let secretToken = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
-    let maxConnections = 10;
+    let maxConnections = 8;
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     try {
-      const memCfg = memoryFallback.get("TG_WEBHOOK_SECURITY_CONFIG_V1");
+      const memCfg = isBrowserSandbox ? memoryFallback.get("TG_WEBHOOK_SECURITY_CONFIG_V1") : null;
       if (memCfg && typeof memCfg === "object") {
         if (memCfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(memCfg.secretToken);
-        if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 10));
+        if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 8));
       } else {
-        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED");
+        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", { ttlMs: 60000 });
         if (rawKv) {
           const parsed = JSON.parse(rawKv);
           if (parsed && typeof parsed === "object") {
             if (parsed.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(parsed.secretToken);
-            if (parsed.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(parsed.maxConnections) || 10));
-            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", parsed);
+            if (parsed.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(parsed.maxConnections) || 8));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", { ...parsed, secretToken, maxConnections });
           }
         } else if (typeof getEntityFromD1 === "function") {
           const d1Cfg = await getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000).catch(() => null);
           if (d1Cfg && typeof d1Cfg === "object") {
             if (d1Cfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(d1Cfg.secretToken);
-            if (d1Cfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(d1Cfg.maxConnections) || 10));
-            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", d1Cfg);
+            if (d1Cfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(d1Cfg.maxConnections) || 8));
+            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", { ...d1Cfg, secretToken, maxConnections });
           }
         }
       }
@@ -927,12 +974,18 @@
     return cfg;
   }
 
-  async function saveWebhookSecurityConfig(env, newSecretToken, maxConnections = 10) {
-    const cleanToken = sanitizeWebhookSecretToken(newSecretToken);
-    const cleanMaxConn = Math.min(40, Math.max(1, Number(maxConnections) || 10));
+  async function saveWebhookSecurityConfig(env, secretOrConfig, maxConnectionsArg = 8) {
+    // Unterstützt sowohl Objekt-Signatur ({ secretToken, maxConnections, dropPendingDefault }) als auch Legacy-Parameter (env, token, maxConnections)
+    const isConfigObj = Boolean(secretOrConfig && typeof secretOrConfig === "object");
+    const rawToken = isConfigObj ? secretOrConfig.secretToken : secretOrConfig;
+    const rawMaxConn = isConfigObj ? secretOrConfig.maxConnections : maxConnectionsArg;
+    const dropPendingDefault = isConfigObj ? Boolean(secretOrConfig.dropPendingDefault) : true;
+    const cleanToken = sanitizeWebhookSecretToken(rawToken);
+    const cleanMaxConn = Math.min(40, Math.max(1, Number(rawMaxConn) || 8));
     const payload = {
       secretToken: cleanToken,
       maxConnections: cleanMaxConn,
+      dropPendingDefault,
       updatedAt: Date.now(),
       loadedAt: Date.now()
     };
@@ -965,19 +1018,25 @@
     if (explicit) return WORKER_SPEED_PROFILES[explicit];
 
     const memKey = "TG_WORKER_SPEED_PROFILE";
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const speedTs = Number(memoryFallback.get("TG_WORKER_SPEED_PROFILE_ts") || 0);
     const cached = normalizeKey(memoryFallback.get(memKey));
-    if (cached) return WORKER_SPEED_PROFILES[cached];
+    if (cached && (isBrowserSandbox || (Date.now() - speedTs) < 60000)) {
+      return WORKER_SPEED_PROFILES[cached];
+    }
 
     try {
-      const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED", { ttlMs: 60000 });
       const kvVal = normalizeKey(raw);
       if (kvVal) {
         memoryFallback.set(memKey, kvVal);
+        memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
         return WORKER_SPEED_PROFILES[kvVal];
       }
     } catch (e) {}
 
     memoryFallback.set(memKey, "free_turbo");
+    memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
     return WORKER_SPEED_PROFILES.free_turbo;
   }
 
@@ -985,6 +1044,7 @@
     const clean = String(profileKey || "").trim().toLowerCase();
     const valid = (clean === "balanced" || clean === "paid_pro") ? clean : "free_turbo";
     memoryFallback.set("TG_WORKER_SPEED_PROFILE", valid);
+    memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
     await kvStageWrite(env, "TG_WORKER_SPEED_PROFILE", valid, {
       bindingName: "MOVIE_SAVED",
       flushNow: true
@@ -1003,7 +1063,10 @@
         exp: Date.now() + (Number(ttlMs) > 0 ? Number(ttlMs) : 24 * 60 * 60 * 1000)
       };
       const payloadHex = Array.from(enc.encode(JSON.stringify(dataObj))).map(b => b.toString(16).padStart(2, "0")).join("");
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
+      const secret = typeof getSessionSigningSecret === "function"
+        ? await getSessionSigningSecret(env)
+        : String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+      if (!secret) return "";
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),
@@ -1026,7 +1089,10 @@
       const [payloadHex, sigHex] = raw.split(".");
       if (!payloadHex || !sigHex || payloadHex.length % 2 !== 0) return { ok: false, error: "Formatfehler im Launch-Token" };
       const enc = new TextEncoder();
-      const secret = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "teleport_default_worker_secret_key");
+      const secret = typeof getSessionSigningSecret === "function"
+        ? await getSessionSigningSecret(env)
+        : String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+      if (!secret) return { ok: false, error: "Signatur-Schlüssel nicht konfiguriert" };
       const key = await crypto.subtle.importKey(
         "raw",
         enc.encode(secret),
@@ -1036,7 +1102,10 @@
       );
       const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`tglaunch:${payloadHex}`));
       const expectedSigHex = Array.from(new Uint8Array(expectedSigBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
-      if (expectedSigHex.toLowerCase() !== sigHex.toLowerCase()) {
+      const sigMatches = typeof timingSafeEqualStr === "function"
+        ? timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())
+        : (expectedSigHex.toLowerCase() === sigHex.toLowerCase());
+      if (!sigMatches) {
         return { ok: false, error: "Ungültige Launch-Token Signatur" };
       }
       const bytes = new Uint8Array(payloadHex.length / 2);
@@ -1056,8 +1125,23 @@
     }
   }
 
+  function resolveDefaultWebAppBaseUrl(env, explicitBase = "") {
+    const raw = String(
+      explicitBase ||
+      env?.WEBAPP_URL ||
+      env?.WEBHOOK_URL ||
+      (typeof globalThis !== "undefined" ? globalThis._activeWorkerOrigin : "") ||
+      "https://teleport.sonhartmann-1997.workers.dev"
+    ).trim();
+    if (!raw) return "";
+    if (typeof resolveCleanWorkerOrigin === "function" && !explicitBase && !env?.WEBAPP_URL) {
+      return resolveCleanWorkerOrigin(env, raw).replace(/\/$/, "");
+    }
+    return raw.replace(/\/$/, "");
+  }
+
   async function buildSignedWebAppUrl(env, baseUrl, chatId = null, extraParams = {}) {
-    const base = String(baseUrl || env?.WEBAPP_URL || env?.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+    const base = resolveDefaultWebAppBaseUrl(env, baseUrl);
     if (!base) return "";
     try {
       const u = new URL(base);
@@ -1106,7 +1190,7 @@
               reply_markup: r.reply_markup ? sanitizeReplyMarkup(r.reply_markup) : undefined
             };
           });
-          const effectiveWebAppBase = String(env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const effectiveWebAppBase = resolveDefaultWebAppBaseUrl(env);
           const cleanInlineOpts = { ...options };
           const switchPmText = cleanInlineOpts.switch_pm_text;
           const switchPmParam = cleanInlineOpts.switch_pm_parameter;
@@ -1142,7 +1226,7 @@
       async setChatMenuButton(chatId = null, webAppUrl = "", buttonText = "🍿 Mediathek") {
         try {
           trackStat("telegramCalls");
-          const base = String(webAppUrl || env.WEBAPP_URL || env.WEBHOOK_URL || "https://teleport.sonhartmann-1997.workers.dev/").replace(/\/$/, "");
+          const base = resolveDefaultWebAppBaseUrl(env, webAppUrl);
           const finalUrl = chatId
             ? await buildSignedWebAppUrl(env, base, chatId)
             : base;
@@ -1225,20 +1309,21 @@
           const { _fromAntiSpamQueue, ...cleanOptions } = options || {};
           recordActualTelegramSendSlot(chatId);
           const safeMarkup = cleanOptions.reply_markup ? sanitizeReplyMarkup(cleanOptions.reply_markup) : undefined;
-          const htmlText = mdToHtml(text);
+          const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
             chat_id: chatId,
-            text: htmlText,
-            parse_mode: "HTML",
+            text: prepared.text,
+            parse_mode: prepared.parse_mode,
             disable_web_page_preview: true,
             ...cleanOptions,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 6000);
 
           if (res.status === 429) {
             const errData = await res.json().catch(() => ({}));
@@ -1261,13 +1346,15 @@
           }
 
           if (!res.ok) {
-            const plainText = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
             const plainBody = { ...body, text: plainText, parse_mode: undefined, reply_markup: safeMarkup };
-            res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+            res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(plainBody),
-            });
+              _criticalSubrequest: true
+            }, 6000);
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -1278,21 +1365,30 @@
       async sendPhoto(chatId, photoUrl, caption, options = {}) {
         try {
           trackStat("telegramCalls");
+          recordActualTelegramSendSlot(chatId);
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
-          const htmlCaption = mdToHtml(caption || "");
+          const prepared = prepareTelegramHtmlPayload(caption || "", 1020);
           const body = {
             chat_id: chatId,
             photo: photoUrl,
-            caption: htmlCaption,
-            parse_mode: "HTML",
+            caption: prepared.text,
+            parse_mode: prepared.parse_mode,
             ...options,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/sendPhoto`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 7000);
+
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retrySec = Number(err429?.parameters?.retry_after) || 5;
+            registerAntiSpam429FloodWait(retrySec, chatId);
+            return null;
+          }
 
           if (!res.ok) {
             const plainCaption = unescapeMdChars(
@@ -1304,11 +1400,12 @@
               parse_mode: undefined,
               reply_markup: safeMarkup
             };
-            res = await fetch(`${TELEGRAM_API}/sendPhoto`, {
+            res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(fallbackBody),
-            });
+              _criticalSubrequest: true
+            }, 7000);
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -1320,11 +1417,12 @@
         try {
           trackStat("telegramCalls");
           const body = { chat_id: chatId, message_id: messageId, reply_markup: sanitizeReplyMarkup(replyMarkup) };
-          let res = await fetch(`${TELEGRAM_API}/editMessageReplyMarkup`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageReplyMarkup`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 5000);
           return res.ok ? await res.json() : null;
         } catch (e) {
           return null;
@@ -1335,18 +1433,20 @@
         try {
           trackStat("telegramCalls");
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
+          const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
             inline_message_id: inlineMessageId,
-            text: mdToHtml(text),
-            parse_mode: "HTML",
+            text: prepared.text,
+            parse_mode: prepared.parse_mode,
             ...options,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/editMessageText`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 5000);
           return res.ok ? await res.json() : null;
         } catch (e) {
           return null;
@@ -1357,20 +1457,28 @@
         try {
           trackStat("telegramCalls");
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
+          const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
             chat_id: chatId,
             message_id: messageId,
-            text: mdToHtml(text),
-            parse_mode: "HTML",
+            text: prepared.text,
+            parse_mode: prepared.parse_mode,
             disable_web_page_preview: true,
             ...options,
             reply_markup: safeMarkup
           };
-          let res = await fetch(`${TELEGRAM_API}/editMessageText`, {
+          let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 6000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retrySec = Number(err429?.parameters?.retry_after) || 5;
+            registerAntiSpam429FloodWait(retrySec, chatId);
+            return null;
+          }
           if (!res.ok) {
             const errJson = await res.clone().json().catch(() => null);
             const errDesc = String(errJson?.description || "").toLowerCase();
@@ -1379,18 +1487,20 @@
             if (errDesc.includes("message is not modified")) {
               return { ok: true, notModified: true };
             }
-            const plainText = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+            const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
             const fallbackBody = {
               ...body,
               text: plainText,
               parse_mode: undefined,
               reply_markup: safeMarkup
             };
-            res = await fetch(`${TELEGRAM_API}/editMessageText`, {
+            res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(fallbackBody),
-            });
+              _criticalSubrequest: true
+            }, 6000);
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -1402,12 +1512,15 @@
         if (!callbackQueryId) return;
         try {
           trackStat("telegramCalls");
-          const body = { callback_query_id: callbackQueryId, text, show_alert: showAlert };
-          await fetch(`${TELEGRAM_API}/answerCallbackQuery`, {
+          // Telegram-Limit: max. 200 Zeichen für answerCallbackQuery-Text
+          const safeText = String(text || "").length > 198 ? (String(text).slice(0, 195) + "…") : String(text || "");
+          const body = { callback_query_id: callbackQueryId, text: safeText, show_alert: showAlert };
+          await fetchWithTimeout(`${TELEGRAM_API}/answerCallbackQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 4000);
         } catch (e) {}
       },
 
@@ -1416,28 +1529,38 @@
         try {
           trackStat("telegramCalls");
           const body = { chat_id: chatId, message_id: messageId };
-          await fetch(`${TELEGRAM_API}/deleteMessage`, {
+          await fetchWithTimeout(`${TELEGRAM_API}/deleteMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
-          });
+            _criticalSubrequest: true
+          }, 4000);
         } catch (e) {}
       },
 
       async getBotUsername(env) {
-        if (env.BOT_USERNAME) return String(env.BOT_USERNAME).replace(/^@/, "");
+        if (env?.BOT_USERNAME) return String(env.BOT_USERNAME).replace(/^@/, "");
         if (memoryFallback.has("bot_username")) return memoryFallback.get("bot_username");
+        if (!env?.TELEGRAM_BOT_TOKEN) return "";
+        const lastFailTs = Number(memoryFallback.get("bot_username_fail_ts") || 0);
+        if (lastFailTs && (Date.now() - lastFailTs) < 60000) return "";
         try {
           trackStat("telegramCalls");
-          const res = await fetch(`${TELEGRAM_API}/getMe`);
+          const res = typeof fetchWithTimeout === "function"
+            ? await fetchWithTimeout(`${TELEGRAM_API}/getMe`, {}, 3000)
+            : await fetch(`${TELEGRAM_API}/getMe`);
           if (res.ok) {
             const data = await res.json();
-            if (data.result && data.result.username) {
+            if (data?.result?.username) {
+              memoryFallback.delete("bot_username_fail_ts");
               memoryFallback.set("bot_username", data.result.username);
               return data.result.username;
             }
           }
-        } catch (e) {}
+          memoryFallback.set("bot_username_fail_ts", Date.now());
+        } catch (e) {
+          memoryFallback.set("bot_username_fail_ts", Date.now());
+        }
         return "";
       },
 
@@ -1472,7 +1595,9 @@
           const apiBase = (customToken && /^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken))
             ? `https://api.telegram.org/bot${customToken}`
             : TELEGRAM_API;
-          const htmlCaption = mdToHtml(caption || "");
+          const preparedCap = prepareTelegramHtmlPayload(caption || "", 1020);
+          const htmlCaption = preparedCap.text;
+          const captionParseMode = preparedCap.parse_mode;
           const threadId = extraOpts.messageThreadId && /^\d+$/.test(String(extraOpts.messageThreadId).trim())
             ? parseInt(String(extraOpts.messageThreadId).trim(), 10)
             : undefined;
@@ -1482,27 +1607,34 @@
           // 1. Prüfe auf Quellgruppen-Referenz aus Telegram Desktop Chat-Backup (tg_export_<channelId>_<msgId>)
           const exportMatch = String(fileIdOrExportRef).trim().match(/^tg_export_(-?\d+)_(\d+)$/i);
           if (exportMatch) {
+            recordActualTelegramSendSlot(targetChatId);
             const rawChannelId = exportMatch[1];
             const sourceMsgId = parseInt(exportMatch[2], 10);
             const overrideBridge = String(extraOpts.sourceBridgeChatId || env.SOURCE_GROUP_CHAT_ID || "").trim();
             const fromChatId = overrideBridge || (rawChannelId.startsWith("-100") || rawChannelId.startsWith("-") ? rawChannelId : `-100${rawChannelId}`);
 
-            // Versuch A: Kopiere Nachricht sauber per copyMessage
+            // Versuch A: Kopiere Nachricht sauber per copyMessage (Hinweis: Telegram copyMessage unterstützt keinen cover-Parameter -> Cover wird direkt danach via editMessageMedia gesetzt!)
             const copyPayload = {
               chat_id: targetChatId,
               from_chat_id: fromChatId,
               message_id: sourceMsgId,
               caption: htmlCaption,
-              parse_mode: "HTML"
+              parse_mode: captionParseMode
             };
             if (threadId) copyPayload.message_thread_id = threadId;
-            if (resolvedCoverUrl) copyPayload.cover = resolvedCoverUrl;
 
-            let copyRes = await fetch(`${apiBase}/copyMessage`, {
+            let copyRes = await fetchWithTimeout(`${apiBase}/copyMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(copyPayload)
-            });
+              body: JSON.stringify(copyPayload),
+              _criticalSubrequest: true
+            }, 7000);
+
+            if (copyRes.status === 429) {
+              const err429Copy = await copyRes.json().catch(() => ({}));
+              registerAntiSpam429FloodWait(Number(err429Copy?.parameters?.retry_after) || 5, targetChatId);
+              return null;
+            }
 
             if (!copyRes.ok) {
               // Fallback ohne HTML parse_mode falls Sonderzeichen im Caption-Text
@@ -1514,11 +1646,17 @@
                 caption: plainCaption.slice(0, 1020)
               };
               if (threadId) fallbackCopyPayload.message_thread_id = threadId;
-              copyRes = await fetch(`${apiBase}/copyMessage`, {
+              copyRes = await fetchWithTimeout(`${apiBase}/copyMessage`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(fallbackCopyPayload)
-              });
+                body: JSON.stringify(fallbackCopyPayload),
+                _criticalSubrequest: true
+              }, 7000);
+              if (copyRes.status === 429) {
+                const err429Copy2 = await copyRes.json().catch(() => ({}));
+                registerAntiSpam429FloodWait(Number(err429Copy2?.parameters?.retry_after) || 5, targetChatId);
+                return null;
+              }
             }
 
             if (copyRes.ok) {
@@ -1546,11 +1684,12 @@
                       disable_notification: true
                     };
                     if (shouldDeleteTempForward && threadId) fwdPayload.message_thread_id = threadId;
-                    const fwdRes = await fetch(`${apiBase}/forwardMessage`, {
+                    const fwdRes = await fetchWithTimeout(`${apiBase}/forwardMessage`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify(fwdPayload)
-                    });
+                      body: JSON.stringify(fwdPayload),
+                      _criticalSubrequest: true
+                    }, 6000);
                     if (fwdRes.ok) {
                       const fwdJson = await fwdRes.json().catch(() => null);
                       const fwdMsgId = fwdJson?.result?.message_id;
@@ -1561,11 +1700,13 @@
                         await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, mediaObj.file_unique_id || null);
                       }
                       if (shouldDeleteTempForward && fwdMsgId) {
-                        fetch(`${apiBase}/deleteMessage`, {
+                        // Awaiten (mit Timeout), damit Cloudflare Workers die Löschung nicht vorzeitig abbricht (verhindert doppelte Videos!)
+                        await fetchWithTimeout(`${apiBase}/deleteMessage`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ chat_id: harvestTargetChat, message_id: fwdMsgId })
-                        }).catch(() => {});
+                          body: JSON.stringify({ chat_id: harvestTargetChat, message_id: fwdMsgId }),
+                          _criticalSubrequest: true
+                        }, 4000).catch(() => {});
                       }
                     }
                   } catch (e) {}
@@ -1584,15 +1725,16 @@
                       media: harvestedFileId,
                       cover: resolvedCoverUrl,
                       caption: htmlCaption,
-                      parse_mode: "HTML",
+                      parse_mode: captionParseMode,
                       supports_streaming: true
                     }
                   };
-                  const editRes = await fetch(`${apiBase}/editMessageMedia`, {
+                  const editRes = await fetchWithTimeout(`${apiBase}/editMessageMedia`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(editMediaPayload)
-                  });
+                    body: JSON.stringify(editMediaPayload),
+                    _criticalSubrequest: true
+                  }, 6000);
                   if (editRes.ok) {
                     coverEmbedded = true;
                   }
@@ -1619,7 +1761,7 @@
             chat_id: targetChatId,
             video: fileIdOrExportRef,
             caption: htmlCaption,
-            parse_mode: "HTML",
+            parse_mode: captionParseMode,
             supports_streaming: true
           };
           if (threadId) videoBody.message_thread_id = threadId;
@@ -1627,11 +1769,12 @@
           if (startTimestamp !== undefined) videoBody.start_timestamp = startTimestamp;
 
           let usedCover = Boolean(resolvedCoverUrl);
-          let res = await fetch(`${apiBase}/sendVideo`, {
+          let res = await fetchWithTimeout(`${apiBase}/sendVideo`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(videoBody)
-          });
+            body: JSON.stringify(videoBody),
+            _criticalSubrequest: true
+          }, 8000);
           if (res.status === 429) {
             const err429 = await res.json().catch(() => ({}));
             const retrySec = Number(err429?.parameters?.retry_after) || 5;
@@ -1643,11 +1786,12 @@
             usedCover = false;
             const fallbackVideoBody = { ...videoBody };
             delete fallbackVideoBody.cover;
-            res = await fetch(`${apiBase}/sendVideo`, {
+            res = await fetchWithTimeout(`${apiBase}/sendVideo`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(fallbackVideoBody)
-            });
+              body: JSON.stringify(fallbackVideoBody),
+              _criticalSubrequest: true
+            }, 8000);
             if (res.status === 429) {
               const err429Retry = await res.json().catch(() => ({}));
               registerAntiSpam429FloodWait(Number(err429Retry?.parameters?.retry_after) || 5, targetChatId);
@@ -1660,14 +1804,15 @@
               chat_id: targetChatId,
               document: fileIdOrExportRef,
               caption: htmlCaption,
-              parse_mode: "HTML"
+              parse_mode: captionParseMode
             };
             if (threadId) docBody.message_thread_id = threadId;
-            res = await fetch(`${apiBase}/sendDocument`, {
+            res = await fetchWithTimeout(`${apiBase}/sendDocument`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(docBody)
-            });
+              body: JSON.stringify(docBody),
+              _criticalSubrequest: true
+            }, 8000);
             if (res.status === 429) {
               const err429Doc = await res.json().catch(() => ({}));
               registerAntiSpam429FloodWait(Number(err429Doc?.parameters?.retry_after) || 5, targetChatId);
@@ -1712,6 +1857,7 @@
   function syncUserBundleToMemoryMirrors(chatId, bundle) {
     if (!chatId || !bundle) return;
     memoryFallback.set(`u_bundle_${chatId}`, bundle);
+    memoryFallback.set(`u_bundle_ts_${chatId}`, Date.now());
     memoryFallback.set(`user_${chatId}`, bundle.savedList || []);
     memoryFallback.set(`folders_${chatId}`, bundle.folders || []);
     memoryFallback.set(`settings_${chatId}`, bundle.settings || { ...DEFAULT_USER_SETTINGS_TEMPLATE });
@@ -1732,7 +1878,8 @@
 
     const forceKv = Boolean(options?.forceKvWrite || options?.flushNow);
     const contentSigKey = `u_bundle_sig_${chatId}`;
-    const nextSig = JSON.stringify({
+    const serializeForSig = typeof stableJsonStringify === "function" ? stableJsonStringify : JSON.stringify;
+    const nextSig = serializeForSig({
       savedList: normSavedList,
       folders: normFolders,
       settings: normSettings,
@@ -1753,19 +1900,35 @@
       settings: normSettings,
       session: cleanSession
     };
-    const deferKv = Boolean(options?.deferKvWrite);
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      // D1-first für User-Bundles (100.000 Writes/Tag statt KV 1.000/Tag, 0s globale Edge-Konsistenz, kein 1-Write/s-Limit!)
+      await saveEntityToD1(env, `u_bundle_${chatId}`, "user_bundle", payloadToPersist);
+      return;
+    }
+    // Fallback ohne D1-Binding: KV-Write am Request-Ende via flushDirtyKvBatch
     await kvStageWrite(env, `u_bundle_${chatId}`, payloadToPersist, {
       bindingName: "MOVIE_SAVED",
-      periodicOnly: deferKv && !forceKv,
+      periodicOnly: false,
       forceKvWrite: forceKv,
       flushNow: Boolean(options?.flushNow)
     });
   }
 
-  async function getUserBundle(env, chatId) {
+  async function getUserBundle(env, chatId, options = {}) {
     const cleanId = String(chatId || "guest");
     const bundleKey = `u_bundle_${cleanId}`;
-    if (memoryFallback.has(bundleKey)) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const bundleTs = Number(memoryFallback.get(`u_bundle_ts_${cleanId}`) || 0);
+    const hasPendingDirtyWrite = typeof kvDirtyBuffer !== "undefined" && kvDirtyBuffer.has(bundleKey);
+    const canUseMemBundle = !options?.forceRefresh && memoryFallback.has(bundleKey) && (
+      isBrowserSandbox ||
+      cleanId === "guest" ||
+      cleanId === "bot_vip" ||
+      hasPendingDirtyWrite ||
+      (bundleTs > 0 && (Date.now() - bundleTs) < 15000)
+    );
+    if (canUseMemBundle) {
       const memBundle = memoryFallback.get(bundleKey);
       if (memBundle && typeof memBundle === "object") {
         if (memoryFallback.has(`user_${cleanId}`)) {
@@ -1798,6 +1961,30 @@
       return botVipBundle;
     }
 
+    // 1. D1-first (sofortige globale Edge-Konsistenz, 0 KV-Reads/Writes!)
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function" && cleanId !== "guest") {
+      try {
+        const d1Bundle = await getEntityFromD1(env, bundleKey, 3650 * 86400000, {
+          ramTtlMs: 15000,
+          bypassMemoryCache: Boolean(options?.forceRefresh)
+        });
+        if (d1Bundle && typeof d1Bundle === "object") {
+          const hydrated = {
+            v: 2,
+            updatedAt: d1Bundle.updatedAt || Date.now(),
+            savedList: normalizeSavedItems(d1Bundle.savedList || []),
+            folders: Array.isArray(d1Bundle.folders) ? d1Bundle.folders : [],
+            settings: { ...DEFAULT_USER_SETTINGS_TEMPLATE, ...(d1Bundle.settings || {}) },
+            session: d1Bundle.session && typeof d1Bundle.session === "object" ? d1Bundle.session : {}
+          };
+          syncUserBundleToMemoryMirrors(cleanId, hydrated);
+          return hydrated;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Fallback & automatische 1x-Migration bestehender KV-User-Bundles nach D1
     try {
       const rawBundle = await kvCachedGetRaw(env, bundleKey, "MOVIE_SAVED");
       if (rawBundle) {
@@ -1812,6 +1999,9 @@
             session: parsed.session && typeof parsed.session === "object" ? parsed.session : {}
           };
           syncUserBundleToMemoryMirrors(cleanId, hydrated);
+          if (hasD1 && typeof saveEntityToD1 === "function" && cleanId !== "guest") {
+            scheduleBackgroundWork(() => saveEntityToD1(env, bundleKey, "user_bundle", hydrated));
+          }
           return hydrated;
         }
       }
@@ -2153,21 +2343,36 @@
 
   async function getBotVipHiddenKeys(env) {
     const key = "bot_vip_hidden_keys";
-    if (memoryFallback.has(key)) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const hiddenTs = Number(memoryFallback.get(`${key}_ts`) || 0);
+    if (memoryFallback.has(key) && (isBrowserSandbox || (Date.now() - hiddenTs) < 60000)) {
       const mem = memoryFallback.get(key);
       if (Array.isArray(mem)) return new Set(mem);
     }
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function") {
+      try {
+        const fromD1 = await getEntityFromD1(env, key, 3650 * 86400000, { ramTtlMs: 60000 });
+        if (Array.isArray(fromD1)) {
+          memoryFallback.set(key, fromD1);
+          memoryFallback.set(`${key}_ts`, Date.now());
+          return new Set(fromD1);
+        }
+      } catch (e) {}
+    }
     try {
-      const raw = await kvCachedGetRaw(env, key, "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, key, "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           memoryFallback.set(key, parsed);
+          memoryFallback.set(`${key}_ts`, Date.now());
           return new Set(parsed);
         }
       }
     } catch (e) {}
     memoryFallback.set(key, []);
+    memoryFallback.set(`${key}_ts`, Date.now());
     return new Set();
   }
 
@@ -2175,6 +2380,12 @@
     const key = "bot_vip_hidden_keys";
     const arr = Array.from(keySet || []);
     memoryFallback.set(key, arr);
+    memoryFallback.set(`${key}_ts`, Date.now());
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      await saveEntityToD1(env, key, "config", arr);
+      return;
+    }
     await kvStageWrite(env, key, arr, { bindingName: "MOVIE_SAVED" });
   }
 
@@ -2230,36 +2441,81 @@
     return Array.from(map.values()).sort((a, b) => (a.season !== b.season ? a.season - b.season : a.episode - b.episode));
   }
 
-  async function getAllSeriesEpisodesMapFromD1(env) {
+  async function getAllSeriesEpisodesMapFromD1(env, targetSeriesIds = null) {
     const epMap = new Map();
+    const hasFilter = Array.isArray(targetSeriesIds);
+    const cleanTargetIds = hasFilter
+      ? Array.from(new Set(targetSeriesIds.map(x => Number(x)).filter(n => Number.isFinite(n) && n > 0)))
+      : null;
+    if (hasFilter && cleanTargetIds.length === 0) {
+      return epMap;
+    }
+    const targetIdSet = cleanTargetIds ? new Set(cleanTargetIds) : null;
     const db = await ensureD1Schema(env);
     if (db) {
       try {
-        const res = await db.prepare(
-          `SELECT ef.series_id, ef.season_number, ef.episode_number, ef.quality, ef.codec, ef.telegram_file_id, ef.file_size, ef.tags,
-                  se.title AS episode_title
-           FROM episode_files ef
-           LEFT JOIN series_episodes se
-             ON se.series_id = ef.series_id AND se.season_number = ef.season_number AND se.episode_number = ef.episode_number
-           WHERE ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
-             AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
-           ORDER BY ef.series_id ASC, ef.season_number ASC, ef.episode_number ASC, ef.updated_at DESC`
-        ).all().catch(() => ({ results: [] }));
-        for (const r of (res?.results || [])) {
-          const sid = Number(r.series_id);
-          if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
-          const prevList = epMap.get(sid) || [];
-          prevList.push({
-            season: Number(r.season_number ?? 1),
-            episode: Number(r.episode_number ?? 1),
-            title: r.episode_title || `Folge ${Number(r.episode_number ?? 1)}`,
-            quality: r.quality || "1080p",
-            codec: r.codec || "x264",
-            fileId: r.telegram_file_id || null,
-            fileSize: r.file_size || null,
-            tags: r.tags || ""
-          });
-          epMap.set(sid, prevList);
+        if (cleanTargetIds) {
+          // Free-Plan Schutz: Gezielter IN-Lookup NUR für die tatsächlich benötigten Serien-IDs (kein Full-Table-Scan!)
+          for (let i = 0; i < cleanTargetIds.length; i += 45) {
+            const chunk = cleanTargetIds.slice(i, i + 45);
+            const ph = chunk.map((_, idx) => `?${idx + 1}`).join(",");
+            const res = await db.prepare(
+              `SELECT ef.series_id, ef.season_number, ef.episode_number, ef.quality, ef.codec, ef.telegram_file_id, ef.file_size, ef.tags,
+                      se.title AS episode_title
+               FROM episode_files ef
+               LEFT JOIN series_episodes se
+                 ON se.series_id = ef.series_id AND se.season_number = ef.season_number AND se.episode_number = ef.episode_number
+               WHERE ef.series_id IN (${ph})
+                 AND ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
+                 AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+               ORDER BY ef.series_id ASC, ef.season_number ASC, ef.episode_number ASC, ef.updated_at DESC
+               LIMIT 4000`
+            ).bind(...chunk).all().catch(() => ({ results: [] }));
+            for (const r of (res?.results || [])) {
+              const sid = Number(r.series_id);
+              if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
+              const prevList = epMap.get(sid) || [];
+              prevList.push({
+                season: Number(r.season_number ?? 1),
+                episode: Number(r.episode_number ?? 1),
+                title: r.episode_title || `Folge ${Number(r.episode_number ?? 1)}`,
+                quality: r.quality || "1080p",
+                codec: r.codec || "x264",
+                fileId: r.telegram_file_id || null,
+                fileSize: r.file_size || null,
+                tags: r.tags || ""
+              });
+              epMap.set(sid, prevList);
+            }
+          }
+        } else {
+          const res = await db.prepare(
+            `SELECT ef.series_id, ef.season_number, ef.episode_number, ef.quality, ef.codec, ef.telegram_file_id, ef.file_size, ef.tags,
+                    se.title AS episode_title
+             FROM episode_files ef
+             LEFT JOIN series_episodes se
+               ON se.series_id = ef.series_id AND se.season_number = ef.season_number AND se.episode_number = ef.episode_number
+             WHERE ef.telegram_file_id IS NOT NULL AND ef.telegram_file_id != ''
+               AND ef.telegram_file_id NOT LIKE 'vip_playlist_%' AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+             ORDER BY ef.series_id ASC, ef.season_number ASC, ef.episode_number ASC, ef.updated_at DESC
+             LIMIT 4000`
+          ).all().catch(() => ({ results: [] }));
+          for (const r of (res?.results || [])) {
+            const sid = Number(r.series_id);
+            if (!sid || scoreTelegramFileIdValidity(r.telegram_file_id) === 0) continue;
+            const prevList = epMap.get(sid) || [];
+            prevList.push({
+              season: Number(r.season_number ?? 1),
+              episode: Number(r.episode_number ?? 1),
+              title: r.episode_title || `Folge ${Number(r.episode_number ?? 1)}`,
+              quality: r.quality || "1080p",
+              codec: r.codec || "x264",
+              fileId: r.telegram_file_id || null,
+              fileSize: r.file_size || null,
+              tags: r.tags || ""
+            });
+            epMap.set(sid, prevList);
+          }
         }
       } catch (e) {}
     }
@@ -2268,7 +2524,7 @@
       if (k.startsWith("d1_ep_files_") && Array.isArray(v)) {
         for (const r of v) {
           const sid = Number(r?.series_id);
-          if (!sid || scoreTelegramFileIdValidity(r?.telegram_file_id) === 0) continue;
+          if (!sid || (targetIdSet && !targetIdSet.has(sid)) || scoreTelegramFileIdValidity(r?.telegram_file_id) === 0) continue;
           const prevList = epMap.get(sid) || [];
           prevList.push({
             season: Number(r.season_number ?? 1),
@@ -2329,12 +2585,30 @@
     if (!Array.isArray(list) || list.length === 0) return [];
     let changed = false;
     const now = Date.now();
+
+    // Gezielter Serien-Episoden-Lookup: Nur die Serien-IDs aus der aktuellen Liste nachladen (0 D1-Reads wenn keine Serien in der Liste!)
     let epMap = memoryFallback.get("d1_all_series_ep_map_cache");
     const epMapTs = Number(memoryFallback.get("d1_all_series_ep_map_cache_ts") || 0);
-    if (!(epMap instanceof Map) || (now - epMapTs) > 90000) {
-      epMap = await getAllSeriesEpisodesMapFromD1(env);
+    if (!(epMap instanceof Map) || (now - epMapTs) > 120000) {
+      epMap = new Map();
       memoryFallback.set("d1_all_series_ep_map_cache", epMap);
       memoryFallback.set("d1_all_series_ep_map_cache_ts", now);
+    }
+    const neededSeriesIds = [];
+    for (const item of list) {
+      if (!item) continue;
+      if (item.contentType === "series" || item.contentType === "episode") {
+        const sid = Number(item.contentType === "episode" ? item.seriesId : item.tmdbId);
+        if (sid > 0 && !epMap.has(sid)) {
+          neededSeriesIds.push(sid);
+        }
+      }
+    }
+    if (neededSeriesIds.length > 0) {
+      const fetchedEpMap = await getAllSeriesEpisodesMapFromD1(env, neededSeriesIds);
+      for (const sid of neededSeriesIds) {
+        epMap.set(sid, fetchedEpMap.get(sid) || []);
+      }
     }
 
     // Gezielter D1-Lookup NUR für die tatsächlich in der Liste vorhandenen IDs (keine LIMIT 1500 Full-Table-Scans!)

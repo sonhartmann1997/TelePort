@@ -2862,14 +2862,14 @@
           ? '<span class="hero-meta-sep">·</span><span class="hero-meta-genres">' +
               genres.map((g, idx) =>
                 (g.id
-                  ? '<span class="hero-meta-genre" onclick="selectHeroGenreFilter(\\'' + esc(g.id) + '\\')" title="Nach Genre ' + esc(g.name) + ' filtern">' + esc(g.name) + '</span>'
+                  ? '<span class="hero-meta-genre" onclick="selectHeroGenreFilter(\\'' + escJs(g.id) + '\\')" title="Nach Genre ' + esc(g.name) + ' filtern">' + esc(g.name) + '</span>'
                   : '<span>' + esc(g.name) + '</span>') +
                 (idx < genres.length - 1 ? '<span>, </span>' : '')
               ).join("") +
             '</span>'
           : '';
         return '<span><span class="hero-meta-star">★</span> ' + voteStr + '</span>' +
-          (yearStr ? '<span class="hero-meta-sep">·</span><span class="hero-meta-year" onclick="runSearch(false,\\'(' + esc(yearStr) + ')\\')" title="Alle Titel aus dem Jahr ' + esc(yearStr) + ' suchen">' + esc(yearStr) + '</span>' : '') +
+          (yearStr ? '<span class="hero-meta-sep">·</span><span class="hero-meta-year" onclick="runSearch(false,\\'(' + escJs(yearStr) + ')\\')" title="Alle Titel aus dem Jahr ' + esc(yearStr) + ' suchen">' + esc(yearStr) + '</span>' : '') +
           '<span class="hero-meta-sep">·</span><span>' + (isMovie ? 'Film' : 'Serie') + '</span>' +
           '<span class="hero-meta-sep">·</span><span class="hero-meta-hd" title="Im Katalog in HD verfügbar">HD</span>' +
           genresHtml;
@@ -3151,11 +3151,11 @@
         const transBtnHtml = (alwaysRenderBtn || showTransBtn)
           ? '<button type="button" id="' + esc(translateBtnId) + '" class="desc-translate-btn' + (isTranslated ? ' is-translated' : '') + '"' +
               (alwaysRenderBtn ? (' style="display:' + (showTransBtn ? 'inline-flex' : 'none') + '"') : '') +
-              ' onclick="translateOverviewTextClient(event,\\'' + esc(translateTargetKey) + '\\',\\'' + esc(boxId) + '\\',\\'' + esc(textId) + '\\',\\'' + esc(translateBtnId) + '\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' +
+              ' onclick="translateOverviewTextClient(event,\\'' + escJs(translateTargetKey) + '\\',\\'' + escJs(boxId) + '\\',\\'' + escJs(textId) + '\\',\\'' + escJs(translateBtnId) + '\\')" title="Englische Beschreibung direkt auf Deutsch übersetzen">' +
               (isTranslated ? '🇬🇧 Original anzeigen' : '🌐 Auf Deutsch übersetzen') +
             '</button>'
           : '';
-        return '<div id="' + esc(boxId) + '" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'' + esc(boxId) + '\\');}">' +
+        return '<div id="' + esc(boxId) + '" class="hero-desc expandable-desc-box" tabindex="0" role="button" aria-expanded="false" onclick="toggleExpandableDescriptionClient(event,\\'' + escJs(boxId) + '\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){event.preventDefault();toggleExpandableDescriptionClient(event,\\'' + escJs(boxId) + '\\');}">' +
           '<div id="' + esc(textId) + '" class="expandable-desc-scroll" data-orig-overview="' + esc(rawOrigOverview) + '">' + esc(overviewText) + '</div>' +
           '<div class="desc-actions-row">' +
             '<span class="desc-expand-hint">▾ Mehr lesen</span>' +
@@ -3620,7 +3620,7 @@
         Object.entries(gMap || {}).forEach(([gName, gId]) => {
           const idStr = String(gId);
           const em = genreEmoji(gName);
-          chipsHtml += '<button type="button" class="genre-overlay-chip ' + (curGenreId === idStr ? "active" : "") + '" onclick="selectGenreFromSearchOverlay(\\'' + esc(idStr) + '\\')">' +
+          chipsHtml += '<button type="button" class="genre-overlay-chip ' + (curGenreId === idStr ? "active" : "") + '" onclick="selectGenreFromSearchOverlay(\\'' + escJs(idStr) + '\\')">' +
             '<span>' + em + '</span><span>' + esc(gName) + '</span>' +
           '</button>';
         });
@@ -4190,7 +4190,7 @@
         if (cols.length || unis.length || studs.length) {
           html += '<div class="ac-group-title">🍿 Reihen, 🌌 Universen & 🏢 Filmstudios</div>';
           unis.forEach(u => {
-            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openUniverseView(\\'' + esc(u.id) + '\\')">' +
+            html += '<div class="ac-item" role="option" tabindex="0" onmousedown="event.preventDefault()" onclick="closeAutocomplete();openUniverseView(\\'' + escJs(u.id) + '\\')">' +
               '<div class="ac-item-left"><span class="ac-item-icon-box">' + esc(u.icon || '🌌') + '</span><span class="ac-item-text"><b>' + esc(u.name) + '</b></span></div>' +
               '<span class="ac-item-action" style="color:#34d399;border-color:rgba(52,211,153,0.35)">Universum ➔</span>' +
             '</div>';

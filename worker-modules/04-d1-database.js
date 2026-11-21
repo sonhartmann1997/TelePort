@@ -8,14 +8,35 @@
   let d1SchemaInitialized = false;
   let d1SchemaInitPromise = null;
   let activeD1WriteBuffer = null;
-  const D1_SCHEMA_VERSION = "20261120_v1";
+  let activeD1WriteBufferStartedAt = 0;
+  const D1_SCHEMA_VERSION = "20261121_v2";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
-  function countD1Subrequest() {
-    if (typeof currentInvocationSubrequests === "number") {
-      currentInvocationSubrequests++;
+  function isD1BufferEligibleWrite(sqlStr) {
+    const s = String(sqlStr || "");
+    if (!/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(s)) return false;
+    // Kritische Nutzer-, Auth-, Meldungs-, Anti-Spam- & Konfig-Tabellen NIEMALS im Import-Batch-Puffer verzögern (verhindert Cross-Request-Hijacking!)
+    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue)\b/i.test(s)) {
+      return false;
     }
+    return true;
+  }
+
+  function hasLiveD1WriteBuffer() {
+    if (!Array.isArray(activeD1WriteBuffer)) return false;
+    // Sicherheits-Timeout: falls ein vorheriger Batch abgestürzt ist, nach 25s automatisch abbrechen statt für immer zu schlucken
+    if (activeD1WriteBufferStartedAt > 0 && (Date.now() - activeD1WriteBufferStartedAt) > 25000) {
+      activeD1WriteBuffer = null;
+      activeD1WriteBufferStartedAt = 0;
+      return false;
+    }
+    return true;
+  }
+
+  function countD1Subrequest() {
+    // D1-Queries zählen bei Cloudflare Workers NICHT gegen das 50-fetch/KV-Subrequest-Limit,
+    // werden aber sauber als d1OpsCount für Telemetrie & CPU-Budget gezählt!
     if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
       activeWorkerTelemetry.d1OpsCount = (activeWorkerTelemetry.d1OpsCount || 0) + 1;
     }
@@ -34,9 +55,11 @@
   function wrapD1Stmt(rawStmt, sqlStr) {
     if (!rawStmt) return rawStmt;
     const isWriteStmt = /^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(String(sqlStr || ""));
+    const bufferEligible = isD1BufferEligibleWrite(sqlStr);
     return {
       _rawStmt: rawStmt,
       _isWriteStmt: isWriteStmt,
+      _bufferEligible: bufferEligible,
       _sql: sqlStr,
       bind(...args) {
         const boundRaw = rawStmt.bind(...args);
@@ -55,7 +78,7 @@
         return await rawStmt.raw(...args);
       },
       async run(...args) {
-        if (Array.isArray(activeD1WriteBuffer) && isWriteStmt) {
+        if (hasLiveD1WriteBuffer() && bufferEligible) {
           activeD1WriteBuffer.push(rawStmt);
           return { success: true, buffered: true, meta: { changes: 1 } };
         }
@@ -76,9 +99,9 @@
       },
       async batch(stmts) {
         if (!Array.isArray(stmts) || stmts.length === 0) return [];
-        const allWrites = stmts.every(s => Boolean(s && s._isWriteStmt));
+        const allBufferEligible = stmts.every(s => Boolean(s && s._bufferEligible));
         const rawStmts = unwrapRawD1Statements(stmts);
-        if (Array.isArray(activeD1WriteBuffer) && allWrites) {
+        if (hasLiveD1WriteBuffer() && allBufferEligible) {
           for (const rs of rawStmts) {
             activeD1WriteBuffer.push(rs);
           }
@@ -102,15 +125,21 @@
     if (!Array.isArray(activeD1WriteBuffer)) {
       activeD1WriteBuffer = [];
     }
+    activeD1WriteBufferStartedAt = Date.now();
   }
 
   async function flushD1BatchBuffer(env) {
     const pending = activeD1WriteBuffer;
     activeD1WriteBuffer = null;
+    activeD1WriteBufferStartedAt = 0;
     if (!Array.isArray(pending) || pending.length === 0) return 0;
     memoryFallback.delete("d1_series_gaps_cache");
     memoryFallback.delete("d1_vip_discover_cache_m");
     memoryFallback.delete("d1_vip_discover_cache_s");
+    memoryFallback.delete("d1_vip_discover_rows_m");
+    memoryFallback.delete("d1_vip_discover_rows_s");
+    memoryFallback.delete("d1_catalog_preseed_cache");
+    memoryFallback.delete("d1_all_series_ep_map_cache");
     memoryFallback.delete("d1_admin_media_list_cache_m");
     memoryFallback.delete("d1_admin_media_list_cache_s");
     memoryFallback.delete("d1_db_stats_cache");
@@ -437,7 +466,10 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_diag_logs_msg ON import_diagnostic_logs(msg_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlists_chat ON d1_playlists(chat_id, created_at)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_folder ON d1_playlist_items(chat_id, folder_id, added_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_chat_added ON d1_playlist_items(chat_id, added_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_d1_playlist_items_tmdb ON d1_playlist_items(tmdb_id, content_type)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_tg_anti_spam_queue_status_sched ON tg_anti_spam_queue(status, scheduled_at ASC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_movies_updated_at ON movies(updated_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_series_updated_at ON series(updated_at DESC)")
         ]));
@@ -565,8 +597,9 @@
         kinds.push("s");
         for (const id of uniqS) entityKeys.push(`tv_${id}`);
       }
-      if (entityKeys.length > 0) {
-        stmts.push(rawDb.prepare(`SELECT cache_key, data_json FROM entity_cache WHERE cache_key IN (${entityKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...entityKeys));
+      const safeEntityKeys = entityKeys.slice(0, 80);
+      if (safeEntityKeys.length > 0) {
+        stmts.push(rawDb.prepare(`SELECT cache_key, data_json FROM entity_cache WHERE cache_key IN (${safeEntityKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...safeEntityKeys));
         kinds.push("ent");
       }
       trackStat("d1Reads");
@@ -1035,14 +1068,35 @@
     return { queued, totalPending: stats.pendingCount };
   }
 
+  const IMPORT_QUEUE_META_KEY = "import_queue_meta_v1";
+
+  async function getImportQueueMetaFromD1(env) {
+    try {
+      const fromD1 = await getEntityFromD1(env, IMPORT_QUEUE_META_KEY, 7 * 86400000);
+      if (fromD1 && typeof fromD1 === "object") {
+        memoryFallback.set("import_queue_meta", fromD1);
+        return fromD1;
+      }
+    } catch (_e) {}
+    return memoryFallback.get("import_queue_meta") || null;
+  }
+
+  async function saveImportQueueMetaInD1(env, meta) {
+    if (!meta || typeof meta !== "object") return;
+    memoryFallback.set("import_queue_meta", meta);
+    try {
+      await saveEntityToD1(env, IMPORT_QUEUE_META_KEY, "import_queue_meta", meta);
+    } catch (_e) {}
+  }
+
   async function getImportQueueStatsFromD1(env) {
     const db = await ensureD1Schema(env);
+    const totalMeta = (await getImportQueueMetaFromD1(env)) || {};
     if (db) {
       try {
         trackStat("d1Reads");
         const row = await db.prepare("SELECT COUNT(*) AS cnt, MIN(source_label) AS src FROM import_queue").first();
         const pendingCount = Number(row?.cnt || 0);
-        const totalMeta = memoryFallback.get("import_queue_meta") || {};
         return {
           pendingCount,
           sourceLabel: row?.src || totalMeta.sourceLabel || "",
@@ -1055,7 +1109,6 @@
       } catch (e) {}
     }
     const memQueue = memoryFallback.get("d1_import_queue") || [];
-    const totalMeta = memoryFallback.get("import_queue_meta") || {};
     return {
       pendingCount: memQueue.length,
       sourceLabel: memQueue[0]?.source_label || totalMeta.sourceLabel || "",
@@ -1119,6 +1172,9 @@
     }
     memoryFallback.delete("d1_import_queue");
     memoryFallback.delete("import_queue_meta");
+    try {
+      await deleteEntityFromD1(env, IMPORT_QUEUE_META_KEY);
+    } catch (_e) {}
     return true;
   }
 
@@ -1128,6 +1184,17 @@
     if (!rawList) return false;
     const allowed = rawList.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
     return allowed.includes(String(telegramId));
+  }
+
+  async function isTelegramBotAdmin(env, telegramId) {
+    if (!telegramId) return false;
+    if (isAuthorizedAdminId(env, telegramId)) return true;
+    try {
+      const userRow = await getUserByTelegramIdFromD1(env, String(telegramId));
+      return Boolean(userRow && Number(userRow.is_admin) === 1);
+    } catch (_e) {
+      return false;
+    }
   }
 
   function formatUserRowForClient(row, env) {
@@ -1489,7 +1556,11 @@
     memoryFallback.delete(`${typeCode === "s" ? "d1_catalog_series_" : "d1_catalog_movie_"}${idNum}`);
     memoryFallback.delete(`d1_vip_summary_${typeCode === "s" ? "s" : "m"}_${idNum}`);
     memoryFallback.delete(`d1_vip_discover_cache_${typeCode === "s" ? "s" : "m"}`);
+    memoryFallback.delete(`d1_vip_discover_rows_${typeCode === "s" ? "s" : "m"}`);
     memoryFallback.delete(`d1_admin_media_list_cache_${typeCode === "s" ? "s" : "m"}`);
+    memoryFallback.delete("d1_catalog_preseed_cache");
+    memoryFallback.delete("d1_series_gaps_cache");
+    memoryFallback.delete("d1_all_series_ep_map_cache");
     memoryFallback.delete("d1_db_stats_cache");
     if (typeCode === "s") {
       memoryFallback.delete(`d1_series_best_quality_${idNum}`);
@@ -2934,9 +3005,27 @@
       ]);
       removedBrokenRows += Number(delM?.meta?.changes || 0) + Number(delE?.meta?.changes || 0);
 
+      // Free-Plan RAM/CPU-Schutz: Lade NUR Gruppen mit echten Duplikaten (COUNT(*) > 1) statt 100% der Tabellen!
       const [allMoviesRes, allEpsRes] = await Promise.all([
-        db.prepare("SELECT id, movie_id, telegram_file_id, telegram_unique_id, quality, codec, part, file_size, updated_at FROM movie_files ORDER BY updated_at DESC").all().catch(() => ({ results: [] })),
-        db.prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, telegram_unique_id, quality, codec, part, file_size, updated_at FROM episode_files ORDER BY updated_at DESC").all().catch(() => ({ results: [] }))
+        db.prepare(`
+          SELECT id, movie_id, telegram_file_id, telegram_unique_id, quality, codec, part, file_size, updated_at
+          FROM movie_files
+          WHERE movie_id IN (SELECT movie_id FROM movie_files GROUP BY movie_id HAVING COUNT(*) > 1)
+          ORDER BY updated_at DESC
+          LIMIT 2500
+        `).all().catch(() => ({ results: [] })),
+        db.prepare(`
+          SELECT ef.id, ef.series_id, ef.season_number, ef.episode_number, ef.telegram_file_id, ef.telegram_unique_id, ef.quality, ef.codec, ef.part, ef.file_size, ef.updated_at
+          FROM episode_files ef
+          INNER JOIN (
+            SELECT series_id, season_number, episode_number
+            FROM episode_files
+            GROUP BY series_id, season_number, episode_number
+            HAVING COUNT(*) > 1
+          ) dup ON dup.series_id = ef.series_id AND dup.season_number = ef.season_number AND dup.episode_number = ef.episode_number
+          ORDER BY ef.updated_at DESC
+          LIMIT 4000
+        `).all().catch(() => ({ results: [] }))
       ]);
 
       const movieGroups = new Map();
@@ -3146,27 +3235,55 @@
       if (!oldSid || !newSid || Number(oldSid) === Number(newSid)) return false;
       try {
         const oldEps = await db.prepare("SELECT * FROM episode_files WHERE series_id = ?1").bind(Number(oldSid)).all().catch(() => ({ results: [] }));
-        for (const ep of (oldEps?.results || [])) {
-          await db.prepare(`
-            INSERT INTO episode_files (series_id, season_number, episode_number, quality, telegram_file_id, file_size, caption, message_id, channel_id, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-            ON CONFLICT(series_id, season_number, episode_number, quality) DO UPDATE SET
-              telegram_file_id = CASE WHEN excluded.telegram_file_id != '' THEN excluded.telegram_file_id ELSE episode_files.telegram_file_id END,
-              message_id = COALESCE(excluded.message_id, episode_files.message_id),
-              channel_id = CASE WHEN excluded.channel_id != '' THEN excluded.channel_id ELSE episode_files.channel_id END,
+        const epRows = Array.isArray(oldEps?.results) ? oldEps.results : [];
+        let migratedOk = 0;
+        for (const ep of epRows) {
+          if (!ep || !ep.telegram_file_id) continue;
+          const insRes = await db.prepare(`
+            INSERT INTO episode_files (
+              series_id, season_number, episode_number, telegram_file_id, telegram_unique_id,
+              file_fingerprint, quality, codec, part, part_number, edition_label,
+              is_bonus, is_download_only, tags, version_label, file_size, mime_type,
+              raw_filename, raw_caption, message_link, subtitles_json, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+            ON CONFLICT(series_id, season_number, episode_number, telegram_file_id) DO UPDATE SET
+              quality = COALESCE(NULLIF(excluded.quality, ''), episode_files.quality),
+              file_size = COALESCE(excluded.file_size, episode_files.file_size),
+              raw_filename = COALESCE(NULLIF(excluded.raw_filename, ''), episode_files.raw_filename),
+              raw_caption = COALESCE(NULLIF(excluded.raw_caption, ''), episode_files.raw_caption),
+              message_link = COALESCE(NULLIF(excluded.message_link, ''), episode_files.message_link),
               updated_at = excluded.updated_at
           `).bind(
             Number(newSid),
             Number(ep.season_number || 1),
             Number(ep.episode_number || 1),
+            String(ep.telegram_file_id),
+            ep.telegram_unique_id || null,
+            ep.file_fingerprint || null,
             ep.quality || "1080p",
-            ep.telegram_file_id || "",
-            Number(ep.file_size || 0),
-            ep.caption || "",
-            ep.message_id || null,
-            ep.channel_id || "",
+            ep.codec || "x264",
+            ep.part || null,
+            Number(ep.part_number || 1),
+            ep.edition_label || null,
+            Number(ep.is_bonus || 0),
+            Number(ep.is_download_only || 0),
+            ep.tags || null,
+            ep.version_label || "Originalfassung",
+            ep.file_size != null ? Number(ep.file_size) : null,
+            ep.mime_type || null,
+            ep.raw_filename || null,
+            ep.raw_caption || null,
+            ep.message_link || null,
+            ep.subtitles_json || "[]",
             now
           ).run().catch(() => null);
+          if (insRes) migratedOk++;
+        }
+        // Datenverlust-Schutz: Alte Episoden NUR löschen, wenn alle vorhandenen Episoden erfolgreich migriert wurden!
+        const expectedCount = epRows.filter(ep => ep && ep.telegram_file_id).length;
+        if (expectedCount > 0 && migratedOk < expectedCount) {
+          return false;
         }
         await db.batch([
           db.prepare("DELETE FROM episode_files WHERE series_id = ?1").bind(Number(oldSid)),
@@ -3176,6 +3293,10 @@
         ]).catch(() => null);
         memoryFallback.delete(`d1_series_${oldSid}`);
         memoryFallback.delete(`d1_catalog_series_${oldSid}`);
+        memoryFallback.delete(`d1_series_best_quality_${oldSid}`);
+        memoryFallback.delete("d1_vip_discover_rows_s");
+        memoryFallback.delete("d1_admin_media_list_cache_s");
+        memoryFallback.delete("d1_series_gaps_cache");
         tmdbCache.delete(`tv_${oldSid}`);
         return true;
       } catch (e) {
@@ -3421,7 +3542,7 @@
     };
   }
 
-  async function getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNumber = null) {
+  async function getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNumber = null, includeFileCounts = true) {
     const sid = Number(seriesId);
     if (!sid) return { seasonCounts: {}, episodeTitleMap: new Map() };
     const seasonCounts = {};
@@ -3430,10 +3551,12 @@
     if (db) {
       try {
         const [sRes, epRes] = await Promise.all([
-          db.prepare("SELECT season_number, COUNT(DISTINCT episode_number) AS ep_cnt FROM episode_files WHERE series_id = ?1 GROUP BY season_number ORDER BY season_number ASC")
-            .bind(sid)
-            .all()
-            .catch(() => ({ results: [] })),
+          includeFileCounts
+            ? db.prepare("SELECT season_number, COUNT(DISTINCT episode_number) AS ep_cnt FROM episode_files WHERE series_id = ?1 GROUP BY season_number ORDER BY season_number ASC")
+                .bind(sid)
+                .all()
+                .catch(() => ({ results: [] }))
+            : Promise.resolve({ results: [] }),
           seasonNumber !== null
             ? db.prepare("SELECT episode_number, title, overview, vote_average, versions_json FROM series_episodes WHERE series_id = ?1 AND season_number = ?2")
                 .bind(sid, Number(seasonNumber))
@@ -3481,7 +3604,7 @@
   // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03 sowie komplett fehlende Zwischen-Staffeln; Priorität 2: Fehlende Folgen bis Staffelende)
   async function computeSeriesGapsOverview(env, forceRefresh = false) {
     const cachedGaps = memoryFallback.get("d1_series_gaps_cache");
-    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 60000) {
+    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 180000) {
       return cachedGaps.data;
     }
     const db = await ensureD1Schema(env);
@@ -3495,40 +3618,68 @@
       try {
         trackStat("d1Reads");
         if (typeof countD1Subrequest === "function") countD1Subrequest();
+        // Free-Plan Schutz: Nur Serien mit tatsächlich vorhandenen episode_files prüfen + json_extract statt Full-details_json / Full-episodes_json!
         const [sRes, ssRes, seCountRes, efRes] = await rawDb.batch([
-          rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path, number_of_seasons, number_of_episodes, details_json FROM series"),
-          rawDb.prepare("SELECT series_id, season_number, episodes_json FROM series_seasons"),
-          rawDb.prepare("SELECT series_id, season_number, COUNT(*) AS ep_count, MAX(episode_number) AS max_ep FROM series_episodes GROUP BY series_id, season_number"),
-          rawDb.prepare("SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags FROM episode_files")
+          rawDb.prepare(`
+            SELECT s.tmdb_id, s.title, s.release_year, s.poster_path, s.number_of_seasons, s.number_of_episodes,
+                   json_extract(s.details_json, '$.seasons') AS seasons_json,
+                   json_extract(s.details_json, '$.external_poster_url') AS ext_poster
+            FROM series s
+            WHERE EXISTS (SELECT 1 FROM episode_files ef WHERE ef.series_id = s.tmdb_id)
+            LIMIT 1000
+          `),
+          rawDb.prepare(`
+            SELECT ss.series_id, ss.season_number,
+                   COALESCE(
+                     json_extract(ss.episodes_json, '$.seasonEpisodeCount'),
+                     CASE WHEN json_type(ss.episodes_json) = 'array' THEN json_array_length(ss.episodes_json) ELSE json_array_length(json_extract(ss.episodes_json, '$.episodes')) END,
+                     0
+                   ) AS ep_count
+            FROM series_seasons ss
+            WHERE EXISTS (SELECT 1 FROM episode_files ef WHERE ef.series_id = ss.series_id)
+            LIMIT 2500
+          `),
+          rawDb.prepare(`
+            SELECT se.series_id, se.season_number, COUNT(*) AS ep_count, MAX(se.episode_number) AS max_ep
+            FROM series_episodes se
+            WHERE EXISTS (SELECT 1 FROM episode_files ef WHERE ef.series_id = se.series_id)
+            GROUP BY se.series_id, se.season_number
+            LIMIT 2500
+          `),
+          rawDb.prepare(`
+            SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags
+            FROM episode_files
+            WHERE telegram_file_id IS NOT NULL AND telegram_file_id != ''
+              AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'
+            LIMIT 8000
+          `)
         ]);
         for (const r of (sRes?.results || [])) {
           if (!r || !r.tmdb_id) continue;
           const sid = Number(r.tmdb_id);
           allCheckedSeriesIds.add(sid);
-          let details = null;
-          try { details = r.details_json ? JSON.parse(r.details_json) : null; } catch (_) {}
+          let parsedSeasons = [];
+          try {
+            const p = r.seasons_json ? JSON.parse(r.seasons_json) : null;
+            if (Array.isArray(p)) parsedSeasons = p;
+          } catch (_) {}
           seriesMap.set(sid, {
             tmdbId: sid,
-            title: r.title || details?.title || `Serie #${sid}`,
-            year: r.release_year || (details?.releaseDate ? String(details.releaseDate).split("-")[0] : "k.A."),
-            poster: resolvePosterUrl(r.poster_path || details?.poster_path, "w185", details?.external_poster_url || ""),
-            numberOfSeasons: Number(r.number_of_seasons || details?.numberOfSeasons || 1),
-            detailsSeasons: Array.isArray(details?.seasons) ? details.seasons : []
+            title: r.title || `Serie #${sid}`,
+            year: r.release_year || "k.A.",
+            poster: resolvePosterUrl(r.poster_path, "w185", r.ext_poster || ""),
+            numberOfSeasons: Number(r.number_of_seasons || parsedSeasons.length || 1),
+            detailsSeasons: parsedSeasons
           });
         }
         for (const sr of (ssRes?.results || [])) {
           const sid = Number(sr?.series_id || 0);
           const sNum = Number(sr?.season_number || 0);
-          if (!sid || !sNum) continue;
+          const epCount = Number(sr?.ep_count || 0);
+          if (!sid || !sNum || epCount <= 0) continue;
           allCheckedSeriesIds.add(sid);
-          let epCount = 0;
-          try {
-            const parsed = JSON.parse(sr.episodes_json || "{}");
-            const arr = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.episodes) ? parsed.episodes : []);
-            epCount = Number(parsed?.seasonEpisodeCount || arr.length || 0);
-          } catch (_) {}
           if (!seasonMetaBySeries.has(sid)) seasonMetaBySeries.set(sid, new Map());
-          if (epCount > 0) seasonMetaBySeries.get(sid).set(sNum, epCount);
+          seasonMetaBySeries.get(sid).set(sNum, epCount);
         }
         for (const secRow of (seCountRes?.results || [])) {
           const sid = Number(secRow?.series_id || 0);
@@ -4276,7 +4427,7 @@
         }).slice(0, 2)
       : [];
 
-    if (missingPosterItems.length > 0 && env?.TMDB_BEARER_TOKEN) {
+    if (missingPosterItems.length > 0 && hasTmdbCredentials(env)) {
       await Promise.all(missingPosterItems.map(async (it) => {
         if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(32)) return;
         const tc = it.media_type === "tv" ? "s" : it.media_type === "movie" ? "m" : fallbackTypeCode;
@@ -4388,20 +4539,35 @@
     if (db && results.length < limit) {
       try {
         if (!wantSeries) {
+          // Index-gestützte 2-Stufen-Abfrage (nutzt idx_movies_updated_at + idx_movie_files_movie_id):
+          // Scannt nur Top-60 statt 100% aller movie_files (schont 5M D1 Rows Read/Tag Limit massiv!)
           const mRes = await db.prepare(`
-            SELECT m.tmdb_id, m.title, m.release_date, m.vote_average, m.poster_path, m.backdrop_path, m.overview,
-                   json_extract(m.details_json, '$.external_poster_url') AS ext_poster,
+            WITH top_movies AS (
+              SELECT m.tmdb_id, m.title, m.release_date, m.vote_average, m.poster_path, m.backdrop_path, m.overview, m.details_json, m.updated_at
+              FROM movies m
+              WHERE EXISTS (
+                SELECT 1 FROM movie_files mf
+                WHERE mf.movie_id = m.tmdb_id
+                  AND mf.telegram_file_id IS NOT NULL
+                  AND mf.telegram_file_id != ''
+                  AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
+                  AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
+              )
+              ORDER BY m.updated_at DESC
+              LIMIT 60
+            )
+            SELECT tm.tmdb_id, tm.title, tm.release_date, tm.vote_average, tm.poster_path, tm.backdrop_path, tm.overview,
+                   json_extract(tm.details_json, '$.external_poster_url') AS ext_poster,
                    MAX(mf.quality) AS quality, MAX(mf.codec) AS codec,
                    MAX(mf.telegram_file_id) AS telegram_file_id, COUNT(mf.id) AS stream_cnt
-            FROM movies m
-            INNER JOIN movie_files mf ON mf.movie_id = m.tmdb_id
+            FROM top_movies tm
+            INNER JOIN movie_files mf ON mf.movie_id = tm.tmdb_id
             WHERE mf.telegram_file_id IS NOT NULL
               AND mf.telegram_file_id != ''
               AND mf.telegram_file_id NOT LIKE 'vip_playlist_%'
               AND mf.telegram_file_id NOT LIKE 'tmdb_card_%'
-            GROUP BY m.tmdb_id
-            ORDER BY m.updated_at DESC
-            LIMIT 60
+            GROUP BY tm.tmdb_id
+            ORDER BY tm.updated_at DESC
           `).all();
           for (const row of (mRes?.results || [])) {
             const mid = Number(row.tmdb_id);
@@ -4424,20 +4590,35 @@
             if (results.length >= limit) break;
           }
         } else {
+          // Index-gestützte 2-Stufen-Abfrage (nutzt idx_series_updated_at + idx_episode_files_series_ep):
+          // Verhindert 50.000+ Rows-Full-Scan über alle Episoden bei jedem Discover-Aufruf!
           const sRes = await db.prepare(`
-            SELECT s.tmdb_id, s.title, s.release_date, s.vote_average, s.poster_path, s.backdrop_path, s.overview,
-                   json_extract(s.details_json, '$.external_poster_url') AS ext_poster,
+            WITH top_series AS (
+              SELECT s.tmdb_id, s.title, s.release_date, s.vote_average, s.poster_path, s.backdrop_path, s.overview, s.details_json, s.updated_at
+              FROM series s
+              WHERE EXISTS (
+                SELECT 1 FROM episode_files ef
+                WHERE ef.series_id = s.tmdb_id
+                  AND ef.telegram_file_id IS NOT NULL
+                  AND ef.telegram_file_id != ''
+                  AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
+                  AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
+              )
+              ORDER BY s.updated_at DESC
+              LIMIT 60
+            )
+            SELECT ts.tmdb_id, ts.title, ts.release_date, ts.vote_average, ts.poster_path, ts.backdrop_path, ts.overview,
+                   json_extract(ts.details_json, '$.external_poster_url') AS ext_poster,
                    MAX(ef.quality) AS quality, MAX(ef.codec) AS codec,
                    MAX(ef.telegram_file_id) AS telegram_file_id, COUNT(ef.id) AS stream_cnt
-            FROM series s
-            INNER JOIN episode_files ef ON ef.series_id = s.tmdb_id
+            FROM top_series ts
+            INNER JOIN episode_files ef ON ef.series_id = ts.tmdb_id
             WHERE ef.telegram_file_id IS NOT NULL
               AND ef.telegram_file_id != ''
               AND ef.telegram_file_id NOT LIKE 'vip_playlist_%'
               AND ef.telegram_file_id NOT LIKE 'tmdb_card_%'
-            GROUP BY s.tmdb_id
-            ORDER BY s.updated_at DESC
-            LIMIT 60
+            GROUP BY ts.tmdb_id
+            ORDER BY ts.updated_at DESC
           `).all();
           for (const row of (sRes?.results || [])) {
             const sid = Number(row.tmdb_id);
@@ -5167,13 +5348,28 @@
     } catch (e) {}
   }
 
-  async function getEntityFromD1(env, cacheKey, ttlMs = D1_SEARCH_TTL_MS) {
+  async function getEntityFromD1(env, cacheKey, ttlMs = D1_SEARCH_TTL_MS, options = {}) {
     if (!cacheKey) return null;
     const memKey = `d1_entity_${cacheKey}`;
-    const memEntry = memoryFallback.get(memKey);
-    if (memEntry && (Date.now() - Number(memEntry.ts || 0) <= ttlMs)) {
-      if (memEntry.notInD1) return null;
-      if (memEntry.data) return memEntry.data;
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const bypassMemoryCache = Boolean(options?.bypassMemoryCache);
+    if (!bypassMemoryCache) {
+      const memEntry = memoryFallback.get(memKey);
+      if (memEntry) {
+        const ageMs = Date.now() - Number(memEntry.ramTs || memEntry.ts || 0);
+        // Negative Cache-Einträge (notInD1) im Live-Worker max. 10s im RAM halten (verhindert 365-Tage-Stale-Misses!)
+        if (memEntry.notInD1) {
+          if (isBrowserSandbox || ageMs <= 10000) return null;
+        } else if (memEntry.data !== undefined) {
+          const effectiveRamTtl = Number.isFinite(Number(options?.ramTtlMs))
+            ? Math.max(0, Number(options.ramTtlMs))
+            : ttlMs;
+          const dbAgeMs = Date.now() - Number(memEntry.ts || 0);
+          if (dbAgeMs <= ttlMs && (isBrowserSandbox || ageMs <= effectiveRamTtl)) {
+            return memEntry.data;
+          }
+        }
+      }
     }
     const db = await ensureD1Schema(env);
     if (!db) return null;
@@ -5183,14 +5379,15 @@
         .prepare("SELECT data_json, updated_at FROM entity_cache WHERE cache_key = ?1")
         .bind(String(cacheKey))
         .first();
+      const now = Date.now();
       if (!row || !row.data_json) {
-        memoryFallback.set(memKey, { notInD1: true, ts: Date.now() });
+        memoryFallback.set(memKey, { notInD1: true, ts: now, ramTs: now });
         return null;
       }
-      if (Date.now() - Number(row.updated_at || 0) > ttlMs) return null;
+      if (now - Number(row.updated_at || 0) > ttlMs) return null;
       const parsed = JSON.parse(row.data_json);
-      if (parsed) {
-        memoryFallback.set(memKey, { data: parsed, ts: Number(row.updated_at || Date.now()) });
+      if (parsed !== undefined && parsed !== null) {
+        memoryFallback.set(memKey, { data: parsed, ts: Number(row.updated_at || now), ramTs: now });
         trackStat("d1Hits");
         return parsed;
       }
@@ -5199,9 +5396,9 @@
   }
 
   async function saveEntityToD1(env, cacheKey, entityType, dataObj) {
-    if (!cacheKey || !dataObj) return;
+    if (!cacheKey || dataObj === undefined || dataObj === null) return;
     const now = Date.now();
-    memoryFallback.set(`d1_entity_${cacheKey}`, { data: dataObj, ts: now });
+    memoryFallback.set(`d1_entity_${cacheKey}`, { data: dataObj, ts: now, ramTs: now });
     const db = await ensureD1Schema(env);
     if (!db) return;
     try {
@@ -5211,6 +5408,20 @@
           cache_key, entity_type, data_json, updated_at
         ) VALUES (?1, ?2, ?3, ?4)`)
         .bind(String(cacheKey), String(entityType || "misc"), JSON.stringify(dataObj), now)
+        .run();
+    } catch (e) {}
+  }
+
+  async function deleteEntityFromD1(env, cacheKey) {
+    if (!cacheKey) return;
+    memoryFallback.delete(`d1_entity_${cacheKey}`);
+    const db = await ensureD1Schema(env);
+    if (!db) return;
+    try {
+      trackStat("d1Writes");
+      await db
+        .prepare("DELETE FROM entity_cache WHERE cache_key = ?1")
+        .bind(String(cacheKey))
         .run();
     } catch (e) {}
   }
@@ -5729,16 +5940,36 @@
       return cachedStats.data;
     }
     try {
-      const [mRow, sRow, qRow] = await Promise.all([
-        db.prepare("SELECT COUNT(*) AS cnt FROM movies").first(),
-        db.prepare("SELECT COUNT(*) AS cnt FROM series").first(),
-        db.prepare("SELECT COUNT(*) AS cnt FROM search_cache").first()
-      ]);
+      const rawDb = getRawD1Binding(env);
+      let mCnt = 0;
+      let sCnt = 0;
+      let qCnt = 0;
+      if (rawDb && typeof rawDb.batch === "function") {
+        trackStat("d1Reads");
+        countD1Subrequest();
+        const [mRes, sRes, qRes] = await rawDb.batch([
+          rawDb.prepare("SELECT COUNT(*) AS cnt FROM movies"),
+          rawDb.prepare("SELECT COUNT(*) AS cnt FROM series"),
+          rawDb.prepare("SELECT COUNT(*) AS cnt FROM search_cache")
+        ]);
+        mCnt = Number(mRes?.results?.[0]?.cnt || 0);
+        sCnt = Number(sRes?.results?.[0]?.cnt || 0);
+        qCnt = Number(qRes?.results?.[0]?.cnt || 0);
+      } else {
+        const [mRow, sRow, qRow] = await Promise.all([
+          db.prepare("SELECT COUNT(*) AS cnt FROM movies").first(),
+          db.prepare("SELECT COUNT(*) AS cnt FROM series").first(),
+          db.prepare("SELECT COUNT(*) AS cnt FROM search_cache").first()
+        ]);
+        mCnt = Number(mRow?.cnt || 0);
+        sCnt = Number(sRow?.cnt || 0);
+        qCnt = Number(qRow?.cnt || 0);
+      }
       const data = {
         enabled: true,
-        moviesCount: Number(mRow?.cnt || 0),
-        seriesCount: Number(sRow?.cnt || 0),
-        searchesCount: Number(qRow?.cnt || 0)
+        moviesCount: mCnt,
+        seriesCount: sCnt,
+        searchesCount: qCnt
       };
       memoryFallback.set("d1_db_stats_cache", { data, ts: Date.now() });
       return data;

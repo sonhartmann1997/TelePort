@@ -711,7 +711,7 @@
         const isInc = (settings.includedStudios || []).includes(st.id);
         const isExc = (settings.excludedStudios || []).includes(st.id);
         const icon = isInc ? "🟢" : isExc ? "❌" : "⚪";
-        row.push({ text: `${icon} ${st.emoji} ${st.label}`, callback_data: `toggle_studio_${st.id}` });
+        row.push({ text: `${icon} ${st.icon || st.emoji || "🏢"} ${st.label}`, callback_data: `toggle_studio_${st.id}` });
       }
       keyboard.push(row);
     }
@@ -752,7 +752,7 @@
         const isInc = (settings.includedPlatforms || []).includes(pl.id);
         const isExc = (settings.excludedPlatforms || []).includes(pl.id);
         const icon = isInc ? "🟢" : isExc ? "❌" : "⚪";
-        row.push({ text: `${icon} ${pl.emoji} ${pl.label}`, callback_data: `toggle_platform_${pl.id}` });
+        row.push({ text: `${icon} ${pl.icon || pl.emoji || "📺"} ${pl.label}`, callback_data: `toggle_platform_${pl.id}` });
       }
       keyboard.push(row);
     }
@@ -1643,14 +1643,19 @@
     const currentPage = Math.min(Math.max(1, page), totalPages);
     const slice = episodesToDisplay.slice((currentPage - 1) * perPage, currentPage * perPage);
 
-    // Für alle sichtbaren Episoden der aktuellen Seite die Telegraph-Story vorab sicherstellen,
-    // damit ein Tipp auf den Episoden-Titel sofort die Story im Instant-View öffnet!
+    // Free-Plan Schutz: Maximal 2 noch nicht gecachte Episoden-Telegraph-Seiten pro Bot-Klick vorwärmen (statt 8x Parallel-Sturm!)
     if (slice.length > 0) {
-      await Promise.all(
-        slice.map(ep =>
-          ensureEpisodeTelegraphUrl(env, seriesId, seriesDetails, ep.season_number || activeSeasonNum, ep)
-        )
-      );
+      let generatedNow = 0;
+      for (const ep of slice) {
+        const epNum = Number(ep?.episode_number || 0);
+        const sNum = Number(ep?.season_number || activeSeasonNum);
+        const memKey = `tg_ep_url_${seriesId}_${sNum}_${epNum}`;
+        if (ep?.telegraph_url || memoryFallback.get(memKey)) continue;
+        if (generatedNow >= 2) break;
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(24)) break;
+        generatedNow++;
+        await ensureEpisodeTelegraphUrl(env, seriesId, seriesDetails, sNum, ep).catch(() => null);
+      }
     }
 
     memoryFallback.set(`active_list_ctx_${chatId}`, {
@@ -3721,16 +3726,15 @@
       const userSettings = await getUserSettings(env, chatId);
       const isFilterOn = userSettings.filtersActive !== false;
 
-      const excludedGenreIds = new Set();
-      if (isFilterOn && Array.isArray(userSettings.excludedGenres)) {
-        for (const gName of userSettings.excludedGenres) {
-          if (MOVIE_GENRES[gName]) excludedGenreIds.add(MOVIE_GENRES[gName]);
-          if (SERIES_GENRES[gName]) excludedGenreIds.add(SERIES_GENRES[gName]);
-        }
-      }
+      const excludedGenreIds = (isFilterOn && Array.isArray(userSettings.excludedGenres))
+        ? resolveGenreIdsFromNames(userSettings.excludedGenres, isMovie ? "m" : "s")
+        : new Set();
+      // TMDb v3: Pipe (|) = OR-Ausschluss und nur gültige Genre-IDs für das gewählte Medium!
       const withoutGenresParam = excludedGenreIds.size > 0
-        ? `&without_genres=${Array.from(excludedGenreIds).join(",")}`
+        ? `&without_genres=${Array.from(excludedGenreIds).join("|")}`
         : "";
+      const mappedExplicitIds = genreId === "random_all" ? [] : mapExplicitGenreIdForMedia(genreId, isMovie);
+      const withGenresParam = mappedExplicitIds.length > 0 ? `with_genres=${mappedExplicitIds.join("|")}&` : "";
 
       let validItem = null;
       let validDetails = null;
@@ -3745,12 +3749,12 @@
         if (validItem || (Date.now() - startTime > 6500)) break;
 
         let tmdbUrl = contentType === "movie"
-          ? (genreId === "random_all"
-              ? `https://api.themoviedb.org/3/discover/movie?language=de-DE&sort_by=popularity.desc&vote_count.gte=20${withoutGenresParam}&page=${page}`
-              : `https://api.themoviedb.org/3/discover/movie?with_genres=${genreId}${withoutGenresParam}&language=de-DE&sort_by=popularity.desc&vote_count.gte=10&page=${page}`)
-          : (genreId === "random_all"
-              ? `https://api.themoviedb.org/3/discover/tv?language=de-DE&sort_by=popularity.desc&vote_count.gte=15${withoutGenresParam}&page=${page}`
-              : `https://api.themoviedb.org/3/discover/tv?with_genres=${genreId}${withoutGenresParam}&language=de-DE&sort_by=popularity.desc&vote_count.gte=5&page=${page}`);
+          ? (withGenresParam
+              ? `https://api.themoviedb.org/3/discover/movie?${withGenresParam}language=de-DE&sort_by=popularity.desc&vote_count.gte=10${withoutGenresParam}&page=${page}`
+              : `https://api.themoviedb.org/3/discover/movie?language=de-DE&sort_by=popularity.desc&vote_count.gte=20${withoutGenresParam}&page=${page}`)
+          : (withGenresParam
+              ? `https://api.themoviedb.org/3/discover/tv?${withGenresParam}language=de-DE&sort_by=popularity.desc&vote_count.gte=5${withoutGenresParam}&page=${page}`
+              : `https://api.themoviedb.org/3/discover/tv?language=de-DE&sort_by=popularity.desc&vote_count.gte=15${withoutGenresParam}&page=${page}`);
 
         let res = null;
         try {
@@ -4214,12 +4218,14 @@
       } else {
         const randPage = Math.floor(Math.random() * 5) + 1;
         if (filterMediaType === "movie") {
-          url = randomGenreId
-            ? `https://api.themoviedb.org/3/discover/movie?with_genres=${randomGenreId}&language=de-DE&sort_by=popularity.desc&vote_count.gte=15&page=${randPage}`
+          const mappedInlineIds = mapExplicitGenreIdForMedia(randomGenreId, true);
+          url = mappedInlineIds.length > 0
+            ? `https://api.themoviedb.org/3/discover/movie?with_genres=${mappedInlineIds.join("|")}&language=de-DE&sort_by=popularity.desc&vote_count.gte=15&page=${randPage}`
             : `https://api.themoviedb.org/3/discover/movie?language=de-DE&sort_by=popularity.desc&vote_count.gte=25&page=${randPage}`;
         } else if (filterMediaType === "tv") {
-          url = randomGenreId
-            ? `https://api.themoviedb.org/3/discover/tv?with_genres=${randomGenreId}&language=de-DE&sort_by=popularity.desc&vote_count.gte=10&page=${randPage}`
+          const mappedInlineIds = mapExplicitGenreIdForMedia(randomGenreId, false);
+          url = mappedInlineIds.length > 0
+            ? `https://api.themoviedb.org/3/discover/tv?with_genres=${mappedInlineIds.join("|")}&language=de-DE&sort_by=popularity.desc&vote_count.gte=10&page=${randPage}`
             : `https://api.themoviedb.org/3/discover/tv?language=de-DE&sort_by=popularity.desc&vote_count.gte=20&page=${randPage}`;
         } else {
           url = `https://api.themoviedb.org/3/trending/all/week?language=de-DE&page=${randPage}`;
@@ -4546,7 +4552,8 @@
 
       if (!results) {
         results = [];
-        const urlRec = `https://api.themoviedb.org/3/${typePath}/${sourceItemId}/recommendations?language=de-DE&page=1`;
+        if (isRealTmdbId(sourceItemId)) {
+          const urlRec = `https://api.themoviedb.org/3/${typePath}/${sourceItemId}/recommendations?language=de-DE&page=1`;
         const res = await fetchWithTimeout(urlRec, {
           headers: { accept: "application/json", Authorization: `Bearer ${env.TMDB_BEARER_TOKEN}` },
         }, 4500);
@@ -4568,6 +4575,7 @@
         if (results.length > 0) {
           setCachedTmdb(simCacheKey, results);
           await saveEntityToD1(env, simCacheKey, "similar", results);
+        }
         }
       }
 

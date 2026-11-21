@@ -2254,6 +2254,23 @@
     return s;
   }
 
+  // Prüft die sichtbare Textlänge nach HTML-Parsing (Telegram-Limit: 4096 für Nachrichten, 1024 für Captions)
+  // und schneidet NIEMALS mitten durch offene HTML-Tags (<a href=...>, <b>, <blockquote>)!
+  function prepareTelegramHtmlPayload(rawMarkdown, maxVisibleLen = 4090) {
+    const rawStr = String(rawMarkdown || "");
+    const html = mdToHtml(rawStr);
+    const visibleLen = html.replace(/<[^>]+>/g, "").replace(/&[a-z#0-9]+;/gi, "x").length;
+    if (visibleLen <= maxVisibleLen) {
+      return { text: html, parse_mode: "HTML" };
+    }
+    const plain = unescapeMdChars(rawStr.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+    const safeLimit = Math.max(20, Number(maxVisibleLen) || 4090);
+    return {
+      text: plain.length > safeLimit ? (plain.slice(0, safeLimit - 3) + "…") : plain,
+      parse_mode: undefined
+    };
+  }
+
   function normalizeToken(str) {
     return String(str || "")
       .toLowerCase()
@@ -2413,12 +2430,26 @@
   function buildEdgeCacheKeyRequest(rawUrl) {
     try {
       const u = new URL(String(rawUrl || ""));
-      // Geheimnisse (api_key) niemals im öffentlichen Edge-Cache-Key speichern
+      // Geheimnisse (api_key, session_id) niemals im öffentlichen Edge-Cache-Key speichern
       u.searchParams.delete("api_key");
+      u.searchParams.delete("session_id");
       return new Request(u.toString(), { method: "GET" });
     } catch (_e) {
       return null;
     }
+  }
+
+  function hasTmdbCredentials(env) {
+    const activeEnv = env || (typeof globalThis !== "undefined" ? globalThis._activeWorkerEnv : null);
+    return Boolean(
+      String(activeEnv?.TMDB_BEARER_TOKEN || activeEnv?.TMDB_API_KEY || activeEnv?.TMDB_KEY || "").trim()
+    );
+  }
+
+  // Synthetische Fallback-IDs (OMDb 100M+, TVMaze 200M+, Wikidata 500M+, Manuell 900M+, >= 8M) existieren NICHT bei TMDb!
+  function isRealTmdbId(rawId) {
+    const num = Number(rawId);
+    return Number.isInteger(num) && num > 0 && num < 8000000;
   }
 
   function resolveExternalEdgeCacheTtl(rawUrl) {
@@ -2427,6 +2458,10 @@
       return 86400; // 24 Stunden
     }
     if (u.includes("api.themoviedb.org/3/")) {
+      // Private/einmalige Auth- & Account-Endpunkte (request_token, session_id, watchlist, favorite) NIEMALS im Edge-Cache speichern!
+      if (u.includes("/authentication/") || u.includes("/account") || u.includes("session_id=")) {
+        return 0;
+      }
       if (u.includes("/discover/") || u.includes("/trending/") || u.includes("/search/")) {
         return 900; // 15 Minuten
       }
@@ -2549,12 +2584,33 @@
     }
   }
 
-  // Normalisiert Reply-Markup inkl. nativer Telegram Bot API 8.0+ copy_text Buttons (CopyTextButton)
+  // Kürzt callback_data sicher auf max. 64 UTF-8-Bytes (hartes Telegram Bot API Limit -> verhindert 400 BUTTON_DATA_INVALID!)
+  function clampTelegramCallbackData(rawData) {
+    const str = String(rawData || "");
+    if (!str) return "wl_noop";
+    try {
+      const enc = new TextEncoder();
+      if (enc.encode(str).length <= 64) return str;
+      let out = "";
+      let usedBytes = 0;
+      for (const ch of str) {
+        const bLen = enc.encode(ch).length;
+        if (usedBytes + bLen > 64) break;
+        out += ch;
+        usedBytes += bLen;
+      }
+      return out || "wl_noop";
+    } catch (_e) {
+      return str.slice(0, 60);
+    }
+  }
+
+  // Normalisiert Reply-Markup inkl. nativer Telegram Bot API 8.0+ copy_text Buttons (CopyTextButton) & 64-Byte callback_data Schutz
   function sanitizeReplyMarkup(replyMarkup) {
     if (!replyMarkup || !Array.isArray(replyMarkup.inline_keyboard)) return replyMarkup;
     return {
       inline_keyboard: replyMarkup.inline_keyboard.map(row =>
-        row.map(btn => {
+        (Array.isArray(row) ? row : []).map(btn => {
           if (btn && btn.copy_text) {
             const rawCopyText = typeof btn.copy_text === "object" && btn.copy_text !== null
               ? String(btn.copy_text.text || "").trim()
@@ -2566,6 +2622,12 @@
               };
             }
             return { text: btn.text, callback_data: "info_copy_fallback" };
+          }
+          if (btn && typeof btn.callback_data === "string") {
+            const safeCb = clampTelegramCallbackData(btn.callback_data);
+            if (safeCb !== btn.callback_data) {
+              return { ...btn, callback_data: safeCb };
+            }
           }
           return btn;
         })

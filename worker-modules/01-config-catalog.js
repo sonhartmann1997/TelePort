@@ -160,8 +160,8 @@
       id: "dcu",
       name: "DC Universe (DCEU & Dark Knight)",
       icon: "🦇",
-      description: "The Dark Knight, Man of Steel, Justice League, Wonder Woman, Aquaman, Suicide Squad, The Batman & Joker",
-      collectionIds: [263, 209131, 468552, 531242, 477962, 531244],
+      description: "The Dark Knight, Man of Steel, Justice League, Wonder Woman, Aquaman, Suicide Squad, Shazam, The Batman & Joker",
+      collectionIds: [263, 209131, 468552, 531242, 573693, 724848],
       movieIds: [414906, 475557, 791373, 436270, 298618]
     },
     {
@@ -602,19 +602,44 @@
     return PLATFORM_ID_ALIASES[clean] || clean;
   }
 
+  const VALID_MOVIE_GENRE_IDS = new Set(Object.values(MOVIE_GENRES).map(Number));
+  const VALID_SERIES_GENRE_IDS = new Set(Object.values(SERIES_GENRES).map(Number));
+
+  // Verhindert ungültige TMDb /discover-Abfragen (z.B. Film-Genre-ID 28 an /discover/tv -> immer 0 Treffer!)
+  function mapExplicitGenreIdForMedia(rawGenreId, isMovie = true) {
+    const clean = String(rawGenreId || "").trim();
+    if (!clean || clean === "all" || clean === "random_all") return [];
+    const num = Number(clean);
+    if (!Number.isFinite(num) || num <= 0) return [];
+    if (isMovie) {
+      if (VALID_MOVIE_GENRE_IDS.has(num)) return [num];
+      if (num === 10759) return [28, 12]; // Action & Adventure -> Action | Abenteuer
+      if (num === 10765) return [878, 14]; // Sci-Fi & Fantasy -> Sci-Fi | Fantasy
+      if (num === 10768) return [10752]; // War & Politics -> Kriegsfilm
+      if (num === 10762) return [10751, 16]; // Kids -> Familie | Animation
+      return [];
+    } else {
+      if (VALID_SERIES_GENRE_IDS.has(num)) return [num];
+      if (num === 28 || num === 12) return [10759]; // Action / Abenteuer -> Action & Adventure
+      if (num === 878 || num === 14) return [10765]; // Sci-Fi / Fantasy -> Sci-Fi & Fantasy
+      if (num === 10752) return [10768]; // Kriegsfilm -> War & Politics
+      if (num === 27 || num === 53) return [9648]; // Horror / Thriller -> Mystery (nächste gültige TV-Genre-ID)
+      if (num === 10749 || num === 36) return [18]; // Liebesfilm / Historie -> Drama
+      return [];
+    }
+  }
+
   function buildTmdbStudioAndPlatformParams(userSettings, isMovie = true, explicitGenreId = "all") {
     let params = "";
     const todayStr = new Date().toISOString().slice(0, 10);
     const showUnreleased = Boolean(userSettings && userSettings.showUnreleased);
-    const cleanExplicitGenre = (explicitGenreId && explicitGenreId !== "all" && explicitGenreId !== "random_all")
-      ? String(explicitGenreId)
-      : "";
+    const mappedExplicitGenreIds = mapExplicitGenreIdForMedia(explicitGenreId, isMovie);
     const explicitCompanyId = userSettings && userSettings.explicitCompanyId
       ? String(userSettings.explicitCompanyId).trim()
       : "";
 
     if (!userSettings || userSettings.filtersActive === false) {
-      if (cleanExplicitGenre) params += `&with_genres=${cleanExplicitGenre}`;
+      if (mappedExplicitGenreIds.length > 0) params += `&with_genres=${mappedExplicitGenreIds.join("|")}`;
       if (explicitCompanyId) params += `&with_companies=${encodeURIComponent(explicitCompanyId)}`;
       if (!showUnreleased) {
         params += isMovie ? `&primary_release_date.lte=${todayStr}` : `&first_air_date.lte=${todayStr}`;
@@ -635,13 +660,14 @@
 
     const targetMedia = isMovie ? "m" : "s";
     const resolvedIncGenreIds = resolveGenreIdsFromNames(incGenres, targetMedia);
-    if (cleanExplicitGenre) resolvedIncGenreIds.add(Number(cleanExplicitGenre) || cleanExplicitGenre);
+    for (const mgid of mappedExplicitGenreIds) resolvedIncGenreIds.add(mgid);
     if (resolvedIncGenreIds.size > 0) {
       params += `&with_genres=${Array.from(resolvedIncGenreIds).join("|")}`;
     }
     const resolvedExcGenreIds = resolveGenreIdsFromNames(excGenres, targetMedia);
     if (resolvedExcGenreIds.size > 0) {
-      params += `&without_genres=${Array.from(resolvedExcGenreIds).join(",")}`;
+      // TMDb v3: Pipe (|) = OR (jedes einzelne ausgeschlossene Genre blockieren; Komma wäre AND!)
+      params += `&without_genres=${Array.from(resolvedExcGenreIds).join("|")}`;
     }
     if (incStudios.length > 0 || explicitCompanyId) {
       const ids = STUDIO_OPTIONS.filter(s => incStudios.includes(s.id)).flatMap(s => s.companyIds);
@@ -649,8 +675,9 @@
       if (ids.length > 0) params += `&with_companies=${Array.from(new Set(ids)).join("|")}`;
     }
     if (excStudios.length > 0) {
-      const ids = STUDIO_OPTIONS.filter(s => excStudios.includes(s.id)).flatMap(s => s.companyIds);
-      if (ids.length > 0) params += `&without_companies=${ids.join(",")}`;
+      const ids = Array.from(new Set(STUDIO_OPTIONS.filter(s => excStudios.includes(s.id)).flatMap(s => s.companyIds)));
+      // TMDb v3: Pipe (|) = OR (jedes Studio/Sub-Label einzeln ausschließen; Komma würde erfordern, dass ALLE IDs gleichzeitig im Film vorkommen!)
+      if (ids.length > 0) params += `&without_companies=${ids.join("|")}`;
     }
     if (incPlatforms.length > 0 || excPlatforms.length > 0) {
       params += `&watch_region=DE`;
@@ -755,7 +782,32 @@
   const memoryFallback = (() => {
     const map = new Map();
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
-    if (!isBrowserSandbox) return map;
+    if (!isBrowserSandbox) {
+      // Free-Plan RAM-Schutz (128MB Limit): Begrenze Isolate-Cache auf max. 1400 Einträge (verhindert Error 1102!)
+      const MAX_WORKER_MEM_ENTRIES = 1400;
+      const PROTECTED_KEYS = new Set([
+        "TG_WEBHOOK_SECURITY_CONFIG_V1",
+        "TG_VIDEO_COVER_MODE",
+        "TG_WORKER_SPEED_PROFILE",
+        "bot_username"
+      ]);
+      const origSetWorker = map.set.bind(map);
+      map.set = (k, v) => {
+        if (map.has(k)) {
+          map.delete(k);
+        } else if (map.size >= MAX_WORKER_MEM_ENTRIES) {
+          let evicted = 0;
+          for (const existingKey of map.keys()) {
+            if (PROTECTED_KEYS.has(existingKey)) continue;
+            map.delete(existingKey);
+            evicted++;
+            if (evicted >= 150) break;
+          }
+        }
+        return origSetWorker(k, v);
+      };
+      return map;
+    }
 
     const shouldPersistKey = (k) => {
       const s = String(k || "");
@@ -987,29 +1039,59 @@
     return null;
   }
 
-  async function kvCachedGetRaw(env, key, bindingName = "MOVIE_SAVED") {
+  function stableJsonStringify(val) {
+    if (val === null || val === undefined) return "null";
+    if (typeof val !== "object") return JSON.stringify(val);
+    if (Array.isArray(val)) return `[${val.map(stableJsonStringify).join(",")}]`;
+    const keys = Object.keys(val).sort();
+    return `{${keys.map(k => `${JSON.stringify(k)}:${stableJsonStringify(val[k])}`).join(",")}}`;
+  }
+
+  function countKvSubrequest() {
+    if (typeof currentInvocationSubrequests === "number") {
+      currentInvocationSubrequests++;
+    }
+  }
+
+  async function kvCachedGetRaw(env, key, bindingName = "MOVIE_SAVED", options = {}) {
     const cleanKey = String(key || "");
     if (!cleanKey) return null;
-    if (kvDirtyBuffer.has(cleanKey)) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const bypassMemoryCache = Boolean(options?.bypassMemoryCache);
+    if (!bypassMemoryCache && kvDirtyBuffer.has(cleanKey)) {
       return kvDirtyBuffer.get(cleanKey).valueStr;
     }
     const cacheKey = `kv_raw_${cleanKey}`;
-    if (memoryFallback.has(cacheKey)) {
+    const cacheTsKey = `kv_raw_ts_${cleanKey}`;
+    const kv = resolveKvBinding(env, bindingName);
+    const hasRealKv = Boolean(kv && typeof kv.get === "function");
+    if (!bypassMemoryCache && memoryFallback.has(cacheKey)) {
       const cached = memoryFallback.get(cacheKey);
-      return cached === KV_EMPTY_SENTINEL ? null : cached;
+      if (isBrowserSandbox || !hasRealKv) {
+        return cached === KV_EMPTY_SENTINEL ? null : cached;
+      }
+      const cachedAt = Number(memoryFallback.get(cacheTsKey) || 0);
+      const defaultTtl = cached === KV_EMPTY_SENTINEL ? 5000 : 15000;
+      const ttlMs = Number.isFinite(Number(options?.ttlMs)) ? Math.max(0, Number(options.ttlMs)) : defaultTtl;
+      if (ttlMs > 0 && cachedAt > 0 && (Date.now() - cachedAt) < ttlMs) {
+        return cached === KV_EMPTY_SENTINEL ? null : cached;
+      }
     }
     try {
-      const kv = resolveKvBinding(env, bindingName);
-      if (kv && typeof kv.get === "function") {
+      if (hasRealKv) {
         trackStat("kvReads");
+        countKvSubrequest();
         const raw = await kv.get(cleanKey);
+        const now = Date.now();
         if (raw !== null && raw !== undefined) {
           const strVal = typeof raw === "string" ? raw : JSON.stringify(raw);
           memoryFallback.set(cacheKey, strVal);
+          memoryFallback.set(cacheTsKey, now);
           memoryFallback.set(`kv_last_saved_${cleanKey}`, strVal);
           return strVal;
         }
         memoryFallback.set(cacheKey, KV_EMPTY_SENTINEL);
+        memoryFallback.set(cacheTsKey, now);
         return null;
       }
     } catch (e) {}
@@ -1021,8 +1103,10 @@
     if (!cleanKey) return false;
     const valueStr = typeof rawOrObj === "string" ? rawOrObj : JSON.stringify(rawOrObj);
     const cacheKey = `kv_raw_${cleanKey}`;
+    const cacheTsKey = `kv_raw_ts_${cleanKey}`;
     const lastSavedKey = `kv_last_saved_${cleanKey}`;
     memoryFallback.set(cacheKey, valueStr);
+    memoryFallback.set(cacheTsKey, Date.now());
 
     const forceWrite = Boolean(options.forceKvWrite || options.flushNow);
     if (!forceWrite && memoryFallback.get(lastSavedKey) === valueStr) {
@@ -1055,10 +1139,12 @@
     if (!cleanKey) return;
     kvDirtyBuffer.delete(cleanKey);
     memoryFallback.set(`kv_raw_${cleanKey}`, KV_EMPTY_SENTINEL);
+    memoryFallback.set(`kv_raw_ts_${cleanKey}`, Date.now());
     memoryFallback.delete(`kv_last_saved_${cleanKey}`);
     try {
       const kv = resolveKvBinding(env, bindingName);
       if (kv && typeof kv.delete === "function") {
+        countKvSubrequest();
         await kv.delete(cleanKey).catch(() => {});
       }
     } catch (e) {}
@@ -1097,6 +1183,7 @@
         ? { expirationTtl: Number(entry.expirationTtl) }
         : undefined;
       trackStat("kvWrites");
+      countKvSubrequest();
       if (putOpts) {
         await kv.put(entry.key, entry.valueStr, putOpts);
       } else {
@@ -1110,25 +1197,30 @@
   }
 
   async function getActiveTiers(env) {
-    if (memoryFallback.has("admin_active_tiers")) {
+    const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+    const cachedTs = Number(memoryFallback.get("admin_active_tiers_ts") || 0);
+    if (memoryFallback.has("admin_active_tiers") && (isBrowserSandbox || (Date.now() - cachedTs) < 60000)) {
       return memoryFallback.get("admin_active_tiers");
     }
     try {
-      const raw = await kvCachedGetRaw(env, "admin_active_tiers", "MOVIE_SAVED");
+      const raw = await kvCachedGetRaw(env, "admin_active_tiers", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const parsed = { ...DEFAULT_ACTIVE_TIERS, ...JSON.parse(raw) };
         memoryFallback.set("admin_active_tiers", parsed);
+        memoryFallback.set("admin_active_tiers_ts", Date.now());
         return parsed;
       }
     } catch (e) {}
     const fallbackTiers = { ...DEFAULT_ACTIVE_TIERS };
     memoryFallback.set("admin_active_tiers", fallbackTiers);
+    memoryFallback.set("admin_active_tiers_ts", Date.now());
     return fallbackTiers;
   }
 
   async function saveActiveTiers(env, tiersObj) {
     const merged = { ...DEFAULT_ACTIVE_TIERS, ...tiersObj };
     memoryFallback.set("admin_active_tiers", merged);
+    memoryFallback.set("admin_active_tiers_ts", Date.now());
     await kvStageWrite(env, "admin_active_tiers", merged, { bindingName: "MOVIE_SAVED", flushNow: true });
     return merged;
   }

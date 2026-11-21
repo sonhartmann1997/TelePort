@@ -32,6 +32,33 @@
     return out;
   }
 
+  function timingSafeEqualStr(a, b) {
+    const strA = String(a || "");
+    const strB = String(b || "");
+    if (!strA || !strB || strA.length !== strB.length) return false;
+    let diff = 0;
+    for (let i = 0; i < strA.length; i++) {
+      diff |= (strA.charCodeAt(i) ^ strB.charCodeAt(i));
+    }
+    return diff === 0;
+  }
+
+  async function computeCustomBotWebhookSecret(env, botToken) {
+    const cleanToken = String(botToken || "").trim();
+    if (!cleanToken) return "";
+    const enc = new TextEncoder();
+    const signingSecret = await getSessionSigningSecret(env);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(signingSecret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`custom-wh-v1:${cleanToken}`));
+    return bytesToHex(sigBuf).slice(0, 48);
+  }
+
   // Offizielle Telegram Mini App HMAC-SHA256 Validierung von initData (Web Crypto API)
   async function verifyTelegramInitDataHmac(rawInitData, botToken, env = null) {
     if (!rawInitData) return { ok: false, error: "Fehlende initData" };
@@ -88,7 +115,7 @@
       const sigBuf = await crypto.subtle.sign("HMAC", validationKey, enc.encode(dataCheckString));
       const calculatedHash = bytesToHex(sigBuf);
 
-      if (calculatedHash.toLowerCase() !== String(receivedHash).toLowerCase()) {
+      if (!timingSafeEqualStr(calculatedHash.toLowerCase(), String(receivedHash).toLowerCase())) {
         return { ok: false, error: "Ungültige Telegram initData Signatur" };
       }
 
@@ -137,8 +164,8 @@
       }
 
       const authDate = Number(widgetData.auth_date || 0);
-      if (authDate > 0 && Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
-        return { ok: false, error: "Telegram Login-Widget Sitzung abgelaufen (> 24h). Bitte erneut anmelden." };
+      if (!authDate || Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
+        return { ok: false, error: "Telegram Login-Widget Sitzung fehlt oder ist abgelaufen (> 24h). Bitte erneut anmelden." };
       }
 
       const checkFields = ["auth_date", "first_name", "id", "last_name", "photo_url", "username"];
@@ -164,7 +191,7 @@
       const sigBuf = await crypto.subtle.sign("HMAC", validationKey, enc.encode(dataCheckString));
       const calculatedHash = bytesToHex(sigBuf);
 
-      if (calculatedHash.toLowerCase() !== receivedHash.toLowerCase()) {
+      if (!timingSafeEqualStr(calculatedHash.toLowerCase(), receivedHash.toLowerCase())) {
         return { ok: false, error: "Ungültige Telegram Login-Widget Signatur (HMAC-SHA256)" };
       }
 
@@ -219,7 +246,7 @@
   async function verifyPasswordPbkdf2(password, saltHex, expectedHashHex) {
     if (!password || !saltHex || !expectedHashHex) return false;
     const { hashHex } = await hashPasswordPbkdf2(password, saltHex);
-    return hashHex.toLowerCase() === String(expectedHashHex).toLowerCase();
+    return timingSafeEqualStr(hashHex.toLowerCase(), String(expectedHashHex).toLowerCase());
   }
 
   // RFC 6238 TOTP (Google Authenticator / Authy kompatibel) via Web Crypto API (HMAC-SHA1)
@@ -302,15 +329,42 @@
     return { otpauthUrl, qrCodeUrl: "" };
   }
 
-  function getSessionSigningSecret(env) {
+  async function getSessionSigningSecret(env) {
     const configured = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
     if (configured) return configured;
-    if (!globalThis.__ephemeralTmaSessionSecret) {
-      const randBytes = new Uint8Array(32);
-      crypto.getRandomValues(randBytes);
-      globalThis.__ephemeralTmaSessionSecret = bytesToHex(randBytes);
+    if (globalThis.__persistentTmaSessionSecret) {
+      return globalThis.__persistentTmaSessionSecret;
     }
-    return globalThis.__ephemeralTmaSessionSecret;
+    const secretKey = "TMA_PERSISTENT_SESSION_SECRET_V1";
+    try {
+      const fromKv = typeof kvCachedGetRaw === "function"
+        ? await kvCachedGetRaw(env, secretKey, "MOVIE_SAVED", { ttlMs: 3600000 }).catch(() => null)
+        : null;
+      if (fromKv && String(fromKv).trim().length >= 32) {
+        globalThis.__persistentTmaSessionSecret = String(fromKv).trim();
+        return globalThis.__persistentTmaSessionSecret;
+      }
+      if (typeof getEntityFromD1 === "function") {
+        const fromD1 = await getEntityFromD1(env, secretKey, 3650 * 86400000).catch(() => null);
+        if (fromD1 && typeof fromD1.secret === "string" && fromD1.secret.length >= 32) {
+          globalThis.__persistentTmaSessionSecret = fromD1.secret;
+          return globalThis.__persistentTmaSessionSecret;
+        }
+      }
+    } catch (_e) {}
+    const randBytes = new Uint8Array(32);
+    crypto.getRandomValues(randBytes);
+    const generated = bytesToHex(randBytes);
+    globalThis.__persistentTmaSessionSecret = generated;
+    try {
+      if (typeof kvStageWrite === "function") {
+        await kvStageWrite(env, secretKey, generated, { bindingName: "MOVIE_SAVED", flushNow: true });
+      }
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, secretKey, "config", { secret: generated, createdAt: Date.now() });
+      }
+    } catch (_e) {}
+    return generated;
   }
 
   async function signTmaSessionToken(payload, env) {
@@ -322,9 +376,10 @@
     };
     const jsonBytes = enc.encode(JSON.stringify(dataObj));
     const payloadHex = bytesToHex(jsonBytes);
+    const signingSecret = await getSessionSigningSecret(env);
     const key = await crypto.subtle.importKey(
       "raw",
-      enc.encode(getSessionSigningSecret(env)),
+      enc.encode(signingSecret),
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["sign"]
@@ -339,16 +394,17 @@
       const [payloadHex, sigHex] = token.split(".");
       if (!payloadHex || !sigHex) return null;
       const enc = new TextEncoder();
+      const signingSecret = await getSessionSigningSecret(env);
       const key = await crypto.subtle.importKey(
         "raw",
-        enc.encode(getSessionSigningSecret(env)),
+        enc.encode(signingSecret),
         { name: "HMAC", hash: "SHA-256" },
         false,
         ["sign"]
       );
       const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(payloadHex));
       const expectedSigHex = bytesToHex(expectedSigBuf);
-      if (expectedSigHex.toLowerCase() !== sigHex.toLowerCase()) return null;
+      if (!timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())) return null;
 
       const jsonStr = new TextDecoder().decode(hexToBytes(payloadHex));
       const data = JSON.parse(jsonStr);
@@ -452,7 +508,7 @@
     try {
       const settings = await getUserSettings(env, chatId);
       const sync = settings?.tmdbSync;
-      if (!sync || !sync.enabled || !sync.sessionId || !sync.accountId || !tmdbId) return false;
+      if (!sync || !sync.enabled || !sync.sessionId || !sync.accountId || !isRealTmdbId(tmdbId)) return false;
       const mediaType = typeCode === "s" || typeCode === "series" ? "tv" : "movie";
       const res = await fetchWithTimeout(
         `https://api.themoviedb.org/3/account/${sync.accountId}/watchlist?session_id=${encodeURIComponent(sync.sessionId)}`,
@@ -572,7 +628,7 @@
       ...remoteMovies.map(m => `movie_${m.id}`),
       ...remoteSeries.map(s => `tv_${s.id}`)
     ]);
-    const localMedia = list.filter(i => (i.contentType === "movie" || i.contentType === "series") && i.tmdbId).slice(-15);
+    const localMedia = list.filter(i => (i.contentType === "movie" || i.contentType === "series") && isRealTmdbId(i.tmdbId)).slice(-15);
     let pushedCount = 0;
     for (const item of localMedia) {
       const mType = item.contentType === "series" ? "tv" : "movie";

@@ -2158,16 +2158,79 @@
           inp.type = "text";
           inp.value = token;
         }
+        refreshManualWebhookLinksUiClient();
         showHudToast("🔑 Sicheres Webhook-Passwort generiert – jetzt auf 'Speichern & bei Telegram registrieren' klicken!");
       }
 
-      async function adminSaveAndRegisterWebhookClient() {
+      function computeManualWebhookLinksClient() {
+        const urlInp = document.getElementById("adminWebhookUrlInp");
+        const pwInp = document.getElementById("adminWebhookPasswordInp");
+        const maxConnSel = document.getElementById("adminWebhookMaxConnSel");
+        const dropChk = document.getElementById("adminWebhookDropPendingChk");
+        const cachedSetup = window._lastAdminOverviewCache?.botSetup || {};
+        const fallbackOrigin = String(location.origin || "").replace(/\\/$/, "");
+        const webhookUrl = (urlInp && urlInp.value.trim()) ? urlInp.value.trim() : String(cachedSetup.webhookUrl || (fallbackOrigin + "/webhook"));
+        let originBase = fallbackOrigin;
+        try {
+          originBase = new URL(webhookUrl).origin.replace(/\\/$/, "");
+        } catch (e) {}
+        const typedSecret = pwInp ? String(pwInp.value || "").trim().replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 128) : "";
+        const effectiveSecret = typedSecret || String(cachedSetup.activeWebhookSecret || "").trim();
+        const maxConnections = maxConnSel ? Math.min(40, Math.max(1, Number(maxConnSel.value) || 8)) : (Number(cachedSetup.webhookMaxConnections) || 8);
+        const dropPending = dropChk ? Boolean(dropChk.checked) : true;
+
+        const workerParams = new URLSearchParams();
+        if (effectiveSecret) workerParams.set("secret", effectiveSecret);
+        if (dropPending) workerParams.set("drop_pending_updates", "1");
+        workerParams.set("max_connections", String(maxConnections));
+        const workerSetWebhookUrl = originBase + "/setwebhook?" + workerParams.toString();
+
+        const tgParams = new URLSearchParams();
+        tgParams.set("url", webhookUrl);
+        tgParams.set("max_connections", String(maxConnections));
+        tgParams.set("drop_pending_updates", dropPending ? "true" : "false");
+        if (effectiveSecret) tgParams.set("secret_token", effectiveSecret);
+        const telegramDirectApiUrl = "https://api.telegram.org/bot<DEIN_BOT_TOKEN>/setWebhook?" + tgParams.toString();
+
+        return {
+          webhookUrl,
+          workerSetWebhookUrl,
+          telegramDirectApiUrl,
+          hasSecret: Boolean(effectiveSecret)
+        };
+      }
+
+      function refreshManualWebhookLinksUiClient() {
+        const links = computeManualWebhookLinksClient();
+        const workerInp = document.getElementById("adminManualWorkerWebhookLinkInp");
+        const tgApiInp = document.getElementById("adminManualTelegramApiLinkInp");
+        const openWorkerLink = document.getElementById("adminManualWorkerOpenAnchor");
+        const secretHint = document.getElementById("adminManualWorkerSecretHint");
+        if (workerInp) workerInp.value = links.workerSetWebhookUrl;
+        if (tgApiInp) tgApiInp.value = links.telegramDirectApiUrl;
+        if (openWorkerLink) openWorkerLink.href = safeHttpUrl(links.workerSetWebhookUrl);
+        if (secretHint) {
+          secretHint.style.display = links.hasSecret ? "none" : "block";
+        }
+      }
+
+      function copyAdminInputValueClient(inputId, label) {
+        const el = document.getElementById(inputId);
+        const val = el ? String(el.value || "").trim() : "";
+        if (!val) {
+          showHudToast("⚠️ Kein Link zum Kopieren vorhanden.");
+          return;
+        }
+        copyAdminTextToClipboardClient(val, label || "Link");
+      }
+
+      async function adminSaveAndRegisterWebhookClient(clearPassword = false) {
         const pwInp = document.getElementById("adminWebhookPasswordInp");
         const maxConnSel = document.getElementById("adminWebhookMaxConnSel");
         const dropChk = document.getElementById("adminWebhookDropPendingChk");
         const urlInp = document.getElementById("adminWebhookUrlInp");
         const statusBox = document.getElementById("adminWebhookStatusBox");
-        const webhookPassword = pwInp ? String(pwInp.value || "").trim() : "";
+        const webhookPassword = clearPassword ? "" : (pwInp ? String(pwInp.value || "").trim() : "");
         const maxConnections = maxConnSel ? Number(maxConnSel.value || 8) : 8;
         const dropPendingUpdates = Boolean(dropChk && dropChk.checked);
         const webhookUrl = urlInp ? String(urlInp.value || "").trim() : "";
@@ -2175,7 +2238,9 @@
         if (statusBox) {
           statusBox.style.display = "block";
           statusBox.style.color = "#38bdf8";
-          statusBox.innerHTML = "⏳ Speichere Webhook-Passwort & registriere Webhook bei Telegram (<code>setWebhook</code>)...";
+          statusBox.innerHTML = clearPassword
+            ? "⏳ Entferne Webhook-Passwort & aktualisiere Webhook bei Telegram (<code>setWebhook</code>)..."
+            : "⏳ Speichere Webhook-Konfiguration & registriere Webhook bei Telegram (<code>setWebhook</code>)...";
         }
         try {
           const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
@@ -2184,6 +2249,7 @@
             body: JSON.stringify({
               action: "save_webhook_and_register",
               webhookPassword,
+              clearPassword: Boolean(clearPassword),
               maxConnections,
               dropPendingUpdates,
               webhookUrl
@@ -2191,15 +2257,26 @@
           });
           if (r && r.ok) {
             if (window._lastAdminOverviewCache && window._lastAdminOverviewCache.botSetup) {
+              window._lastAdminOverviewCache.botSetup.webhookUrl = r.webhookUrl || webhookUrl;
               window._lastAdminOverviewCache.botSetup.hasWebhookPassword = Boolean(r.hasWebhookPassword);
               window._lastAdminOverviewCache.botSetup.webhookPasswordPreview = r.webhookPasswordPreview || "";
+              window._lastAdminOverviewCache.botSetup.activeWebhookSecret = String(r.activeWebhookSecret || "");
               window._lastAdminOverviewCache.botSetup.webhookMaxConnections = r.maxConnections || maxConnections;
+              window._lastAdminOverviewCache.botSetup.manualSetWebhookWorkerUrl = r.manualSetWebhookWorkerUrl || "";
+              window._lastAdminOverviewCache.botSetup.manualTelegramApiTemplateUrl = r.manualTelegramApiTemplateUrl || "";
             }
-            showHudToast("🔒 Webhook & Passwort erfolgreich bei Telegram registriert!");
+            if (clearPassword && pwInp) pwInp.value = "";
+            refreshManualWebhookLinksUiClient();
+            showHudToast(r.simulated ? "💾 Webhook-Konfiguration im Simulator gespeichert!" : "🔒 Webhook erfolgreich bei Telegram registriert & verifiziert!");
             if (statusBox) {
-              statusBox.style.color = "#34d399";
-              statusBox.innerHTML = "✅ <b>" + esc(r.message || "Webhook registriert!") + "</b>" +
-                (r.webhookPasswordPreview ? (" • Aktives Passwort: <code>" + esc(r.webhookPasswordPreview) + "</code>") : "");
+              const info = r.webhookInfo || null;
+              const liveLine = info
+                ? ('<br/>📡 <b>Telegram-Bestätigung (<code>getWebhookInfo</code>):</b> URL <code>' + esc(info.url || "-") + '</code> • Wartende Updates: <b>' + Number(info.pending_update_count || 0) + '</b> • max_connections: <code>' + Number(info.max_connections || maxConnections) + '</code>' + (info.last_error_message ? (' • ⚠️ Letzter Fehler: <code>' + esc(info.last_error_message) + '</code>') : ' • ✅ Keine Fehler'))
+                : '';
+              statusBox.style.color = r.simulated ? "#fbbf24" : "#34d399";
+              statusBox.innerHTML = (r.simulated ? "⚠️ <b>" : "✅ <b>") + esc(r.message || "Webhook registriert!") + "</b>" +
+                (r.webhookPasswordPreview ? (" • Aktives Passwort: <code>" + esc(r.webhookPasswordPreview) + "</code>") : " • Passwort: <code>deaktiviert</code>") +
+                liveLine;
             }
           } else {
             const errTxt = (r && (r.message || r.error)) || "Registrierung fehlgeschlagen";
@@ -2427,9 +2504,9 @@
                   (String(state.adminPlaylistTargetChatId) === "bot_vip"
                     ? '<button class="btn amber" onclick="adminSyncBotVipFromD1Client(true)" title="Synchronisiert alle vom Telegram-Bot in D1 gespeicherten Filme & Serien in 25er-Batches">🔄 Alle D1-Bot-Filme & -Serien (25er-Batches) synchronisieren</button>'
                     : '') +
-                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'vip_stream' ? 'amber' : '') + '" onclick="adminSetPlaylistMode(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'vip_stream\\')">🌟 Als VIP-Stream-Playlist</button>' +
-                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'watchlist' ? 'blue' : '') + '" onclick="adminSetPlaylistMode(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'watchlist\\')">🔖 Als Merkliste</button>' +
-                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'both' ? 'green' : '') + '" onclick="adminSetPlaylistMode(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'both\\')">⚡ Beides (VIP + Merkliste)</button>' +
+                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'vip_stream' ? 'amber' : '') + '" onclick="adminSetPlaylistMode(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'vip_stream\\')">🌟 Als VIP-Stream-Playlist</button>' +
+                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'watchlist' ? 'blue' : '') + '" onclick="adminSetPlaylistMode(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'watchlist\\')">🔖 Als Merkliste</button>' +
+                  '<button class="btn ' + ((activeFolderObj.playlistMode || 'both') === 'both' ? 'green' : '') + '" onclick="adminSetPlaylistMode(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'both\\')">⚡ Beides (VIP + Merkliste)</button>' +
                 '</div>' +
               '</div>' +
               '<div class="admin-sub-box" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
@@ -2438,9 +2515,9 @@
                   '<option value="m">🎬 Film</option>' +
                   '<option value="s">📺 Serie</option>' +
                 '</select>' +
-                '<input id="plEditorAddQueryInp" class="tma-input" placeholder="Titel oder TMDb-ID zur Playlist hinzufügen (z.B. Inception oder 27205)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();adminAddPlaylistItemClient(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\')}" style="flex:1;min-width:210px;padding:7px 10px;font-size:12px" />' +
+                '<input id="plEditorAddQueryInp" class="tma-input" placeholder="Titel oder TMDb-ID zur Playlist hinzufügen (z.B. Inception oder 27205)..." onkeydown="if(event.key===\\'Enter\\'){event.preventDefault();adminAddPlaylistItemClient(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\')}" style="flex:1;min-width:210px;padding:7px 10px;font-size:12px" />' +
                 '<input id="plEditorAddQualInp" class="tma-input" value="1080p" placeholder="Qualität (1080p/4K)" style="width:95px;padding:7px 9px;font-size:12px" />' +
-                '<button class="btn green" onclick="adminAddPlaylistItemClient(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\')">➕ Titel hinzufügen</button>' +
+                '<button class="btn green" onclick="adminAddPlaylistItemClient(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\')">➕ Titel hinzufügen</button>' +
               '</div>' +
               (activeFolderItems.length === 0 ? (
                 '<div class="admin-sub-box" style="font-size:12px;color:var(--muted);padding:12px;text-align:center">Diese Playlist enthält noch keine Titel. Klicke oben auf <b>🔄 Alle D1-Bot-Filme & -Serien synchronisieren</b>, füge einen Titel per Name/TMDb-ID hinzu oder importiere ein JSON-Backup.</div>'
@@ -2494,11 +2571,11 @@
                         '</div>' +
                         '<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">' +
                           epDrawerToggleHtml +
-                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Nach ganz oben" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'top\\')">⏫</button>' : '') +
-                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach oben" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'up\\')">⬆️</button>' : '') +
-                          (idx < activeFolderItems.length - 1 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach unten" onclick="adminReorderPlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\',\\'down\\')">⬇️</button>' : '') +
+                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Nach ganz oben" onclick="adminReorderPlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\',\\'top\\')">⏫</button>' : '') +
+                          (idx > 0 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach oben" onclick="adminReorderPlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\',\\'up\\')">⬆️</button>' : '') +
+                          (idx < activeFolderItems.length - 1 ? '<button class="btn" style="padding:4px 7px;font-size:11px" title="Position nach unten" onclick="adminReorderPlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\',\\'down\\')">⬇️</button>' : '') +
                           '<button class="btn" style="padding:4px 8px;font-size:11px" title="Details & Streams öffnen" onclick="openDetails(\\'' + tc + '\\',' + Number(it.tmdbId) + ',false)">👁️</button>' +
-                          '<button class="btn" style="padding:4px 8px;font-size:11px;border-color:rgba(245,158,11,0.45);color:#fbbf24" title="Nur aus dieser Playlist entfernen (Film/Serie bleibt in D1 erhalten)" onclick="adminRemovePlaylistItem(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(activeFolderObj.id) + '\\',\\'' + esc(it.uid) + '\\')">➖ Aus Playlist</button>' +
+                          '<button class="btn" style="padding:4px 8px;font-size:11px;border-color:rgba(245,158,11,0.45);color:#fbbf24" title="Nur aus dieser Playlist entfernen (Film/Serie bleibt in D1 erhalten)" onclick="adminRemovePlaylistItem(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(activeFolderObj.id) + '\\',\\'' + escJs(it.uid) + '\\')">➖ Aus Playlist</button>' +
                           '<button class="btn danger" style="padding:4px 8px;font-size:11px" title="Komplett aus D1-Datenbank + Telegram-Bot UND aus Playlist löschen" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(activeFolderObj.id) + '" data-item-uid="' + esc(it.uid) + '" data-type="' + esc(tc) + '" data-tmdb-id="' + Number(it.tmdbId) + '" data-title="' + esc(it.title) + '" onclick="adminDeletePlaylistItemFromBtn(this)">🗑️ Aus D1 + Bot</button>' +
                         '</div>' +
                       '</div>' +
@@ -2551,9 +2628,9 @@
                         '</div>' +
                       '</div>' +
                       '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-                        '<button class="btn ' + (isEditingThis ? 'amber' : 'blue') + '" onclick="adminOpenPlaylistEditor(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\')">📂 Öffnen & Bearbeiten</button>' +
+                        '<button class="btn ' + (isEditingThis ? 'amber' : 'blue') + '" onclick="adminOpenPlaylistEditor(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(pl.id) + '\\')">📂 Öffnen & Bearbeiten</button>' +
                         '<button class="btn green" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminCopyPlaylistBatchFromBtn(this)" title="Kopiert diese Playlist in 25er-Batches ohne API-Limit">📋 25er-Batch Kopie</button>' +
-                        '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="adminTogglePlaylist(\\'' + esc(state.adminPlaylistTargetChatId) + '\\',\\'' + esc(pl.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
+                        '<button class="btn ' + (isEn ? 'green' : '') + '" onclick="adminTogglePlaylist(\\'' + escJs(state.adminPlaylistTargetChatId) + '\\',\\'' + escJs(pl.id) + '\\')">' + (isEn ? '🟢 Ein' : '⚪ Aus') + '</button>' +
                         '<button class="btn" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminRenamePlaylistFromBtn(this)">✏️</button>' +
                         '<button class="btn danger" data-target-uid="' + esc(state.adminPlaylistTargetChatId) + '" data-folder-id="' + esc(pl.id) + '" data-name="' + esc(pl.name) + '" onclick="adminDeletePlaylistFromBtn(this)">🗑️</button>' +
                       '</div>' +
@@ -2731,7 +2808,7 @@
                       '3. <b>Main Mini App & Farben:</b> <i>Bot Settings ▸ Configure Mini App</i> ▸ URL einfügen, das <b>640×360 PNG</b> sowie Header <code>#0B1021</code> & Background <code>#070B19</code> eintragen.<br/>' +
                       '4. <b>Telegram Login Widget im Browser:</b> Sende <code>/setdomain</code> an @BotFather und hinterlege deine Worker-Domain:' +
                       '<div style="display:flex;gap:6px;margin-top:5px;flex-wrap:wrap">' +
-                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + esc(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
+                        '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(\\'' + escJs(effMiniAppUrl) + '\\',\\'Mini-App URL\\')">📋 Mini-App URL kopieren</button>' +
                         '<button type="button" class="btn" style="padding:3px 8px;font-size:11px" onclick="copyAdminTextToClipboardClient(' + JSON.stringify(botFatherCommandsBlock).replace(/"/g, '&quot;') + ',\\'BotFather Befehlsliste\\')">📋 Befehlsliste kopieren</button>' +
                       '</div>' +
                     '</div>' +
@@ -2740,10 +2817,13 @@
               ) : '') +
             '</div>';
 
-          const officialWebhookUrl = String(botSetup.webhookUrl || (effMiniAppUrl + "/webhook"));
+          const officialWebhookUrl = String(botSetup.webhookUrl || (String(effMiniAppUrl || "").replace(/\\/app$/i, "") + "/webhook"));
           const hasWebhookPw = Boolean(botSetup.hasWebhookPassword);
           const webhookPwPreview = String(botSetup.webhookPasswordPreview || "");
           const webhookMaxConn = Number(botSetup.webhookMaxConnections || 8);
+          const activeWhSecretRaw = String(botSetup.activeWebhookSecret || "");
+          const fallbackWorkerSetUrl = String(botSetup.manualSetWebhookWorkerUrl || (officialWebhookUrl.replace(/\\/webhook$/i, "") + "/setwebhook?" + (activeWhSecretRaw ? ("secret=" + encodeURIComponent(activeWhSecretRaw) + "&") : "") + "drop_pending_updates=1&max_connections=" + webhookMaxConn));
+          const fallbackTgApiSetUrl = String(botSetup.manualTelegramApiTemplateUrl || ("https://api.telegram.org/bot<DEIN_BOT_TOKEN>/setWebhook?url=" + encodeURIComponent(officialWebhookUrl) + "&max_connections=" + webhookMaxConn + "&drop_pending_updates=true" + (activeWhSecretRaw ? ("&secret_token=" + encodeURIComponent(activeWhSecretRaw)) : "")));
 
           const botAndSettingsDedicatedPageHtml =
             '<div class="golden-grid">' +
@@ -2769,19 +2849,20 @@
                   '<div style="display:flex;flex-direction:column;gap:8px">' +
                     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
                       '<span style="font-size:11.5px;font-weight:800;color:#0284c7;min-width:130px">🌐 Webhook-URL:</span>' +
-                      '<input id="adminWebhookUrlInp" class="tma-input" value="' + esc(officialWebhookUrl) + '" readonly style="flex:1;min-width:220px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
-                      '<button type="button" class="btn" onclick="copyAdminTextToClipboardClient(\\'' + esc(officialWebhookUrl) + '\\',\\'Telegram Webhook-URL\\')">📋 Link kopieren</button>' +
+                      '<input id="adminWebhookUrlInp" class="tma-input" value="' + esc(officialWebhookUrl) + '" oninput="refreshManualWebhookLinksUiClient()" style="flex:1;min-width:220px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
+                      '<button type="button" class="btn" onclick="copyAdminInputValueClient(\\'adminWebhookUrlInp\\',\\'Telegram Webhook-URL\\')">📋 Link kopieren</button>' +
                     '</div>' +
                     '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
                       '<span style="font-size:11.5px;font-weight:800;color:#10b981;min-width:130px">🔑 Webhook-Passwort:</span>' +
-                      '<input id="adminWebhookPasswordInp" class="tma-input" type="password" placeholder="' + (hasWebhookPw ? ('Aktives Passwort (' + esc(webhookPwPreview) + ') – neu eingeben zum Ändern') : 'Sicheres Passwort (A-Z, 0-9, _, -) eingeben oder generieren...') + '" style="flex:1;min-width:210px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
+                      '<input id="adminWebhookPasswordInp" class="tma-input" type="password" oninput="refreshManualWebhookLinksUiClient()" placeholder="' + (hasWebhookPw ? ('Aktives Passwort (' + esc(webhookPwPreview) + ') – leer lassen zum Behalten') : 'Sicheres Passwort (A-Z, 0-9, _, -) eingeben oder generieren...') + '" style="flex:1;min-width:210px;padding:7px 10px;font-family:monospace;font-size:12px" />' +
                       '<button type="button" class="btn" onclick="const el=document.getElementById(\\'adminWebhookPasswordInp\\');if(el)el.type=el.type===\\'password\\'?\\'text\\':\\'password\\'">👁️</button>' +
                       '<button type="button" class="btn purple" onclick="generateRandomWebhookPasswordClient()">🎲 Passwort generieren</button>' +
+                      (hasWebhookPw ? '<button type="button" class="btn red" onclick="adminSaveAndRegisterWebhookClient(true)" title="Entfernt das Webhook-Passwort und aktualisiert den Webhook">🗑️ Entfernen</button>' : '') +
                     '</div>' +
                     '<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding-top:4px">' +
                       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--text)">' +
                         '<label style="display:flex;align-items:center;gap:5px">⚡ Max. parallele Verbindungen:' +
-                          '<select id="adminWebhookMaxConnSel" class="tma-select" style="padding:4px 8px;font-size:11.5px">' +
+                          '<select id="adminWebhookMaxConnSel" class="tma-select" onchange="refreshManualWebhookLinksUiClient()" style="padding:4px 8px;font-size:11.5px">' +
                             '<option value="6" ' + (webhookMaxConn === 6 ? 'selected' : '') + '>6 (Ultra-Safe Free-Tier)</option>' +
                             '<option value="8" ' + (webhookMaxConn === 8 ? 'selected' : '') + '>8 (Empfohlen Free-Tier)</option>' +
                             '<option value="16" ' + (webhookMaxConn === 16 ? 'selected' : '') + '>16 (Balanced)</option>' +
@@ -2789,12 +2870,34 @@
                           '</select>' +
                         '</label>' +
                         '<label style="display:flex;align-items:center;gap:5px;cursor:pointer">' +
-                          '<input id="adminWebhookDropPendingChk" type="checkbox" checked /> 🧹 Alte hängende Updates beim Setzen verwerfen' +
+                          '<input id="adminWebhookDropPendingChk" type="checkbox" checked onchange="refreshManualWebhookLinksUiClient()" /> 🧹 Alte hängende Updates beim Setzen verwerfen' +
                         '</label>' +
                       '</div>' +
-                      '<button type="button" class="btn green" onclick="adminSaveAndRegisterWebhookClient()">🔒 Passwort speichern & Webhook bei Telegram registrieren</button>' +
+                      '<button type="button" class="btn green" onclick="adminSaveAndRegisterWebhookClient(false)">🔒 Speichern & Webhook automatisch bei Telegram registrieren</button>' +
                     '</div>' +
                     '<div id="adminWebhookStatusBox" class="admin-sub-box" style="display:none;margin-top:6px;padding:8px 10px;font-size:11.5px;line-height:1.5"></div>' +
+                    /* Manueller Webhook-Eintrag (Direktlinks zum Kopieren / Aufrufen) */
+                    '<div class="admin-sub-box" style="margin-top:6px;padding:10px 12px;border-color:rgba(56,189,248,0.35);background:rgba(15,23,42,0.55)">' +
+                      '<div style="font-size:11.5px;font-weight:900;color:#38bdf8;margin-bottom:6px">📋 Manueller Webhook-Eintrag (Direktlinks – passen sich live an deine Eingaben an)</div>' +
+                      '<div style="display:flex;flex-direction:column;gap:7px">' +
+                        '<div>' +
+                          '<div style="font-size:10.5px;color:#cbd5e1;margin-bottom:3px"><b>Option A – Worker-Direktlink (<code>/setwebhook</code>):</b> Im Browser öffnen, damit dein Worker den Webhook inkl. Secret-Token setzt:</div>' +
+                          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                            '<input id="adminManualWorkerWebhookLinkInp" class="tma-input" value="' + esc(fallbackWorkerSetUrl) + '" readonly style="flex:1;min-width:220px;padding:6px 9px;font-family:monospace;font-size:11px;color:#93c5fd" />' +
+                            '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="copyAdminInputValueClient(\\'adminManualWorkerWebhookLinkInp\\',\\'Worker /setwebhook Link\\')">📋 Kopieren</button>' +
+                            '<a id="adminManualWorkerOpenAnchor" href="' + esc(safeHttpUrl(fallbackWorkerSetUrl)) + '" target="_blank" rel="noopener noreferrer" class="btn blue" style="padding:5px 9px;font-size:11px;text-decoration:none">🌐 Öffnen</a>' +
+                          '</div>' +
+                          '<div id="adminManualWorkerSecretHint" style="display:' + (hasWebhookPw ? 'none' : 'block') + ';font-size:10px;color:#fbbf24;margin-top:3px">ℹ️ Ohne gespeichertes Webhook-Passwort erfordert <code>/setwebhook</code> eine aktive Admin-Session – oder nutze Option B direkt über die Telegram API.</div>' +
+                        '</div>' +
+                        '<div>' +
+                          '<div style="font-size:10.5px;color:#cbd5e1;margin-bottom:3px"><b>Option B – Direkter Telegram Bot API Link:</b> Ersetze <code>&lt;DEIN_BOT_TOKEN&gt;</code> durch dein BotFather-Token und öffne die URL im Browser:</div>' +
+                          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                            '<input id="adminManualTelegramApiLinkInp" class="tma-input" value="' + esc(fallbackTgApiSetUrl) + '" readonly style="flex:1;min-width:220px;padding:6px 9px;font-family:monospace;font-size:11px;color:#86efac" />' +
+                            '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="copyAdminInputValueClient(\\'adminManualTelegramApiLinkInp\\',\\'Telegram API setWebhook Link\\')">📋 Kopieren</button>' +
+                          '</div>' +
+                        '</div>' +
+                      '</div>' +
+                    '</div>' +
                   '</div>' +
                 '</div>' +
 
@@ -2895,8 +2998,8 @@
                     '</div>' +
                   '</div>' +
                   '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                    '<button class="btn" onclick="state.adminPlaylistTargetChatId=\\'' + esc(u.telegramId) + '\\';state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten</button>' +
-                    '<button class="btn ' + (u.isVip ? 'amber' : '') + '" onclick="toggleUserVipAdmin(\\'' + esc(u.telegramId) + '\\',' + (!u.isVip) + ')">' +
+                    '<button class="btn" onclick="state.adminPlaylistTargetChatId=\\'' + escJs(u.telegramId) + '\\';state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten</button>' +
+                    '<button class="btn ' + (u.isVip ? 'amber' : '') + '" onclick="toggleUserVipAdmin(\\'' + escJs(u.telegramId) + '\\',' + (!u.isVip) + ')">' +
                       (u.isVip ? '🌟 VIP AKTIV (Entziehen)' : '⚪ Kein VIP (VIP vergeben)') +
                     '</button>' +
                   '</div>' +
