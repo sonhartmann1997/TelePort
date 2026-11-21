@@ -3176,9 +3176,9 @@
         window.addEventListener("message", (ev) => {
           if (!detailBgTeaserActiveKey) return;
           const detailFrame = document.getElementById("detailBgVideoIframe");
-          if (!detailFrame || (ev.source && ev.source !== detailFrame.contentWindow)) return;
+          if (!detailFrame || !detailFrame.contentWindow || ev.source !== detailFrame.contentWindow) return;
           const orig = String(ev.origin || "");
-          if (!orig.includes("youtube.com") && !orig.includes("youtube-nocookie.com")) return;
+          if (orig !== "https://www.youtube.com" && orig !== "https://www.youtube-nocookie.com" && orig !== "https://youtube.com" && orig !== "https://youtube-nocookie.com") return;
           let msg = null;
           try {
             msg = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;

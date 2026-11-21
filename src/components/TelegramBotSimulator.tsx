@@ -51,6 +51,75 @@ interface UserChatMessage {
   timestamp: string;
 }
 
+function isSafeExternalUrl(rawUrl?: string): boolean {
+  if (!rawUrl) return false;
+  return /^(https?:\/\/|tg:\/\/)/i.test(rawUrl.trim());
+}
+
+function renderSafeTelegramNodes(node: ChildNode, keyPrefix: string): React.ReactNode {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent;
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return null;
+  }
+  const el = node as HTMLElement;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'script' || tag === 'style' || tag === 'iframe' || tag === 'object' || tag === 'embed') {
+    return null;
+  }
+  if (tag === 'br') {
+    return <br key={keyPrefix} />;
+  }
+  const children = Array.from(el.childNodes).map((child, idx) =>
+    renderSafeTelegramNodes(child, `${keyPrefix}_${idx}`)
+  );
+  if (tag === 'b' || tag === 'strong') return <strong key={keyPrefix}>{children}</strong>;
+  if (tag === 'i' || tag === 'em') return <em key={keyPrefix}>{children}</em>;
+  if (tag === 'u') return <u key={keyPrefix}>{children}</u>;
+  if (tag === 's' || tag === 'del' || tag === 'strike') return <s key={keyPrefix}>{children}</s>;
+  if (tag === 'code') return <code key={keyPrefix} className="px-1 py-0.5 rounded bg-black/30 font-mono text-[11px]">{children}</code>;
+  if (tag === 'pre') return <pre key={keyPrefix} className="p-2 my-1 rounded bg-black/40 font-mono text-[11px] overflow-x-auto">{children}</pre>;
+  if (tag === 'blockquote') return <blockquote key={keyPrefix} className="border-l-2 border-sky-400/60 pl-2 my-1 text-slate-300">{children}</blockquote>;
+  if (tag === 'a') {
+    const href = (el.getAttribute('href') || '').trim();
+    if (isSafeExternalUrl(href)) {
+      return (
+        <a
+          key={keyPrefix}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sky-400 underline hover:text-sky-300"
+        >
+          {children}
+        </a>
+      );
+    }
+    return <React.Fragment key={keyPrefix}>{children}</React.Fragment>;
+  }
+  return <React.Fragment key={keyPrefix}>{children}</React.Fragment>;
+}
+
+function renderSafeTelegramText(rawText: string): React.ReactNode {
+  const prepared = String(rawText || '')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br/>');
+  if (typeof DOMParser === 'undefined') {
+    return String(rawText || '');
+  }
+  try {
+    const doc = new DOMParser().parseFromString(`<div>${prepared}</div>`, 'text/html');
+    const root = doc.body.firstElementChild;
+    if (!root) return String(rawText || '');
+    return Array.from(root.childNodes).map((child, idx) =>
+      renderSafeTelegramNodes(child, `tg_${idx}`)
+    );
+  } catch {
+    return String(rawText || '');
+  }
+}
+
 export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
   workerCode,
   envVars,
@@ -242,7 +311,9 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
       return;
     }
     if (btn.url) {
-      window.open(btn.url, '_blank', 'noopener,noreferrer');
+      if (isSafeExternalUrl(btn.url)) {
+        window.open(btn.url, '_blank', 'noopener,noreferrer');
+      }
       return;
     }
     if (btn.callback_data) {
@@ -420,13 +491,7 @@ export const TelegramBotSimulator: React.FC<TelegramBotSimulatorProps> = ({
                     </div>
                   )}
                   <div className="p-3 text-xs leading-relaxed whitespace-pre-wrap break-words">
-                    <div
-                      dangerouslySetInnerHTML={{
-                        __html: msg.text
-                          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                          .replace(/\n/g, '<br/>'),
-                      }}
-                    />
+                    <div>{renderSafeTelegramText(msg.text)}</div>
                     <div className="mt-1.5 flex items-center justify-end gap-2 text-[10px] text-slate-400">
                       <span>{msg.method}</span>
                       <span>·</span>

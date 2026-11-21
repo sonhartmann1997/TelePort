@@ -1357,6 +1357,7 @@
           sourceBridgeChatId: "",
           customBotToken: "",
           customBotUsername: "",
+          afterSendAction: "open_minimize", // 'open_minimize' | 'open_close' | 'stay'
           retentionDays: 30 // 7 | 30 | 90 Tage KV Retention Policy
         };
         let local = {};
@@ -1368,6 +1369,8 @@
           ? state.settings.deliveryConfig
           : {};
         const merged = { ...defaults, ...fromServer, ...local };
+        const act = String(merged.afterSendAction || "open_minimize").trim();
+        merged.afterSendAction = (act === "open_minimize" || act === "open_close" || act === "stay") ? act : "open_minimize";
         const rDays = Number(merged.retentionDays);
         merged.retentionDays = (rDays === 7 || rDays === 30 || rDays === 90) ? rDays : 30;
         return merged;
@@ -1445,6 +1448,12 @@
                   '</div>' +
                 '</div>' +
               '</div>' +
+              '<div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                '<span style="font-size:10.5px;color:var(--muted);font-weight:700">📲 Nach dem Senden:</span>' +
+                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_minimize' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_minimize\\')" title="Öffnet die gesendete Nachricht/den Chat und minimiert die Mini-App">💬 Öffnen &amp; Minimieren</button>' +
+                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_close' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_close\\')" title="Öffnet den Chat und schließt die Mini-App vollständig">✖️ Schließen</button>' +
+                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'stay' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'stay\\')" title="In der Mini-App bleiben (mit Button zum Öffnen im Hinweis)">📌 In App bleiben</button>' +
+              '</div>' +
             '</div>'
           ) : '') +
         '</div>';
@@ -1474,6 +1483,113 @@
         modalDeliveryConfigExpanded = !modalDeliveryConfigExpanded;
         const mount = document.getElementById("modalDeliveryTargetMount");
         if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+      }
+
+      function switchAfterSendActionClient(nextAction) {
+        const clean = (nextAction === "open_minimize" || nextAction === "open_close" || nextAction === "stay")
+          ? nextAction
+          : "open_minimize";
+        saveDeliveryPreferencesClient({ afterSendAction: clean }, true);
+        const mount = document.getElementById("modalDeliveryTargetMount");
+        if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+        const labelMap = {
+          open_minimize: "💬 Nach dem Senden: Nachricht öffnen & Mini-App minimieren",
+          open_close: "✖️ Nach dem Senden: Nachricht öffnen & Mini-App schließen",
+          stay: "📌 Nach dem Senden: In Mini-App bleiben (mit Öffnen-Button)"
+        };
+        showHudToast(labelMap[clean]);
+      }
+
+      function openSentTelegramMessageClient(openUrl, opts = {}) {
+        const safeUrl = (typeof safeHttpUrl === "function") ? safeHttpUrl(openUrl) : ( /^https?:\\/\\//i.test(String(openUrl || "").trim()) ? String(openUrl).trim() : "" );
+        const mode = String(opts.afterSendAction || "open_minimize");
+        const targetMode = String(opts.targetMode || "dm");
+        const isDirectLink = Boolean(opts.isDirectMessageLink);
+        const isInsideTg = Boolean(tg && (tg.initData || (tg.platform && tg.platform !== "unknown")));
+        const launchedChatType = String(tg?.initDataUnsafe?.chat_type || "").toLowerCase();
+        const isOwnBotDmContext = targetMode === "dm" && !isDirectLink && (!launchedChatType || launchedChatType === "sender");
+
+        if (isInsideTg) {
+          if (mode === "open_close") {
+            if (!isOwnBotDmContext && safeUrl && typeof tg.openTelegramLink === "function") {
+              try { tg.openTelegramLink(safeUrl); } catch (_e) {}
+              if (typeof tg.close === "function") {
+                setTimeout(() => { try { tg.close(); } catch (_e) {} }, 220);
+              }
+              return true;
+            }
+            if (typeof tg.close === "function") {
+              try { tg.close(); return true; } catch (_e) {}
+            }
+          }
+          // Standard "open_minimize": openTelegramLink springt direkt zur Nachricht/zum Chat und minimiert die Mini-App nativ in Telegram
+          if (safeUrl && typeof tg.openTelegramLink === "function") {
+            try { tg.openTelegramLink(safeUrl); return true; } catch (_e) {}
+          }
+          if (typeof tg.close === "function") {
+            try { tg.close(); return true; } catch (_e) {}
+          }
+          return false;
+        }
+        if (safeUrl) {
+          try { window.open(safeUrl, "_blank", "noopener,noreferrer"); return true; } catch (_e) {}
+        }
+        return false;
+      }
+
+      function handleAfterTelegramSendClient(streamRes, toastText, extra = {}) {
+        const prefs = getDeliveryPreferencesClient();
+        const afterSendAction = prefs.afterSendAction || "open_minimize";
+        const isInsideTg = Boolean(tg && (tg.initData || (tg.platform && tg.platform !== "unknown")));
+        try {
+          if (tg && tg.HapticFeedback && typeof tg.HapticFeedback.notificationOccurred === "function") {
+            tg.HapticFeedback.notificationOccurred("success");
+          }
+        } catch (_e) {}
+
+        let openUrl = String(streamRes?.openMessageUrl || "").trim();
+        if (!openUrl && prefs.targetMode === "custom_bot" && prefs.customBotUsername) {
+          openUrl = "https://t.me/" + String(prefs.customBotUsername).replace(/^@/, "").trim();
+        }
+        const safeUrl = (typeof safeHttpUrl === "function") ? safeHttpUrl(openUrl) : ( /^https?:\\/\\//i.test(openUrl) ? openUrl : "" );
+        const isDirectMessageLink = Boolean(streamRes?.isDirectMessageLink);
+        const actionLabel = isDirectMessageLink ? "💬 Nachricht öffnen" : "💬 Chat öffnen";
+        const canJumpToChat = Boolean(safeUrl || isInsideTg);
+        const willAutoTrigger = Boolean(
+          !extra.skipAutoAction &&
+          !streamRes?.queued &&
+          isInsideTg &&
+          (afterSendAction === "open_minimize" || afterSendAction === "open_close")
+        );
+
+        const finalToastMsg = willAutoTrigger
+          ? (toastText + (afterSendAction === "open_close" ? " — schließe Mini-App..." : " — öffne Chat..."))
+          : toastText;
+
+        showHudToast(
+          finalToastMsg,
+          canJumpToChat
+            ? {
+                actionLabel,
+                durationMs: willAutoTrigger ? 3000 : 6000,
+                onAction: () => openSentTelegramMessageClient(safeUrl, {
+                  afterSendAction: afterSendAction === "stay" ? "open_minimize" : afterSendAction,
+                  targetMode: prefs.targetMode || "dm",
+                  isDirectMessageLink
+                })
+              }
+            : null
+        );
+
+        if (willAutoTrigger) {
+          setTimeout(() => {
+            openSentTelegramMessageClient(safeUrl, {
+              afterSendAction,
+              targetMode: prefs.targetMode || "dm",
+              isDirectMessageLink
+            });
+          }, 450);
+        }
       }
 
       function onModalDeliveryFieldInputClient() {
@@ -2001,14 +2117,24 @@
           if (r && r.ok) {
             if (r.queued && r.job) {
               const etaSec = Math.max(1, Math.ceil((Number(r.job.waitMs) || 1150) / 1000));
-              showHudToast("⏳ Anti-Spam Schutz: „" + cleanTitle + "“ auf Warteschleifen-Pos. #" + (r.job.position || 1) + " (Zustellung in ~" + etaSec + "s)");
+              handleAfterTelegramSendClient(
+                r,
+                "⏳ Anti-Spam Schutz: „" + cleanTitle + "“ auf Warteschleifen-Pos. #" + (r.job.position || 1) + " (Zustellung in ~" + etaSec + "s)",
+                { skipAutoAction: true }
+              );
             } else if (isSubtitleOnly) {
-              showHudToast("💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet!");
+              handleAfterTelegramSendClient(
+                r,
+                "💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet!"
+              );
             } else {
-              const copyNote = r.copiedFromSourceGroup ? " (per Auto-Copy aus Quellgruppe)" : "";
-              const coverNote = r.coverEmbedded ? " + 🖼️ Cover eingebettet" : "";
-              const subNote = Number(r.subtitlesSentCount || 0) > 0 ? (" + 💬 " + r.subtitlesSentCount + " Untertitel mitgesendet") : "";
-              showHudToast("✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!");
+              const copyNote = r.copiedFromSourceGroup ? " (Auto-Copy)" : "";
+              const coverNote = r.coverEmbedded ? " + 🖼️ Cover" : "";
+              const subNote = Number(r.subtitlesSentCount || 0) > 0 ? (" + 💬 " + r.subtitlesSentCount + " UT") : "";
+              handleAfterTelegramSendClient(
+                r,
+                "✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!"
+              );
             }
             if (!isSubtitleOnly && metaObj.seriesId && metaObj.season) {
               loadSeason(metaObj.seriesId, metaObj.season, false, false);
@@ -2139,6 +2265,7 @@
         const isSeriesModal = Array.isArray(d.seasons) && d.seasons.length > 0;
         let sentCount = 0;
         let queuedCount = 0;
+        let lastSentRes = null;
         for (let i = 0; i < targetList.length; i++) {
           const dl = targetList[i];
           const fid = dl.telegram_file_id || dl.file_id || "";
@@ -2178,6 +2305,7 @@
               renderAntiSpamLiveHudBannerClient(r.antiSpam);
             }
             if (r && r.ok) {
+              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
               if (r.queued) queuedCount++;
               else sentCount++;
             }
@@ -2185,10 +2313,13 @@
         }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
-        if (queuedCount > 0) {
-          showHudToast("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Archiv-Teil(e) in Anti-Spam Warteschleife eingereiht!");
+        if (sentCount + queuedCount > 0) {
+          const msg = queuedCount > 0
+            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Archiv-Teil(e) in Warteschleife!")
+            : ("✅ Alle " + sentCount + "/" + targetList.length + " Archiv-Teile gesendet!");
+          handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
-          showHudToast("✅ Alle " + sentCount + "/" + targetList.length + " Archiv-Teile gesendet!");
+          showHudToast("⚠️ Archiv-Teile konnten nicht gesendet werden.");
         }
       }
 
@@ -2373,6 +2504,7 @@
 
         let sentCount = 0;
         let queuedCount = 0;
+        let lastSentRes = null;
         for (let i = 0; i < targetList.length; i++) {
           const f = targetList[i];
           const cleanPartStr = f._normPart || normalizeClientPartLabel(f.part, f.raw_filename || "") || ("CD " + (i + 1));
@@ -2406,6 +2538,7 @@
               renderAntiSpamLiveHudBannerClient(r.antiSpam);
             }
             if (r && r.ok) {
+              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
               if (r.queued) queuedCount++;
               else sentCount++;
             }
@@ -2413,10 +2546,13 @@
         }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
-        if (queuedCount > 0) {
-          showHudToast("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " CD(s) in Anti-Spam Warteschleife eingereiht!");
+        if (sentCount + queuedCount > 0) {
+          const msg = queuedCount > 0
+            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " CD(s) in Warteschleife!")
+            : ("✅ Alle " + sentCount + "/" + targetList.length + " CDs gesendet!");
+          handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
-          showHudToast("✅ Alle " + sentCount + "/" + targetList.length + " CDs gesendet!");
+          showHudToast("⚠️ Teile konnten nicht gesendet werden.");
         }
       }
 
@@ -2454,6 +2590,7 @@
         const seriesTitle = state.activeDetails?.title || "Serie";
         let sentCount = 0;
         let queuedCount = 0;
+        let lastSentRes = null;
         for (let i = 0; i < episodesWithStreams.length; i++) {
           const ep = episodesWithStreams[i];
           const bestFile = ep._resolvedActiveFile || (Array.isArray(ep.versions) && ep.versions[0]) || (Array.isArray(ep.files) && ep.files[0]);
@@ -2490,6 +2627,7 @@
               renderAntiSpamLiveHudBannerClient(r.antiSpam);
             }
             if (r && r.ok) {
+              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
               if (r.queued) queuedCount++;
               else sentCount++;
               setSeriesProgress(seriesId, seasonNum, ep.episode_number, ep.name || "");
@@ -2499,10 +2637,13 @@
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
         const sSummaryPrefix = Number(seasonNum) === 0 ? "Specials" : ("Staffel " + seasonNum);
-        if (queuedCount > 0) {
-          showHudToast("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Anti-Spam Warteschleife!");
+        if (sentCount + queuedCount > 0) {
+          const msg = queuedCount > 0
+            ? ("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Warteschleife!")
+            : ("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!");
+          handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
-          showHudToast("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!");
+          showHudToast("⚠️ Folgen konnten nicht gesendet werden.");
         }
         loadSeason(seriesId, seasonNum, false, false);
       }

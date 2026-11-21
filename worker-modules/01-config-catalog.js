@@ -1182,15 +1182,21 @@
       const putOpts = entry.expirationTtl && Number(entry.expirationTtl) >= 60
         ? { expirationTtl: Number(entry.expirationTtl) }
         : undefined;
-      trackStat("kvWrites");
-      countKvSubrequest();
-      if (putOpts) {
-        await kv.put(entry.key, entry.valueStr, putOpts);
-      } else {
-        await kv.put(entry.key, entry.valueStr);
+      try {
+        trackStat("kvWrites");
+        countKvSubrequest();
+        if (putOpts) {
+          await kv.put(entry.key, entry.valueStr, putOpts);
+        } else {
+          await kv.put(entry.key, entry.valueStr);
+        }
+        memoryFallback.set(lastSavedKey, entry.valueStr);
+        writtenCount += 1;
+      } catch (_kvPutErr) {
+        if (!kvDirtyBuffer.has(entry.key)) {
+          kvDirtyBuffer.set(entry.key, entry);
+        }
       }
-      memoryFallback.set(lastSavedKey, entry.valueStr);
-      writtenCount += 1;
     }));
 
     return writtenCount;

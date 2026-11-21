@@ -557,18 +557,38 @@
       }
 
       let hudToastTimer = null;
-      function showHudToast(msg) {
+      function showHudToast(msg, opts = null) {
         const el = document.getElementById("hudToast");
         if (!el) return;
-        el.textContent = msg;
+        const options = (opts && typeof opts === "object") ? opts : null;
+        el.innerHTML = "";
+        const textSpan = document.createElement("span");
+        textSpan.textContent = String(msg || "");
+        el.appendChild(textSpan);
+        if (options && options.actionLabel && typeof options.onAction === "function") {
+          const actBtn = document.createElement("button");
+          actBtn.type = "button";
+          actBtn.className = "hud-toast-action-btn";
+          actBtn.textContent = String(options.actionLabel);
+          actBtn.onclick = (ev) => {
+            if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+            if (hudToastTimer) clearTimeout(hudToastTimer);
+            el.style.display = "none";
+            try { options.onAction(); } catch (_e) {}
+          };
+          el.appendChild(actBtn);
+        }
         el.title = "Antippen zum Ausblenden";
         el.onclick = () => {
           if (hudToastTimer) clearTimeout(hudToastTimer);
           el.style.display = "none";
         };
-        el.style.display = "block";
+        el.style.display = "flex";
         if (hudToastTimer) clearTimeout(hudToastTimer);
-        hudToastTimer = setTimeout(() => { el.style.display = "none"; }, 2500);
+        const dur = Number(options?.durationMs) > 0
+          ? Number(options.durationMs)
+          : (options && options.actionLabel ? 5500 : 2500);
+        hudToastTimer = setTimeout(() => { el.style.display = "none"; }, dur);
       }
 
       // Nicht-blockierende Custom Dialoge (Ersatz für window.prompt & window.confirm im iFrame/Telegram WebApp)

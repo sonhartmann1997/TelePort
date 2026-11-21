@@ -1627,6 +1627,15 @@
                   '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Eigene Ziel-Gruppe</button>' +
                   '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Eigener Bot</button>' +
                 '</div>' +
+                '<div style="margin-bottom:12px;padding:9px 10px;border-radius:10px;background:rgba(14,165,233,0.06);border:1px solid rgba(56,189,248,0.18)">' +
+                  '<div style="font-size:11.5px;font-weight:700;color:var(--text);margin-bottom:4px">📲 Verhalten direkt nach dem Senden</div>' +
+                  '<div style="font-size:11px;color:var(--muted);margin-bottom:7px">Springt automatisch zur gesendeten Nachricht im Telegram-Chat, damit man sofort sieht, dass der Bot geliefert hat.</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button class="btn ' + ((deliv.afterSendAction || 'open_minimize') === 'open_minimize' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_minimize\\'});loadSettingsView()">💬 Nachricht öffnen &amp; Minimieren</button>' +
+                    '<button class="btn ' + (deliv.afterSendAction === 'open_close' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_close\\'});loadSettingsView()">✖️ Öffnen &amp; Mini-App schließen</button>' +
+                    '<button class="btn ' + (deliv.afterSendAction === 'stay' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'stay\\'});loadSettingsView()">📌 In Mini-App bleiben</button>' +
+                  '</div>' +
+                '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
                     '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +

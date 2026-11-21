@@ -1242,9 +1242,9 @@
         window.addEventListener("message", (ev) => {
           if (!heroBgTeaserActiveKey) return;
           const heroFrame = document.getElementById("heroBgVideoIframe");
-          if (!heroFrame || (ev.source && ev.source !== heroFrame.contentWindow)) return;
+          if (!heroFrame || !heroFrame.contentWindow || ev.source !== heroFrame.contentWindow) return;
           const orig = String(ev.origin || "");
-          if (!orig.includes("youtube.com") && !orig.includes("youtube-nocookie.com")) return;
+          if (orig !== "https://www.youtube.com" && orig !== "https://www.youtube-nocookie.com" && orig !== "https://youtube.com" && orig !== "https://youtube-nocookie.com") return;
           let msg = null;
           try {
             msg = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
@@ -2351,12 +2351,16 @@
         }
       };
 
-      window.addEventListener("message", (ev) => {
-        const d = ev && ev.data;
-        if (d && d.type === "TMA_HERO_SWIPE_GESTURE" && d.direction) {
-          window.__tmaHandleHeroSwipe(d.direction, { bounceLock: Boolean(d.bounceLock) });
-        }
-      });
+      if (typeof window !== "undefined" && !window._heroSwipeMessageListenerBound) {
+        window._heroSwipeMessageListenerBound = true;
+        window.addEventListener("message", (ev) => {
+          if (ev.source !== window.parent && ev.source !== window) return;
+          const d = ev && ev.data;
+          if (d && d.type === "TMA_HERO_SWIPE_GESTURE" && (d.direction === "up" || d.direction === "down" || d.direction === "left" || d.direction === "right")) {
+            window.__tmaHandleHeroSwipe(d.direction, { bounceLock: Boolean(d.bounceLock) });
+          }
+        });
+      }
 
       function resolveHeroEventTargetElementClient(rawTarget) {
         if (!rawTarget || typeof rawTarget !== "object") return null;

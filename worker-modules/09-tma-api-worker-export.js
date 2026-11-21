@@ -595,10 +595,15 @@
         const rlKey = `login_rl_${normUserKey}_${clientIp}`;
         const rlWindowMs = 10 * 60 * 1000;
         const nowRl = Date.now();
-        let rlEntry = memoryFallback.get(rlKey);
-        if ((!rlEntry || nowRl > Number(rlEntry.resetAt || 0)) && typeof getEntityFromD1 === "function") {
+        const memRlEntry = memoryFallback.get(rlKey);
+        let rlEntry = (memRlEntry && nowRl <= Number(memRlEntry.resetAt || 0)) ? memRlEntry : null;
+        if (typeof getEntityFromD1 === "function") {
           const d1Rl = await getEntityFromD1(env, rlKey, rlWindowMs, { bypassMemoryCache: true }).catch(() => null);
-          if (d1Rl && nowRl <= Number(d1Rl.resetAt || 0)) rlEntry = d1Rl;
+          if (d1Rl && nowRl <= Number(d1Rl.resetAt || 0)) {
+            if (!rlEntry || Number(d1Rl.count || 0) >= Number(rlEntry.count || 0)) {
+              rlEntry = d1Rl;
+            }
+          }
         }
         if (rlEntry && nowRl <= Number(rlEntry.resetAt || 0) && Number(rlEntry.count || 0) >= 8) {
           const waitSec = Math.max(10, Math.ceil((Number(rlEntry.resetAt) - nowRl) / 1000));
@@ -618,7 +623,7 @@
         };
         const clearLoginFailures = async () => {
           memoryFallback.delete(rlKey);
-          if (rlEntry && typeof deleteEntityFromD1 === "function") {
+          if (typeof deleteEntityFromD1 === "function") {
             await deleteEntityFromD1(env, rlKey).catch(() => {});
           }
         };
@@ -718,7 +723,7 @@
         }
         const body = await request.json().catch(() => ({}));
         const action = String(body.action || "");
-        const userRow = await getUserByTelegramIdFromD1(env, auth.chatId);
+        const userRow = await getUserByTelegramIdFromD1(env, auth.chatId, true);
 
         if (action === "setup") {
           if (Number(userRow?.totp_enabled) === 1 && userRow?.totp_secret) {
@@ -728,7 +733,10 @@
             }), { status: 400, headers: corsHeaders });
           }
           const newSecret = generateBase32TotpSecret(32);
-          await saveUserTotpInD1(env, auth.chatId, newSecret, false);
+          const savedSetup = await saveUserTotpInD1(env, auth.chatId, newSecret, false);
+          if (!savedSetup) {
+            return new Response(JSON.stringify({ ok: false, error: "2FA-Schlüssel konnte nicht in der Datenbank gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           const accountLabel = auth.user.customUsername || auth.user.tgUsername || `TG-${auth.chatId}`;
           const { otpauthUrl, qrCodeUrl } = buildOtpAuthUri(newSecret, accountLabel, "TelePort TMA");
           return new Response(JSON.stringify({
@@ -750,6 +758,9 @@
             return new Response(JSON.stringify({ ok: false, error: "Der eingegebene 6-stellige Code stimmt nicht überein." }), { status: 400, headers: corsHeaders });
           }
           const updatedUser = await saveUserTotpInD1(env, auth.chatId, pendingSecret, true);
+          if (!updatedUser) {
+            return new Response(JSON.stringify({ ok: false, error: "2FA-Status konnte nicht dauerhaft gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           return new Response(JSON.stringify({ ok: true, user: updatedUser }), { status: 200, headers: corsHeaders });
         }
 
@@ -762,6 +773,9 @@
             }
           }
           const updatedUser = await saveUserTotpInD1(env, auth.chatId, null, false);
+          if (!updatedUser) {
+            return new Response(JSON.stringify({ ok: false, error: "2FA-Deaktivierung konnte nicht dauerhaft gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           return new Response(JSON.stringify({ ok: true, user: updatedUser }), { status: 200, headers: corsHeaders });
         }
 
@@ -1113,12 +1127,20 @@
               if (savedCfg.secretToken) {
                 whPayload.secret_token = savedCfg.secretToken;
               }
-              const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(whPayload)
-              }, 6000);
-              const whJson = await whRes.json().catch(() => ({}));
+              let whJson = {};
+              let whErrorMsg = "";
+              try {
+                const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(whPayload)
+                }, 6000);
+                whJson = await whRes.json().catch(() => ({}));
+              } catch (whErr) {
+                whErrorMsg = String(whErr?.message || "Netzwerkfehler bei Telegram setWebhook.");
+              }
+              let effectiveActiveCfg = savedCfg;
+              let effectiveManualLinks = manualLinks;
               let liveWebhookInfo = null;
               if (whJson?.ok) {
                 try {
@@ -1126,21 +1148,29 @@
                   const infoJson = await infoRes.json().catch(() => ({}));
                   if (infoJson?.ok && infoJson?.result) liveWebhookInfo = infoJson.result;
                 } catch (_infoErr) {}
+              } else if (typeof saveWebhookSecurityConfig === "function") {
+                // Rollback auf das vorherige Webhook-Secret, damit Telegram-Updates nicht ausgesperrt werden!
+                effectiveActiveCfg = await saveWebhookSecurityConfig(env, {
+                  secretToken: String(existingCfg?.secretToken || ""),
+                  maxConnections: Number(existingCfg?.maxConnections || 8),
+                  dropPendingDefault: Boolean(existingCfg?.dropPendingDefault)
+                }).catch(() => existingCfg);
+                effectiveManualLinks = buildManualWebhookLinks(cleanWorkerOrigin, customWebhookUrl, effectiveActiveCfg.secretToken, effectiveActiveCfg.maxConnections, dropPending);
               }
               return new Response(JSON.stringify({
                 ok: Boolean(whJson?.ok),
                 webhookUrl: customWebhookUrl,
-                manualSetWebhookWorkerUrl: manualLinks.manualSetWebhookWorkerUrl,
-                manualTelegramApiTemplateUrl: manualLinks.manualTelegramApiTemplateUrl,
-                activeWebhookSecret: savedCfg.secretToken,
-                hasWebhookPassword: Boolean(savedCfg.secretToken),
-                webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
-                maxConnections: savedCfg.maxConnections,
+                manualSetWebhookWorkerUrl: effectiveManualLinks.manualSetWebhookWorkerUrl,
+                manualTelegramApiTemplateUrl: effectiveManualLinks.manualTelegramApiTemplateUrl,
+                activeWebhookSecret: effectiveActiveCfg.secretToken,
+                hasWebhookPassword: Boolean(effectiveActiveCfg.secretToken),
+                webhookPasswordPreview: effectiveActiveCfg.secretToken ? `${effectiveActiveCfg.secretToken.slice(0, 3)}•••${effectiveActiveCfg.secretToken.slice(-2)}` : "",
+                maxConnections: effectiveActiveCfg.maxConnections,
                 webhookInfo: liveWebhookInfo,
                 telegramResponse: whJson,
                 message: whJson?.ok
-                  ? `Webhook inkl. Passwort-Schutz (${savedCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${savedCfg.maxConnections}) erfolgreich bei Telegram registriert & verifiziert!`
-                  : (whJson?.description || "Telegram setWebhook fehlgeschlagen."),
+                  ? `Webhook inkl. Passwort-Schutz (${effectiveActiveCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${effectiveActiveCfg.maxConnections}) erfolgreich bei Telegram registriert & verifiziert!`
+                  : `${whJson?.description || whErrorMsg || "Telegram setWebhook fehlgeschlagen."} (Vorheriges Webhook-Secret wurde zur Sicherheit beibehalten.)`,
                 _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
@@ -2013,7 +2043,14 @@
         }
         if (path === "/api/tma/admin/vip" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          const updatedUser = await setUserVipStatusInD1(env, body.telegramId, Boolean(body.isVip));
+          const rawTid = String(body.telegramId || "").trim();
+          if (!rawTid || !/^\d{3,20}$/.test(rawTid)) {
+            return new Response(JSON.stringify({ ok: false, error: "Ungültige Telegram-User-ID." }), { status: 400, headers: corsHeaders });
+          }
+          const updatedUser = await setUserVipStatusInD1(env, rawTid, Boolean(body.isVip));
+          if (!updatedUser) {
+            return new Response(JSON.stringify({ ok: false, error: "VIP-Status konnte nicht in der Datenbank gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           return new Response(JSON.stringify({ ok: true, user: updatedUser }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/media" && request.method === "POST") {
@@ -2055,7 +2092,8 @@
             }
             if (!details && targetId && body.title) {
               const cleanYear = body.year && /^\d{4}$/.test(String(body.year).trim()) ? String(body.year).trim() : "";
-              const customPoster = body.poster ? String(body.poster).trim() : null;
+              const rawCustomPoster = body.poster ? String(body.poster).trim() : "";
+              const customPoster = /^https?:\/\/[^\s"'<>]+$/i.test(rawCustomPoster) ? rawCustomPoster : null;
               details = {
                 id: targetId,
                 title: String(body.title).trim(),
@@ -2192,13 +2230,20 @@
           const tmdbId = Number(body.tmdbId || 0);
           const posterPath = body.poster_path ? String(body.poster_path).trim() : null;
           const externalPosterUrl = body.external_poster_url ? String(body.external_poster_url).trim() : "";
-          if (!tmdbId || (!posterPath && !externalPosterUrl)) {
+          if (!Number.isInteger(tmdbId) || tmdbId <= 0 || (!posterPath && !externalPosterUrl)) {
             return new Response(JSON.stringify({ ok: false, error: "Ungültige Titel-ID oder leeres Cover." }), { status: 400, headers: corsHeaders });
+          }
+          if (posterPath && !/^\/(?!\/)[^\s"'<>]+$/.test(posterPath)) {
+            return new Response(JSON.stringify({ ok: false, error: "Ungültiger TMDb-Poster-Pfad." }), { status: 400, headers: corsHeaders });
+          }
+          if (externalPosterUrl && !/^https?:\/\/[^\s"'<>]+$/i.test(externalPosterUrl)) {
+            return new Response(JSON.stringify({ ok: false, error: "Externe Cover-URL muss mit https:// oder http:// beginnen." }), { status: 400, headers: corsHeaders });
           }
 
           const db = await ensureD1Schema(env);
           if (db) {
             try {
+              trackStat("d1Writes");
               const table = typeCode === "s" ? "series" : "movies";
               // movies/series haben keine eigene Spalte external_poster_url -> wird in details_json per json_set gespeichert!
               await db.prepare(
@@ -2213,7 +2258,9 @@
               )
                 .bind(posterPath, externalPosterUrl || "", Date.now(), tmdbId)
                 .run();
-            } catch (e) {}
+            } catch (e) {
+              return new Response(JSON.stringify({ ok: false, error: "Cover konnte nicht in der Datenbank gespeichert werden." }), { status: 500, headers: corsHeaders });
+            }
           }
 
           const cacheKey = `${typeCode === "s" ? "tv" : "movie"}_${tmdbId}`;
@@ -3788,6 +3835,60 @@
             ? "copyMessage"
             : "sendVideo";
 
+        const resolveOpenMessageInfo = async (sentPayload = null) => {
+          const msgObj = (sentPayload && typeof sentPayload === "object")
+            ? (sentPayload.result && typeof sentPayload.result === "object" ? sentPayload.result : sentPayload)
+            : null;
+          const rawMsgId = Number(msgObj?.message_id || 0);
+          const messageId = Number.isInteger(rawMsgId) && rawMsgId > 0 ? rawMsgId : null;
+          const chatUsername = String(msgObj?.chat?.username || "").replace(/^@/, "").trim();
+          const cleanTopic = targetTopicId && /^\d+$/.test(targetTopicId) ? targetTopicId : "";
+          const targetStr = String(targetChat || "").trim();
+
+          let resolvedBotUsername = "";
+          if (usingOwnCustomBot) {
+            resolvedBotUsername = String(body.customBotUsername || savedDeliv.customBotUsername || "").replace(/^@/, "").trim();
+            if (!resolvedBotUsername && effectiveCustomToken) {
+              resolvedBotUsername = await tgApi({ ...env, TELEGRAM_BOT_TOKEN: effectiveCustomToken }).getBotUsername(env).catch(() => "");
+            }
+          } else if (env.TELEGRAM_BOT_TOKEN) {
+            resolvedBotUsername = await tgApi(env).getBotUsername(env).catch(() => "");
+          }
+          resolvedBotUsername = String(resolvedBotUsername || "").replace(/^@/, "").trim();
+
+          if (chatUsername && /^[A-Za-z0-9_]{3,64}$/.test(chatUsername)) {
+            const pathSuffix = messageId
+              ? (cleanTopic ? `/${cleanTopic}/${messageId}` : `/${messageId}`)
+              : (cleanTopic ? `/${cleanTopic}` : "");
+            return {
+              messageId,
+              openMessageUrl: `https://t.me/${chatUsername}${pathSuffix}`,
+              isDirectMessageLink: Boolean(messageId),
+              botUsername: resolvedBotUsername
+            };
+          }
+          if (targetStr.startsWith("-100")) {
+            const internalId = targetStr.slice(4);
+            if (/^\d+$/.test(internalId)) {
+              const pathSuffix = messageId
+                ? (cleanTopic ? `/${cleanTopic}/${messageId}` : `/${messageId}`)
+                : (cleanTopic ? `/${cleanTopic}` : "");
+              return {
+                messageId,
+                openMessageUrl: `https://t.me/c/${internalId}${pathSuffix}`,
+                isDirectMessageLink: Boolean(messageId),
+                botUsername: resolvedBotUsername
+              };
+            }
+          }
+          return {
+            messageId,
+            openMessageUrl: resolvedBotUsername ? `https://t.me/${resolvedBotUsername}` : "",
+            isDirectMessageLink: false,
+            botUsername: resolvedBotUsername
+          };
+        };
+
         // 0. Prüfe strikte Telegram Anti-Spam-Grenzwerte (Single-Chat 1.15s, Gruppe 18/60s, Global 25/1s, 429 Cooldown)
         await hydrateAntiSpamStateFromStorage(env);
         const slotCheck = evaluateAntiSpamSlot(targetChat, methodLabel, true);
@@ -3823,10 +3924,12 @@
             summary: `⏳ Anti-Spam Warteschleife Pos. #${queuedJob.position} (${slotCheck.reason})`
           });
 
+          const queuedLinkInfo = await resolveOpenMessageInfo(null);
           return new Response(JSON.stringify({
             ok: true,
             queued: true,
             targetChat,
+            ...queuedLinkInfo,
             job: queuedJob,
             antiSpam: getAntiSpamSnapshot(env, targetChat),
             message: `⏳ Anti-Spam Schutz aktiv: „${cleanTitle}“ wurde auf Position #${queuedJob.position} eingereiht.`
@@ -3847,10 +3950,12 @@
               durationMs: Date.now() - reqStartMs,
               summary: `Simulierter Karten-Versand „${cleanTitle}“ an ${targetChat}`
             });
+            const simCardLinkInfo = await resolveOpenMessageInfo({ result: { message_id: Math.floor(Date.now() % 900000) + 100 } });
             return new Response(JSON.stringify({
               ok: true,
               simulated: true,
               targetChat,
+              ...simCardLinkInfo,
               antiSpam: getAntiSpamSnapshot(env, targetChat),
               message: `Simulierter Versand von „${cleanTitle}“ an ${targetChat} (Kein TELEGRAM_BOT_TOKEN in env gesetzt).`
             }), { status: 200, headers: corsHeaders });
@@ -3884,7 +3989,8 @@
             durationMs: Date.now() - reqStartMs,
             summary: `Medienkarte „${cleanTitle}“ an ${targetChat} gesendet`
           });
-          return new Response(JSON.stringify({ ok: true, targetChat, antiSpam: getAntiSpamSnapshot(env, targetChat) }), { status: 200, headers: corsHeaders });
+          const cardLinkInfo = await resolveOpenMessageInfo(msgRes);
+          return new Response(JSON.stringify({ ok: true, targetChat, ...cardLinkInfo, antiSpam: getAntiSpamSnapshot(env, targetChat) }), { status: 200, headers: corsHeaders });
         }
 
         // Gebundene Untertitel (.srt, .vtt, .sub) zu dieser Datei aus D1 / Memory ermitteln
@@ -3925,10 +4031,12 @@
             durationMs: Date.now() - reqStartMs,
             summary: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox${simCoverUrl ? " + 🖼️ Cover" : ""})`
           });
+          const simLinkInfo = await resolveOpenMessageInfo({ result: { message_id: Math.floor(Date.now() % 900000) + 100 } });
           return new Response(JSON.stringify({
             ok: true,
             simulated: true,
             targetChat,
+            ...simLinkInfo,
             subtitlesSentCount: boundSubtitles.length,
             copiedFromSourceGroup: fileId.startsWith("tg_export_"),
             coverEmbedded: Boolean(simCoverUrl),
@@ -3944,6 +4052,7 @@
             return new Response(JSON.stringify({ ok: false, error: "Für diese Datei sind keine verknüpften Untertitel hinterlegt." }), { status: 404, headers: corsHeaders });
           }
           let subtitlesSentCount = 0;
+          let lastSubRes = null;
           for (const sub of boundSubtitles) {
             const subFid = String(sub?.file_id || "").trim();
             if (!subFid) continue;
@@ -3954,11 +4063,16 @@
               sourceBridgeChatId,
               disableCover: true
             }).catch(() => null);
-            if (sRes) subtitlesSentCount++;
+            if (sRes) {
+              subtitlesSentCount++;
+              lastSubRes = sRes;
+            }
           }
+          const subLinkInfo = await resolveOpenMessageInfo(lastSubRes);
           return new Response(JSON.stringify({
             ok: subtitlesSentCount > 0,
             targetChat,
+            ...subLinkInfo,
             subtitlesSentCount,
             antiSpam: getAntiSpamSnapshot(env, targetChat)
           }), { status: subtitlesSentCount > 0 ? 200 : 500, headers: corsHeaders });
@@ -4055,9 +4169,11 @@
           durationMs: Date.now() - reqStartMs,
           summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat} gesendet${sent.coverEmbedded ? " (+ 🖼️ Cover)" : ""}${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
         });
+        const sentLinkInfo = await resolveOpenMessageInfo(sent);
         return new Response(JSON.stringify({
           ok: true,
           targetChat,
+          ...sentLinkInfo,
           subtitlesSentCount,
           copiedFromSourceGroup: Boolean(sent.copiedFromSourceGroup),
           harvestedFileId: sent.harvestedFileId || null,
@@ -4516,6 +4632,10 @@
             }
             const dc = body.deliveryConfig;
             const retentionDays = normalizeWorkerRetentionDays(dc.retentionDays);
+            const rawAfterSend = String(dc.afterSendAction || "open_minimize").trim();
+            const afterSendAction = (rawAfterSend === "open_minimize" || rawAfterSend === "open_close" || rawAfterSend === "stay")
+              ? rawAfterSend
+              : "open_minimize";
             cur.deliveryConfig = {
               targetMode: String(dc.targetMode || "dm"),
               targetGroupChatId: String(dc.targetGroupChatId || "").trim(),
@@ -4523,6 +4643,7 @@
               sourceBridgeChatId: String(dc.sourceBridgeChatId || "").trim(),
               customBotToken: String(dc.customBotToken || "").trim(),
               customBotUsername: String(dc.customBotUsername || "").trim(),
+              afterSendAction,
               retentionDays
             };
             if (auth.user?.isAdmin) {

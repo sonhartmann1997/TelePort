@@ -1411,7 +1411,7 @@
     if (!tid || tid === "guest") return null;
     const enabledVal = totpEnabled ? 1 : 0;
     const now = Date.now();
-    const cur = (await getUserByTelegramIdFromD1(env, tid)) || {
+    const prev = (await getUserByTelegramIdFromD1(env, tid, true)) || {
       telegram_id: tid,
       tg_username: "",
       first_name: "",
@@ -1419,46 +1419,101 @@
       is_admin: isAuthorizedAdminId(env, tid) ? 1 : 0,
       created_at: now
     };
-    cur.totp_secret = totpSecret ? String(totpSecret) : null;
-    cur.totp_enabled = enabledVal;
-    cur.last_seen_at = now;
-    memoryFallback.set(`d1_user_${tid}`, cur);
+    const nextRow = {
+      ...prev,
+      telegram_id: tid,
+      totp_secret: totpSecret ? String(totpSecret) : null,
+      totp_enabled: enabledVal,
+      last_seen_at: now,
+      _cachedAt: now,
+      _d1SyncedAt: now
+    };
 
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Writes");
         await db
-          .prepare("UPDATE users SET totp_secret = ?1, totp_enabled = ?2, last_seen_at = ?3 WHERE telegram_id = ?4")
-          .bind(cur.totp_secret, enabledVal, now, tid)
+          .prepare(
+            `INSERT INTO users (telegram_id, tg_username, first_name, is_vip, is_admin, totp_secret, totp_enabled, created_at, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(telegram_id) DO UPDATE SET
+               totp_secret = excluded.totp_secret,
+               totp_enabled = excluded.totp_enabled,
+               last_seen_at = excluded.last_seen_at`
+          )
+          .bind(
+            tid,
+            String(nextRow.tg_username || ""),
+            String(nextRow.first_name || ""),
+            Number(nextRow.is_vip) ? 1 : 0,
+            Number(nextRow.is_admin) ? 1 : 0,
+            nextRow.totp_secret,
+            enabledVal,
+            Number(nextRow.created_at || now),
+            now
+          )
           .run();
-      } catch (e) {}
+      } catch (e) {
+        return null;
+      }
     }
-    return formatUserRowForClient(cur, env);
+    memoryFallback.set(`d1_user_${tid}`, nextRow);
+    memoryFallback.delete("d1_admin_users_list_cache");
+    return formatUserRowForClient(nextRow, env);
   }
 
   async function setUserVipStatusInD1(env, telegramId, isVip) {
     const tid = String(telegramId || "").trim();
-    if (!tid) return null;
+    if (!tid || tid === "guest") return null;
     const vipVal = isVip ? 1 : 0;
-    const cur = await getUserByTelegramIdFromD1(env, tid);
-    if (cur) {
-      cur.is_vip = vipVal;
-      memoryFallback.set(`d1_user_${tid}`, cur);
-    }
-    memoryFallback.delete("d1_admin_users_list_cache");
+    const now = Date.now();
+    const prev = (await getUserByTelegramIdFromD1(env, tid, true)) || {
+      telegram_id: tid,
+      tg_username: "",
+      first_name: "",
+      is_vip: 0,
+      is_admin: isAuthorizedAdminId(env, tid) ? 1 : 0,
+      created_at: now
+    };
+    const nextRow = {
+      ...prev,
+      telegram_id: tid,
+      is_vip: vipVal,
+      last_seen_at: now,
+      _cachedAt: now,
+      _d1SyncedAt: now
+    };
+
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Writes");
         await db
-          .prepare("UPDATE users SET is_vip = ?1, last_seen_at = ?2 WHERE telegram_id = ?3")
-          .bind(vipVal, Date.now(), tid)
+          .prepare(
+            `INSERT INTO users (telegram_id, tg_username, first_name, is_vip, is_admin, created_at, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(telegram_id) DO UPDATE SET
+               is_vip = excluded.is_vip,
+               last_seen_at = excluded.last_seen_at`
+          )
+          .bind(
+            tid,
+            String(nextRow.tg_username || ""),
+            String(nextRow.first_name || ""),
+            vipVal,
+            Number(nextRow.is_admin) ? 1 : 0,
+            Number(nextRow.created_at || now),
+            now
+          )
           .run();
-      } catch (e) {}
+      } catch (e) {
+        return null;
+      }
     }
-    const updated = await getUserByTelegramIdFromD1(env, tid);
-    return formatUserRowForClient(updated || { telegram_id: tid, is_vip: vipVal }, env);
+    memoryFallback.set(`d1_user_${tid}`, nextRow);
+    memoryFallback.delete("d1_admin_users_list_cache");
+    return formatUserRowForClient(nextRow, env);
   }
 
   async function listAllUsersFromD1(env) {

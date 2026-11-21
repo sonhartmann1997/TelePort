@@ -5081,7 +5081,7 @@
         right: auto;
         transform: translateX(-50%);
         z-index: 2600;
-        max-width: min(92vw, 560px);
+        max-width: min(94vw, 580px);
         text-align: center;
         background: rgba(7, 12, 26, 0.96);
         backdrop-filter: blur(12px);
@@ -5093,9 +5093,26 @@
         font-weight: 800;
         box-shadow: 0 10px 28px rgba(0,0,0,0.82), 0 0 16px rgba(56, 189, 248, 0.2);
         display: none;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
         pointer-events: auto;
         cursor: pointer;
       }
+      .hud-toast-action-btn {
+        background: linear-gradient(135deg, #0ea5e9, #2563eb);
+        color: #fff;
+        border: 1px solid rgba(125, 211, 252, 0.7);
+        border-radius: 999px;
+        padding: 5px 12px;
+        font-size: 11.5px;
+        font-weight: 800;
+        cursor: pointer;
+        white-space: nowrap;
+        box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+      }
+      .hud-toast-action-btn:hover { filter: brightness(1.1); }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
       /* Futuristischer Neon-Cinema Boot-Splashscreen */
       #tmaBootSplashscreen {

@@ -1182,15 +1182,21 @@
       const putOpts = entry.expirationTtl && Number(entry.expirationTtl) >= 60
         ? { expirationTtl: Number(entry.expirationTtl) }
         : undefined;
-      trackStat("kvWrites");
-      countKvSubrequest();
-      if (putOpts) {
-        await kv.put(entry.key, entry.valueStr, putOpts);
-      } else {
-        await kv.put(entry.key, entry.valueStr);
+      try {
+        trackStat("kvWrites");
+        countKvSubrequest();
+        if (putOpts) {
+          await kv.put(entry.key, entry.valueStr, putOpts);
+        } else {
+          await kv.put(entry.key, entry.valueStr);
+        }
+        memoryFallback.set(lastSavedKey, entry.valueStr);
+        writtenCount += 1;
+      } catch (_kvPutErr) {
+        if (!kvDirtyBuffer.has(entry.key)) {
+          kvDirtyBuffer.set(entry.key, entry);
+        }
       }
-      memoryFallback.set(lastSavedKey, entry.valueStr);
-      writtenCount += 1;
     }));
 
     return writtenCount;
@@ -9238,7 +9244,7 @@
     if (!tid || tid === "guest") return null;
     const enabledVal = totpEnabled ? 1 : 0;
     const now = Date.now();
-    const cur = (await getUserByTelegramIdFromD1(env, tid)) || {
+    const prev = (await getUserByTelegramIdFromD1(env, tid, true)) || {
       telegram_id: tid,
       tg_username: "",
       first_name: "",
@@ -9246,46 +9252,101 @@
       is_admin: isAuthorizedAdminId(env, tid) ? 1 : 0,
       created_at: now
     };
-    cur.totp_secret = totpSecret ? String(totpSecret) : null;
-    cur.totp_enabled = enabledVal;
-    cur.last_seen_at = now;
-    memoryFallback.set(`d1_user_${tid}`, cur);
+    const nextRow = {
+      ...prev,
+      telegram_id: tid,
+      totp_secret: totpSecret ? String(totpSecret) : null,
+      totp_enabled: enabledVal,
+      last_seen_at: now,
+      _cachedAt: now,
+      _d1SyncedAt: now
+    };
 
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Writes");
         await db
-          .prepare("UPDATE users SET totp_secret = ?1, totp_enabled = ?2, last_seen_at = ?3 WHERE telegram_id = ?4")
-          .bind(cur.totp_secret, enabledVal, now, tid)
+          .prepare(
+            `INSERT INTO users (telegram_id, tg_username, first_name, is_vip, is_admin, totp_secret, totp_enabled, created_at, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(telegram_id) DO UPDATE SET
+               totp_secret = excluded.totp_secret,
+               totp_enabled = excluded.totp_enabled,
+               last_seen_at = excluded.last_seen_at`
+          )
+          .bind(
+            tid,
+            String(nextRow.tg_username || ""),
+            String(nextRow.first_name || ""),
+            Number(nextRow.is_vip) ? 1 : 0,
+            Number(nextRow.is_admin) ? 1 : 0,
+            nextRow.totp_secret,
+            enabledVal,
+            Number(nextRow.created_at || now),
+            now
+          )
           .run();
-      } catch (e) {}
+      } catch (e) {
+        return null;
+      }
     }
-    return formatUserRowForClient(cur, env);
+    memoryFallback.set(`d1_user_${tid}`, nextRow);
+    memoryFallback.delete("d1_admin_users_list_cache");
+    return formatUserRowForClient(nextRow, env);
   }
 
   async function setUserVipStatusInD1(env, telegramId, isVip) {
     const tid = String(telegramId || "").trim();
-    if (!tid) return null;
+    if (!tid || tid === "guest") return null;
     const vipVal = isVip ? 1 : 0;
-    const cur = await getUserByTelegramIdFromD1(env, tid);
-    if (cur) {
-      cur.is_vip = vipVal;
-      memoryFallback.set(`d1_user_${tid}`, cur);
-    }
-    memoryFallback.delete("d1_admin_users_list_cache");
+    const now = Date.now();
+    const prev = (await getUserByTelegramIdFromD1(env, tid, true)) || {
+      telegram_id: tid,
+      tg_username: "",
+      first_name: "",
+      is_vip: 0,
+      is_admin: isAuthorizedAdminId(env, tid) ? 1 : 0,
+      created_at: now
+    };
+    const nextRow = {
+      ...prev,
+      telegram_id: tid,
+      is_vip: vipVal,
+      last_seen_at: now,
+      _cachedAt: now,
+      _d1SyncedAt: now
+    };
+
     const db = await ensureD1Schema(env);
     if (db) {
       try {
         trackStat("d1Writes");
         await db
-          .prepare("UPDATE users SET is_vip = ?1, last_seen_at = ?2 WHERE telegram_id = ?3")
-          .bind(vipVal, Date.now(), tid)
+          .prepare(
+            `INSERT INTO users (telegram_id, tg_username, first_name, is_vip, is_admin, created_at, last_seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(telegram_id) DO UPDATE SET
+               is_vip = excluded.is_vip,
+               last_seen_at = excluded.last_seen_at`
+          )
+          .bind(
+            tid,
+            String(nextRow.tg_username || ""),
+            String(nextRow.first_name || ""),
+            vipVal,
+            Number(nextRow.is_admin) ? 1 : 0,
+            Number(nextRow.created_at || now),
+            now
+          )
           .run();
-      } catch (e) {}
+      } catch (e) {
+        return null;
+      }
     }
-    const updated = await getUserByTelegramIdFromD1(env, tid);
-    return formatUserRowForClient(updated || { telegram_id: tid, is_vip: vipVal }, env);
+    memoryFallback.set(`d1_user_${tid}`, nextRow);
+    memoryFallback.delete("d1_admin_users_list_cache");
+    return formatUserRowForClient(nextRow, env);
   }
 
   async function listAllUsersFromD1(env) {
@@ -38275,7 +38336,7 @@
         right: auto;
         transform: translateX(-50%);
         z-index: 2600;
-        max-width: min(92vw, 560px);
+        max-width: min(94vw, 580px);
         text-align: center;
         background: rgba(7, 12, 26, 0.96);
         backdrop-filter: blur(12px);
@@ -38287,9 +38348,26 @@
         font-weight: 800;
         box-shadow: 0 10px 28px rgba(0,0,0,0.82), 0 0 16px rgba(56, 189, 248, 0.2);
         display: none;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        flex-wrap: wrap;
         pointer-events: auto;
         cursor: pointer;
       }
+      .hud-toast-action-btn {
+        background: linear-gradient(135deg, #0ea5e9, #2563eb);
+        color: #fff;
+        border: 1px solid rgba(125, 211, 252, 0.7);
+        border-radius: 999px;
+        padding: 5px 12px;
+        font-size: 11.5px;
+        font-weight: 800;
+        cursor: pointer;
+        white-space: nowrap;
+        box-shadow: 0 4px 14px rgba(14, 165, 233, 0.35);
+      }
+      .hud-toast-action-btn:hover { filter: brightness(1.1); }
       @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
       /* Futuristischer Neon-Cinema Boot-Splashscreen */
       #tmaBootSplashscreen {
@@ -39191,18 +39269,38 @@
       }
 
       let hudToastTimer = null;
-      function showHudToast(msg) {
+      function showHudToast(msg, opts = null) {
         const el = document.getElementById("hudToast");
         if (!el) return;
-        el.textContent = msg;
+        const options = (opts && typeof opts === "object") ? opts : null;
+        el.innerHTML = "";
+        const textSpan = document.createElement("span");
+        textSpan.textContent = String(msg || "");
+        el.appendChild(textSpan);
+        if (options && options.actionLabel && typeof options.onAction === "function") {
+          const actBtn = document.createElement("button");
+          actBtn.type = "button";
+          actBtn.className = "hud-toast-action-btn";
+          actBtn.textContent = String(options.actionLabel);
+          actBtn.onclick = (ev) => {
+            if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+            if (hudToastTimer) clearTimeout(hudToastTimer);
+            el.style.display = "none";
+            try { options.onAction(); } catch (_e) {}
+          };
+          el.appendChild(actBtn);
+        }
         el.title = "Antippen zum Ausblenden";
         el.onclick = () => {
           if (hudToastTimer) clearTimeout(hudToastTimer);
           el.style.display = "none";
         };
-        el.style.display = "block";
+        el.style.display = "flex";
         if (hudToastTimer) clearTimeout(hudToastTimer);
-        hudToastTimer = setTimeout(() => { el.style.display = "none"; }, 2500);
+        const dur = Number(options?.durationMs) > 0
+          ? Number(options.durationMs)
+          : (options && options.actionLabel ? 5500 : 2500);
+        hudToastTimer = setTimeout(() => { el.style.display = "none"; }, dur);
       }
 
       // Nicht-blockierende Custom Dialoge (Ersatz für window.prompt & window.confirm im iFrame/Telegram WebApp)
@@ -44604,9 +44702,9 @@
         window.addEventListener("message", (ev) => {
           if (!heroBgTeaserActiveKey) return;
           const heroFrame = document.getElementById("heroBgVideoIframe");
-          if (!heroFrame || (ev.source && ev.source !== heroFrame.contentWindow)) return;
+          if (!heroFrame || !heroFrame.contentWindow || ev.source !== heroFrame.contentWindow) return;
           const orig = String(ev.origin || "");
-          if (!orig.includes("youtube.com") && !orig.includes("youtube-nocookie.com")) return;
+          if (orig !== "https://www.youtube.com" && orig !== "https://www.youtube-nocookie.com" && orig !== "https://youtube.com" && orig !== "https://youtube-nocookie.com") return;
           let msg = null;
           try {
             msg = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
@@ -45713,12 +45811,16 @@
         }
       };
 
-      window.addEventListener("message", (ev) => {
-        const d = ev && ev.data;
-        if (d && d.type === "TMA_HERO_SWIPE_GESTURE" && d.direction) {
-          window.__tmaHandleHeroSwipe(d.direction, { bounceLock: Boolean(d.bounceLock) });
-        }
-      });
+      if (typeof window !== "undefined" && !window._heroSwipeMessageListenerBound) {
+        window._heroSwipeMessageListenerBound = true;
+        window.addEventListener("message", (ev) => {
+          if (ev.source !== window.parent && ev.source !== window) return;
+          const d = ev && ev.data;
+          if (d && d.type === "TMA_HERO_SWIPE_GESTURE" && (d.direction === "up" || d.direction === "down" || d.direction === "left" || d.direction === "right")) {
+            window.__tmaHandleHeroSwipe(d.direction, { bounceLock: Boolean(d.bounceLock) });
+          }
+        });
+      }
 
       function resolveHeroEventTargetElementClient(rawTarget) {
         if (!rawTarget || typeof rawTarget !== "object") return null;
@@ -50767,9 +50869,9 @@
         window.addEventListener("message", (ev) => {
           if (!detailBgTeaserActiveKey) return;
           const detailFrame = document.getElementById("detailBgVideoIframe");
-          if (!detailFrame || (ev.source && ev.source !== detailFrame.contentWindow)) return;
+          if (!detailFrame || !detailFrame.contentWindow || ev.source !== detailFrame.contentWindow) return;
           const orig = String(ev.origin || "");
-          if (!orig.includes("youtube.com") && !orig.includes("youtube-nocookie.com")) return;
+          if (orig !== "https://www.youtube.com" && orig !== "https://www.youtube-nocookie.com" && orig !== "https://youtube.com" && orig !== "https://youtube-nocookie.com") return;
           let msg = null;
           try {
             msg = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
@@ -53691,6 +53793,7 @@
           sourceBridgeChatId: "",
           customBotToken: "",
           customBotUsername: "",
+          afterSendAction: "open_minimize", // 'open_minimize' | 'open_close' | 'stay'
           retentionDays: 30 // 7 | 30 | 90 Tage KV Retention Policy
         };
         let local = {};
@@ -53702,6 +53805,8 @@
           ? state.settings.deliveryConfig
           : {};
         const merged = { ...defaults, ...fromServer, ...local };
+        const act = String(merged.afterSendAction || "open_minimize").trim();
+        merged.afterSendAction = (act === "open_minimize" || act === "open_close" || act === "stay") ? act : "open_minimize";
         const rDays = Number(merged.retentionDays);
         merged.retentionDays = (rDays === 7 || rDays === 30 || rDays === 90) ? rDays : 30;
         return merged;
@@ -53779,6 +53884,12 @@
                   '</div>' +
                 '</div>' +
               '</div>' +
+              '<div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                '<span style="font-size:10.5px;color:var(--muted);font-weight:700">📲 Nach dem Senden:</span>' +
+                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_minimize' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_minimize\\')" title="Öffnet die gesendete Nachricht/den Chat und minimiert die Mini-App">💬 Öffnen &amp; Minimieren</button>' +
+                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_close' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_close\\')" title="Öffnet den Chat und schließt die Mini-App vollständig">✖️ Schließen</button>' +
+                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'stay' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'stay\\')" title="In der Mini-App bleiben (mit Button zum Öffnen im Hinweis)">📌 In App bleiben</button>' +
+              '</div>' +
             '</div>'
           ) : '') +
         '</div>';
@@ -53808,6 +53919,113 @@
         modalDeliveryConfigExpanded = !modalDeliveryConfigExpanded;
         const mount = document.getElementById("modalDeliveryTargetMount");
         if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+      }
+
+      function switchAfterSendActionClient(nextAction) {
+        const clean = (nextAction === "open_minimize" || nextAction === "open_close" || nextAction === "stay")
+          ? nextAction
+          : "open_minimize";
+        saveDeliveryPreferencesClient({ afterSendAction: clean }, true);
+        const mount = document.getElementById("modalDeliveryTargetMount");
+        if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+        const labelMap = {
+          open_minimize: "💬 Nach dem Senden: Nachricht öffnen & Mini-App minimieren",
+          open_close: "✖️ Nach dem Senden: Nachricht öffnen & Mini-App schließen",
+          stay: "📌 Nach dem Senden: In Mini-App bleiben (mit Öffnen-Button)"
+        };
+        showHudToast(labelMap[clean]);
+      }
+
+      function openSentTelegramMessageClient(openUrl, opts = {}) {
+        const safeUrl = (typeof safeHttpUrl === "function") ? safeHttpUrl(openUrl) : ( /^https?:\\/\\//i.test(String(openUrl || "").trim()) ? String(openUrl).trim() : "" );
+        const mode = String(opts.afterSendAction || "open_minimize");
+        const targetMode = String(opts.targetMode || "dm");
+        const isDirectLink = Boolean(opts.isDirectMessageLink);
+        const isInsideTg = Boolean(tg && (tg.initData || (tg.platform && tg.platform !== "unknown")));
+        const launchedChatType = String(tg?.initDataUnsafe?.chat_type || "").toLowerCase();
+        const isOwnBotDmContext = targetMode === "dm" && !isDirectLink && (!launchedChatType || launchedChatType === "sender");
+
+        if (isInsideTg) {
+          if (mode === "open_close") {
+            if (!isOwnBotDmContext && safeUrl && typeof tg.openTelegramLink === "function") {
+              try { tg.openTelegramLink(safeUrl); } catch (_e) {}
+              if (typeof tg.close === "function") {
+                setTimeout(() => { try { tg.close(); } catch (_e) {} }, 220);
+              }
+              return true;
+            }
+            if (typeof tg.close === "function") {
+              try { tg.close(); return true; } catch (_e) {}
+            }
+          }
+          // Standard "open_minimize": openTelegramLink springt direkt zur Nachricht/zum Chat und minimiert die Mini-App nativ in Telegram
+          if (safeUrl && typeof tg.openTelegramLink === "function") {
+            try { tg.openTelegramLink(safeUrl); return true; } catch (_e) {}
+          }
+          if (typeof tg.close === "function") {
+            try { tg.close(); return true; } catch (_e) {}
+          }
+          return false;
+        }
+        if (safeUrl) {
+          try { window.open(safeUrl, "_blank", "noopener,noreferrer"); return true; } catch (_e) {}
+        }
+        return false;
+      }
+
+      function handleAfterTelegramSendClient(streamRes, toastText, extra = {}) {
+        const prefs = getDeliveryPreferencesClient();
+        const afterSendAction = prefs.afterSendAction || "open_minimize";
+        const isInsideTg = Boolean(tg && (tg.initData || (tg.platform && tg.platform !== "unknown")));
+        try {
+          if (tg && tg.HapticFeedback && typeof tg.HapticFeedback.notificationOccurred === "function") {
+            tg.HapticFeedback.notificationOccurred("success");
+          }
+        } catch (_e) {}
+
+        let openUrl = String(streamRes?.openMessageUrl || "").trim();
+        if (!openUrl && prefs.targetMode === "custom_bot" && prefs.customBotUsername) {
+          openUrl = "https://t.me/" + String(prefs.customBotUsername).replace(/^@/, "").trim();
+        }
+        const safeUrl = (typeof safeHttpUrl === "function") ? safeHttpUrl(openUrl) : ( /^https?:\\/\\//i.test(openUrl) ? openUrl : "" );
+        const isDirectMessageLink = Boolean(streamRes?.isDirectMessageLink);
+        const actionLabel = isDirectMessageLink ? "💬 Nachricht öffnen" : "💬 Chat öffnen";
+        const canJumpToChat = Boolean(safeUrl || isInsideTg);
+        const willAutoTrigger = Boolean(
+          !extra.skipAutoAction &&
+          !streamRes?.queued &&
+          isInsideTg &&
+          (afterSendAction === "open_minimize" || afterSendAction === "open_close")
+        );
+
+        const finalToastMsg = willAutoTrigger
+          ? (toastText + (afterSendAction === "open_close" ? " — schließe Mini-App..." : " — öffne Chat..."))
+          : toastText;
+
+        showHudToast(
+          finalToastMsg,
+          canJumpToChat
+            ? {
+                actionLabel,
+                durationMs: willAutoTrigger ? 3000 : 6000,
+                onAction: () => openSentTelegramMessageClient(safeUrl, {
+                  afterSendAction: afterSendAction === "stay" ? "open_minimize" : afterSendAction,
+                  targetMode: prefs.targetMode || "dm",
+                  isDirectMessageLink
+                })
+              }
+            : null
+        );
+
+        if (willAutoTrigger) {
+          setTimeout(() => {
+            openSentTelegramMessageClient(safeUrl, {
+              afterSendAction,
+              targetMode: prefs.targetMode || "dm",
+              isDirectMessageLink
+            });
+          }, 450);
+        }
       }
 
       function onModalDeliveryFieldInputClient() {
@@ -54335,14 +54553,24 @@
           if (r && r.ok) {
             if (r.queued && r.job) {
               const etaSec = Math.max(1, Math.ceil((Number(r.job.waitMs) || 1150) / 1000));
-              showHudToast("⏳ Anti-Spam Schutz: „" + cleanTitle + "“ auf Warteschleifen-Pos. #" + (r.job.position || 1) + " (Zustellung in ~" + etaSec + "s)");
+              handleAfterTelegramSendClient(
+                r,
+                "⏳ Anti-Spam Schutz: „" + cleanTitle + "“ auf Warteschleifen-Pos. #" + (r.job.position || 1) + " (Zustellung in ~" + etaSec + "s)",
+                { skipAutoAction: true }
+              );
             } else if (isSubtitleOnly) {
-              showHudToast("💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet!");
+              handleAfterTelegramSendClient(
+                r,
+                "💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet!"
+              );
             } else {
-              const copyNote = r.copiedFromSourceGroup ? " (per Auto-Copy aus Quellgruppe)" : "";
-              const coverNote = r.coverEmbedded ? " + 🖼️ Cover eingebettet" : "";
-              const subNote = Number(r.subtitlesSentCount || 0) > 0 ? (" + 💬 " + r.subtitlesSentCount + " Untertitel mitgesendet") : "";
-              showHudToast("✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!");
+              const copyNote = r.copiedFromSourceGroup ? " (Auto-Copy)" : "";
+              const coverNote = r.coverEmbedded ? " + 🖼️ Cover" : "";
+              const subNote = Number(r.subtitlesSentCount || 0) > 0 ? (" + 💬 " + r.subtitlesSentCount + " UT") : "";
+              handleAfterTelegramSendClient(
+                r,
+                "✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!"
+              );
             }
             if (!isSubtitleOnly && metaObj.seriesId && metaObj.season) {
               loadSeason(metaObj.seriesId, metaObj.season, false, false);
@@ -54473,6 +54701,7 @@
         const isSeriesModal = Array.isArray(d.seasons) && d.seasons.length > 0;
         let sentCount = 0;
         let queuedCount = 0;
+        let lastSentRes = null;
         for (let i = 0; i < targetList.length; i++) {
           const dl = targetList[i];
           const fid = dl.telegram_file_id || dl.file_id || "";
@@ -54512,6 +54741,7 @@
               renderAntiSpamLiveHudBannerClient(r.antiSpam);
             }
             if (r && r.ok) {
+              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
               if (r.queued) queuedCount++;
               else sentCount++;
             }
@@ -54519,10 +54749,13 @@
         }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
-        if (queuedCount > 0) {
-          showHudToast("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Archiv-Teil(e) in Anti-Spam Warteschleife eingereiht!");
+        if (sentCount + queuedCount > 0) {
+          const msg = queuedCount > 0
+            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Archiv-Teil(e) in Warteschleife!")
+            : ("✅ Alle " + sentCount + "/" + targetList.length + " Archiv-Teile gesendet!");
+          handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
-          showHudToast("✅ Alle " + sentCount + "/" + targetList.length + " Archiv-Teile gesendet!");
+          showHudToast("⚠️ Archiv-Teile konnten nicht gesendet werden.");
         }
       }
 
@@ -54707,6 +54940,7 @@
 
         let sentCount = 0;
         let queuedCount = 0;
+        let lastSentRes = null;
         for (let i = 0; i < targetList.length; i++) {
           const f = targetList[i];
           const cleanPartStr = f._normPart || normalizeClientPartLabel(f.part, f.raw_filename || "") || ("CD " + (i + 1));
@@ -54740,6 +54974,7 @@
               renderAntiSpamLiveHudBannerClient(r.antiSpam);
             }
             if (r && r.ok) {
+              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
               if (r.queued) queuedCount++;
               else sentCount++;
             }
@@ -54747,10 +54982,13 @@
         }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
-        if (queuedCount > 0) {
-          showHudToast("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " CD(s) in Anti-Spam Warteschleife eingereiht!");
+        if (sentCount + queuedCount > 0) {
+          const msg = queuedCount > 0
+            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " CD(s) in Warteschleife!")
+            : ("✅ Alle " + sentCount + "/" + targetList.length + " CDs gesendet!");
+          handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
-          showHudToast("✅ Alle " + sentCount + "/" + targetList.length + " CDs gesendet!");
+          showHudToast("⚠️ Teile konnten nicht gesendet werden.");
         }
       }
 
@@ -54788,6 +55026,7 @@
         const seriesTitle = state.activeDetails?.title || "Serie";
         let sentCount = 0;
         let queuedCount = 0;
+        let lastSentRes = null;
         for (let i = 0; i < episodesWithStreams.length; i++) {
           const ep = episodesWithStreams[i];
           const bestFile = ep._resolvedActiveFile || (Array.isArray(ep.versions) && ep.versions[0]) || (Array.isArray(ep.files) && ep.files[0]);
@@ -54824,6 +55063,7 @@
               renderAntiSpamLiveHudBannerClient(r.antiSpam);
             }
             if (r && r.ok) {
+              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
               if (r.queued) queuedCount++;
               else sentCount++;
               setSeriesProgress(seriesId, seasonNum, ep.episode_number, ep.name || "");
@@ -54833,10 +55073,13 @@
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
         const sSummaryPrefix = Number(seasonNum) === 0 ? "Specials" : ("Staffel " + seasonNum);
-        if (queuedCount > 0) {
-          showHudToast("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Anti-Spam Warteschleife!");
+        if (sentCount + queuedCount > 0) {
+          const msg = queuedCount > 0
+            ? ("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Warteschleife!")
+            : ("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!");
+          handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
-          showHudToast("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!");
+          showHudToast("⚠️ Folgen konnten nicht gesendet werden.");
         }
         loadSeason(seriesId, seasonNum, false, false);
       }
@@ -56835,6 +57078,15 @@
                   '<button class="btn ' + (dMode === 'dm' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'dm\\'});loadSettingsView()">💬 Bot-Privatchat</button>' +
                   '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Eigene Ziel-Gruppe</button>' +
                   '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Eigener Bot</button>' +
+                '</div>' +
+                '<div style="margin-bottom:12px;padding:9px 10px;border-radius:10px;background:rgba(14,165,233,0.06);border:1px solid rgba(56,189,248,0.18)">' +
+                  '<div style="font-size:11.5px;font-weight:700;color:var(--text);margin-bottom:4px">📲 Verhalten direkt nach dem Senden</div>' +
+                  '<div style="font-size:11px;color:var(--muted);margin-bottom:7px">Springt automatisch zur gesendeten Nachricht im Telegram-Chat, damit man sofort sieht, dass der Bot geliefert hat.</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    '<button class="btn ' + ((deliv.afterSendAction || 'open_minimize') === 'open_minimize' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_minimize\\'});loadSettingsView()">💬 Nachricht öffnen &amp; Minimieren</button>' +
+                    '<button class="btn ' + (deliv.afterSendAction === 'open_close' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_close\\'});loadSettingsView()">✖️ Öffnen &amp; Mini-App schließen</button>' +
+                    '<button class="btn ' + (deliv.afterSendAction === 'stay' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'stay\\'});loadSettingsView()">📌 In Mini-App bleiben</button>' +
+                  '</div>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
@@ -69588,10 +69840,15 @@
         const rlKey = `login_rl_${normUserKey}_${clientIp}`;
         const rlWindowMs = 10 * 60 * 1000;
         const nowRl = Date.now();
-        let rlEntry = memoryFallback.get(rlKey);
-        if ((!rlEntry || nowRl > Number(rlEntry.resetAt || 0)) && typeof getEntityFromD1 === "function") {
+        const memRlEntry = memoryFallback.get(rlKey);
+        let rlEntry = (memRlEntry && nowRl <= Number(memRlEntry.resetAt || 0)) ? memRlEntry : null;
+        if (typeof getEntityFromD1 === "function") {
           const d1Rl = await getEntityFromD1(env, rlKey, rlWindowMs, { bypassMemoryCache: true }).catch(() => null);
-          if (d1Rl && nowRl <= Number(d1Rl.resetAt || 0)) rlEntry = d1Rl;
+          if (d1Rl && nowRl <= Number(d1Rl.resetAt || 0)) {
+            if (!rlEntry || Number(d1Rl.count || 0) >= Number(rlEntry.count || 0)) {
+              rlEntry = d1Rl;
+            }
+          }
         }
         if (rlEntry && nowRl <= Number(rlEntry.resetAt || 0) && Number(rlEntry.count || 0) >= 8) {
           const waitSec = Math.max(10, Math.ceil((Number(rlEntry.resetAt) - nowRl) / 1000));
@@ -69611,7 +69868,7 @@
         };
         const clearLoginFailures = async () => {
           memoryFallback.delete(rlKey);
-          if (rlEntry && typeof deleteEntityFromD1 === "function") {
+          if (typeof deleteEntityFromD1 === "function") {
             await deleteEntityFromD1(env, rlKey).catch(() => {});
           }
         };
@@ -69711,7 +69968,7 @@
         }
         const body = await request.json().catch(() => ({}));
         const action = String(body.action || "");
-        const userRow = await getUserByTelegramIdFromD1(env, auth.chatId);
+        const userRow = await getUserByTelegramIdFromD1(env, auth.chatId, true);
 
         if (action === "setup") {
           if (Number(userRow?.totp_enabled) === 1 && userRow?.totp_secret) {
@@ -69721,7 +69978,10 @@
             }), { status: 400, headers: corsHeaders });
           }
           const newSecret = generateBase32TotpSecret(32);
-          await saveUserTotpInD1(env, auth.chatId, newSecret, false);
+          const savedSetup = await saveUserTotpInD1(env, auth.chatId, newSecret, false);
+          if (!savedSetup) {
+            return new Response(JSON.stringify({ ok: false, error: "2FA-Schlüssel konnte nicht in der Datenbank gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           const accountLabel = auth.user.customUsername || auth.user.tgUsername || `TG-${auth.chatId}`;
           const { otpauthUrl, qrCodeUrl } = buildOtpAuthUri(newSecret, accountLabel, "TelePort TMA");
           return new Response(JSON.stringify({
@@ -69743,6 +70003,9 @@
             return new Response(JSON.stringify({ ok: false, error: "Der eingegebene 6-stellige Code stimmt nicht überein." }), { status: 400, headers: corsHeaders });
           }
           const updatedUser = await saveUserTotpInD1(env, auth.chatId, pendingSecret, true);
+          if (!updatedUser) {
+            return new Response(JSON.stringify({ ok: false, error: "2FA-Status konnte nicht dauerhaft gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           return new Response(JSON.stringify({ ok: true, user: updatedUser }), { status: 200, headers: corsHeaders });
         }
 
@@ -69755,6 +70018,9 @@
             }
           }
           const updatedUser = await saveUserTotpInD1(env, auth.chatId, null, false);
+          if (!updatedUser) {
+            return new Response(JSON.stringify({ ok: false, error: "2FA-Deaktivierung konnte nicht dauerhaft gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           return new Response(JSON.stringify({ ok: true, user: updatedUser }), { status: 200, headers: corsHeaders });
         }
 
@@ -70106,12 +70372,20 @@
               if (savedCfg.secretToken) {
                 whPayload.secret_token = savedCfg.secretToken;
               }
-              const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(whPayload)
-              }, 6000);
-              const whJson = await whRes.json().catch(() => ({}));
+              let whJson = {};
+              let whErrorMsg = "";
+              try {
+                const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(whPayload)
+                }, 6000);
+                whJson = await whRes.json().catch(() => ({}));
+              } catch (whErr) {
+                whErrorMsg = String(whErr?.message || "Netzwerkfehler bei Telegram setWebhook.");
+              }
+              let effectiveActiveCfg = savedCfg;
+              let effectiveManualLinks = manualLinks;
               let liveWebhookInfo = null;
               if (whJson?.ok) {
                 try {
@@ -70119,21 +70393,29 @@
                   const infoJson = await infoRes.json().catch(() => ({}));
                   if (infoJson?.ok && infoJson?.result) liveWebhookInfo = infoJson.result;
                 } catch (_infoErr) {}
+              } else if (typeof saveWebhookSecurityConfig === "function") {
+                // Rollback auf das vorherige Webhook-Secret, damit Telegram-Updates nicht ausgesperrt werden!
+                effectiveActiveCfg = await saveWebhookSecurityConfig(env, {
+                  secretToken: String(existingCfg?.secretToken || ""),
+                  maxConnections: Number(existingCfg?.maxConnections || 8),
+                  dropPendingDefault: Boolean(existingCfg?.dropPendingDefault)
+                }).catch(() => existingCfg);
+                effectiveManualLinks = buildManualWebhookLinks(cleanWorkerOrigin, customWebhookUrl, effectiveActiveCfg.secretToken, effectiveActiveCfg.maxConnections, dropPending);
               }
               return new Response(JSON.stringify({
                 ok: Boolean(whJson?.ok),
                 webhookUrl: customWebhookUrl,
-                manualSetWebhookWorkerUrl: manualLinks.manualSetWebhookWorkerUrl,
-                manualTelegramApiTemplateUrl: manualLinks.manualTelegramApiTemplateUrl,
-                activeWebhookSecret: savedCfg.secretToken,
-                hasWebhookPassword: Boolean(savedCfg.secretToken),
-                webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
-                maxConnections: savedCfg.maxConnections,
+                manualSetWebhookWorkerUrl: effectiveManualLinks.manualSetWebhookWorkerUrl,
+                manualTelegramApiTemplateUrl: effectiveManualLinks.manualTelegramApiTemplateUrl,
+                activeWebhookSecret: effectiveActiveCfg.secretToken,
+                hasWebhookPassword: Boolean(effectiveActiveCfg.secretToken),
+                webhookPasswordPreview: effectiveActiveCfg.secretToken ? `${effectiveActiveCfg.secretToken.slice(0, 3)}•••${effectiveActiveCfg.secretToken.slice(-2)}` : "",
+                maxConnections: effectiveActiveCfg.maxConnections,
                 webhookInfo: liveWebhookInfo,
                 telegramResponse: whJson,
                 message: whJson?.ok
-                  ? `Webhook inkl. Passwort-Schutz (${savedCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${savedCfg.maxConnections}) erfolgreich bei Telegram registriert & verifiziert!`
-                  : (whJson?.description || "Telegram setWebhook fehlgeschlagen."),
+                  ? `Webhook inkl. Passwort-Schutz (${effectiveActiveCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${effectiveActiveCfg.maxConnections}) erfolgreich bei Telegram registriert & verifiziert!`
+                  : `${whJson?.description || whErrorMsg || "Telegram setWebhook fehlgeschlagen."} (Vorheriges Webhook-Secret wurde zur Sicherheit beibehalten.)`,
                 _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
@@ -71006,7 +71288,14 @@
         }
         if (path === "/api/tma/admin/vip" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          const updatedUser = await setUserVipStatusInD1(env, body.telegramId, Boolean(body.isVip));
+          const rawTid = String(body.telegramId || "").trim();
+          if (!rawTid || !/^\d{3,20}$/.test(rawTid)) {
+            return new Response(JSON.stringify({ ok: false, error: "Ungültige Telegram-User-ID." }), { status: 400, headers: corsHeaders });
+          }
+          const updatedUser = await setUserVipStatusInD1(env, rawTid, Boolean(body.isVip));
+          if (!updatedUser) {
+            return new Response(JSON.stringify({ ok: false, error: "VIP-Status konnte nicht in der Datenbank gespeichert werden." }), { status: 500, headers: corsHeaders });
+          }
           return new Response(JSON.stringify({ ok: true, user: updatedUser }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/media" && request.method === "POST") {
@@ -71048,7 +71337,8 @@
             }
             if (!details && targetId && body.title) {
               const cleanYear = body.year && /^\d{4}$/.test(String(body.year).trim()) ? String(body.year).trim() : "";
-              const customPoster = body.poster ? String(body.poster).trim() : null;
+              const rawCustomPoster = body.poster ? String(body.poster).trim() : "";
+              const customPoster = /^https?:\/\/[^\s"'<>]+$/i.test(rawCustomPoster) ? rawCustomPoster : null;
               details = {
                 id: targetId,
                 title: String(body.title).trim(),
@@ -71185,13 +71475,20 @@
           const tmdbId = Number(body.tmdbId || 0);
           const posterPath = body.poster_path ? String(body.poster_path).trim() : null;
           const externalPosterUrl = body.external_poster_url ? String(body.external_poster_url).trim() : "";
-          if (!tmdbId || (!posterPath && !externalPosterUrl)) {
+          if (!Number.isInteger(tmdbId) || tmdbId <= 0 || (!posterPath && !externalPosterUrl)) {
             return new Response(JSON.stringify({ ok: false, error: "Ungültige Titel-ID oder leeres Cover." }), { status: 400, headers: corsHeaders });
+          }
+          if (posterPath && !/^\/(?!\/)[^\s"'<>]+$/.test(posterPath)) {
+            return new Response(JSON.stringify({ ok: false, error: "Ungültiger TMDb-Poster-Pfad." }), { status: 400, headers: corsHeaders });
+          }
+          if (externalPosterUrl && !/^https?:\/\/[^\s"'<>]+$/i.test(externalPosterUrl)) {
+            return new Response(JSON.stringify({ ok: false, error: "Externe Cover-URL muss mit https:// oder http:// beginnen." }), { status: 400, headers: corsHeaders });
           }
 
           const db = await ensureD1Schema(env);
           if (db) {
             try {
+              trackStat("d1Writes");
               const table = typeCode === "s" ? "series" : "movies";
               // movies/series haben keine eigene Spalte external_poster_url -> wird in details_json per json_set gespeichert!
               await db.prepare(
@@ -71206,7 +71503,9 @@
               )
                 .bind(posterPath, externalPosterUrl || "", Date.now(), tmdbId)
                 .run();
-            } catch (e) {}
+            } catch (e) {
+              return new Response(JSON.stringify({ ok: false, error: "Cover konnte nicht in der Datenbank gespeichert werden." }), { status: 500, headers: corsHeaders });
+            }
           }
 
           const cacheKey = `${typeCode === "s" ? "tv" : "movie"}_${tmdbId}`;
@@ -72781,6 +73080,60 @@
             ? "copyMessage"
             : "sendVideo";
 
+        const resolveOpenMessageInfo = async (sentPayload = null) => {
+          const msgObj = (sentPayload && typeof sentPayload === "object")
+            ? (sentPayload.result && typeof sentPayload.result === "object" ? sentPayload.result : sentPayload)
+            : null;
+          const rawMsgId = Number(msgObj?.message_id || 0);
+          const messageId = Number.isInteger(rawMsgId) && rawMsgId > 0 ? rawMsgId : null;
+          const chatUsername = String(msgObj?.chat?.username || "").replace(/^@/, "").trim();
+          const cleanTopic = targetTopicId && /^\d+$/.test(targetTopicId) ? targetTopicId : "";
+          const targetStr = String(targetChat || "").trim();
+
+          let resolvedBotUsername = "";
+          if (usingOwnCustomBot) {
+            resolvedBotUsername = String(body.customBotUsername || savedDeliv.customBotUsername || "").replace(/^@/, "").trim();
+            if (!resolvedBotUsername && effectiveCustomToken) {
+              resolvedBotUsername = await tgApi({ ...env, TELEGRAM_BOT_TOKEN: effectiveCustomToken }).getBotUsername(env).catch(() => "");
+            }
+          } else if (env.TELEGRAM_BOT_TOKEN) {
+            resolvedBotUsername = await tgApi(env).getBotUsername(env).catch(() => "");
+          }
+          resolvedBotUsername = String(resolvedBotUsername || "").replace(/^@/, "").trim();
+
+          if (chatUsername && /^[A-Za-z0-9_]{3,64}$/.test(chatUsername)) {
+            const pathSuffix = messageId
+              ? (cleanTopic ? `/${cleanTopic}/${messageId}` : `/${messageId}`)
+              : (cleanTopic ? `/${cleanTopic}` : "");
+            return {
+              messageId,
+              openMessageUrl: `https://t.me/${chatUsername}${pathSuffix}`,
+              isDirectMessageLink: Boolean(messageId),
+              botUsername: resolvedBotUsername
+            };
+          }
+          if (targetStr.startsWith("-100")) {
+            const internalId = targetStr.slice(4);
+            if (/^\d+$/.test(internalId)) {
+              const pathSuffix = messageId
+                ? (cleanTopic ? `/${cleanTopic}/${messageId}` : `/${messageId}`)
+                : (cleanTopic ? `/${cleanTopic}` : "");
+              return {
+                messageId,
+                openMessageUrl: `https://t.me/c/${internalId}${pathSuffix}`,
+                isDirectMessageLink: Boolean(messageId),
+                botUsername: resolvedBotUsername
+              };
+            }
+          }
+          return {
+            messageId,
+            openMessageUrl: resolvedBotUsername ? `https://t.me/${resolvedBotUsername}` : "",
+            isDirectMessageLink: false,
+            botUsername: resolvedBotUsername
+          };
+        };
+
         // 0. Prüfe strikte Telegram Anti-Spam-Grenzwerte (Single-Chat 1.15s, Gruppe 18/60s, Global 25/1s, 429 Cooldown)
         await hydrateAntiSpamStateFromStorage(env);
         const slotCheck = evaluateAntiSpamSlot(targetChat, methodLabel, true);
@@ -72816,10 +73169,12 @@
             summary: `⏳ Anti-Spam Warteschleife Pos. #${queuedJob.position} (${slotCheck.reason})`
           });
 
+          const queuedLinkInfo = await resolveOpenMessageInfo(null);
           return new Response(JSON.stringify({
             ok: true,
             queued: true,
             targetChat,
+            ...queuedLinkInfo,
             job: queuedJob,
             antiSpam: getAntiSpamSnapshot(env, targetChat),
             message: `⏳ Anti-Spam Schutz aktiv: „${cleanTitle}“ wurde auf Position #${queuedJob.position} eingereiht.`
@@ -72840,10 +73195,12 @@
               durationMs: Date.now() - reqStartMs,
               summary: `Simulierter Karten-Versand „${cleanTitle}“ an ${targetChat}`
             });
+            const simCardLinkInfo = await resolveOpenMessageInfo({ result: { message_id: Math.floor(Date.now() % 900000) + 100 } });
             return new Response(JSON.stringify({
               ok: true,
               simulated: true,
               targetChat,
+              ...simCardLinkInfo,
               antiSpam: getAntiSpamSnapshot(env, targetChat),
               message: `Simulierter Versand von „${cleanTitle}“ an ${targetChat} (Kein TELEGRAM_BOT_TOKEN in env gesetzt).`
             }), { status: 200, headers: corsHeaders });
@@ -72877,7 +73234,8 @@
             durationMs: Date.now() - reqStartMs,
             summary: `Medienkarte „${cleanTitle}“ an ${targetChat} gesendet`
           });
-          return new Response(JSON.stringify({ ok: true, targetChat, antiSpam: getAntiSpamSnapshot(env, targetChat) }), { status: 200, headers: corsHeaders });
+          const cardLinkInfo = await resolveOpenMessageInfo(msgRes);
+          return new Response(JSON.stringify({ ok: true, targetChat, ...cardLinkInfo, antiSpam: getAntiSpamSnapshot(env, targetChat) }), { status: 200, headers: corsHeaders });
         }
 
         // Gebundene Untertitel (.srt, .vtt, .sub) zu dieser Datei aus D1 / Memory ermitteln
@@ -72918,10 +73276,12 @@
             durationMs: Date.now() - reqStartMs,
             summary: `Stream „${cleanTitle}“ (${quality}) an ${targetChat} übermittelt (Sandbox${simCoverUrl ? " + 🖼️ Cover" : ""})`
           });
+          const simLinkInfo = await resolveOpenMessageInfo({ result: { message_id: Math.floor(Date.now() % 900000) + 100 } });
           return new Response(JSON.stringify({
             ok: true,
             simulated: true,
             targetChat,
+            ...simLinkInfo,
             subtitlesSentCount: boundSubtitles.length,
             copiedFromSourceGroup: fileId.startsWith("tg_export_"),
             coverEmbedded: Boolean(simCoverUrl),
@@ -72937,6 +73297,7 @@
             return new Response(JSON.stringify({ ok: false, error: "Für diese Datei sind keine verknüpften Untertitel hinterlegt." }), { status: 404, headers: corsHeaders });
           }
           let subtitlesSentCount = 0;
+          let lastSubRes = null;
           for (const sub of boundSubtitles) {
             const subFid = String(sub?.file_id || "").trim();
             if (!subFid) continue;
@@ -72947,11 +73308,16 @@
               sourceBridgeChatId,
               disableCover: true
             }).catch(() => null);
-            if (sRes) subtitlesSentCount++;
+            if (sRes) {
+              subtitlesSentCount++;
+              lastSubRes = sRes;
+            }
           }
+          const subLinkInfo = await resolveOpenMessageInfo(lastSubRes);
           return new Response(JSON.stringify({
             ok: subtitlesSentCount > 0,
             targetChat,
+            ...subLinkInfo,
             subtitlesSentCount,
             antiSpam: getAntiSpamSnapshot(env, targetChat)
           }), { status: subtitlesSentCount > 0 ? 200 : 500, headers: corsHeaders });
@@ -73048,9 +73414,11 @@
           durationMs: Date.now() - reqStartMs,
           summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat} gesendet${sent.coverEmbedded ? " (+ 🖼️ Cover)" : ""}${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
         });
+        const sentLinkInfo = await resolveOpenMessageInfo(sent);
         return new Response(JSON.stringify({
           ok: true,
           targetChat,
+          ...sentLinkInfo,
           subtitlesSentCount,
           copiedFromSourceGroup: Boolean(sent.copiedFromSourceGroup),
           harvestedFileId: sent.harvestedFileId || null,
@@ -73509,6 +73877,10 @@
             }
             const dc = body.deliveryConfig;
             const retentionDays = normalizeWorkerRetentionDays(dc.retentionDays);
+            const rawAfterSend = String(dc.afterSendAction || "open_minimize").trim();
+            const afterSendAction = (rawAfterSend === "open_minimize" || rawAfterSend === "open_close" || rawAfterSend === "stay")
+              ? rawAfterSend
+              : "open_minimize";
             cur.deliveryConfig = {
               targetMode: String(dc.targetMode || "dm"),
               targetGroupChatId: String(dc.targetGroupChatId || "").trim(),
@@ -73516,6 +73888,7 @@
               sourceBridgeChatId: String(dc.sourceBridgeChatId || "").trim(),
               customBotToken: String(dc.customBotToken || "").trim(),
               customBotUsername: String(dc.customBotUsername || "").trim(),
+              afterSendAction,
               retentionDays
             };
             if (auth.user?.isAdmin) {

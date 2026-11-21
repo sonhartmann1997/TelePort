@@ -671,6 +671,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [lastApiRoute, setLastApiRoute] = useState<string>('/app');
   const [lastDurationMs, setLastDurationMs] = useState<number>(0);
+  const [simWebAppAction, setSimWebAppAction] = useState<{ kind: 'close' | 'open_link'; url?: string } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const workspaceContainerRef = useRef<HTMLDivElement>(null);
 
@@ -751,9 +752,19 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
       viewportStableHeight: window.innerHeight,
       ready: function() {},
       expand: function() {},
-      close: function() {},
-      openTelegramLink: function(url) { window.open(url, "_blank"); },
-      openLink: function(url) { window.open(url, "_blank"); },
+      close: function() {
+        try { window.parent.postMessage({ type: "TMA_SIM_WEBAPP_ACTION", kind: "close" }, "*"); } catch (e) {}
+      },
+      openTelegramLink: function(url) {
+        const s = String(url || "").trim();
+        if (/^(https?:\\/\\/|tg:\\/\\/)/i.test(s)) {
+          try { window.parent.postMessage({ type: "TMA_SIM_WEBAPP_ACTION", kind: "open_link", url: s }, "*"); } catch (e) {}
+        }
+      },
+      openLink: function(url) {
+        const s = String(url || "").trim();
+        if (/^https?:\\/\\//i.test(s)) window.open(s, "_blank", "noopener,noreferrer");
+      },
       HapticFeedback: hapticFeedbackBridge,
       MainButton: {
         text: "",
@@ -788,6 +799,7 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   let reqCounter = 1;
 
   window.addEventListener("message", function(event) {
+    if (event.source !== window.parent) return;
     const data = event.data;
     if (!data || data.type !== "TMA_SANDBOX_FETCH_RESPONSE") return;
     const resolver = pendingRequests.get(data.reqId);
@@ -1024,10 +1036,17 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
   // Listen for fetch requests coming from inside the simulated TelePort iframe
   useEffect(() => {
     const handleMessage = async (event: MessageEvent) => {
+      if (!iframeRef.current?.contentWindow || event.source !== iframeRef.current.contentWindow) return;
       const data = event.data;
       if (!data) return;
       if (data.type === 'TMA_HAPTIC_VIBRATE') {
         triggerHapticFeedback(data.pattern ?? 10);
+        return;
+      }
+      if (data.type === 'TMA_SIM_WEBAPP_ACTION') {
+        const kind = data.kind === 'close' ? 'close' : 'open_link';
+        const safeUrl = typeof data.url === 'string' && /^(https?:\/\/|tg:\/\/)/i.test(data.url.trim()) ? data.url.trim() : undefined;
+        setSimWebAppAction({ kind, url: safeUrl });
         return;
       }
       if (data.type !== 'TMA_SANDBOX_FETCH_REQUEST') return;
@@ -1092,6 +1111,33 @@ export const NetflixTmaSimulator: React.FC<NetflixTmaSimulatorProps> = ({
           <span className="text-[11px] text-slate-400 hidden sm:inline">
             Rolle &amp; Geräte-Ansicht testen
           </span>
+          {simWebAppAction && (
+            <span className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-md bg-sky-500/15 border border-sky-400/35 text-[11px] text-sky-200">
+              <span>
+                {simWebAppAction.kind === 'close'
+                  ? 'Mini-App geschlossen (zurück im Bot-Chat)'
+                  : 'Chat/Nachricht geöffnet & Mini-App minimiert'}
+              </span>
+              {simWebAppAction.url && (
+                <a
+                  href={simWebAppAction.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline text-sky-300 hover:text-white"
+                >
+                  Link öffnen
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => setSimWebAppAction(null)}
+                className="text-sky-300/80 hover:text-white cursor-pointer"
+                aria-label="Hinweis schließen"
+              >
+                ✕
+              </button>
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
