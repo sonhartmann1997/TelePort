@@ -4179,15 +4179,27 @@
     return merged;
   }
 
-  // Ersetzt eine synthetische Export-Referenz (tg_export_<channelId>_<msgId>) dauerhaft durch eine echte Telegram file_id in D1 + Memory
+  // Ersetzt eine synthetische Export-Referenz (tg_export_<channelId>_<msgId> inkl. -100-Variante) dauerhaft durch eine echte Telegram file_id in D1 + Memory
   async function replaceExportFileIdInD1(env, oldExportFileId, realTelegramFileId, realUniqueId = null) {
     if (!oldExportFileId || !realTelegramFileId || oldExportFileId === realTelegramFileId) return false;
+    const candidateSet = new Set([String(oldExportFileId).trim()]);
+    const expMatch = String(oldExportFileId).trim().match(/^tg_export_(-?\d+)_(\d+)$/i);
+    if (expMatch) {
+      const rawChan = expMatch[1].replace(/^-100/, "").replace(/^-/, "");
+      const msgNum = expMatch[2];
+      if (rawChan) {
+        candidateSet.add(`tg_export_${rawChan}_${msgNum}`);
+        candidateSet.add(`tg_export_-100${rawChan}_${msgNum}`);
+      }
+    }
+    const candidates = Array.from(candidateSet).filter(Boolean);
+    if (candidates.length === 0) return false;
     let updatedAny = false;
     try {
       for (const [k, v] of memoryFallback.entries()) {
         if ((k.startsWith("d1_movie_files_") || k.startsWith("d1_ep_files_")) && Array.isArray(v)) {
           for (const item of v) {
-            if (item && item.telegram_file_id === oldExportFileId) {
+            if (item && candidateSet.has(String(item.telegram_file_id || ""))) {
               item.telegram_file_id = realTelegramFileId;
               if (realUniqueId) item.telegram_unique_id = realUniqueId;
               updatedAny = true;
@@ -4198,11 +4210,13 @@
       const db = await ensureD1Schema(env);
       if (db) {
         trackStat("d1Writes");
+        const nowTs = Date.now();
+        const placeholders = candidates.map((_, idx) => `?${idx + 4}`).join(", ");
         await db.batch([
-          db.prepare("UPDATE movie_files SET telegram_file_id = ?1, telegram_unique_id = COALESCE(?2, telegram_unique_id), updated_at = ?3 WHERE telegram_file_id = ?4")
-            .bind(realTelegramFileId, realUniqueId, Date.now(), oldExportFileId),
-          db.prepare("UPDATE episode_files SET telegram_file_id = ?1, telegram_unique_id = COALESCE(?2, telegram_unique_id), updated_at = ?3 WHERE telegram_file_id = ?4")
-            .bind(realTelegramFileId, realUniqueId, Date.now(), oldExportFileId)
+          db.prepare(`UPDATE movie_files SET telegram_file_id = ?1, telegram_unique_id = COALESCE(?2, telegram_unique_id), updated_at = ?3 WHERE telegram_file_id IN (${placeholders})`)
+            .bind(realTelegramFileId, realUniqueId, nowTs, ...candidates),
+          db.prepare(`UPDATE episode_files SET telegram_file_id = ?1, telegram_unique_id = COALESCE(?2, telegram_unique_id), updated_at = ?3 WHERE telegram_file_id IN (${placeholders})`)
+            .bind(realTelegramFileId, realUniqueId, nowTs, ...candidates)
         ]);
         updatedAny = true;
       }

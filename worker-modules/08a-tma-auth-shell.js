@@ -171,8 +171,7 @@
       const checkFields = ["auth_date", "first_name", "id", "last_name", "photo_url", "username"];
       const pairs = [];
       for (const k of Object.keys(widgetData).sort()) {
-        if (k === "hash") continue;
-        if (!checkFields.includes(k) && widgetData[k] === undefined) continue;
+        if (k === "hash" || !checkFields.includes(k)) continue;
         const val = widgetData[k];
         if (val === undefined || val === null || val === "") continue;
         pairs.push(`${k}=${val}`);
@@ -313,11 +312,12 @@
     const secretBytes = decodeBase32ToBytes(base32Secret);
     if (!secretBytes.length) return false;
     const currentCounter = Math.floor(Date.now() / 30000);
+    let matched = false;
     for (let step = -windowSteps; step <= windowSteps; step++) {
       const candidate = await computeHotpCode(secretBytes, currentCounter + step);
-      if (candidate === cleanCode) return true;
+      if (timingSafeEqualStr(candidate, cleanCode)) matched = true;
     }
-    return false;
+    return matched;
   }
 
   function buildOtpAuthUri(secret, accountLabel, issuer = "TelePort TMA") {

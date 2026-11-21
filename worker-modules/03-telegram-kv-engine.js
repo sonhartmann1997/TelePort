@@ -1175,16 +1175,19 @@
       async answerInlineQuery(inlineQueryId, results, options = {}) {
         try {
           trackStat("telegramCalls");
-          const safeResults = (results || []).map(r => {
+          const safeResults = (results || []).slice(0, 50).map(r => {
             const rawMsg = r.input_message_content?.message_text || "";
             const alreadyHtml = /<\/?(?:b|i|code|pre|a)\b/i.test(rawMsg);
+            const preparedInline = alreadyHtml
+              ? { text: rawMsg, parse_mode: "HTML" }
+              : prepareTelegramHtmlPayload(rawMsg, 4090);
             return {
               ...r,
               input_message_content: r.input_message_content
                 ? {
                     ...r.input_message_content,
-                    message_text: alreadyHtml ? rawMsg : mdToHtml(rawMsg),
-                    parse_mode: "HTML"
+                    message_text: preparedInline.text,
+                    parse_mode: preparedInline.parse_mode
                   }
                 : r.input_message_content,
               reply_markup: r.reply_markup ? sanitizeReplyMarkup(r.reply_markup) : undefined
@@ -1311,11 +1314,11 @@
           const safeMarkup = cleanOptions.reply_markup ? sanitizeReplyMarkup(cleanOptions.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
+            disable_web_page_preview: true,
+            ...cleanOptions,
             chat_id: chatId,
             text: prepared.text,
             parse_mode: prepared.parse_mode,
-            disable_web_page_preview: true,
-            ...cleanOptions,
             reply_markup: safeMarkup
           };
           let res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
@@ -1369,11 +1372,11 @@
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(caption || "", 1020);
           const body = {
+            ...options,
             chat_id: chatId,
             photo: photoUrl,
             caption: prepared.text,
             parse_mode: prepared.parse_mode,
-            ...options,
             reply_markup: safeMarkup
           };
           let res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
@@ -1435,10 +1438,10 @@
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
+            ...options,
             inline_message_id: inlineMessageId,
             text: prepared.text,
             parse_mode: prepared.parse_mode,
-            ...options,
             reply_markup: safeMarkup
           };
           let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
@@ -1459,12 +1462,12 @@
           const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
+            disable_web_page_preview: true,
+            ...options,
             chat_id: chatId,
             message_id: messageId,
             text: prepared.text,
             parse_mode: prepared.parse_mode,
-            disable_web_page_preview: true,
-            ...options,
             reply_markup: safeMarkup
           };
           let res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
@@ -1539,10 +1542,13 @@
       },
 
       async getBotUsername(env) {
-        if (env?.BOT_USERNAME) return String(env.BOT_USERNAME).replace(/^@/, "");
-        if (memoryFallback.has("bot_username")) return memoryFallback.get("bot_username");
+        if (!env?._isCustomBotWebhook && env?.BOT_USERNAME) return String(env.BOT_USERNAME).replace(/^@/, "");
         if (!env?.TELEGRAM_BOT_TOKEN) return "";
-        const lastFailTs = Number(memoryFallback.get("bot_username_fail_ts") || 0);
+        const botIdScope = String(env.TELEGRAM_BOT_TOKEN).split(":")[0] || "main";
+        const cacheKey = `bot_username_${botIdScope}`;
+        const failKey = `bot_username_fail_ts_${botIdScope}`;
+        if (memoryFallback.has(cacheKey)) return memoryFallback.get(cacheKey);
+        const lastFailTs = Number(memoryFallback.get(failKey) || 0);
         if (lastFailTs && (Date.now() - lastFailTs) < 60000) return "";
         try {
           trackStat("telegramCalls");
@@ -1552,14 +1558,14 @@
           if (res.ok) {
             const data = await res.json();
             if (data?.result?.username) {
-              memoryFallback.delete("bot_username_fail_ts");
-              memoryFallback.set("bot_username", data.result.username);
+              memoryFallback.delete(failKey);
+              memoryFallback.set(cacheKey, data.result.username);
               return data.result.username;
             }
           }
-          memoryFallback.set("bot_username_fail_ts", Date.now());
+          memoryFallback.set(failKey, Date.now());
         } catch (e) {
-          memoryFallback.set("bot_username_fail_ts", Date.now());
+          memoryFallback.set(failKey, Date.now());
         }
         return "";
       },

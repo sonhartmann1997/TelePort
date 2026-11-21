@@ -151,7 +151,7 @@
     }
 
     if (path === "/sw.js" || path === "/service-worker.js") {
-      const swCode = `const CACHE_NAME="teleport-v2";const IMG_CACHE="teleport-img-v2";const MAX_IMG=150;const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME&&x!==IMG_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});async function putImgCapped(req,res){try{const c=await caches.open(IMG_CACHE);await c.put(req,res);const ks=await c.keys();if(ks.length>MAX_IMG){await Promise.all(ks.slice(0,ks.length-MAX_IMG).map(k=>c.delete(k)))}}catch(_e){}}self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname==="/favicon.svg"||u.pathname==="/manifest.json")){e.respondWith(fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();caches.open(CACHE_NAME).then(c=>c.put(r,cl))}return nr}).catch(()=>caches.match(r)));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&(nr.status===200||nr.type==="opaque")){putImgCapped(r,nr.clone())}return nr}).catch(()=>caches.match("/favicon.svg"))}));return}});`;
+      const swCode = `const CACHE_NAME="teleport-v2";const IMG_CACHE="teleport-img-v2";const MAX_IMG=150;const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME&&x!==IMG_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});async function putImgCapped(req,res){try{const c=await caches.open(IMG_CACHE);await c.put(req,res);const ks=await c.keys();if(ks.length>MAX_IMG){await Promise.all(ks.slice(0,ks.length-MAX_IMG).map(k=>c.delete(k)))}}catch(_e){}}self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname==="/favicon.svg"||u.pathname==="/manifest.json")){e.respondWith(fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();e.waitUntil(caches.open(CACHE_NAME).then(c=>c.put(r,cl)).catch(()=>{}))}return nr}).catch(()=>caches.match(r).then(m=>m||caches.match("/app")).then(m=>m||Response.error())));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&(nr.status===200||nr.type==="opaque")){e.waitUntil(putImgCapped(r,nr.clone()))}return nr}).catch(()=>caches.match("/favicon.svg").then(m=>m||Response.error()))}));return}});`;
       return new Response(swCode, {
         status: 200,
         headers: {
@@ -281,7 +281,27 @@
       let clientHeaderSettings = null;
       try {
         const rawHdr = request.headers.get("X-Tma-Settings");
-        if (rawHdr) clientHeaderSettings = JSON.parse(decodeURIComponent(rawHdr));
+        if (rawHdr && rawHdr.length <= 4096) {
+          const parsedHdr = JSON.parse(decodeURIComponent(rawHdr));
+          if (parsedHdr && typeof parsedHdr === "object" && !Array.isArray(parsedHdr)) {
+            const ALLOWED_HDR_KEYS = [
+              "filtersActive", "showUnreleased", "onlyVip",
+              "includedFsk", "excludedFsk",
+              "includedGenres", "excludedGenres",
+              "includedEras", "excludedEras",
+              "includedStudios", "excludedStudios",
+              "includedPlatforms", "excludedPlatforms",
+              "uiScale"
+            ];
+            const sanitized = {};
+            for (const k of ALLOWED_HDR_KEYS) {
+              if (Object.prototype.hasOwnProperty.call(parsedHdr, k)) {
+                sanitized[k] = parsedHdr[k];
+              }
+            }
+            if (Object.keys(sanitized).length > 0) clientHeaderSettings = sanitized;
+          }
+        }
       } catch (e) {}
       const isLocalSandboxRuntime = typeof window !== "undefined" && typeof document !== "undefined";
       const guestMemSettings = isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || {}) : {};
@@ -418,8 +438,12 @@
         const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
 
         if (action === "create") {
-          const challengeId = `wac_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-          const code = String(Math.floor(100000 + Math.random() * 900000));
+          const randIdBytes = new Uint8Array(12);
+          crypto.getRandomValues(randIdBytes);
+          const challengeId = `wac_${bytesToHex(randIdBytes)}`;
+          const randCodeBuf = new Uint32Array(1);
+          crypto.getRandomValues(randCodeBuf);
+          const code = String(100000 + (randCodeBuf[0] % 900000));
           const expiresAt = Date.now() + 300000; // 5 Minuten gültig
           const botUsername = (await tgApi(env).getBotUsername(env).catch(() => "")) || "";
           const challengeObj = {
@@ -547,7 +571,7 @@
         }
       }
 
-      // 3. Web-Login (Username + Passwort + optionaler TOTP 2FA Code) – funktioniert von überall, auch OHNE initData!
+      // 3. Web-Login (Username + Passwort + optionaler TOTP 2FA Code) – inkl. Brute-Force-Schutz (max. 8 Fehlversuche / 10 Min.)
       if (path === "/api/tma/auth/login" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const username = String(body.username || "").trim();
@@ -556,12 +580,47 @@
         if (!username || !password) {
           return new Response(JSON.stringify({ ok: false, error: "Bitte Username und Passwort eingeben." }), { status: 400, headers: corsHeaders });
         }
+        const clientIp = String(request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "unknown").split(",")[0].trim().slice(0, 64);
+        const normUserKey = username.toLowerCase().replace(/[^a-z0-9_.-]/g, "").slice(0, 40) || "empty";
+        const rlKey = `login_rl_${normUserKey}_${clientIp}`;
+        const rlWindowMs = 10 * 60 * 1000;
+        const nowRl = Date.now();
+        let rlEntry = memoryFallback.get(rlKey);
+        if ((!rlEntry || nowRl > Number(rlEntry.resetAt || 0)) && typeof getEntityFromD1 === "function") {
+          const d1Rl = await getEntityFromD1(env, rlKey, rlWindowMs, { bypassMemoryCache: true }).catch(() => null);
+          if (d1Rl && nowRl <= Number(d1Rl.resetAt || 0)) rlEntry = d1Rl;
+        }
+        if (rlEntry && nowRl <= Number(rlEntry.resetAt || 0) && Number(rlEntry.count || 0) >= 8) {
+          const waitSec = Math.max(10, Math.ceil((Number(rlEntry.resetAt) - nowRl) / 1000));
+          return new Response(JSON.stringify({
+            ok: false,
+            error: `Zu viele fehlgeschlagene Anmeldeversuche. Bitte warte ${waitSec} Sekunden.`
+          }), { status: 429, headers: { ...corsHeaders, "Retry-After": String(waitSec) } });
+        }
+        const recordLoginFailure = async () => {
+          const nextEntry = (rlEntry && nowRl <= Number(rlEntry.resetAt || 0))
+            ? { count: Number(rlEntry.count || 0) + 1, resetAt: Number(rlEntry.resetAt) }
+            : { count: 1, resetAt: nowRl + rlWindowMs };
+          memoryFallback.set(rlKey, nextEntry);
+          if (typeof saveEntityToD1 === "function") {
+            await saveEntityToD1(env, rlKey, "auth_rl", nextEntry).catch(() => {});
+          }
+        };
+        const clearLoginFailures = async () => {
+          memoryFallback.delete(rlKey);
+          if (rlEntry && typeof deleteEntityFromD1 === "function") {
+            await deleteEntityFromD1(env, rlKey).catch(() => {});
+          }
+        };
+
         const userRow = await getUserByCustomUsernameFromD1(env, username);
         if (!userRow || !userRow.password_hash || !userRow.password_salt) {
+          await recordLoginFailure();
           return new Response(JSON.stringify({ ok: false, error: "Ungültiger Username oder Passwort." }), { status: 401, headers: corsHeaders });
         }
         const validPw = await verifyPasswordPbkdf2(password, userRow.password_salt, userRow.password_hash);
         if (!validPw) {
+          await recordLoginFailure();
           return new Response(JSON.stringify({ ok: false, error: "Ungültiger Username oder Passwort." }), { status: 401, headers: corsHeaders });
         }
         if (Number(userRow.totp_enabled) === 1 && userRow.totp_secret) {
@@ -574,6 +633,7 @@
           }
           const valid2fa = await verifyTotpCode(userRow.totp_secret, totpCode);
           if (!valid2fa) {
+            await recordLoginFailure();
             return new Response(JSON.stringify({
               ok: false,
               requires2fa: true,
@@ -581,6 +641,7 @@
             }), { status: 200, headers: corsHeaders });
           }
         }
+        await clearLoginFailures();
         const userProfile = formatUserRowForClient(userRow, env);
         const sessionToken = await signTmaSessionToken({
           telegramId: String(userRow.telegram_id),
@@ -650,6 +711,12 @@
         const userRow = await getUserByTelegramIdFromD1(env, auth.chatId);
 
         if (action === "setup") {
+          if (Number(userRow?.totp_enabled) === 1 && userRow?.totp_secret) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: "2FA ist bereits aktiv. Bitte deaktiviere 2FA zuerst mit deinem aktuellen 6-stelligen Code."
+            }), { status: 400, headers: corsHeaders });
+          }
           const newSecret = generateBase32TotpSecret(32);
           await saveUserTotpInD1(env, auth.chatId, newSecret, false);
           const accountLabel = auth.user.customUsername || auth.user.tgUsername || `TG-${auth.chatId}`;
@@ -3653,9 +3720,20 @@
         const sourceBridgeChatId = String(body.sourceBridgeChatId || savedDeliv.sourceBridgeChatId || "").trim();
         const effectiveCustomToken = customBotToken || String(savedDeliv.customBotToken || "").trim();
 
-        const targetChat = (targetMode === "group" && targetGroupChatId)
-          ? targetGroupChatId
-          : String(body.chatId || kvDefaultChatId || auth.chatId || "").trim();
+        const isAdminStreamCaller = Boolean(auth.user?.isAdmin);
+        const usingOwnCustomBot = Boolean(effectiveCustomToken && effectiveCustomToken !== String(env.TELEGRAM_BOT_TOKEN || "").trim());
+        let targetChat = "";
+        if (targetMode === "group" && targetGroupChatId) {
+          if (!isAdminStreamCaller && !usingOwnCustomBot && !targetGroupChatId.startsWith("-")) {
+            return new Response(JSON.stringify({ ok: false, error: "Gruppen-Zustellung über den Haupt-Bot erfordert eine gültige Gruppen-/Kanal-ID (beginnend mit -)." }), { status: 403, headers: corsHeaders });
+          }
+          targetChat = targetGroupChatId;
+        } else {
+          // Nicht-Admins dürfen im DM-Modus über den Haupt-Bot ausschließlich an ihren eigenen Chat senden (IDOR-/Spam-Schutz)
+          targetChat = (isAdminStreamCaller || usingOwnCustomBot)
+            ? String(body.chatId || kvDefaultChatId || auth.chatId || "").trim()
+            : String(auth.chatId || "").trim();
+        }
 
         const fileId = String(body.fileId || "").trim();
         const cleanTitle = String(body.title || "Stream").trim();
@@ -4649,7 +4727,13 @@
           : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || "") };
         const configuredImportSecret = String(importWebhookSec?.secretToken || "").trim();
         const incomingImportSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
-        const hasValidImportSecret = Boolean(configuredImportSecret && incomingImportSecret && incomingImportSecret === configuredImportSecret);
+        const hasValidImportSecret = Boolean(
+          configuredImportSecret &&
+          incomingImportSecret &&
+          (typeof timingSafeEqualStr === "function"
+            ? timingSafeEqualStr(incomingImportSecret, configuredImportSecret)
+            : incomingImportSecret === configuredImportSecret)
+        );
         if ((!auth.isAuthenticated || !auth.user?.isAdmin) && !hasValidImportSecret) {
           return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur autorisierte Administratoren dürfen /api/import-json verwenden." }), { status: 403, headers: corsHeaders });
         }
