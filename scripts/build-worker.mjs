@@ -1,9 +1,159 @@
+import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
+import { transform as esbuildTransform } from 'esbuild';
 
 const rootDir = import.meta.dirname ? path.resolve(import.meta.dirname, '..') : process.cwd();
 const workerPath = path.join(rootDir, 'worker.js');
 const modulesDir = path.join(rootDir, 'worker-modules');
+
+export const TMA_STATIC_MARKERS = {
+  cssStart: '<!-- @TMA_STATIC_CSS_START -->',
+  cssEnd: '<!-- @TMA_STATIC_CSS_END -->',
+  jsStart: '<!-- @TMA_STATIC_JS_START -->',
+  jsEnd: '<!-- @TMA_STATIC_JS_END -->',
+};
+
+function unescapeTemplateLiteralSlice(rawSlice, label) {
+  // Security/integrity check: extracted static blocks must contain ZERO unescaped ${...} interpolations
+  const unescapedInterpRe = /(?<!\\)(?:\\\\)*\$\{/g;
+  const badMatch = unescapedInterpRe.exec(rawSlice);
+  if (badMatch) {
+    const lineNum = rawSlice.slice(0, badMatch.index).split(/\r?\n/).length;
+    throw new Error(
+      `[extractStaticTmaAssets] Unerwartete Template-Interpolation "\${...}" im ${label}-Block (Zeile ${lineNum}) gefunden.`
+    );
+  }
+  return new Function('"use strict"; return `' + rawSlice + '`;')();
+}
+
+export async function extractStaticTmaAssets(assembledCode, { minify = true } = {}) {
+  if (typeof assembledCode !== 'string' || assembledCode.length < 1000) {
+    throw new Error('[extractStaticTmaAssets] Ungültiger Worker-Quellcode übergeben.');
+  }
+
+  const cssStartIdx = assembledCode.indexOf(TMA_STATIC_MARKERS.cssStart);
+  const cssEndIdx = assembledCode.indexOf(TMA_STATIC_MARKERS.cssEnd, cssStartIdx + 1);
+  if (cssStartIdx === -1 || cssEndIdx === -1) {
+    throw new Error(
+      `[extractStaticTmaAssets] CSS-Marker fehlen (${TMA_STATIC_MARKERS.cssStart} / ${TMA_STATIC_MARKERS.cssEnd}).`
+    );
+  }
+
+  const jsStartIdx = assembledCode.indexOf(TMA_STATIC_MARKERS.jsStart, cssEndIdx);
+  const jsEndIdx = assembledCode.indexOf(TMA_STATIC_MARKERS.jsEnd, jsStartIdx + 1);
+  if (jsStartIdx === -1 || jsEndIdx === -1) {
+    throw new Error(
+      `[extractStaticTmaAssets] JS-Marker fehlen (${TMA_STATIC_MARKERS.jsStart} / ${TMA_STATIC_MARKERS.jsEnd}).`
+    );
+  }
+
+  const rawCssSlice = assembledCode.slice(
+    cssStartIdx + TMA_STATIC_MARKERS.cssStart.length,
+    cssEndIdx
+  );
+  const rawJsSlice = assembledCode.slice(
+    jsStartIdx + TMA_STATIC_MARKERS.jsStart.length,
+    jsEndIdx
+  );
+
+  const renderedCssBlock = unescapeTemplateLiteralSlice(rawCssSlice, 'CSS').trim();
+  const renderedJsBlock = unescapeTemplateLiteralSlice(rawJsSlice, 'JS').trim();
+
+  const cssMatch = renderedCssBlock.match(/^<style\b[^>]*>([\s\S]*?)<\/style>$/i);
+  if (!cssMatch) {
+    throw new Error(
+      '[extractStaticTmaAssets] CSS-Marker umschließen keinen gültigen <style>...</style>-Block.'
+    );
+  }
+  const jsMatch = renderedJsBlock.match(/^<script\b[^>]*>([\s\S]*?)<\/script>$/i);
+  if (!jsMatch) {
+    throw new Error(
+      '[extractStaticTmaAssets] JS-Marker umschließen keinen gültigen <script>...</script>-Block.'
+    );
+  }
+
+  const rawCss = cssMatch[1];
+  const rawJs = jsMatch[1];
+
+  const cssTransformed = await esbuildTransform(rawCss, {
+    loader: 'css',
+    minify,
+    sourcefile: 'tma-style.css',
+    logLevel: 'silent',
+  });
+  const jsTransformed = await esbuildTransform(rawJs, {
+    loader: 'js',
+    target: 'es2022',
+    minify,
+    sourcefile: 'tma-app.js',
+    logLevel: 'silent',
+  });
+
+  const cssOutput = cssTransformed.code;
+  const jsOutput = jsTransformed.code;
+
+  const cssHash = crypto.createHash('sha256').update(cssOutput).digest('hex').slice(0, 10);
+  const jsHash = crypto.createHash('sha256').update(jsOutput).digest('hex').slice(0, 10);
+
+  const cssFileName = `tma-style.${cssHash}.css`;
+  const jsFileName = `tma-app.${jsHash}.js`;
+
+  const cssReplacement = `<link rel="stylesheet" href="/assets/${cssFileName}" />`;
+  const jsReplacement = `<script src="/assets/${jsFileName}"></script>`;
+
+  // Splice from end to start so indices remain exact
+  const slimWorkerCode =
+    assembledCode.slice(0, cssStartIdx) +
+    cssReplacement +
+    assembledCode.slice(cssEndIdx + TMA_STATIC_MARKERS.cssEnd.length, jsStartIdx) +
+    jsReplacement +
+    assembledCode.slice(jsEndIdx + TMA_STATIC_MARKERS.jsEnd.length);
+
+  const originalWorkerBytes = Buffer.byteLength(assembledCode, 'utf8');
+  const slimWorkerBytes = Buffer.byteLength(slimWorkerCode, 'utf8');
+  const savedBytes = Math.max(0, originalWorkerBytes - slimWorkerBytes);
+  const savedPercent = originalWorkerBytes > 0 ? Number(((savedBytes / originalWorkerBytes) * 100).toFixed(1)) : 0;
+
+  const cssRawBytes = Buffer.byteLength(rawCss, 'utf8');
+  const cssBytes = Buffer.byteLength(cssOutput, 'utf8');
+  const jsRawBytes = Buffer.byteLength(rawJs, 'utf8');
+  const jsBytes = Buffer.byteLength(jsOutput, 'utf8');
+
+  return {
+    slimWorkerCode,
+    assets: [
+      {
+        fileName: cssFileName,
+        publicPath: `/assets/${cssFileName}`,
+        content: cssOutput,
+        rawBytes: cssRawBytes,
+        bytes: cssBytes,
+        type: 'css',
+      },
+      {
+        fileName: jsFileName,
+        publicPath: `/assets/${jsFileName}`,
+        content: jsOutput,
+        rawBytes: jsRawBytes,
+        bytes: jsBytes,
+        type: 'js',
+      },
+    ],
+    stats: {
+      originalWorkerBytes,
+      slimWorkerBytes,
+      savedBytes,
+      savedPercent,
+      cssFileName,
+      jsFileName,
+      cssRawBytes,
+      cssBytes,
+      jsRawBytes,
+      jsBytes,
+    },
+  };
+}
 
 export const WORKER_DEPARTMENTS = [
   {
@@ -147,7 +297,7 @@ export function splitWorkerIntoModules(sourceCode) {
       const semanticSplits = [
         { file: '08a-tma-auth-shell.js', idx: 0 },
         { file: '08b-tma-css-hero-player.js', find: '/* 100% Vollbild TelePort Kino-Spotlight:' },
-        { file: '08c-tma-js-core-catalog.js', find: 'const API_BASE = "${workerOrigin}/api/tma";', offset: -1 },
+        { file: '08c-tma-js-core-catalog.js', find: 'window.__TMA_BOOTSTRAP__ = {', offset: -1 },
         { file: '08d-tma-js-hero-cinema-player.js', find: '// HAUPTSLIDER INLINE-KINO-TRAILER ENGINE', offset: -1 },
         { file: '08e-tma-js-detail-trailer.js', find: 'async function openStudioView(companyId, companyName, presetStudioId = "") {' },
         { file: '08f-tma-js-detail-modal-streams.js', find: 'function renderOrPatchDetailStageClient(type, id, d, forceSeasonNum = null' },
@@ -207,6 +357,21 @@ if (process.argv[1] && process.argv[1].endsWith('build-worker.mjs')) {
     if (combined) {
       fs.writeFileSync(workerPath, combined, 'utf8');
       console.log(`[build-worker] Bundled modules -> worker.js (${(Buffer.byteLength(combined) / 1024).toFixed(1)} KB)`);
+    }
+  } else if (mode === '--bundle-slim') {
+    const combined = assembleWorkerFromModules();
+    if (combined) {
+      extractStaticTmaAssets(combined, { minify: true }).then(({ slimWorkerCode, assets, stats }) => {
+        const distAssetsDir = path.join(rootDir, 'dist', 'assets');
+        fs.mkdirSync(distAssetsDir, { recursive: true });
+        for (const asset of assets) {
+          fs.writeFileSync(path.join(distAssetsDir, asset.fileName), asset.content, 'utf8');
+        }
+        fs.writeFileSync(workerPath, slimWorkerCode, 'utf8');
+        console.log(
+          `[build-worker] Bundled SLIM worker -> worker.js (${(stats.slimWorkerBytes / 1024).toFixed(1)} KB, -${stats.savedPercent}% vs ${(stats.originalWorkerBytes / 1024).toFixed(1)} KB) + ${assets.map((a) => a.fileName).join(', ')}`
+        );
+      });
     }
   } else if (mode === '--stub') {
     fs.writeFileSync(workerPath, WORKER_REPO_STUB, 'utf8');

@@ -151,7 +151,7 @@
     }
 
     if (path === "/sw.js" || path === "/service-worker.js") {
-      const swCode = `const CACHE_NAME="teleport-v2";const IMG_CACHE="teleport-img-v2";const MAX_IMG=150;const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME&&x!==IMG_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});async function putImgCapped(req,res){try{const c=await caches.open(IMG_CACHE);await c.put(req,res);const ks=await c.keys();if(ks.length>MAX_IMG){await Promise.all(ks.slice(0,ks.length-MAX_IMG).map(k=>c.delete(k)))}}catch(_e){}}self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname==="/favicon.svg"||u.pathname==="/manifest.json")){e.respondWith(fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();e.waitUntil(caches.open(CACHE_NAME).then(c=>c.put(r,cl)).catch(()=>{}))}return nr}).catch(()=>caches.match(r).then(m=>m||caches.match("/app")).then(m=>m||Response.error())));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&(nr.status===200||nr.type==="opaque")){e.waitUntil(putImgCapped(r,nr.clone()))}return nr}).catch(()=>caches.match("/favicon.svg").then(m=>m||Response.error()))}));return}});`;
+      const swCode = `const CACHE_NAME="teleport-v3";const IMG_CACHE="teleport-img-v2";const MAX_IMG=150;const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME&&x!==IMG_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});async function putImgCapped(req,res){try{const c=await caches.open(IMG_CACHE);await c.put(req,res);const ks=await c.keys();if(ks.length>MAX_IMG){await Promise.all(ks.slice(0,ks.length-MAX_IMG).map(k=>c.delete(k)))}}catch(_e){}}self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&u.pathname.startsWith("/assets/tma-")){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();e.waitUntil(caches.open(CACHE_NAME).then(c=>c.put(r,cl)).catch(()=>{}))}return nr}).catch(()=>Response.error())}));return}if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname==="/favicon.svg"||u.pathname==="/manifest.json")){e.respondWith(fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();e.waitUntil(caches.open(CACHE_NAME).then(c=>c.put(r,cl)).catch(()=>{}))}return nr}).catch(()=>caches.match(r).then(m=>m||caches.match("/app")).then(m=>m||Response.error())));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&(nr.status===200||nr.type==="opaque")){e.waitUntil(putImgCapped(r,nr.clone()))}return nr}).catch(()=>caches.match("/favicon.svg").then(m=>m||Response.error()))}));return}});`;
       return new Response(swCode, {
         status: 200,
         headers: {
@@ -5558,8 +5558,20 @@
 
         // Statische Assets & Worker Studio UI (/studio, /assets/*, /favicon.svg, /worker.js) über Cloudflare Workers Assets Binding
         if (request.method === "GET" && env && env.ASSETS && typeof env.ASSETS.fetch === "function") {
+          if (url.pathname.startsWith("/assets/")) {
+            const assetRes = await env.ASSETS.fetch(request);
+            if (url.pathname.startsWith("/assets/tma-") && assetRes && assetRes.status === 200) {
+              const immutableHeaders = new Headers(assetRes.headers);
+              immutableHeaders.set("Cache-Control", "public, max-age=31536000, immutable");
+              return new Response(assetRes.body, {
+                status: assetRes.status,
+                statusText: assetRes.statusText,
+                headers: immutableHeaders
+              });
+            }
+            return assetRes;
+          }
           if (
-            url.pathname.startsWith("/assets/") ||
             url.pathname === "/favicon.svg" ||
             url.pathname === "/manifest.json" ||
             url.pathname === "/manifest.webmanifest" ||

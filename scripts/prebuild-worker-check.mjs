@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { build, transform } from 'esbuild';
-import { assembleWorkerFromModules } from './build-worker.mjs';
+import { assembleWorkerFromModules, extractStaticTmaAssets } from './build-worker.mjs';
 
 const rootDir = process.cwd();
 const modulesDir = path.join(rootDir, 'worker-modules');
@@ -265,9 +265,12 @@ async function verifyAndAssembleWorker() {
     process.exit(1);
   }
 
-  // Auf Cloudflare Build CI die vollständige worker.js schreiben; in AI Studio als kompakten Stub belassen (verhindert GitHub Sync >1MB Limit)
+  // Auf Cloudflare Build CI die vollständige/slim worker.js erst nach Verifikation schreiben; in AI Studio als kompakten Stub belassen (verhindert GitHub Sync >1MB Limit)
   const isAiStudioWorkspace =
-    fs.existsSync('/.aistudio') && !process.argv.includes('--write-full');
+    (process.env.DISABLE_HMR === 'true' ||
+      fs.existsSync('/.aistudio') ||
+      fs.existsSync(path.join(rootDir, '.aistudio'))) &&
+    !process.argv.includes('--write-full');
   if (isAiStudioWorkspace) {
     const stub =
       '// Auto-assembled at build time from /worker-modules/*.js via scripts/prebuild-worker-check.mjs\nexport default { async fetch() { return new Response("Assembled at build time"); } };\n';
@@ -326,8 +329,35 @@ async function verifyAndAssembleWorker() {
     staticReport.moduleMap
   );
 
+  // 5. Dry-run verify static TMA CSS/JS extraction, minification & slim worker syntax
+  const extracted = await extractStaticTmaAssets(code, { minify: true });
+  const slimCheck = await build({
+    stdin: {
+      contents: extracted.slimWorkerCode,
+      resolveDir: rootDir,
+      sourcefile: 'worker-slim.js',
+      loader: 'js',
+    },
+    bundle: true,
+    format: 'esm',
+    platform: 'browser',
+    write: false,
+    logLevel: 'silent',
+  }).catch((err) => err);
+  if (slimCheck.errors && slimCheck.errors.length > 0) {
+    console.error('[Pre-Build Check] Slim-Worker nach Static-Asset-Extraktion fehlerhaft:');
+    for (const e of slimCheck.errors) {
+      console.error(`  ❌ [esbuild slim] ${e.text}`);
+    }
+    process.exit(1);
+  }
+  const { stats } = extracted;
+
   console.log(
     `[Pre-Build Check] Statische Analyse für ${staticReport.moduleMap.length} Module in worker-modules/ bestanden (0 Fehler, ${staticReport.warnings.length + buildWarnings.length} Warnungen, ${tmaScriptCheck.scriptCount} eingebettete TMA-Skripte verifiziert).`
+  );
+  console.log(
+    `[Pre-Build Check] Static Asset Offload verifiziert: worker.js ${(stats.originalWorkerBytes / 1024).toFixed(1)} KB -> ${(stats.slimWorkerBytes / 1024).toFixed(1)} KB (-${stats.savedPercent}%) | ${stats.cssFileName} (${(stats.cssBytes / 1024).toFixed(1)} KB, roh ${(stats.cssRawBytes / 1024).toFixed(1)} KB) | ${stats.jsFileName} (${(stats.jsBytes / 1024).toFixed(1)} KB, roh ${(stats.jsRawBytes / 1024).toFixed(1)} KB).`
   );
 }
 

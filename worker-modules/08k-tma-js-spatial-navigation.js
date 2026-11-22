@@ -3543,6 +3543,7 @@
         }
       }, 900);
     </script>
+    <!-- @TMA_STATIC_JS_END -->
   </body>
   </html>`;
   }

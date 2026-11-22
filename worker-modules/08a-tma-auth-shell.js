@@ -696,6 +696,7 @@
     <link rel="alternate icon" type="image/svg+xml" href="/favicon.svg" />
     <title>TelePort – Film & Serien Mini-App</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- @TMA_STATIC_CSS_START -->
     <style>
       :root {
         --bg: #060a14;

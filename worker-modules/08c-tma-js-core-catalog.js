@@ -1,5 +1,21 @@
     <script>
-      const API_BASE = "${workerOrigin}/api/tma";
+      window.__TMA_BOOTSTRAP__ = {
+        workerOrigin: ${JSON.stringify(workerOrigin)},
+        GENRE_EMOJIS: ${JSON.stringify(GENRE_EMOJIS)},
+        MOVIE_GENRES: ${JSON.stringify(MOVIE_GENRES)},
+        SERIES_GENRES: ${JSON.stringify(SERIES_GENRES)},
+        PLATFORM_OPTIONS: ${JSON.stringify(PLATFORM_OPTIONS)},
+        STUDIO_OPTIONS: ${JSON.stringify(STUDIO_OPTIONS)},
+        ERA_OPTIONS: ${JSON.stringify(ERA_OPTIONS)},
+        FSK_OPTIONS: ${JSON.stringify(FSK_OPTIONS)},
+        FEATURED_COLLECTIONS: ${JSON.stringify(FEATURED_COLLECTIONS)},
+        CINEMATIC_UNIVERSES: ${JSON.stringify(CINEMATIC_UNIVERSES)}
+      };
+    </script>
+    <!-- @TMA_STATIC_JS_START -->
+    <script>
+      const __TMA_BOOT = (typeof window !== "undefined" && window.__TMA_BOOTSTRAP__) || {};
+      const API_BASE = (__TMA_BOOT.workerOrigin || (typeof location !== "undefined" ? location.origin : "")) + "/api/tma";
       const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
       if (tg) {
         try {
@@ -138,15 +154,15 @@
       try { sessionToken = localStorage.getItem("tma_session_token") || ""; } catch (e) {}
       let chatId = "guest";
 
-      const GENRE_EMOJIS = ${JSON.stringify(GENRE_EMOJIS)};
-      const MOVIE_GENRES_CLIENT = ${JSON.stringify(MOVIE_GENRES)};
-      const SERIES_GENRES_CLIENT = ${JSON.stringify(SERIES_GENRES)};
-      const PLATFORM_OPTIONS_CLIENT = ${JSON.stringify(PLATFORM_OPTIONS)};
-      const STUDIO_OPTIONS_CLIENT = ${JSON.stringify(STUDIO_OPTIONS)};
-      const ERA_OPTIONS_CLIENT = ${JSON.stringify(ERA_OPTIONS)};
-      const FSK_OPTIONS_CLIENT = ${JSON.stringify(FSK_OPTIONS)};
-      const FEATURED_COLLECTIONS_CLIENT = ${JSON.stringify(FEATURED_COLLECTIONS)};
-      const CINEMATIC_UNIVERSES_CLIENT = ${JSON.stringify(CINEMATIC_UNIVERSES)};
+      const GENRE_EMOJIS = __TMA_BOOT.GENRE_EMOJIS || {};
+      const MOVIE_GENRES_CLIENT = __TMA_BOOT.MOVIE_GENRES || {};
+      const SERIES_GENRES_CLIENT = __TMA_BOOT.SERIES_GENRES || {};
+      const PLATFORM_OPTIONS_CLIENT = __TMA_BOOT.PLATFORM_OPTIONS || [];
+      const STUDIO_OPTIONS_CLIENT = __TMA_BOOT.STUDIO_OPTIONS || [];
+      const ERA_OPTIONS_CLIENT = __TMA_BOOT.ERA_OPTIONS || [];
+      const FSK_OPTIONS_CLIENT = __TMA_BOOT.FSK_OPTIONS || [];
+      const FEATURED_COLLECTIONS_CLIENT = __TMA_BOOT.FEATURED_COLLECTIONS || [];
+      const CINEMATIC_UNIVERSES_CLIENT = __TMA_BOOT.CINEMATIC_UNIVERSES || [];
 
       function genreEmoji(name) {
         return GENRE_EMOJIS[name] || "🎞️";

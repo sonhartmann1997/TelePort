@@ -1,4 +1,4 @@
-const CACHE_NAME = "teleport-v2";
+const CACHE_NAME = "teleport-v3";
 const IMG_CACHE = "teleport-img-v2";
 const MAX_IMG = 150;
 const APP_SHELL = [
@@ -57,6 +57,23 @@ self.addEventListener("fetch", (event) => {
         }).catch(() =>
           caches.match(req).then((m) => m || caches.match("/app")).then((m) => m || Response.error())
         )
+      );
+      return;
+    }
+
+    // Content-gehashte immutable TMA-Assets (/assets/tma-*): Reines Cache-First (0 unnötige Revalidierungen)
+    if (url.pathname.startsWith("/assets/tma-")) {
+      event.respondWith(
+        caches.match(req).then((cached) => {
+          if (cached) return cached;
+          return fetch(req).then((networkRes) => {
+            if (networkRes && networkRes.status === 200) {
+              const resClone = networkRes.clone();
+              event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone)).catch(() => {}));
+            }
+            return networkRes;
+          }).catch(() => Response.error());
+        })
       );
       return;
     }

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
 import {defineConfig, Plugin} from 'vite';
+import {extractStaticTmaAssets} from './scripts/build-worker.mjs';
 
 const rootDir = import.meta.dirname || path.resolve();
 const modulesDir = path.resolve(rootDir, 'worker-modules');
@@ -44,18 +45,9 @@ function cloudflareStudioPlugin(): Plugin {
     name: 'cloudflare-studio-plugin',
     buildStart() {
       cleanAiStudioAttachments(path.resolve(rootDir, 'public'));
-      const assembled = assembleWorkerFromModulesSync();
-      if (assembled) {
-        // On Cloudflare Workers Builds (DISABLE_HMR !== 'true'), write full assembled worker.js for npx wrangler deploy!
-        if (process.env.DISABLE_HMR !== 'true') {
-          fs.writeFileSync(workerFile, assembled, 'utf8');
-          console.log(
-            `[Cloudflare Assembler] Assembled worker-modules -> worker.js (${(Buffer.byteLength(assembled) / 1024).toFixed(1)} KB)`
-          );
-        } else {
-          // Inside AI Studio VFS, keep worker.js as a tiny <1KB stub so GitHub Sync never hits the 2MB single-file limit
-          fs.writeFileSync(workerFile, WORKER_REPO_STUB, 'utf8');
-        }
+      if (process.env.DISABLE_HMR === 'true') {
+        // Inside AI Studio VFS, keep worker.js as a tiny <1KB stub so GitHub Sync never hits the 2MB single-file limit
+        fs.writeFileSync(workerFile, WORKER_REPO_STUB, 'utf8');
       }
     },
     configureServer(server) {
@@ -79,7 +71,7 @@ function cloudflareStudioPlugin(): Plugin {
         next();
       });
     },
-    closeBundle() {
+    async closeBundle() {
       const distDir = path.resolve(rootDir, 'dist');
       if (process.env.DISABLE_HMR === 'true') {
         // Keep AI Studio VFS clean of /dist so GitHub Sync only uploads source files (< 400 KB each)
@@ -97,6 +89,29 @@ function cloudflareStudioPlugin(): Plugin {
       if (fs.existsSync(distWorkerCopy)) {
         fs.rmSync(distWorkerCopy, {force: true});
       }
+
+      // Extract & minify static TMA CSS/JS into dist/assets/ and emit SLIM worker.js (~55%+ kleiner!)
+      const assembled = assembleWorkerFromModulesSync();
+      if (assembled) {
+        const {slimWorkerCode, assets, stats} = await extractStaticTmaAssets(assembled, {
+          minify: true,
+        });
+        const distAssetsDir = path.join(distDir, 'assets');
+        fs.mkdirSync(distAssetsDir, {recursive: true});
+        for (const asset of assets) {
+          fs.writeFileSync(path.join(distAssetsDir, asset.fileName), asset.content, 'utf8');
+        }
+        fs.writeFileSync(workerFile, slimWorkerCode, 'utf8');
+        console.log(
+          `[Cloudflare Static Asset Offload] Slim worker.js: ${(stats.slimWorkerBytes / 1024).toFixed(1)} KB (vorher ${(stats.originalWorkerBytes / 1024).toFixed(1)} KB, -${stats.savedPercent}%) | Assets: ${stats.cssFileName} (${(stats.cssBytes / 1024).toFixed(1)} KB), ${stats.jsFileName} (${(stats.jsBytes / 1024).toFixed(1)} KB)`
+        );
+      }
+
+      fs.writeFileSync(
+        path.join(distDir, '_headers'),
+        '/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n',
+        'utf8'
+      );
       fs.writeFileSync(
         path.join(distDir, '.assetsignore'),
         'aistudio\naistudio/**\nassets/aistudio\nassets/aistudio/**\n*.zip\n*.rar\n*.tar.gz\n',

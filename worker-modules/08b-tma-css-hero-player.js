@@ -5295,6 +5295,7 @@
         box-shadow: inset 0 0 0 1px rgba(255, 195, 113, 0.8), 0 0 0 2px #ff7a00, 0 0 18px rgba(255, 122, 0, 0.85) !important;
       }
     </style>
+    <!-- @TMA_STATIC_CSS_END -->
   </head>
   <body>
     <div id="tmaBootSplashscreen" onclick="dismissBootSplashscreen()" title="Antippen zum Überspringen">
