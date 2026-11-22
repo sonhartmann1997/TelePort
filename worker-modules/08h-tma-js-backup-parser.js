@@ -2155,9 +2155,12 @@
         if (_backupSessionRestorePromise) return _backupSessionRestorePromise;
         _backupSessionRestorePromise = (async () => {
           try {
+            const canFetchAdminCheckpoint = Boolean(state.isAuthenticated && state.authUser?.isAdmin);
             const [idbJob, serverCpRes] = await Promise.all([
               loadBackupJobFromIndexedDbClient(),
-              apiFetchJson(API_BASE + "/admin/import-checkpoint").catch(() => null)
+              canFetchAdminCheckpoint
+                ? apiFetchJson(API_BASE + "/admin/import-checkpoint").catch(() => null)
+                : Promise.resolve(null)
             ]);
             const serverCp = (serverCpRes && serverCpRes.ok && serverCpRes.checkpoint) ? serverCpRes.checkpoint : null;
             const localCp = loadBackupCheckpointClient();
@@ -2324,13 +2327,20 @@
         } catch (e) {}
         saveBackupJobToIndexedDbClient(Boolean(forceServerSync));
         backupImportJob._cpSyncStep = Number(backupImportJob._cpSyncStep || 0) + 1;
-        // Während der aktive Batch-Loop läuft, wird der Checkpoint bereits atomar in jedem /admin/import-batch Request in D1 gespeichert.
-        // Ein separater Server-POST erfolgt nur bei explizitem Pause-Klick (forceServerSync = true), außerhalb des Loops oder bei 100% Abschluss,
-        // damit niemals 2 parallele Worker-Requests kollidieren (Schutz vor HTTP 503).
-        const shouldSyncServer = Boolean(forceServerSync) || (!backupImportJob.running && (backupImportJob._cpSyncStep % 5 === 0)) || (cp.totalEntries > 0 && cp.cursor >= cp.totalEntries);
+        // Während der aktive Batch-Loop läuft, bei Auth-Abbruch oder während eines 503-Cooldowns NIEMALS einen separaten Server-POST feuern!
+        const inCooldown = typeof getClientWorkerCircuitState === "function" && getClientWorkerCircuitState().cooldownUntil > Date.now();
+        const isAuthedAdmin = Boolean(state.isAuthenticated && state.authUser?.isAdmin);
+        const shouldSyncServer = Boolean(
+          isAuthedAdmin &&
+          !backupImportJob.running &&
+          !backupImportJob.authAbortError &&
+          !inCooldown &&
+          (forceServerSync || (cp.totalEntries > 0 && cp.cursor >= cp.totalEntries))
+        );
         if (shouldSyncServer) {
           apiFetchJson(API_BASE + "/admin/import-checkpoint", {
             method: "POST",
+            noRetry: true,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ checkpoint: cp })
           }).catch(() => {});
@@ -2343,11 +2353,14 @@
           localStorage.removeItem(BACKUP_CHECKPOINT_STORAGE_KEY);
         } catch (e) {}
         clearBackupJobFromIndexedDbClient();
-        apiFetchJson(API_BASE + "/admin/import-checkpoint", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ clear: true })
-        }).catch(() => {});
+        if (state.isAuthenticated && state.authUser?.isAdmin) {
+          apiFetchJson(API_BASE + "/admin/import-checkpoint", {
+            method: "POST",
+            noRetry: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clear: true })
+          }).catch(() => {});
+        }
       }
 
       async function verifyBackupChannelClient() {

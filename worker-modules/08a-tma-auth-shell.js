@@ -61,11 +61,12 @@
 
   // Offizielle Telegram Mini App HMAC-SHA256 Validierung von initData (Web Crypto API)
   async function verifyTelegramInitDataHmac(rawInitData, botToken, env = null) {
-    if (!rawInitData) return { ok: false, error: "Fehlende initData" };
+    if (!rawInitData) return { ok: false, reasonCode: "MISSING_INIT_DATA", error: "Fehlende initData" };
     try {
+      const effectiveBotToken = String(botToken || env?.TELEGRAM_BOT_TOKEN || env?.BOT_TOKEN || "").trim();
       const params = new URLSearchParams(String(rawInitData));
       const receivedHash = params.get("hash");
-      if (!receivedHash) return { ok: false, error: "Kein Hash in initData" };
+      if (!receivedHash) return { ok: false, reasonCode: "MISSING_HASH", error: "Kein Hash in initData" };
 
       const userRaw = params.get("user");
       const userObj = userRaw ? JSON.parse(userRaw) : null;
@@ -74,17 +75,17 @@
       const isDevEnv = Boolean(env && (env.ENVIRONMENT === "development" || env.ENABLE_SIMULATOR === "true" || env.DEV_MODE === "true"));
       if (receivedHash === "sim_valid_hmac" && userObj && (String(userObj.id) === "100998877" || String(userObj.id) === "55443322")) {
         if (!isDevEnv) {
-          return { ok: false, error: "Simulator-initData ist in der Produktivumgebung deaktiviert." };
+          return { ok: false, reasonCode: "SIMULATOR_DISABLED", error: "Simulator-initData ist in der Produktivumgebung deaktiviert." };
         }
         return { ok: true, user: userObj, isSimulator: true };
       }
 
-      if (!botToken) return { ok: false, error: "Fehlendes Bot-Token" };
+      if (!effectiveBotToken) return { ok: false, reasonCode: "MISSING_BOT_TOKEN", error: "Fehlendes Bot-Token" };
 
       // Replay-Schutz: auth_date Validierung (maximal 24 Stunden = 86400 Sekunden alt)
       const authDate = Number(params.get("auth_date") || 0);
       if (!authDate || Math.abs(Math.floor(Date.now() / 1000) - authDate) > 86400) {
-        return { ok: false, error: "Telegram initData ist abgelaufen (> 24h)." };
+        return { ok: false, reasonCode: "INIT_DATA_EXPIRED", error: "Telegram initData ist abgelaufen (> 24h). Bitte Mini-App kurz neu über Telegram öffnen." };
       }
 
       const pairs = [];
@@ -103,7 +104,7 @@
         false,
         ["sign"]
       );
-      const secretKeyBuf = await crypto.subtle.sign("HMAC", secretKeyMaterial, enc.encode(String(botToken).trim()));
+      const secretKeyBuf = await crypto.subtle.sign("HMAC", secretKeyMaterial, enc.encode(effectiveBotToken));
 
       const validationKey = await crypto.subtle.importKey(
         "raw",
@@ -116,15 +117,15 @@
       const calculatedHash = bytesToHex(sigBuf);
 
       if (!timingSafeEqualStr(calculatedHash.toLowerCase(), String(receivedHash).toLowerCase())) {
-        return { ok: false, error: "Ungültige Telegram initData Signatur" };
+        return { ok: false, reasonCode: "INVALID_SIGNATURE", error: "Ungültige Telegram initData Signatur (prüfe TELEGRAM_BOT_TOKEN im Worker)." };
       }
 
       if (!userObj || !userObj.id) {
-        return { ok: false, error: "Kein gültiges User-Objekt in initData" };
+        return { ok: false, reasonCode: "MISSING_USER", error: "Kein gültiges User-Objekt in initData" };
       }
       return { ok: true, user: userObj };
     } catch (e) {
-      return { ok: false, error: "Fehler bei initData-Prüfung" };
+      return { ok: false, reasonCode: "PARSE_ERROR", error: "Fehler bei initData-Prüfung" };
     }
   }
 
@@ -388,23 +389,47 @@
     return `${payloadHex}.${bytesToHex(sigBuf)}`;
   }
 
+  async function getVerificationSigningSecrets(env) {
+    const primary = await getSessionSigningSecret(env);
+    const list = [];
+    const pushUnique = (val) => {
+      const s = String(val || "").trim();
+      if (s && !list.includes(s)) list.push(s);
+    };
+    pushUnique(primary);
+    // Fallback bei nachträglichem Setzen von JWT_SECRET / TELEGRAM_WEBHOOK_SECRET:
+    // Bestehende 30-Tage-Sessions bleiben gültig, wenn sie zuvor mit TELEGRAM_BOT_TOKEN signiert wurden.
+    pushUnique(env?.JWT_SECRET);
+    pushUnique(env?.TELEGRAM_WEBHOOK_SECRET);
+    pushUnique(env?.TELEGRAM_BOT_TOKEN);
+    pushUnique(env?.BOT_TOKEN);
+    return list;
+  }
+
   async function verifyTmaSessionToken(token, env) {
     if (!token || typeof token !== "string" || !token.includes(".")) return null;
     try {
       const [payloadHex, sigHex] = token.split(".");
       if (!payloadHex || !sigHex) return null;
       const enc = new TextEncoder();
-      const signingSecret = await getSessionSigningSecret(env);
-      const key = await crypto.subtle.importKey(
-        "raw",
-        enc.encode(signingSecret),
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign"]
-      );
-      const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(payloadHex));
-      const expectedSigHex = bytesToHex(expectedSigBuf);
-      if (!timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())) return null;
+      const secrets = await getVerificationSigningSecrets(env);
+      let signatureValid = false;
+      for (const signingSecret of secrets) {
+        const key = await crypto.subtle.importKey(
+          "raw",
+          enc.encode(signingSecret),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["sign"]
+        );
+        const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(payloadHex));
+        const expectedSigHex = bytesToHex(expectedSigBuf);
+        if (timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())) {
+          signatureValid = true;
+          break;
+        }
+      }
+      if (!signatureValid) return null;
 
       const jsonStr = new TextDecoder().decode(hexToBytes(payloadHex));
       const data = JSON.parse(jsonStr);
@@ -420,6 +445,7 @@
   // 2. Oder prüft kryptografisch signiertes Telegram initData (X-Telegram-Init-Data)
   // 3. Ohne beides -> Strikter Gast-Modus (chatId = "guest", kein Speicher, kein Zugriff auf fremde IDs!)
   async function resolveTmaAuthContext(request, env) {
+    const failureReasons = [];
     const authHeader = request.headers.get("Authorization") || "";
     const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
     if (bearerToken) {
@@ -444,14 +470,17 @@
           authMethod: verifiedToken.authMethod || "token",
           hasInitData: Boolean(verifiedToken.hasInitData),
           chatId: String(verifiedToken.telegramId),
-          user: userProfile
+          user: userProfile,
+          authFailureReason: null
         };
       }
+      failureReasons.push("invalid_or_expired_bearer_token");
     }
 
     const rawInitData = request.headers.get("X-Telegram-Init-Data") || "";
-    if (rawInitData && env?.TELEGRAM_BOT_TOKEN) {
-      const verifiedInit = await verifyTelegramInitDataHmac(rawInitData, env.TELEGRAM_BOT_TOKEN, env);
+    const effectiveBotToken = String(env?.TELEGRAM_BOT_TOKEN || env?.BOT_TOKEN || "").trim();
+    if (rawInitData && effectiveBotToken) {
+      const verifiedInit = await verifyTelegramInitDataHmac(rawInitData, effectiveBotToken, env);
       if (verifiedInit.ok && verifiedInit.user) {
         const userProfile = await upsertTelegramUserInD1(env, verifiedInit.user);
         return {
@@ -460,9 +489,13 @@
           authMethod: "initData",
           hasInitData: true,
           chatId: String(verifiedInit.user.id),
-          user: userProfile
+          user: userProfile,
+          authFailureReason: null
         };
       }
+      failureReasons.push(verifiedInit?.reasonCode ? `initData_${verifiedInit.reasonCode.toLowerCase()}` : "invalid_init_data");
+    } else if (rawInitData && !effectiveBotToken) {
+      failureReasons.push("missing_bot_token");
     }
 
     let rawLaunchToken = request.headers.get("X-Telegram-Launch-Token") || "";
@@ -487,9 +520,11 @@
           authMethod: "tgLaunch",
           hasInitData: true,
           chatId: String(verifiedLaunch.chatId),
-          user: userProfile
+          user: userProfile,
+          authFailureReason: null
         };
       }
+      failureReasons.push("invalid_or_expired_launch_token");
     }
 
     // Kein gültiges initData, kein gültiger Launch-Token & kein eingeloggter Account -> Gast-Modus ohne Speicher!
@@ -499,7 +534,8 @@
       authMethod: "guest",
       hasInitData: false,
       chatId: "guest",
-      user: null
+      user: null,
+      authFailureReason: failureReasons.length > 0 ? failureReasons.join(",") : "no_credentials"
     };
   }
 

@@ -2601,8 +2601,30 @@
             '</div>')
           : '';
 
+        const authAbortBannerHtml = j.authAbortError
+          ? ('<div style="background:rgba(220,38,38,0.18);border:1px solid rgba(248,113,113,0.6);border-radius:10px;padding:12px 14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
+              '<div style="font-size:12.5px;color:#fecaca;line-height:1.45">' +
+                '<div style="font-weight:800;color:#fff;margin-bottom:3px">⛔ Import sofort gestoppt (HTTP ' + esc(String(j.authAbortError.status || 403)) + ')</div>' +
+                esc(j.authAbortError.message || "Keine gültige Admin-Authentifizierung.") +
+                (j.authAbortError.telegramId ? (' <span style="opacity:0.85">[Telegram-ID: <code>' + esc(String(j.authAbortError.telegramId)) + '</code>]</span>') : '') +
+              '</div>' +
+              '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+                '<button type="button" class="btn blue" style="padding:6px 11px;font-size:12px" onclick="openAccountModal()">🔐 Neu anmelden</button>' +
+              '</div>' +
+            '</div>')
+          : '';
+
+        const circuitBreakerBannerHtml = (!j.authAbortError && j.circuitBreakerNotice)
+          ? ('<div style="background:rgba(245,158,11,0.16);border:1px solid rgba(251,191,36,0.55);border-radius:10px;padding:11px 13px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">' +
+              '<div style="font-size:12px;color:#fde68a;line-height:1.45">' + esc(j.circuitBreakerNotice) + '</div>' +
+              '<button type="button" class="btn green" style="padding:6px 11px;font-size:12px" onclick="startOrResumeBackupImport()">▶️ Fortsetzen</button>' +
+            '</div>')
+          : '';
+
         mount.innerHTML =
           '<div class="backup-cockpit-box">' +
+            authAbortBannerHtml +
+            circuitBreakerBannerHtml +
             checkpointBannerHtml +
             (j.repaired ? (
               '<div style="background:rgba(2,132,199,0.14);border:1px solid rgba(14,165,233,0.4);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:var(--text)">' +

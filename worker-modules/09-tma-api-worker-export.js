@@ -315,7 +315,15 @@
       } catch (e) {}
       const isLocalSandboxRuntime = typeof window !== "undefined" && typeof document !== "undefined";
       const guestMemSettings = isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || {}) : {};
-      const baseUserSettings = auth.isAuthenticated
+      const skipUserSettingsRead =
+        path === "/api/tma/admin/import-batch" ||
+        path === "/api/tma/admin/import-logs" ||
+        path === "/api/tma/admin/import-checkpoint" ||
+        path === "/api/tma/admin/catalog-preseed" ||
+        path === "/api/tma/auth/init" ||
+        path === "/api/tma/auth/me" ||
+        path === "/api/tma/anti-spam-queue";
+      const baseUserSettings = (auth.isAuthenticated && !skipUserSettingsRead)
         ? await getUserSettings(env, chatId)
         : { filtersActive: true, showUnreleased: false, ...guestMemSettings };
       const settings = (clientHeaderSettings && typeof clientHeaderSettings === "object")
@@ -344,8 +352,9 @@
           return new Response(JSON.stringify({ ok: false, error: "Keine Telegram initData oder Launch-Token übermittelt." }), { status: 400, headers: corsHeaders });
         }
 
+        const effBotToken = String(env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN || "").trim();
         if (rawInit) {
-          const verified = await verifyTelegramInitDataHmac(rawInit, env.TELEGRAM_BOT_TOKEN, env);
+          const verified = await verifyTelegramInitDataHmac(rawInit, effBotToken, env);
           if (verified.ok && verified.user) {
             const userProfile = await upsertTelegramUserInD1(env, verified.user);
             const sessionToken = await signTmaSessionToken({
@@ -366,7 +375,12 @@
             }), { status: 200, headers: corsHeaders });
           }
           if (!rawLaunch) {
-            return new Response(JSON.stringify({ ok: false, error: verified.error || "initData Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
+            return new Response(JSON.stringify({
+              ok: false,
+              code: verified.reasonCode || "INIT_DATA_INVALID",
+              reasonCode: verified.reasonCode || "INIT_DATA_INVALID",
+              error: verified.error || "initData Validierung fehlgeschlagen."
+            }), { status: 401, headers: corsHeaders });
           }
         }
 
@@ -397,10 +411,15 @@
               sessionToken
             }), { status: 200, headers: corsHeaders });
           }
-          return new Response(JSON.stringify({ ok: false, error: verifiedLaunch?.error || "Chat-Button Launch-Token abgelaufen oder ungültig." }), { status: 401, headers: corsHeaders });
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "LAUNCH_TOKEN_INVALID",
+            reasonCode: "LAUNCH_TOKEN_INVALID",
+            error: verifiedLaunch?.error || "Chat-Button Launch-Token abgelaufen oder ungültig."
+          }), { status: 401, headers: corsHeaders });
         }
 
-        return new Response(JSON.stringify({ ok: false, error: "Authentifizierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
+        return new Response(JSON.stringify({ ok: false, code: "AUTH_FAILED", error: "Authentifizierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
       }
 
       // 2. Aktuellen Session-Status abfragen
@@ -410,6 +429,8 @@
           isAuthenticated: auth.isAuthenticated,
           isGuest: auth.isGuest,
           hasInitData: auth.hasInitData,
+          authMethod: auth.authMethod || "guest",
+          authFailureReason: auth.authFailureReason || "",
           user: auth.user
         }), { status: 200, headers: corsHeaders });
       }
@@ -418,7 +439,7 @@
       if (path === "/api/tma/auth/telegram-widget" && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
         const widgetData = (body && typeof body.user === "object" && body.user !== null) ? body.user : body;
-        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN, env);
+        const verified = await verifyTelegramLoginWidgetHmac(widgetData, env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN, env);
         if (!verified.ok || !verified.user) {
           return new Response(JSON.stringify({ ok: false, error: verified.error || "Telegram Login-Widget Validierung fehlgeschlagen." }), { status: 401, headers: corsHeaders });
         }
@@ -784,8 +805,32 @@
 
       // 5. Admin-Panel Endpunkte (User-Liste, VIP-Status Toggle, Smart Playlist Manager, Film/Serien CRUD & 100k+ Backup-Importer)
       if (path.startsWith("/api/tma/admin/")) {
-        if (!auth.isAuthenticated || !auth.user?.isAdmin) {
-          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur für autorisierte Telegram-Admins." }), { status: 403, headers: corsHeaders });
+        const configuredAdminSet = typeof getConfiguredAdminIdSet === "function" ? getConfiguredAdminIdSet(env) : new Set();
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "AUTH_REQUIRED",
+            error: "Sitzung abgelaufen oder nicht angemeldet. Bitte neu einloggen.",
+            diagnostics: {
+              telegramId: null,
+              authMethod: auth.authMethod || "guest",
+              authFailureReason: auth.authFailureReason || "no_credentials",
+              hasAdminEnvConfigured: configuredAdminSet.size > 0
+            }
+          }), { status: 401, headers: corsHeaders });
+        }
+        if (!auth.user?.isAdmin) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "ADMIN_REQUIRED",
+            error: "Zugriff verweigert: Deine Telegram-ID ist nicht als Admin autorisiert.",
+            diagnostics: {
+              telegramId: String(auth.user?.telegramId || auth.chatId || ""),
+              authMethod: auth.authMethod || "unknown",
+              authFailureReason: "not_in_admin_ids",
+              hasAdminEnvConfigured: configuredAdminSet.size > 0
+            }
+          }), { status: 403, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/validate-channel" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
@@ -1456,16 +1501,22 @@
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          const activeSpeedProf = await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
-          const isPaidProf = activeSpeedProf?.id === "paid_highspeed";
+          if (body.deferKvWrite && !body.isFinalBatch) {
+            globalThis.__DEFER_KV_FLUSH_FOR_REQUEST = true;
+          }
+          const directSpeedProf = (typeof body.speedProfile === "string" && WORKER_SPEED_PROFILES[body.speedProfile])
+            ? WORKER_SPEED_PROFILES[body.speedProfile]
+            : null;
+          const activeSpeedProf = directSpeedProf || await getWorkerSpeedProfile(env, body.speedProfile || null).catch(() => WORKER_SPEED_PROFILES.free_turbo);
+          const isPaidProf = activeSpeedProf?.id === "paid_pro" || activeSpeedProf?.id === "paid_highspeed";
           const incomingArr = Array.isArray(body.entries) ? body.entries : [];
           const preResolvedCount = incomingArr.filter(e => e && (e.tmdb_id || e.tmdbId)).length;
           const isPreResolvedBatch = Boolean(body.isPreResolvedFastBatch || (incomingArr.length > 0 && preResolvedCount >= Math.ceil(incomingArr.length * 0.7)));
           const maxSliceCap = isPaidProf
-            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24) + 8), 32)
+            ? Math.min(Math.max(8, Number(activeSpeedProf?.batchSize || 24)), 28)
             : isPreResolvedBatch
-              ? 24
-              : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 5) + 3), 10);
+              ? 8
+              : Math.min(Math.max(1, Number(activeSpeedProf?.batchSize || 4)), 5);
           const rawEntries = incomingArr.slice(0, maxSliceCap);
           if (rawEntries.length === 0) {
             return new Response(JSON.stringify({ ok: false, error: "Keine Einträge im Batch." }), { status: 400, headers: corsHeaders });
@@ -1485,7 +1536,11 @@
             }
             if (savedCh && savedCh.channelId) verifiedChannelId = String(savedCh.channelId);
           }
+          const skipFullChannelReParse = Boolean(body.alreadyNormalized && verifiedChannelId);
           const entries = rawEntries.map(item => {
+            if (skipFullChannelReParse && item && typeof item === "object" && item.chat_id && item.telegram_file_id && !String(item.telegram_file_id).startsWith("tg_export_0_")) {
+              return item;
+            }
             const entryCopy = { ...item };
             const itemParsedCh = parseAndNormalizeTelegramChannelInput(String(entryCopy.chat_id || verifiedChannelId || ""));
             const effCh = itemParsedCh.channelId || verifiedChannelId;
@@ -1555,6 +1610,7 @@
               playlistMode: playlistFolder.playlistMode || playlistMode,
               speedProfile: activeSpeedProf.id,
               deferKvWrite: true,
+              alreadySorted: Boolean(body.alreadySorted),
               isFinalBatch: body.isFinalBatch === undefined ? true : Boolean(body.isFinalBatch)
             }
           );
@@ -2446,9 +2502,13 @@
           const scope = String(body.scope || "single_episode"); // "single_episode" | "entire_series"
           const oldTypeCode = body.oldTypeCode === "m" ? "m" : "s";
           const oldTmdbId = Number(body.seriesId || body.oldTmdbId || 0);
-          const oldSeason = Math.max(1, Number(body.oldSeason || 1));
+          const oldSeason = (body.oldSeason !== undefined && body.oldSeason !== null && body.oldSeason !== "")
+            ? Math.max(0, Number(body.oldSeason))
+            : 1;
           const oldEpisode = Math.max(1, Number(body.oldEpisode || 1));
-          const newSeason = Math.max(1, Number(body.newSeason || oldSeason));
+          const newSeason = (body.newSeason !== undefined && body.newSeason !== null && body.newSeason !== "")
+            ? Math.max(0, Number(body.newSeason))
+            : oldSeason;
           const newEpisode = Math.max(1, Number(body.newEpisode || oldEpisode));
           const telegramFileId = String(body.telegramFileId || "").trim();
           const newVersionLabel = normalizeCompactVersionTags(body.newVersionLabel || "Originalfassung") || "Originalfassung";
@@ -2700,10 +2760,19 @@
             }
 
             for (const f of filesToRelink) {
+              const destSeason = (scope === "entire_series" && oldTypeCode === "s" && f.season_number !== undefined && f.season_number !== null)
+                ? Math.max(0, Number(f.season_number))
+                : newSeason;
+              const destEpisode = (scope === "entire_series" && oldTypeCode === "s" && f.episode_number !== undefined && f.episode_number !== null)
+                ? Math.max(1, Number(f.episode_number))
+                : newEpisode;
+              const resolvedEpTitle = (scope === "entire_series" && oldTypeCode === "s")
+                ? (f.episode_title || `Folge ${destEpisode}`)
+                : targetEpTitle;
               const filePayload = {
                 fileId: f.telegram_file_id,
                 fileUniqueId: f.telegram_unique_id || null,
-                episodeTitle: targetEpTitle,
+                episodeTitle: resolvedEpTitle,
                 quality: f.quality || "1080p",
                 codec: f.codec || "x264",
                 part: f.part || null,
@@ -2716,8 +2785,6 @@
                 messageLink: f.message_link || ""
               };
               if (newTypeCode === "s") {
-                const destSeason = scope === "entire_series" && oldTypeCode === "s" ? Number(f.season_number || newSeason) : newSeason;
-                const destEpisode = scope === "entire_series" && oldTypeCode === "s" ? Number(f.episode_number || newEpisode) : newEpisode;
                 await saveEpisodeFileToD1(env, newTmdbId, destSeason, destEpisode, filePayload);
               } else {
                 await saveMovieFileToD1(env, newTmdbId, filePayload);
@@ -2727,12 +2794,22 @@
               if (scope === "single_episode" && (oldTmdbId !== newTmdbId || oldTypeCode !== newTypeCode || oldSeason !== newSeason || oldEpisode !== newEpisode)) {
                 if (oldTypeCode === "s") {
                   await removeOldEpisodeFileRecord(f.telegram_file_id);
-                } else if (db) {
-                  try {
-                    await db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_file_id = ?2")
-                      .bind(oldTmdbId, f.telegram_file_id)
-                      .run();
-                  } catch (e) {}
+                } else {
+                  const normMovieFid = normalizeExportFileIdChannel(f.telegram_file_id);
+                  const memMovieKey = `d1_movie_files_${oldTmdbId}`;
+                  const existingMovieMem = Array.isArray(memoryFallback.get(memMovieKey)) ? memoryFallback.get(memMovieKey) : [];
+                  memoryFallback.set(
+                    memMovieKey,
+                    existingMovieMem.filter(x => x && String(x.telegram_file_id) !== String(f.telegram_file_id) && (!normMovieFid || String(x.telegram_file_id) !== normMovieFid))
+                  );
+                  memoryFallback.delete(`d1_movie_best_quality_${oldTmdbId}`);
+                  if (db) {
+                    try {
+                      await db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND (telegram_file_id = ?2 OR telegram_file_id = ?3)")
+                        .bind(oldTmdbId, f.telegram_file_id, normMovieFid || f.telegram_file_id)
+                        .run();
+                    } catch (e) {}
+                  }
                 }
               }
             }
@@ -3371,9 +3448,11 @@
         if (!isMovie && Array.isArray(seriesEpisodeFiles) && seriesEpisodeFiles.length > 0) {
           const epSetsBySeason = new Map();
           for (const ef of seriesEpisodeFiles) {
-            const sn = Number(ef.season_number || 1);
+            const sn = (ef.season_number !== undefined && ef.season_number !== null && ef.season_number !== "")
+              ? Number(ef.season_number)
+              : 1;
             const en = Number(ef.episode_number || 1);
-            if (sn > 0) {
+            if (sn >= 0) {
               if (!epSetsBySeason.has(sn)) epSetsBySeason.set(sn, new Set());
               epSetsBySeason.get(sn).add(en);
             }
@@ -3383,7 +3462,7 @@
           }
         }
         const vipSeasonsSorted = Object.keys(seasonCounts).map(Number).filter(n => n > 0).sort((a, b) => a - b);
-        const firstVipSeason = vipSeasonsSorted[0] || 1;
+        const firstVipSeason = vipSeasonsSorted[0] ?? (Number(seasonCounts[0] || 0) > 0 ? 0 : 1);
         const isSaved = Boolean(matchedSavedItem);
         const candidateKeys = Array.isArray(resolvedTrailersPack?.keys) && resolvedTrailersPack.keys.length > 0
           ? resolvedTrailersPack.keys
@@ -3590,6 +3669,7 @@
           wrong_media: "🎬 Falscher Film / Falsche Serie",
           wrong_episode: "🔢 Falsche Staffel- oder Folgennummer",
           broken_video: "❌ Video defekt / Lädt nicht",
+          audio_sub: "🔇 Tonspur / Sprache fehlt oder asynchron",
           other: "💬 Sonstiges"
         };
         const reasonCode = String(body.reasonCode || "other").trim();
@@ -3631,12 +3711,13 @@
         const epTitleMap = d1SeasonMeta?.episodeTitleMap || new Map();
 
         const seasonSet = new Set(
-          (sDetails?.seasons || []).filter(s => s && Number(s.season_number) > 0).map(s => Number(s.season_number))
+          (sDetails?.seasons || []).filter(s => s && (Number(s.season_number) > 0 || (Number(s.season_number) === 0 && (Number(seasonCounts[0] || 0) > 0 || seasonNum === 0)))).map(s => Number(s.season_number))
         );
         for (const sKey of Object.keys(seasonCounts)) {
           const sn = Number(sKey);
-          if (sn > 0) seasonSet.add(sn);
+          if (sn > 0 || (sn === 0 && Number(seasonCounts[0] || 0) > 0)) seasonSet.add(sn);
         }
+        if (seasonNum === 0) seasonSet.add(0);
         if (seasonSet.size === 0) seasonSet.add(1);
         const seasons = Array.from(seasonSet).sort((a, b) => a - b);
 
@@ -4125,6 +4206,7 @@
               queued: true,
               targetChat,
               job: queued429,
+              ...await resolveOpenMessageInfo(null),
               antiSpam: getAntiSpamSnapshot(env, targetChat)
             }), { status: 200, headers: corsHeaders });
           }
@@ -4323,8 +4405,20 @@
       }
 
       if (path === "/api/tma/anti-spam-queue") {
-        if (!auth.isAuthenticated || (!auth.user?.isAdmin && !hasVipStreamAccess)) {
-          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Anmeldung erforderlich." }), { status: 403, headers: corsHeaders });
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "AUTH_REQUIRED",
+            error: "Anmeldung erforderlich (HTTP 401).",
+            authFailureReason: auth.authFailureReason || "no_credentials"
+          }), { status: 401, headers: corsHeaders });
+        }
+        if (!auth.user?.isAdmin && !hasVipStreamAccess) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "VIP_OR_ADMIN_REQUIRED",
+            error: "Zugriff verweigert: VIP- oder Admin-Status erforderlich."
+          }), { status: 403, headers: corsHeaders });
         }
         if (!antiSpamState.hydratedFromStorage) {
           await hydrateAntiSpamStateFromStorage(env);
@@ -4571,20 +4665,34 @@
             const item = list[targetIdx];
             const oldUid = item.uid;
             const oldFolderId = item.folderId || null;
-            const defaultCat = (item.contentType === "series" || item.contentType === "episode") ? "cat_series" : "cat_movies";
+            const isEpisodeItem = item.contentType === "episode";
+            const defaultCat = (item.contentType === "series" || isEpisodeItem) ? "cat_series" : "cat_movies";
             const nextFolderId = (body.targetFolderId && body.targetFolderId !== "root") ? String(body.targetFolderId) : defaultCat;
-            const prefix = (item.contentType === "series" || item.contentType === "episode") ? "s" : "m";
+            const prefix = (item.contentType === "series" || isEpisodeItem) ? "s" : "m";
             const baseId = item.tmdbId || item.seriesId || Date.now();
-            const nextUid = (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series")
-              ? `${prefix}_${baseId}_${nextFolderId}`
-              : `${prefix}_${baseId}`;
+            const isCustomDestFolder = Boolean(nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series");
+            let nextUid;
+            if (isEpisodeItem) {
+              const sNum = item.seasonNumber != null ? Number(item.seasonNumber) : 1;
+              const eNum = item.episodeNumber != null ? Number(item.episodeNumber) : 1;
+              const epBaseUid = `ep_${item.seriesId || baseId}_${sNum}_${eNum}`;
+              nextUid = isCustomDestFolder ? `${epBaseUid}_${nextFolderId}` : epBaseUid;
+            } else {
+              nextUid = isCustomDestFolder ? `${prefix}_${baseId}_${nextFolderId}` : `${prefix}_${baseId}`;
+            }
             if (oldFolderId && oldFolderId !== nextFolderId) {
               await deletePlaylistItemFromD1(env, targetChatId, oldUid, oldFolderId);
             }
             item.folderId = nextFolderId;
             item.uid = nextUid;
-            list[targetIdx] = item;
-            if (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series") {
+            const duplicateIdx = list.findIndex((i, idx) => idx !== targetIdx && String(i.uid) === String(nextUid));
+            if (duplicateIdx !== -1) {
+              list[duplicateIdx] = item;
+              list.splice(targetIdx, 1);
+            } else {
+              list[targetIdx] = item;
+            }
+            if (isCustomDestFolder) {
               await batchUpsertPlaylistItemsInD1(env, targetChatId, nextFolderId, [item]);
             }
             await saveRawList(env, targetChatId, list);
@@ -5081,7 +5189,8 @@
           const configuredWebhookBase = resolveCleanWorkerOrigin(env, url.origin);
           const officialWebhookEndpoint = `${configuredWebhookBase}/webhook`;
           if (url.pathname === "/setwebhook" || url.searchParams.get("setwebhook") === "1") {
-            if (!env.TELEGRAM_BOT_TOKEN) {
+            const effBotToken = String(env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN || "").trim();
+            if (!effBotToken) {
               return new Response(JSON.stringify({
                 ok: false,
                 error: "TELEGRAM_BOT_TOKEN ist in diesem Worker nicht als Secret hinterlegt.",
@@ -5097,15 +5206,41 @@
             const activeSetWhSecret = String(webhookSecurity?.secretToken || "").trim();
             const incomingWhHeader = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
             const incomingWhQuery = String(url.searchParams.get("secret") || "").trim();
+            const incomingTokenQuery = String(url.searchParams.get("token") || "").trim();
             const eqSecret = typeof timingSafeEqualStr === "function" ? timingSafeEqualStr : ((a, b) => a === b);
             const hasValidWhSecret = Boolean(activeSetWhSecret && (eqSecret(incomingWhHeader, activeSetWhSecret) || eqSecret(incomingWhQuery, activeSetWhSecret)));
-            const whAdminAuth = hasValidWhSecret ? null : await resolveTmaAuthContext(request, env).catch(() => null);
-            if (!hasValidWhSecret && !(whAdminAuth?.isAuthenticated && whAdminAuth?.user?.isAdmin)) {
+            let hasValidQueryAdminToken = false;
+            if (!hasValidWhSecret && incomingTokenQuery && typeof verifyTmaSessionToken === "function") {
+              const qPayload = await verifyTmaSessionToken(incomingTokenQuery, env).catch(() => null);
+              if (qPayload && qPayload.tid) {
+                const qTid = String(qPayload.tid);
+                if (typeof isAuthorizedAdminId === "function" && isAuthorizedAdminId(env, qTid)) {
+                  hasValidQueryAdminToken = true;
+                } else {
+                  const qUser = await getUserByTelegramIdFromD1(env, qTid).catch(() => null);
+                  if (qUser && Number(qUser.is_admin) === 1) hasValidQueryAdminToken = true;
+                }
+              }
+            }
+            const whAdminAuth = (hasValidWhSecret || hasValidQueryAdminToken)
+              ? null
+              : await resolveTmaAuthContext(request, env).catch(() => null);
+            const isWhAdmin = Boolean(hasValidWhSecret || hasValidQueryAdminToken || (whAdminAuth?.isAuthenticated && whAdminAuth?.user?.isAdmin));
+            if (!isWhAdmin) {
+              const isAuthedNonAdmin = Boolean(whAdminAuth?.isAuthenticated && !whAdminAuth?.user?.isAdmin);
               return new Response(JSON.stringify({
                 ok: false,
-                error: "Unauthorized: Admin-Authentifizierung oder gültiges Webhook-Secret (?secret=...) erforderlich."
+                code: isAuthedNonAdmin ? "ADMIN_REQUIRED" : "AUTH_REQUIRED",
+                error: isAuthedNonAdmin
+                  ? "Zugriff verweigert: Angemeldete Telegram-ID ist kein Admin."
+                  : "Unauthorized: Admin-Session (Bearer / ?token=...) oder Webhook-Secret (?secret=...) erforderlich.",
+                diagnostics: {
+                  hasWebhookSecretConfigured: Boolean(activeSetWhSecret),
+                  authFailureReason: whAdminAuth?.authFailureReason || (incomingWhQuery ? "webhook_secret_mismatch" : "no_credentials"),
+                  telegramId: whAdminAuth?.user?.telegramId || null
+                }
               }, null, 2), {
-                status: 403,
+                status: isAuthedNonAdmin ? 403 : 401,
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
@@ -5124,7 +5259,7 @@
             if (activeSetWhSecret) {
               whPayload.secret_token = activeSetWhSecret;
             }
-            const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+            const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/setWebhook`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(whPayload)
@@ -5133,7 +5268,7 @@
             let liveInfo = null;
             if (whJson?.ok) {
               try {
-                const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`, {}, 4500);
+                const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/getWebhookInfo`, {}, 4500);
                 const infoJson = await infoRes.json().catch(() => ({}));
                 if (infoJson?.ok && infoJson?.result) liveInfo = infoJson.result;
               } catch (_e) {}
@@ -5225,10 +5360,14 @@
         }
         return new Response("OK", { status: 200 });
       } finally {
-        if (ctx && typeof ctx.waitUntil === "function") {
-          ctx.waitUntil(flushDirtyKvBatch(env).catch(() => {}));
-        } else {
-          await flushDirtyKvBatch(env).catch(() => {});
+        const deferKvFlush = Boolean(globalThis.__DEFER_KV_FLUSH_FOR_REQUEST);
+        globalThis.__DEFER_KV_FLUSH_FOR_REQUEST = false;
+        if (!deferKvFlush) {
+          if (ctx && typeof ctx.waitUntil === "function") {
+            ctx.waitUntil(flushDirtyKvBatch(env).catch(() => {}));
+          } else {
+            await flushDirtyKvBatch(env).catch(() => {});
+          }
         }
       }
     },

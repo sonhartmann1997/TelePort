@@ -1178,12 +1178,40 @@
     return true;
   }
 
+  function getConfiguredAdminIdSet(env) {
+    const candidates = [
+      env?.ADMIN_IDS,
+      env?.ADMIN_ID,
+      env?.TELEGRAM_ADMIN_IDS,
+      env?.TELEGRAM_ADMIN_ID,
+      env?.ADMIN_TELEGRAM_IDS,
+      env?.ADMIN_TELEGRAM_ID,
+      env?.ADMIN_USER_IDS,
+      env?.ADMIN_USER_ID,
+      env?.ADMIN_CHAT_ID,
+      env?.ADMIN_CHAT_IDS,
+      env?.OWNER_ID
+    ];
+    const set = new Set();
+    for (const raw of candidates) {
+      if (raw === undefined || raw === null) continue;
+      const cleaned = String(raw).replace(/[\[\]"']/g, " ").trim();
+      if (!cleaned) continue;
+      for (const token of cleaned.split(/[\s,;]+/)) {
+        const idStr = token.trim();
+        if (idStr) set.add(idStr);
+      }
+    }
+    return set;
+  }
+
   function isAuthorizedAdminId(env, telegramId) {
     if (!telegramId) return false;
-    const rawList = String(env?.ADMIN_IDS || env?.TELEGRAM_ADMIN_IDS || env?.ADMIN_TELEGRAM_IDS || env?.ADMIN_CHAT_ID || "").trim();
-    if (!rawList) return false;
-    const allowed = rawList.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
-    return allowed.includes(String(telegramId));
+    const tid = String(telegramId).trim();
+    if (!tid) return false;
+    const allowedSet = getConfiguredAdminIdSet(env);
+    if (allowedSet.size === 0) return false;
+    return allowedSet.has(tid);
   }
 
   async function isTelegramBotAdmin(env, telegramId) {
@@ -1290,11 +1318,16 @@
 
   async function getUserByTelegramIdFromD1(env, telegramId, forceFresh = false) {
     if (!telegramId || telegramId === "guest") return null;
-    const tid = String(telegramId);
+    const tid = String(telegramId).trim();
     const memKey = `d1_user_${tid}`;
+    const envIsAdmin = isAuthorizedAdminId(env, tid);
     const cached = memoryFallback.get(memKey);
     // RAM-First Cache (5 Minuten gültig): Verhindert einen D1-Read bei jedem einzelnen /api/tma/* Aufruf!
     if (!forceFresh && cached && cached.telegram_id && (Date.now() - Number(cached._cachedAt || 0)) < 300000) {
+      if (envIsAdmin && !Number(cached.is_admin)) {
+        cached.is_admin = 1;
+        cached.is_vip = 1;
+      }
       return cached;
     }
     const db = await ensureD1Schema(env);
@@ -1306,12 +1339,20 @@
           .bind(tid)
           .first();
         if (row) {
+          if (envIsAdmin && !Number(row.is_admin)) {
+            row.is_admin = 1;
+            row.is_vip = 1;
+          }
           row._cachedAt = Date.now();
           row._d1SyncedAt = Date.now();
           memoryFallback.set(memKey, row);
           return row;
         }
       } catch (e) {}
+    }
+    if (cached && envIsAdmin && !Number(cached.is_admin)) {
+      cached.is_admin = 1;
+      cached.is_vip = 1;
     }
     return cached || null;
   }
@@ -1886,10 +1927,8 @@
 
   async function notifyAdminsOnTelegramForReport(env, report) {
     try {
-      const rawAdmins = String(env?.ADMIN_CHAT_ID || env?.ADMIN_IDS || env?.ADMIN_TELEGRAM_IDS || "").trim();
-      if (!rawAdmins || !env?.TELEGRAM_BOT_TOKEN) return;
-      const adminIds = Array.from(new Set(rawAdmins.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean)));
-      if (adminIds.length === 0) return;
+      const adminIds = Array.from(getConfiguredAdminIdSet(env));
+      if (adminIds.length === 0 || !(env?.TELEGRAM_BOT_TOKEN || env?.BOT_TOKEN)) return;
 
       const epTag = report.type_code === "s" && report.season_number
         ? ` • <b>S${String(report.season_number).padStart(2, "0")}E${String(report.episode_number || 1).padStart(2, "0")}</b>${report.episode_title ? ` (${escapeHtml(report.episode_title)})` : ""}`
@@ -2696,8 +2735,8 @@
         : [...memDownloads];
       const nextDownloads = [
         dlEntry,
-        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid && !(Number(d.season_number || 1) === sNum && Number(d.episode_number || 1) === eNum && Number(d.part_number || 1) === partNumber && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0"))
-      ].sort((a, b) => (Number(a.season_number || 1) - Number(b.season_number || 1)) || (Number(a.episode_number || 1) - Number(b.episode_number || 1)) || (Number(a.part_number || 1) - Number(b.part_number || 1)));
+        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid && !(Number(d.season_number ?? 1) === sNum && Number(d.episode_number || 1) === eNum && Number(d.part_number || 1) === partNumber && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0"))
+      ].sort((a, b) => (Number(a.season_number ?? 1) - Number(b.season_number ?? 1)) || (Number(a.episode_number || 1) - Number(b.episode_number || 1)) || (Number(a.part_number || 1) - Number(b.part_number || 1)));
       memoryFallback.set(`d1_series_downloads_${sid}`, nextDownloads);
       if (existingSeries) {
         existingSeries.downloads = nextDownloads;
@@ -3358,7 +3397,7 @@
               updated_at = excluded.updated_at
           `).bind(
             Number(newSid),
-            Number(ep.season_number || 1),
+            ep.season_number != null ? Number(ep.season_number) : 1,
             Number(ep.episode_number || 1),
             String(ep.telegram_file_id),
             ep.telegram_unique_id || null,
@@ -3667,8 +3706,8 @@
             : Promise.resolve({ results: [] })
         ]);
         for (const r of (sRes?.results || [])) {
-          const sn = Number(r.season_number || 1);
-          if (sn > 0) seasonCounts[sn] = Number(r.ep_cnt || 0);
+          const sn = r.season_number != null ? Number(r.season_number) : 1;
+          if (sn >= 0) seasonCounts[sn] = Number(r.ep_cnt || 0);
         }
         for (const r of (epRes?.results || [])) {
           const en = Number(r.episode_number || 1);
@@ -3685,8 +3724,9 @@
     }
     for (const [k, v] of memoryFallback.entries()) {
       if (k.startsWith(`d1_ep_files_${sid}_`) && Array.isArray(v)) {
-        const sn = Number(k.split("_").pop() || 1);
-        if (sn > 0) {
+        const rawSn = k.split("_").pop();
+        const sn = (rawSn !== undefined && rawSn !== "") ? Number(rawSn) : 1;
+        if (sn >= 0) {
           const distinctEps = new Set(v.map(x => Number(x?.episode_number || 1)));
           seasonCounts[sn] = Math.max(seasonCounts[sn] || 0, distinctEps.size);
           if (seasonNumber !== null && sn === Number(seasonNumber)) {
@@ -3795,9 +3835,9 @@
         }
         for (const ef of (efRes?.results || [])) {
           const sid = Number(ef?.series_id || 0);
-          const sNum = Number(ef?.season_number || 1);
+          const sNum = ef?.season_number != null ? Number(ef.season_number) : 1;
           const eNum = Number(ef?.episode_number || 0);
-          if (!sid || !sNum || eNum <= 0) continue;
+          if (!sid || sNum <= 0 || eNum <= 0) continue;
           allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
           if (!uploadedBySeriesSeason.has(key)) uploadedBySeriesSeason.set(key, new Map());
@@ -3829,7 +3869,7 @@
       } else if (k.startsWith("d1_ep_files_") && Array.isArray(v)) {
         const parts = k.replace("d1_ep_files_", "").split("_");
         const sid = Number(parts[0] || 0);
-        const sNum = Number(parts[1] || 1);
+        const sNum = (parts[1] !== undefined && parts[1] !== "") ? Number(parts[1]) : 1;
         if (sid > 0 && sNum > 0) {
           allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
@@ -4209,7 +4249,9 @@
   async function getEpisodeFilesFromD1(env, seriesId, seasonNumber, episodeNumber = null) {
     if (!seriesId) return [];
     const sid = Number(seriesId);
-    const sNum = Number(seasonNumber || 1);
+    const sNum = (seasonNumber !== undefined && seasonNumber !== null && seasonNumber !== "")
+      ? Math.max(0, Number(seasonNumber))
+      : 1;
     const memKey = `d1_ep_files_${sid}_${sNum}`;
     if (episodeNumber !== null) {
       const eNum = Number(episodeNumber);
@@ -5764,7 +5806,7 @@
               matchedBy: "file_id",
               typeCode: "s",
               tmdbId: Number(r.series_id),
-              season: Number(r.season_number || 1),
+              season: r.season_number != null ? Number(r.season_number) : 1,
               episode: Number(r.episode_number || 1),
               confidence: 100,
               source: "D1 (Datei-ID)"
@@ -6636,7 +6678,7 @@
         const epFilesRes = await db.prepare("SELECT * FROM episode_files WHERE series_id = ?1").bind(oldId).all();
         const epFiles = Array.isArray(epFilesRes?.results) ? epFilesRes.results : [];
         for (const f of epFiles) {
-          await saveEpisodeFileToD1(env, newId, f.season_number || 1, f.episode_number || 1, {
+          await saveEpisodeFileToD1(env, newId, f.season_number != null ? Number(f.season_number) : 1, f.episode_number || 1, {
             fileId: f.telegram_file_id,
             fileUniqueId: f.telegram_unique_id,
             fileFingerprint: f.file_fingerprint,
@@ -6667,6 +6709,21 @@
         ];
         await db.batch(stmts);
         memoryFallback.delete(`d1_catalog_series_${oldId}`);
+        memoryFallback.delete(`d1_series_${oldId}`);
+        memoryFallback.delete(`d1_series_best_quality_${oldId}`);
+        memoryFallback.delete(`d1_series_downloads_${oldId}`);
+        for (const k of Array.from(memoryFallback.keys())) {
+          if (
+            k.startsWith(`d1_ep_files_${oldId}_`) ||
+            k.startsWith(`d1_ep_files_season_ts_${oldId}_`) ||
+            k.startsWith(`d1_ep_files_ts_${oldId}_`) ||
+            k.startsWith(`d1_season_${oldId}_`) ||
+            k.startsWith(`tv_${oldId}`) ||
+            k.startsWith(`tv_season_${oldId}_`)
+          ) {
+            memoryFallback.delete(k);
+          }
+        }
       } else {
         const movFilesRes = await db.prepare("SELECT * FROM movie_files WHERE movie_id = ?1").bind(oldId).all();
         const movFiles = Array.isArray(movFilesRes?.results) ? movFilesRes.results : [];
@@ -6699,6 +6756,12 @@
         ];
         await db.batch(stmts);
         memoryFallback.delete(`d1_catalog_movie_${oldId}`);
+        memoryFallback.delete(`d1_movie_${oldId}`);
+        memoryFallback.delete(`d1_movie_files_${oldId}`);
+        memoryFallback.delete(`d1_movie_files_ts_${oldId}`);
+        memoryFallback.delete(`d1_movie_best_quality_${oldId}`);
+        memoryFallback.delete(`d1_movie_downloads_${oldId}`);
+        memoryFallback.delete(`movie_${oldId}`);
       }
       memoryFallback.delete("d1_local_catalog_title_map_ts");
       memoryFallback.delete("d1_series_gaps_cache");

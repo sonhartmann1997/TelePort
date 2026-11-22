@@ -1474,7 +1474,7 @@
 
                 if (Array.isArray(resolvedVer.series._normalizedGroupSeasons)) {
                   for (const gSeason of resolvedVer.series._normalizedGroupSeasons) {
-                    const gNum = Number(gSeason.season_number || 1);
+                    const gNum = gSeason.season_number != null ? Number(gSeason.season_number) : 1;
                     const normalizedSeasonObj = {
                       id: gSeason.id || `${seriesDetails.id}_${gNum}`,
                       season_number: gNum,
@@ -2678,16 +2678,15 @@
 
   async function processEntriesBatchWithLimit(env, entriesList, onProgressStep = null, playlistContext = null) {
     const batchWallStartMs = Date.now();
-    // MODUL 1.2: Cloudflare Free-Tier Turbo Subrequest-Guard auf 38 und Zeit-Guard auf 6000ms angehoben!
     const speedProfileObj = typeof getWorkerSpeedProfile === "function"
       ? await getWorkerSpeedProfile(env, playlistContext?.speedProfile || null)
-      : { id: "free_turbo", wallClockLimitMs: 6000, subrequestGuard: 38, fallbackMode: "smart_emergency" };
-    const BATCH_WALL_CLOCK_LIMIT_MS = Math.max(6000, Number(speedProfileObj.wallClockLimitMs || 6000));
-    const SUBREQUEST_GUARD_LIMIT = Math.max(38, Number(speedProfileObj.subrequestGuard || 38));
+      : { id: "free_turbo", wallClockLimitMs: 3600, subrequestGuard: 18, fallbackMode: "smart_emergency" };
+    const BATCH_WALL_CLOCK_LIMIT_MS = Math.max(2200, Math.min(8000, Number(speedProfileObj.wallClockLimitMs || 3600)));
+    const SUBREQUEST_GUARD_LIMIT = Math.max(10, Math.min(42, Number(speedProfileObj.subrequestGuard || 18)));
     resetSubrequestBudget();
 
-    // MODUL 1.1: Sortiere messages/entries vor dem Loop zwingend aufsteigend nach msg.id!
-    if (Array.isArray(entriesList) && entriesList.length > 1) {
+    // MODUL 1.1: Sortiere messages/entries vor dem Loop aufsteigend nach msg.id (überspringe wenn Browser bereits sortiert hat)
+    if (!playlistContext?.alreadySorted && Array.isArray(entriesList) && entriesList.length > 1) {
       const hasMsgIds = entriesList.some(e => e && typeof e === "object" && Number(e.msg_id || e.message_id || e.id || 0) > 0);
       if (hasMsgIds) {
         entriesList.sort((a, b) => Number(a?.msg_id || a?.message_id || a?.id || 0) - Number(b?.msg_id || b?.message_id || b?.id || 0));
@@ -4215,7 +4214,7 @@
             const itemObj = list.find(i => String(i.uid) === String(uid));
             if (itemObj) {
               if (itemObj.contentType === "episode" && itemObj.seriesId) {
-                await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber || 1, "all", 1, null);
+                await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber != null ? Number(itemObj.seasonNumber) : 1, "all", 1, null);
               } else {
                 const typeCode = itemObj.contentType === "series" ? "s" : "m";
                 const loadingMsgId = await sendLoadingPlaceholder(env, chatId, `sd_${uid}`, itemObj.title);
@@ -5929,7 +5928,7 @@
           if (itemObj) {
             if (itemObj.contentType === "episode" && itemObj.seriesId) {
               await answerCallbackQuery(cq.id);
-              await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber || 1, "all", 1, msgId);
+              await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber != null ? Number(itemObj.seasonNumber) : 1, "all", 1, msgId);
               return;
             }
             const itemTitle = itemObj.title || "Gespeicherter Titel";

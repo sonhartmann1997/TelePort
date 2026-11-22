@@ -10532,8 +10532,8 @@
         : [...memDownloads];
       const nextDownloads = [
         dlEntry,
-        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid && !(Number(d.season_number || 1) === sNum && Number(d.episode_number || 1) === eNum && Number(d.part_number || 1) === partNumber && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0"))
-      ].sort((a, b) => (Number(a.season_number || 1) - Number(b.season_number || 1)) || (Number(a.episode_number || 1) - Number(b.episode_number || 1)) || (Number(a.part_number || 1) - Number(b.part_number || 1)));
+        ...currentDownloads.filter(d => d && d.telegram_file_id !== normalizedFid && !(Number(d.season_number ?? 1) === sNum && Number(d.episode_number || 1) === eNum && Number(d.part_number || 1) === partNumber && d.file_fingerprint === fileFingerprint && fileFingerprint !== "0_0_0x0"))
+      ].sort((a, b) => (Number(a.season_number ?? 1) - Number(b.season_number ?? 1)) || (Number(a.episode_number || 1) - Number(b.episode_number || 1)) || (Number(a.part_number || 1) - Number(b.part_number || 1)));
       memoryFallback.set(`d1_series_downloads_${sid}`, nextDownloads);
       if (existingSeries) {
         existingSeries.downloads = nextDownloads;
@@ -11194,7 +11194,7 @@
               updated_at = excluded.updated_at
           `).bind(
             Number(newSid),
-            Number(ep.season_number || 1),
+            ep.season_number != null ? Number(ep.season_number) : 1,
             Number(ep.episode_number || 1),
             String(ep.telegram_file_id),
             ep.telegram_unique_id || null,
@@ -11503,8 +11503,8 @@
             : Promise.resolve({ results: [] })
         ]);
         for (const r of (sRes?.results || [])) {
-          const sn = Number(r.season_number || 1);
-          if (sn > 0) seasonCounts[sn] = Number(r.ep_cnt || 0);
+          const sn = r.season_number != null ? Number(r.season_number) : 1;
+          if (sn >= 0) seasonCounts[sn] = Number(r.ep_cnt || 0);
         }
         for (const r of (epRes?.results || [])) {
           const en = Number(r.episode_number || 1);
@@ -11521,8 +11521,9 @@
     }
     for (const [k, v] of memoryFallback.entries()) {
       if (k.startsWith(`d1_ep_files_${sid}_`) && Array.isArray(v)) {
-        const sn = Number(k.split("_").pop() || 1);
-        if (sn > 0) {
+        const rawSn = k.split("_").pop();
+        const sn = (rawSn !== undefined && rawSn !== "") ? Number(rawSn) : 1;
+        if (sn >= 0) {
           const distinctEps = new Set(v.map(x => Number(x?.episode_number || 1)));
           seasonCounts[sn] = Math.max(seasonCounts[sn] || 0, distinctEps.size);
           if (seasonNumber !== null && sn === Number(seasonNumber)) {
@@ -11631,9 +11632,9 @@
         }
         for (const ef of (efRes?.results || [])) {
           const sid = Number(ef?.series_id || 0);
-          const sNum = Number(ef?.season_number || 1);
+          const sNum = ef?.season_number != null ? Number(ef.season_number) : 1;
           const eNum = Number(ef?.episode_number || 0);
-          if (!sid || !sNum || eNum <= 0) continue;
+          if (!sid || sNum <= 0 || eNum <= 0) continue;
           allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
           if (!uploadedBySeriesSeason.has(key)) uploadedBySeriesSeason.set(key, new Map());
@@ -11665,7 +11666,7 @@
       } else if (k.startsWith("d1_ep_files_") && Array.isArray(v)) {
         const parts = k.replace("d1_ep_files_", "").split("_");
         const sid = Number(parts[0] || 0);
-        const sNum = Number(parts[1] || 1);
+        const sNum = (parts[1] !== undefined && parts[1] !== "") ? Number(parts[1]) : 1;
         if (sid > 0 && sNum > 0) {
           allCheckedSeriesIds.add(sid);
           const key = `${sid}_${sNum}`;
@@ -12045,7 +12046,9 @@
   async function getEpisodeFilesFromD1(env, seriesId, seasonNumber, episodeNumber = null) {
     if (!seriesId) return [];
     const sid = Number(seriesId);
-    const sNum = Number(seasonNumber || 1);
+    const sNum = (seasonNumber !== undefined && seasonNumber !== null && seasonNumber !== "")
+      ? Math.max(0, Number(seasonNumber))
+      : 1;
     const memKey = `d1_ep_files_${sid}_${sNum}`;
     if (episodeNumber !== null) {
       const eNum = Number(episodeNumber);
@@ -13600,7 +13603,7 @@
               matchedBy: "file_id",
               typeCode: "s",
               tmdbId: Number(r.series_id),
-              season: Number(r.season_number || 1),
+              season: r.season_number != null ? Number(r.season_number) : 1,
               episode: Number(r.episode_number || 1),
               confidence: 100,
               source: "D1 (Datei-ID)"
@@ -14472,7 +14475,7 @@
         const epFilesRes = await db.prepare("SELECT * FROM episode_files WHERE series_id = ?1").bind(oldId).all();
         const epFiles = Array.isArray(epFilesRes?.results) ? epFilesRes.results : [];
         for (const f of epFiles) {
-          await saveEpisodeFileToD1(env, newId, f.season_number || 1, f.episode_number || 1, {
+          await saveEpisodeFileToD1(env, newId, f.season_number != null ? Number(f.season_number) : 1, f.episode_number || 1, {
             fileId: f.telegram_file_id,
             fileUniqueId: f.telegram_unique_id,
             fileFingerprint: f.file_fingerprint,
@@ -14503,6 +14506,21 @@
         ];
         await db.batch(stmts);
         memoryFallback.delete(`d1_catalog_series_${oldId}`);
+        memoryFallback.delete(`d1_series_${oldId}`);
+        memoryFallback.delete(`d1_series_best_quality_${oldId}`);
+        memoryFallback.delete(`d1_series_downloads_${oldId}`);
+        for (const k of Array.from(memoryFallback.keys())) {
+          if (
+            k.startsWith(`d1_ep_files_${oldId}_`) ||
+            k.startsWith(`d1_ep_files_season_ts_${oldId}_`) ||
+            k.startsWith(`d1_ep_files_ts_${oldId}_`) ||
+            k.startsWith(`d1_season_${oldId}_`) ||
+            k.startsWith(`tv_${oldId}`) ||
+            k.startsWith(`tv_season_${oldId}_`)
+          ) {
+            memoryFallback.delete(k);
+          }
+        }
       } else {
         const movFilesRes = await db.prepare("SELECT * FROM movie_files WHERE movie_id = ?1").bind(oldId).all();
         const movFiles = Array.isArray(movFilesRes?.results) ? movFilesRes.results : [];
@@ -14535,6 +14553,12 @@
         ];
         await db.batch(stmts);
         memoryFallback.delete(`d1_catalog_movie_${oldId}`);
+        memoryFallback.delete(`d1_movie_${oldId}`);
+        memoryFallback.delete(`d1_movie_files_${oldId}`);
+        memoryFallback.delete(`d1_movie_files_ts_${oldId}`);
+        memoryFallback.delete(`d1_movie_best_quality_${oldId}`);
+        memoryFallback.delete(`d1_movie_downloads_${oldId}`);
+        memoryFallback.delete(`movie_${oldId}`);
       }
       memoryFallback.delete("d1_local_catalog_title_map_ts");
       memoryFallback.delete("d1_series_gaps_cache");
@@ -14781,8 +14805,9 @@
     if (seasonData.telegraphUrl && seasonData.telegraphVersion === 2) return seasonData.telegraphUrl;
 
     const seriesTitle = (seriesDetails?.title || `Serie #${seriesId}`).replace(/\s*\(\d{4}\)$/, "").trim();
-    const sNum = seasonData.season_number || 1;
-    const pageTitle = `${seriesTitle} • Staffel ${sNum} (Episoden-Guide)`;
+    const sNum = seasonData.season_number != null ? Number(seasonData.season_number) : 1;
+    const sLabel = sNum === 0 ? "Specials (Staffel 0)" : `Staffel ${sNum}`;
+    const pageTitle = `${seriesTitle} • ${sLabel} (Episoden-Guide)`;
 
     const nodes = [];
     if (seriesDetails?.poster_path) {
@@ -14790,7 +14815,7 @@
         tag: "figure",
         children: [
           { tag: "img", attrs: { src: `https://image.tmdb.org/t/p/original${seriesDetails.poster_path}` } },
-          { tag: "figcaption", children: [`🖼️ Original-Serienposter • ${seriesTitle} (Staffel ${sNum})`] }
+          { tag: "figcaption", children: [`🖼️ Original-Serienposter • ${seriesTitle} (${sLabel})`] }
         ]
       });
     }
@@ -14807,7 +14832,7 @@
 
     nodes.push({
       tag: "aside",
-      children: [`📺 ${seriesTitle}  •  💿 Staffel ${sNum}  •  🎞️ ${seasonData.episodes.length} Episoden`]
+      children: [`📺 ${seriesTitle}  •  💿 ${sLabel}  •  🎞️ ${seasonData.episodes.length} Episoden`]
     });
     nodes.push({ tag: "hr" });
 
@@ -20596,7 +20621,7 @@
       episodesToDisplay = savedEpisodesForSeries.map(ep => ({
         id: ep.tmdbId,
         episode_number: ep.episodeNumber || 1,
-        season_number: ep.seasonNumber || 1,
+        season_number: ep.seasonNumber != null ? Number(ep.seasonNumber) : 1,
         name: ep.episodeName || ep.title,
         air_date: ep.year,
         vote_average: null,
@@ -21435,10 +21460,11 @@
         const deleteConfirmLink = makeBotLink(botUsername, `delc_${item.uid}`);
 
         if (item.contentType === "episode") {
-          const sCode = `S${String(item.seasonNumber || 1).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`;
+          const epSNum = item.seasonNumber != null ? Number(item.seasonNumber) : 1;
+          const sCode = `S${String(epSNum).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`;
           const epTitle = (item.episodeName || item.title || "Episode").trim();
           const openSeriesLink = item.seriesId
-            ? makeBotLink(botUsername, `ep_${item.seriesId}_${item.seasonNumber || 1}_all_1`)
+            ? makeBotLink(botUsername, `ep_${item.seriesId}_${epSNum}_all_1`)
             : makeBotLink(botUsername, `sd_${item.uid}`);
           text +=
             `[🔍](${whereSearchLink}) 🎞️ *[${escapeMd(sCode)} – ${escapeMd(epTitle)}](${openSeriesLink})*\n` +
@@ -21713,8 +21739,9 @@
       return;
     }
 
+    const epSeasonNum = item.seasonNumber != null ? Number(item.seasonNumber) : 1;
     const titleWithYear = item.contentType === "episode"
-      ? `${item.seriesTitle || ""} S${String(item.seasonNumber || 1).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`.trim()
+      ? `${item.seriesTitle || ""} S${String(epSeasonNum).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`.trim()
       : (item.year && item.year !== "K. A." ? `${item.title} ${item.year}` : item.title);
     const tgSearchUrl = `tg://search?query=${safeEncodeParam(titleWithYear)}`;
     const tmdbType = item.contentType === "series" || item.contentType === "episode" ? "tv" : "movie";
@@ -21736,7 +21763,7 @@
         { text: "🔎 In Telegram suchen", url: tgSearchUrl },
         { text: "🌐 Auf TMDB öffnen", url: tmdbUrl }
       ],
-      [{ text: "🤖 Details im Bot öffnen", callback_data: item.contentType === "episode" && item.seriesId ? `ep_${item.seriesId}_${item.seasonNumber || 1}_all_1` : `sd_${item.uid}` }],
+      [{ text: "🤖 Details im Bot öffnen", callback_data: item.contentType === "episode" && item.seriesId ? `ep_${item.seriesId}_${epSeasonNum}_all_1` : `sd_${item.uid}` }],
       [{ text: "🔙 Zurück zur Merkliste", callback_data: "wl_back" }]
     ];
 
@@ -25083,7 +25110,7 @@
 
                 if (Array.isArray(resolvedVer.series._normalizedGroupSeasons)) {
                   for (const gSeason of resolvedVer.series._normalizedGroupSeasons) {
-                    const gNum = Number(gSeason.season_number || 1);
+                    const gNum = gSeason.season_number != null ? Number(gSeason.season_number) : 1;
                     const normalizedSeasonObj = {
                       id: gSeason.id || `${seriesDetails.id}_${gNum}`,
                       season_number: gNum,
@@ -27824,7 +27851,7 @@
             const itemObj = list.find(i => String(i.uid) === String(uid));
             if (itemObj) {
               if (itemObj.contentType === "episode" && itemObj.seriesId) {
-                await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber || 1, "all", 1, null);
+                await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber != null ? Number(itemObj.seasonNumber) : 1, "all", 1, null);
               } else {
                 const typeCode = itemObj.contentType === "series" ? "s" : "m";
                 const loadingMsgId = await sendLoadingPlaceholder(env, chatId, `sd_${uid}`, itemObj.title);
@@ -29538,7 +29565,7 @@
           if (itemObj) {
             if (itemObj.contentType === "episode" && itemObj.seriesId) {
               await answerCallbackQuery(cq.id);
-              await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber || 1, "all", 1, msgId);
+              await showSeriesEpisodes(env, chatId, itemObj.seriesId, itemObj.seasonNumber != null ? Number(itemObj.seasonNumber) : 1, "all", 1, msgId);
               return;
             }
             const itemTitle = itemObj.title || "Gespeicherter Titel";
@@ -54637,7 +54664,7 @@
         if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const metaObj = extraMeta && typeof extraMeta === "object" ? extraMeta : {};
         const isSubtitleOnly = Boolean(metaObj.subtitleOnly);
-        if (!isSubtitleOnly && metaObj.seriesId && metaObj.season && metaObj.episode) {
+        if (!isSubtitleOnly && metaObj.seriesId && metaObj.season !== undefined && metaObj.season !== null && metaObj.episode) {
           setSeriesProgress(metaObj.seriesId, metaObj.season, metaObj.episode, metaObj.epName || "");
         }
         const sizeSuffix = metaObj.fileSize ? (" • " + metaObj.fileSize) : "";
@@ -54669,7 +54696,7 @@
               tmdbId: metaObj.seriesId || state.activeDetails?.id || null,
               posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
               backdropUrl: state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
-              season: metaObj.season || null,
+              season: (metaObj.season !== undefined && metaObj.season !== null && metaObj.season !== "") ? Number(metaObj.season) : null,
               episode: metaObj.episode || null
             })
           });
@@ -54701,7 +54728,7 @@
                 "✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!"
               );
             }
-            if (!isSubtitleOnly && metaObj.seriesId && metaObj.season) {
+            if (!isSubtitleOnly && metaObj.seriesId && metaObj.season !== undefined && metaObj.season !== null && metaObj.season !== "") {
               loadSeason(metaObj.seriesId, metaObj.season, false, false);
             }
           } else {
@@ -55190,7 +55217,9 @@
                 typeCode: "s",
                 tmdbId: seriesId || state.activeDetails?.id || null,
                 posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
-                backdropUrl: ep.still || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || ""
+                backdropUrl: ep.still || ep.still_path || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
+                season: (seasonNum !== undefined && seasonNum !== null && seasonNum !== "") ? Number(seasonNum) : null,
+                episode: ep.episode_number || null
               })
             });
             if (r && r.antiSpam) {
@@ -55241,12 +55270,12 @@
           });
         }
         const vipAllowed = isCurrentUserVip();
-        const cacheKey = seriesId + "_" + seasonNum + "_" + (vipAllowed ? "vip" : "std");
+        const cacheKey = seriesId + "_" + parsedSeasonNum + "_" + (vipAllowed ? "vip" : "std");
         const cachedEntry = !forceRefresh ? clientSeasonCache.get(cacheKey) : null;
         const hasValidCache = Boolean(cachedEntry && (Date.now() - cachedEntry.ts < CLIENT_CACHE_TTL_MS));
         const s = hasValidCache
           ? cachedEntry.data
-          : await apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + seasonNum);
+          : await apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + parsedSeasonNum);
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
         }
@@ -72302,9 +72331,13 @@
           const scope = String(body.scope || "single_episode"); // "single_episode" | "entire_series"
           const oldTypeCode = body.oldTypeCode === "m" ? "m" : "s";
           const oldTmdbId = Number(body.seriesId || body.oldTmdbId || 0);
-          const oldSeason = Math.max(1, Number(body.oldSeason || 1));
+          const oldSeason = (body.oldSeason !== undefined && body.oldSeason !== null && body.oldSeason !== "")
+            ? Math.max(0, Number(body.oldSeason))
+            : 1;
           const oldEpisode = Math.max(1, Number(body.oldEpisode || 1));
-          const newSeason = Math.max(1, Number(body.newSeason || oldSeason));
+          const newSeason = (body.newSeason !== undefined && body.newSeason !== null && body.newSeason !== "")
+            ? Math.max(0, Number(body.newSeason))
+            : oldSeason;
           const newEpisode = Math.max(1, Number(body.newEpisode || oldEpisode));
           const telegramFileId = String(body.telegramFileId || "").trim();
           const newVersionLabel = normalizeCompactVersionTags(body.newVersionLabel || "Originalfassung") || "Originalfassung";
@@ -72556,10 +72589,19 @@
             }
 
             for (const f of filesToRelink) {
+              const destSeason = (scope === "entire_series" && oldTypeCode === "s" && f.season_number !== undefined && f.season_number !== null)
+                ? Math.max(0, Number(f.season_number))
+                : newSeason;
+              const destEpisode = (scope === "entire_series" && oldTypeCode === "s" && f.episode_number !== undefined && f.episode_number !== null)
+                ? Math.max(1, Number(f.episode_number))
+                : newEpisode;
+              const resolvedEpTitle = (scope === "entire_series" && oldTypeCode === "s")
+                ? (f.episode_title || `Folge ${destEpisode}`)
+                : targetEpTitle;
               const filePayload = {
                 fileId: f.telegram_file_id,
                 fileUniqueId: f.telegram_unique_id || null,
-                episodeTitle: targetEpTitle,
+                episodeTitle: resolvedEpTitle,
                 quality: f.quality || "1080p",
                 codec: f.codec || "x264",
                 part: f.part || null,
@@ -72572,8 +72614,6 @@
                 messageLink: f.message_link || ""
               };
               if (newTypeCode === "s") {
-                const destSeason = scope === "entire_series" && oldTypeCode === "s" ? Number(f.season_number || newSeason) : newSeason;
-                const destEpisode = scope === "entire_series" && oldTypeCode === "s" ? Number(f.episode_number || newEpisode) : newEpisode;
                 await saveEpisodeFileToD1(env, newTmdbId, destSeason, destEpisode, filePayload);
               } else {
                 await saveMovieFileToD1(env, newTmdbId, filePayload);
@@ -72583,12 +72623,22 @@
               if (scope === "single_episode" && (oldTmdbId !== newTmdbId || oldTypeCode !== newTypeCode || oldSeason !== newSeason || oldEpisode !== newEpisode)) {
                 if (oldTypeCode === "s") {
                   await removeOldEpisodeFileRecord(f.telegram_file_id);
-                } else if (db) {
-                  try {
-                    await db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND telegram_file_id = ?2")
-                      .bind(oldTmdbId, f.telegram_file_id)
-                      .run();
-                  } catch (e) {}
+                } else {
+                  const normMovieFid = normalizeExportFileIdChannel(f.telegram_file_id);
+                  const memMovieKey = `d1_movie_files_${oldTmdbId}`;
+                  const existingMovieMem = Array.isArray(memoryFallback.get(memMovieKey)) ? memoryFallback.get(memMovieKey) : [];
+                  memoryFallback.set(
+                    memMovieKey,
+                    existingMovieMem.filter(x => x && String(x.telegram_file_id) !== String(f.telegram_file_id) && (!normMovieFid || String(x.telegram_file_id) !== normMovieFid))
+                  );
+                  memoryFallback.delete(`d1_movie_best_quality_${oldTmdbId}`);
+                  if (db) {
+                    try {
+                      await db.prepare("DELETE FROM movie_files WHERE movie_id = ?1 AND (telegram_file_id = ?2 OR telegram_file_id = ?3)")
+                        .bind(oldTmdbId, f.telegram_file_id, normMovieFid || f.telegram_file_id)
+                        .run();
+                    } catch (e) {}
+                  }
                 }
               }
             }
@@ -73227,9 +73277,11 @@
         if (!isMovie && Array.isArray(seriesEpisodeFiles) && seriesEpisodeFiles.length > 0) {
           const epSetsBySeason = new Map();
           for (const ef of seriesEpisodeFiles) {
-            const sn = Number(ef.season_number || 1);
+            const sn = (ef.season_number !== undefined && ef.season_number !== null && ef.season_number !== "")
+              ? Number(ef.season_number)
+              : 1;
             const en = Number(ef.episode_number || 1);
-            if (sn > 0) {
+            if (sn >= 0) {
               if (!epSetsBySeason.has(sn)) epSetsBySeason.set(sn, new Set());
               epSetsBySeason.get(sn).add(en);
             }
@@ -73239,7 +73291,7 @@
           }
         }
         const vipSeasonsSorted = Object.keys(seasonCounts).map(Number).filter(n => n > 0).sort((a, b) => a - b);
-        const firstVipSeason = vipSeasonsSorted[0] || 1;
+        const firstVipSeason = vipSeasonsSorted[0] ?? (Number(seasonCounts[0] || 0) > 0 ? 0 : 1);
         const isSaved = Boolean(matchedSavedItem);
         const candidateKeys = Array.isArray(resolvedTrailersPack?.keys) && resolvedTrailersPack.keys.length > 0
           ? resolvedTrailersPack.keys
@@ -73446,6 +73498,7 @@
           wrong_media: "🎬 Falscher Film / Falsche Serie",
           wrong_episode: "🔢 Falsche Staffel- oder Folgennummer",
           broken_video: "❌ Video defekt / Lädt nicht",
+          audio_sub: "🔇 Tonspur / Sprache fehlt oder asynchron",
           other: "💬 Sonstiges"
         };
         const reasonCode = String(body.reasonCode || "other").trim();
@@ -73487,12 +73540,13 @@
         const epTitleMap = d1SeasonMeta?.episodeTitleMap || new Map();
 
         const seasonSet = new Set(
-          (sDetails?.seasons || []).filter(s => s && Number(s.season_number) > 0).map(s => Number(s.season_number))
+          (sDetails?.seasons || []).filter(s => s && (Number(s.season_number) > 0 || (Number(s.season_number) === 0 && (Number(seasonCounts[0] || 0) > 0 || seasonNum === 0)))).map(s => Number(s.season_number))
         );
         for (const sKey of Object.keys(seasonCounts)) {
           const sn = Number(sKey);
-          if (sn > 0) seasonSet.add(sn);
+          if (sn > 0 || (sn === 0 && Number(seasonCounts[0] || 0) > 0)) seasonSet.add(sn);
         }
+        if (seasonNum === 0) seasonSet.add(0);
         if (seasonSet.size === 0) seasonSet.add(1);
         const seasons = Array.from(seasonSet).sort((a, b) => a - b);
 
@@ -73981,6 +74035,7 @@
               queued: true,
               targetChat,
               job: queued429,
+              ...await resolveOpenMessageInfo(null),
               antiSpam: getAntiSpamSnapshot(env, targetChat)
             }), { status: 200, headers: corsHeaders });
           }
@@ -74427,20 +74482,34 @@
             const item = list[targetIdx];
             const oldUid = item.uid;
             const oldFolderId = item.folderId || null;
-            const defaultCat = (item.contentType === "series" || item.contentType === "episode") ? "cat_series" : "cat_movies";
+            const isEpisodeItem = item.contentType === "episode";
+            const defaultCat = (item.contentType === "series" || isEpisodeItem) ? "cat_series" : "cat_movies";
             const nextFolderId = (body.targetFolderId && body.targetFolderId !== "root") ? String(body.targetFolderId) : defaultCat;
-            const prefix = (item.contentType === "series" || item.contentType === "episode") ? "s" : "m";
+            const prefix = (item.contentType === "series" || isEpisodeItem) ? "s" : "m";
             const baseId = item.tmdbId || item.seriesId || Date.now();
-            const nextUid = (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series")
-              ? `${prefix}_${baseId}_${nextFolderId}`
-              : `${prefix}_${baseId}`;
+            const isCustomDestFolder = Boolean(nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series");
+            let nextUid;
+            if (isEpisodeItem) {
+              const sNum = item.seasonNumber != null ? Number(item.seasonNumber) : 1;
+              const eNum = item.episodeNumber != null ? Number(item.episodeNumber) : 1;
+              const epBaseUid = `ep_${item.seriesId || baseId}_${sNum}_${eNum}`;
+              nextUid = isCustomDestFolder ? `${epBaseUid}_${nextFolderId}` : epBaseUid;
+            } else {
+              nextUid = isCustomDestFolder ? `${prefix}_${baseId}_${nextFolderId}` : `${prefix}_${baseId}`;
+            }
             if (oldFolderId && oldFolderId !== nextFolderId) {
               await deletePlaylistItemFromD1(env, targetChatId, oldUid, oldFolderId);
             }
             item.folderId = nextFolderId;
             item.uid = nextUid;
-            list[targetIdx] = item;
-            if (nextFolderId && nextFolderId !== "cat_movies" && nextFolderId !== "cat_series") {
+            const duplicateIdx = list.findIndex((i, idx) => idx !== targetIdx && String(i.uid) === String(nextUid));
+            if (duplicateIdx !== -1) {
+              list[duplicateIdx] = item;
+              list.splice(targetIdx, 1);
+            } else {
+              list[targetIdx] = item;
+            }
+            if (isCustomDestFolder) {
               await batchUpsertPlaylistItemsInD1(env, targetChatId, nextFolderId, [item]);
             }
             await saveRawList(env, targetChatId, list);

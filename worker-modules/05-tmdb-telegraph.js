@@ -235,8 +235,9 @@
     if (seasonData.telegraphUrl && seasonData.telegraphVersion === 2) return seasonData.telegraphUrl;
 
     const seriesTitle = (seriesDetails?.title || `Serie #${seriesId}`).replace(/\s*\(\d{4}\)$/, "").trim();
-    const sNum = seasonData.season_number || 1;
-    const pageTitle = `${seriesTitle} • Staffel ${sNum} (Episoden-Guide)`;
+    const sNum = seasonData.season_number != null ? Number(seasonData.season_number) : 1;
+    const sLabel = sNum === 0 ? "Specials (Staffel 0)" : `Staffel ${sNum}`;
+    const pageTitle = `${seriesTitle} • ${sLabel} (Episoden-Guide)`;
 
     const nodes = [];
     if (seriesDetails?.poster_path) {
@@ -244,7 +245,7 @@
         tag: "figure",
         children: [
           { tag: "img", attrs: { src: `https://image.tmdb.org/t/p/original${seriesDetails.poster_path}` } },
-          { tag: "figcaption", children: [`🖼️ Original-Serienposter • ${seriesTitle} (Staffel ${sNum})`] }
+          { tag: "figcaption", children: [`🖼️ Original-Serienposter • ${seriesTitle} (${sLabel})`] }
         ]
       });
     }
@@ -261,7 +262,7 @@
 
     nodes.push({
       tag: "aside",
-      children: [`📺 ${seriesTitle}  •  💿 Staffel ${sNum}  •  🎞️ ${seasonData.episodes.length} Episoden`]
+      children: [`📺 ${seriesTitle}  •  💿 ${sLabel}  •  🎞️ ${seasonData.episodes.length} Episoden`]
     });
     nodes.push({ tag: "hr" });
 

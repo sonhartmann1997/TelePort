@@ -152,10 +152,20 @@
             ...routineLogs.slice(0, remainingSlots)
           ];
         }
-        saveClientDiagnosticLogsToStorage(Boolean(syncToServer));
-        if (syncToServer && added.length > 0) {
+        const isImportActivelyRunning = Boolean(typeof backupImportJob !== "undefined" && backupImportJob && backupImportJob.running);
+        const canSyncDiagToServer = Boolean(
+          syncToServer &&
+          added.length > 0 &&
+          !isImportActivelyRunning &&
+          state.isAuthenticated &&
+          state.authUser?.isAdmin &&
+          !(typeof getClientWorkerCircuitState === "function" && getClientWorkerCircuitState().cooldownUntil > Date.now())
+        );
+        saveClientDiagnosticLogsToStorage(Boolean(syncToServer && !isImportActivelyRunning));
+        if (canSyncDiagToServer) {
           apiFetchJson(API_BASE + "/admin/import-logs", {
             method: "POST",
+            noRetry: true,
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "append", logs: added.slice(0, 120) })
           }).catch(() => {});
@@ -570,12 +580,30 @@
 
       async function startOrResumeBackupImport() {
         if (backupImportJob.running || !backupImportJob.entries.length) return;
+        if (!state.isAuthenticated || !state.authUser?.isAdmin) {
+          backupImportJob.authAbortError = {
+            status: state.isAuthenticated ? 403 : 401,
+            code: state.isAuthenticated ? "ADMIN_REQUIRED" : "AUTH_REQUIRED",
+            message: state.isAuthenticated
+              ? "Zugriff verweigert (HTTP 403): Dein Account hat keine Admin-Berechtigung."
+              : "Nicht angemeldet (HTTP 401): Bitte zuerst als Admin einloggen.",
+            telegramId: state.authUser?.telegramId || null,
+            failureReason: state.isAuthenticated ? "not_in_admin_ids" : "no_credentials",
+            at: Date.now()
+          };
+          showHudToast("⛔ Import gestoppt: " + backupImportJob.authAbortError.message);
+          renderBackupImportBoxDom();
+          return;
+        }
         const activeChan = backupImportJob.verifiedChannelId || getSavedVerifiedChannelIdClient();
         if (!activeChan || (!activeChan.startsWith("-100") && !activeChan.startsWith("@"))) {
           showHudToast("⛔ Import gesperrt: Bitte zuerst oben in Schritt 1 die Kanal-ID (-100...) prüfen!");
           return;
         }
         backupImportJob.verifiedChannelId = activeChan;
+        backupImportJob.authAbortError = null;
+        backupImportJob.circuitBreakerNotice = null;
+        backupImportJob.overloadStreak = 0;
 
         const inpEl = document.getElementById("backupPlaylistNameInp");
         if ( inpEl && inpEl.value.trim()) {
@@ -599,6 +627,51 @@
 
         const DEFAULT_BATCH_SIZE = getEffectiveImportBatchSizeClient();
         if (!backupImportJob.cursorRetries) backupImportJob.cursorRetries = {};
+
+        const abortBackupImportOnAuthError = (httpStatus, serverRes, contextLabel) => {
+          const st = Number(httpStatus || serverRes?._httpStatus || 403);
+          const diag = serverRes?.diagnostics || {};
+          const msg = String(
+            serverRes?.error ||
+            (st === 401
+              ? "Sitzung abgelaufen oder nicht authentifiziert (HTTP 401)."
+              : "Zugriff verweigert: Keine Admin-Berechtigung (HTTP 403).")
+          );
+          backupImportJob.running = false;
+          backupImportJob.paused = true;
+          backupImportJob.authAbortError = {
+            status: st,
+            code: serverRes?.code || (st === 401 ? "AUTH_REQUIRED" : "ADMIN_REQUIRED"),
+            message: msg,
+            telegramId: diag.telegramId || state.authUser?.telegramId || null,
+            failureReason: diag.authFailureReason || serverRes?.code || "",
+            context: contextLabel || "import-batch",
+            at: Date.now()
+          };
+          backupImportJob.currentBatchModeLabel = "⛔ Gestoppt (HTTP " + st + " Auth-Fehler)";
+          backupImportJob.currentBatchModeColor = "#ef4444";
+          backupImportJob.recentLog.push(
+            "⛔ IMPORT SOFORT GESTOPPT (HTTP " + st + " bei " + (contextLabel || "import-batch") + "): " + msg +
+            (backupImportJob.authAbortError.telegramId ? (" [Telegram-ID: " + backupImportJob.authAbortError.telegramId + "]") : "") +
+            " – keine weiteren Anfragen gesendet."
+          );
+          // Checkpoint NUR lokal speichern (kein Server-POST auf /admin/import-checkpoint!)
+          saveBackupCheckpointClient(false);
+          showHudToast("⛔ Import abgebrochen (HTTP " + st + "): " + msg);
+          renderBackupImportBoxDom();
+        };
+
+        const sleepWithImportCountdown = async (totalMs, labelPrefix) => {
+          const endAt = Date.now() + Math.max(400, Number(totalMs || 0));
+          while (backupImportJob.running && !backupImportJob.paused) {
+            const remMs = endAt - Date.now();
+            if (remMs <= 0) break;
+            backupImportJob.currentBatchModeLabel = labelPrefix + " (" + Math.ceil(remMs / 1000) + "s)";
+            backupImportJob.currentBatchModeColor = "#f59e0b";
+            renderBackupImportBoxDom();
+            await new Promise(res => setTimeout(res, Math.min(500, remMs)));
+          }
+        };
 
         const isolateFailedEntryAtCursor = (reasonMsg) => {
           const badIdx = backupImportJob.cursor;
@@ -654,8 +727,8 @@
             episodeNumber: fallbackItem.episode,
             tmdbId: null,
             rawEntry: fallbackItem.rawEntry
-          }], true);
-          saveBackupCheckpointClient();
+          }], false);
+          saveBackupCheckpointClient(false);
           const isOutdatedWorkerErr = String(reasonMsg || "").includes("normalizeCompareString") || String(reasonMsg || "").includes("externalFallbackCache");
           backupImportJob.recentLog.push(
             "⚠️ Eintrag #" + (badIdx + 1) + " (" + String(rawLabel).slice(0, 36) + ") zur Prüfung isoliert" +
@@ -722,7 +795,12 @@
           backupImportJob.currentBatchModeColor = "#38bdf8";
           renderBackupImportBoxDom();
           try {
-            const preRes = await apiFetchJson(API_BASE + "/admin/catalog-preseed", { method: "GET" });
+            const preRes = await apiFetchJson(API_BASE + "/admin/catalog-preseed", { method: "GET", noRetry: true });
+            if (preRes && (preRes._httpStatus === 401 || preRes._httpStatus === 403 || preRes._authError)) {
+              backupImportJob._d1CatalogPreSeeded = false;
+              abortBackupImportOnAuthError(preRes._httpStatus || 403, preRes, "catalog-preseed");
+              return;
+            }
             if (preRes && preRes.ok) {
               let preSeedAdded = 0;
               if (Array.isArray(preRes.items)) {
@@ -844,41 +922,51 @@
             await new Promise(r => setTimeout(r, waitCooldownMs));
           }
           const curProfileBaseSize = getEffectiveImportBatchSizeClient();
-          const healthRecSize = Number(healthSt.recommendedBatchSize || 5);
+          const isPaidClientProf = (state.adminWorkerSpeedProfile || "free_turbo") === "paid_pro";
+          const healthRecSize = Number(healthSt.recommendedBatchSize || 4);
           let effectiveBatchSize = Math.min(curProfileBaseSize, healthRecSize);
           let isPreResolvedFastBatch = false;
           if (curRetryCount > 0) {
             effectiveBatchSize = 1;
             backupImportJob.currentBatchModeLabel = "🔍 Einzel-Isolierung (1/Batch)";
             backupImportJob.currentBatchModeColor = "#fbbf24";
+          } else if (Number(backupImportJob._postOverloadRecoveryBatches || 0) > 0) {
+            effectiveBatchSize = Math.min(2, Math.max(1, curProfileBaseSize));
+            backupImportJob.currentBatchModeLabel = "🛡️ Sanfter Wiederanlauf nach 503 (" + effectiveBatchSize + "/Batch)";
+            backupImportJob.currentBatchModeColor = "#f59e0b";
           } else if (healthSt.throttled || backupImportJob._lastBatchHadLatencyCooldown) {
             effectiveBatchSize = Math.min(2, Math.max(1, healthRecSize));
             backupImportJob._lastBatchHadLatencyCooldown = false;
             backupImportJob.currentBatchModeLabel = "🛡️ Auto-Throttle (" + effectiveBatchSize + "/Batch • <7ms CPU Schutz)";
             backupImportJob.currentBatchModeColor = "#f59e0b";
-          } else if (consecutivePreResolved >= 8) {
-            effectiveBatchSize = Math.min(20, consecutivePreResolved);
+          } else if (consecutivePreResolved >= 4) {
+            effectiveBatchSize = Math.min(isPaidClientProf ? 20 : 8, consecutivePreResolved);
             isPreResolvedFastBatch = true;
             backupImportJob.currentBatchModeLabel = "⚡ Browser-Cache Fast-Batch (" + effectiveBatchSize + "/Batch • 0 Such-Calls)";
             backupImportJob.currentBatchModeColor = "#10b981";
-          } else if (lookaheadCacheHits >= 5) {
-            effectiveBatchSize = Math.min(12, curProfileBaseSize + 5);
-            isPreResolvedFastBatch = consecutivePreResolved >= 5;
+          } else if (lookaheadCacheHits >= 3) {
+            effectiveBatchSize = Math.min(isPaidClientProf ? 14 : 6, curProfileBaseSize + 2);
+            isPreResolvedFastBatch = consecutivePreResolved >= 3;
             backupImportJob.currentBatchModeLabel = "🚀 Turbo (" + effectiveBatchSize + "/Batch • Cache-Hits)";
             backupImportJob.currentBatchModeColor = "#34d399";
           } else {
-            effectiveBatchSize = Math.min(6, curProfileBaseSize + 1);
-            const profShort = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo" ? "🛡️ Free-Turbo" : (state.adminWorkerSpeedProfile === "paid_pro" ? "🚀 Paid Pro" : "⚖️ Ausgewogen");
+            effectiveBatchSize = Math.min(isPaidClientProf ? 12 : 4, curProfileBaseSize);
+            const profShort = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo" ? "🛡️ Free-Micro" : (isPaidClientProf ? "🚀 Paid Pro" : "⚖️ Ausgewogen");
             backupImportJob.currentBatchModeLabel = profShort + " (" + effectiveBatchSize + "/Batch)";
             backupImportJob.currentBatchModeColor = "#00e5ff";
           }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
 
-          // MODUL 1.1: Set-basierte Deduplizierung inkl. processedMsgIds (bereits abgearbeitete msg.id ohne Logging überspringen!)
+          // MODUL 1.1 + Browser-Offloading: Set-basierte Deduplizierung inkl. processedMsgIds & D1-Pre-Seed Duplikat-Vorfilter direkt im Browser (0 Worker-CPU!)
           const seenBatchItemKeys = new Set();
           const dedupedRawSlice = [];
           const dedupedOrigIndices = [];
           let batchDedupDropped = 0;
+          let browserD1Skipped = 0;
+          const canSkipKnownD1Locally = Boolean(
+            (backupImportJob.playlistMode || "both") === "vip_stream" &&
+            (backupImportJob._knownD1FileIds.size > 0 || backupImportJob._knownD1Fingerprints.size > 0)
+          );
           for (let sIdx = 0; sIdx < rawSlice.length; sIdx++) {
             const item = rawSlice[sIdx];
             if (!item || typeof item !== "object") {
@@ -890,9 +978,22 @@
             if (itemMsgId > 0 && backupImportJob._processedMsgIds.has(itemMsgId)) {
               continue;
             }
+            const expectedFileId = (item.telegram_file_id && !String(item.telegram_file_id).startsWith("tg_export_0_"))
+              ? String(item.telegram_file_id)
+              : (itemMsgId > 0 && activeChan ? ("tg_export_" + activeChan + "_" + itemMsgId) : "");
+            const itemFp = String(item.fileFingerprint || item.file_fingerprint || "").trim();
+            if (canSkipKnownD1Locally && (
+              (expectedFileId && backupImportJob._knownD1FileIds.has(expectedFileId)) ||
+              (itemFp && itemFp !== "0_0_0x0" && backupImportJob._knownD1Fingerprints.has(itemFp))
+            )) {
+              if (itemMsgId > 0) backupImportJob._processedMsgIds.add(itemMsgId);
+              batchDedupDropped++;
+              browserD1Skipped++;
+              continue;
+            }
             const rawTitle = String(item.cleanTitle || item.title || item.filename || item.file_name || item.raw_file_name || item.rawInput || "").trim();
             const normTitle = normClientTitleKey(rawTitle);
-            const tgIdKey = String(item.fileFingerprint || item.telegram_unique_id || item.file_unique_id || item.telegram_file_id || item.file_id || item.msg_id || item.message_id || "").trim();
+            const tgIdKey = String(itemFp || item.telegram_unique_id || item.file_unique_id || expectedFileId || item.file_id || item.msg_id || item.message_id || "").trim();
             const seKey = (item.season || item.episode) ? ("s" + (item.season || 0) + "e" + (item.episode || 0)) : "";
             const yKey = String(item.year || "").trim();
             if (tgIdKey || normTitle) {
@@ -907,42 +1008,65 @@
             dedupedOrigIndices.push(sIdx);
           }
 
+          if (browserD1Skipped > 0) {
+            backupImportJob.browserPreFilteredCount = Number(backupImportJob.browserPreFilteredCount || 0) + browserD1Skipped;
+          }
+
           if (dedupedRawSlice.length === 0) {
             backupImportJob.cursor += rawSlice.length;
             backupImportJob.duplicatesInDb += batchDedupDropped;
+            if (browserD1Skipped > 0 && (backupImportJob.cursor % 40 < rawSlice.length)) {
+              backupImportJob.recentLog.push("⚡ Browser-Pre-Filter: " + Number(backupImportJob.browserPreFilteredCount || browserD1Skipped) + " bereits in D1 vorhandene Dateien lokal übersprungen (0 Worker-Requests)");
+            }
             saveBackupCheckpointClient(false);
             renderBackupImportBoxDom();
             continue;
           }
 
-          // 2. Browser-Titel-Cache: Bereits im Lauf oder per D1-Pre-Seed aufgelöste Serien/Filme direkt mit ihrer TMDb-ID annotieren (0 Such-Calls im Worker!)
+          // 2. Browser-Titel-Cache & Browser-Normalisierung: Bereits aufgelöste TMDb-IDs + Kanal/File-ID direkt im Browser vorbereiten (spart Worker-CPU!)
           const slice = dedupedRawSlice.map(entry => {
             if (!entry || typeof entry !== "object") return entry;
-            if (entry.tmdb_id || entry.tmdbId || entry.knownUnmatched) return entry;
-            const rawTitle = entry.cleanTitle || entry.title || "";
+            const eMsgId = Number(entry.msg_id || entry.message_id || entry.messageId || 0);
+            const normalizedBase = { ...entry };
+            if (activeChan) {
+              if (!normalizedBase.chat_id || String(normalizedBase.chat_id) === "0") {
+                normalizedBase.chat_id = activeChan;
+              }
+              if (eMsgId > 0 && (!normalizedBase.telegram_file_id || String(normalizedBase.telegram_file_id).startsWith("tg_export_0_"))) {
+                normalizedBase.telegram_file_id = "tg_export_" + activeChan + "_" + eMsgId;
+              }
+            }
+            if (normalizedBase.tmdb_id || normalizedBase.tmdbId || normalizedBase.knownUnmatched) return normalizedBase;
+            const rawTitle = normalizedBase.cleanTitle || normalizedBase.title || "";
             const nKey = normClientTitleKey(rawTitle);
-            if (!nKey || nKey === "unbekannt" || nKey.length < 2) return entry;
-            const tCode = (entry.typeCode === "s" || entry.isSeries || entry.season || entry.episode) ? "s" : "m";
-            const yKey = entry.year && entry.year !== "k.A." ? String(entry.year) : "any";
+            if (!nKey || nKey === "unbekannt" || nKey.length < 2) return normalizedBase;
+            const tCode = (normalizedBase.typeCode === "s" || normalizedBase.isSeries || normalizedBase.season || normalizedBase.episode) ? "s" : "m";
+            const yKey = normalizedBase.year && normalizedBase.year !== "k.A." ? String(normalizedBase.year) : "any";
             const cachedHit = backupImportJob.resolvedTitlesCache[tCode + "_" + nKey + "_" + yKey]
               || (tCode === "s" ? backupImportJob.resolvedTitlesCache["s_" + nKey + "_any"] : null)
               || (yKey === "any" ? backupImportJob.resolvedTitlesCache[tCode + "_" + nKey + "_any"] : null);
-            if (!cachedHit) return entry;
+            if (!cachedHit) return normalizedBase;
             if (cachedHit.knownUnmatched) {
-              return { ...entry, knownUnmatched: true };
+              return { ...normalizedBase, knownUnmatched: true };
             }
             if (cachedHit.tmdbId) {
               backupImportJob.browserCacheHitsCount = Number(backupImportJob.browserCacheHitsCount || 0) + 1;
               return {
-                ...entry,
+                ...normalizedBase,
                 tmdb_id: cachedHit.tmdbId,
                 typeCode: cachedHit.typeCode || tCode,
                 isSeries: (cachedHit.typeCode || tCode) === "s",
-                cleanTitle: cachedHit.cleanTitle || entry.cleanTitle,
-                external_poster_url: entry.external_poster_url || cachedHit.poster || ""
+                cleanTitle: cachedHit.cleanTitle || normalizedBase.cleanTitle,
+                external_poster_url: normalizedBase.external_poster_url || cachedHit.poster || ""
               };
             }
-            return entry;
+            return normalizedBase;
+          });
+          const isSliceAlreadySorted = slice.every((it, idx) => {
+            if (idx === 0) return true;
+            const prevId = Number(slice[idx - 1]?.msg_id || slice[idx - 1]?.message_id || slice[idx - 1]?.id || 0);
+            const curId = Number(it?.msg_id || it?.message_id || it?.id || 0);
+            return curId >= prevId;
           });
           let hadRateWarning = false;
           let batchLatencyMs = 0;
@@ -964,10 +1088,13 @@
             const tBatchStartMs = Date.now();
             const r = await apiFetchJson(API_BASE + "/admin/import-batch", {
               method: "POST",
+              noRetry: true,
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 entries: slice,
                 isPreResolvedFastBatch,
+                alreadyNormalized: true,
+                alreadySorted: isSliceAlreadySorted,
                 batchStartCursor: backupImportJob.cursor,
                 isFinalBatch: isFinalBatchFlag,
                 sourceChannelId: activeChan,
@@ -982,7 +1109,15 @@
               })
             });
             batchLatencyMs = Date.now() - tBatchStartMs;
+            if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+              abortBackupImportOnAuthError(r._httpStatus || 403, r, "import-batch");
+              break;
+            }
             if (r && r.ok) {
+              backupImportJob.overloadStreak = 0;
+              if (Number(backupImportJob._postOverloadRecoveryBatches || 0) > 0) {
+                backupImportJob._postOverloadRecoveryBatches = Math.max(0, Number(backupImportJob._postOverloadRecoveryBatches) - 1);
+              }
               delete backupImportJob.cursorRetries[backupImportJob.cursor];
               if (r.playlistFolder?.id) {
                 backupImportJob.playlistFolderId = r.playlistFolder.id;
@@ -998,9 +1133,13 @@
                 : rawSlice.length;
               const processedCount = processedSliceCount;
               for (let pi = 0; pi < processedSliceCount; pi++) {
-                const pEntry = dedupedRawSlice[pi];
+                const pEntry = slice[pi] || dedupedRawSlice[pi];
                 const pMsgId = Number(pEntry?.msg_id || pEntry?.message_id || pEntry?.messageId || 0);
                 if (pMsgId > 0) backupImportJob._processedMsgIds.add(pMsgId);
+                const pFileId = String(pEntry?.telegram_file_id || "").trim();
+                if (pFileId && !pFileId.startsWith("tg_export_0_")) backupImportJob._knownD1FileIds.add(pFileId);
+                const pFp = String(pEntry?.fileFingerprint || pEntry?.file_fingerprint || "").trim();
+                if (pFp && pFp !== "0_0_0x0") backupImportJob._knownD1Fingerprints.add(pFp);
               }
               backupImportJob.cursor += rawAdvanceCount;
               backupImportJob.moviesSaved += Number(r.moviesAddedCount || 0);
@@ -1151,7 +1290,10 @@
                       orphansToHeal.push({ revItem: prevRev, resolved: matchedResolved });
                     }
                   }
-                  if (orphansToHeal.length > 0) {
+                  const isWorkerHealthyForHeal = Number(backupImportJob.overloadStreak || 0) === 0 &&
+                    Number(backupImportJob._postOverloadRecoveryBatches || 0) === 0 &&
+                    !(typeof getClientWorkerCircuitState === "function" && getClientWorkerCircuitState().cooldownUntil > Date.now());
+                  if (orphansToHeal.length > 0 && isWorkerHealthyForHeal) {
                     try {
                       const healEntries = orphansToHeal.map(o => ({
                         ...(typeof o.revItem.rawEntry === "object" && o.revItem.rawEntry ? o.revItem.rawEntry : { filename: o.revItem.rawInput }),
@@ -1164,6 +1306,7 @@
                       }));
                       const healRes = await apiFetchJson(API_BASE + "/admin/import-batch", {
                         method: "POST",
+                        noRetry: true,
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                           entries: healEntries,
@@ -1176,6 +1319,10 @@
                           deferKvWrite: true
                         })
                       });
+                      if (healRes && (healRes._httpStatus === 401 || healRes._httpStatus === 403 || healRes._authError)) {
+                        abortBackupImportOnAuthError(healRes._httpStatus || 403, healRes, "import-batch-heal");
+                        break;
+                      }
                       if (healRes && healRes.ok && Array.isArray(healRes.batchItems)) {
                         for (let hi = 0; hi < orphansToHeal.length; hi++) {
                           const healedItem = healRes.batchItems[hi];
@@ -1224,66 +1371,137 @@
               }
               saveBackupCheckpointClient(false);
             } else {
+              if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+                abortBackupImportOnAuthError(r._httpStatus || 403, r, "import-batch");
+                break;
+              }
               hadRateWarning = true;
-              const errMsg = String(r?.error || "Kurze Pause...");
+              const httpSt = Number(r?._httpStatus || 0);
+              const errMsg = String(r?.error || "Server-Warnung bei Batch #" + backupImportJob.cursor);
+              const isOverloadResponse = httpSt === 503 || httpSt === 429 || httpSt === 502 || httpSt === 524 || /503|429|rate|limit|busy|locked|overloaded/i.test(errMsg);
               if (state.adminWorkerSpeedProfile && state.adminWorkerSpeedProfile !== "free_turbo") {
                 state.adminWorkerSpeedProfile = "free_turbo";
                 try { localStorage.setItem("tma_worker_speed_profile", "free_turbo"); } catch (e) {}
                 backupImportJob.recentLog.push("🛡️ Automatischer Wechsel auf „Free-Tier Turbo“ nach Server-Warnung.");
               }
-              const nextRetry = curRetryCount + 1;
-              backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
-              if (nextRetry >= 3) {
-                isolateFailedEntryAtCursor(errMsg);
-              } else {
+              if (isOverloadResponse) {
+                const nextStreak = Number(backupImportJob.overloadStreak || 0) + 1;
+                backupImportJob.overloadStreak = nextStreak;
+                backupImportJob._postOverloadRecoveryBatches = 3;
                 saveBackupCheckpointClient(false);
-                const waitMs = 1800 * nextRetry;
-                backupImportJob.recentLog.push("⏳ Einzel-Prüfung (" + nextRetry + "/2) bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
-                await new Promise(res => setTimeout(res, waitMs));
+                if (nextStreak >= 6) {
+                  backupImportJob.running = false;
+                  backupImportJob.paused = true;
+                  backupImportJob.circuitBreakerNotice = "⚡ Circuit Breaker aktiv: Worker/D1 meldet wiederholt Überlastung (HTTP " + (httpSt || 503) + ", " + nextStreak + "x in Folge). Import bei Eintrag #" + backupImportJob.cursor + " sauber pausiert – bitte kurz warten und dann auf Fortsetzen klicken.";
+                  backupImportJob.currentBatchModeLabel = "⚡ Circuit Breaker Pause (503-Schutz)";
+                  backupImportJob.currentBatchModeColor = "#f59e0b";
+                  backupImportJob.recentLog.push(backupImportJob.circuitBreakerNotice);
+                  showHudToast("⚡ Circuit Breaker: Import nach wiederholtem 503 sauber pausiert.");
+                  renderBackupImportBoxDom();
+                  break;
+                }
+                const expSchedule = [3500, 7000, 14000, 25000, 40000];
+                const baseWaitMs = expSchedule[Math.min(expSchedule.length - 1, nextStreak - 1)];
+                const waitMs = baseWaitMs + Math.floor(Math.random() * 1200);
+                backupImportJob.recentLog.push("⏳ Exponential Backoff (" + nextStreak + "/5 • " + Math.round(waitMs / 1000) + "s Pause) bei #" + backupImportJob.cursor + ": " + errMsg);
+                await sleepWithImportCountdown(waitMs, "⏳ 503-Backoff (" + nextStreak + "/5)");
+              } else {
+                const nextRetry = curRetryCount + 1;
+                backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
+                if (nextRetry >= 2) {
+                  isolateFailedEntryAtCursor(errMsg);
+                } else {
+                  saveBackupCheckpointClient(false);
+                  const waitMs = 2000 + Math.floor(Math.random() * 600);
+                  backupImportJob.recentLog.push("⏳ Einzel-Prüfung (" + nextRetry + "/2) bei Checkpoint #" + backupImportJob.cursor + ": " + errMsg);
+                  await sleepWithImportCountdown(waitMs, "🔍 Einzel-Prüfung");
+                }
               }
             }
           } catch (e) {
+            const errStatus = Number(e?.httpStatus || 0);
+            if (errStatus === 401 || errStatus === 403) {
+              abortBackupImportOnAuthError(errStatus, { error: String(e?.message || "Auth-Fehler") }, "import-batch");
+              break;
+            }
             hadRateWarning = true;
             const errMsg = String(e?.message || e || "Netzwerkfehler");
+            const isOverloadError = Boolean(
+              e?.isRateLimitOrHtml ||
+              errStatus === 503 ||
+              errStatus === 429 ||
+              errStatus === 502 ||
+              errStatus === 524 ||
+              e?.name === "AbortError" ||
+              /503|429|502|524|timeout|failed to fetch|network|overloaded|locked/i.test(errMsg)
+            );
             if (state.adminWorkerSpeedProfile && state.adminWorkerSpeedProfile !== "free_turbo") {
               state.adminWorkerSpeedProfile = "free_turbo";
               try { localStorage.setItem("tma_worker_speed_profile", "free_turbo"); } catch (err) {}
-              backupImportJob.recentLog.push("🛡️ Timeout erkannt – schalte automatisch auf „Free-Tier Turbo“ (12/Batch, 3.2s Guard) um!");
+              backupImportJob.recentLog.push("🛡️ Überlastung/Timeout erkannt – schalte automatisch auf „Free-Tier Turbo“ um!");
             }
-            const nextRetry = curRetryCount + 1;
-            backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
-            if (nextRetry >= 3) {
-              isolateFailedEntryAtCursor(errMsg);
-            } else {
+            if (isOverloadError) {
+              const nextStreak = Number(backupImportJob.overloadStreak || 0) + 1;
+              backupImportJob.overloadStreak = nextStreak;
+              backupImportJob._postOverloadRecoveryBatches = 3;
               saveBackupCheckpointClient(false);
-              const waitMs = 2200 * nextRetry;
-              backupImportJob.recentLog.push("⏳ Rate-Limit / Einzel-Isolierung (" + nextRetry + "/2) bei #" + backupImportJob.cursor + ": " + errMsg);
-              await new Promise(res => setTimeout(res, waitMs));
+              if (nextStreak >= 6) {
+                backupImportJob.running = false;
+                backupImportJob.paused = true;
+                backupImportJob.circuitBreakerNotice = "⚡ Circuit Breaker aktiv: Cloudflare Worker/D1 meldet dauerhaft HTTP " + (errStatus || 503) + " (" + nextStreak + "x in Folge). Import bei Eintrag #" + backupImportJob.cursor + " verlustfrei pausiert – keine Daten übersprungen!";
+                backupImportJob.currentBatchModeLabel = "⚡ Circuit Breaker Pause (503-Schutz)";
+                backupImportJob.currentBatchModeColor = "#f59e0b";
+                backupImportJob.recentLog.push(backupImportJob.circuitBreakerNotice);
+                showHudToast("⚡ Circuit Breaker: Import nach wiederholtem 503 pausiert.");
+                renderBackupImportBoxDom();
+                break;
+              }
+              const expSchedule = [3500, 7000, 14000, 25000, 40000];
+              const baseWaitMs = Math.max(
+                expSchedule[Math.min(expSchedule.length - 1, nextStreak - 1)],
+                Math.min(45000, Number(e?.retryAfterMs || 0))
+              );
+              const waitMs = baseWaitMs + Math.floor(Math.random() * 1400);
+              backupImportJob.recentLog.push(
+                "⏳ 503/Rate-Limit Exponential Backoff (" + nextStreak + "/5 • " + Math.round(waitMs / 1000) + "s Pause, kein Eintrag verworfen) bei #" + backupImportJob.cursor + ": " + errMsg
+              );
+              await sleepWithImportCountdown(waitMs, "⏳ 503-Backoff (" + nextStreak + "/5)");
+            } else {
+              const nextRetry = curRetryCount + 1;
+              backupImportJob.cursorRetries[backupImportJob.cursor] = nextRetry;
+              if (nextRetry >= 2) {
+                isolateFailedEntryAtCursor(errMsg);
+              } else {
+                saveBackupCheckpointClient(false);
+                const waitMs = 2400 + Math.floor(Math.random() * 600);
+                backupImportJob.recentLog.push("⏳ Einzel-Isolierung (" + nextRetry + "/2) bei #" + backupImportJob.cursor + ": " + errMsg);
+                await sleepWithImportCountdown(waitMs, "🔍 Einzel-Prüfung");
+              }
             }
           }
           renderBackupImportBoxDom();
-          // Adaptives Pacing statt starrer 5s-Pause bei >2000ms:
-          // Normale TMDb-Batches bis 4500ms laufen ohne Zusatzpause durch; 4500–6500ms erhalten 1s Verschnaufpause; erst ab >6500ms greift ein 2s Cooldown.
-          if (batchLatencyMs > 6500 && backupImportJob.running && !backupImportJob.paused) {
+          if (!backupImportJob.running || backupImportJob.paused) break;
+          // Adaptives Pacing für Cloudflare Free-Worker: verhindert 503-Wellen bei hoher Last
+          if (batchLatencyMs > 6500) {
             backupImportJob._lastBatchHadLatencyCooldown = true;
-            backupImportJob.currentBatchModeLabel = "⏳ Kurz-Pause (2s Cooldown)";
+            backupImportJob.currentBatchModeLabel = "⏳ Kurz-Pause (2.5s Cooldown)";
             backupImportJob.currentBatchModeColor = "#fbbf24";
-            backupImportJob.recentLog.push("⏳ Kurz-Pause (2s Cooldown): Hohe Worker-Batch-Latenz (" + batchLatencyMs + "ms > 6500ms) – drossele Folge-Batch auf 6 Einträge");
-            renderBackupImportBoxDom();
-            await new Promise(res => setTimeout(res, 2000));
-          } else if (batchLatencyMs > 4500 && backupImportJob.running && !backupImportJob.paused) {
+            backupImportJob.recentLog.push("⏳ Kurz-Pause (2.5s Cooldown): Hohe Worker-Batch-Latenz (" + batchLatencyMs + "ms > 6500ms) – drossele Folge-Batch");
+            await sleepWithImportCountdown(2500, "⏳ Latenz-Cooldown");
+          } else if (batchLatencyMs > 4500) {
             backupImportJob._lastBatchHadLatencyCooldown = true;
-            backupImportJob.currentBatchModeLabel = "🛡️ Adaptives Pacing (1s)";
-            backupImportJob.currentBatchModeColor = "#f59e0b";
-            renderBackupImportBoxDom();
-            await new Promise(res => setTimeout(res, 1000));
-          } else {
-            await new Promise(res => setTimeout(res, hadRateWarning ? 500 : 220));
+            await sleepWithImportCountdown(1200, "🛡️ Adaptives Pacing");
+          } else if (!hadRateWarning) {
+            const isFreeProf = (state.adminWorkerSpeedProfile || "free_turbo") === "free_turbo";
+            const gentleGapMs = Number(backupImportJob._postOverloadRecoveryBatches || 0) > 0
+              ? 1200
+              : (isFreeProf ? (isPreResolvedFastBatch ? 360 : 550) : 260);
+            await new Promise(res => setTimeout(res, gentleGapMs));
           }
         }
 
         backupImportJob.running = false;
-        if (backupImportJob.cursor >= backupImportJob.entries.length && backupImportJob.entries.length > 0) {
+        if (backupImportJob.cursor >= backupImportJob.entries.length && backupImportJob.entries.length > 0 && !backupImportJob.authAbortError) {
           saveBackupCheckpointClient(true);
           clearClientMediaCaches();
           showHudToast("🎉 Smart-Import 100% abgeschlossen! Alle Einträge sind dauerhaft in D1 gespeichert.");
@@ -1316,6 +1534,10 @@
         backupImportJob.startedAt = 0;
         backupImportJob._freshLogsResetDone = false;
         backupImportJob.cursorRetries = {};
+        backupImportJob.authAbortError = null;
+        backupImportJob.circuitBreakerNotice = null;
+        backupImportJob.overloadStreak = 0;
+        backupImportJob._postOverloadRecoveryBatches = 0;
         backupImportJob._processedMsgIds = new Set();
         backupImportJob.recentLog = [];
         backupImportJob.livePosterFeed = [];
@@ -1813,9 +2035,9 @@
           }
         }
         const prof = String(state.adminWorkerSpeedProfile || "free_turbo");
-        if (prof === "paid_pro") return 30;
-        if (prof === "balanced") return 18;
-        return 12;
+        if (prof === "paid_pro") return 20;
+        if (prof === "balanced") return 8;
+        return 4;
       }
 
       async function adminSetWorkerSpeedProfileClient(profileKey) {
@@ -1845,9 +2067,9 @@
             };
           }
           const labelMap = {
-            free_turbo: "🛡️ Free-Tier Turbo (10ms CPU Schutz • 12er-Batch • 3.2s Guard • Smart-Notfall-Fallback)",
-            balanced: "⚖️ Ausgewogen (18er-Batch • 4.5s Guard)",
-            paid_pro: "🚀 Paid Worker Pro (30er-Batch • 6.5s Guard • Volle 8-API Kaskade)"
+            free_turbo: "🛡️ Free-Tier Turbo (10ms CPU Schutz • 4er-Micro-Batch • 18 Subreq / 3.6s Guard)",
+            balanced: "⚖️ Ausgewogen (8er-Batch • 26 Subreq / 4.8s Guard)",
+            paid_pro: "🚀 Paid Worker Pro (20er-Batch • 40 Subreq / 6.8s Guard)"
           };
           showHudToast("⚡ Worker-Profil aktiv: " + (labelMap[state.adminWorkerSpeedProfile] || state.adminWorkerSpeedProfile));
           renderBackupImportBoxDom();
@@ -2556,9 +2778,37 @@
             return;
           }
 
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            const authStatus = Number(r._httpStatus || 403);
+            const diag = r.diagnostics || {};
+            const detectedTid = diag.telegramId || state.authUser?.telegramId || "unbekannt";
+            const failReason = diag.authFailureReason || r.code || (authStatus === 401 ? "AUTH_REQUIRED" : "ADMIN_REQUIRED");
+            const root = document.getElementById("appRoot");
+            if (root) {
+              root.innerHTML =
+                '<div style="max-width:680px;margin:28px auto;padding:20px;border-radius:16px;background:rgba(127,29,29,0.22);border:1px solid rgba(248,113,113,0.45);color:#fff;">' +
+                '<div style="font-size:18px;font-weight:800;margin-bottom:8px;">⛔ Admin-Zugriff abgelehnt (HTTP ' + authStatus + ')</div>' +
+                '<div style="font-size:13px;color:#fecaca;line-height:1.5;margin-bottom:14px;">' + escHtml(r.error || "Keine gültige Admin-Sitzung.") + '</div>' +
+                '<div style="font-size:12px;color:#e2e8f0;background:rgba(2,6,23,0.65);border:1px solid rgba(148,163,184,0.25);border-radius:10px;padding:10px 12px;margin-bottom:14px;font-family:monospace;">' +
+                'Telegram-ID: ' + escHtml(String(detectedTid)) + '<br>' +
+                'Auth-Methode: ' + escHtml(String(diag.authMethod || "unbekannt")) + '<br>' +
+                'Ursache: ' + escHtml(String(failReason)) + '<br>' +
+                'Admin-Env gesetzt: ' + (diag.hasAdminEnvConfigured === false ? 'NEIN (ADMIN_ID / ADMIN_IDS fehlt im Worker)' : 'Ja') +
+                '</div>' +
+                '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+                '<button class="btn-primary" onclick="openAccountModal()">🔐 Neu anmelden</button>' +
+                '<button class="btn-secondary" onclick="loadAdminPanelView(true)">🔄 Erneut prüfen</button>' +
+                '<button class="btn-secondary" onclick="loadDiscover(\\'m\\',\\'all\\',\\'trend\\',\\'pop_desc\\')">← Zurück</button>' +
+                '</div></div>';
+            }
+            showHudToast("⛔ Admin-Zugriff abgelehnt (HTTP " + authStatus + "): " + (r.error || failReason));
+            setBusyState(false);
+            return;
+          }
+
           if (!r || !r.ok) {
-            // Niemals das Öffnen des Admin-Panels abbrechen! Stattdessen sofort mit Cache/Fallback-Daten öffnen,
-            // damit Backup-Import (Pause/Stopp) und Diagnose-Logs zu 100% erreichbar bleiben!
+            // Niemals das Öffnen des Admin-Panels bei transientem 503/Netzwerkfehler abbrechen! Stattdessen mit Cache/Fallback-Daten öffnen,
+            // damit Backup-Import (Pause/Stopp) und Diagnose-Logs erreichbar bleiben.
             r = window._lastAdminOverviewCache || {
               ok: true,
               users: [],
@@ -3532,31 +3782,45 @@
           }
           let loggedInViaInitOrLaunch = false;
           if (rawInitData || rawLaunchToken) {
-            const r = await apiFetchJson(API_BASE + "/auth/init", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ initData: rawInitData || "", tgLaunch: rawLaunchToken || "" })
-            });
-            if (r && r.ok && r.user) {
-              sessionToken = r.sessionToken || sessionToken;
-              try { if (sessionToken) localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
-              state.isAuthenticated = true;
-              state.hasInitData = true;
-              state.authUser = r.user;
-              chatId = String(r.user.telegramId);
-              loggedInViaInitOrLaunch = true;
+            try {
+              const r = await apiFetchJson(API_BASE + "/auth/init", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ initData: rawInitData || "", tgLaunch: rawLaunchToken || "" })
+              });
+              if (r && r.ok && r.user) {
+                sessionToken = r.sessionToken || sessionToken;
+                try { if (sessionToken) localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
+                state.isAuthenticated = true;
+                state.hasInitData = true;
+                state.authUser = r.user;
+                chatId = String(r.user.telegramId);
+                loggedInViaInitOrLaunch = true;
+              } else if (r && (r._httpStatus === 401 || r.reasonCode === "INIT_DATA_EXPIRED" || r.reasonCode === "LAUNCH_TOKEN_INVALID")) {
+                // Abgelaufene initData/Launch-Tokens nicht weiter mitsenden, stattdessen nahtlos auf 30-Tage-SessionToken (/auth/me) zurückfallen
+                rawInitData = "";
+                rawLaunchToken = "";
+              }
+            } catch (_initErr) {
+              // Bei Netzwerk-/503-Fehler bei /auth/init trotzdem gespeicherten 30-Tage-SessionToken über /auth/me prüfen
             }
           }
           if (!loggedInViaInitOrLaunch && sessionToken) {
-            const r = await apiFetchJson(API_BASE + "/auth/me");
-            if (r && r.ok && r.isAuthenticated && r.user) {
-              state.isAuthenticated = true;
-              state.hasInitData = Boolean(r.hasInitData);
-              state.authUser = r.user;
-              chatId = String(r.user.telegramId);
-            } else {
-              sessionToken = "";
-              try { localStorage.removeItem("tma_session_token"); } catch (e) {}
+            try {
+              const r = await apiFetchJson(API_BASE + "/auth/me");
+              if (r && r.ok && r.isAuthenticated && r.user) {
+                state.isAuthenticated = true;
+                state.hasInitData = Boolean(r.hasInitData);
+                state.authUser = r.user;
+                chatId = String(r.user.telegramId);
+              } else if (r && (r.ok || r._httpStatus === 401)) {
+                sessionToken = "";
+                try { localStorage.removeItem("tma_session_token"); } catch (e) {}
+                state.isAuthenticated = false;
+                state.authUser = null;
+                chatId = "guest";
+              }
+            } catch (_meErr) {
               state.isAuthenticated = false;
               state.authUser = null;
               chatId = "guest";

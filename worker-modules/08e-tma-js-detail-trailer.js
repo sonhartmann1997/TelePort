@@ -380,10 +380,31 @@
         }
       }
 
+      function getClientWorkerCircuitState() {
+        if (!window._clientWorkerCircuitState || typeof window._clientWorkerCircuitState !== "object") {
+          window._clientWorkerCircuitState = {
+            consecutiveOverloads: 0,
+            cooldownUntil: 0,
+            lastStatus: 0
+          };
+        }
+        return window._clientWorkerCircuitState;
+      }
+
       async function apiFetchJson(url, opts = {}) {
         const method = String(opts.method || "GET").toUpperCase();
         const urlStr = String(url || "");
         const isImportBatch = urlStr.includes("/admin/import-batch");
+        const isBackgroundImportAux = method !== "GET" && (urlStr.includes("/admin/import-logs") || urlStr.includes("/admin/import-checkpoint"));
+        const circuitSt = getClientWorkerCircuitState();
+        if (isBackgroundImportAux && circuitSt.cooldownUntil > Date.now()) {
+          return {
+            ok: false,
+            skippedDueToCooldown: true,
+            _httpStatus: 503,
+            error: "Hintergrund-Sync pausiert (Worker-Cooldown aktiv)."
+          };
+        }
         const isGetRequest = method === "GET" && !opts.bypassCache;
         const cacheTtlMs = isGetRequest ? getBrowserApiCacheTtlMsClient(urlStr) : 0;
         const cacheKey = isGetRequest ? buildBrowserApiCacheKeyClient(urlStr) : "";
@@ -423,9 +444,10 @@
         if (!rawInitData && typeof extractClientTelegramInitData === "function") {
           rawInitData = extractClientTelegramInitData();
         }
-        if (sessionToken) headers["Authorization"] = "Bearer " + sessionToken;
-        if (rawInitData) headers["X-Telegram-Init-Data"] = rawInitData;
-        if (typeof rawLaunchToken === "string" && rawLaunchToken) {
+        const isHeaderSafeStr = (v) => typeof v === "string" && v.length > 0 && !/[^\\x00-\\xFF]/.test(v);
+        if (isHeaderSafeStr(sessionToken)) headers["Authorization"] = "Bearer " + sessionToken;
+        if (isHeaderSafeStr(rawInitData)) headers["X-Telegram-Init-Data"] = rawInitData;
+        if (isHeaderSafeStr(rawLaunchToken)) {
           headers["X-Telegram-Launch-Token"] = rawLaunchToken;
         }
         if (state.settings && Object.keys(state.settings).length > 0) {
@@ -502,15 +524,63 @@
                     route: urlStr,
                     forcedOverload: true
                   });
+                  const retryAfterRaw = res.headers ? res.headers.get("Retry-After") : null;
+                  let retryAfterMs = 0;
+                  if (retryAfterRaw) {
+                    const secNum = Number(retryAfterRaw);
+                    if (Number.isFinite(secNum) && secNum > 0) {
+                      retryAfterMs = Math.min(60000, Math.round(secNum * 1000));
+                    } else {
+                      const dtMs = Date.parse(retryAfterRaw) - Date.now();
+                      if (Number.isFinite(dtMs) && dtMs > 0) retryAfterMs = Math.min(60000, Math.round(dtMs));
+                    }
+                  }
+                  const cState = getClientWorkerCircuitState();
+                  cState.consecutiveOverloads = Math.min(10, Number(cState.consecutiveOverloads || 0) + 1);
+                  cState.lastStatus = res.status || 503;
+                  const expCooldownMs = Math.min(45000, 2500 * Math.pow(2, Math.min(4, cState.consecutiveOverloads - 1)));
+                  const jitterCooldown = Math.floor(Math.random() * 650);
+                  const effectiveCooldownMs = Math.max(retryAfterMs, expCooldownMs) + jitterCooldown;
+                  cState.cooldownUntil = Math.max(Number(cState.cooldownUntil || 0), Date.now() + effectiveCooldownMs);
                   const rateErr = new Error(
-                    "API-Zugriffslimit / Cloudflare Gateway-Pause (HTTP " + (res.status || 524) + ") – automatischer Cooldown aktiv"
+                    "Worker/D1 überlastet oder Rate-Limit (HTTP " + (res.status || 524) + ") – Exponential Backoff aktiv"
                   );
                   rateErr.isRateLimitOrHtml = true;
                   rateErr.httpStatus = res.status || 503;
+                  rateErr.retryAfterMs = effectiveCooldownMs;
+                  rateErr.consecutiveOverloads = cState.consecutiveOverloads;
                   throw rateErr;
+                }
+                if (res.status === 401 || res.status === 403) {
+                  let authParsed = null;
+                  try {
+                    authParsed = JSON.parse(text);
+                  } catch (_parseErr) {
+                    authParsed = null;
+                  }
+                  const authResult = (authParsed && typeof authParsed === "object")
+                    ? { ...authParsed }
+                    : {
+                        ok: false,
+                        error: res.status === 401
+                          ? "Authentifizierung fehlgeschlagen oder Sitzung abgelaufen (HTTP 401)."
+                          : "Zugriff verweigert: Keine Admin- oder VIP-Berechtigung (HTTP 403)."
+                      };
+                  authResult.ok = false;
+                  authResult._httpStatus = res.status;
+                  authResult._authError = true;
+                  return authResult;
                 }
                 try {
                   const parsed = JSON.parse(text);
+                  if (parsed && typeof parsed === "object") {
+                    parsed._httpStatus = res.status;
+                  }
+                  if (res.ok) {
+                    const cState = getClientWorkerCircuitState();
+                    cState.consecutiveOverloads = isImportBatch ? 0 : Math.max(0, Number(cState.consecutiveOverloads || 0) - 1);
+                    if (cState.consecutiveOverloads === 0) cState.cooldownUntil = 0;
+                  }
                   if (parsed && parsed._workerHealth && typeof parsed._workerHealth === "object") {
                     recordClientWorkerHealthSample(parsed._workerHealth);
                   } else {
@@ -531,6 +601,7 @@
                   const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 90);
                   const parseErr = new Error("Server-Antwort kein JSON (HTTP " + res.status + "): " + (cleanSnippet || "Leere Antwort"));
                   parseErr.isRateLimitOrHtml = res.status >= 500 || res.status === 429;
+                  parseErr.httpStatus = res.status;
                   throw parseErr;
                 }
               } finally {
@@ -538,7 +609,8 @@
               }
             };
 
-            const backoffDelays = isImportBatch ? [1400, 3200, 6200] : [900, 2100, 4200];
+            const disableInternalRetries = Boolean(opts.noRetry || isImportBatch || isBackgroundImportAux);
+            const backoffDelays = disableInternalRetries ? [] : [1200, 3200];
             let lastErr = null;
             for (let attempt = 0; attempt <= backoffDelays.length; attempt++) {
               try {
@@ -546,14 +618,17 @@
               } catch (err) {
                 lastErr = err;
                 if (opts.signal && opts.signal.aborted) throw err;
+                if (disableInternalRetries) throw err;
                 // Wenn ein Stale-Browser-Cache für diesen GET-Aufruf vorliegt und HTTP 503/429 auftritt, liefere sofort die gecachte Antwort ohne Blockade!
-                if (isGetRequest && staleCacheEntry && staleCacheEntry.data && err && err.isRateLimitOrHtml && attempt >= 1) {
+                if (isGetRequest && staleCacheEntry && staleCacheEntry.data && err && err.isRateLimitOrHtml) {
                   return staleCacheEntry.data;
                 }
                 if (attempt < backoffDelays.length) {
-                  const jitterMs = Math.floor(Math.random() * 260);
-                  const waitMs = (err && err.isRateLimitOrHtml ? backoffDelays[attempt] : 420 * (attempt + 1)) + jitterMs;
-                  await new Promise(r => setTimeout(r, waitMs));
+                  const jitterMs = Math.floor(Math.random() * 450);
+                  const baseWait = err && err.isRateLimitOrHtml
+                    ? Math.max(backoffDelays[attempt], Math.min(8000, Number(err.retryAfterMs || 0)))
+                    : 600 * (attempt + 1);
+                  await new Promise(r => setTimeout(r, baseWait + jitterMs));
                 }
               }
             }

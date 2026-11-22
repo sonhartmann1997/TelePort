@@ -1737,11 +1737,25 @@
           if (typeof backupImportJob !== "undefined" && backupImportJob && backupImportJob.running) {
             return;
           }
+          if (!state.isAuthenticated || (!state.authUser?.isVip && !state.authUser?.isAdmin)) {
+            if (clientAntiSpamPollTimer) {
+              clearTimeout(clientAntiSpamPollTimer);
+              clientAntiSpamPollTimer = null;
+            }
+            return;
+          }
           const prefs = getDeliveryPreferencesClient();
           const targetChat = prefs.targetMode === "group" && prefs.targetGroupChatId ? prefs.targetGroupChatId : chatId;
           const r = await apiFetchJson(
             API_BASE + "/anti-spam-queue?chatId=" + encodeURIComponent(targetChat || "") + "&drain=" + (autoDrain ? "1" : "0")
           );
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            if (clientAntiSpamPollTimer) {
+              clearTimeout(clientAntiSpamPollTimer);
+              clientAntiSpamPollTimer = null;
+            }
+            return;
+          }
           if (r && r.ok && r.snapshot) {
             const prevCount = clientAntiSpamSnapshot ? Number(clientAntiSpamSnapshot.queueCount || 0) : 0;
             clientAntiSpamSnapshot = r.snapshot;
@@ -2086,7 +2100,7 @@
         if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const metaObj = extraMeta && typeof extraMeta === "object" ? extraMeta : {};
         const isSubtitleOnly = Boolean(metaObj.subtitleOnly);
-        if (!isSubtitleOnly && metaObj.seriesId && metaObj.season && metaObj.episode) {
+        if (!isSubtitleOnly && metaObj.seriesId && metaObj.season !== undefined && metaObj.season !== null && metaObj.episode) {
           setSeriesProgress(metaObj.seriesId, metaObj.season, metaObj.episode, metaObj.epName || "");
         }
         const sizeSuffix = metaObj.fileSize ? (" • " + metaObj.fileSize) : "";
@@ -2118,7 +2132,7 @@
               tmdbId: metaObj.seriesId || state.activeDetails?.id || null,
               posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
               backdropUrl: state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
-              season: metaObj.season || null,
+              season: (metaObj.season !== undefined && metaObj.season !== null && metaObj.season !== "") ? Number(metaObj.season) : null,
               episode: metaObj.episode || null
             })
           });
@@ -2150,7 +2164,7 @@
                 "✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!"
               );
             }
-            if (!isSubtitleOnly && metaObj.seriesId && metaObj.season) {
+            if (!isSubtitleOnly && metaObj.seriesId && metaObj.season !== undefined && metaObj.season !== null && metaObj.season !== "") {
               loadSeason(metaObj.seriesId, metaObj.season, false, false);
             }
           } else {
@@ -2639,7 +2653,9 @@
                 typeCode: "s",
                 tmdbId: seriesId || state.activeDetails?.id || null,
                 posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
-                backdropUrl: ep.still || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || ""
+                backdropUrl: ep.still || ep.still_path || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
+                season: (seasonNum !== undefined && seasonNum !== null && seasonNum !== "") ? Number(seasonNum) : null,
+                episode: ep.episode_number || null
               })
             });
             if (r && r.antiSpam) {
@@ -2690,12 +2706,12 @@
           });
         }
         const vipAllowed = isCurrentUserVip();
-        const cacheKey = seriesId + "_" + seasonNum + "_" + (vipAllowed ? "vip" : "std");
+        const cacheKey = seriesId + "_" + parsedSeasonNum + "_" + (vipAllowed ? "vip" : "std");
         const cachedEntry = !forceRefresh ? clientSeasonCache.get(cacheKey) : null;
         const hasValidCache = Boolean(cachedEntry && (Date.now() - cachedEntry.ts < CLIENT_CACHE_TTL_MS));
         const s = hasValidCache
           ? cachedEntry.data
-          : await apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + seasonNum);
+          : await apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + parsedSeasonNum);
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
         }

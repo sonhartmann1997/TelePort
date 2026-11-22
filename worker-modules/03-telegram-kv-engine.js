@@ -800,24 +800,24 @@
     free_turbo: {
       id: "free_turbo",
       label: "🛡️ Cloudflare Free-Tier Turbo (<10ms CPU Micro-Batch)",
-      batchSize: 8,
-      wallClockLimitMs: 6000,
-      subrequestGuard: 38,
-      midBatchSubrequestGuard: 38,
-      tmdbTimeoutMs: 2200,
-      fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,6s Notfall-Parallel-Fallback wenn 0 TMDb-Treffer & Budget frei
-      fallbackTimeoutMs: 1600
+      batchSize: 4,
+      wallClockLimitMs: 3600,
+      subrequestGuard: 18,
+      midBatchSubrequestGuard: 18,
+      tmdbTimeoutMs: 2000,
+      fallbackMode: "smart_emergency", // Nur TMDb DE/EN + 1,5s Notfall-Fallback wenn 0 TMDb-Treffer & Budget frei
+      fallbackTimeoutMs: 1500
     },
     balanced: {
       id: "balanced",
       label: "⚖️ Ausgewogen (Standard)",
-      batchSize: 12,
-      wallClockLimitMs: 6000,
-      subrequestGuard: 38,
-      midBatchSubrequestGuard: 38,
-      tmdbTimeoutMs: 2500,
+      batchSize: 8,
+      wallClockLimitMs: 4800,
+      subrequestGuard: 26,
+      midBatchSubrequestGuard: 26,
+      tmdbTimeoutMs: 2400,
       fallbackMode: "balanced",
-      fallbackTimeoutMs: 2100
+      fallbackTimeoutMs: 2000
     },
     paid_pro: {
       id: "paid_pro",
@@ -875,10 +875,10 @@
       (d1Ops * 0.38) +
       (subreqs * 0.28);
     const cpuMs = Number(Math.min(25, Math.max(0.4, rawCpuEst)).toFixed(2));
-    const approachingLimit = cpuMs >= 6.8 || subreqs >= 18 || wallMs >= 3200;
-    const criticalLimit = cpuMs >= 8.5 || subreqs >= 26 || wallMs >= 5000;
+    const approachingLimit = cpuMs >= 6.4 || subreqs >= 14 || wallMs >= 3000;
+    const criticalLimit = cpuMs >= 8.2 || subreqs >= 22 || wallMs >= 4600;
     const status = criticalLimit ? "critical" : approachingLimit ? "warning" : "optimal";
-    const recommendedBatchSize = criticalLimit ? 1 : approachingLimit ? 2 : 5;
+    const recommendedBatchSize = criticalLimit ? 1 : approachingLimit ? 2 : 4;
     const cooldownMs = criticalLimit ? 2600 : approachingLimit ? 1200 : 0;
     const entry = {
       ts: now,
@@ -1089,22 +1089,29 @@
       const [payloadHex, sigHex] = raw.split(".");
       if (!payloadHex || !sigHex || payloadHex.length % 2 !== 0) return { ok: false, error: "Formatfehler im Launch-Token" };
       const enc = new TextEncoder();
-      const secret = typeof getSessionSigningSecret === "function"
-        ? await getSessionSigningSecret(env)
-        : String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
-      if (!secret) return { ok: false, error: "Signatur-Schlüssel nicht konfiguriert" };
-      const key = await crypto.subtle.importKey(
-        "raw",
-        enc.encode(secret),
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign"]
-      );
-      const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`tglaunch:${payloadHex}`));
-      const expectedSigHex = Array.from(new Uint8Array(expectedSigBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
-      const sigMatches = typeof timingSafeEqualStr === "function"
-        ? timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())
-        : (expectedSigHex.toLowerCase() === sigHex.toLowerCase());
+      const secrets = typeof getVerificationSigningSecrets === "function"
+        ? await getVerificationSigningSecrets(env)
+        : [String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || env?.BOT_TOKEN || "").trim()].filter(Boolean);
+      if (!secrets.length) return { ok: false, error: "Signatur-Schlüssel nicht konfiguriert" };
+      let sigMatches = false;
+      for (const secret of secrets) {
+        const key = await crypto.subtle.importKey(
+          "raw",
+          enc.encode(secret),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["sign"]
+        );
+        const expectedSigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(`tglaunch:${payloadHex}`));
+        const expectedSigHex = Array.from(new Uint8Array(expectedSigBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+        const matched = typeof timingSafeEqualStr === "function"
+          ? timingSafeEqualStr(expectedSigHex.toLowerCase(), sigHex.toLowerCase())
+          : (expectedSigHex.toLowerCase() === sigHex.toLowerCase());
+        if (matched) {
+          sigMatches = true;
+          break;
+        }
+      }
       if (!sigMatches) {
         return { ok: false, error: "Ungültige Launch-Token Signatur" };
       }

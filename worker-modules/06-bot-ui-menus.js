@@ -1618,7 +1618,7 @@
       episodesToDisplay = savedEpisodesForSeries.map(ep => ({
         id: ep.tmdbId,
         episode_number: ep.episodeNumber || 1,
-        season_number: ep.seasonNumber || 1,
+        season_number: ep.seasonNumber != null ? Number(ep.seasonNumber) : 1,
         name: ep.episodeName || ep.title,
         air_date: ep.year,
         vote_average: null,
@@ -2457,10 +2457,11 @@
         const deleteConfirmLink = makeBotLink(botUsername, `delc_${item.uid}`);
 
         if (item.contentType === "episode") {
-          const sCode = `S${String(item.seasonNumber || 1).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`;
+          const epSNum = item.seasonNumber != null ? Number(item.seasonNumber) : 1;
+          const sCode = `S${String(epSNum).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`;
           const epTitle = (item.episodeName || item.title || "Episode").trim();
           const openSeriesLink = item.seriesId
-            ? makeBotLink(botUsername, `ep_${item.seriesId}_${item.seasonNumber || 1}_all_1`)
+            ? makeBotLink(botUsername, `ep_${item.seriesId}_${epSNum}_all_1`)
             : makeBotLink(botUsername, `sd_${item.uid}`);
           text +=
             `[🔍](${whereSearchLink}) 🎞️ *[${escapeMd(sCode)} – ${escapeMd(epTitle)}](${openSeriesLink})*\n` +
@@ -2735,8 +2736,9 @@
       return;
     }
 
+    const epSeasonNum = item.seasonNumber != null ? Number(item.seasonNumber) : 1;
     const titleWithYear = item.contentType === "episode"
-      ? `${item.seriesTitle || ""} S${String(item.seasonNumber || 1).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`.trim()
+      ? `${item.seriesTitle || ""} S${String(epSeasonNum).padStart(2, "0")}E${String(item.episodeNumber || 1).padStart(2, "0")}`.trim()
       : (item.year && item.year !== "K. A." ? `${item.title} ${item.year}` : item.title);
     const tgSearchUrl = `tg://search?query=${safeEncodeParam(titleWithYear)}`;
     const tmdbType = item.contentType === "series" || item.contentType === "episode" ? "tv" : "movie";
@@ -2758,7 +2760,7 @@
         { text: "🔎 In Telegram suchen", url: tgSearchUrl },
         { text: "🌐 Auf TMDB öffnen", url: tmdbUrl }
       ],
-      [{ text: "🤖 Details im Bot öffnen", callback_data: item.contentType === "episode" && item.seriesId ? `ep_${item.seriesId}_${item.seasonNumber || 1}_all_1` : `sd_${item.uid}` }],
+      [{ text: "🤖 Details im Bot öffnen", callback_data: item.contentType === "episode" && item.seriesId ? `ep_${item.seriesId}_${epSeasonNum}_all_1` : `sd_${item.uid}` }],
       [{ text: "🔙 Zurück zur Merkliste", callback_data: "wl_back" }]
     ];
 
