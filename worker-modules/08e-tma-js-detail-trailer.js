@@ -1103,7 +1103,11 @@
           state.totalPages = Math.max(1, Number(res.totalPages) || 1);
           state.totalResults = Math.max(state.items.length, Number(res.totalResults) || state.items.length);
           state.hasMorePages = Boolean(res.hasMore ?? (pageNum < state.totalPages));
-          state.genres = res.genres || {};
+          if (res.genres && typeof res.genres === "object") {
+            state.genres = res.genres;
+          } else if (!state.genres || Object.keys(state.genres).length === 0) {
+            state.genres = type === "s" ? SERIES_GENRES_CLIENT : MOVIE_GENRES_CLIENT;
+          }
           syncSearchGenreSelectDom();
           if (Array.isArray(res.savedKeys)) {
             savedKeysSet = new Set(res.savedKeys);

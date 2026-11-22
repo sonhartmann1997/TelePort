@@ -306,6 +306,52 @@
         }
         return copy;
       };
+      // Deterministischer, nutzerunabhängiger Filter-Hash für Cloudflare Edge Cache (/discover, /collections, /universes).
+      // Berücksichtigt ausschließlich katalogrelevante Filterfelder (kein uiScale, kein trailerProvider, kein chatId).
+      const buildCatalogEdgeFilterHash = (settingsObj, vipAccessFlag = false) => {
+        const s = (settingsObj && typeof settingsObj === "object") ? settingsObj : {};
+        const filtersActive = s.filtersActive !== false;
+        const showUnreleased = Boolean(s.showUnreleased);
+        const onlyVipStreams = Boolean(vipAccessFlag && s.onlyVipStreams);
+        const normArr = (arr) => {
+          if (!filtersActive || !Array.isArray(arr) || arr.length === 0) return [];
+          return Array.from(new Set(arr.map(v => String(v ?? "").trim()).filter(Boolean))).sort();
+        };
+        const canonical = {
+          fa: filtersActive ? 1 : 0,
+          su: showUnreleased ? 1 : 0,
+          ov: onlyVipStreams ? 1 : 0,
+          ifsk: normArr(s.includedFsk),
+          efsk: normArr(s.excludedFsk),
+          ig: normArr(s.includedGenres),
+          eg: normArr(s.excludedGenres),
+          ie: normArr(s.includedEras),
+          ee: normArr(s.excludedEras),
+          is: normArr(s.includedStudios),
+          es: normArr(s.excludedStudios),
+          ip: normArr(s.includedPlatforms),
+          ep: normArr(s.excludedPlatforms)
+        };
+        if (
+          canonical.fa === 1 && canonical.su === 0 && canonical.ov === 0 &&
+          canonical.ifsk.length === 0 && canonical.efsk.length === 0 &&
+          canonical.ig.length === 0 && canonical.eg.length === 0 &&
+          canonical.ie.length === 0 && canonical.ee.length === 0 &&
+          canonical.is.length === 0 && canonical.es.length === 0 &&
+          canonical.ip.length === 0 && canonical.ep.length === 0
+        ) {
+          return "default";
+        }
+        const serialized = JSON.stringify(canonical);
+        let h1 = 0x811c9dc5;
+        let h2 = 0x01000193;
+        for (let i = 0; i < serialized.length; i++) {
+          const c = serialized.charCodeAt(i);
+          h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+          h2 = Math.imul(h2 ^ (c + i), 0x85ebca6b) >>> 0;
+        }
+        return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
+      };
       let clientHeaderSettings = null;
       try {
         const rawHdr = request.headers.get("X-Tma-Settings");
@@ -3047,130 +3093,190 @@
         const page = Math.max(1, Math.min(500, parseInt(url.searchParams.get("page") || "1", 10) || 1));
         const bypass = url.searchParams.get("bypass") === "1";
 
-        // Cloudflare Edge Cache für nicht-personalisierte Guest-Standardansichten (5 Min TTL, 0 D1/TMDb-Last!)
-        const canEdgeCacheDiscover = !auth.isAuthenticated && !clientHeaderSettings && mode !== "random";
+        const baseEffectiveSettings = bypass
+          ? { ...settings, filtersActive: false, showUnreleased: true, onlyVipStreams: false }
+          : { ...settings, onlyVipStreams: Boolean(hasVipStreamAccess && settings?.onlyVipStreams) };
+        const effectiveSettings = companyId ? { ...baseEffectiveSettings, explicitCompanyId: companyId } : baseEffectiveSettings;
+
+        // Cloudflare Edge Cache für ALLE Nutzer (auch eingeloggte Telegram-Nutzer!) über Filter-Hash + VIP-Bit.
+        // Im Edge Cache liegt ausschließlich das nutzerunabhängige Katalog-Objekt (keine savedKeys/chatId/persönliche Settings).
+        const canEdgeCacheDiscover = mode !== "random";
         const edgeCache = (canEdgeCacheDiscover && typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const filterHash = canEdgeCacheDiscover ? buildCatalogEdgeFilterHash(effectiveSettings, hasVipStreamAccess) : "";
         const discoverCacheKey = edgeCache
-          ? new Request(`${url.origin}/api/tma/discover?type=${typeCode}&genreId=${encodeURIComponent(genreId)}&companyId=${encodeURIComponent(companyId)}&mode=${encodeURIComponent(mode)}&sort=${encodeURIComponent(sortBy)}&page=${page}&bypass=${bypass ? 1 : 0}`, { method: "GET" })
+          ? new Request(
+              `${url.origin}/__edge_cache/api/tma/discover/v1?type=${typeCode}&genreId=${encodeURIComponent(genreId)}&companyId=${encodeURIComponent(companyId)}&mode=${encodeURIComponent(mode)}&sort=${encodeURIComponent(sortBy)}&page=${page}&bypass=${bypass ? 1 : 0}&vip=${hasVipStreamAccess ? 1 : 0}&fh=${encodeURIComponent(filterHash)}`,
+              { method: "GET" }
+            )
           : null;
+
+        let catalogPayload = null;
+        let edgeCacheHit = false;
         if (edgeCache && discoverCacheKey) {
           try {
             const cachedDiscoverRes = await edgeCache.match(discoverCacheKey);
             if (cachedDiscoverRes && cachedDiscoverRes.ok) {
-              if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
-              return cachedDiscoverRes;
+              const parsedCatalog = await cachedDiscoverRes.json().catch(() => null);
+              if (parsedCatalog && Array.isArray(parsedCatalog.items)) {
+                catalogPayload = parsedCatalog;
+                edgeCacheHit = true;
+                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+              }
             }
           } catch (_e) {}
         }
 
-        const baseEffectiveSettings = bypass ? { ...settings, filtersActive: false, showUnreleased: true, onlyVipStreams: false } : settings;
-        const effectiveSettings = companyId ? { ...baseEffectiveSettings, explicitCompanyId: companyId } : baseEffectiveSettings;
-        const lookahead = await fetchFilteredDiscoverWithLookahead(
-          env,
-          typeCode,
-          genreId,
-          mode === "random" ? "pop" : mode,
-          page,
-          sortBy,
-          effectiveSettings,
-          18,
-          bypass
-        );
-        let visibleItems = lookahead.items || [];
-        visibleItems = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, typeCode, effectiveSettings, hasVipStreamAccess);
-        let items = mode === "random" && visibleItems.length > 0
-          ? [visibleItems[Math.floor(Math.random() * visibleItems.length)]]
-          : visibleItems;
+        if (!catalogPayload) {
+          const lookahead = await fetchFilteredDiscoverWithLookahead(
+            env,
+            typeCode,
+            genreId,
+            mode === "random" ? "pop" : mode,
+            page,
+            sortBy,
+            effectiveSettings,
+            18,
+            bypass
+          );
+          let visibleItems = lookahead.items || [];
+          visibleItems = await applyVipStreamsOnlyFilterIfActive(env, visibleItems, typeCode, effectiveSettings, hasVipStreamAccess);
+          let items = mode === "random" && visibleItems.length > 0
+            ? [visibleItems[Math.floor(Math.random() * visibleItems.length)]]
+            : visibleItems;
 
-        // Seite 1: Gecachte ClearLogos & Beschreibungen gebündelt aus RAM + D1-Batch anreichern; max. 3 fehlende Overviews per TMDb
-        if (page === 1 && Array.isArray(items) && items.length > 0) {
-          const topCandidates = items.slice(0, 14);
-          const missingOvCandidates = topCandidates.filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
-          const [d1LogosMap, d1MetaMap] = await Promise.all([
-            typeof getClearLogosBatchFromD1 === "function"
-              ? getClearLogosBatchFromD1(env, topCandidates, typeCode).catch(() => new Map())
-              : Promise.resolve(new Map()),
-            (missingOvCandidates.length > 0 && typeof getMediaMetaBatchFromD1 === "function")
-              ? getMediaMetaBatchFromD1(env, missingOvCandidates, typeCode).catch(() => new Map())
-              : Promise.resolve(new Map())
-          ]);
-          for (const it of topCandidates) {
-            if (!it || !it.id) continue;
-            const isSer = it.media_type === "tv" || typeCode === "s";
-            const k = `${isSer ? "s" : "m"}_${Number(it.id)}`;
-            if (!it.logo_path && d1LogosMap.has(k) && d1LogosMap.get(k)) {
-              it.logo_path = d1LogosMap.get(k);
-            }
-            if ((!it.overview || !String(it.overview).trim()) && d1MetaMap.has(k)) {
-              const cachedDet = d1MetaMap.get(k);
-              if (cachedDet?.overview && String(cachedDet.overview).trim() && cachedDet.overview !== "Keine Beschreibung verfügbar.") {
-                it.overview = String(cachedDet.overview).trim();
+          // Seite 1: Gecachte ClearLogos & Beschreibungen gebündelt aus RAM + D1-Batch anreichern; max. 3 fehlende Overviews per TMDb
+          if (page === 1 && Array.isArray(items) && items.length > 0) {
+            const topCandidates = items.slice(0, 14);
+            const missingOvCandidates = topCandidates.filter(it => it && it.id && (!it.overview || !String(it.overview).trim()));
+            const [d1LogosMap, d1MetaMap] = await Promise.all([
+              typeof getClearLogosBatchFromD1 === "function"
+                ? getClearLogosBatchFromD1(env, topCandidates, typeCode).catch(() => new Map())
+                : Promise.resolve(new Map()),
+              (missingOvCandidates.length > 0 && typeof getMediaMetaBatchFromD1 === "function")
+                ? getMediaMetaBatchFromD1(env, missingOvCandidates, typeCode).catch(() => new Map())
+                : Promise.resolve(new Map())
+            ]);
+            for (const it of topCandidates) {
+              if (!it || !it.id) continue;
+              const isSer = it.media_type === "tv" || typeCode === "s";
+              const k = `${isSer ? "s" : "m"}_${Number(it.id)}`;
+              if (!it.logo_path && d1LogosMap.has(k) && d1LogosMap.get(k)) {
+                it.logo_path = d1LogosMap.get(k);
+              }
+              if ((!it.overview || !String(it.overview).trim()) && d1MetaMap.has(k)) {
+                const cachedDet = d1MetaMap.get(k);
+                if (cachedDet?.overview && String(cachedDet.overview).trim() && cachedDet.overview !== "Keine Beschreibung verfügbar.") {
+                  it.overview = String(cachedDet.overview).trim();
+                }
               }
             }
+            const stillMissingOv = topCandidates
+              .filter(it => it && it.id && (!it.overview || !String(it.overview).trim()))
+              .slice(0, 3);
+            if (stillMissingOv.length > 0 && hasSubrequestBudget(30)) {
+              await Promise.race([
+                Promise.all(stillMissingOv.map(async (it) => {
+                  if (!hasSubrequestBudget(34)) return;
+                  try {
+                    const isSer = it.media_type === "tv" || typeCode === "s";
+                    const det = isSer ? await fetchSeriesDetails(env, it.id) : await fetchMovieDetails(env, it.id);
+                    if (det && det.overview && String(det.overview).trim() && det.overview !== "Keine Beschreibung verfügbar.") {
+                      it.overview = String(det.overview).trim();
+                    }
+                  } catch (_e) {}
+                })),
+                new Promise(resolve => setTimeout(resolve, 900))
+              ]);
+            }
           }
-          const stillMissingOv = topCandidates
-            .filter(it => it && it.id && (!it.overview || !String(it.overview).trim()))
-            .slice(0, 3);
-          if (stillMissingOv.length > 0 && hasSubrequestBudget(30)) {
-            await Promise.race([
-              Promise.all(stillMissingOv.map(async (it) => {
-                if (!hasSubrequestBudget(34)) return;
-                try {
-                  const isSer = it.media_type === "tv" || typeCode === "s";
-                  const det = isSer ? await fetchSeriesDetails(env, it.id) : await fetchMovieDetails(env, it.id);
-                  if (det && det.overview && String(det.overview).trim() && det.overview !== "Keine Beschreibung verfügbar.") {
-                    it.overview = String(det.overview).trim();
-                  }
-                } catch (_e) {}
-              })),
-              new Promise(resolve => setTimeout(resolve, 900))
-            ]);
+
+          const rawTotalPages = mode === "random" ? 1 : Math.max(1, Number(lookahead.total_pages || 1));
+          const hasMoreAfterFilter = mode !== "random" && Boolean(lookahead.hasMore) && items.length > 0 && page < rawTotalPages;
+          const totalPages = hasMoreAfterFilter ? rawTotalPages : page;
+          const hasMore = Boolean(hasMoreAfterFilter && page < totalPages);
+          const totalResults = mode === "random"
+            ? items.length
+            : Math.max(items.length, Number(lookahead.total_results || items.length));
+          const resolvedBotUsername = page === 1 ? await tgApi(env).getBotUsername(env) : "";
+
+          catalogPayload = {
+            items,
+            totalPages,
+            totalResults,
+            hasMore,
+            rawCount: lookahead.rawCount || items.length,
+            filteredOutCount: lookahead.filteredOutCount || 0,
+            botUsername: resolvedBotUsername || ""
+          };
+
+          // Nur valide Katalog-Ergebnisse (nicht bei temporärem TMDb-Ausfall mit 0 Roh-Treffern) für 5 Min. im Edge Cache speichern
+          if (edgeCache && discoverCacheKey && (catalogPayload.items.length > 0 || catalogPayload.rawCount > 0)) {
+            const edgeEntryRes = new Response(JSON.stringify(catalogPayload), {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "public, max-age=300"
+              }
+            });
+            scheduleBackgroundWork(() => edgeCache.put(discoverCacheKey, edgeEntryRes));
           }
         }
 
-        const rawTotalPages = mode === "random" ? 1 : Math.max(1, Number(lookahead.total_pages || 1));
-        const hasMoreAfterFilter = mode !== "random" && Boolean(lookahead.hasMore) && items.length > 0 && page < rawTotalPages;
-        const totalPages = hasMoreAfterFilter ? rawTotalPages : page;
-        const hasMore = Boolean(hasMoreAfterFilter && page < totalPages);
-        const totalResults = mode === "random"
-          ? items.length
-          : Math.max(items.length, Number(lookahead.total_results || items.length));
-        const [botUsername, savedList] = await Promise.all([
-          tgApi(env).getBotUsername(env),
-          auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([])
-        ]);
-        const savedKeys = (savedList || [])
-          .filter(i => (i.contentType === "movie" || i.contentType === "series") && i.tmdbId)
-          .map(i => (i.contentType === "series" ? "s_" : "m_") + i.tmdbId);
+        // Seite > 1 (Infinite Scroll / Folgeseiten): spart getSavedList (D1/KV), getBotUsername sowie redundante genres/genreEmojis/settings
+        let responseBody;
+        if (page === 1) {
+          const [botUsername, savedList] = await Promise.all([
+            catalogPayload.botUsername ? Promise.resolve(catalogPayload.botUsername) : tgApi(env).getBotUsername(env),
+            auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([])
+          ]);
+          const savedKeys = (savedList || [])
+            .filter(i => (i.contentType === "movie" || i.contentType === "series") && i.tmdbId)
+            .map(i => (i.contentType === "series" ? "s_" : "m_") + i.tmdbId);
+          responseBody = {
+            ok: true,
+            botUsername,
+            savedKeys,
+            typeCode,
+            genreId,
+            mode,
+            sortBy,
+            page,
+            totalPages: catalogPayload.totalPages,
+            totalResults: catalogPayload.totalResults,
+            hasMore: catalogPayload.hasMore,
+            rawCount: catalogPayload.rawCount,
+            filteredOutCount: catalogPayload.filteredOutCount,
+            genres: typeCode === "m" ? MOVIE_GENRES : SERIES_GENRES,
+            genreEmojis: GENRE_EMOJIS,
+            settings: sanitizeSettingsForClient(settings),
+            items: catalogPayload.items
+          };
+        } else {
+          responseBody = {
+            ok: true,
+            typeCode,
+            genreId,
+            mode,
+            sortBy,
+            page,
+            totalPages: catalogPayload.totalPages,
+            totalResults: catalogPayload.totalResults,
+            hasMore: catalogPayload.hasMore,
+            rawCount: catalogPayload.rawCount,
+            filteredOutCount: catalogPayload.filteredOutCount,
+            items: catalogPayload.items
+          };
+        }
 
-        const discoverRes = new Response(JSON.stringify({
-          ok: true,
-          botUsername,
-          savedKeys,
-          typeCode,
-          genreId,
-          mode,
-          sortBy,
-          page,
-          totalPages,
-          totalResults,
-          hasMore,
-          rawCount: lookahead.rawCount || items.length,
-          filteredOutCount: lookahead.filteredOutCount || 0,
-          genres: typeCode === "m" ? MOVIE_GENRES : SERIES_GENRES,
-          genreEmojis: GENRE_EMOJIS,
-          settings: sanitizeSettingsForClient(settings),
-          items
-        }), {
+        const isPublicGuestResponse = !auth.isAuthenticated && !clientHeaderSettings && mode !== "random";
+        return new Response(JSON.stringify(responseBody), {
           status: 200,
-          headers: canEdgeCacheDiscover
-            ? { ...corsHeaders, "Cache-Control": "public, max-age=300" }
-            : corsHeaders
+          headers: {
+            ...corsHeaders,
+            "Cache-Control": isPublicGuestResponse ? "public, max-age=300" : "private, no-store",
+            "X-Discover-Edge-Cache": edgeCacheHit ? "HIT" : "MISS"
+          }
         });
-        if (edgeCache && discoverCacheKey) {
-          scheduleBackgroundWork(() => edgeCache.put(discoverCacheKey, discoverRes.clone()));
-        }
-        return discoverRes;
       }
 
       if (path === "/api/tma/translate" && (request.method === "POST" || request.method === "GET")) {
