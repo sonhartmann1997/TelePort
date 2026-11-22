@@ -1445,6 +1445,34 @@
     const resolvedBotToken = getBotToken(env);
     const TELEGRAM_API = `https://api.telegram.org/bot${resolvedBotToken}`;
 
+    const normalizeLinkPreviewOptions = (rawOpts = {}, defaultDisabled = true) => {
+      const { _fromAntiSpamQueue, disable_web_page_preview, link_preview_options, ...rest } = rawOpts || {};
+      let resolvedLpo = link_preview_options;
+      if (!resolvedLpo || typeof resolvedLpo !== "object") {
+        if (typeof disable_web_page_preview === "boolean") {
+          resolvedLpo = { is_disabled: disable_web_page_preview };
+        } else if (defaultDisabled) {
+          resolvedLpo = { is_disabled: true };
+        }
+      }
+      if (resolvedLpo) rest.link_preview_options = resolvedLpo;
+      return rest;
+    };
+
+    const isTelegramParseOrEntityError = (errDesc) => {
+      const d = String(errDesc || "").toLowerCase();
+      return (
+        d.includes("can't parse entities") ||
+        d.includes("parse entities") ||
+        d.includes("unsupported start tag") ||
+        d.includes("can't find end tag") ||
+        d.includes("unclosed start tag") ||
+        d.includes("unexpected end tag") ||
+        d.includes("byte offset") ||
+        d.includes("entity")
+      );
+    };
+
     return {
       async answerInlineQuery(inlineQueryId, results, options = {}) {
         try {
@@ -1583,12 +1611,12 @@
       async sendMessage(chatId, text, options = {}) {
         try {
           trackStat("telegramCalls");
-          const { _fromAntiSpamQueue, ...cleanOptions } = options || {};
+          const _fromAntiSpamQueue = Boolean(options?._fromAntiSpamQueue);
+          const cleanOptions = normalizeLinkPreviewOptions(options, true);
           recordActualTelegramSendSlot(chatId);
           const safeMarkup = cleanOptions.reply_markup ? sanitizeReplyMarkup(cleanOptions.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
-            disable_web_page_preview: true,
             ...cleanOptions,
             chat_id: chatId,
             text: prepared.text,
@@ -1623,15 +1651,21 @@
           }
 
           if (!res.ok) {
-            const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
-            const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
-            const plainBody = { ...body, text: plainText, parse_mode: undefined, reply_markup: safeMarkup };
-            res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(plainBody),
-              _criticalSubrequest: true
-            }, 6000);
+            const errJson = await res.clone().json().catch(() => null);
+            const errDesc = String(errJson?.description || "");
+            if (res.status === 400 && isTelegramParseOrEntityError(errDesc)) {
+              const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+              const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
+              const plainBody = { ...body, text: plainText, parse_mode: undefined, reply_markup: safeMarkup };
+              res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(plainBody),
+                _criticalSubrequest: true
+              }, 6000);
+            } else {
+              return null;
+            }
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -1668,21 +1702,27 @@
           }
 
           if (!res.ok) {
-            const plainCaption = unescapeMdChars(
-              (caption || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-            ).replace(/[*_`]/g, "");
-            const fallbackBody = {
-              ...body,
-              caption: plainCaption.length > 1020 ? plainCaption.slice(0, 1017) + "…" : plainCaption,
-              parse_mode: undefined,
-              reply_markup: safeMarkup
-            };
-            res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(fallbackBody),
-              _criticalSubrequest: true
-            }, 7000);
+            const errJson = await res.clone().json().catch(() => null);
+            const errDesc = String(errJson?.description || "");
+            if (res.status === 400 && isTelegramParseOrEntityError(errDesc)) {
+              const plainCaption = unescapeMdChars(
+                (caption || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+              ).replace(/[*_`]/g, "");
+              const fallbackBody = {
+                ...body,
+                caption: plainCaption.length > 1020 ? plainCaption.slice(0, 1017) + "…" : plainCaption,
+                parse_mode: undefined,
+                reply_markup: safeMarkup
+              };
+              res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(fallbackBody),
+                _criticalSubrequest: true
+              }, 7000);
+            } else {
+              return null;
+            }
           }
           return res.ok ? await res.json() : null;
         } catch (e) {
@@ -1709,10 +1749,11 @@
       async editInlineMessageText(inlineMessageId, text, options = {}) {
         try {
           trackStat("telegramCalls");
-          const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
+          const cleanOptions = normalizeLinkPreviewOptions(options, false);
+          const safeMarkup = cleanOptions.reply_markup ? sanitizeReplyMarkup(cleanOptions.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
-            ...options,
+            ...cleanOptions,
             inline_message_id: inlineMessageId,
             text: prepared.text,
             parse_mode: prepared.parse_mode,
@@ -1733,11 +1774,11 @@
       async editMessageText(chatId, messageId, text, options = {}) {
         try {
           trackStat("telegramCalls");
-          const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
+          const cleanOptions = normalizeLinkPreviewOptions(options, true);
+          const safeMarkup = cleanOptions.reply_markup ? sanitizeReplyMarkup(cleanOptions.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(text, 4090);
           const body = {
-            disable_web_page_preview: true,
-            ...options,
+            ...cleanOptions,
             chat_id: chatId,
             message_id: messageId,
             text: prepared.text,
@@ -1764,20 +1805,24 @@
             if (errDesc.includes("message is not modified")) {
               return { ok: true, notModified: true };
             }
-            const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
-            const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
-            const fallbackBody = {
-              ...body,
-              text: plainText,
-              parse_mode: undefined,
-              reply_markup: safeMarkup
-            };
-            res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(fallbackBody),
-              _criticalSubrequest: true
-            }, 6000);
+            if (res.status === 400 && isTelegramParseOrEntityError(errDesc)) {
+              const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+              const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
+              const fallbackBody = {
+                ...body,
+                text: plainText,
+                parse_mode: undefined,
+                reply_markup: safeMarkup
+              };
+              res = await fetchWithTimeout(`${TELEGRAM_API}/editMessageText`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(fallbackBody),
+                _criticalSubrequest: true
+              }, 6000);
+            } else {
+              return null;
+            }
           }
           return res.ok ? await res.json() : null;
         } catch (e) {

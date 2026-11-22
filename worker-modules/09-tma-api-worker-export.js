@@ -3325,7 +3325,7 @@
         const sortBy = url.searchParams.get("sort") || "pop_desc";
         const page = Math.max(1, Math.min(500, parseInt(url.searchParams.get("page") || "1", 10) || 1));
         const bypass = url.searchParams.get("bypass") === "1";
-        const effectiveSettings = bypass ? { ...settings, filtersActive: false, showUnreleased: true } : settings;
+        const effectiveSettings = bypass ? { ...settings, filtersActive: false, showUnreleased: true, onlyVipStreams: false } : settings;
 
         if (personIdParam) {
           const pData = await fetchPersonDetails(env, personIdParam);
@@ -5715,11 +5715,14 @@
               });
             }
             const scopedEnv = { ...env, TELEGRAM_BOT_TOKEN: customToken, _isCustomBotWebhook: true };
+            deferKvFlushForThisRequest = true;
             const runCustomHook = async () => {
               try {
                 await handleUpdate(scopedEnv, update);
               } catch (err) {
                 console.error("[custom-webhook] handleUpdate Fehler:", err);
+              } finally {
+                await flushDirtyKvBatch(env).catch(() => {});
               }
             };
             if (ctx && ctx.waitUntil) ctx.waitUntil(runCustomHook());
@@ -5902,9 +5905,15 @@
             return new Response("OK", { status: 200 });
           }
 
+          deferKvFlushForThisRequest = true;
           const runAll = async () => {
-            await handleUpdate(env, update);
-            await flushDirtyKvBatch(env);
+            try {
+              await handleUpdate(env, update);
+            } catch (err) {
+              console.error("[webhook] handleUpdate Fehler:", err);
+            } finally {
+              await flushDirtyKvBatch(env).catch(() => {});
+            }
           };
           if (ctx && ctx.waitUntil) {
             ctx.waitUntil(runAll());

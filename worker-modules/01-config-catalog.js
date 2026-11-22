@@ -872,7 +872,25 @@
   })();
   const tmdbCache = new Map();
   const tmdbMemoryCache = tmdbCache;
-  const externalFallbackCache = new Map();
+  const externalFallbackCache = (() => {
+    const map = new Map();
+    const MAX_EXT_CACHE_ENTRIES = 300;
+    const origSet = map.set.bind(map);
+    map.set = (k, v) => {
+      if (map.has(k)) {
+        map.delete(k);
+      } else if (map.size >= MAX_EXT_CACHE_ENTRIES) {
+        let evicted = 0;
+        for (const oldKey of map.keys()) {
+          map.delete(oldKey);
+          evicted++;
+          if (evicted >= 40) break;
+        }
+      }
+      return origSet(k, v);
+    };
+    return map;
+  })();
 
   // Globale String-Normalisierung für exakte und Teil-Vergleiche (verhindert ReferenceError in allen Worker- & Fallback-Scopes)
   function normalizeCompareString(str) {
