@@ -452,6 +452,96 @@
     };
   }
 
+  async function enqueueAntiSpamJobsBatch(env, jobInputs, ctx = null) {
+    if (!Array.isArray(jobInputs) || jobInputs.length === 0) return [];
+    if (jobInputs.length === 1) {
+      const single = await enqueueAntiSpamJob(env, jobInputs[0], ctx);
+      return single ? [single] : [];
+    }
+    await hydrateAntiSpamStateFromStorage(env);
+    const now = Date.now();
+    const randPrefix = Math.random().toString(36).slice(2, 6);
+    const jobs = [];
+    let earliestScheduledAt = Infinity;
+
+    for (let i = 0; i < jobInputs.length; i++) {
+      const jobInput = jobInputs[i] || {};
+      const jobId = jobInput.id || `asq_${now}_${i}_${randPrefix}`;
+      const scheduledAt = Math.max(now + 250, Number(jobInput.scheduledAt) || (now + ANTI_SPAM_LIMITS.SINGLE_CHAT_MIN_INTERVAL_MS));
+      if (scheduledAt < earliestScheduledAt) earliestScheduledAt = scheduledAt;
+      const job = {
+        id: jobId,
+        chatId: String(jobInput.chatId || "").trim(),
+        title: String(jobInput.title || "Telegram Zustellung").trim(),
+        quality: String(jobInput.quality || "1080p").trim(),
+        fileId: String(jobInput.fileId || "").trim(),
+        caption: String(jobInput.caption || "").trim(),
+        targetMode: String(jobInput.targetMode || "dm").trim(),
+        targetTopicId: String(jobInput.targetTopicId || "").trim(),
+        sourceBridgeChatId: String(jobInput.sourceBridgeChatId || "").trim(),
+        customBotToken: String(jobInput.customBotToken || "").trim(),
+        posterUrl: String(jobInput.posterUrl || "").trim(),
+        backdropUrl: String(jobInput.backdropUrl || "").trim(),
+        coverUrl: String(jobInput.coverUrl || "").trim(),
+        tmdbId: jobInput.tmdbId ? Number(jobInput.tmdbId) : null,
+        typeCode: String(jobInput.typeCode || "").trim(),
+        method: String(jobInput.method || "copyMessages").trim(),
+        status: "queued",
+        reason: String(jobInput.reason || "Telegram Anti-Spam Pacing"),
+        reasonCode: String(jobInput.reasonCode || "chat_pacing"),
+        createdAt: now,
+        scheduledAt,
+        waitMs: Math.max(0, scheduledAt - now),
+        attempts: Number(jobInput.attempts) || 0
+      };
+      jobs.push(job);
+      antiSpamState.queue.push(job);
+    }
+
+    antiSpamState.queue.sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0));
+    antiSpamState.totalQueued += jobs.length;
+
+    try {
+      const db = await ensureD1Schema(env);
+      const rawDb = typeof getRawD1Binding === "function" ? getRawD1Binding(env) : null;
+      if (db && rawDb && typeof rawDb.batch === "function") {
+        const CHUNK = 50;
+        for (let off = 0; off < jobs.length; off += CHUNK) {
+          const slice = jobs.slice(off, off + CHUNK);
+          const stmts = slice.map((job) =>
+            rawDb.prepare(
+              "INSERT INTO tg_anti_spam_queue (job_id, chat_id, payload_json, status, scheduled_at, created_at) VALUES (?, ?, ?, 'queued', ?, ?)"
+            ).bind(job.id, job.chatId, JSON.stringify(job), job.scheduledAt, job.createdAt)
+          );
+          trackStat("d1Writes");
+          if (typeof countD1Subrequest === "function") countD1Subrequest();
+          await rawDb.batch(stmts);
+        }
+      } else if (db) {
+        for (const job of jobs) {
+          trackStat("d1Writes");
+          await db.prepare(
+            "INSERT INTO tg_anti_spam_queue (job_id, chat_id, payload_json, status, scheduled_at, created_at) VALUES (?, ?, ?, 'queued', ?, ?)"
+          ).bind(job.id, job.chatId, JSON.stringify(job), job.scheduledAt, job.createdAt).run();
+        }
+      }
+    } catch (e) {}
+
+    await persistAntiSpamStateToStorage(env);
+
+    // Ein einziger Hintergrund-Timer statt N paralleler Timer
+    const delayMs = Math.max(150, (Number.isFinite(earliestScheduledAt) ? earliestScheduledAt : now + 1200) - Date.now());
+    if (ctx && typeof ctx.waitUntil === "function" && delayMs <= 6500) {
+      const drainCap = Math.min(100, Math.max(6, jobs.length));
+      ctx.waitUntil((async () => {
+        await new Promise(res => setTimeout(res, delayMs + 60));
+        await drainAntiSpamQueue(env, drainCap);
+      })());
+    }
+
+    return jobs;
+  }
+
   function normalizeWorkerRetentionDays(val) {
     const n = Number(val);
     return (n === 7 || n === 30 || n === 90) ? n : 30;
@@ -1935,9 +2025,15 @@
                 harvestedIsVideo = Boolean(copyData?.result?.video);
                 await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, videoInRes.file_unique_id || null);
               } else if (extraOpts.autoHarvestFileId !== false) {
-                const harvestTargetChat = env.HARVEST_CACHE_CHAT_ID || (resolvedCoverUrl ? targetChatId : "");
-                const shouldDeleteTempForward = !env.HARVEST_CACHE_CHAT_ID && String(harvestTargetChat) === String(targetChatId);
-                if (harvestTargetChat) {
+                // Datenschutz- & Anti-429-Schutz: NIEMALS per forwardMessage in den User-Chat (targetChatId) weiterleiten
+                // (würde privaten Quellkanalnamen leaken, Doppel-Nachrichten riskieren & 3 zusätzliche Telegram-API-Calls auslösen).
+                // File-ID Harvesting via forwardMessage läuft ausschließlich über einen dedizierten privaten Cache-Kanal (env.HARVEST_CACHE_CHAT_ID).
+                const harvestTargetChat = String(env.HARVEST_CACHE_CHAT_ID || "").trim();
+                const isSafeDedicatedHarvestChat = Boolean(
+                  harvestTargetChat &&
+                  harvestTargetChat !== String(targetChatId).trim()
+                );
+                if (isSafeDedicatedHarvestChat) {
                   try {
                     const fwdPayload = {
                       chat_id: harvestTargetChat,
@@ -1945,14 +2041,16 @@
                       message_id: sourceMsgId,
                       disable_notification: true
                     };
-                    if (shouldDeleteTempForward && threadId) fwdPayload.message_thread_id = threadId;
                     const fwdRes = await fetchWithTimeout(`${apiBase}/forwardMessage`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify(fwdPayload),
                       _criticalSubrequest: true
                     }, 6000);
-                    if (fwdRes.ok) {
+                    if (fwdRes.status === 429) {
+                      const err429Fwd = await fwdRes.json().catch(() => ({}));
+                      registerAntiSpam429FloodWait(Number(err429Fwd?.parameters?.retry_after) || 5, harvestTargetChat);
+                    } else if (fwdRes.ok) {
                       const fwdJson = await fwdRes.json().catch(() => null);
                       const fwdMsgId = fwdJson?.result?.message_id;
                       const mediaObj = fwdJson?.result?.video || fwdJson?.result?.document;
@@ -1961,8 +2059,7 @@
                         harvestedIsVideo = Boolean(fwdJson?.result?.video);
                         await replaceExportFileIdInD1(env, String(fileIdOrExportRef).trim(), harvestedFileId, mediaObj.file_unique_id || null);
                       }
-                      if (shouldDeleteTempForward && fwdMsgId) {
-                        // Awaiten (mit Timeout), damit Cloudflare Workers die Löschung nicht vorzeitig abbricht (verhindert doppelte Videos!)
+                      if (fwdMsgId) {
                         await fetchWithTimeout(`${apiBase}/deleteMessage`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },

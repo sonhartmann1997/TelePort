@@ -4105,6 +4105,8 @@
               if (r && r.ok && r.user) {
                 sessionToken = r.sessionToken || sessionToken;
                 try { if (sessionToken) localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
+                window._tmaDeadInitData = "";
+                window._tmaDeadLaunchToken = "";
                 state.isAuthenticated = true;
                 state.hasInitData = true;
                 state.authUser = r.user;
@@ -4112,6 +4114,8 @@
                 loggedInViaInitOrLaunch = true;
               } else if (r && (r._httpStatus === 401 || r.reasonCode === "INIT_DATA_EXPIRED" || r.reasonCode === "LAUNCH_TOKEN_INVALID")) {
                 // Abgelaufene initData/Launch-Tokens nicht weiter mitsenden, stattdessen nahtlos auf 30-Tage-SessionToken (/auth/me) zurückfallen
+                if (rawInitData) window._tmaDeadInitData = rawInitData;
+                if (rawLaunchToken) window._tmaDeadLaunchToken = rawLaunchToken;
                 rawInitData = "";
                 rawLaunchToken = "";
               }

@@ -10,7 +10,7 @@
   let activeD1WriteBuffer = null;
   let activeD1WriteBufferStartedAt = 0;
   let activeD1WriteBufferDepth = 0;
-  const D1_SCHEMA_VERSION = "20261121_v2";
+  const D1_SCHEMA_VERSION = "20261122_v3";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
@@ -479,7 +479,10 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_tg_anti_spam_queue_status_sched ON tg_anti_spam_queue(status, scheduled_at ASC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_movies_updated_at ON movies(updated_at DESC)"),
-          db.prepare("CREATE INDEX IF NOT EXISTS idx_series_updated_at ON series(updated_at DESC)")
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_series_updated_at ON series(updated_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_updated_at ON movie_files(updated_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_episode_files_updated_at ON episode_files(updated_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_entity_cache_type_updated ON entity_cache(entity_type, updated_at DESC)")
         ]));
       } catch (e) {}
 

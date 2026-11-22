@@ -1947,6 +1947,8 @@
         if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
           stopDetailBackgroundVideoTeaserClient();
         }
+        if (typeof activeDetailReqSeq === "number") activeDetailReqSeq++;
+        if (typeof activeSeasonReqSeq === "number") activeSeasonReqSeq++;
         if (document.body) document.body.classList.remove("modal-open-pause-hero");
         if (m) m.innerHTML = "";
         if (typeof syncTelegramBackButtonClient === "function") {

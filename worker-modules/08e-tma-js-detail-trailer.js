@@ -391,6 +391,99 @@
         return window._clientWorkerCircuitState;
       }
 
+      async function refreshTmaSessionSingleFlight() {
+        const now = Date.now();
+        if (window._tmaAuthRefreshInFlight) {
+          return window._tmaAuthRefreshInFlight;
+        }
+        if (Number(window._tmaLastAuthRefreshFailTs || 0) > 0 && (now - Number(window._tmaLastAuthRefreshFailTs)) < 5000) {
+          return { ok: false, skippedCooldown: true };
+        }
+        const extractedInit = (typeof extractClientTelegramInitData === "function") ? extractClientTelegramInitData() : "";
+        const extractedLaunch = (typeof extractClientTelegramLaunchToken === "function") ? extractClientTelegramLaunchToken() : "";
+        const candidateInit = extractedInit || rawInitData || "";
+        const candidateLaunch = extractedLaunch || rawLaunchToken || "";
+        const usableInit = (candidateInit && candidateInit !== String(window._tmaDeadInitData || "")) ? candidateInit : "";
+        const usableLaunch = (candidateLaunch && candidateLaunch !== String(window._tmaDeadLaunchToken || "")) ? candidateLaunch : "";
+        if (!usableInit && !usableLaunch) {
+          return { ok: false, noCredentials: true };
+        }
+
+        const refreshPromise = (async () => {
+          const timeoutCtrl = new AbortController();
+          const timer = setTimeout(() => {
+            try { timeoutCtrl.abort(); } catch (e) {}
+          }, 10000);
+          try {
+            const refreshHeaders = { "Content-Type": "application/json" };
+            const isSafeHdr = (v) => typeof v === "string" && v.length > 0 && !/[^\\x00-\\xFF]/.test(v);
+            if (isSafeHdr(usableInit)) refreshHeaders["X-Telegram-Init-Data"] = usableInit;
+            if (isSafeHdr(usableLaunch)) refreshHeaders["X-Telegram-Launch-Token"] = usableLaunch;
+            const res = await fetch(API_BASE + "/auth/init", {
+              method: "POST",
+              headers: refreshHeaders,
+              body: JSON.stringify({ initData: usableInit, tgLaunch: usableLaunch }),
+              cache: "no-store",
+              signal: timeoutCtrl.signal
+            });
+            const text = await res.text();
+            let parsed = null;
+            try { parsed = JSON.parse(text); } catch (_e) { parsed = null; }
+            if (res.ok && parsed && parsed.ok && parsed.sessionToken) {
+              sessionToken = String(parsed.sessionToken);
+              try { localStorage.setItem("tma_session_token", sessionToken); } catch (e) {}
+              if (usableInit) rawInitData = usableInit;
+              if (usableLaunch) rawLaunchToken = usableLaunch;
+              window._tmaDeadInitData = "";
+              window._tmaDeadLaunchToken = "";
+              window._tmaLastAuthRefreshFailTs = 0;
+              if (typeof state === "object" && state) {
+                state.isAuthenticated = true;
+                state.hasInitData = true;
+                if (parsed.user) {
+                  state.authUser = parsed.user;
+                  if (parsed.user.telegramId) chatId = String(parsed.user.telegramId);
+                }
+              }
+              if (typeof updateSyncBadge === "function") {
+                try { updateSyncBadge(); } catch (e) {}
+              }
+              return { ok: true, sessionToken };
+            }
+            if (
+              res.status === 401 ||
+              res.status === 400 ||
+              (parsed && (parsed.reasonCode === "INIT_DATA_EXPIRED" || parsed.reasonCode === "LAUNCH_TOKEN_INVALID"))
+            ) {
+              if (usableInit) {
+                window._tmaDeadInitData = usableInit;
+                if (rawInitData === usableInit) rawInitData = "";
+              }
+              if (usableLaunch) {
+                window._tmaDeadLaunchToken = usableLaunch;
+                if (rawLaunchToken === usableLaunch) rawLaunchToken = "";
+              }
+            }
+            window._tmaLastAuthRefreshFailTs = Date.now();
+            return { ok: false, status: res.status || 0 };
+          } catch (_err) {
+            window._tmaLastAuthRefreshFailTs = Date.now();
+            return { ok: false, networkError: true };
+          } finally {
+            clearTimeout(timer);
+          }
+        })();
+
+        window._tmaAuthRefreshInFlight = refreshPromise;
+        try {
+          return await refreshPromise;
+        } finally {
+          if (window._tmaAuthRefreshInFlight === refreshPromise) {
+            window._tmaAuthRefreshInFlight = null;
+          }
+        }
+      }
+
       async function apiFetchJson(url, opts = {}) {
         const method = String(opts.method || "GET").toUpperCase();
         const urlStr = String(url || "");
@@ -442,7 +535,10 @@
 
         const headers = { ...(opts.headers || {}) };
         if (!rawInitData && typeof extractClientTelegramInitData === "function") {
-          rawInitData = extractClientTelegramInitData();
+          const freshInit = extractClientTelegramInitData();
+          if (freshInit && freshInit !== String(window._tmaDeadInitData || "")) {
+            rawInitData = freshInit;
+          }
         }
         const isHeaderSafeStr = (v) => typeof v === "string" && v.length > 0 && !/[^\\x00-\\xFF]/.test(v);
         if (isHeaderSafeStr(sessionToken)) headers["Authorization"] = "Bearer " + sessionToken;
@@ -480,21 +576,24 @@
 
         const executeNetworkFetchWithRetries = async () => {
           try {
-            const doSingleFetch = async (isRetry = false) => {
+            const doSingleFetch = async (isRetry = false, hasRefreshedAuth = false) => {
               const reqStartMs = Date.now();
+              const sentBearerToken = sessionToken;
               const timeoutCtrl = new AbortController();
               const timer = setTimeout(() => {
                 try { timeoutCtrl.abort(); } catch (e) {}
               }, timeoutMs);
+              let onExternalAbort = null;
               if (opts.signal) {
                 if (opts.signal.aborted) {
                   clearTimeout(timer);
                   throw new DOMException("Aborted", "AbortError");
                 }
-                opts.signal.addEventListener("abort", () => {
+                onExternalAbort = () => {
                   clearTimeout(timer);
                   try { timeoutCtrl.abort(); } catch (e) {}
-                }, { once: true });
+                };
+                opts.signal.addEventListener("abort", onExternalAbort, { once: true });
               }
               try {
                 const fetchOpts = {
@@ -552,6 +651,39 @@
                   throw rateErr;
                 }
                 if (res.status === 401 || res.status === 403) {
+                  const canAttemptSilentRefresh =
+                    res.status === 401 &&
+                    !hasRefreshedAuth &&
+                    !opts._authRefreshAttempted &&
+                    !urlStr.includes("/auth/");
+                  if (canAttemptSilentRefresh) {
+                    clearTimeout(timer);
+                    let refreshedOk = false;
+                    if (isHeaderSafeStr(sessionToken) && sessionToken !== sentBearerToken) {
+                      // Ein paralleler Request hat die Session bereits erfolgreich erneuert
+                      refreshedOk = true;
+                    } else {
+                      const refreshRes = await refreshTmaSessionSingleFlight();
+                      refreshedOk = Boolean(refreshRes && refreshRes.ok && isHeaderSafeStr(sessionToken));
+                    }
+                    if (refreshedOk) {
+                      if (opts.signal && opts.signal.aborted) {
+                        throw new DOMException("Aborted", "AbortError");
+                      }
+                      headers["Authorization"] = "Bearer " + sessionToken;
+                      if (isHeaderSafeStr(rawInitData)) {
+                        headers["X-Telegram-Init-Data"] = rawInitData;
+                      } else {
+                        delete headers["X-Telegram-Init-Data"];
+                      }
+                      if (isHeaderSafeStr(rawLaunchToken)) {
+                        headers["X-Telegram-Launch-Token"] = rawLaunchToken;
+                      } else {
+                        delete headers["X-Telegram-Launch-Token"];
+                      }
+                      return await doSingleFetch(true, true);
+                    }
+                  }
                   let authParsed = null;
                   try {
                     authParsed = JSON.parse(text);
@@ -606,6 +738,9 @@
                 }
               } finally {
                 clearTimeout(timer);
+                if (opts.signal && onExternalAbort) {
+                  try { opts.signal.removeEventListener("abort", onExternalAbort); } catch (e) {}
+                }
               }
             };
 
@@ -4672,12 +4807,14 @@
       }
 
       function setSeriesProgress(seriesId, season, episode, epName = "") {
-        if (!seriesId || !season || !episode) return;
+        const sNum = (season !== undefined && season !== null && String(season).trim() !== "") ? Number(season) : NaN;
+        const eNum = Number(episode);
+        if (!seriesId || !Number.isFinite(sNum) || sNum < 0 || !Number.isFinite(eNum) || eNum <= 0) return;
         try {
           const map = getSeriesProgressMap();
           map[String(seriesId)] = {
-            season: Number(season),
-            episode: Number(episode),
+            season: sNum,
+            episode: eNum,
             epName: String(epName || "").slice(0, 80),
             updatedAt: Date.now()
           };

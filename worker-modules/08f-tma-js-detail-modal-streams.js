@@ -590,10 +590,15 @@
         }
       }
 
+      let activeDetailReqSeq = 0;
+      let activeSeasonReqSeq = 0;
+
       async function openDetails(type, id, autoOpenTrailer = false, preTitle = "", prePoster = "", forceSeasonNum = null) {
         if (typeof lastCardLongPressAt !== "undefined" && Date.now() - lastCardLongPressAt < 650) {
           return;
         }
+        const reqSeq = ++activeDetailReqSeq;
+        activeSeasonReqSeq++;
         detailAutoOpenTrailerCancelled = false;
         state.openedFromRandom = Boolean(window._openingViaRandomDice);
         window._openingViaRandomDice = false;
@@ -630,6 +635,10 @@
           if (!hasValidCache) {
             clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
           }
+          // Race-Condition-Schutz: Falls inzwischen ein anderer Titel geöffnet oder das Modal geschlossen wurde, veraltete Antwort verwerfen
+          if (reqSeq !== activeDetailReqSeq) {
+            return;
+          }
           if (seedItem && seedItem._showTranslatedOverviewDe && seedItem._translatedOverviewDe) {
             d._translatedOverviewDe = seedItem._translatedOverviewDe;
             d._showTranslatedOverviewDe = true;
@@ -655,11 +664,13 @@
           }
         } catch (err) {
           clientDetailsCache.delete(cacheKey);
-          if (!seedItem) {
+          if (reqSeq === activeDetailReqSeq && !seedItem) {
             showHudToast("⚠️ Details konnten nicht geladen werden – bitte erneut antippen.");
           }
         } finally {
-          setBusyState(false);
+          if (reqSeq === activeDetailReqSeq) {
+            setBusyState(false);
+          }
         }
       }
 
@@ -2825,7 +2836,9 @@
       }
 
       async function loadSeason(seriesId, seasonNum, jumpToFirstEpisode = false, forceRefresh = false) {
-        const parsedSeasonNum = (seasonNum !== undefined && seasonNum !== null && !isNaN(Number(seasonNum))) ? Number(seasonNum) : 1;
+        const parsedSeasonNum = (seasonNum !== undefined && seasonNum !== null && String(seasonNum).trim() !== "" && !isNaN(Number(seasonNum))) ? Number(seasonNum) : 1;
+        seasonNum = parsedSeasonNum;
+        const seasonReqSeq = ++activeSeasonReqSeq;
         if (state.activeDetails && String(state.activeDetails.id) === String(seriesId)) {
           state.activeDetails._activeLoadedSeason = parsedSeasonNum;
         }
@@ -2855,6 +2868,9 @@
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
         }
+        // Race-Condition-Schutz: Veraltete Staffel-Antwort verwerfen, falls inzwischen eine andere Staffel oder Serie geöffnet wurde
+        if (seasonReqSeq !== activeSeasonReqSeq) return;
+        if (state.activeDetails && String(state.activeDetails.id) !== String(seriesId)) return;
         // Free-Plan Schutz: Folge-Staffel erst bei explizitem Staffel-Klick laden (kein automatischer Hintergrund-Prefetch)
         const box = document.getElementById("seasonBox");
         if (!box) return;
@@ -2864,7 +2880,7 @@
         // Smart Auto-Fill Ergänzung: Falls in allStreamFiles der Serie für diese Staffel Folgen vorliegen, die in ep.files fehlen, automatisch zusammenführen
         if (vipAllowed && Array.isArray(state.activeDetails?.allStreamFiles)) {
           const extraSeasonFiles = state.activeDetails.allStreamFiles.filter(f =>
-            f && Number(f.season_number ?? 1) === Number(seasonNum) &&
+            f && Number(f.season_number ?? 1) === parsedSeasonNum &&
             !f.is_download_only && !f.isDownloadOnly &&
             String(f.codec || "").toUpperCase() !== "RAR" &&
             !/\\.rar$/i.test(String(f.raw_filename || ""))

@@ -315,16 +315,18 @@
       } catch (e) {}
       const isLocalSandboxRuntime = typeof window !== "undefined" && typeof document !== "undefined";
       const guestMemSettings = isLocalSandboxRuntime ? (memoryFallback.get("settings_guest") || {}) : {};
-      const skipUserSettingsRead =
-        path === "/api/tma/admin/import-batch" ||
-        path === "/api/tma/admin/import-logs" ||
-        path === "/api/tma/admin/import-checkpoint" ||
-        path === "/api/tma/admin/catalog-preseed" ||
-        path === "/api/tma/admin/playlist-bulk-link" ||
-        path === "/api/tma/auth/init" ||
-        path === "/api/tma/auth/me" ||
-        path === "/api/tma/anti-spam-queue";
-      const baseUserSettings = (auth.isAuthenticated && !skipUserSettingsRead)
+      const needsUserSettingsRead =
+        path === "/api/tma/discover" ||
+        path === "/api/tma/search" ||
+        path === "/api/tma/collections" ||
+        path === "/api/tma/universes" ||
+        path === "/api/tma/similar" ||
+        path === "/api/tma/stream" ||
+        path === "/api/tma/stream-batch" ||
+        (path === "/api/tma/wishlist" && request.method === "POST") ||
+        (path === "/api/tma/activity-log" && request.method === "POST") ||
+        (path === "/api/tma/settings" && request.method === "GET");
+      const baseUserSettings = (auth.isAuthenticated && needsUserSettingsRead)
         ? await getUserSettings(env, chatId)
         : { filtersActive: true, showUnreleased: false, ...guestMemSettings };
       const settings = (clientHeaderSettings && typeof clientHeaderSettings === "object")
@@ -3807,7 +3809,7 @@
 
       if (path === "/api/tma/share-in-bot" && request.method === "POST") {
         if (!auth.isAuthenticated) {
-          return new Response(JSON.stringify({ ok: false, error: "Bitte zuerst über Telegram öffnen oder einloggen, um den Post im Bot-Chat zu erhalten." }), { status: 403, headers: corsHeaders });
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Bitte zuerst über Telegram öffnen oder einloggen, um den Post im Bot-Chat zu erhalten." }), { status: 401, headers: corsHeaders });
         }
         const body = await request.json().catch(() => ({}));
         const typeCode = (body.type || body.typeCode) === "s" ? "s" : "m";
@@ -3821,9 +3823,17 @@
 
       // Fehlermeldungs-Endpunkt ("Fehler melden") — strikt für freigeschaltete VIP-Mitglieder und Admins
       if (path === "/api/tma/reports" && request.method === "POST") {
-        if (!auth.isAuthenticated || (!hasVipStreamAccess && !auth.user?.isAdmin)) {
+        if (!auth.isAuthenticated) {
           return new Response(JSON.stringify({
             ok: false,
+            code: "AUTH_REQUIRED",
+            error: "Sitzung abgelaufen oder nicht angemeldet. Bitte kurz neu öffnen oder einloggen."
+          }), { status: 401, headers: corsHeaders });
+        }
+        if (!hasVipStreamAccess && !auth.user?.isAdmin) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "VIP_OR_ADMIN_REQUIRED",
             error: "Nur freigeschaltete VIP-Mitglieder und Administratoren können Fehlermeldungen einreichen."
           }), { status: 403, headers: corsHeaders });
         }
@@ -4032,17 +4042,21 @@
 
       if (path === "/api/tma/stream" && request.method === "POST") {
         const reqStartMs = Date.now();
-        const body = await request.json().catch(() => ({}));
-        const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED")) || "").trim();
-        const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")) || "").trim();
-        const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
-        // Strenge Auth- & VIP-/Admin-Prüfung (kein Bypass durch customBotToken oder globale KV-Defaults!)
+        // Strenge Auth- & VIP-/Admin-Prüfung VOR jeglichen KV-Reads (kein Bypass & 0 KV-IO für unautorisierte Anfragen!)
         if (!auth.isAuthenticated) {
-          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 403, headers: corsHeaders });
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 401, headers: corsHeaders });
         }
         if (!hasVipStreamAccess && !auth.user?.isAdmin) {
-          return new Response(JSON.stringify({ ok: false, error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder und Administratoren freigeschaltet." }), { status: 403, headers: corsHeaders });
+          return new Response(JSON.stringify({ ok: false, code: "VIP_OR_ADMIN_REQUIRED", error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder und Administratoren freigeschaltet." }), { status: 403, headers: corsHeaders });
         }
+        const body = await request.json().catch(() => ({}));
+        const [rawKvBotToken, rawKvDefaultChatId] = await Promise.all([
+          kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED"),
+          kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")
+        ]);
+        const kvBotToken = String(rawKvBotToken || "").trim();
+        const kvDefaultChatId = String(rawKvDefaultChatId || "").trim();
+        const customBotToken = String(body.customBotToken || kvBotToken || "").trim();
 
         const savedDeliv = (settings && settings.deliveryConfig && typeof settings.deliveryConfig === "object")
           ? settings.deliveryConfig
@@ -4455,10 +4469,10 @@
         const reqStartMs = Date.now();
         const body = await request.json().catch(() => ({}));
         if (!auth.isAuthenticated) {
-          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 403, headers: corsHeaders });
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 401, headers: corsHeaders });
         }
         if (!hasVipStreamAccess && !auth.user?.isAdmin) {
-          return new Response(JSON.stringify({ ok: false, error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder und Administratoren freigeschaltet." }), { status: 403, headers: corsHeaders });
+          return new Response(JSON.stringify({ ok: false, code: "VIP_OR_ADMIN_REQUIRED", error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder und Administratoren freigeschaltet." }), { status: 403, headers: corsHeaders });
         }
         const rawItems = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
         const items = rawItems.filter(it => it && String(it.fileId || "").trim());
@@ -4507,6 +4521,22 @@
             resolvedBotUsername = await tgApi(env).getBotUsername(env).catch(() => "");
           }
           resolvedBotUsername = String(resolvedBotUsername || "").replace(/^@/, "").trim();
+          // Öffentliche Gruppe/Kanal über @username (nur im Gruppen-Modus!)
+          if (targetMode === "group" && targetStr.startsWith("@")) {
+            const cleanGroupUser = targetStr.replace(/^@/, "").trim();
+            if (/^[A-Za-z0-9_]{3,64}$/.test(cleanGroupUser)) {
+              const pathSuffix = firstMsgId
+                ? (cleanTopic ? `/${cleanTopic}/${firstMsgId}` : `/${firstMsgId}`)
+                : (cleanTopic ? `/${cleanTopic}` : "");
+              return {
+                messageId: firstMsgId,
+                openMessageUrl: `https://t.me/${cleanGroupUser}${pathSuffix}`,
+                isDirectMessageLink: Boolean(firstMsgId),
+                botUsername: resolvedBotUsername
+              };
+            }
+          }
+          // Private Supergruppe/Kanal (-100...)
           if (targetStr.startsWith("-100")) {
             const internalId = targetStr.slice(4);
             if (/^\d+$/.test(internalId)) {
@@ -4521,6 +4551,7 @@
               };
             }
           }
+          // Private DM: sauber zurück zum Bot-Chat (niemals User-Self-Link)
           return {
             messageId: firstMsgId,
             openMessageUrl: resolvedBotUsername ? `https://t.me/${resolvedBotUsername}` : "",
@@ -4689,10 +4720,12 @@
                   continue;
                 }
                 if (bRes && bRes.throttled429) {
-                  // Alle verbleibenden Einträge sauber in Anti-Spam Queue einreihen (werden später per copyMessages gedrained)
+                  // Alle verbleibenden Einträge gebündelt in 1x D1-Batch + 1x Persistenz einreihen (verhindert 100x Write-Sturm!)
+                  const floodScheduledAt = Math.max(Date.now() + 2500, antiSpamState.floodWaitUntil);
+                  const batchJobs429 = [];
                   for (let k = cursor; k < items.length; k++) {
                     const rem = items[k];
-                    await enqueueAntiSpamJob(env, {
+                    batchJobs429.push({
                       chatId: targetChat,
                       title: String(rem.title || "Stream").trim(),
                       quality: String(rem.quality || "1080p").trim(),
@@ -4705,11 +4738,12 @@
                       method: "copyMessages",
                       reason: `Telegram 429 (${bRes.retryAfter || 5}s)`,
                       reasonCode: "FLOOD_WAIT_429",
-                      scheduledAt: Math.max(Date.now() + 2500, antiSpamState.floodWaitUntil)
-                    }, ctx);
+                      scheduledAt: floodScheduledAt
+                    });
                     queuedCount += 1;
                     deliveredIndices.push(k);
                   }
+                  await enqueueAntiSpamJobsBatch(env, batchJobs429, ctx);
                   break;
                 }
                 // Nicht-429 Fehler bei copyMessages (z. B. 1 gelöschte Quelle): sauber einzeln durchprobieren
@@ -4719,9 +4753,10 @@
                 cursor = look;
                 continue;
               } else {
-                // Slot gerade im Cooldown -> gesammelt in Queue legen (drainAntiSpamQueue nutzt dann copyMessages!)
+                // Slot gerade im Cooldown -> gebündelt in 1x D1-Batch einreihen (drainAntiSpamQueue nutzt dann copyMessages!)
+                const batchJobsCooldown = [];
                 for (const r of runItems) {
-                  await enqueueAntiSpamJob(env, {
+                  batchJobsCooldown.push({
                     chatId: targetChat,
                     title: String(r.item.title || "Stream").trim(),
                     quality: String(r.item.quality || "1080p").trim(),
@@ -4735,10 +4770,11 @@
                     reason: slotCheck.reason,
                     reasonCode: slotCheck.reasonCode,
                     scheduledAt: slotCheck.scheduledAt
-                  }, ctx);
+                  });
                   queuedCount += 1;
                   deliveredIndices.push(r.idx);
                 }
+                await enqueueAntiSpamJobsBatch(env, batchJobsCooldown, ctx);
                 cursor = look;
                 continue;
               }
@@ -4781,8 +4817,11 @@
       }
 
       if (path === "/api/tma/custom-bot/verify" && request.method === "POST") {
-        if (!auth.isAuthenticated || (!auth.user?.isAdmin && !hasVipStreamAccess)) {
-          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur für angemeldete VIP-Nutzer oder Administratoren." }), { status: 403, headers: corsHeaders });
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Anmeldung erforderlich (HTTP 401)." }), { status: 401, headers: corsHeaders });
+        }
+        if (!auth.user?.isAdmin && !hasVipStreamAccess) {
+          return new Response(JSON.stringify({ ok: false, code: "VIP_OR_ADMIN_REQUIRED", error: "Zugriff verweigert: Nur für angemeldete VIP-Nutzer oder Administratoren." }), { status: 403, headers: corsHeaders });
         }
         const reqStartMs = Date.now();
         const body = await request.json().catch(() => ({}));
@@ -4860,8 +4899,11 @@
       }
 
       if (path === "/api/tma/activity-log") {
-        if (!auth.isAuthenticated || (!auth.user?.isAdmin && !hasVipStreamAccess)) {
-          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Anmeldung erforderlich." }), { status: 403, headers: corsHeaders });
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Anmeldung erforderlich (HTTP 401)." }), { status: 401, headers: corsHeaders });
+        }
+        if (!auth.user?.isAdmin && !hasVipStreamAccess) {
+          return new Response(JSON.stringify({ ok: false, code: "VIP_OR_ADMIN_REQUIRED", error: "Zugriff verweigert: VIP- oder Admin-Status erforderlich." }), { status: 403, headers: corsHeaders });
         }
         if (request.method === "GET") {
           const result = await recordAndPruneWorkerActivityLog(env, null, null);
@@ -5084,11 +5126,12 @@
         if (!auth.isAuthenticated) {
           return new Response(JSON.stringify({
             ok: false,
+            code: "AUTH_REQUIRED",
             isGuest: true,
             items: [],
             folders: [],
             error: "Im Gast-Modus (ohne Telegram initData / ohne Account) steht kein Speicher zur Verfügung."
-          }), { status: 403, headers: corsHeaders });
+          }), { status: 401, headers: corsHeaders });
         }
         if (request.method === "GET") {
           const rawItems = await getSavedList(env, chatId);
@@ -5251,7 +5294,7 @@
             };
           } else if (body.action === "save_delivery_config" && body.deliveryConfig && typeof body.deliveryConfig === "object") {
             if (!auth.isAuthenticated) {
-              return new Response(JSON.stringify({ ok: false, error: "Bitte zuerst einloggen, um Versand-Einstellungen zu speichern." }), { status: 403, headers: corsHeaders });
+              return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Bitte zuerst einloggen, um Versand-Einstellungen zu speichern." }), { status: 401, headers: corsHeaders });
             }
             const dc = body.deliveryConfig;
             const retentionDays = normalizeWorkerRetentionDays(dc.retentionDays);
@@ -5427,7 +5470,7 @@
 
       if (path === "/api/tma/tmdb-sync" && request.method === "POST") {
         if (!auth.isAuthenticated) {
-          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 403, headers: corsHeaders });
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 401, headers: corsHeaders });
         }
         const body = await request.json().catch(() => ({}));
         const targetChatId = auth.chatId;
@@ -5503,8 +5546,11 @@
             : { ok: false, hasSecret: false };
           hasValidImportSecret = Boolean(importSecCheck.hasSecret && importSecCheck.ok);
         }
-        if ((!auth.isAuthenticated || !auth.user?.isAdmin) && !hasValidImportSecret) {
-          return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur autorisierte Administratoren dürfen /api/import-json verwenden." }), { status: 403, headers: corsHeaders });
+        if (!auth.isAuthenticated && !hasValidImportSecret) {
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Anmeldung erforderlich: Bitte als Administrator einloggen oder gültiges Webhook-Secret senden." }), { status: 401, headers: corsHeaders });
+        }
+        if (!auth.user?.isAdmin && !hasValidImportSecret) {
+          return new Response(JSON.stringify({ ok: false, code: "ADMIN_REQUIRED", error: "Zugriff verweigert: Nur autorisierte Administratoren dürfen /api/import-json verwenden." }), { status: 403, headers: corsHeaders });
         }
         const body = await request.json().catch(() => ({}));
         const rawEntries = Array.isArray(body.entries)
@@ -5582,12 +5628,14 @@
           if (
             url.pathname === "/favicon.svg" ||
             url.pathname === "/manifest.json" ||
-            url.pathname === "/manifest.webmanifest" ||
             url.pathname === "/sw.js" ||
-            url.pathname === "/service-worker.js" ||
             url.pathname === "/worker.js"
           ) {
-            return await env.ASSETS.fetch(request);
+            const staticRes = await env.ASSETS.fetch(request);
+            const staticCt = String(staticRes?.headers?.get("Content-Type") || "").toLowerCase();
+            if (staticRes && staticRes.ok && !staticCt.includes("text/html")) {
+              return staticRes;
+            }
           }
           if (
             url.pathname === "/studio" ||
@@ -5736,8 +5784,9 @@
             let hasValidQueryAdminToken = false;
             if (!hasValidWhSecret && incomingTokenQuery && typeof verifyTmaSessionToken === "function") {
               const qPayload = await verifyTmaSessionToken(incomingTokenQuery, env).catch(() => null);
-              if (qPayload && qPayload.tid) {
-                const qTid = String(qPayload.tid);
+              const rawQTid = qPayload?.telegramId || qPayload?.tid || "";
+              if (rawQTid) {
+                const qTid = String(rawQTid);
                 if (typeof isAuthorizedAdminId === "function" && isAuthorizedAdminId(env, qTid)) {
                   hasValidQueryAdminToken = true;
                 } else {
