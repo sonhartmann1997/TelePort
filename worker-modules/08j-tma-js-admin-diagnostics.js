@@ -746,6 +746,99 @@
         if (!(backupImportJob._knownD1Fingerprints instanceof Set)) {
           backupImportJob._knownD1Fingerprints = new Set();
         }
+        if (!(backupImportJob._knownD1FileToTmdb instanceof Map)) {
+          backupImportJob._knownD1FileToTmdb = new Map();
+        }
+        if (!(backupImportJob._knownD1FpToTmdb instanceof Map)) {
+          backupImportJob._knownD1FpToTmdb = new Map();
+        }
+        if (!(backupImportJob._tmdbCatalogByRef instanceof Map)) {
+          backupImportJob._tmdbCatalogByRef = new Map();
+        }
+        if (!(backupImportJob._pendingBothModePlaylistLinks instanceof Map)) {
+          backupImportJob._pendingBothModePlaylistLinks = new Map();
+        }
+
+        // IndexedDB-Helfer für persistenten, speichereffizienten D1-Katalog Pre-Seed Cache im Browser (spart 1-2 MB + Full-Table-Scans bei jedem Neustart!)
+        const PRESEED_IDB_NAME = "teleport_tma_cache_v1";
+        const PRESEED_IDB_STORE = "kv";
+        const PRESEED_IDB_KEY = "catalog_preseed_v2";
+        const openPreseedIdb = () => new Promise((resolve) => {
+          try {
+            if (typeof indexedDB === "undefined") { resolve(null); return; }
+            const req = indexedDB.open(PRESEED_IDB_NAME, 1);
+            req.onupgradeneeded = () => {
+              try {
+                const db = req.result;
+                if (!db.objectStoreNames.contains(PRESEED_IDB_STORE)) {
+                  db.createObjectStore(PRESEED_IDB_STORE);
+                }
+              } catch (e) {}
+            };
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+          } catch (e) {
+            resolve(null);
+          }
+        });
+        const readPreseedIdb = async () => {
+          const db = await openPreseedIdb();
+          if (!db) return null;
+          return await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(PRESEED_IDB_STORE, "readonly");
+              const req = tx.objectStore(PRESEED_IDB_STORE).get(PRESEED_IDB_KEY);
+              req.onsuccess = () => { try { db.close(); } catch (e) {} resolve(req.result || null); };
+              req.onerror = () => { try { db.close(); } catch (e) {} resolve(null); };
+            } catch (e) {
+              try { db.close(); } catch (e2) {}
+              resolve(null);
+            }
+          });
+        };
+        const writePreseedIdb = async (snapshotObj) => {
+          const db = await openPreseedIdb();
+          if (!db || !snapshotObj) return false;
+          return await new Promise((resolve) => {
+            try {
+              const tx = db.transaction(PRESEED_IDB_STORE, "readwrite");
+              tx.objectStore(PRESEED_IDB_STORE).put(snapshotObj, PRESEED_IDB_KEY);
+              tx.oncomplete = () => { try { db.close(); } catch (e) {} resolve(true); };
+              tx.onerror = () => { try { db.close(); } catch (e) {} resolve(false); };
+            } catch (e) {
+              try { db.close(); } catch (e2) {}
+              resolve(false);
+            }
+          });
+        };
+        let _persistPreseedIdbTimer = null;
+        const schedulePersistPreseedIdb = (overrideVersion = null) => {
+          if (overrideVersion) backupImportJob._preseedCatalogVersion = String(overrideVersion);
+          if (_persistPreseedIdbTimer) return;
+          _persistPreseedIdbTimer = setTimeout(() => {
+            _persistPreseedIdbTimer = null;
+            try {
+              const itemsArr = Array.from(backupImportJob._tmdbCatalogByRef.values()).slice(-8000);
+              const fileIdsArr = Array.from(backupImportJob._knownD1FileIds).slice(-14000);
+              const fpsArr = Array.from(backupImportJob._knownD1Fingerprints).slice(-14000);
+              const fileMapArr = Array.from(backupImportJob._knownD1FileToTmdb.entries()).slice(-14000);
+              const fpMapArr = Array.from(backupImportJob._knownD1FpToTmdb.entries()).slice(-14000);
+              writePreseedIdb({
+                catalogVersion: String(backupImportJob._preseedCatalogVersion || ""),
+                savedAt: Date.now(),
+                items: itemsArr,
+                existingFileIds: fileIdsArr,
+                existingFingerprints: fpsArr,
+                fileTmdbMap: fileMapArr,
+                fpTmdbMap: fpMapArr,
+                entityMappings: Array.isArray(backupImportJob._lastPreseedEntityMappings)
+                  ? backupImportJob._lastPreseedEntityMappings.slice(-1000)
+                  : []
+              });
+            } catch (e) {}
+          }, 2200);
+        };
+
         const PERSISTENT_BROWSER_TITLES_KEY = "tma_persistent_resolved_titles_v2";
         if (!backupImportJob._loadedPersistentBrowserTitles) {
           backupImportJob._loadedPersistentBrowserTitles = true;
@@ -788,84 +881,207 @@
           .replace(/[^a-z0-9]+/g, "")
           .trim();
 
-        // D1-Katalog Pre-Seed: Einmalig beim Start alle bereits in D1 gespeicherten Filme, Serien, Entity-Mappings & Datei-Fingerprints in den Browser-Cache vorladen (0 Such-Calls ab Eintrag #1!)
+        const hydratePreseedPayloadIntoJob = (payload) => {
+          if (!payload || typeof payload !== "object") return 0;
+          let addedTitles = 0;
+          if (payload.catalogVersion) {
+            backupImportJob._preseedCatalogVersion = String(payload.catalogVersion);
+          }
+          if (Array.isArray(payload.items)) {
+            for (const pItem of payload.items) {
+              if (!pItem || !pItem.tmdbId || !pItem.title) continue;
+              const pType = pItem.typeCode === "s" ? "s" : "m";
+              const pId = Number(pItem.tmdbId);
+              const pYear = pItem.year ? String(pItem.year) : "any";
+              backupImportJob._tmdbCatalogByRef.set(pType + ":" + pId, {
+                tmdbId: pId,
+                typeCode: pType,
+                title: String(pItem.title),
+                year: pItem.year ? String(pItem.year) : null,
+                poster: pItem.poster || ""
+              });
+              const pNorm = normClientTitleKey(pItem.title);
+              if (!pNorm || pNorm === "unbekannt") continue;
+              const cacheObj = {
+                tmdbId: pId,
+                typeCode: pType,
+                cleanTitle: String(pItem.title),
+                poster: pItem.poster || ""
+              };
+              backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
+              if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
+                backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
+              }
+              addedTitles++;
+            }
+          }
+          if (Array.isArray(payload.entityMappings)) {
+            backupImportJob._lastPreseedEntityMappings = payload.entityMappings;
+            for (const em of payload.entityMappings) {
+              if (!em || !em.tmdbId) continue;
+              const emNorm = normClientTitleKey(em.title || "");
+              const emType = em.typeCode === "s" ? "s" : "m";
+              const cacheObj = {
+                tmdbId: Number(em.tmdbId),
+                typeCode: emType,
+                cleanTitle: String(em.title || ""),
+                poster: em.poster || ""
+              };
+              if (!backupImportJob._tmdbCatalogByRef.has(emType + ":" + Number(em.tmdbId))) {
+                backupImportJob._tmdbCatalogByRef.set(emType + ":" + Number(em.tmdbId), {
+                  tmdbId: Number(em.tmdbId),
+                  typeCode: emType,
+                  title: String(em.title || ""),
+                  year: null,
+                  poster: em.poster || ""
+                });
+              }
+              if (emNorm && emNorm !== "unbekannt") {
+                if (!backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"]) {
+                  backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"] = cacheObj;
+                }
+              }
+              const strippedKey = String(em.cacheKey || "").replace(/^title_res_/, "");
+              if (strippedKey && !backupImportJob.resolvedTitlesCache[strippedKey]) {
+                backupImportJob.resolvedTitlesCache[strippedKey] = cacheObj;
+              }
+            }
+          }
+          if (Array.isArray(payload.existingFileIds)) {
+            for (const fid of payload.existingFileIds) {
+              if (fid) backupImportJob._knownD1FileIds.add(String(fid));
+            }
+          }
+          if (Array.isArray(payload.existingFingerprints)) {
+            for (const fp of payload.existingFingerprints) {
+              if (fp && fp !== "0_0_0x0") backupImportJob._knownD1Fingerprints.add(String(fp));
+            }
+          }
+          if (Array.isArray(payload.fileTmdbMap)) {
+            for (const pair of payload.fileTmdbMap) {
+              if (Array.isArray(pair) && pair[0] && pair[1]) {
+                backupImportJob._knownD1FileToTmdb.set(String(pair[0]), String(pair[1]));
+              }
+            }
+          }
+          if (Array.isArray(payload.fpTmdbMap)) {
+            for (const pair of payload.fpTmdbMap) {
+              if (Array.isArray(pair) && pair[0] && pair[1]) {
+                backupImportJob._knownD1FpToTmdb.set(String(pair[0]), String(pair[1]));
+              }
+            }
+          }
+          return addedTitles;
+        };
+
+        // Bulk-Flush für bereits in D1 bekannte Dateien im 'both'-Modus (0 TMDb-Calls, 1 Request für bis zu 80 Titel!)
+        const flushPendingBothModePlaylistLinks = async (isFinalFlush = false) => {
+          const pendingMap = backupImportJob._pendingBothModePlaylistLinks;
+          if (!(pendingMap instanceof Map) || pendingMap.size === 0) return 0;
+          const allPending = Array.from(pendingMap.values());
+          pendingMap.clear();
+          let totalLinked = 0;
+          const CHUNK = 80;
+          for (let off = 0; off < allPending.length; off += CHUNK) {
+            const chunkItems = allPending.slice(off, off + CHUNK);
+            const isLastChunk = isFinalFlush && (off + CHUNK >= allPending.length);
+            try {
+              const lkRes = await apiFetchJson(API_BASE + "/admin/playlist-bulk-link", {
+                method: "POST",
+                noRetry: true,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  items: chunkItems,
+                  targetChatId: backupImportJob.targetPlaylistChatId || chatId,
+                  playlistFolderId: backupImportJob.playlistFolderId || null,
+                  playlistName: backupImportJob.customPlaylistName || backupImportJob.fileName || "JSON-Import",
+                  playlistMode: backupImportJob.playlistMode || "both",
+                  sourceLabel: backupImportJob.isTelegramBackup ? ("Telegram Backup: " + backupImportJob.backupChatName) : backupImportJob.fileName,
+                  deferKvWrite: true,
+                  isFinalBatch: isLastChunk
+                })
+              });
+              if (lkRes && (lkRes._httpStatus === 401 || lkRes._httpStatus === 403 || lkRes._authError)) {
+                abortBackupImportOnAuthError(lkRes._httpStatus || 403, lkRes, "playlist-bulk-link");
+                return totalLinked;
+              }
+              if (lkRes && lkRes.ok) {
+                totalLinked += Number(lkRes.linkedCount || 0);
+                if (lkRes.playlistFolder?.id) {
+                  backupImportJob.playlistFolderId = lkRes.playlistFolder.id;
+                  backupImportJob.customPlaylistName = lkRes.playlistFolder.name;
+                }
+              }
+            } catch (e) {}
+          }
+          if (totalLinked > 0) {
+            backupImportJob.recentLog.push("⚡ Both-Modus Bulk-Link: " + totalLinked + " bereits vorhandene D1-Titel in 1 Request mit Playlist verknüpft (0 TMDb-Calls)");
+          }
+          return totalLinked;
+        };
+
+        // D1-Katalog Pre-Seed: IndexedDB-first + leichtgewichtige Versionsprüfung (?ifVersion=...) gegen den Worker!
         if (!backupImportJob._d1CatalogPreSeeded) {
           backupImportJob._d1CatalogPreSeeded = true;
-          backupImportJob.currentBatchModeLabel = "🧠 Lade D1-Pre-Seed...";
+          backupImportJob.currentBatchModeLabel = "🧠 Prüfe IndexedDB Pre-Seed...";
           backupImportJob.currentBatchModeColor = "#38bdf8";
           renderBackupImportBoxDom();
+          let idbTitlesCount = 0;
+          let idbCatalogVersion = "";
           try {
-            const preRes = await apiFetchJson(API_BASE + "/admin/catalog-preseed", { method: "GET", noRetry: true });
+            const cachedIdb = await readPreseedIdb();
+            if (cachedIdb && typeof cachedIdb === "object") {
+              idbTitlesCount = hydratePreseedPayloadIntoJob(cachedIdb);
+              idbCatalogVersion = String(cachedIdb.catalogVersion || "").trim();
+              backupImportJob.d1PreSeedCount = idbTitlesCount;
+            }
+          } catch (idbErr) {}
+
+          try {
+            const preUrl = idbCatalogVersion
+              ? (API_BASE + "/admin/catalog-preseed?ifVersion=" + encodeURIComponent(idbCatalogVersion))
+              : (API_BASE + "/admin/catalog-preseed");
+            const preRes = await apiFetchJson(preUrl, { method: "GET", noRetry: true });
             if (preRes && (preRes._httpStatus === 401 || preRes._httpStatus === 403 || preRes._authError)) {
               backupImportJob._d1CatalogPreSeeded = false;
               abortBackupImportOnAuthError(preRes._httpStatus || 403, preRes, "catalog-preseed");
               return;
             }
             if (preRes && preRes.ok) {
-              let preSeedAdded = 0;
-              if (Array.isArray(preRes.items)) {
-                for (const pItem of preRes.items) {
-                  if (!pItem || !pItem.tmdbId || !pItem.title) continue;
-                  const pNorm = normClientTitleKey(pItem.title);
-                  if (!pNorm || pNorm === "unbekannt") continue;
-                  const pType = pItem.typeCode === "s" ? "s" : "m";
-                  const pYear = pItem.year ? String(pItem.year) : "any";
-                  const cacheObj = {
-                    tmdbId: Number(pItem.tmdbId),
-                    typeCode: pType,
-                    cleanTitle: String(pItem.title),
-                    poster: pItem.poster || ""
-                  };
-                  backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_" + pYear] = cacheObj;
-                  if (!backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"]) {
-                    backupImportJob.resolvedTitlesCache[pType + "_" + pNorm + "_any"] = cacheObj;
-                  }
-                  preSeedAdded++;
-                }
-              }
-              if (Array.isArray(preRes.entityMappings)) {
-                for (const em of preRes.entityMappings) {
-                  if (!em || !em.tmdbId) continue;
-                  const emNorm = normClientTitleKey(em.title || "");
-                  const emType = em.typeCode === "s" ? "s" : "m";
-                  const cacheObj = {
-                    tmdbId: Number(em.tmdbId),
-                    typeCode: emType,
-                    cleanTitle: String(em.title || ""),
-                    poster: em.poster || ""
-                  };
-                  if (emNorm && emNorm !== "unbekannt") {
-                    if (!backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"]) {
-                      backupImportJob.resolvedTitlesCache[emType + "_" + emNorm + "_any"] = cacheObj;
-                    }
-                  }
-                  const strippedKey = String(em.cacheKey || "").replace(/^title_res_/, "");
-                  if (strippedKey && !backupImportJob.resolvedTitlesCache[strippedKey]) {
-                    backupImportJob.resolvedTitlesCache[strippedKey] = cacheObj;
-                  }
-                }
-              }
-              if (Array.isArray(preRes.existingFileIds)) {
-                for (const fid of preRes.existingFileIds) {
-                  if (fid) backupImportJob._knownD1FileIds.add(String(fid));
-                }
-              }
-              if (Array.isArray(preRes.existingFingerprints)) {
-                for (const fp of preRes.existingFingerprints) {
-                  if (fp && fp !== "0_0_0x0") backupImportJob._knownD1Fingerprints.add(String(fp));
-                }
-              }
-              backupImportJob.d1PreSeedCount = preSeedAdded;
-              schedulePersistBrowserTitlesCache();
-              if (preSeedAdded > 0 || backupImportJob._knownD1FileIds.size > 0) {
+              if (preRes.notModified) {
                 backupImportJob.recentLog.push(
-                  "🧠 D1-Katalog Pre-Seed geladen: " +
-                  preSeedAdded.toLocaleString("de-DE") + " Titel & " +
-                  backupImportJob._knownD1FileIds.size.toLocaleString("de-DE") + " Datei-IDs im Browser-Cache bereit!"
+                  "⚡ D1-Pre-Seed aus IndexedDB (aktuell, 0 MB geladen): " +
+                  idbTitlesCount.toLocaleString("de-DE") + " Titel & " +
+                  backupImportJob._knownD1FileIds.size.toLocaleString("de-DE") + " Datei-IDs sofort bereit!"
                 );
+              } else {
+                const preSeedAdded = hydratePreseedPayloadIntoJob(preRes);
+                backupImportJob.d1PreSeedCount = Math.max(idbTitlesCount, preSeedAdded);
+                schedulePersistBrowserTitlesCache();
+                writePreseedIdb({
+                  catalogVersion: String(preRes.catalogVersion || ""),
+                  savedAt: Date.now(),
+                  items: Array.isArray(preRes.items) ? preRes.items : [],
+                  existingFileIds: Array.isArray(preRes.existingFileIds) ? preRes.existingFileIds : [],
+                  existingFingerprints: Array.isArray(preRes.existingFingerprints) ? preRes.existingFingerprints : [],
+                  fileTmdbMap: Array.isArray(preRes.fileTmdbMap) ? preRes.fileTmdbMap : [],
+                  fpTmdbMap: Array.isArray(preRes.fpTmdbMap) ? preRes.fpTmdbMap : [],
+                  entityMappings: Array.isArray(preRes.entityMappings) ? preRes.entityMappings : []
+                }).catch(() => {});
+                if (preSeedAdded > 0 || backupImportJob._knownD1FileIds.size > 0) {
+                  backupImportJob.recentLog.push(
+                    "🧠 D1-Katalog Pre-Seed geladen & in IndexedDB gecacht: " +
+                    preSeedAdded.toLocaleString("de-DE") + " Titel & " +
+                    backupImportJob._knownD1FileIds.size.toLocaleString("de-DE") + " Datei-IDs bereit!"
+                  );
+                }
               }
             }
-          } catch (preErr) {}
+          } catch (preErr) {
+            if (idbTitlesCount > 0 || backupImportJob._knownD1FileIds.size > 0) {
+              backupImportJob.recentLog.push("⚡ Offline-Fallback: Nutze lokalen IndexedDB Pre-Seed (" + backupImportJob._knownD1FileIds.size.toLocaleString("de-DE") + " Datei-IDs)");
+            }
+          }
           renderBackupImportBoxDom();
         }
 
@@ -957,15 +1173,16 @@
           }
           const rawSlice = backupImportJob.entries.slice(backupImportJob.cursor, backupImportJob.cursor + effectiveBatchSize);
 
-          // MODUL 1.1 + Browser-Offloading: Set-basierte Deduplizierung inkl. processedMsgIds & D1-Pre-Seed Duplikat-Vorfilter direkt im Browser (0 Worker-CPU!)
+          // MODUL 1.1 + Browser-Offloading: Set-basierte Deduplizierung inkl. processedMsgIds & D1-Pre-Seed Duplikat-Vorfilter direkt im Browser (jetzt für vip_stream UND both!)
           const seenBatchItemKeys = new Set();
           const dedupedRawSlice = [];
           const dedupedOrigIndices = [];
           let batchDedupDropped = 0;
           let browserD1Skipped = 0;
+          const activePlaylistMode = backupImportJob.playlistMode || "both";
+          const hasKnownD1Sets = backupImportJob._knownD1FileIds.size > 0 || backupImportJob._knownD1Fingerprints.size > 0;
           const canSkipKnownD1Locally = Boolean(
-            (backupImportJob.playlistMode || "both") === "vip_stream" &&
-            (backupImportJob._knownD1FileIds.size > 0 || backupImportJob._knownD1Fingerprints.size > 0)
+            hasKnownD1Sets && (activePlaylistMode === "vip_stream" || activePlaylistMode === "both")
           );
           for (let sIdx = 0; sIdx < rawSlice.length; sIdx++) {
             const item = rawSlice[sIdx];
@@ -982,14 +1199,53 @@
               ? String(item.telegram_file_id)
               : (itemMsgId > 0 && activeChan ? ("tg_export_" + activeChan + "_" + itemMsgId) : "");
             const itemFp = String(item.fileFingerprint || item.file_fingerprint || "").trim();
-            if (canSkipKnownD1Locally && (
+            const isKnownInD1 = canSkipKnownD1Locally && (
               (expectedFileId && backupImportJob._knownD1FileIds.has(expectedFileId)) ||
               (itemFp && itemFp !== "0_0_0x0" && backupImportJob._knownD1Fingerprints.has(itemFp))
-            )) {
-              if (itemMsgId > 0) backupImportJob._processedMsgIds.add(itemMsgId);
-              batchDedupDropped++;
-              browserD1Skipped++;
-              continue;
+            );
+            if (isKnownInD1) {
+              if (activePlaylistMode === "vip_stream") {
+                if (itemMsgId > 0) backupImportJob._processedMsgIds.add(itemMsgId);
+                batchDedupDropped++;
+                browserD1Skipped++;
+                continue;
+              }
+              // Im 'both'-Modus: Nur dann lokal überspringen, wenn wir das TMDb-Ziel aus dem Pre-Seed kennen und per Bulk-Link verknüpfen können!
+              const mappedRef = (expectedFileId && backupImportJob._knownD1FileToTmdb.get(expectedFileId))
+                || (itemFp && itemFp !== "0_0_0x0" && backupImportJob._knownD1FpToTmdb.get(itemFp))
+                || "";
+              if (mappedRef && mappedRef.includes(":")) {
+                const refParts = mappedRef.split(":");
+                const refTc = refParts[0] === "s" ? "s" : "m";
+                const refTmdbId = Number(refParts[1] || 0);
+                if (refTmdbId > 0) {
+                  const catInfo = backupImportJob._tmdbCatalogByRef.get(mappedRef) || {};
+                  const linkSeason = Number(item.season || 1);
+                  const linkEpisode = Number(item.episode || 1);
+                  const linkKey = refTc + "_" + refTmdbId + "_" + (refTc === "s" ? (linkSeason + "_" + linkEpisode) : "0");
+                  if (!backupImportJob._pendingBothModePlaylistLinks.has(linkKey)) {
+                    backupImportJob._pendingBothModePlaylistLinks.set(linkKey, {
+                      tmdbId: refTmdbId,
+                      typeCode: refTc,
+                      cleanTitle: catInfo.title || item.cleanTitle || item.title || ("Titel #" + refTmdbId),
+                      year: catInfo.year || item.year || "K. A.",
+                      poster: catInfo.poster || item.external_poster_url || "",
+                      quality: item.quality || "1080p",
+                      codec: item.codec || "x264",
+                      season: linkSeason,
+                      episode: linkEpisode,
+                      fileId: expectedFileId || "",
+                      fileSize: item.file_size || item.fileSize || null,
+                      tags: item.tags || "",
+                      hasValidVideoFile: true
+                    });
+                  }
+                  if (itemMsgId > 0) backupImportJob._processedMsgIds.add(itemMsgId);
+                  batchDedupDropped++;
+                  browserD1Skipped++;
+                  continue;
+                }
+              }
             }
             const rawTitle = String(item.cleanTitle || item.title || item.filename || item.file_name || item.raw_file_name || item.rawInput || "").trim();
             const normTitle = normClientTitleKey(rawTitle);
@@ -1010,13 +1266,17 @@
 
           if (browserD1Skipped > 0) {
             backupImportJob.browserPreFilteredCount = Number(backupImportJob.browserPreFilteredCount || 0) + browserD1Skipped;
+            if (backupImportJob._pendingBothModePlaylistLinks.size >= 60) {
+              await flushPendingBothModePlaylistLinks(false);
+              if (backupImportJob.authAbortError) break;
+            }
           }
 
           if (dedupedRawSlice.length === 0) {
             backupImportJob.cursor += rawSlice.length;
             backupImportJob.duplicatesInDb += batchDedupDropped;
             if (browserD1Skipped > 0 && (backupImportJob.cursor % 40 < rawSlice.length)) {
-              backupImportJob.recentLog.push("⚡ Browser-Pre-Filter: " + Number(backupImportJob.browserPreFilteredCount || browserD1Skipped) + " bereits in D1 vorhandene Dateien lokal übersprungen (0 Worker-Requests)");
+              backupImportJob.recentLog.push("⚡ Browser-Pre-Filter (" + activePlaylistMode + "): " + Number(backupImportJob.browserPreFilteredCount || browserD1Skipped) + " bereits in D1 vorhandene Dateien lokal übersprungen (0 Worker-Import-Batches)");
             }
             saveBackupCheckpointClient(false);
             renderBackupImportBoxDom();
@@ -1163,6 +1423,25 @@
                   const itemTypeCode = bItem.typeCode === "s" ? "s" : "m";
                   const itemYearKey = (origEntry.year && origEntry.year !== "k.A.") ? String(origEntry.year) : ((bItem.year && bItem.year !== "k.A.") ? String(bItem.year) : "any");
                   if (bItem.tmdbId && Number(bItem.confidence || 100) >= 75) {
+                    const bRefKey = itemTypeCode + ":" + Number(bItem.tmdbId);
+                    backupImportJob._tmdbCatalogByRef.set(bRefKey, {
+                      tmdbId: Number(bItem.tmdbId),
+                      typeCode: itemTypeCode,
+                      title: bItem.cleanTitle || rawInTitle,
+                      year: bItem.year && bItem.year !== "k.A." ? String(bItem.year) : null,
+                      poster: bItem.poster || ""
+                    });
+                    const bEntryFid = String(origEntry.telegram_file_id || (bItem.msgId && activeChan ? ("tg_export_" + activeChan + "_" + bItem.msgId) : "") || "").trim();
+                    if (bEntryFid && !bEntryFid.startsWith("tg_export_0_")) {
+                      backupImportJob._knownD1FileIds.add(bEntryFid);
+                      backupImportJob._knownD1FileToTmdb.set(bEntryFid, bRefKey);
+                    }
+                    const bEntryFp = String(origEntry.fileFingerprint || origEntry.file_fingerprint || "").trim();
+                    if (bEntryFp && bEntryFp !== "0_0_0x0") {
+                      backupImportJob._knownD1Fingerprints.add(bEntryFp);
+                      backupImportJob._knownD1FpToTmdb.set(bEntryFp, bRefKey);
+                    }
+                    schedulePersistPreseedIdb();
                     const cacheVal = {
                       tmdbId: Number(bItem.tmdbId),
                       typeCode: itemTypeCode,
@@ -1507,6 +1786,10 @@
           }
         }
 
+        // Restliche im Browser vorgemerkte 'both'-Modus Playlist-Verknüpfungen gesammelt nachziehen
+        if (!backupImportJob.authAbortError && backupImportJob._pendingBothModePlaylistLinks instanceof Map && backupImportJob._pendingBothModePlaylistLinks.size > 0) {
+          await flushPendingBothModePlaylistLinks(true);
+        }
         backupImportJob.running = false;
         if (backupImportJob.cursor >= backupImportJob.entries.length && backupImportJob.entries.length > 0 && !backupImportJob.authAbortError) {
           saveBackupCheckpointClient(true);

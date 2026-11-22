@@ -320,6 +320,7 @@
         path === "/api/tma/admin/import-logs" ||
         path === "/api/tma/admin/import-checkpoint" ||
         path === "/api/tma/admin/catalog-preseed" ||
+        path === "/api/tma/admin/playlist-bulk-link" ||
         path === "/api/tma/auth/init" ||
         path === "/api/tma/auth/me" ||
         path === "/api/tma/anti-spam-queue";
@@ -1446,13 +1447,66 @@
         }
         if (path === "/api/tma/admin/catalog-preseed" && (request.method === "GET" || request.method === "POST")) {
           const forcePreseedRefresh = url.searchParams.get("refresh") === "1";
+          const clientIfVersion = String(url.searchParams.get("ifVersion") || request.headers.get("If-None-Match") || "").replace(/^"|"$/g, "").trim();
           const cachedPreseed = memoryFallback.get("d1_catalog_preseed_cache");
-          if (!forcePreseedRefresh && cachedPreseed && cachedPreseed.payload && (Date.now() - Number(cachedPreseed.ts || 0)) < 60000) {
+          const cachedVerEntry = memoryFallback.get("d1_catalog_preseed_ver_cache");
+
+          // Ultra-leichter D1-Versions-Fingerprint (5x COUNT+MAX, 0 Full-Table-Scans -> ~1ms) für IndexedDB-Cache-Validierung
+          let catalogVersion = "";
+          if (!forcePreseedRefresh && cachedVerEntry && cachedVerEntry.version && (Date.now() - Number(cachedVerEntry.ts || 0)) < 30000) {
+            catalogVersion = String(cachedVerEntry.version);
+          } else {
+            try {
+              await ensureD1Schema(env);
+              const rawDbVer = getRawD1Binding(env);
+              if (rawDbVer) {
+                trackStat("d1Reads");
+                if (typeof countD1Subrequest === "function") countD1Subrequest();
+                const [mv, sv, mfv, efv, ev] = await rawDbVer.batch([
+                  rawDbVer.prepare("SELECT COUNT(*) AS c, COALESCE(MAX(updated_at), 0) AS m FROM movies"),
+                  rawDbVer.prepare("SELECT COUNT(*) AS c, COALESCE(MAX(updated_at), 0) AS m FROM series"),
+                  rawDbVer.prepare("SELECT COUNT(*) AS c, COALESCE(MAX(updated_at), 0) AS m FROM movie_files"),
+                  rawDbVer.prepare("SELECT COUNT(*) AS c, COALESCE(MAX(updated_at), 0) AS m FROM episode_files"),
+                  rawDbVer.prepare("SELECT COUNT(*) AS c, COALESCE(MAX(updated_at), 0) AS m FROM entity_cache WHERE entity_type = 'title_res'")
+                ]);
+                const rM = mv?.results?.[0] || {};
+                const rS = sv?.results?.[0] || {};
+                const rMf = mfv?.results?.[0] || {};
+                const rEf = efv?.results?.[0] || {};
+                const rE = ev?.results?.[0] || {};
+                catalogVersion = `v2:${rM.c || 0}:${rM.m || 0}:${rS.c || 0}:${rS.m || 0}:${rMf.c || 0}:${rMf.m || 0}:${rEf.c || 0}:${rEf.m || 0}:${rE.c || 0}:${rE.m || 0}`;
+                memoryFallback.set("d1_catalog_preseed_ver_cache", { version: catalogVersion, ts: Date.now() });
+              } else {
+                catalogVersion = "v2:mem:0";
+              }
+            } catch (verErr) {
+              catalogVersion = "";
+            }
+          }
+
+          if (!forcePreseedRefresh && clientIfVersion && catalogVersion && clientIfVersion === catalogVersion) {
+            return new Response(JSON.stringify({
+              ok: true,
+              notModified: true,
+              catalogVersion
+            }), { status: 200, headers: corsHeaders });
+          }
+
+          if (
+            !forcePreseedRefresh &&
+            cachedPreseed &&
+            cachedPreseed.payload &&
+            (Date.now() - Number(cachedPreseed.ts || 0)) < 60000 &&
+            (!catalogVersion || cachedPreseed.payload.catalogVersion === catalogVersion)
+          ) {
             return new Response(JSON.stringify(cachedPreseed.payload), { status: 200, headers: corsHeaders });
           }
+
           const items = [];
           const existingFileIds = [];
           const existingFingerprints = [];
+          const fileTmdbMap = [];
+          const fpTmdbMap = [];
           const entityMappings = [];
           try {
             await ensureD1Schema(env);
@@ -1464,8 +1518,8 @@
               const [mRows, sRows, mfRows, efRows, entRows] = await rawDb.batch([
                 rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM movies ORDER BY updated_at DESC LIMIT 4000"),
                 rawDb.prepare("SELECT tmdb_id, title, release_year, poster_path FROM series ORDER BY updated_at DESC LIMIT 4000"),
-                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' ORDER BY updated_at DESC LIMIT 6000"),
-                rawDb.prepare("SELECT telegram_file_id, file_fingerprint FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' ORDER BY updated_at DESC LIMIT 6000"),
+                rawDb.prepare("SELECT movie_id, telegram_file_id, file_fingerprint FROM movie_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' ORDER BY updated_at DESC LIMIT 6000"),
+                rawDb.prepare("SELECT series_id, telegram_file_id, file_fingerprint FROM episode_files WHERE telegram_file_id IS NOT NULL AND telegram_file_id != '' ORDER BY updated_at DESC LIMIT 6000"),
                 rawDb.prepare("SELECT cache_key, data_json FROM entity_cache WHERE entity_type = 'title_res' ORDER BY updated_at DESC LIMIT 1000")
               ]);
               for (const r of (mRows?.results || [])) {
@@ -1492,18 +1546,26 @@
               }
               const seenFidSet = new Set();
               const seenFpSet = new Set();
-              for (const r of [...(mfRows?.results || []), ...(efRows?.results || [])]) {
-                const fid = String(r?.telegram_file_id || "").trim();
-                if (fid && !fid.startsWith("vip_playlist_") && !fid.startsWith("tmdb_card_") && !seenFidSet.has(fid)) {
-                  seenFidSet.add(fid);
-                  existingFileIds.push(fid);
+              const registerFileRows = (rows, typeCode, idCol) => {
+                for (const r of (rows || [])) {
+                  const refId = Number(r?.[idCol] || 0);
+                  const refTag = refId > 0 ? `${typeCode}:${refId}` : "";
+                  const fid = String(r?.telegram_file_id || "").trim();
+                  if (fid && !fid.startsWith("vip_playlist_") && !fid.startsWith("tmdb_card_") && !seenFidSet.has(fid)) {
+                    seenFidSet.add(fid);
+                    existingFileIds.push(fid);
+                    if (refTag) fileTmdbMap.push([fid, refTag]);
+                  }
+                  const fp = String(r?.file_fingerprint || "").trim();
+                  if (fp && fp !== "0_0_0x0" && fp !== "null" && !seenFpSet.has(fp)) {
+                    seenFpSet.add(fp);
+                    existingFingerprints.push(fp);
+                    if (refTag) fpTmdbMap.push([fp, refTag]);
+                  }
                 }
-                const fp = String(r?.file_fingerprint || "").trim();
-                if (fp && fp !== "0_0_0x0" && fp !== "null" && !seenFpSet.has(fp)) {
-                  seenFpSet.add(fp);
-                  existingFingerprints.push(fp);
-                }
-              }
+              };
+              registerFileRows(mfRows?.results, "m", "movie_id");
+              registerFileRows(efRows?.results, "s", "series_id");
               for (const r of (entRows?.results || [])) {
                 if (r?.cache_key && r?.data_json) {
                   try {
@@ -1524,14 +1586,76 @@
           } catch (e) {}
           const preseedPayload = {
             ok: true,
+            notModified: false,
+            catalogVersion: catalogVersion || `v2:fallback:${Date.now()}`,
             count: items.length,
             items,
             existingFileIds,
             existingFingerprints,
+            fileTmdbMap,
+            fpTmdbMap,
             entityMappings
           };
           memoryFallback.set("d1_catalog_preseed_cache", { payload: preseedPayload, ts: Date.now() });
           return new Response(JSON.stringify(preseedPayload), { status: 200, headers: corsHeaders });
+        }
+        // Ultra-leichter Bulk-Playlist-Link für bereits im Browser als D1-Duplikat erkannte Dateien im 'both'-Modus (0 TMDb-Calls, 0 Media-Scans!)
+        if (path === "/api/tma/admin/playlist-bulk-link" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const rawItems = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
+          if (rawItems.length === 0) {
+            return new Response(JSON.stringify({ ok: true, linkedCount: 0, playlistFolder: null }), { status: 200, headers: corsHeaders });
+          }
+          const targetChatId = String(body.targetChatId || auth.chatId).trim();
+          const playlistName = String(body.playlistName || "🎵 JSON-Import").trim().slice(0, 48);
+          const playlistMode = ["vip_stream", "watchlist", "both"].includes(body.playlistMode)
+            ? body.playlistMode
+            : (targetChatId === "bot_vip" ? "vip_stream" : "both");
+          const sourceLabel = String(body.sourceLabel || playlistName).trim().slice(0, 64);
+          let playlistFolder = null;
+          if (body.playlistFolderId) {
+            const existingFolders = await getFolders(env, targetChatId);
+            playlistFolder = existingFolders.find(f => f.id === String(body.playlistFolderId)) || null;
+          }
+          if (!playlistFolder) {
+            playlistFolder = await createOrGetJsonPlaylistFolder(env, targetChatId, playlistName, sourceLabel, playlistMode);
+          }
+          const resolvedForLink = [];
+          for (const it of rawItems) {
+            const tmdbId = Number(it?.tmdbId || it?.tmdb_id || 0);
+            if (!Number.isInteger(tmdbId) || tmdbId <= 0) continue;
+            const tc = it?.typeCode === "s" ? "s" : "m";
+            const fid = String(it?.fileId || it?.telegram_file_id || "").trim();
+            resolvedForLink.push({
+              tmdbId,
+              typeCode: tc,
+              cleanTitle: String(it?.cleanTitle || it?.title || `Titel #${tmdbId}`).trim(),
+              year: it?.year ? String(it.year) : "K. A.",
+              poster: String(it?.poster || "").trim(),
+              quality: String(it?.quality || "1080p").trim(),
+              codec: String(it?.codec || "x264").trim(),
+              season: it?.season ? Number(it.season) : 1,
+              episode: it?.episode ? Number(it.episode) : 1,
+              episodeTitle: String(it?.episodeTitle || "").trim(),
+              fileSize: it?.fileSize || null,
+              tags: String(it?.tags || "").trim(),
+              hasValidVideoFile: Boolean(fid || it?.hasValidVideoFile),
+              fileMeta: fid ? { fileId: fid, telegram_file_id: fid } : null
+            });
+          }
+          const linkedCount = playlistFolder && resolvedForLink.length > 0
+            ? await batchSaveIngestedItemsToPlaylist(env, targetChatId, playlistFolder.id, resolvedForLink, { playlistMode: playlistFolder.playlistMode || playlistMode })
+            : 0;
+          const shouldDeferLinkKv = Boolean(body.deferKvWrite && !body.isFinalBatch);
+          const linkHeaders = shouldDeferLinkKv
+            ? { ...corsHeaders, "X-Internal-Defer-Kv-Flush": "1" }
+            : corsHeaders;
+          return new Response(JSON.stringify({
+            ok: true,
+            linkedCount,
+            playlistFolder,
+            _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+          }), { status: 200, headers: linkHeaders });
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
@@ -1676,6 +1800,10 @@
           const tmdbRetryAfterMs = (pauseReason === "TMDB_RATE_LIMIT" && typeof tmdbRateLimitUntilMs === "number" && tmdbRateLimitUntilMs > Date.now())
             ? Math.max(1500, tmdbRateLimitUntilMs - Date.now())
             : 0;
+          if (moviesAdded.length > 0 || seriesAdded.length > 0) {
+            memoryFallback.delete("d1_catalog_preseed_cache");
+            memoryFallback.delete("d1_catalog_preseed_ver_cache");
+          }
           const batchRespHeaders = shouldDeferKvFlush
             ? { ...corsHeaders, "X-Internal-Defer-Kv-Flush": "1" }
             : corsHeaders;
