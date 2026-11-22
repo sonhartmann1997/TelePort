@@ -4099,9 +4099,14 @@
             : null;
           const rawMsgId = Number(msgObj?.message_id || 0);
           const messageId = Number.isInteger(rawMsgId) && rawMsgId > 0 ? rawMsgId : null;
+          const chatType = String(msgObj?.chat?.type || "").toLowerCase();
           const chatUsername = String(msgObj?.chat?.username || "").replace(/^@/, "").trim();
           const cleanTopic = targetTopicId && /^\d+$/.test(targetTopicId) ? targetTopicId : "";
           const targetStr = String(targetChat || "").trim();
+          const isGroupOrChannelTarget =
+            chatType === "supergroup" ||
+            chatType === "channel" ||
+            (chatType !== "private" && (targetStr.startsWith("-") || targetMode === "group"));
 
           let resolvedBotUsername = "";
           if (usingOwnCustomBot) {
@@ -4114,7 +4119,8 @@
           }
           resolvedBotUsername = String(resolvedBotUsername || "").replace(/^@/, "").trim();
 
-          if (chatUsername && /^[A-Za-z0-9_]{3,64}$/.test(chatUsername)) {
+          // Öffentliche Gruppen/Kanäle: direkter Nachrichten-Deep-Link über Gruppen-Username (NIEMALS bei Private-DM, da msgObj.chat.username dort der User selbst -> "Gespeicherte Nachrichten" ist!)
+          if (isGroupOrChannelTarget && chatType !== "private" && chatUsername && /^[A-Za-z0-9_]{3,64}$/.test(chatUsername)) {
             const pathSuffix = messageId
               ? (cleanTopic ? `/${cleanTopic}/${messageId}` : `/${messageId}`)
               : (cleanTopic ? `/${cleanTopic}` : "");
@@ -4125,6 +4131,7 @@
               botUsername: resolvedBotUsername
             };
           }
+          // Private Supergruppen/Kanäle (-100...): direkter Nachrichten-Deep-Link über t.me/c/<internalId>/<msgId>
           if (targetStr.startsWith("-100")) {
             const internalId = targetStr.slice(4);
             if (/^\d+$/.test(internalId)) {
@@ -4139,6 +4146,7 @@
               };
             }
           }
+          // Private-Chat (DM): Telegram unterstützt keine /<message_id>-Deep-Links für Bot-DMs -> sauber zurück zum Bot-Chat
           return {
             messageId,
             openMessageUrl: resolvedBotUsername ? `https://t.me/${resolvedBotUsername}` : "",

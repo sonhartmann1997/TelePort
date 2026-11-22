@@ -1501,12 +1501,26 @@
       }
 
       function openSentTelegramMessageClient(openUrl, opts = {}) {
-        const safeUrl = (typeof safeHttpUrl === "function") ? safeHttpUrl(openUrl) : ( /^https?:\\/\\//i.test(String(openUrl || "").trim()) ? String(openUrl).trim() : "" );
+        let safeUrl = (typeof safeHttpUrl === "function") ? safeHttpUrl(openUrl) : ( /^https?:\\/\\//i.test(String(openUrl || "").trim()) ? String(openUrl).trim() : "" );
         const mode = String(opts.afterSendAction || "open_minimize");
         const targetMode = String(opts.targetMode || "dm");
-        const isDirectLink = Boolean(opts.isDirectMessageLink);
+        let isDirectLink = Boolean(opts.isDirectMessageLink);
+        const fallbackBotUser = String(opts.botUsername || "").replace(/^@/, "").trim();
         const isInsideTg = Boolean(tg && (tg.initData || (tg.platform && tg.platform !== "unknown")));
         const launchedChatType = String(tg?.initDataUnsafe?.chat_type || "").toLowerCase();
+
+        // Schutz gegen Versehen (Saved Messages): Im DM-Modus niemals auf den eigenen Telegram-Usernamen springen!
+        const ownUsername = String(tg?.initDataUnsafe?.user?.username || "").replace(/^@/, "").trim().toLowerCase();
+        if (targetMode !== "group" && safeUrl && ownUsername) {
+          const selfMatch = safeUrl.match(/^https?:\\/\\/t\\.me\\/([A-Za-z0-9_]+)(?:\\/.*)?$/i);
+          if (selfMatch && selfMatch[1].toLowerCase() === ownUsername) {
+            safeUrl = (fallbackBotUser && fallbackBotUser.toLowerCase() !== ownUsername)
+              ? ("https://t.me/" + fallbackBotUser)
+              : "";
+            isDirectLink = false;
+          }
+        }
+
         const isOwnBotDmContext = targetMode === "dm" && !isDirectLink && (!launchedChatType || launchedChatType === "sender");
 
         if (isInsideTg) {
@@ -1547,9 +1561,10 @@
           }
         } catch (_e) {}
 
+        const resolvedBotUser = String(streamRes?.botUsername || (prefs.targetMode === "custom_bot" ? prefs.customBotUsername : "") || "").replace(/^@/, "").trim();
         let openUrl = String(streamRes?.openMessageUrl || "").trim();
-        if (!openUrl && prefs.targetMode === "custom_bot" && prefs.customBotUsername) {
-          openUrl = "https://t.me/" + String(prefs.customBotUsername).replace(/^@/, "").trim();
+        if (!openUrl && resolvedBotUser) {
+          openUrl = "https://t.me/" + resolvedBotUser;
         }
         const safeUrl = (typeof safeHttpUrl === "function") ? safeHttpUrl(openUrl) : ( /^https?:\\/\\//i.test(openUrl) ? openUrl : "" );
         const isDirectMessageLink = Boolean(streamRes?.isDirectMessageLink);
@@ -1575,7 +1590,8 @@
                 onAction: () => openSentTelegramMessageClient(safeUrl, {
                   afterSendAction: afterSendAction === "stay" ? "open_minimize" : afterSendAction,
                   targetMode: prefs.targetMode || "dm",
-                  isDirectMessageLink
+                  isDirectMessageLink,
+                  botUsername: resolvedBotUser
                 })
               }
             : null
@@ -1586,7 +1602,8 @@
             openSentTelegramMessageClient(safeUrl, {
               afterSendAction,
               targetMode: prefs.targetMode || "dm",
-              isDirectMessageLink
+              isDirectMessageLink,
+              botUsername: resolvedBotUser
             });
           }, 450);
         }
