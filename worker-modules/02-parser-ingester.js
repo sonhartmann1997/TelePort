@@ -2473,7 +2473,10 @@
     return 0;
   }
 
-  // --- Fetch mit Timeout, Edge-Cache (caches.default), Subrequest-Circuit-Breaker & TMDb Auth-Normalisierung ---
+  var tmdbRateLimitUntilMs = 0;
+  var tmdbRateLimitHitInBatch = false;
+
+  // --- Fetch mit Timeout, Edge-Cache (caches.default), Subrequest-Circuit-Breaker, TMDb-429-Guard & Auth-Normalisierung ---
   async function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -2481,6 +2484,7 @@
       let targetUrl = String(url || "");
       let effectiveOptions = { ...options };
       const method = String(effectiveOptions.method || "GET").toUpperCase();
+      const isTmdbReq = targetUrl.includes("api.themoviedb.org");
       const edgeCacheTtl = method === "GET" && !effectiveOptions._skipEdgeCache
         ? resolveExternalEdgeCacheTtl(targetUrl)
         : 0;
@@ -2503,6 +2507,20 @@
         } catch (_cacheErr) {}
       }
 
+      // 1b. Zentraler TMDb-429-Cooldown: Bei aktivem TMDb-Rate-Limit keine weiteren Subrequests verbrennen!
+      if (isTmdbReq && typeof tmdbRateLimitUntilMs === "number" && tmdbRateLimitUntilMs > Date.now()) {
+        clearTimeout(id);
+        tmdbRateLimitHitInBatch = true;
+        const remRetryMs = Math.max(500, tmdbRateLimitUntilMs - Date.now());
+        return new Response(JSON.stringify({ ok: false, tmdb_rate_limited: true, retry_after_ms: remRetryMs }), {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "Retry-After": String(Math.ceil(remRetryMs / 1000))
+          }
+        });
+      }
+
       // 2. Harter Subrequest-Circuit-Breaker für Cloudflare Free Plan (50 Subrequests Limit)
       const hardSubrequestCap = effectiveOptions._criticalSubrequest ? 47 : 42;
       if (typeof currentInvocationSubrequests === "number" && currentInvocationSubrequests >= hardSubrequestCap) {
@@ -2516,7 +2534,7 @@
         });
       }
 
-      if (targetUrl.includes("api.themoviedb.org")) {
+      if (isTmdbReq) {
         trackStat("tmdbCalls");
         const hdrs = { ...(options?.headers || {}) };
         let rawToken = String(hdrs.Authorization || hdrs.authorization || "")
@@ -2561,6 +2579,18 @@
       }
       const res = await fetch(targetUrl, { ...effectiveOptions, signal: controller.signal });
       clearTimeout(id);
+
+      // TMDb 429 Rate-Limit abfangen und Retry-After zentral im Isolate respektieren
+      if (isTmdbReq && res && res.status === 429) {
+        const raHdr = res.headers ? res.headers.get("Retry-After") : null;
+        const parsedSec = Number(raHdr);
+        const waitMs = (Number.isFinite(parsedSec) && parsedSec > 0)
+          ? Math.min(15000, Math.max(1500, Math.round(parsedSec * 1000)))
+          : 4000;
+        tmdbRateLimitUntilMs = Math.max(Number(tmdbRateLimitUntilMs || 0), Date.now() + waitMs);
+        tmdbRateLimitHitInBatch = true;
+        return res;
+      }
 
       // Erfolgreiche GET-Antworten asynchron im Cloudflare Edge Cache sichern (blockiert nicht die Antwort)
       if (edgeCacheApi && edgeCacheKey && res && res.ok && edgeCacheTtl > 0) {

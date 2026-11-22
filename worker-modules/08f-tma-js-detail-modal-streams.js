@@ -2275,6 +2275,61 @@
         '</div>';
       }
 
+      async function sendStreamBatchClient(itemsPayload, prefs, batchLabel = "Batch-Versand") {
+        if (!Array.isArray(itemsPayload) || itemsPayload.length === 0) {
+          return { ok: false, sentCount: 0, queuedCount: 0, failedCount: 0, batchApiCalls: 0, lastSentRes: null, deliveredIndices: [] };
+        }
+        let sentCount = 0;
+        let queuedCount = 0;
+        let failedCount = 0;
+        let batchApiCalls = 0;
+        let lastSentRes = null;
+        let methodUsed = "";
+        const deliveredIndices = [];
+        const CHUNK_SIZE = 100;
+        for (let offset = 0; offset < itemsPayload.length; offset += CHUNK_SIZE) {
+          const chunk = itemsPayload.slice(offset, offset + CHUNK_SIZE);
+          const totalChunks = Math.ceil(itemsPayload.length / CHUNK_SIZE);
+          const chunkNum = Math.floor(offset / CHUNK_SIZE) + 1;
+          setBusyState(true, "⚡ Batch-Versand (" + chunk.length + " Dateien" + (totalChunks > 1 ? (" · Paket " + chunkNum + "/" + totalChunks) : "") + "): " + batchLabel + "...");
+          const r = await apiFetchJson(API_BASE + "/stream-batch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chatId,
+              batchLabel,
+              items: chunk,
+              targetMode: prefs.targetMode || "dm",
+              targetGroupChatId: prefs.targetGroupChatId || "",
+              targetTopicId: prefs.targetTopicId || "",
+              sourceBridgeChatId: prefs.sourceBridgeChatId || "",
+              customBotToken: prefs.customBotToken || "",
+              customBotUsername: prefs.customBotUsername || ""
+            })
+          });
+          if (r && r.antiSpam) {
+            clientAntiSpamSnapshot = r.antiSpam;
+            renderAntiSpamLiveHudBannerClient(r.antiSpam);
+          }
+          if (r && r.ok) {
+            sentCount += Number(r.sentCount || 0);
+            queuedCount += Number(r.queuedCount || 0);
+            failedCount += Number(r.failedCount || 0);
+            batchApiCalls += Number(r.batchApiCalls || 0);
+            if (r.method) methodUsed = String(r.method);
+            if (!lastSentRes || r.openMessageUrl) lastSentRes = r;
+            if (Array.isArray(r.deliveredIndices)) {
+              for (const localIdx of r.deliveredIndices) {
+                deliveredIndices.push(offset + Number(localIdx));
+              }
+            }
+          } else {
+            return { ok: false, fallbackNeeded: Boolean(r && r._httpStatus === 404), error: r?.error || "Batch-Versand fehlgeschlagen", sentCount, queuedCount, failedCount, batchApiCalls, lastSentRes, deliveredIndices, methodUsed };
+          }
+        }
+        return { ok: sentCount + queuedCount > 0, sentCount, queuedCount, failedCount, batchApiCalls, lastSentRes, deliveredIndices, methodUsed };
+      }
+
       async function sendAllArchiveDownloadsToTelegram() {
         if (!isCurrentUserVip()) {
           showHudToast("🔒 Exklusiv für VIP-Mitglieder verfügbar.");
@@ -2292,61 +2347,78 @@
         const prefs = getDeliveryPreferencesClient();
         if (!validateDeliveryTargetBeforeSendClient(prefs)) return;
         const isSeriesModal = Array.isArray(d.seasons) && d.seasons.length > 0;
-        let sentCount = 0;
-        let queuedCount = 0;
-        let lastSentRes = null;
-        for (let i = 0; i < targetList.length; i++) {
-          const dl = targetList[i];
+        const batchItems = targetList.map((dl, i) => {
           const fid = dl.telegram_file_id || dl.file_id || "";
-          if (!fid) continue;
           const fnLabel = dl.file_name || dl.raw_filename || "Archiv-Download";
           const codecLabel = dl.codec || (/\\.(?:zip|z\\d{2}|zip\\.\\d{3})$/i.test(fnLabel) ? "ZIP" : /\\.7z(?:\\.\\d{3})?$/i.test(fnLabel) ? "7Z" : "RAR");
           const partLabel = normalizeClientPartLabel(dl.part, fnLabel) || ("Teil " + (i + 1));
           const hasSeEp = Number.isFinite(Number(dl.season_number)) && Number.isFinite(Number(dl.episode_number)) && Number(dl.episode_number) > 0;
           const seEpCode = hasSeEp ? (' S' + String(dl.season_number).padStart(2, '0') + 'E' + String(dl.episode_number).padStart(2, '0')) : '';
-          const sizeLabel = formatFileSizeClient(dl.file_size);
-          const itemTitle = (d.title || "Archiv") + seEpCode + " (" + partLabel + ")";
-          setBusyState(true, "📦 Sende Archiv " + (i + 1) + "/" + targetList.length + ": " + itemTitle + "...");
+          return {
+            fileId: fid,
+            title: (d.title || "Archiv") + seEpCode + " (" + partLabel + ")",
+            quality: codecLabel,
+            fileSize: formatFileSizeClient(dl.file_size),
+            tags: "📦 Archiv-Download",
+            typeCode: isSeriesModal ? "s" : "m",
+            tmdbId: d.id || null,
+            posterUrl: d.poster || d.poster_path || "",
+            backdropUrl: d.backdrop || d.backdrop_path || ""
+          };
+        });
+        let sentCount = 0;
+        let queuedCount = 0;
+        let lastSentRes = null;
+        let usedCopyMessages = false;
+        if (batchItems.length >= 2) {
           try {
-            const r = await apiFetchJson(API_BASE + "/stream", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chatId,
-                fileId: fid,
-                title: itemTitle,
-                quality: codecLabel,
-                fileSize: sizeLabel,
-                tags: "📦 Archiv-Download",
-                targetMode: prefs.targetMode || "dm",
-                targetGroupChatId: prefs.targetGroupChatId || "",
-                targetTopicId: prefs.targetTopicId || "",
-                sourceBridgeChatId: prefs.sourceBridgeChatId || "",
-                customBotToken: prefs.customBotToken || "",
-                customBotUsername: prefs.customBotUsername || "",
-                typeCode: isSeriesModal ? "s" : "m",
-                tmdbId: d.id || null,
-                posterUrl: d.poster || d.poster_path || "",
-                backdropUrl: d.backdrop || d.backdrop_path || ""
-              })
-            });
-            if (r && r.antiSpam) {
-              clientAntiSpamSnapshot = r.antiSpam;
-              renderAntiSpamLiveHudBannerClient(r.antiSpam);
-            }
-            if (r && r.ok) {
-              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
-              if (r.queued) queuedCount++;
-              else sentCount++;
+            const bRes = await sendStreamBatchClient(batchItems, prefs, (d.title || "Archiv") + " (" + batchItems.length + " Teile)");
+            if (bRes && bRes.ok) {
+              sentCount = bRes.sentCount;
+              queuedCount = bRes.queuedCount;
+              lastSentRes = bRes.lastSentRes;
+              usedCopyMessages = Boolean(bRes.batchApiCalls > 0);
             }
           } catch (e) {}
+        }
+        if (sentCount + queuedCount === 0) {
+          for (let i = 0; i < batchItems.length; i++) {
+            const item = batchItems[i];
+            setBusyState(true, "📦 Sende Archiv " + (i + 1) + "/" + batchItems.length + ": " + item.title + "...");
+            try {
+              const r = await apiFetchJson(API_BASE + "/stream", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chatId,
+                  ...item,
+                  targetMode: prefs.targetMode || "dm",
+                  targetGroupChatId: prefs.targetGroupChatId || "",
+                  targetTopicId: prefs.targetTopicId || "",
+                  sourceBridgeChatId: prefs.sourceBridgeChatId || "",
+                  customBotToken: prefs.customBotToken || "",
+                  customBotUsername: prefs.customBotUsername || ""
+                })
+              });
+              if (r && r.antiSpam) {
+                clientAntiSpamSnapshot = r.antiSpam;
+                renderAntiSpamLiveHudBannerClient(r.antiSpam);
+              }
+              if (r && r.ok) {
+                if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
+                if (r.queued) queuedCount++;
+                else sentCount++;
+              }
+            } catch (e) {}
+          }
         }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
         if (sentCount + queuedCount > 0) {
+          const batchBadge = usedCopyMessages ? " ⚡ Batch-API" : "";
           const msg = queuedCount > 0
-            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Archiv-Teil(e) in Warteschleife!")
-            : ("✅ Alle " + sentCount + "/" + targetList.length + " Archiv-Teile gesendet!");
+            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " Archiv-Teil(e) in Warteschleife!" + batchBadge)
+            : ("✅ Alle " + sentCount + "/" + targetList.length + " Archiv-Teile gesendet!" + batchBadge);
           handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
           showHudToast("⚠️ Archiv-Teile konnten nicht gesendet werden.");
@@ -2533,55 +2605,74 @@
         const targetList = partFiles.length >= 2 ? partFiles : d.files.filter(f => f && f.telegram_file_id);
         if (targetList.length === 0) return;
 
+        const batchItems = targetList.map((f, i) => {
+          const cleanPartStr = f._normPart || normalizeClientPartLabel(f.part, f.raw_filename || "") || ("CD " + (i + 1));
+          return {
+            fileId: f.telegram_file_id,
+            title: d.title + " (" + cleanPartStr + ")",
+            quality: f.quality || "1080p",
+            fileSize: formatFileSizeClient(f.file_size),
+            tags: cleanUserVisibleStreamTagsClient(f.tags || ""),
+            typeCode: "m",
+            tmdbId: d.id || null,
+            posterUrl: d.poster || d.poster_path || "",
+            backdropUrl: d.backdrop || d.backdrop_path || ""
+          };
+        });
+
         let sentCount = 0;
         let queuedCount = 0;
         let lastSentRes = null;
-        for (let i = 0; i < targetList.length; i++) {
-          const f = targetList[i];
-          const cleanPartStr = f._normPart || normalizeClientPartLabel(f.part, f.raw_filename || "") || ("CD " + (i + 1));
-          const partLabel = " (" + cleanPartStr + ")";
-          const sizeLabel = formatFileSizeClient(f.file_size);
-          setBusyState(true, "📦 Sende " + cleanPartStr + " (" + (i + 1) + "/" + targetList.length + "): " + d.title + "...");
+        let usedCopyMessages = false;
+        if (batchItems.length >= 2) {
           try {
-            const r = await apiFetchJson(API_BASE + "/stream", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chatId,
-                fileId: f.telegram_file_id,
-                title: d.title + partLabel,
-                quality: f.quality || "1080p",
-                fileSize: sizeLabel,
-                tags: cleanUserVisibleStreamTagsClient(f.tags || ""),
-                targetMode: prefs.targetMode || "dm",
-                targetGroupChatId: prefs.targetGroupChatId || "",
-                targetTopicId: prefs.targetTopicId || "",
-                sourceBridgeChatId: prefs.sourceBridgeChatId || "",
-                customBotToken: prefs.customBotToken || "",
-                customBotUsername: prefs.customBotUsername || "",
-                typeCode: "m",
-                tmdbId: d.id || null,
-                posterUrl: d.poster || d.poster_path || "",
-                backdropUrl: d.backdrop || d.backdrop_path || ""
-              })
-            });
-            if (r && r.antiSpam) {
-              clientAntiSpamSnapshot = r.antiSpam;
-              renderAntiSpamLiveHudBannerClient(r.antiSpam);
-            }
-            if (r && r.ok) {
-              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
-              if (r.queued) queuedCount++;
-              else sentCount++;
+            const bRes = await sendStreamBatchClient(batchItems, prefs, d.title + " (" + batchItems.length + " Teile)");
+            if (bRes && bRes.ok) {
+              sentCount = bRes.sentCount;
+              queuedCount = bRes.queuedCount;
+              lastSentRes = bRes.lastSentRes;
+              usedCopyMessages = Boolean(bRes.batchApiCalls > 0);
             }
           } catch (e) {}
+        }
+        if (sentCount + queuedCount === 0) {
+          for (let i = 0; i < batchItems.length; i++) {
+            const item = batchItems[i];
+            setBusyState(true, "📦 Sende Teil " + (i + 1) + "/" + batchItems.length + ": " + item.title + "...");
+            try {
+              const r = await apiFetchJson(API_BASE + "/stream", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chatId,
+                  ...item,
+                  targetMode: prefs.targetMode || "dm",
+                  targetGroupChatId: prefs.targetGroupChatId || "",
+                  targetTopicId: prefs.targetTopicId || "",
+                  sourceBridgeChatId: prefs.sourceBridgeChatId || "",
+                  customBotToken: prefs.customBotToken || "",
+                  customBotUsername: prefs.customBotUsername || ""
+                })
+              });
+              if (r && r.antiSpam) {
+                clientAntiSpamSnapshot = r.antiSpam;
+                renderAntiSpamLiveHudBannerClient(r.antiSpam);
+              }
+              if (r && r.ok) {
+                if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
+                if (r.queued) queuedCount++;
+                else sentCount++;
+              }
+            } catch (e) {}
+          }
         }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
         if (sentCount + queuedCount > 0) {
+          const batchBadge = usedCopyMessages ? " ⚡ Batch-API" : "";
           const msg = queuedCount > 0
-            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " CD(s) in Warteschleife!")
-            : ("✅ Alle " + sentCount + "/" + targetList.length + " CDs gesendet!");
+            ? ("⏳ " + sentCount + " sofort gesendet, " + queuedCount + " CD(s) in Warteschleife!" + batchBadge)
+            : ("✅ Alle " + sentCount + "/" + targetList.length + " CDs gesendet!" + batchBadge);
           handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
           showHudToast("⚠️ Teile konnten nicht gesendet werden.");
@@ -2621,62 +2712,94 @@
           return;
         }
         const seriesTitle = state.activeDetails?.title || "Serie";
-        let sentCount = 0;
-        let queuedCount = 0;
-        let lastSentRes = null;
+        const sSummaryPrefix = Number(seasonNum) === 0 ? "Specials" : ("Staffel " + seasonNum);
+        const batchEntries = [];
         for (let i = 0; i < episodesWithStreams.length; i++) {
           const ep = episodesWithStreams[i];
           const bestFile = ep._resolvedActiveFile || (Array.isArray(ep.versions) && ep.versions[0]) || (Array.isArray(ep.files) && ep.files[0]);
           const targetFileId = bestFile?.telegram_file_id || bestFile?.file_id;
           if (!bestFile || !targetFileId) continue;
           const epCode = "S" + String(seasonNum).padStart(2, "0") + "E" + String(ep.episode_number).padStart(2, "0");
-          const sizeLabel = formatFileSizeClient(bestFile.file_size);
-          const sTitlePrefix = Number(seasonNum) === 0 ? "Specials" : ("Staffel " + seasonNum);
-          setBusyState(true, "📦 " + sTitlePrefix + " (" + (i + 1) + "/" + episodesWithStreams.length + "): " + epCode + "...");
-          try {
-            const r = await apiFetchJson(API_BASE + "/stream", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chatId,
-                fileId: targetFileId,
-                title: seriesTitle + " " + epCode + " - " + (ep.name || ("Folge " + ep.episode_number)),
-                quality: bestFile.quality || "1080p",
-                fileSize: sizeLabel,
-                tags: bestFile.versionLabel || bestFile.tags || "",
-                targetMode: prefs.targetMode || "dm",
-                targetGroupChatId: prefs.targetGroupChatId || "",
-                targetTopicId: prefs.targetTopicId || "",
-                sourceBridgeChatId: prefs.sourceBridgeChatId || "",
-                customBotToken: prefs.customBotToken || "",
-                customBotUsername: prefs.customBotUsername || "",
-                typeCode: "s",
-                tmdbId: seriesId || state.activeDetails?.id || null,
-                posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
-                backdropUrl: ep.still || ep.still_path || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
-                season: (seasonNum !== undefined && seasonNum !== null && seasonNum !== "") ? Number(seasonNum) : null,
-                episode: ep.episode_number || null
-              })
-            });
-            if (r && r.antiSpam) {
-              clientAntiSpamSnapshot = r.antiSpam;
-              renderAntiSpamLiveHudBannerClient(r.antiSpam);
+          batchEntries.push({
+            ep,
+            payload: {
+              fileId: targetFileId,
+              title: seriesTitle + " " + epCode + " - " + (ep.name || ("Folge " + ep.episode_number)),
+              quality: bestFile.quality || "1080p",
+              fileSize: formatFileSizeClient(bestFile.file_size),
+              tags: bestFile.versionLabel || bestFile.tags || "",
+              typeCode: "s",
+              tmdbId: seriesId || state.activeDetails?.id || null,
+              posterUrl: state.activeDetails?.poster || state.activeDetails?.poster_path || "",
+              backdropUrl: ep.still || ep.still_path || state.activeDetails?.backdrop || state.activeDetails?.backdrop_path || "",
+              season: (seasonNum !== undefined && seasonNum !== null && seasonNum !== "") ? Number(seasonNum) : null,
+              episode: ep.episode_number || null
             }
-            if (r && r.ok) {
-              if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
-              if (r.queued) queuedCount++;
-              else sentCount++;
-              setSeriesProgress(seriesId, seasonNum, ep.episode_number, ep.name || "");
+          });
+        }
+        let sentCount = 0;
+        let queuedCount = 0;
+        let lastSentRes = null;
+        let usedCopyMessages = false;
+        if (batchEntries.length >= 2) {
+          try {
+            const bRes = await sendStreamBatchClient(
+              batchEntries.map(x => x.payload),
+              prefs,
+              seriesTitle + " · " + sSummaryPrefix + " (" + batchEntries.length + " Folgen)"
+            );
+            if (bRes && bRes.ok) {
+              sentCount = bRes.sentCount;
+              queuedCount = bRes.queuedCount;
+              lastSentRes = bRes.lastSentRes;
+              usedCopyMessages = Boolean(bRes.batchApiCalls > 0);
+              for (const idx of (bRes.deliveredIndices || [])) {
+                const deliveredEp = batchEntries[idx]?.ep;
+                if (deliveredEp) setSeriesProgress(seriesId, seasonNum, deliveredEp.episode_number, deliveredEp.name || "");
+              }
             }
           } catch (e) {}
         }
+        if (sentCount + queuedCount === 0) {
+          for (let i = 0; i < batchEntries.length; i++) {
+            const { ep, payload } = batchEntries[i];
+            const epCode = "S" + String(seasonNum).padStart(2, "0") + "E" + String(ep.episode_number).padStart(2, "0");
+            setBusyState(true, "📦 " + sSummaryPrefix + " (" + (i + 1) + "/" + batchEntries.length + "): " + epCode + "...");
+            try {
+              const r = await apiFetchJson(API_BASE + "/stream", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chatId,
+                  ...payload,
+                  targetMode: prefs.targetMode || "dm",
+                  targetGroupChatId: prefs.targetGroupChatId || "",
+                  targetTopicId: prefs.targetTopicId || "",
+                  sourceBridgeChatId: prefs.sourceBridgeChatId || "",
+                  customBotToken: prefs.customBotToken || "",
+                  customBotUsername: prefs.customBotUsername || ""
+                })
+              });
+              if (r && r.antiSpam) {
+                clientAntiSpamSnapshot = r.antiSpam;
+                renderAntiSpamLiveHudBannerClient(r.antiSpam);
+              }
+              if (r && r.ok) {
+                if (!lastSentRes || (!r.queued && r.openMessageUrl)) lastSentRes = r;
+                if (r.queued) queuedCount++;
+                else sentCount++;
+                setSeriesProgress(seriesId, seasonNum, ep.episode_number, ep.name || "");
+              }
+            } catch (e) {}
+          }
+        }
         setBusyState(false);
         scheduleAntiSpamPollClient(950);
-        const sSummaryPrefix = Number(seasonNum) === 0 ? "Specials" : ("Staffel " + seasonNum);
         if (sentCount + queuedCount > 0) {
+          const batchBadge = usedCopyMessages ? " ⚡ Batch-API" : "";
           const msg = queuedCount > 0
-            ? ("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Warteschleife!")
-            : ("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!");
+            ? ("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Warteschleife!" + batchBadge)
+            : ("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!" + batchBadge);
           handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
           showHudToast("⚠️ Folgen konnten nicht gesendet werden.");

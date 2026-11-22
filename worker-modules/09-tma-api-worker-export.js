@@ -850,7 +850,7 @@
           let readable = true;
           let copyTestPassed = false;
           let diagnosticSummary = `✅ Kanal ${channelId} ist verifiziert und lesbar.`;
-          const effBotToken = String(env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN || "").trim();
+          const effBotToken = getBotToken(env);
           const isSimulatedToken = !effBotToken || effBotToken.startsWith("123456:");
           if (effBotToken && !isSimulatedToken) {
             try {
@@ -972,13 +972,23 @@
           const requestedFolderId = String(url.searchParams.get("folderId") || "").trim();
           const activeTab = String(url.searchParams.get("tab") || "").trim();
           const isFullRefresh = url.searchParams.get("refresh") === "1";
-          if (playlistChatId === "bot_vip") {
+
+          // Tab-basiertes Lazy-Loading: Nur laden, was der aktive Tab tatsächlich benötigt (spart massiv D1-Reads & CPU-ms auf Free Plan!)
+          const needUsers = isFullRefresh || !activeTab || activeTab === "users";
+          const needMedia = isFullRefresh || activeTab === "crud";
+          const needPlaylists = isFullRefresh || activeTab === "playlists" || activeTab === "backup";
+          const needPlaylistItems = isFullRefresh || activeTab === "playlists";
+          const needReports = isFullRefresh || activeTab === "reports";
+          const needQueueStats = isFullRefresh || !activeTab || activeTab === "backup" || activeTab === "users";
+          const needBotSetup = isFullRefresh || !activeTab || activeTab === "bot" || activeTab === "backup";
+          const shouldComputeSeriesGapsNow = isFullRefresh || activeTab === "gaps";
+
+          if (needPlaylists && playlistChatId === "bot_vip") {
             await ensureBotVipDefaultPlaylist(env).catch(() => null);
           }
           if (isFullRefresh) {
             await cleanupEmptySeriesInD1AndMemory(env).catch(() => null);
           }
-          const shouldComputeSeriesGapsNow = isFullRefresh || activeTab === "gaps";
           const cachedSeriesGapsRaw = memoryFallback.get("d1_series_gaps_cache");
           const cachedSeriesGaps = (cachedSeriesGapsRaw && cachedSeriesGapsRaw.data)
             ? cachedSeriesGapsRaw.data
@@ -995,56 +1005,51 @@
                 lazyDeferred: !shouldComputeSeriesGapsNow
               };
           const [users, media, queueStats, targetFolders, rawTargetItems, reports, seriesGaps] = await Promise.all([
-            listAllUsersFromD1(env).catch(() => []),
-            listAllMediaFromD1(env, mediaType).catch(() => []),
-            getImportQueueStatsFromD1(env).catch(() => ({ pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 })),
-            getFolders(env, playlistChatId).catch(() => []),
-            getSavedList(env, playlistChatId).catch(() => []),
-            listMediaReportsFromD1(env, "all").catch(() => []),
+            needUsers ? listAllUsersFromD1(env).catch(() => []) : Promise.resolve([]),
+            needMedia ? listAllMediaFromD1(env, mediaType).catch(() => []) : Promise.resolve([]),
+            needQueueStats
+              ? getImportQueueStatsFromD1(env).catch(() => ({ pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 }))
+              : Promise.resolve({ pendingCount: 0, processedCount: 0, moviesSaved: 0, seriesSaved: 0, failedCount: 0 }),
+            needPlaylists ? getFolders(env, playlistChatId).catch(() => []) : Promise.resolve([]),
+            needPlaylistItems ? getSavedList(env, playlistChatId).catch(() => []) : Promise.resolve([]),
+            needReports ? listMediaReportsFromD1(env, "all").catch(() => []) : Promise.resolve([]),
             shouldComputeSeriesGapsNow
               ? computeSeriesGapsOverview(env, isFullRefresh).catch(() => cachedSeriesGaps)
               : Promise.resolve(cachedSeriesGaps)
           ]);
-          const targetItems = await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || []);
+          const targetItems = needPlaylistItems
+            ? await enrichSavedListWithD1EpisodesAndPosters(env, playlistChatId, rawTargetItems).catch(() => rawTargetItems || [])
+            : [];
           const playlists = (targetFolders || []).map(f => ({
             ...f,
             enabled: f.enabled !== false,
             playlistMode: f.playlistMode || (playlistChatId === "bot_vip" ? "vip_stream" : "both"),
-            itemCount: (targetItems || []).filter(i => String(i.folderId) === String(f.id)).length
+            itemCount: needPlaylistItems
+              ? (targetItems || []).filter(i => String(i.folderId) === String(f.id)).length
+              : Number(f.itemCount || 0)
           }));
           const activeFolderId = requestedFolderId && playlists.some(p => String(p.id) === requestedFolderId)
             ? requestedFolderId
             : (playlists[0]?.id ? String(playlists[0].id) : "");
-          const activePlaylistItems = activeFolderId
+          const activePlaylistItems = (needPlaylistItems && activeFolderId)
             ? (targetItems || []).filter(i => String(i.folderId) === activeFolderId)
             : [];
           const openReportsCount = (reports || []).filter(r => r && r.status === "open").length;
-          const [videoCoverMode, botUsername, speedProfileConfig, webhookSecurity] = await Promise.all([
-            getVideoCoverMode(env).catch(() => "backdrop"),
-            tgApi(env).getBotUsername(env).catch(() => ""),
-            getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo),
-            typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
-          ]);
-          const cleanWorkerOrigin = resolveCleanWorkerOrigin(env, url.origin);
-          const effectiveWebAppUrl = String(env.WEBAPP_URL || cleanWorkerOrigin).replace(/\/$/, "");
-          const officialWebhookUrl = `${cleanWorkerOrigin}/webhook`;
-          const activeSecret = String(webhookSecurity?.secretToken || "");
-          const activeMaxConn = Number(webhookSecurity?.maxConnections || 8);
-          const manualWebhookLinks = buildManualWebhookLinks(cleanWorkerOrigin, officialWebhookUrl, activeSecret, activeMaxConn, true);
-          return new Response(JSON.stringify({
-            ok: true,
-            users,
-            media,
-            queueStats,
-            playlists,
-            playlistChatId,
-            activeFolderId,
-            activePlaylistItems,
-            reports: reports || [],
-            openReportsCount,
-            seriesGaps,
-            _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null,
-            botSetup: {
+          let botSetupObj = null;
+          if (needBotSetup) {
+            const [videoCoverMode, botUsername, speedProfileConfig, webhookSecurity] = await Promise.all([
+              getVideoCoverMode(env).catch(() => "backdrop"),
+              tgApi(env).getBotUsername(env).catch(() => ""),
+              getWorkerSpeedProfile(env).catch(() => WORKER_SPEED_PROFILES.free_turbo),
+              typeof getWebhookSecurityConfig === "function" ? getWebhookSecurityConfig(env).catch(() => ({ secretToken: "", maxConnections: 8 })) : Promise.resolve({ secretToken: "", maxConnections: 8 })
+            ]);
+            const cleanWorkerOrigin = resolveCleanWorkerOrigin(env, url.origin);
+            const effectiveWebAppUrl = String(env.WEBAPP_URL || cleanWorkerOrigin).replace(/\/$/, "");
+            const officialWebhookUrl = `${cleanWorkerOrigin}/webhook`;
+            const activeSecret = String(webhookSecurity?.secretToken || "");
+            const activeMaxConn = Number(webhookSecurity?.maxConnections || 8);
+            const manualWebhookLinks = buildManualWebhookLinks(cleanWorkerOrigin, officialWebhookUrl, activeSecret, activeMaxConn, true);
+            botSetupObj = {
               videoCoverMode,
               speedProfile: speedProfileConfig?.id || "free_turbo",
               speedProfileConfig,
@@ -1057,9 +1062,35 @@
               webhookPasswordLength: activeSecret.length,
               webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
               webhookMaxConnections: activeMaxConn,
-              hasBotToken: Boolean(env.TELEGRAM_BOT_TOKEN),
+              hasBotToken: Boolean(getBotToken(env)),
               botUsername: botUsername || "DeinBot"
-            }
+            };
+          }
+          return new Response(JSON.stringify({
+            ok: true,
+            activeTab: activeTab || "users",
+            loadedSections: {
+              users: needUsers,
+              media: needMedia,
+              playlists: needPlaylists,
+              playlistItems: needPlaylistItems,
+              reports: needReports,
+              queueStats: needQueueStats,
+              botSetup: needBotSetup,
+              seriesGaps: shouldComputeSeriesGapsNow
+            },
+            users,
+            media,
+            queueStats,
+            playlists,
+            playlistChatId,
+            activeFolderId,
+            activePlaylistItems,
+            reports: reports || [],
+            openReportsCount,
+            seriesGaps,
+            _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null,
+            botSetup: botSetupObj
           }), { status: 200, headers: corsHeaders });
         }
         if (path === "/api/tma/admin/bot-setup") {
@@ -1090,7 +1121,7 @@
               webhookPasswordLength: activeSecret.length,
               webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
               webhookMaxConnections: activeMaxConn,
-              hasBotToken: Boolean(env.TELEGRAM_BOT_TOKEN),
+              hasBotToken: Boolean(getBotToken(env)),
               botUsername: botUsername || "DeinBot",
               _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
             }), { status: 200, headers: corsHeaders });
@@ -1148,7 +1179,8 @@
                   })
                 : { secretToken: effectiveSecret, maxConnections };
               const manualLinks = buildManualWebhookLinks(cleanWorkerOrigin, customWebhookUrl, savedCfg.secretToken, savedCfg.maxConnections, dropPending);
-              if (!env.TELEGRAM_BOT_TOKEN) {
+              const effBotToken = getBotToken(env);
+              if (!effBotToken) {
                 return new Response(JSON.stringify({
                   ok: true,
                   simulated: true,
@@ -1159,7 +1191,7 @@
                   hasWebhookPassword: Boolean(savedCfg.secretToken),
                   webhookPasswordPreview: savedCfg.secretToken ? `${savedCfg.secretToken.slice(0, 3)}•••${savedCfg.secretToken.slice(-2)}` : "",
                   maxConnections: savedCfg.maxConnections,
-                  message: "Webhook-Konfiguration gespeichert (Hinweis: TELEGRAM_BOT_TOKEN ist in dieser Umgebung nicht gesetzt – bitte im echten Cloudflare Worker oder über den manuellen Telegram-API-Link unten registrieren).",
+                  message: "Webhook-Konfiguration gespeichert (Hinweis: TELEGRAM_BOT_TOKEN / BOT_TOKEN ist in dieser Umgebung nicht gesetzt – bitte im echten Cloudflare Worker oder über den manuellen Telegram-API-Link unten registrieren).",
                   _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
                 }), { status: 200, headers: corsHeaders });
               }
@@ -1175,7 +1207,7 @@
               let whJson = {};
               let whErrorMsg = "";
               try {
-                const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+                const whRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/setWebhook`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify(whPayload)
@@ -1189,7 +1221,7 @@
               let liveWebhookInfo = null;
               if (whJson?.ok) {
                 try {
-                  const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`, {}, 4500);
+                  const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/getWebhookInfo`, {}, 4500);
                   const infoJson = await infoRes.json().catch(() => ({}));
                   if (infoJson?.ok && infoJson?.result) liveWebhookInfo = infoJson.result;
                 } catch (_infoErr) {}
@@ -1223,7 +1255,8 @@
               const webhookSecurity = typeof getWebhookSecurityConfig === "function"
                 ? await getWebhookSecurityConfig(env)
                 : { secretToken: "", maxConnections: 8 };
-              if (!env.TELEGRAM_BOT_TOKEN) {
+              const effBotToken = getBotToken(env);
+              if (!effBotToken) {
                 return new Response(JSON.stringify({
                   ok: true,
                   simulated: true,
@@ -1239,7 +1272,7 @@
                   _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
                 }), { status: 200, headers: corsHeaders });
               }
-              const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`, {}, 5000);
+              const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/getWebhookInfo`, {}, 5000);
               const infoJson = await infoRes.json().catch(() => ({}));
               return new Response(JSON.stringify({
                 ok: Boolean(infoJson?.ok),
@@ -1253,7 +1286,8 @@
               const webhookSecurity = typeof getWebhookSecurityConfig === "function"
                 ? await getWebhookSecurityConfig(env)
                 : { secretToken: "", maxConnections: 8 };
-              if (!env.TELEGRAM_BOT_TOKEN) {
+              const effBotToken = getBotToken(env);
+              if (!effBotToken) {
                 return new Response(JSON.stringify({
                   ok: true,
                   simulated: true,
@@ -1269,7 +1303,7 @@
               if (webhookSecurity.secretToken) {
                 whPayload.secret_token = webhookSecurity.secretToken;
               }
-              const dropRes = await fetchWithTimeout(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/setWebhook`, {
+              const dropRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/setWebhook`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(whPayload)
@@ -1302,7 +1336,7 @@
             if (action === "setup_miniapp_menu") {
               const customUrl = String(body.webAppUrl || effectiveWebAppUrl).trim().replace(/\/$/, "");
               const buttonText = String(body.buttonText || "🍿 Mediathek").trim().slice(0, 32) || "🍿 Mediathek";
-              if (!env.TELEGRAM_BOT_TOKEN) {
+              if (!getBotToken(env)) {
                 return new Response(JSON.stringify({
                   ok: true,
                   simulated: true,
@@ -1501,9 +1535,7 @@
         }
         if (path === "/api/tma/admin/import-batch" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
-          if (body.deferKvWrite && !body.isFinalBatch) {
-            globalThis.__DEFER_KV_FLUSH_FOR_REQUEST = true;
-          }
+          const shouldDeferKvFlush = Boolean(body.deferKvWrite && !body.isFinalBatch);
           const directSpeedProf = (typeof body.speedProfile === "string" && WORKER_SPEED_PROFILES[body.speedProfile])
             ? WORKER_SPEED_PROFILES[body.speedProfile]
             : null;
@@ -1641,12 +1673,19 @@
           const workerHealth = typeof buildWorkerHealthSnapshot === "function"
             ? buildWorkerHealthSnapshot({ route: path, batchProcessedCount: effectiveProcessedCount })
             : null;
+          const tmdbRetryAfterMs = (pauseReason === "TMDB_RATE_LIMIT" && typeof tmdbRateLimitUntilMs === "number" && tmdbRateLimitUntilMs > Date.now())
+            ? Math.max(1500, tmdbRateLimitUntilMs - Date.now())
+            : 0;
+          const batchRespHeaders = shouldDeferKvFlush
+            ? { ...corsHeaders, "X-Internal-Defer-Kv-Flush": "1" }
+            : corsHeaders;
           return new Response(JSON.stringify({
             ok: true,
             status: status || "COMPLETED_BATCH",
             partialBatch: Boolean(partialBatch),
             nextStartIndex: effectiveProcessedCount,
             pauseReason: pauseReason || null,
+            retryAfterMs: tmdbRetryAfterMs,
             subrequestCount: Number(subrequestCount || 0),
             moviesAddedCount: moviesAdded.length,
             seriesAddedCount: seriesAdded.length,
@@ -1659,7 +1698,7 @@
             sampleTitles: [...moviesAdded.slice(0, 3), ...seriesAdded.slice(0, 3)],
             batchItems: batchItems || [],
             _workerHealth: workerHealth
-          }), { status: 200, headers: corsHeaders });
+          }), { status: 200, headers: batchRespHeaders });
         }
         if (path === "/api/tma/admin/import-logs") {
           if (request.method === "GET") {
@@ -3887,7 +3926,7 @@
         const effectiveCustomToken = customBotToken || String(savedDeliv.customBotToken || "").trim();
 
         const isAdminStreamCaller = Boolean(auth.user?.isAdmin);
-        const usingOwnCustomBot = Boolean(effectiveCustomToken && effectiveCustomToken !== String(env.TELEGRAM_BOT_TOKEN || "").trim());
+        const usingOwnCustomBot = Boolean(effectiveCustomToken && effectiveCustomToken !== getBotToken(env));
         let targetChat = "";
         if (targetMode === "group" && targetGroupChatId) {
           if (!isAdminStreamCaller && !usingOwnCustomBot && !targetGroupChatId.startsWith("-")) {
@@ -3942,7 +3981,7 @@
             if (!resolvedBotUsername && effectiveCustomToken) {
               resolvedBotUsername = await tgApi({ ...env, TELEGRAM_BOT_TOKEN: effectiveCustomToken }).getBotUsername(env).catch(() => "");
             }
-          } else if (env.TELEGRAM_BOT_TOKEN) {
+          } else if (getBotToken(env)) {
             resolvedBotUsername = await tgApi(env).getBotUsername(env).catch(() => "");
           }
           resolvedBotUsername = String(resolvedBotUsername || "").replace(/^@/, "").trim();
@@ -4029,7 +4068,7 @@
 
         // Spezialfall: Reine TMDb-Karten-Übermittlung aus dem ResponseInspector (falls noch kein Stream-File verknüpft ist)
         if (fileId.startsWith("tmdb_card_")) {
-          const apiToken = effectiveCustomToken || env.TELEGRAM_BOT_TOKEN;
+          const apiToken = getBotToken(env, effectiveCustomToken);
           if (!apiToken) {
             await recordAndPruneWorkerActivityLog(env, {
               eventType: "delivery",
@@ -4107,8 +4146,8 @@
 
         const isSubtitleOnlyRequest = Boolean(body.subtitleOnly);
 
-        // Wenn in der lokalen Sandbox weder TELEGRAM_BOT_TOKEN noch customBotToken gesetzt ist, liefere saubere Simulations-Bestätigung
-        if (!env.TELEGRAM_BOT_TOKEN && !effectiveCustomToken) {
+        // Wenn in der lokalen Sandbox weder TELEGRAM_BOT_TOKEN/BOT_TOKEN noch customBotToken gesetzt ist, liefere saubere Simulations-Bestätigung
+        if (!getBotToken(env, effectiveCustomToken)) {
           const simCoverUrl = isSubtitleOnlyRequest
             ? ""
             : await resolveVideoCoverUrlForDelivery(env, { posterUrl, backdropUrl, tmdbId, typeCode }).catch(() => "");
@@ -4272,6 +4311,336 @@
           coverEmbedded: Boolean(sent.coverEmbedded),
           coverUrl: sent.coverUrl || null,
           antiSpam: getAntiSpamSnapshot(env, targetChat)
+        }), { status: 200, headers: corsHeaders });
+      }
+
+      // Moderne Telegram Bot API 7.0+ Batch-Zustellung (copyMessages: bis zu 100 Episoden/Teile in 1 API-Aufruf)
+      if (path === "/api/tma/stream-batch" && request.method === "POST") {
+        const reqStartMs = Date.now();
+        const body = await request.json().catch(() => ({}));
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({ ok: false, error: "Im Gast-Modus nicht verfügbar. Bitte zuerst einloggen oder über Telegram öffnen." }), { status: 403, headers: corsHeaders });
+        }
+        if (!hasVipStreamAccess && !auth.user?.isAdmin) {
+          return new Response(JSON.stringify({ ok: false, error: "Streams & Qualitäten sind exklusiv für VIP-Mitglieder und Administratoren freigeschaltet." }), { status: 403, headers: corsHeaders });
+        }
+        const rawItems = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
+        const items = rawItems.filter(it => it && String(it.fileId || "").trim());
+        if (items.length === 0) {
+          return new Response(JSON.stringify({ ok: false, error: "Keine gültigen Stream-Einträge im Batch." }), { status: 400, headers: corsHeaders });
+        }
+
+        const kvBotToken = String((await kvCachedGetRaw(env, "TG_CUSTOM_BOT_TOKEN", "MOVIE_SAVED")) || "").trim();
+        const kvDefaultChatId = String((await kvCachedGetRaw(env, "TG_DEFAULT_CHAT_ID", "MOVIE_SAVED")) || "").trim();
+        const savedDeliv = (settings && settings.deliveryConfig && typeof settings.deliveryConfig === "object")
+          ? settings.deliveryConfig
+          : {};
+        const targetMode = String(body.targetMode || savedDeliv.targetMode || "dm").trim();
+        const targetGroupChatId = String(body.targetGroupChatId || savedDeliv.targetGroupChatId || "").trim();
+        const targetTopicId = String(body.targetTopicId || savedDeliv.targetTopicId || "").trim();
+        const sourceBridgeChatId = String(body.sourceBridgeChatId || savedDeliv.sourceBridgeChatId || "").trim();
+        const effectiveCustomToken = String(body.customBotToken || kvBotToken || savedDeliv.customBotToken || "").trim();
+
+        const isAdminStreamCaller = Boolean(auth.user?.isAdmin);
+        const usingOwnCustomBot = Boolean(effectiveCustomToken && effectiveCustomToken !== getBotToken(env));
+        let targetChat = "";
+        if (targetMode === "group" && targetGroupChatId) {
+          if (!isAdminStreamCaller && !usingOwnCustomBot && !targetGroupChatId.startsWith("-")) {
+            return new Response(JSON.stringify({ ok: false, error: "Gruppen-Zustellung über den Haupt-Bot erfordert eine gültige Gruppen-/Kanal-ID (beginnend mit -)." }), { status: 403, headers: corsHeaders });
+          }
+          targetChat = targetGroupChatId;
+        } else {
+          targetChat = (isAdminStreamCaller || usingOwnCustomBot)
+            ? String(body.chatId || kvDefaultChatId || auth.chatId || "").trim()
+            : String(auth.chatId || "").trim();
+        }
+        if (!targetChat || targetChat === "guest") {
+          return new Response(JSON.stringify({ ok: false, error: "Bitte gültige Ziel-Chat-ID (bzw. Gruppen-ID) angeben." }), { status: 400, headers: corsHeaders });
+        }
+
+        const buildOpenLink = async (firstMsgId = null) => {
+          const cleanTopic = targetTopicId && /^\d+$/.test(targetTopicId) ? targetTopicId : "";
+          const targetStr = String(targetChat || "").trim();
+          let resolvedBotUsername = "";
+          if (usingOwnCustomBot) {
+            resolvedBotUsername = String(body.customBotUsername || savedDeliv.customBotUsername || "").replace(/^@/, "").trim();
+            if (!resolvedBotUsername && effectiveCustomToken) {
+              resolvedBotUsername = await tgApi({ ...env, TELEGRAM_BOT_TOKEN: effectiveCustomToken }).getBotUsername(env).catch(() => "");
+            }
+          } else if (getBotToken(env)) {
+            resolvedBotUsername = await tgApi(env).getBotUsername(env).catch(() => "");
+          }
+          resolvedBotUsername = String(resolvedBotUsername || "").replace(/^@/, "").trim();
+          if (targetStr.startsWith("-100")) {
+            const internalId = targetStr.slice(4);
+            if (/^\d+$/.test(internalId)) {
+              const pathSuffix = firstMsgId
+                ? (cleanTopic ? `/${cleanTopic}/${firstMsgId}` : `/${firstMsgId}`)
+                : (cleanTopic ? `/${cleanTopic}` : "");
+              return {
+                messageId: firstMsgId,
+                openMessageUrl: `https://t.me/c/${internalId}${pathSuffix}`,
+                isDirectMessageLink: Boolean(firstMsgId),
+                botUsername: resolvedBotUsername
+              };
+            }
+          }
+          return {
+            messageId: firstMsgId,
+            openMessageUrl: resolvedBotUsername ? `https://t.me/${resolvedBotUsername}` : "",
+            isDirectMessageLink: false,
+            botUsername: resolvedBotUsername
+          };
+        };
+
+        const batchLabel = String(body.batchLabel || items[0]?.title || "Batch-Versand").trim().slice(0, 80);
+        const effToken = getBotToken(env, effectiveCustomToken);
+
+        // Sandbox-Simulation falls kein Bot-Token gesetzt
+        if (!effToken) {
+          const simLink = await buildOpenLink(Math.floor(Date.now() % 900000) + 100);
+          return new Response(JSON.stringify({
+            ok: true,
+            simulated: true,
+            targetChat,
+            ...simLink,
+            method: "copyMessages (sandbox)",
+            sentCount: items.length,
+            queuedCount: 0,
+            failedCount: 0,
+            batchApiCalls: 1,
+            deliveredIndices: items.map((_, i) => i),
+            antiSpam: getAntiSpamSnapshot(env, targetChat)
+          }), { status: 200, headers: corsHeaders });
+        }
+
+        await hydrateAntiSpamStateFromStorage(env);
+        let sentCount = 0;
+        let queuedCount = 0;
+        let failedCount = 0;
+        let batchApiCalls = 0;
+        let firstDeliveredMessageId = null;
+        let usedCopyMessages = false;
+        let usedSingleFallback = false;
+        const deliveredIndices = [];
+
+        const buildItemCaption = (it) => {
+          const cleanTitle = String(it.title || "Stream").trim();
+          const quality = String(it.quality || "1080p").trim();
+          const fileSizeStr = formatFileSizeBytes(it.fileSize);
+          const tagsStr = String(it.tags || "").trim();
+          const extraLines = [
+            `🎞️ *Qualität:* \`${escapeMd(quality)}\``,
+            fileSizeStr ? `📦 *Größe:* \`${escapeMd(fileSizeStr)}\`` : "",
+            tagsStr ? `🏷️ *Info:* \`${escapeMd(tagsStr)}\`` : ""
+          ].filter(Boolean).join("\n");
+          return `🎬 *${escapeMd(cleanTitle)}*\n${extraLines}`;
+        };
+
+        const enqueueOrSendSingle = async (it, itemIdx) => {
+          const fid = String(it.fileId || "").trim();
+          const cap = buildItemCaption(it);
+          const mLabel = fid.startsWith("tg_export_") ? "copyMessage" : "sendVideo";
+          const slot = evaluateAntiSpamSlot(targetChat, mLabel, true);
+          if (!slot.canSendNow) {
+            await enqueueAntiSpamJob(env, {
+              chatId: targetChat,
+              title: String(it.title || "Stream").trim(),
+              quality: String(it.quality || "1080p").trim(),
+              fileId: fid,
+              caption: cap,
+              targetMode,
+              targetTopicId,
+              sourceBridgeChatId,
+              customBotToken: effectiveCustomToken,
+              posterUrl: String(it.posterUrl || ""),
+              backdropUrl: String(it.backdropUrl || ""),
+              tmdbId: it.tmdbId ? Number(it.tmdbId) : null,
+              typeCode: String(it.typeCode || ""),
+              method: mLabel,
+              reason: slot.reason,
+              reasonCode: slot.reasonCode,
+              scheduledAt: slot.scheduledAt
+            }, ctx);
+            queuedCount += 1;
+            deliveredIndices.push(itemIdx);
+            return;
+          }
+          const sent = await tgApi(env).deliverMediaOrCopyFromSource(targetChat, fid, cap, {
+            customBotToken: effectiveCustomToken,
+            messageThreadId: targetTopicId,
+            sourceBridgeChatId,
+            posterUrl: String(it.posterUrl || ""),
+            backdropUrl: String(it.backdropUrl || ""),
+            tmdbId: it.tmdbId ? Number(it.tmdbId) : null,
+            typeCode: String(it.typeCode || ""),
+            autoHarvestFileId: false
+          }).catch(() => null);
+          if (sent && sent.ok) {
+            sentCount += 1;
+            usedSingleFallback = true;
+            if (!firstDeliveredMessageId && sent?.result?.message_id) {
+              firstDeliveredMessageId = Number(sent.result.message_id);
+            }
+            deliveredIndices.push(itemIdx);
+          } else {
+            // Bei 429 oder temporärem Fehler sauber in Queue legen statt zu verlieren
+            const retrySlot = evaluateAntiSpamSlot(targetChat, mLabel, false);
+            if (antiSpamState.floodWaitUntil > Date.now()) {
+              await enqueueAntiSpamJob(env, {
+                chatId: targetChat,
+                title: String(it.title || "Stream").trim(),
+                quality: String(it.quality || "1080p").trim(),
+                fileId: fid,
+                caption: cap,
+                targetMode,
+                targetTopicId,
+                sourceBridgeChatId,
+                customBotToken: effectiveCustomToken,
+                method: mLabel,
+                reason: "Telegram 429 Cooldown",
+                reasonCode: "FLOOD_WAIT_429",
+                scheduledAt: Math.max(Date.now() + 2500, antiSpamState.floodWaitUntil, retrySlot.scheduledAt || 0)
+              }, ctx);
+              queuedCount += 1;
+              deliveredIndices.push(itemIdx);
+            } else {
+              failedCount += 1;
+            }
+          }
+        };
+
+        // Gruppiere aufeinanderfolgende tg_export_-Einträge desselben Quellkanals mit strikt aufsteigender message_id
+        let cursor = 0;
+        while (cursor < items.length) {
+          const curItem = items[cursor];
+          const curRef = parseTgExportRef(curItem.fileId, env, sourceBridgeChatId);
+          if (curRef) {
+            const runItems = [{ item: curItem, idx: cursor, ref: curRef }];
+            let look = cursor + 1;
+            while (look < items.length && runItems.length < 100) {
+              const nxtItem = items[look];
+              const nxtRef = parseTgExportRef(nxtItem.fileId, env, sourceBridgeChatId);
+              if (
+                nxtRef &&
+                nxtRef.fromChatId === curRef.fromChatId &&
+                nxtRef.messageId > runItems[runItems.length - 1].ref.messageId
+              ) {
+                runItems.push({ item: nxtItem, idx: look, ref: nxtRef });
+                look++;
+              } else {
+                break;
+              }
+            }
+
+            if (runItems.length >= 2) {
+              const slotCheck = evaluateAntiSpamSlot(targetChat, "copyMessages", true);
+              if (slotCheck.canSendNow) {
+                const msgIds = runItems.map(r => r.ref.messageId);
+                batchApiCalls += 1;
+                const bRes = await tgApi(env).copyMessagesBatch(targetChat, curRef.fromChatId, msgIds, {
+                  customBotToken: effectiveCustomToken,
+                  messageThreadId: targetTopicId
+                });
+                if (bRes && bRes.ok) {
+                  usedCopyMessages = true;
+                  sentCount += runItems.length;
+                  if (!firstDeliveredMessageId && bRes.firstMessageId) {
+                    firstDeliveredMessageId = bRes.firstMessageId;
+                  }
+                  for (const r of runItems) deliveredIndices.push(r.idx);
+                  cursor = look;
+                  continue;
+                }
+                if (bRes && bRes.throttled429) {
+                  // Alle verbleibenden Einträge sauber in Anti-Spam Queue einreihen (werden später per copyMessages gedrained)
+                  for (let k = cursor; k < items.length; k++) {
+                    const rem = items[k];
+                    await enqueueAntiSpamJob(env, {
+                      chatId: targetChat,
+                      title: String(rem.title || "Stream").trim(),
+                      quality: String(rem.quality || "1080p").trim(),
+                      fileId: String(rem.fileId || "").trim(),
+                      caption: buildItemCaption(rem),
+                      targetMode,
+                      targetTopicId,
+                      sourceBridgeChatId,
+                      customBotToken: effectiveCustomToken,
+                      method: "copyMessages",
+                      reason: `Telegram 429 (${bRes.retryAfter || 5}s)`,
+                      reasonCode: "FLOOD_WAIT_429",
+                      scheduledAt: Math.max(Date.now() + 2500, antiSpamState.floodWaitUntil)
+                    }, ctx);
+                    queuedCount += 1;
+                    deliveredIndices.push(k);
+                  }
+                  break;
+                }
+                // Nicht-429 Fehler bei copyMessages (z. B. 1 gelöschte Quelle): sauber einzeln durchprobieren
+                for (const r of runItems) {
+                  await enqueueOrSendSingle(r.item, r.idx);
+                }
+                cursor = look;
+                continue;
+              } else {
+                // Slot gerade im Cooldown -> gesammelt in Queue legen (drainAntiSpamQueue nutzt dann copyMessages!)
+                for (const r of runItems) {
+                  await enqueueAntiSpamJob(env, {
+                    chatId: targetChat,
+                    title: String(r.item.title || "Stream").trim(),
+                    quality: String(r.item.quality || "1080p").trim(),
+                    fileId: String(r.item.fileId || "").trim(),
+                    caption: buildItemCaption(r.item),
+                    targetMode,
+                    targetTopicId,
+                    sourceBridgeChatId,
+                    customBotToken: effectiveCustomToken,
+                    method: "copyMessages",
+                    reason: slotCheck.reason,
+                    reasonCode: slotCheck.reasonCode,
+                    scheduledAt: slotCheck.scheduledAt
+                  }, ctx);
+                  queuedCount += 1;
+                  deliveredIndices.push(r.idx);
+                }
+                cursor = look;
+                continue;
+              }
+            }
+          }
+
+          await enqueueOrSendSingle(curItem, cursor);
+          cursor += 1;
+        }
+
+        const resolvedMethod = usedCopyMessages
+          ? (usedSingleFallback ? "copyMessages + fallback" : "copyMessages")
+          : (queuedCount > 0 && sentCount === 0 ? "antiSpamQueue" : "copyMessage/sendVideo");
+
+        await recordAndPruneWorkerActivityLog(env, {
+          eventType: "delivery",
+          status: sentCount + queuedCount > 0 ? "success" : "error",
+          deliveryMode: targetMode,
+          method: `${resolvedMethod} (x${items.length})`,
+          title: batchLabel,
+          targetChatId: targetChat,
+          durationMs: Date.now() - reqStartMs,
+          summary: `⚡ Batch „${batchLabel}“: ${sentCount} sofort (${batchApiCalls} copyMessages-Calls), ${queuedCount} Queue, ${failedCount} Fehler`
+        });
+
+        const linkInfo = await buildOpenLink(firstDeliveredMessageId);
+        return new Response(JSON.stringify({
+          ok: sentCount + queuedCount > 0,
+          targetChat,
+          ...linkInfo,
+          method: resolvedMethod,
+          sentCount,
+          queuedCount,
+          failedCount,
+          batchApiCalls,
+          deliveredIndices,
+          antiSpam: getAntiSpamSnapshot(env, targetChat),
+          _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
         }), { status: 200, headers: corsHeaders });
       }
 
@@ -4991,18 +5360,13 @@
       }
 
       if (path === "/api/import-json" && request.method === "POST") {
-        const importWebhookSec = typeof getWebhookSecurityConfig === "function"
-          ? await getWebhookSecurityConfig(env)
-          : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || "") };
-        const configuredImportSecret = String(importWebhookSec?.secretToken || "").trim();
-        const incomingImportSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
-        const hasValidImportSecret = Boolean(
-          configuredImportSecret &&
-          incomingImportSecret &&
-          (typeof timingSafeEqualStr === "function"
-            ? timingSafeEqualStr(incomingImportSecret, configuredImportSecret)
-            : incomingImportSecret === configuredImportSecret)
-        );
+        let hasValidImportSecret = false;
+        if (!auth.isAuthenticated || !auth.user?.isAdmin) {
+          const importSecCheck = typeof verifyWebhookSecretFast === "function"
+            ? await verifyWebhookSecretFast(request, url, env, { allowQuerySecret: false })
+            : { ok: false, hasSecret: false };
+          hasValidImportSecret = Boolean(importSecCheck.hasSecret && importSecCheck.ok);
+        }
         if ((!auth.isAuthenticated || !auth.user?.isAdmin) && !hasValidImportSecret) {
           return new Response(JSON.stringify({ ok: false, error: "Zugriff verweigert: Nur autorisierte Administratoren dürfen /api/import-json verwenden." }), { status: 403, headers: corsHeaders });
         }
@@ -5056,6 +5420,7 @@
   // --- Cloudflare Workers Export ---
   export default {
     async fetch(request, env, ctx) {
+      let deferKvFlushForThisRequest = false;
       globalThis._activeWorkerEnv = env;
       globalThis._activeWorkerCtx = ctx;
       resetSubrequestBudget();
@@ -5107,7 +5472,7 @@
                 headers: { "Content-Type": "application/json; charset=utf-8" }
               });
             }
-            const mainBotToken = String(env.TELEGRAM_BOT_TOKEN || "").trim();
+            const mainBotToken = getBotToken(env);
             const matchesMainBot = Boolean(
               mainBotToken &&
               (typeof timingSafeEqualStr === "function"
@@ -5182,6 +5547,17 @@
           (request.method === "GET" && url.pathname === "/" && url.searchParams.get("status") !== "1")
         ) {
           const tmaRes = await handleTmaRequest(request, env, ctx);
+          if (tmaRes && tmaRes.headers && tmaRes.headers.get("X-Internal-Defer-Kv-Flush") === "1") {
+            deferKvFlushForThisRequest = true;
+            const cleanHeaders = new Headers(tmaRes.headers);
+            cleanHeaders.delete("X-Internal-Defer-Kv-Flush");
+            const cleanRes = new Response(tmaRes.body, {
+              status: tmaRes.status,
+              statusText: tmaRes.statusText,
+              headers: cleanHeaders
+            });
+            return attachWorkerDiagHeader(cleanRes, url.pathname);
+          }
           return attachWorkerDiagHeader(tmaRes, url.pathname);
         }
 
@@ -5189,7 +5565,7 @@
           const configuredWebhookBase = resolveCleanWorkerOrigin(env, url.origin);
           const officialWebhookEndpoint = `${configuredWebhookBase}/webhook`;
           if (url.pathname === "/setwebhook" || url.searchParams.get("setwebhook") === "1") {
-            const effBotToken = String(env.TELEGRAM_BOT_TOKEN || env.BOT_TOKEN || "").trim();
+            const effBotToken = getBotToken(env);
             if (!effBotToken) {
               return new Response(JSON.stringify({
                 ok: false,
@@ -5297,7 +5673,7 @@
             customBotWebhookEndpoint: `${configuredWebhookBase}/api/telegram/custom-webhook`,
             timestamp: new Date().toISOString(),
             configuredSecrets: {
-              TELEGRAM_BOT_TOKEN: !!env.TELEGRAM_BOT_TOKEN,
+              TELEGRAM_BOT_TOKEN: !!getBotToken(env),
               TMDB_BEARER_TOKEN: !!env.TMDB_BEARER_TOKEN,
               WEBHOOK_URL: officialWebhookEndpoint,
               MOVIE_SAVED: !!env.MOVIE_SAVED,
@@ -5311,18 +5687,12 @@
         }
 
         if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/webhook")) {
-          // 0ms Edge-Gatekeeper: Validiere Webhook-Passwort (X-Telegram-Bot-Api-Secret-Token oder ?secret=...)
-          const webhookSecurity = typeof getWebhookSecurityConfig === "function"
-            ? await getWebhookSecurityConfig(env)
-            : { secretToken: String(env.TELEGRAM_WEBHOOK_SECRET || "") };
-          const activeSecret = String(webhookSecurity?.secretToken || "").trim();
-          if (activeSecret) {
-            const incomingHeaderSecret = String(request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
-            const incomingQuerySecret = String(url.searchParams.get("secret") || "").trim();
-            const eqSecret = typeof timingSafeEqualStr === "function" ? timingSafeEqualStr : ((a, b) => a === b);
-            if (!eqSecret(incomingHeaderSecret, activeSecret) && !eqSecret(incomingQuerySecret, activeSecret)) {
-              return new Response("Unauthorized: Invalid Telegram Webhook Secret Password", { status: 401 });
-            }
+          // 0-IO Edge-Gatekeeper: Fast-Path über env.TELEGRAM_WEBHOOK_SECRET + RAM-Cache (0 KV/D1-Reads bei gültigem Secret!)
+          const secCheck = typeof verifyWebhookSecretFast === "function"
+            ? await verifyWebhookSecretFast(request, url, env, { allowQuerySecret: true })
+            : { ok: true };
+          if (!secCheck.ok) {
+            return new Response("Unauthorized: Invalid Telegram Webhook Secret Password", { status: 401 });
           }
 
           const update = await request.json().catch(() => null);
@@ -5360,9 +5730,7 @@
         }
         return new Response("OK", { status: 200 });
       } finally {
-        const deferKvFlush = Boolean(globalThis.__DEFER_KV_FLUSH_FOR_REQUEST);
-        globalThis.__DEFER_KV_FLUSH_FOR_REQUEST = false;
-        if (!deferKvFlush) {
+        if (!deferKvFlushForThisRequest) {
           if (ctx && typeof ctx.waitUntil === "function") {
             ctx.waitUntil(flushDirtyKvBatch(env).catch(() => {}));
           } else {

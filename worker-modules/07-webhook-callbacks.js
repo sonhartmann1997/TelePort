@@ -2747,6 +2747,7 @@
       const batchResults = [];
       let abortedMidBatchDueToBudget = false;
       let abortBatchIndex = i;
+      let midBatchPauseReason = "SUBREQUEST_LIMIT_GUARD";
 
       // MODUL 1.1 & 6.3: Streng sequenzielle Abarbeitung + Variablen-Hygiene (tmdbId, matchedTitle, parsedItem strikt lokal im Loop!)
       for (let bStep = 0; bStep < batch.length; bStep++) {
@@ -2757,12 +2758,23 @@
         if ((!hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT) || stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS) && (i + bStep) > 0) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
+          midBatchPauseReason = stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
           break;
         }
         if (typeof subrequestBudgetExhausted !== "undefined") {
           subrequestBudgetExhausted = false;
         }
+        if (typeof tmdbRateLimitHitInBatch !== "undefined") {
+          tmdbRateLimitHitInBatch = false;
+        }
         let entry = batch[bStep];
+        const hasPreResolvedTmdbId = typeof entry === "object" && entry !== null && Boolean(entry.tmdb_id || entry.tmdbId);
+        if (!hasPreResolvedTmdbId && typeof tmdbRateLimitUntilMs === "number" && tmdbRateLimitUntilMs > Date.now()) {
+          abortedMidBatchDueToBudget = true;
+          abortBatchIndex = i + bStep;
+          midBatchPauseReason = "TMDB_RATE_LIMIT";
+          break;
+        }
         const entryMsgIdNum = Number(entry?.msg_id || entry?.message_id || entry?.messageId || entry?.id || 0);
         if (entryMsgIdNum > 0) {
           // MODUL 1.1: Ist msg.id schon in processedMsgIds, überspringe die Nachricht sofort (ohne Logging!), um 3-fache Durchläufe bei Resumes zu verhindern.
@@ -2831,6 +2843,12 @@
         ) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
+          break;
+        }
+        if (typeof tmdbRateLimitHitInBatch !== "undefined" && tmdbRateLimitHitInBatch && (!stepRes || stepRes.unmatched)) {
+          abortedMidBatchDueToBudget = true;
+          abortBatchIndex = i + bStep;
+          midBatchPauseReason = "TMDB_RATE_LIMIT";
           break;
         }
         if (entryMsgIdNum > 0) {
@@ -3043,8 +3061,8 @@
         partialBatch = true;
         nextStartIndex = abortBatchIndex;
         subrequestPauseCount++;
-        pauseReason = "SUBREQUEST_LIMIT_GUARD";
-        // MODUL 1.2: SUBREQUEST_PAUSE NIEMALS in diagLogsToSave / entries pushen!
+        pauseReason = midBatchPauseReason || "SUBREQUEST_LIMIT_GUARD";
+        // MODUL 1.2: SUBREQUEST_PAUSE / TMDB_RATE_LIMIT NIEMALS in diagLogsToSave / entries pushen!
         break;
       }
 

@@ -577,7 +577,117 @@
         .sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0))
         .slice(0, maxJobs);
 
+      // Moderne Telegram Bot API 7.0+ copyMessages-Bündelung für aufeinanderfolgende Quellgruppen-Jobs
+      // (gleicher Ziel-Chat, Topic, Bot-Token & Quell-Kanal mit strikt aufsteigenden message_ids -> 1 API-Call statt N!)
+      const handledJobIds = new Set();
+      let idx = 0;
+      while (idx < dueJobs.length) {
+        const firstJob = dueJobs[idx];
+        const firstRef = parseTgExportRef(firstJob?.fileId, env, firstJob?.sourceBridgeChatId);
+        const firstToken = getBotToken(env, firstJob?.customBotToken);
+        if (firstRef && firstToken && !String(firstJob.fileId || "").startsWith("sim_burst_")) {
+          const group = [firstJob];
+          const msgIds = [firstRef.messageId];
+          let look = idx + 1;
+          while (look < dueJobs.length && group.length < 100) {
+            const nextJob = dueJobs[look];
+            const nextRef = parseTgExportRef(nextJob?.fileId, env, nextJob?.sourceBridgeChatId);
+            const nextToken = getBotToken(env, nextJob?.customBotToken);
+            if (
+              nextRef &&
+              nextToken === firstToken &&
+              String(nextJob.chatId || "") === String(firstJob.chatId || "") &&
+              String(nextJob.targetTopicId || "") === String(firstJob.targetTopicId || "") &&
+              nextRef.fromChatId === firstRef.fromChatId &&
+              nextRef.messageId > msgIds[msgIds.length - 1]
+            ) {
+              group.push(nextJob);
+              msgIds.push(nextRef.messageId);
+              look++;
+            } else {
+              break;
+            }
+          }
+          if (group.length >= 2) {
+            const startBatchMs = Date.now();
+            group.forEach(j => {
+              j.status = "sending";
+              j.attempts = (j.attempts || 0) + 1;
+            });
+            const batchRes = await tgApi(env).copyMessagesBatch(firstJob.chatId, firstRef.fromChatId, msgIds, {
+              customBotToken: firstJob.customBotToken,
+              messageThreadId: firstJob.targetTopicId
+            }).catch(() => null);
+            if (batchRes && batchRes.ok) {
+              const delIds = new Set(group.map(j => j.id));
+              group.forEach(j => handledJobIds.add(j.id));
+              drainedCount += group.length;
+              antiSpamState.totalDrained += group.length;
+              antiSpamState.queue = antiSpamState.queue.filter(q => !delIds.has(q.id));
+              for (const j of group) {
+                antiSpamState.recentProcessed.unshift({
+                  id: j.id,
+                  chatId: j.chatId,
+                  title: j.title,
+                  quality: j.quality,
+                  method: `copyMessages (Batch x${group.length})`,
+                  reason: j.reason,
+                  waitedMs: Math.max(0, Date.now() - (j.createdAt || startBatchMs)),
+                  completedAt: Date.now(),
+                  status: "delivered"
+                });
+              }
+              if (antiSpamState.recentProcessed.length > 25) {
+                antiSpamState.recentProcessed = antiSpamState.recentProcessed.slice(0, 25);
+              }
+              try {
+                const db = await ensureD1Schema(env);
+                if (db) {
+                  trackStat("d1Writes");
+                  const stmts = group.map(j => db.prepare("DELETE FROM tg_anti_spam_queue WHERE job_id = ?").bind(j.id));
+                  if (typeof db.batch === "function" && stmts.length > 1) {
+                    await db.batch(stmts);
+                  } else {
+                    for (const st of stmts) await st.run();
+                  }
+                }
+              } catch (e) {}
+              if (typeof recordAndPruneWorkerActivityLog === "function") {
+                await recordAndPruneWorkerActivityLog(env, {
+                  eventType: "delivery",
+                  status: "success",
+                  deliveryMode: firstJob.targetMode || "dm",
+                  method: `copyMessages (Batch x${group.length})`,
+                  title: `${firstJob.title} (+${group.length - 1} weitere)`,
+                  targetChatId: firstJob.chatId,
+                  durationMs: Math.max(1, Date.now() - startBatchMs),
+                  summary: `⚡ ${group.length} Queue-Jobs in 1 copyMessages-Aufruf an ${firstJob.chatId} zugestellt`
+                });
+              }
+              idx = look;
+              continue;
+            } else if (batchRes && batchRes.throttled429) {
+              group.forEach(j => {
+                handledJobIds.add(j.id);
+                j.status = "queued";
+                j.scheduledAt = Math.max(Date.now() + 2000, antiSpamState.floodWaitUntil);
+                j.reason = `429 retry_after (${batchRes.retryAfter || 5}s)`;
+              });
+              break;
+            } else {
+              // Fallback: Einzeln versuchen (z. B. falls 1 gelöschte Nachricht im Batch war)
+              group.forEach(j => {
+                j.status = "queued";
+                j.attempts = Math.max(0, (j.attempts || 1) - 1);
+              });
+            }
+          }
+        }
+        idx++;
+      }
+
       for (const job of dueJobs) {
+        if (handledJobIds.has(job.id)) continue;
         job.status = "sending";
         job.attempts = (job.attempts || 0) + 1;
         const startMs = Date.now();
@@ -586,7 +696,7 @@
         let errorMsg = "";
 
         try {
-          const effectiveToken = job.customBotToken || (env && env.TELEGRAM_BOT_TOKEN) || "";
+          const effectiveToken = getBotToken(env, job.customBotToken);
           if (!effectiveToken || job.fileId.startsWith("sim_burst_")) {
             // Sandbox- oder Simulations-Job
             simulated = true;
@@ -933,8 +1043,25 @@
     return clean;
   }
 
+  function getBotToken(env, overrideToken = "") {
+    const ov = String(overrideToken || "").trim();
+    if (ov) return ov;
+    return String(env?.TELEGRAM_BOT_TOKEN || env?.BOT_TOKEN || "").trim();
+  }
+
+  function parseTgExportRef(fileIdOrRef, env = null, sourceBridgeChatId = "") {
+    const m = String(fileIdOrRef || "").trim().match(/^tg_export_(-?\d+)_(\d+)$/i);
+    if (!m) return null;
+    const rawChannelId = m[1];
+    const messageId = parseInt(m[2], 10);
+    if (!Number.isInteger(messageId) || messageId <= 0) return null;
+    const overrideBridge = String(sourceBridgeChatId || env?.SOURCE_GROUP_CHAT_ID || "").trim();
+    const fromChatId = overrideBridge || (rawChannelId.startsWith("-100") || rawChannelId.startsWith("-") ? rawChannelId : `-100${rawChannelId}`);
+    return { rawChannelId, fromChatId, messageId };
+  }
+
   async function getWebhookSecurityConfig(env) {
-    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 60000) {
+    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 300000) {
       return globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
     }
     let secretToken = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
@@ -946,7 +1073,7 @@
         if (memCfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(memCfg.secretToken);
         if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 8));
       } else {
-        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", { ttlMs: 60000 });
+        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", { ttlMs: 300000 });
         if (rawKv) {
           const parsed = JSON.parse(rawKv);
           if (parsed && typeof parsed === "object") {
@@ -972,6 +1099,55 @@
     };
     globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = cfg;
     return cfg;
+  }
+
+  // 0-IO Fast-Path für Telegram Webhook-Secret Prüfung:
+  // Wenn TELEGRAM_WEBHOOK_SECRET im Env gesetzt ist und übereinstimmt (oder komplett fehlt),
+  // werden 0 KV- und 0 D1-Reads benötigt (spart Latenz & schützt Free-Plan gegen POST-Floods).
+  async function verifyWebhookSecretFast(request, url, env, options = {}) {
+    const allowQuerySecret = options.allowQuerySecret !== false;
+    const incomingHeader = String(request?.headers?.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
+    const incomingQuery = allowQuerySecret ? String(url?.searchParams?.get("secret") || "").trim() : "";
+    const eqSecret = typeof timingSafeEqualStr === "function" ? timingSafeEqualStr : ((a, b) => a === b);
+    const matchesCandidate = (expected) => Boolean(
+      expected && (
+        (incomingHeader && eqSecret(incomingHeader, expected)) ||
+        (incomingQuery && eqSecret(incomingQuery, expected))
+      )
+    );
+
+    const envSecret = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
+    const cachedCfg = globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
+    const hasWarmCache = Boolean(cachedCfg && (Date.now() - Number(cachedCfg.loadedAt || 0)) < 300000);
+
+    // Fast-Path 1: Env-Secret stimmt exakt überein -> sofortiger 0-IO Pass!
+    if (envSecret && matchesCandidate(envSecret)) {
+      return { ok: true, fastPath: "env_match", hasSecret: true };
+    }
+    // Fast-Path 2: Warmer RAM-Cache vorhanden -> sofortige Entscheidung ohne KV/D1!
+    if (hasWarmCache) {
+      const cachedSecret = String(cachedCfg.secretToken || "").trim();
+      if (!cachedSecret) return { ok: true, fastPath: "cache_open", hasSecret: false };
+      return {
+        ok: matchesCandidate(cachedSecret),
+        fastPath: "cache_check",
+        hasSecret: true
+      };
+    }
+    // Fast-Path 3: Env-Secret aktiv & Request liefert überhaupt keinen Secret-Header/Query -> sofort 401 (0-IO Schutz gegen Bot-Scanner)
+    if (envSecret && !incomingHeader && !incomingQuery) {
+      return { ok: false, fastPath: "env_missing_reject", hasSecret: true };
+    }
+
+    // Fallback: Prüfe gespeicherte UI-Konfiguration (KV/D1)
+    const webhookSecurity = await getWebhookSecurityConfig(env);
+    const activeSecret = String(webhookSecurity?.secretToken || "").trim();
+    if (!activeSecret) return { ok: true, fastPath: "storage_open", hasSecret: false };
+    return {
+      ok: matchesCandidate(activeSecret),
+      fastPath: "storage_check",
+      hasSecret: true
+    };
   }
 
   async function saveWebhookSecurityConfig(env, secretOrConfig, maxConnectionsArg = 8) {
@@ -1065,7 +1241,7 @@
       const payloadHex = Array.from(enc.encode(JSON.stringify(dataObj))).map(b => b.toString(16).padStart(2, "0")).join("");
       const secret = typeof getSessionSigningSecret === "function"
         ? await getSessionSigningSecret(env)
-        : String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+        : String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || getBotToken(env) || "").trim();
       if (!secret) return "";
       const key = await crypto.subtle.importKey(
         "raw",
@@ -1176,7 +1352,8 @@
   // @ANCHOR: TELEGRAM_API
   // --- Telegram API Client (Nutzt stabiles HTML-Parsing gegen kaputte Links + 429 Anti-Spam Schutz!) ---
   function tgApi(env) {
-    const TELEGRAM_API = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
+    const resolvedBotToken = getBotToken(env);
+    const TELEGRAM_API = `https://api.telegram.org/bot${resolvedBotToken}`;
 
     return {
       async answerInlineQuery(inlineQueryId, results, options = {}) {
@@ -1550,8 +1727,9 @@
 
       async getBotUsername(env) {
         if (!env?._isCustomBotWebhook && env?.BOT_USERNAME) return String(env.BOT_USERNAME).replace(/^@/, "");
-        if (!env?.TELEGRAM_BOT_TOKEN) return "";
-        const botIdScope = String(env.TELEGRAM_BOT_TOKEN).split(":")[0] || "main";
+        const activeToken = getBotToken(env) || resolvedBotToken;
+        if (!activeToken) return "";
+        const botIdScope = String(activeToken).split(":")[0] || "main";
         const cacheKey = `bot_username_${botIdScope}`;
         const failKey = `bot_username_fail_ts_${botIdScope}`;
         if (memoryFallback.has(cacheKey)) return memoryFallback.get(cacheKey);
@@ -1559,9 +1737,10 @@
         if (lastFailTs && (Date.now() - lastFailTs) < 60000) return "";
         try {
           trackStat("telegramCalls");
+          const apiMeUrl = `https://api.telegram.org/bot${activeToken}/getMe`;
           const res = typeof fetchWithTimeout === "function"
-            ? await fetchWithTimeout(`${TELEGRAM_API}/getMe`, {}, 3000)
-            : await fetch(`${TELEGRAM_API}/getMe`);
+            ? await fetchWithTimeout(apiMeUrl, {}, 3000)
+            : await fetch(apiMeUrl);
           if (res.ok) {
             const data = await res.json();
             if (data?.result?.username) {
@@ -1578,7 +1757,7 @@
       },
 
       async getFileText(fileId) {
-        if (!fileId) return null;
+        if (!fileId || !resolvedBotToken) return null;
         try {
           trackStat("telegramCalls");
           const res = await fetchWithTimeout(`${TELEGRAM_API}/getFile?file_id=${encodeURIComponent(fileId)}`, {}, 4000);
@@ -1586,7 +1765,7 @@
           const data = await res.json();
           const filePath = data?.result?.file_path;
           if (!filePath) return null;
-          const fileUrl = `https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${filePath}`;
+          const fileUrl = `https://api.telegram.org/file/bot${resolvedBotToken}/${filePath}`;
           const fileRes = await fetchWithTimeout(fileUrl, {}, 6000);
           if (!fileRes.ok) return null;
           return await fileRes.text();
@@ -1598,6 +1777,76 @@
       async sendVideoByFileId(chatId, telegramFileId, caption = "", options = {}) {
         if (!chatId || !telegramFileId) return null;
         return await this.deliverMediaOrCopyFromSource(chatId, telegramFileId, caption, options);
+      },
+
+      // Telegram Bot API 7.0+: copyMessages kopiert bis zu 100 Nachrichten aus demselben Quell-Chat in 1 einzigen API-Aufruf
+      async copyMessagesBatch(targetChatId, fromChatId, messageIds, extraOpts = {}) {
+        if (!targetChatId || !fromChatId || !Array.isArray(messageIds) || messageIds.length === 0) {
+          return { ok: false, error: "Ungültige Parameter für copyMessages." };
+        }
+        const cleanIds = Array.from(new Set(
+          messageIds
+            .map(n => parseInt(String(n), 10))
+            .filter(n => Number.isInteger(n) && n > 0)
+        )).sort((a, b) => a - b).slice(0, 100);
+        if (cleanIds.length === 0) {
+          return { ok: false, error: "Keine gültigen message_ids für copyMessages." };
+        }
+        const customToken = String(extraOpts.customBotToken || "").trim();
+        const activeToken = (customToken && /^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken)) ? customToken : resolvedBotToken;
+        if (!activeToken) {
+          return { ok: false, error: "Kein Bot-Token konfiguriert." };
+        }
+        const apiBase = `https://api.telegram.org/bot${activeToken}`;
+        const threadId = extraOpts.messageThreadId && /^\d+$/.test(String(extraOpts.messageThreadId).trim())
+          ? parseInt(String(extraOpts.messageThreadId).trim(), 10)
+          : undefined;
+        const payload = {
+          chat_id: targetChatId,
+          from_chat_id: fromChatId,
+          message_ids: cleanIds
+        };
+        if (threadId) payload.message_thread_id = threadId;
+        if (extraOpts.disableNotification) payload.disable_notification = true;
+        if (extraOpts.protectContent) payload.protect_content = true;
+        if (extraOpts.removeCaption) payload.remove_caption = true;
+
+        try {
+          trackStat("telegramCalls");
+          recordActualTelegramSendSlot(targetChatId);
+          const res = await fetchWithTimeout(`${apiBase}/copyMessages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            _criticalSubrequest: true
+          }, 10000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retryAfter = Number(err429?.parameters?.retry_after) || 5;
+            registerAntiSpam429FloodWait(retryAfter, targetChatId);
+            return { ok: false, throttled429: true, retryAfter, error: `Telegram 429 (${retryAfter}s)` };
+          }
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok && Array.isArray(json.result)) {
+            const copiedIds = json.result
+              .map(r => Number(r?.message_id || 0))
+              .filter(n => Number.isInteger(n) && n > 0);
+            return {
+              ok: true,
+              copiedCount: copiedIds.length || cleanIds.length,
+              messageIds: copiedIds,
+              firstMessageId: copiedIds[0] || null,
+              result: json.result
+            };
+          }
+          return {
+            ok: false,
+            status: res.status,
+            error: String(json?.description || `copyMessages HTTP ${res.status}`)
+          };
+        } catch (err) {
+          return { ok: false, error: String(err?.message || "copyMessages Netzwerkfehler") };
+        }
       },
 
       async deliverMediaOrCopyFromSource(targetChatId, fileIdOrExportRef, caption = "", extraOpts = {}) {

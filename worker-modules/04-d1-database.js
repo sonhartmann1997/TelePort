@@ -9,6 +9,7 @@
   let d1SchemaInitPromise = null;
   let activeD1WriteBuffer = null;
   let activeD1WriteBufferStartedAt = 0;
+  let activeD1WriteBufferDepth = 0;
   const D1_SCHEMA_VERSION = "20261121_v2";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
@@ -16,21 +17,23 @@
   function isD1BufferEligibleWrite(sqlStr) {
     const s = String(sqlStr || "");
     if (!/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(s)) return false;
-    // Kritische Nutzer-, Auth-, Meldungs-, Anti-Spam- & Konfig-Tabellen NIEMALS im Import-Batch-Puffer verzögern (verhindert Cross-Request-Hijacking!)
-    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue)\b/i.test(s)) {
+    // Kritische Nutzer-, Auth-, Checkpoint-, Meldungs-, Anti-Spam- & Konfig-Tabellen NIEMALS im Import-Batch-Puffer verzögern!
+    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue|d1_import_checkpoints)\b/i.test(s)) {
       return false;
     }
     return true;
   }
 
   function hasLiveD1WriteBuffer() {
-    if (!Array.isArray(activeD1WriteBuffer)) return false;
-    // Sicherheits-Timeout: falls ein vorheriger Batch abgestürzt ist, nach 25s automatisch abbrechen statt für immer zu schlucken
+    if (!Array.isArray(activeD1WriteBuffer) || activeD1WriteBufferDepth <= 0) return false;
+    // Sicherheits-Timeout & Größen-Cap: verhindert unkontrolliertes Anwachsen oder hängende Buffer nach Absturz
     if (activeD1WriteBufferStartedAt > 0 && (Date.now() - activeD1WriteBufferStartedAt) > 25000) {
       activeD1WriteBuffer = null;
       activeD1WriteBufferStartedAt = 0;
+      activeD1WriteBufferDepth = 0;
       return false;
     }
+    if (activeD1WriteBuffer.length >= 250) return false;
     return true;
   }
 
@@ -122,6 +125,7 @@
   }
 
   function beginD1BatchBuffer() {
+    activeD1WriteBufferDepth = Math.max(0, Number(activeD1WriteBufferDepth || 0)) + 1;
     if (!Array.isArray(activeD1WriteBuffer)) {
       activeD1WriteBuffer = [];
     }
@@ -129,10 +133,14 @@
   }
 
   async function flushD1BatchBuffer(env) {
-    const pending = activeD1WriteBuffer;
-    activeD1WriteBuffer = null;
-    activeD1WriteBufferStartedAt = 0;
-    if (!Array.isArray(pending) || pending.length === 0) return 0;
+    activeD1WriteBufferDepth = Math.max(0, Number(activeD1WriteBufferDepth || 0) - 1);
+    const pending = Array.isArray(activeD1WriteBuffer) ? activeD1WriteBuffer.splice(0, activeD1WriteBuffer.length) : [];
+    if (activeD1WriteBufferDepth <= 0) {
+      activeD1WriteBuffer = null;
+      activeD1WriteBufferStartedAt = 0;
+      activeD1WriteBufferDepth = 0;
+    }
+    if (pending.length === 0) return 0;
     memoryFallback.delete("d1_series_gaps_cache");
     memoryFallback.delete("d1_vip_discover_cache_m");
     memoryFallback.delete("d1_vip_discover_cache_s");

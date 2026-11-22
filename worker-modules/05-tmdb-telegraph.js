@@ -486,6 +486,9 @@
   function resetSubrequestBudget() {
     currentInvocationSubrequests = 0;
     subrequestBudgetExhausted = false;
+    if (typeof tmdbRateLimitHitInBatch !== "undefined") {
+      tmdbRateLimitHitInBatch = false;
+    }
   }
   function hasSubrequestBudget(limit = 36) {
     return currentInvocationSubrequests < limit;
@@ -502,14 +505,15 @@
     }
 
     try {
-      // fetchWithTimeout prüft Edge Cache zuerst (0 Subrequests bei Hit!) und zählt echte Fetches automatisch mit
+      // fetchWithTimeout prüft Edge Cache & TMDb-429-Guard zuerst (0 Subrequests bei Hit/Cooldown!)
       const res = await fetchWithTimeout(url, options, timeoutMs);
-      if (!res || !res.ok) return null;
+      if (!res || !res.ok || res.status === 429) return null;
       const text = await res.text();
       if (!text || text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
         return null;
       }
       const data = JSON.parse(text);
+      if (data && (data.tmdb_rate_limited || data.budget_exhausted)) return null;
       setCachedTmdb(memKey, data);
       return data;
     } catch (e) {

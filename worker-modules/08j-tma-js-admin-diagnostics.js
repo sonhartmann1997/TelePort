@@ -1245,12 +1245,19 @@
                 }
                 if (r.status === "PARTIAL_BATCH") {
                   const isTimeGuard = r.pauseReason === "TIME_LIMIT_GUARD";
+                  const isTmdbRateLimit = r.pauseReason === "TMDB_RATE_LIMIT";
                   if (!clientDiagnosticLogState.summaryCounts) {
                     clientDiagnosticLogState.summaryCounts = { SUBREQUEST_PAUSE: 0, SKIPPED_HEADER: 0, SKIPPED_JUNK: 0 };
                   }
-                  // MODUL 1.2: SUBREQUEST_PAUSE NUR in summaryCounts hochzählen, NIEMALS in batchDiagEntries / entries schreiben!
+                  // MODUL 1.2: SUBREQUEST_PAUSE / TMDB_RATE_LIMIT NUR in summaryCounts hochzählen, NIEMALS in batchDiagEntries / entries schreiben!
                   clientDiagnosticLogState.summaryCounts.SUBREQUEST_PAUSE = (clientDiagnosticLogState.summaryCounts.SUBREQUEST_PAUSE || 0) + 1;
-                  backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "6s-Zeit-Guard" : "38-Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
+                  if (isTmdbRateLimit) {
+                    const tmdbWaitMs = Math.min(15000, Math.max(3500, Number(r.retryAfterMs || 4500)));
+                    backupImportJob.recentLog.push("⏳ TMDb Rate-Limit (429) erkannt (" + processedCount + "/" + slice.length + " im Batch) – pausiere " + Math.ceil(tmdbWaitMs / 1000) + "s und setze verlustfrei bei #" + backupImportJob.cursor + " fort...");
+                    await sleepWithImportCountdown(tmdbWaitMs, "⏳ TMDb-429-Cooldown");
+                  } else {
+                    backupImportJob.recentLog.push("🛡️ " + (isTimeGuard ? "Zeit-Guard" : "Subrequest-Guard") + " aktiv (" + processedCount + "/" + slice.length + " im Batch verarbeitet) – setze nahtlos bei #" + backupImportJob.cursor + " fort...");
+                  }
                 }
                 appendClientDiagnosticLogs(batchDiagEntries, false);
                 schedulePersistBrowserTitlesCache();
@@ -2761,9 +2768,33 @@
                 (forceNetworkRefresh ? "&refresh=1" : "")
               );
               if (r && r.ok) {
-                const prevGaps = window._lastAdminOverviewCache?.seriesGaps;
-                if (!forceNetworkRefresh && r.seriesGaps?.lazyDeferred && prevGaps && !prevGaps.lazyDeferred) {
-                  r.seriesGaps = prevGaps;
+                const prevCache = window._lastAdminOverviewCache || {};
+                const loaded = r.loadedSections || null;
+                if (loaded && typeof loaded === "object") {
+                  const merged = {
+                    ...prevCache,
+                    ...r,
+                    users: loaded.users ? (r.users || []) : (prevCache.users || r.users || []),
+                    media: loaded.media ? (r.media || []) : (prevCache.media || r.media || []),
+                    queueStats: loaded.queueStats ? (r.queueStats || prevCache.queueStats) : (prevCache.queueStats || r.queueStats),
+                    playlists: loaded.playlists ? (r.playlists || []) : (prevCache.playlists || r.playlists || []),
+                    activeFolderId: loaded.playlists ? (r.activeFolderId || "") : (prevCache.activeFolderId || r.activeFolderId || ""),
+                    activePlaylistItems: loaded.playlistItems ? (r.activePlaylistItems || []) : (prevCache.activePlaylistItems || r.activePlaylistItems || []),
+                    reports: loaded.reports ? (r.reports || []) : (prevCache.reports || r.reports || []),
+                    openReportsCount: loaded.reports ? Number(r.openReportsCount || 0) : Number(prevCache.openReportsCount || r.openReportsCount || 0),
+                    botSetup: loaded.botSetup && r.botSetup ? r.botSetup : (prevCache.botSetup || r.botSetup || null),
+                    seriesGaps: loaded.seriesGaps
+                      ? r.seriesGaps
+                      : ((!forceNetworkRefresh && r.seriesGaps?.lazyDeferred && prevCache.seriesGaps && !prevCache.seriesGaps.lazyDeferred)
+                          ? prevCache.seriesGaps
+                          : (prevCache.seriesGaps || r.seriesGaps))
+                  };
+                  r = merged;
+                } else {
+                  const prevGaps = prevCache.seriesGaps;
+                  if (!forceNetworkRefresh && r.seriesGaps?.lazyDeferred && prevGaps && !prevGaps.lazyDeferred) {
+                    r.seriesGaps = prevGaps;
+                  }
                 }
                 window._lastAdminOverviewCache = r;
               }

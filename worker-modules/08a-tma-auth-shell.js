@@ -331,7 +331,7 @@
   }
 
   async function getSessionSigningSecret(env) {
-    const configured = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || "").trim();
+    const configured = String(env?.JWT_SECRET || env?.TELEGRAM_WEBHOOK_SECRET || env?.TELEGRAM_BOT_TOKEN || env?.BOT_TOKEN || "").trim();
     if (configured) return configured;
     if (globalThis.__persistentTmaSessionSecret) {
       return globalThis.__persistentTmaSessionSecret;
