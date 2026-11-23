@@ -17,6 +17,67 @@
       const __TMA_BOOT = (typeof window !== "undefined" && window.__TMA_BOOTSTRAP__) || {};
       const API_BASE = (__TMA_BOOT.workerOrigin || (typeof location !== "undefined" ? location.origin : "")) + "/api/tma";
       const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+      window._tmaHomeScreenStatus = "unknown";
+      window._tmaAppDeactivated = false;
+
+      function syncTelegramSafeAreaInsetsClient() {
+        try {
+          const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+          const root = document.documentElement;
+          if (!root) return;
+          const sa = (liveTg && liveTg.safeAreaInset && typeof liveTg.safeAreaInset === "object") ? liveTg.safeAreaInset : {};
+          const csa = (liveTg && liveTg.contentSafeAreaInset && typeof liveTg.contentSafeAreaInset === "object") ? liveTg.contentSafeAreaInset : {};
+          const isFs = Boolean(liveTg && liveTg.isFullscreen);
+          const topPx = isFs ? Math.max(0, Math.round(Number(sa.top || 0) + Number(csa.top || 0))) : 0;
+          const bottomPx = isFs ? Math.max(0, Math.round(Number(sa.bottom || 0) + Number(csa.bottom || 0))) : 0;
+          const leftPx = isFs ? Math.max(0, Math.round(Number(sa.left || 0) + Number(csa.left || 0))) : 0;
+          const rightPx = isFs ? Math.max(0, Math.round(Number(sa.right || 0) + Number(csa.right || 0))) : 0;
+          root.style.setProperty("--tg-safe-top", topPx + "px");
+          root.style.setProperty("--tg-safe-bottom", bottomPx + "px");
+          root.style.setProperty("--tg-safe-left", leftPx + "px");
+          root.style.setProperty("--tg-safe-right", rightPx + "px");
+          if (document.body) {
+            document.body.classList.toggle("tg-fullscreen-active", isFs);
+          }
+          if (typeof syncStickyHeaderCssVars === "function") {
+            syncStickyHeaderCssVars();
+          }
+        } catch (_e) {}
+      }
+
+      function hideTmaMobileKeyboardClient() {
+        try {
+          const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+          if (liveTg && typeof liveTg.hideKeyboard === "function") {
+            liveTg.hideKeyboard();
+          }
+        } catch (_e) {}
+        try {
+          const ae = document.activeElement;
+          if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA") && typeof ae.blur === "function") {
+            ae.blur();
+          }
+        } catch (_e) {}
+      }
+
+      function refreshTelegramHomeScreenStatusClient() {
+        try {
+          const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+          if (!liveTg) return;
+          if (typeof liveTg.checkHomeScreenStatus === "function") {
+            liveTg.checkHomeScreenStatus(function(status) {
+              const norm = String(status || "unknown").toLowerCase();
+              window._tmaHomeScreenStatus = norm;
+              if (typeof state !== "undefined" && state && state.sidebarOpen && typeof renderFilterSidebarContent === "function") {
+                renderFilterSidebarContent(false);
+              }
+            });
+          } else if (typeof liveTg.addToHomeScreen !== "function") {
+            window._tmaHomeScreenStatus = "unsupported";
+          }
+        } catch (_e) {}
+      }
+
       if (tg) {
         try {
           tg.ready();
@@ -24,7 +85,48 @@
           if (typeof tg.disableVerticalSwipes === "function") {
             tg.disableVerticalSwipes();
           }
+          syncTelegramSafeAreaInsetsClient();
+          refreshTelegramHomeScreenStatusClient();
+          if (typeof tg.onEvent === "function" && !window._tmaWebAppEventsBound) {
+            window._tmaWebAppEventsBound = true;
+            const onSafeOrFsChange = function() {
+              syncTelegramSafeAreaInsetsClient();
+              if (typeof state !== "undefined" && state && state.sidebarOpen && typeof renderFilterSidebarContent === "function") {
+                renderFilterSidebarContent(false);
+              }
+            };
+            tg.onEvent("safeAreaChanged", onSafeOrFsChange);
+            tg.onEvent("contentSafeAreaChanged", onSafeOrFsChange);
+            tg.onEvent("fullscreenChanged", onSafeOrFsChange);
+            tg.onEvent("homeScreenAdded", function() {
+              window._tmaHomeScreenStatus = "added";
+              if (typeof showHudToast === "function") {
+                showHudToast("✅ TelePort wurde zum Startbildschirm hinzugefügt!");
+              }
+              if (typeof state !== "undefined" && state && state.sidebarOpen && typeof renderFilterSidebarContent === "function") {
+                renderFilterSidebarContent(false);
+              }
+            });
+            tg.onEvent("deactivated", function() {
+              window._tmaAppDeactivated = true;
+              try {
+                if (typeof stopHeroBackgroundVideoTeaserClient === "function") stopHeroBackgroundVideoTeaserClient();
+              } catch (_e) {}
+              try {
+                if (typeof stopDetailBackgroundVideoTeaserClient === "function") stopDetailBackgroundVideoTeaserClient();
+              } catch (_e) {}
+            });
+            tg.onEvent("activated", function() {
+              window._tmaAppDeactivated = false;
+              syncTelegramSafeAreaInsetsClient();
+            });
+          }
         } catch (e) {}
+      }
+      if (typeof document !== "undefined") {
+        document.addEventListener("DOMContentLoaded", function() {
+          syncTelegramSafeAreaInsetsClient();
+        });
       }
 
       function syncTelegramBackButtonClient() {
@@ -240,12 +342,35 @@
         openInBot(state.type === "s" ? "discover_series" : "discover_movies");
       }
 
-      function shareItemFromTma(typeCode, id) {
+      async function shareItemFromTma(typeCode, id) {
         const d = state.activeDetails;
         const botName = state.botUsername || "";
+        const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+        if (liveTg && typeof liveTg.shareMessage === "function" && state && state.isAuthenticated) {
+          setBusyState(true, "📤 Bereite 1-Klick-Empfehlung vor...");
+          try {
+            const prep = await apiFetchJson(API_BASE + "/prepare-share", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ typeCode, id })
+            });
+            if (prep && prep.ok && prep.preparedMessageId) {
+              setBusyState(false);
+              liveTg.shareMessage(prep.preparedMessageId, function(sent) {
+                if (sent && typeof showHudToast === "function") {
+                  showHudToast("✅ Empfehlung erfolgreich geteilt!");
+                }
+              });
+              return;
+            }
+          } catch (_e) {
+          } finally {
+            setBusyState(false);
+          }
+        }
         const inlineQuery = "share_" + typeCode + "_" + id;
-        if (tg && typeof tg.switchInlineQuery === "function") {
-          try { tg.switchInlineQuery(inlineQuery, ["users", "groups", "channels"]); return; } catch (e) {}
+        if (liveTg && typeof liveTg.switchInlineQuery === "function") {
+          try { liveTg.switchInlineQuery(inlineQuery, ["users", "groups", "channels"]); return; } catch (e) {}
         }
         const shareTargetUrl = (d && d.shareData && d.shareData.targetTitleUrl)
           ? d.shareData.targetTitleUrl
@@ -254,10 +379,40 @@
           ? d.shareData.plainShareText
           : ("🎬 " + (d?.title || "Empfehlung") + " – Im Film & Serien Bot öffnen!");
         const tgShareUrl = "https://t.me/share/url?url=" + encodeURIComponent(shareTargetUrl) + "&text=" + encodeURIComponent(sharePlain);
-        if (tg && typeof tg.openTelegramLink === "function") {
-          try { tg.openTelegramLink(tgShareUrl); return; } catch (e) {}
+        if (liveTg && typeof liveTg.openTelegramLink === "function") {
+          try { liveTg.openTelegramLink(tgShareUrl); return; } catch (e) {}
         }
         window.open(tgShareUrl, "_blank");
+      }
+
+      function shareItemToStoryFromTma(typeCode, id) {
+        const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+        if (!liveTg || typeof liveTg.shareToStory !== "function") {
+          showHudToast("ℹ️ Story-Teilen ist nur in der offiziellen Telegram-App verfügbar.");
+          return;
+        }
+        const d = state.activeDetails || {};
+        const posterUrl = resolvePosterUrlClient(d.poster_path, "w780", d.external_poster_url || "");
+        if (!posterUrl) {
+          showHudToast("⚠️ Kein Cover-Bild für die Story verfügbar.");
+          return;
+        }
+        const title = String(d.title || "Empfehlung").trim();
+        const year = d.releaseDate && d.releaseDate !== "Keine Angabe" ? String(d.releaseDate).split("-")[0] : "";
+        const rating = d.vote_average ? ("⭐ " + (Math.round(Number(d.vote_average) * 10) / 10) + "/10") : "";
+        const storyText = ("🎬 " + title + (year ? " (" + year + ")" : "") + (rating ? " · " + rating : "")).slice(0, 200);
+        const botName = state.botUsername || "";
+        const deepLink = (d.shareData && d.shareData.tmaDeepLink)
+          || (botName ? ("https://t.me/" + botName + "?startapp=" + typeCode + "_" + id) : "");
+        const storyOpts = { text: storyText };
+        if (deepLink) {
+          storyOpts.widget_link = { url: deepLink, name: "🎬 In TelePort öffnen" };
+        }
+        try {
+          liveTg.shareToStory(posterUrl, storyOpts);
+        } catch (_e) {
+          showHudToast("⚠️ Story-Editor konnte nicht geöffnet werden.");
+        }
       }
 
       async function sendSharePostToBotChat(typeCode, id) {
@@ -926,6 +1081,10 @@
 
       function addTmaToHomeScreenClient() {
         try {
+          if (window._tmaHomeScreenStatus === "added") {
+            showHudToast("✅ TelePort ist bereits auf deinem Startbildschirm hinterlegt.");
+            return;
+          }
           const tgWebApp = window.Telegram && window.Telegram.WebApp;
           if (tgWebApp && typeof tgWebApp.addToHomeScreen === "function") {
             tgWebApp.addToHomeScreen();
@@ -1069,11 +1228,13 @@
                 '🤖 Im Bot öffnen' +
               '</button>' +
               '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
-                '⛶ Vollbild' +
+                ((window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.isFullscreen) ? '🗗 Vollbild aus' : '⛶ Vollbild') +
               '</button>' +
-              '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
-                '📲 Home-Icon' +
-              '</button>' +
+              ((window._tmaHomeScreenStatus === "added" || window._tmaHomeScreenStatus === "unsupported") ? '' : (
+                '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
+                  '📲 Home-Icon' +
+                '</button>'
+              )) +
               '<button class="btn" onclick="closeFilterSidebar();goBack()" title="Zurück zur vorherigen Ansicht">' +
                 '⬅️ Zurück' +
               '</button>' +

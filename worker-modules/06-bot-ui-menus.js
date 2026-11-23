@@ -3264,8 +3264,8 @@
     const titleWithYear = releaseYear ? `${cleanTitle} (${releaseYear})` : cleanTitle;
     const inline_keyboard = [
       [
-        { text: "📤 Inline an Chat senden", switch_inline_query: `share_${typeCode}_${itemId}` },
-        { text: "📲 Über Telegram teilen", url: directShareUrl }
+        { text: "📤 Inline an Chat senden", switch_inline_query: `share_${typeCode}_${itemId}`, style: "primary" },
+        { text: "📲 Über Telegram teilen", url: directShareUrl, style: "primary" }
       ],
       [
         { text: "📋 Titel kopieren", copy_text: { text: titleWithYear } }

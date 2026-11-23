@@ -285,8 +285,13 @@
           ) : '') +
           '<button type="button" id="modalMoreActionsBtn" class="detail-btn-glass" onclick="toggleModalMoreActions()" title="Teilen, Melden, Original-Poster, TMDb & weitere Werkzeuge">⋯ Mehr ▾</button>';
 
+        const canShareToStoryNow = Boolean(
+          window.Telegram && window.Telegram.WebApp && typeof window.Telegram.WebApp.shareToStory === "function" &&
+          (posterOrig || d.poster_path || d.external_poster_url)
+        );
         const moreActionsInnerHtml =
-          '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 Über Telegram teilen</button>' +
+          '<button class="btn purple" onclick="shareItemFromTma(\\'' + type + '\\',' + Number(d.id) + ')">📤 An Chat teilen</button>' +
+          (canShareToStoryNow ? '<button class="btn" onclick="shareItemToStoryFromTma(\\'' + type + '\\',' + Number(d.id) + ')" title="Filmposter direkt in deine Telegram-Story teilen">✨ In Story teilen</button>' : '') +
           '<button class="btn" onclick="sendSharePostToBotChat(\\'' + type + '\\',' + Number(d.id) + ')">💬 Teilen-Post im Bot</button>' +
           '<button class="btn blue" onclick="openInBot(\\'' + type + "_" + Number(d.id) + '\\')">🤖 Im Bot öffnen</button>' +
           (canReportMedia ? '<button class="btn" onclick="openMediaReportModal({typeCode:\\'' + type + '\\',tmdbId:' + Number(d.id) + ',title:\\'' + escJs(d.title) + '\\',versionLabel:\\'' + escJs(primaryVersionBadgeText || "Originalfassung") + '\\'})" title="Defekten Stream oder falsche Zuordnung melden">⚠️ Fehler melden</button>' : '') +
@@ -602,6 +607,9 @@
         detailAutoOpenTrailerCancelled = false;
         state.openedFromRandom = Boolean(window._openingViaRandomDice);
         window._openingViaRandomDice = false;
+        if (typeof hideTmaMobileKeyboardClient === "function") {
+          hideTmaMobileKeyboardClient();
+        }
         if (typeof stopHeroBackgroundVideoTeaserClient === "function") {
           stopHeroBackgroundVideoTeaserClient();
         }

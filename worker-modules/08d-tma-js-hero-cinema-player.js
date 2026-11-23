@@ -2230,6 +2230,7 @@
         const intervalMs = state.heroHidden ? 5500 : 7000;
         heroRotationTimer = setInterval(() => {
           if (typeof document !== "undefined" && document.hidden) return;
+          if (typeof window !== "undefined" && window._tmaAppDeactivated) return;
           if (!Array.isArray(state.heroSlides) || state.heroSlides.length <= 1) return;
           if (
             document.getElementById("modalRoot")?.innerHTML.trim() ||

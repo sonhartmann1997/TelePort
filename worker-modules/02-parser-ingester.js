@@ -2635,31 +2635,86 @@
     }
   }
 
-  // Normalisiert Reply-Markup inkl. nativer Telegram Bot API 8.0+ copy_text Buttons (CopyTextButton) & 64-Byte callback_data Schutz
+  // Telegram Bot API 9.4+ farbige Inline-Buttons ("primary" = Blau, "success" = Grün, "danger" = Rot)
+  const VALID_TG_BUTTON_STYLES = new Set(["primary", "success", "danger"]);
+
+  function resolveTelegramButtonStyle(btn) {
+    if (!btn || typeof btn !== "object") return undefined;
+    if (btn.style === "" || btn.style === null || btn.style === false) return undefined;
+    if (typeof btn.style === "string") {
+      const normalized = btn.style.trim().toLowerCase();
+      return VALID_TG_BUTTON_STYLES.has(normalized) ? normalized : undefined;
+    }
+    const text = String(btn.text || "").trim();
+    const cb = typeof btn.callback_data === "string" ? btn.callback_data.trim().toLowerCase() : "";
+    const url = typeof btn.url === "string" ? btn.url.trim().toLowerCase() : "";
+
+    // 1. Destruktive Aktionen & Abbrechen -> danger (Rot)
+    if (
+      /^(?:del_|delete_|confirm_del|wl_del|rm_|remove_|clear_all|reset_all|webauth_deny_)/.test(cb) ||
+      text.includes("🗑️") || text.includes("🗑") ||
+      /^❌\s*(?:Abbrechen|Löschen|Entfernen|Ablehnen|Leeren|Zurücksetzen)/i.test(text) ||
+      /^✅\s*Ja,?\s*(?:löschen|entfernen|leeren)/i.test(text)
+    ) {
+      return "danger";
+    }
+
+    // 2. Positive Bestätigungen & Gemerkt-Status -> success (Grün)
+    if (
+      /^(?:webauth_confirm_|confirm_save|wl_add_|wl_save_)/.test(cb) ||
+      /^✅\s*(?:Bestätigen|Speichern|Gemerkt|Gespeichert|In Merkliste|Freigeben|Login bestätigen|Aktiv)/i.test(text)
+    ) {
+      return "success";
+    }
+
+    // 3. Primäre Hauptaktionen (Mini-App, Stream anfordern, Teilen) -> primary (Blau)
+    if (
+      btn.web_app ||
+      /^(?:vip_stream_|vip_send_|vip_dl_|share_|tma_open_)/.test(cb) ||
+      url.startsWith("https://t.me/share/") ||
+      url.startsWith("https://t.me/botinvite/") ||
+      (typeof btn.switch_inline_query === "string" && (text.includes("📤") || /teilen|an chat senden/i.test(text)))
+    ) {
+      return "primary";
+    }
+
+    return undefined;
+  }
+
+  // Normalisiert Reply-Markup inkl. Bot API 8.0+ copy_text, Bot API 9.4+ button style & 64-Byte callback_data Schutz
   function sanitizeReplyMarkup(replyMarkup) {
     if (!replyMarkup || !Array.isArray(replyMarkup.inline_keyboard)) return replyMarkup;
     return {
       inline_keyboard: replyMarkup.inline_keyboard.map(row =>
         (Array.isArray(row) ? row : []).map(btn => {
-          if (btn && btn.copy_text) {
+          if (!btn || typeof btn !== "object") return btn;
+          const resolvedStyle = resolveTelegramButtonStyle(btn);
+          const withStyle = (obj) => {
+            const clean = { ...obj };
+            if (resolvedStyle) {
+              clean.style = resolvedStyle;
+            } else {
+              delete clean.style;
+            }
+            return clean;
+          };
+          if (btn.copy_text) {
             const rawCopyText = typeof btn.copy_text === "object" && btn.copy_text !== null
               ? String(btn.copy_text.text || "").trim()
               : String(btn.copy_text || "").trim();
             if (rawCopyText) {
-              return {
+              return withStyle({
                 text: String(btn.text || "📋 Kopieren"),
                 copy_text: { text: rawCopyText.slice(0, 256) }
-              };
+              });
             }
-            return { text: btn.text, callback_data: "info_copy_fallback" };
+            return withStyle({ text: btn.text, callback_data: "info_copy_fallback" });
           }
-          if (btn && typeof btn.callback_data === "string") {
+          if (typeof btn.callback_data === "string") {
             const safeCb = clampTelegramCallbackData(btn.callback_data);
-            if (safeCb !== btn.callback_data) {
-              return { ...btn, callback_data: safeCb };
-            }
+            return withStyle(safeCb !== btn.callback_data ? { ...btn, callback_data: safeCb } : btn);
           }
-          return btn;
+          return withStyle(btn);
         })
       )
     };

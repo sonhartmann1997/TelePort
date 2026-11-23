@@ -1528,6 +1528,60 @@
         }
       },
 
+      async savePreparedInlineMessage(userId, result, opts = {}) {
+        try {
+          const numericUserId = Number(userId);
+          if (!Number.isSafeInteger(numericUserId) || numericUserId <= 0 || !result || typeof result !== "object") {
+            return { ok: false, error: "Ungültige user_id oder leeres Inline-Ergebnis." };
+          }
+          trackStat("telegramCalls");
+          const rawMsg = result.input_message_content?.message_text || "";
+          const alreadyHtml = /<\/?(?:b|i|code|pre|a)\b/i.test(rawMsg);
+          const preparedText = rawMsg
+            ? (alreadyHtml ? { text: rawMsg, parse_mode: "HTML" } : prepareTelegramHtmlPayload(rawMsg, 4090))
+            : null;
+          const safeResult = {
+            ...result,
+            input_message_content: (result.input_message_content && preparedText)
+              ? {
+                  ...result.input_message_content,
+                  message_text: preparedText.text,
+                  parse_mode: preparedText.parse_mode
+                }
+              : result.input_message_content,
+            reply_markup: result.reply_markup ? sanitizeReplyMarkup(result.reply_markup) : undefined
+          };
+          const payload = {
+            user_id: numericUserId,
+            result: safeResult,
+            allow_user_chats: opts.allow_user_chats !== false,
+            allow_bot_chats: Boolean(opts.allow_bot_chats),
+            allow_group_chats: opts.allow_group_chats !== false,
+            allow_channel_chats: opts.allow_channel_chats !== false
+          };
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/savePreparedInlineMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }, 5500);
+          const json = await res.json().catch(() => null);
+          if (res.ok && json?.ok && json?.result?.id) {
+            return {
+              ok: true,
+              id: String(json.result.id),
+              expiration_date: Number(json.result.expiration_date || 0)
+            };
+          }
+          return {
+            ok: false,
+            status: res.status,
+            error: json?.description || `HTTP ${res.status}`
+          };
+        } catch (e) {
+          return { ok: false, error: e?.message || "savePreparedInlineMessage failed" };
+        }
+      },
+
       async setChatMenuButton(chatId = null, webAppUrl = "", buttonText = "🍿 Mediathek") {
         try {
           trackStat("telegramCalls");
@@ -1553,6 +1607,119 @@
           return res.ok ? await res.json() : { ok: false, status: res.status };
         } catch (e) {
           return { ok: false, error: e?.message || "setChatMenuButton failed" };
+        }
+      },
+
+      async getBotFullInfo(forceRefresh = false) {
+        try {
+          const cacheKey = "bot_full_info_cache";
+          if (!forceRefresh) {
+            const cached = memoryFallback.get(cacheKey);
+            if (cached && cached.ts && (Date.now() - cached.ts) < 300000 && cached.data) {
+              return { ok: true, cached: true, data: cached.data };
+            }
+          }
+          if (!getBotToken(env)) {
+            const fallbackUser = String(env.BOT_USERNAME || "DeinBot").replace(/^@/, "");
+            return {
+              ok: true,
+              simulated: true,
+              data: {
+                id: 0,
+                username: fallbackUser,
+                first_name: "TelePort Bot (Sandbox)",
+                active_usernames: fallbackUser ? [fallbackUser] : [],
+                can_join_groups: true,
+                can_read_all_group_messages: false,
+                supports_inline_queries: true,
+                has_main_web_app: true,
+                has_topics_enabled: false,
+                has_topic_sidebar: false,
+                inline_query_placeholder: "Film oder Serie suchen...",
+                needs_inline_query_location: false,
+                inviteLink: fallbackUser ? `https://t.me/botinvite/${fallbackUser}` : ""
+              }
+            };
+          }
+          trackStat("telegramCalls");
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/getMe`, { method: "GET" }, 4500);
+          const json = await res.json().catch(() => null);
+          if (res.ok && json?.ok && json?.result) {
+            const r = json.result;
+            const uname = String(r.username || env.BOT_USERNAME || "").replace(/^@/, "");
+            const normalized = {
+              id: Number(r.id || 0),
+              username: uname,
+              first_name: String(r.first_name || ""),
+              active_usernames: Array.isArray(r.active_usernames) ? r.active_usernames : (uname ? [uname] : []),
+              can_join_groups: Boolean(r.can_join_groups),
+              can_read_all_group_messages: Boolean(r.can_read_all_group_messages),
+              supports_inline_queries: Boolean(r.supports_inline_queries),
+              can_connect_to_business: Boolean(r.can_connect_to_business),
+              has_main_web_app: Boolean(r.has_main_web_app),
+              has_topics_enabled: Boolean(r.has_topics_enabled),
+              has_topic_sidebar: Boolean(r.has_topic_sidebar),
+              inline_query_placeholder: String(r.inline_query_placeholder || ""),
+              needs_inline_query_location: Boolean(r.needs_inline_query_location),
+              inviteLink: uname ? `https://t.me/botinvite/${uname}` : ""
+            };
+            memoryFallback.set(cacheKey, { ts: Date.now(), data: normalized });
+            return { ok: true, cached: false, data: normalized };
+          }
+          return { ok: false, status: res.status, error: json?.description || `HTTP ${res.status}` };
+        } catch (e) {
+          return { ok: false, error: e?.message || "getBotFullInfo failed" };
+        }
+      },
+
+      async setMySettings(rawSettings = {}) {
+        try {
+          const payload = {};
+          const boolKeys = [
+            "can_join_groups",
+            "can_read_all_group_messages",
+            "supports_inline_queries",
+            "has_topics_enabled",
+            "has_topic_sidebar",
+            "needs_inline_query_location"
+          ];
+          for (const k of boolKeys) {
+            if (typeof rawSettings[k] === "boolean") {
+              payload[k] = rawSettings[k];
+            }
+          }
+          if (typeof rawSettings.inline_query_placeholder === "string") {
+            payload.inline_query_placeholder = rawSettings.inline_query_placeholder.trim().slice(0, 64);
+          }
+          if (Object.keys(payload).length === 0) {
+            return { ok: false, error: "Keine gültigen Bot-Einstellungen übergeben." };
+          }
+          if (!getBotToken(env)) {
+            const cur = memoryFallback.get("bot_full_info_cache")?.data || {};
+            const merged = { ...cur, ...payload };
+            memoryFallback.set("bot_full_info_cache", { ts: Date.now(), data: merged });
+            return { ok: true, simulated: true, applied: payload };
+          }
+          trackStat("telegramCalls");
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/setMySettings`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }, 5500);
+          const json = await res.json().catch(() => null);
+          if (res.ok && json?.ok) {
+            memoryFallback.delete("bot_full_info_cache");
+            return { ok: true, applied: payload, telegramResponse: json };
+          }
+          return {
+            ok: false,
+            status: res.status,
+            applied: payload,
+            telegramResponse: json,
+            error: json?.description || `HTTP ${res.status}`
+          };
+        } catch (e) {
+          return { ok: false, error: e?.message || "setMySettings failed" };
         }
       },
 

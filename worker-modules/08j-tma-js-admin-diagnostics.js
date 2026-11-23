@@ -2976,6 +2976,116 @@
         }
       }
 
+      function applyBotFullInfoToAdminDomClient(info) {
+        if (!info || typeof info !== "object") return;
+        const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = Boolean(val); };
+        setChk("adminBot105InlineChk", info.supports_inline_queries);
+        setChk("adminBot105GroupsChk", info.can_join_groups);
+        setChk("adminBot105PrivacyOffChk", info.can_read_all_group_messages);
+        setChk("adminBot105TopicsChk", info.has_topics_enabled);
+        setChk("adminBot105TopicSidebarChk", info.has_topic_sidebar);
+        const phEl = document.getElementById("adminBot105InlinePlaceholderInp");
+        if (phEl && typeof info.inline_query_placeholder === "string") {
+          phEl.value = info.inline_query_placeholder;
+        }
+        const invEl = document.getElementById("adminBot105InviteLinkInp");
+        const invBtn = document.getElementById("adminBot105InviteOpenAnchor");
+        if (info.inviteLink) {
+          if (invEl) invEl.value = info.inviteLink;
+          if (invBtn) invBtn.href = safeHttpUrl(info.inviteLink);
+        }
+        const badgesEl = document.getElementById("adminBot105InfoBadges");
+        if (badgesEl) {
+          const unameList = Array.isArray(info.active_usernames) && info.active_usernames.length > 0
+            ? info.active_usernames.map(u => "@" + String(u).replace(/^@/, "")).join(", ")
+            : (info.username ? ("@" + info.username) : "–");
+          badgesEl.innerHTML =
+            '<span class="admin-pill">🆔 ' + esc(unameList) + '</span>' +
+            '<span class="admin-pill">' + (info.supports_inline_queries ? '✅ Inline aktiv' : '⚪ Inline aus') + '</span>' +
+            '<span class="admin-pill">' + (info.can_join_groups ? '✅ Gruppen erlaubt' : '⚪ Gruppen gesperrt') + '</span>' +
+            '<span class="admin-pill">' + (info.has_topics_enabled ? '🗂️ Private Topics an' : '⚪ Private Topics aus') + '</span>' +
+            '<span class="admin-pill">' + (info.has_topic_sidebar ? '📑 Topic-Sidebar an' : '⚪ Topic-Sidebar aus') + '</span>';
+        }
+      }
+
+      async function adminLoadBotFullInfoClient() {
+        const statusBox = document.getElementById("adminBot105StatusBox");
+        if (statusBox) {
+          statusBox.style.display = "block";
+          statusBox.style.color = "#38bdf8";
+          statusBox.innerHTML = "🔍 Lade Live-<code>BotFullInfo</code> über <code>getMe</code> (Bot API 10.5)...";
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "get_bot_full_info", forceRefresh: true })
+          });
+          if (!r || !r.ok || !r.botFullInfo) {
+            const errTxt = r?.error || "BotFullInfo konnte nicht geladen werden.";
+            if (statusBox) { statusBox.style.color = "#f87171"; statusBox.innerHTML = "❌ " + esc(errTxt); }
+            showHudToast("⚠️ " + errTxt);
+            return;
+          }
+          if (window._lastAdminOverviewCache && window._lastAdminOverviewCache.botSetup) {
+            window._lastAdminOverviewCache.botSetup.botFullInfo = r.botFullInfo;
+            if (r.botInviteUrl) window._lastAdminOverviewCache.botSetup.botInviteUrl = r.botInviteUrl;
+          }
+          applyBotFullInfoToAdminDomClient(r.botFullInfo);
+          if (statusBox) {
+            statusBox.style.color = "#34d399";
+            statusBox.innerHTML = "✅ Live-<code>BotFullInfo</code> geladen" + (r.simulated ? " (Sandbox)" : "") + ".";
+          }
+          showHudToast("✅ BotFullInfo aktualisiert!");
+        } catch (e) {
+          if (statusBox) { statusBox.style.color = "#f87171"; statusBox.innerHTML = "❌ Fehler: " + esc(e.message || String(e)); }
+        }
+      }
+
+      async function adminSaveBotApi105SettingsClient() {
+        const statusBox = document.getElementById("adminBot105StatusBox");
+        const settings = {
+          supports_inline_queries: Boolean(document.getElementById("adminBot105InlineChk")?.checked),
+          can_join_groups: Boolean(document.getElementById("adminBot105GroupsChk")?.checked),
+          can_read_all_group_messages: Boolean(document.getElementById("adminBot105PrivacyOffChk")?.checked),
+          has_topics_enabled: Boolean(document.getElementById("adminBot105TopicsChk")?.checked),
+          has_topic_sidebar: Boolean(document.getElementById("adminBot105TopicSidebarChk")?.checked)
+        };
+        const phVal = String(document.getElementById("adminBot105InlinePlaceholderInp")?.value || "").trim();
+        if (phVal) settings.inline_query_placeholder = phVal.slice(0, 64);
+        if (statusBox) {
+          statusBox.style.display = "block";
+          statusBox.style.color = "#38bdf8";
+          statusBox.innerHTML = "💾 Übertrage Bot-Einstellungen via <code>setMySettings</code> (Bot API 10.5)...";
+        }
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/bot-setup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "update_bot_settings", settings })
+          });
+          if (!r || !r.ok) {
+            const errTxt = r?.error || "setMySettings fehlgeschlagen.";
+            if (statusBox) { statusBox.style.color = "#f87171"; statusBox.innerHTML = "❌ " + esc(errTxt); }
+            showHudToast("⚠️ " + errTxt);
+            return;
+          }
+          if (r.botFullInfo) {
+            if (window._lastAdminOverviewCache && window._lastAdminOverviewCache.botSetup) {
+              window._lastAdminOverviewCache.botSetup.botFullInfo = r.botFullInfo;
+            }
+            applyBotFullInfoToAdminDomClient(r.botFullInfo);
+          }
+          if (statusBox) {
+            statusBox.style.color = "#34d399";
+            statusBox.innerHTML = "✅ " + esc(r.message || "Einstellungen gespeichert!");
+          }
+          showHudToast("✅ Bot API 10.5 Einstellungen übernommen!");
+        } catch (e) {
+          if (statusBox) { statusBox.style.color = "#f87171"; statusBox.innerHTML = "❌ Fehler: " + esc(e.message || String(e)); }
+        }
+      }
+
       function applyAdminTelegramPaletteLiveClient(paletteKey) {
         state.themeMode = paletteKey || "dark";
         applyThemeAndAccessibilityToDom();
@@ -3584,6 +3694,45 @@
                     '</div>' +
                   '</div>' +
                 '</div>' +
+
+                /* 1b. Bot API 10.5 Steuerung (BotFullInfo, setMySettings & t.me/botinvite) */
+                (() => {
+                  const bfi = (botSetup && botSetup.botFullInfo && typeof botSetup.botFullInfo === "object") ? botSetup.botFullInfo : {};
+                  const invUrl = String(botSetup.botInviteUrl || bfi.inviteLink || (effBotUsername && effBotUsername !== "DeinBot" ? ("https://t.me/botinvite/" + effBotUsername) : ""));
+                  return '<div class="panel-box" style="border-color:rgba(16,185,129,0.45)">' +
+                    '<div class="section-title" style="margin-bottom:6px">' +
+                      '<span>🚀 Telegram Bot API 10.5 Steuerung (<code>setMySettings</code>, <code>BotFullInfo</code> &amp; <code>botinvite</code>)</span>' +
+                      '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="adminLoadBotFullInfoClient()">🔍 BotFullInfo live laden (getMe)</button>' +
+                    '</div>' +
+                    '<div id="adminBot105InfoBadges" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;font-size:11px">' +
+                      '<span class="admin-pill">🆔 @' + esc(effBotUsername) + '</span>' +
+                      '<span class="admin-pill">' + (bfi.supports_inline_queries ? '✅ Inline aktiv' : 'ℹ️ Live-Status per Klick laden') + '</span>' +
+                      (bfi.has_topics_enabled ? '<span class="admin-pill">🗂️ Private Topics an</span>' : '') +
+                      (bfi.has_topic_sidebar ? '<span class="admin-pill">📑 Topic-Sidebar an</span>' : '') +
+                    '</div>' +
+                    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:6px 12px;font-size:11.5px;margin-bottom:8px">' +
+                      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="adminBot105InlineChk" type="checkbox" ' + (bfi.supports_inline_queries !== false ? 'checked' : '') + ' /> 🔍 Inline-Modus (<code>supports_inline_queries</code>)</label>' +
+                      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="adminBot105GroupsChk" type="checkbox" ' + (bfi.can_join_groups !== false ? 'checked' : '') + ' /> 👥 Gruppen-Beitritt (<code>can_join_groups</code>)</label>' +
+                      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="adminBot105PrivacyOffChk" type="checkbox" ' + (bfi.can_read_all_group_messages ? 'checked' : '') + ' /> 👁️ Alle Gruppennachrichten lesen</label>' +
+                      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="adminBot105TopicsChk" type="checkbox" ' + (bfi.has_topics_enabled ? 'checked' : '') + ' /> 🗂️ Private-Chat-Topics aktivieren</label>' +
+                      '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="adminBot105TopicSidebarChk" type="checkbox" ' + (bfi.has_topic_sidebar ? 'checked' : '') + ' /> 📑 Topic-Sidebar anzeigen (API 10.5)</label>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+                      '<span style="font-size:11px;color:var(--muted)">Inline-Platzhalter:</span>' +
+                      '<input id="adminBot105InlinePlaceholderInp" class="tma-input" value="' + esc(bfi.inline_query_placeholder || "Film oder Serie suchen...") + '" maxlength="64" style="flex:1;min-width:180px;padding:6px 9px;font-size:11.5px" />' +
+                      '<button type="button" class="btn green" onclick="adminSaveBotApi105SettingsClient()">💾 Via setMySettings speichern</button>' +
+                    '</div>' +
+                    '<div id="adminBot105StatusBox" class="admin-sub-box" style="display:none;margin-bottom:8px;padding:7px 10px;font-size:11.5px"></div>' +
+                    '<div class="admin-sub-box" style="padding:8px 10px;border-color:rgba(16,185,129,0.35)">' +
+                      '<div style="font-size:11px;font-weight:800;color:#34d399;margin-bottom:4px">📨 Bot API 10.5 Gruppen-Einladungslink (bis zu 10 Nutzer gleichzeitig in den Bot einladen)</div>' +
+                      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">' +
+                        '<input id="adminBot105InviteLinkInp" class="tma-input" value="' + esc(invUrl || "Bitte zuerst Bot-Username/Token setzen") + '" readonly style="flex:1;min-width:210px;padding:6px 9px;font-family:monospace;font-size:11.5px;color:#86efac" />' +
+                        (invUrl ? '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="copyAdminInputValueClient(\\'adminBot105InviteLinkInp\\',\\'Bot API 10.5 Einladungslink\\')">📋 Kopieren</button>' : '') +
+                        (invUrl ? '<a id="adminBot105InviteOpenAnchor" href="' + esc(safeHttpUrl(invUrl)) + '" target="_blank" rel="noopener noreferrer" class="btn blue" style="padding:5px 9px;font-size:11px;text-decoration:none">🚀 Einladen</a>' : '') +
+                      '</div>' +
+                    '</div>' +
+                  '</div>';
+                })() +
 
                 /* 2. @BotFather Studio inkl. 512x512 Single-<path> SVG + 512x512 WEBP + 512x512 PNG + 640x360 PNG */
                 '<div class="panel-box" style="border-color:rgba(99,102,241,0.45);background:linear-gradient(145deg,#091224,#101935)">' +

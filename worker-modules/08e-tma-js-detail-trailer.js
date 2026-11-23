@@ -794,7 +794,7 @@
           }
           if (isWishlistMut || isAdminMut) {
             clearPersistentBrowserApiCacheClient((routePath) => (
-              routePath.endsWith("/details") || routePath.endsWith("/season")
+              routePath.endsWith("/details") || routePath.endsWith("/season") || routePath.endsWith("/discover")
             ));
           }
         }
@@ -1425,7 +1425,9 @@
         const q = (overrideQuery !== null ? overrideQuery : (inp ? inp.value : "")).trim();
         if (!q) return;
         const myReqSeq = ++catalogViewReqSeq;
-        if (inp && document.activeElement === inp) {
+        if (typeof hideTmaMobileKeyboardClient === "function") {
+          hideTmaMobileKeyboardClient();
+        } else if (inp && document.activeElement === inp) {
           inp.blur();
         }
         const topHdr = document.getElementById("topUnifiedBar");

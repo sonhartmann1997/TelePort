@@ -352,6 +352,33 @@
         }
         return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
       };
+      const purgeMediaEdgeCache = async (typeCode, tmdbId, seasons = []) => {
+        const edgeCache = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const cleanId = String(tmdbId || "").trim();
+        if (!edgeCache || !/^\d+$/.test(cleanId)) return 0;
+        const tc = typeCode === "s" ? "s" : "m";
+        const keys = [
+          new Request(`${url.origin}/__edge_cache/api/tma/details/base/v1?type=${tc}&id=${encodeURIComponent(cleanId)}`, { method: "GET" })
+        ];
+        if (tc === "s" && Array.isArray(seasons)) {
+          const uniqSeasons = new Set();
+          for (const s of seasons) {
+            const sn = Number(s);
+            if (Number.isInteger(sn) && sn >= 0 && sn <= 200) uniqSeasons.add(sn);
+          }
+          for (const sn of uniqSeasons) {
+            keys.push(new Request(`${url.origin}/__edge_cache/api/tma/season/base/v1?seriesId=${encodeURIComponent(cleanId)}&season=${sn}`, { method: "GET" }));
+          }
+        }
+        let deleted = 0;
+        await Promise.all(keys.map(async (k) => {
+          try {
+            const did = await edgeCache.delete(k);
+            if (did) deleted++;
+          } catch (_e) {}
+        }));
+        return deleted;
+      };
       let clientHeaderSettings = null;
       try {
         const rawHdr = request.headers.get("X-Tma-Settings");
@@ -750,8 +777,10 @@
         if (!auth.isAuthenticated || !auth.user) {
           return new Response(JSON.stringify({
             ok: false,
-            error: "Account-Erstellung ohne Telegram initData ist gesperrt. Bitte öffne die Mini-App einmal über den Telegram-Bot."
-          }), { status: 403, headers: corsHeaders });
+            code: "AUTH_REQUIRED",
+            error: "Anmeldung erforderlich (HTTP 401). Bitte öffne die Mini-App über den Telegram-Bot oder logge dich erneut ein.",
+            authFailureReason: auth.authFailureReason || "no_credentials"
+          }), { status: 401, headers: corsHeaders });
         }
         if (!auth.hasInitData && !auth.user.hasPasswordAccount) {
           return new Response(JSON.stringify({
@@ -789,7 +818,12 @@
       // 4b. TOTP 2FA (Google Authenticator / Authy) Setup, Aktivierung & Deaktivierung
       if (path === "/api/tma/auth/2fa" && request.method === "POST") {
         if (!auth.isAuthenticated || !auth.user) {
-          return new Response(JSON.stringify({ ok: false, error: "Nicht authentifiziert." }), { status: 403, headers: corsHeaders });
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "AUTH_REQUIRED",
+            error: "Nicht authentifiziert (HTTP 401).",
+            authFailureReason: auth.authFailureReason || "no_credentials"
+          }), { status: 401, headers: corsHeaders });
         }
         const body = await request.json().catch(() => ({}));
         const action = String(body.action || "");
@@ -1156,6 +1190,8 @@
             const activeSecret = String(webhookSecurity?.secretToken || "");
             const activeMaxConn = Number(webhookSecurity?.maxConnections || 8);
             const manualWebhookLinks = buildManualWebhookLinks(cleanWorkerOrigin, officialWebhookUrl, activeSecret, activeMaxConn, true);
+            const cleanBotName = String(botUsername || "DeinBot").replace(/^@/, "");
+            const cachedBotFullInfo = memoryFallback.get("bot_full_info_cache")?.data || null;
             return new Response(JSON.stringify({
               ok: true,
               videoCoverMode,
@@ -1171,7 +1207,9 @@
               webhookPasswordPreview: activeSecret ? `${activeSecret.slice(0, 3)}•••${activeSecret.slice(-2)}` : "",
               webhookMaxConnections: activeMaxConn,
               hasBotToken: Boolean(getBotToken(env)),
-              botUsername: botUsername || "DeinBot",
+              botUsername: cleanBotName || "DeinBot",
+              botInviteUrl: cleanBotName && cleanBotName !== "DeinBot" ? `https://t.me/botinvite/${cleanBotName}` : "",
+              botFullInfo: cachedBotFullInfo,
               _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
             }), { status: 200, headers: corsHeaders });
           }
@@ -1408,6 +1446,45 @@
                 globalMenuRes,
                 adminMenuRes,
                 commandsRes
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "get_bot_full_info") {
+              const infoRes = await tgApi(env).getBotFullInfo(Boolean(body.forceRefresh !== false));
+              if (!infoRes.ok) {
+                return new Response(JSON.stringify({
+                  ok: false,
+                  error: infoRes.error || "BotFullInfo konnte nicht abgerufen werden."
+                }), { status: 200, headers: corsHeaders });
+              }
+              return new Response(JSON.stringify({
+                ok: true,
+                simulated: Boolean(infoRes.simulated),
+                botFullInfo: infoRes.data,
+                botInviteUrl: infoRes.data?.inviteLink || "",
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
+              }), { status: 200, headers: corsHeaders });
+            }
+            if (action === "update_bot_settings") {
+              const settingsPayload = (body.settings && typeof body.settings === "object") ? body.settings : {};
+              const setRes = await tgApi(env).setMySettings(settingsPayload);
+              if (!setRes.ok) {
+                return new Response(JSON.stringify({
+                  ok: false,
+                  error: setRes.error || "setMySettings wurde von Telegram abgelehnt.",
+                  telegramResponse: setRes.telegramResponse || null
+                }), { status: 200, headers: corsHeaders });
+              }
+              const refreshedInfo = await tgApi(env).getBotFullInfo(true).catch(() => null);
+              return new Response(JSON.stringify({
+                ok: true,
+                simulated: Boolean(setRes.simulated),
+                applied: setRes.applied || settingsPayload,
+                botFullInfo: refreshedInfo?.data || null,
+                botInviteUrl: refreshedInfo?.data?.inviteLink || "",
+                message: setRes.simulated
+                  ? "Bot-Einstellungen (Bot API 10.5 setMySettings) im Simulator gespeichert."
+                  : "Bot-Einstellungen erfolgreich über Telegram Bot API 10.5 (setMySettings) übernommen!",
+                _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
             return new Response(JSON.stringify({ ok: false, error: "Unbekannte Bot-Setup Aktion." }), { status: 400, headers: corsHeaders });
@@ -2329,6 +2406,7 @@
           const typeCode = body.typeCode === "s" ? "s" : "m";
           if (body.action === "delete") {
             const ok = await deleteMediaFromD1(env, typeCode, body.tmdbId);
+            await purgeMediaEdgeCache(typeCode, body.tmdbId, typeCode === "s" ? [0, 1, 2, 3, 4, 5] : []);
             return new Response(JSON.stringify({ ok }), { status: 200, headers: corsHeaders });
           }
           if (body.action === "upsert") {
@@ -2355,6 +2433,9 @@
                 tags: body.tags || ""
               });
               if (ingested?.ok) {
+                if (ingested.tmdbId) {
+                  await purgeMediaEdgeCache(typeCode, ingested.tmdbId, typeCode === "s" ? [Math.max(1, parseInt(body.season, 10) || 1)] : []);
+                }
                 return new Response(JSON.stringify({ ok: true, item: ingested }), { status: 200, headers: corsHeaders });
               }
               if (body.allowManualFallback !== false) {
@@ -2405,6 +2486,9 @@
                   tags: body.tags || ""
                 });
               }
+            }
+            if (details && details.id) {
+              await purgeMediaEdgeCache(typeCode, details.id, typeCode === "s" ? [Math.max(1, parseInt(body.season, 10) || 1)] : []);
             }
             return new Response(JSON.stringify({ ok: Boolean(details), item: details }), { status: 200, headers: corsHeaders });
           }
@@ -2562,6 +2646,7 @@
           memoryFallback.delete(`d1_admin_media_list_cache_${typeCode}`);
 
           await backfillMediaPosterInLists(env, typeCode, tmdbId, posterPath, externalPosterUrl, auth.chatId || null, true);
+          await purgeMediaEdgeCache(typeCode, tmdbId);
           return new Response(JSON.stringify({
             ok: true,
             tmdbId,
@@ -2672,6 +2757,17 @@
               }], { playlistMode: "both" });
             }
           } catch (e) {}
+
+          const remapOldSeasons = oldTypeCode === "s"
+            ? Array.from(new Set(sourceFiles.map(f => Number(f?.season_number ?? targetSeason)).filter(n => Number.isInteger(n) && n >= 0)))
+            : [];
+          const remapNewSeasons = newTypeCode === "s"
+            ? Array.from(new Set([targetSeason, ...remapOldSeasons]))
+            : [];
+          await Promise.all([
+            purgeMediaEdgeCache(oldTypeCode, oldTmdbId, remapOldSeasons),
+            purgeMediaEdgeCache(newTypeCode, newDetails.id, remapNewSeasons)
+          ]);
 
           return new Response(JSON.stringify({
             ok: true,
@@ -2847,6 +2943,8 @@
               }, `${resolvedBy} (Verschoben nach S${String(newSeason).padStart(2, "0")}E${String(newEpisode).padStart(2, "0")})`);
             }
 
+            await purgeMediaEdgeCache("s", oldTmdbId, [oldSeason, newSeason]);
+
             return new Response(JSON.stringify({
               ok: true,
               mode: "move_se",
@@ -2916,6 +3014,8 @@
                 telegramFileId
               }, `${resolvedBy} (Version: ${newVersionLabel})`);
             }
+
+            await purgeMediaEdgeCache(oldTypeCode, oldTmdbId, oldTypeCode === "s" ? [oldSeason] : []);
 
             return new Response(JSON.stringify({
               ok: true,
@@ -3066,6 +3166,17 @@
                 telegramFileId
               }, `${resolvedBy} (Neu verknüpft mit ${newDetails.title} #${newDetails.id})`);
             }
+
+            const relinkOldSeasons = oldTypeCode === "s"
+              ? Array.from(new Set([oldSeason, ...filesToRelink.map(f => Number(f?.season_number ?? oldSeason)).filter(n => Number.isInteger(n) && n >= 0)]))
+              : [];
+            const relinkNewSeasons = newTypeCode === "s"
+              ? Array.from(new Set([newSeason, ...relinkOldSeasons]))
+              : [];
+            await Promise.all([
+              purgeMediaEdgeCache(oldTypeCode, oldTmdbId, relinkOldSeasons),
+              purgeMediaEdgeCache(newTypeCode, newDetails.id, relinkNewSeasons)
+            ]);
 
             return new Response(JSON.stringify({
               ok: true,
@@ -4131,6 +4242,93 @@
         }
         await showSharePostOverlay(env, auth.chatId, typeCode, id);
         return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
+      }
+
+      if (path === "/api/tma/prepare-share" && request.method === "POST") {
+        if (!auth.isAuthenticated) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "AUTH_REQUIRED",
+            error: "Bitte zuerst über Telegram öffnen oder einloggen, um Empfehlungen direkt zu teilen."
+          }), { status: 401, headers: corsHeaders });
+        }
+        const body = await request.json().catch(() => ({}));
+        const typeCode = (body.type || body.typeCode) === "s" ? "s" : "m";
+        const id = String(body.id || "").trim();
+        if (!/^\d+$/.test(id)) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültige Titel-ID" }), { status: 400, headers: corsHeaders });
+        }
+        const details = typeCode === "s"
+          ? await fetchSeriesDetails(env, id)
+          : await fetchMovieDetails(env, id);
+        if (!details) {
+          return new Response(JSON.stringify({ ok: false, error: "Titel konnte nicht geladen werden." }), { status: 404, headers: corsHeaders });
+        }
+        const { getBotUsername, savePreparedInlineMessage } = tgApi(env);
+        const botUsername = await getBotUsername(env);
+        const cleanTitle = String(details.title || details.name || `Titel #${id}`).replace(/\s*\(\d{4}\)$/, "").replace(/`/g, "'").trim();
+        const releaseYear = details.releaseDate && details.releaseDate !== "Keine Angabe"
+          ? String(details.releaseDate).split("-")[0]
+          : "";
+        const voteAverage = details.vote_average ? `${Math.round(details.vote_average * 10) / 10} / 10` : "Keine Angabe";
+        const posterUrl = resolvePosterUrl(details.poster_path, "w780", details.external_poster_url || "") || PLACEHOLDER_POSTER;
+
+        const unified = buildUnifiedTelegramSharePost({
+          typeCode,
+          itemId: id,
+          title: cleanTitle,
+          releaseYear,
+          voteAverage,
+          genres: details.genres || "",
+          fsk: details.fsk || "",
+          overview: details.overview || "",
+          posterUrl,
+          telegraphUrl: "",
+          botUsername
+        });
+
+        const articleResult = {
+          type: "article",
+          id: `prep_${typeCode}_${id}_${Date.now().toString(36).slice(-4)}`,
+          title: unified.titleWithYear.slice(0, 128),
+          description: `⭐ ${voteAverage}${details.genres ? ` • ${String(details.genres).slice(0, 80)}` : ""}`,
+          thumbnail_url: posterUrl,
+          input_message_content: {
+            message_text: unified.markdownText,
+            parse_mode: "Markdown",
+            link_preview_options: {
+              is_disabled: false,
+              url: unified.targetTitleUrl,
+              prefer_large_media: true,
+              show_above_text: true
+            }
+          },
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "🎬 Im Bot öffnen", url: unified.botDeepLink, style: "primary" },
+              { text: "📱 Mini-App", url: unified.tmaDeepLink, style: "primary" }
+            ]]
+          }
+        };
+
+        const savedPrep = await savePreparedInlineMessage(auth.chatId, articleResult, {
+          allow_user_chats: true,
+          allow_group_chats: true,
+          allow_channel_chats: true
+        });
+        if (!savedPrep.ok || !savedPrep.id) {
+          return new Response(JSON.stringify({
+            ok: false,
+            fallbackAvailable: true,
+            error: savedPrep.error || "Prepared Inline Message nicht verfügbar."
+          }), { status: 200, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          preparedMessageId: savedPrep.id,
+          expirationDate: savedPrep.expiration_date || 0,
+          title: unified.titleWithYear
+        }), { status: 200, headers: corsHeaders });
       }
 
       // Fehlermeldungs-Endpunkt ("Fehler melden") — strikt für freigeschaltete VIP-Mitglieder und Admins
@@ -5358,7 +5556,9 @@
         if (!antiSpamState.hydratedFromStorage) {
           await hydrateAntiSpamStateFromStorage(env);
         }
-        const focusChat = String(url.searchParams.get("chatId") || auth.chatId || "").trim();
+        const focusChat = auth.user?.isAdmin
+          ? String(url.searchParams.get("chatId") || auth.chatId || "").trim()
+          : String(auth.chatId || "").trim();
         if (request.method === "GET") {
           const shouldDrain = url.searchParams.get("drain") !== "0" && antiSpamState.queue.length > 0;
           if (shouldDrain) {
