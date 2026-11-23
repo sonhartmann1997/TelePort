@@ -4086,7 +4086,12 @@
               reply_markup: {
                 inline_keyboard: [
                   [
-                    { text: "🤖 Im Film & Serien Bot öffnen", url: unified.botDeepLink }
+                    { text: "🎬 Im Bot öffnen", url: unified.botDeepLink, style: "primary" },
+                    { text: "📱 Mini-App", url: unified.tmaDeepLink, style: "primary" }
+                  ],
+                  [
+                    { text: "🔖 Merken", callback_data: `iq_save_${shType}_${shId}`, style: "success" },
+                    { text: "ℹ️ Kurzinfo", callback_data: `iq_info_${shType}_${shId}` }
                   ]
                 ]
               }

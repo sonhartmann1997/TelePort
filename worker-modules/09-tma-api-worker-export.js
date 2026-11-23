@@ -4304,10 +4304,16 @@
             }
           },
           reply_markup: {
-            inline_keyboard: [[
-              { text: "🎬 Im Bot öffnen", url: unified.botDeepLink, style: "primary" },
-              { text: "📱 Mini-App", url: unified.tmaDeepLink, style: "primary" }
-            ]]
+            inline_keyboard: [
+              [
+                { text: "🎬 Im Bot öffnen", url: unified.botDeepLink, style: "primary" },
+                { text: "📱 Mini-App", url: unified.tmaDeepLink, style: "primary" }
+              ],
+              [
+                { text: "🔖 Merken", callback_data: `iq_save_${typeCode}_${id}`, style: "success" },
+                { text: "ℹ️ Kurzinfo", callback_data: `iq_info_${typeCode}_${id}` }
+              ]
+            ]
           }
         };
 
@@ -4649,7 +4655,8 @@
           : {};
         const targetMode = String(body.targetMode || savedDeliv.targetMode || "dm").trim();
         const targetGroupChatId = String(body.targetGroupChatId || savedDeliv.targetGroupChatId || "").trim();
-        const targetTopicId = String(body.targetTopicId || savedDeliv.targetTopicId || "").trim();
+        const explicitTopicOverride = String(body.targetTopicId || "").trim();
+        const requestedTopicMode = String(body.topicRoutingMode || savedDeliv.topicRoutingMode || "off").trim();
         const sourceBridgeChatId = String(body.sourceBridgeChatId || savedDeliv.sourceBridgeChatId || "").trim();
         const effectiveCustomToken = customBotToken || String(savedDeliv.customBotToken || "").trim();
 
@@ -4670,6 +4677,7 @@
 
         const fileId = String(body.fileId || "").trim();
         const cleanTitle = String(body.title || "Stream").trim();
+        const seriesTitle = String(body.seriesTitle || "").trim();
         const quality = String(body.quality || "1080p").trim();
         const fileSizeStr = formatFileSizeBytes(body.fileSize);
         const tagsStr = String(body.tags || "").trim();
@@ -4680,6 +4688,19 @@
         if (!fileId || !targetChat || targetChat === "guest") {
           return new Response(JSON.stringify({ ok: false, error: "Bitte gültige Datei-Referenz und Ziel-Chat-ID (bzw. Gruppen-ID) angeben." }), { status: 400, headers: corsHeaders });
         }
+        const topicResolution = await resolveOrCreateDeliveryTopic(env, {
+          ownerChatId: auth.chatId,
+          targetChatId: targetChat,
+          explicitTopicId: explicitTopicOverride,
+          savedDeliv,
+          topicRoutingMode: requestedTopicMode,
+          typeCode,
+          tmdbId,
+          title: cleanTitle,
+          seriesTitle,
+          customBotToken: effectiveCustomToken
+        });
+        let targetTopicId = String(topicResolution.topicId || "").trim();
         const extraLines = [
           `🎞️ *Qualität:* \`${escapeMd(quality)}\``,
           fileSizeStr ? `📦 *Größe:* \`${escapeMd(fileSizeStr)}\`` : "",
@@ -4796,6 +4817,10 @@
             queued: true,
             targetChat,
             ...queuedLinkInfo,
+            resolvedTopicId: targetTopicId,
+            resolvedTopicName: targetTopicId ? (topicResolution.topicName || "") : "",
+            topicAutoCreated: Boolean(targetTopicId && topicResolution.autoCreated),
+            topicRoutingMode: topicResolution.mode || "off",
             job: queuedJob,
             antiSpam: getAntiSpamSnapshot(env, targetChat),
             message: `⏳ Anti-Spam Schutz aktiv: „${cleanTitle}“ wurde auf Position #${queuedJob.position} eingereiht.`
@@ -4982,6 +5007,10 @@
               targetChat,
               job: queued429,
               ...await resolveOpenMessageInfo(null),
+              resolvedTopicId: targetTopicId,
+              resolvedTopicName: targetTopicId ? (topicResolution.topicName || "") : "",
+              topicAutoCreated: Boolean(targetTopicId && topicResolution.autoCreated),
+              topicRoutingMode: topicResolution.mode || "off",
               antiSpam: getAntiSpamSnapshot(env, targetChat)
             }), { status: 200, headers: corsHeaders });
           }
@@ -5025,6 +5054,12 @@
           }
         }
 
+        // Selbstheilung: Falls das gespeicherte Auto-Topic gelöscht wurde (400 Fallback auf Hauptchat), veralteten Mapping-Eintrag sofort bereinigen
+        if (sent.topicFallbackTriggered && topicResolution?.topicKey) {
+          targetTopicId = "";
+          await invalidateDeliveryTopicEntry(env, auth.chatId, targetChat, topicResolution.topicKey);
+        }
+
         await recordAndPruneWorkerActivityLog(env, {
           eventType: "delivery",
           status: "success",
@@ -5034,13 +5069,18 @@
           targetChatId: targetChat,
           harvestedFileId: sent.harvestedFileId || null,
           durationMs: Date.now() - reqStartMs,
-          summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat} gesendet${sent.coverEmbedded ? " (+ 🖼️ Cover)" : ""}${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
+          summary: `„${cleanTitle}“ (${quality}) erfolgreich an ${targetChat}${targetTopicId ? ` (Topic ${targetTopicId}${topicResolution.topicName ? `: ${topicResolution.topicName}` : ""})` : ""} gesendet${sent.coverEmbedded ? " (+ 🖼️ Cover)" : ""}${subtitlesSentCount > 0 ? ` (+${subtitlesSentCount} UT)` : ""}`
         });
         const sentLinkInfo = await resolveOpenMessageInfo(sent);
         return new Response(JSON.stringify({
           ok: true,
           targetChat,
           ...sentLinkInfo,
+          resolvedTopicId: targetTopicId,
+          resolvedTopicName: targetTopicId ? (topicResolution.topicName || "") : "",
+          topicAutoCreated: Boolean(targetTopicId && topicResolution.autoCreated),
+          topicRoutingMode: topicResolution.mode || "off",
+          topicFallbackTriggered: Boolean(sent.topicFallbackTriggered),
           subtitlesSentCount,
           copiedFromSourceGroup: Boolean(sent.copiedFromSourceGroup),
           harvestedFileId: sent.harvestedFileId || null,
@@ -5073,7 +5113,8 @@
           : {};
         const targetMode = String(body.targetMode || savedDeliv.targetMode || "dm").trim();
         const targetGroupChatId = String(body.targetGroupChatId || savedDeliv.targetGroupChatId || "").trim();
-        const targetTopicId = String(body.targetTopicId || savedDeliv.targetTopicId || "").trim();
+        const explicitTopicOverride = String(body.targetTopicId || "").trim();
+        const requestedTopicMode = String(body.topicRoutingMode || savedDeliv.topicRoutingMode || "off").trim();
         const sourceBridgeChatId = String(body.sourceBridgeChatId || savedDeliv.sourceBridgeChatId || "").trim();
         const effectiveCustomToken = String(body.customBotToken || kvBotToken || savedDeliv.customBotToken || "").trim();
 
@@ -5093,6 +5134,21 @@
         if (!targetChat || targetChat === "guest") {
           return new Response(JSON.stringify({ ok: false, error: "Bitte gültige Ziel-Chat-ID (bzw. Gruppen-ID) angeben." }), { status: 400, headers: corsHeaders });
         }
+        // Thema für den gesamten Staffel-/Batch-Versand EINMALIG auflösen/erstellen (z. B. 1 Serien-Topic für alle 10 Episoden!)
+        const firstBatchItem = items[0] || {};
+        const batchTopicResolution = await resolveOrCreateDeliveryTopic(env, {
+          ownerChatId: auth.chatId,
+          targetChatId: targetChat,
+          explicitTopicId: explicitTopicOverride,
+          savedDeliv,
+          topicRoutingMode: requestedTopicMode,
+          typeCode: String(body.typeCode || firstBatchItem.typeCode || "").trim(),
+          tmdbId: body.tmdbId || firstBatchItem.tmdbId || null,
+          title: String(body.batchTitle || firstBatchItem.title || "").trim(),
+          seriesTitle: String(body.seriesTitle || firstBatchItem.seriesTitle || "").trim(),
+          customBotToken: effectiveCustomToken
+        });
+        const targetTopicId = String(batchTopicResolution.topicId || "").trim();
 
         const buildOpenLink = async (firstMsgId = null) => {
           const cleanTopic = targetTopicId && /^\d+$/.test(targetTopicId) ? targetTopicId : "";
@@ -5391,6 +5447,10 @@
           ok: sentCount + queuedCount > 0,
           targetChat,
           ...linkInfo,
+          resolvedTopicId: targetTopicId,
+          resolvedTopicName: targetTopicId ? (batchTopicResolution.topicName || "") : "",
+          topicAutoCreated: Boolean(targetTopicId && batchTopicResolution.autoCreated),
+          topicRoutingMode: batchTopicResolution.mode || "off",
           method: resolvedMethod,
           sentCount,
           queuedCount,
@@ -5890,10 +5950,21 @@
             const afterSendAction = (rawAfterSend === "open_minimize" || rawAfterSend === "open_close" || rawAfterSend === "stay")
               ? rawAfterSend
               : "open_minimize";
+            const prevTopicMap = (cur.deliveryConfig && cur.deliveryConfig.topicMap && typeof cur.deliveryConfig.topicMap === "object")
+              ? cur.deliveryConfig.topicMap
+              : {};
+            const topicRoutingMode = normalizeTopicRoutingMode(
+              dc.topicRoutingMode !== undefined ? dc.topicRoutingMode : cur.deliveryConfig?.topicRoutingMode
+            );
+            const nextTopicMap = dc.resetTopicMap === true
+              ? {}
+              : sanitizeTopicMap(dc.topicMap !== undefined ? dc.topicMap : prevTopicMap);
             cur.deliveryConfig = {
               targetMode: String(dc.targetMode || "dm"),
               targetGroupChatId: String(dc.targetGroupChatId || "").trim(),
               targetTopicId: String(dc.targetTopicId || "").trim(),
+              topicRoutingMode,
+              topicMap: nextTopicMap,
               sourceBridgeChatId: String(dc.sourceBridgeChatId || "").trim(),
               customBotToken: String(dc.customBotToken || "").trim(),
               customBotUsername: String(dc.customBotUsername || "").trim(),

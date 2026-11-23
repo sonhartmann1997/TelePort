@@ -3583,7 +3583,7 @@
 
   // --- Haupt-Router für Telegram Webhook Updates ---
   async function handleUpdate(env, update) {
-    const { sendMessage, editMessageText, answerCallbackQuery, deleteMessage, editMessageReplyMarkup, editInlineMessageText, getChatMember } = tgApi(env);
+    const { sendMessage, sendEphemeralGroupOrPrivateNotice, editMessageText, answerCallbackQuery, deleteMessage, editMessageReplyMarkup, editInlineMessageText, getChatMember } = tgApi(env);
     const activeSessionChatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id || update?.callback_query?.from?.id || null;
     const incomingThreadChatId = update?.message?.chat?.id ?? update?.callback_query?.message?.chat?.id ?? null;
     const incomingThreadId = update?.message?.message_thread_id ?? update?.callback_query?.message?.message_thread_id ?? null;
@@ -3724,7 +3724,7 @@
             ? await isTelegramBotAdmin(env, message.from?.id || chatId)
             : false;
           if (!canOpenAdmin) {
-            await sendMessage(chatId, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
+            await sendEphemeralGroupOrPrivateNotice(chatId, message.from?.id, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
             return;
           }
           await showAdminStatsPanel(env, chatId);
@@ -3856,7 +3856,7 @@
 
           if (startParam.startsWith("webauth_")) {
             if (env._isCustomBotWebhook || isGroupOrChannelChat(chatId)) {
-              await sendMessage(chatId, `🔒 *Web-Login-Bestätigung ist nur im privaten Chat mit dem Haupt-Bot möglich.*`);
+              await sendEphemeralGroupOrPrivateNotice(chatId, message.from?.id, `🔒 *Web-Login-Bestätigung ist nur im privaten Chat mit dem Haupt-Bot möglich.*`);
               return;
             }
             const cId = startParam.replace(/^webauth_/i, "").trim();
@@ -4170,7 +4170,7 @@
               ? await isTelegramBotAdmin(env, message.from?.id || chatId)
               : false;
             if (!canOpenAdmin) {
-              await sendMessage(chatId, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
+              await sendEphemeralGroupOrPrivateNotice(chatId, message.from?.id, `🔒 *Zugriff verweigert:* Das Admin-Panel ist nur für autorisierte Administratoren freigeschaltet.`);
               return;
             }
             await showAdminStatsPanel(env, chatId);
@@ -4449,6 +4449,78 @@
         const inlineMsgId = cq.inline_message_id;
         const data = cq.data || "";
 
+        // ======================================================================
+        // BOT API 10.0 / 10.4: EPHEMERAL GRUPPEN- & GUEST-MODE-CALLBACKS
+        // Funktionieren in Gruppen, Kanälen, inline_message_id & im Guest-Mode
+        // für JEDEN Klicker privat über answerCallbackQuery – 0 Gruppen-Spam!
+        // ======================================================================
+        const iqSaveMatch = data.match(/^iq_save_([ms])_(\d+)$/i);
+        if (iqSaveMatch) {
+          const saveType = iqSaveMatch[1].toLowerCase();
+          const saveId = iqSaveMatch[2];
+          const personalUserId = cq.from?.id || chatId;
+          if (!personalUserId) {
+            await answerCallbackQuery(cq.id, "⚠️ Benutzer-ID nicht verfügbar.", true);
+            return;
+          }
+          const details = saveType === "s"
+            ? await fetchSeriesDetails(env, saveId)
+            : await fetchMovieDetails(env, saveId);
+          if (!details) {
+            await answerCallbackQuery(cq.id, "⚠️ Titel konnte gerade nicht geladen werden.", true);
+            return;
+          }
+          const cleanTitle = String(details.title || details.name || `Titel #${saveId}`).replace(/\s*\(\d{4}\)$/, "").trim();
+          const saveRes = await saveItemToList(env, personalUserId, {
+            title: cleanTitle,
+            tmdbId: Number(saveId),
+            contentType: saveType === "s" ? "series" : "movie",
+            releaseDate: details.releaseDate || "",
+            vote_average: details.vote_average || 0,
+            poster_path: details.poster_path || "",
+            genres: details.genres || "",
+            fsk: details.fsk || "",
+            overview: details.overview || ""
+          });
+          if (saveRes?.saved) {
+            await answerCallbackQuery(cq.id, `✅ "${cleanTitle}" auf deiner persönlichen Merkliste gespeichert!`, false);
+          } else {
+            await answerCallbackQuery(cq.id, `🔖 "${cleanTitle}" ist bereits auf deiner Merkliste.`, false);
+          }
+          return;
+        }
+
+        const iqInfoMatch = data.match(/^iq_info_([ms])_(\d+)$/i);
+        if (iqInfoMatch) {
+          const infoType = iqInfoMatch[1].toLowerCase();
+          const infoId = iqInfoMatch[2];
+          const details = infoType === "s"
+            ? await fetchSeriesDetails(env, infoId)
+            : await fetchMovieDetails(env, infoId);
+          if (!details) {
+            await answerCallbackQuery(cq.id, "⚠️ Kurzinfo aktuell nicht verfügbar.", true);
+            return;
+          }
+          const cleanTitle = String(details.title || details.name || `Titel #${infoId}`).replace(/\s*\(\d{4}\)$/, "").trim();
+          const yearStr = details.releaseDate && details.releaseDate !== "Keine Angabe"
+            ? ` (${String(details.releaseDate).split("-")[0]})`
+            : "";
+          const ratingStr = details.vote_average ? `⭐ ${Math.round(details.vote_average * 10) / 10}/10` : "⭐ k.A.";
+          const rawFsk = String(details.fsk || "").trim();
+          const fskStr = rawFsk && rawFsk !== "Keine Angabe"
+            ? ` • ${/^fsk\b/i.test(rawFsk) ? rawFsk : `FSK ${rawFsk}`}`
+            : "";
+          const genreStr = details.genres ? `\n🎭 ${String(details.genres).slice(0, 48)}` : "";
+          const header = `${infoType === "s" ? "📺" : "🎬"} ${cleanTitle}${yearStr}\n${ratingStr}${fskStr}${genreStr}`;
+          const maxOverviewLen = Math.max(0, 194 - header.length);
+          const rawOverview = String(details.overview || "").replace(/\s+/g, " ").trim();
+          const shortOverview = (rawOverview && maxOverviewLen > 20)
+            ? `\n${rawOverview.length > maxOverviewLen ? rawOverview.slice(0, maxOverviewLen - 1) + "…" : rawOverview}`
+            : "";
+          await answerCallbackQuery(cq.id, `${header}${shortOverview}`, true);
+          return;
+        }
+
         // Prüfe anhand des Bot-Nachrichten-Zeitstempels (edit_date || date), ob die Genre-Übersicht >= 60s ohne Auswahl offen war
         if (chatId && data !== "main_menu" && data !== "nav_back_step" && data !== "close_bot_msg") {
           const genreTimeout = getGenreMenuTimeoutFromBotMessage(cq);
@@ -4463,6 +4535,7 @@
         // GRUPPEN-AUTORISIERUNG:
         // In Gruppen darf der Bot NUR von dem gesteuert werden, der den Befehl
         // eingegeben hat (sessionOwnerId) ODER von einem Gruppen-Admin!
+        // (Guest-Safe/Ephemeral-Aktionen wie iq_save / iq_info wurden oben bereits verarbeitet.)
         // ======================================================================
         if (chatId && isGroupOrChannelChat(chatId) && cq.from?.id) {
           const sess = await getUserSession(env, chatId);
@@ -4505,7 +4578,13 @@
         }
 
         if (!chatId) {
-          await answerCallbackQuery(cq.id);
+          await answerCallbackQuery(
+            cq.id,
+            inlineMsgId
+              ? "ℹ️ Für weitere Optionen öffne den Titel über 'Im Bot öffnen' oder 'Mini-App'."
+              : "",
+            false
+          );
           return;
         }
 

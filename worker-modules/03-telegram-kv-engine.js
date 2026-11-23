@@ -1492,6 +1492,255 @@
     if (key) activeChatThreadContextMap.delete(key);
   }
 
+  // ============================================================================
+  // BOT API 9.3 / 10.5: SMART TOPIC-ROUTING ENGINE (PRIVATE-CHAT & FORUM TOPICS)
+  // Modi:
+  //  - "off"        : Hauptchat oder manuell eingetragene Topic-ID
+  //  - "by_type"    : Automatisch 🎬 Filme vs. 📺 Serien
+  //  - "per_series" : 🎬 Filme + eigenes Thema pro Serie (z. B. 📺 Breaking Bad)
+  // ============================================================================
+  const TELEGRAM_TOPIC_ICON_COLORS = {
+    BLUE: 7322096,
+    YELLOW: 16766590,
+    VIOLET: 13338331,
+    GREEN: 9367192,
+    ROSE: 16749490,
+    RED: 16478047
+  };
+
+  function normalizeTopicRoutingMode(rawMode) {
+    const m = String(rawMode || "").trim().toLowerCase();
+    if (m === "by_type" || m === "per_series" || m === "off") return m;
+    return "off";
+  }
+
+  function sanitizeTopicMap(rawMap) {
+    const out = {};
+    if (!rawMap || typeof rawMap !== "object") return out;
+    const chatEntries = Object.entries(rawMap).slice(0, 10);
+    for (const [chatKey, entries] of chatEntries) {
+      const cleanChatKey = String(chatKey || "").trim();
+      if (!cleanChatKey || !entries || typeof entries !== "object") continue;
+      const validTopics = [];
+      for (const [topicKey, val] of Object.entries(entries)) {
+        const cleanKey = String(topicKey || "").trim().slice(0, 80);
+        const tid = parseValidTelegramThreadId(val?.threadId ?? val);
+        if (!cleanKey || !tid) continue;
+        validTopics.push([cleanKey, {
+          threadId: tid,
+          name: String(val?.name || "").trim().slice(0, 128),
+          updatedAt: Number(val?.updatedAt) || Date.now()
+        }]);
+      }
+      // Behalte Standard-Topics (type:*) immer, limitiere Serien-Topics auf die 60 neuesten (LRU)
+      const pinned = validTopics.filter(([k]) => k.startsWith("type:"));
+      const dynamic = validTopics
+        .filter(([k]) => !k.startsWith("type:"))
+        .sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0))
+        .slice(0, 60);
+      const merged = {};
+      for (const [k, v] of [...pinned, ...dynamic]) merged[k] = v;
+      if (Object.keys(merged).length > 0) out[cleanChatKey] = merged;
+    }
+    return out;
+  }
+
+  function deriveSeriesNameForTopic(rawTitle, explicitSeriesTitle = "") {
+    const base = String(explicitSeriesTitle || rawTitle || "").trim();
+    if (!base) return "Serie";
+    const cleaned = base
+      .replace(/\s*[-–—|:]\s*(?:S\d{1,2}E\d{1,3}|Staffel\s*\d+|Season\s*\d+|Folge\s*\d+|Episode\s*\d+).*$/i, "")
+      .replace(/\s*\bS\d{1,2}E\d{1,3}\b.*$/i, "")
+      .replace(/\s*\bStaffel\s*\d+\b.*$/i, "")
+      .replace(/\s*\bSeason\s*\d+\b.*$/i, "")
+      .replace(/\s*\((?:4K|2160p|1080p|720p|HDR|DV|HEVC|IMAX|x265|x264)[^)]*\)\s*$/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return (cleaned || base).slice(0, 118);
+  }
+
+  function resolveDeliveryTopicDescriptor({ mode, typeCode, tmdbId, title, seriesTitle }) {
+    const normMode = normalizeTopicRoutingMode(mode);
+    if (normMode === "off") return null;
+    const tc = String(typeCode || "").trim().toLowerCase();
+    const rawTitle = String(title || "").trim();
+    const isSeries =
+      tc === "s" ||
+      tc === "series" ||
+      tc === "tv" ||
+      tc === "episode" ||
+      Boolean(String(seriesTitle || "").trim()) ||
+      /\b(?:S\d{1,2}E\d{1,3}|Staffel\s*\d+|Season\s*\d+)\b/i.test(rawTitle);
+
+    if (normMode === "per_series" && isSeries) {
+      const cleanSeriesName = deriveSeriesNameForTopic(rawTitle, seriesTitle);
+      const numericId = Number(tmdbId);
+      const slug = cleanSeriesName.toLowerCase().replace(/[^a-z0-9äöüß]+/gi, "_").replace(/^_+|_+$/g, "").slice(0, 48) || "serie";
+      const topicKey = (Number.isInteger(numericId) && numericId > 0)
+        ? `series:${numericId}`
+        : `series_name:${slug}`;
+      return {
+        topicKey,
+        topicName: `📺 ${cleanSeriesName}`.slice(0, 128),
+        iconColor: TELEGRAM_TOPIC_ICON_COLORS.VIOLET,
+        category: "series"
+      };
+    }
+
+    if (isSeries) {
+      return {
+        topicKey: "type:series",
+        topicName: "📺 Serien",
+        iconColor: TELEGRAM_TOPIC_ICON_COLORS.VIOLET,
+        category: "series"
+      };
+    }
+
+    return {
+      topicKey: "type:movie",
+      topicName: "🎬 Filme",
+      iconColor: TELEGRAM_TOPIC_ICON_COLORS.BLUE,
+      category: "movie"
+    };
+  }
+
+  async function resolveOrCreateDeliveryTopic(env, opts = {}) {
+    const {
+      ownerChatId = "",
+      targetChatId = "",
+      explicitTopicId = "",
+      savedDeliv = {},
+      topicRoutingMode = "",
+      typeCode = "",
+      tmdbId = null,
+      title = "",
+      seriesTitle = "",
+      customBotToken = "",
+      forceRecreate = false
+    } = opts || {};
+
+    const manualTid = parseValidTelegramThreadId(explicitTopicId);
+    const mode = normalizeTopicRoutingMode(topicRoutingMode || savedDeliv?.topicRoutingMode);
+    if (manualTid && !forceRecreate) {
+      return {
+        topicId: String(manualTid),
+        topicName: "",
+        topicKey: "",
+        mode,
+        autoCreated: false,
+        source: "manual"
+      };
+    }
+
+    if (mode === "off") {
+      const fallbackSavedTid = parseValidTelegramThreadId(savedDeliv?.targetTopicId);
+      return {
+        topicId: fallbackSavedTid ? String(fallbackSavedTid) : "",
+        topicName: "",
+        topicKey: "",
+        mode: "off",
+        autoCreated: false,
+        source: fallbackSavedTid ? "saved_manual" : "none"
+      };
+    }
+
+    const cleanTargetChat = String(targetChatId || "").trim();
+    if (!cleanTargetChat || cleanTargetChat === "guest") {
+      return { topicId: "", topicName: "", topicKey: "", mode, autoCreated: false, source: "none" };
+    }
+
+    const desc = resolveDeliveryTopicDescriptor({ mode, typeCode, tmdbId, title, seriesTitle });
+    if (!desc) {
+      return { topicId: "", topicName: "", topicKey: "", mode, autoCreated: false, source: "none" };
+    }
+
+    const topicMap = sanitizeTopicMap(savedDeliv?.topicMap);
+    const chatTopics = topicMap[cleanTargetChat] || {};
+    const existing = chatTopics[desc.topicKey];
+    if (!forceRecreate && existing && parseValidTelegramThreadId(existing.threadId)) {
+      return {
+        topicId: String(existing.threadId),
+        topicName: existing.name || desc.topicName,
+        topicKey: desc.topicKey,
+        mode,
+        autoCreated: false,
+        source: "cached_topic"
+      };
+    }
+
+    const created = await tgApi(env).createForumTopic(cleanTargetChat, desc.topicName, {
+      icon_color: desc.iconColor,
+      customBotToken
+    });
+    if (created && created.ok && parseValidTelegramThreadId(created.message_thread_id)) {
+      const newTid = parseValidTelegramThreadId(created.message_thread_id);
+      const persistOwner = String(ownerChatId || "").trim();
+      if (persistOwner && persistOwner !== "guest" && typeof getUserSettings === "function" && typeof saveUserSettings === "function") {
+        try {
+          const curSettings = await getUserSettings(env, persistOwner);
+          const curDeliv = (curSettings && curSettings.deliveryConfig && typeof curSettings.deliveryConfig === "object")
+            ? { ...curSettings.deliveryConfig }
+            : {};
+          const nextMap = sanitizeTopicMap(curDeliv.topicMap);
+          if (!nextMap[cleanTargetChat]) nextMap[cleanTargetChat] = {};
+          nextMap[cleanTargetChat][desc.topicKey] = {
+            threadId: newTid,
+            name: desc.topicName,
+            updatedAt: Date.now()
+          };
+          curDeliv.topicMap = sanitizeTopicMap(nextMap);
+          if (!curDeliv.topicRoutingMode) curDeliv.topicRoutingMode = mode;
+          await saveUserSettings(env, persistOwner, { ...curSettings, deliveryConfig: curDeliv });
+        } catch (e) {}
+      }
+      return {
+        topicId: String(newTid),
+        topicName: desc.topicName,
+        topicKey: desc.topicKey,
+        mode,
+        autoCreated: true,
+        source: "auto_created"
+      };
+    }
+
+    // Sauberer Fallback: Falls Private-Chat-Topics noch nicht aktiviert sind oder Zielgruppe kein Forum ist -> General-Chat!
+    return {
+      topicId: "",
+      topicName: desc.topicName,
+      topicKey: desc.topicKey,
+      mode,
+      autoCreated: false,
+      fallbackReason: String(created?.error || "Topic konnte nicht erstellt werden"),
+      source: "fallback_general"
+    };
+  }
+
+  async function invalidateDeliveryTopicEntry(env, ownerChatId, targetChatId, topicKey) {
+    const cleanOwner = String(ownerChatId || "").trim();
+    const cleanTarget = String(targetChatId || "").trim();
+    const cleanKey = String(topicKey || "").trim();
+    if (!cleanOwner || cleanOwner === "guest" || !cleanTarget || !cleanKey) return false;
+    try {
+      const curSettings = await getUserSettings(env, cleanOwner);
+      const curDeliv = (curSettings && curSettings.deliveryConfig && typeof curSettings.deliveryConfig === "object")
+        ? { ...curSettings.deliveryConfig }
+        : null;
+      if (!curDeliv || !curDeliv.topicMap || !curDeliv.topicMap[cleanTarget] || !curDeliv.topicMap[cleanTarget][cleanKey]) {
+        return false;
+      }
+      const nextMap = sanitizeTopicMap(curDeliv.topicMap);
+      if (nextMap[cleanTarget]) {
+        delete nextMap[cleanTarget][cleanKey];
+        if (Object.keys(nextMap[cleanTarget]).length === 0) delete nextMap[cleanTarget];
+      }
+      curDeliv.topicMap = nextMap;
+      await saveUserSettings(env, cleanOwner, { ...curSettings, deliveryConfig: curDeliv });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // @ANCHOR: TELEGRAM_API
   // --- Telegram API Client (Nutzt stabiles HTML-Parsing gegen kaputte Links + 429 Anti-Spam Schutz!) ---
   function tgApi(env) {
@@ -1893,6 +2142,12 @@
             return { ok: false, _throttled429: true, retryAfter: retrySec };
           }
 
+          if (res.status === 403) {
+            const err403 = await res.json().catch(() => ({}));
+            const errDesc403 = String(err403?.description || "Forbidden");
+            return { ok: false, guestOrBlocked: true, status: 403, error: errDesc403 };
+          }
+
           if (!res.ok) {
             let errJson = await res.clone().json().catch(() => null);
             let errDesc = String(errJson?.description || "");
@@ -1930,6 +2185,31 @@
         } catch (e) {
           return null;
         }
+      },
+
+      // Bot API 10.0 / 10.4: Ephemeral Group Notice + Guest-Mode Fallback
+      // Versucht in Gruppen zuerst eine private DM an den auslösenden Nutzer (0 Gruppen-Spam).
+      // Falls der Nutzer im Guest-Mode ist (Bot noch nicht gestartet -> 403), fällt es auf eine kompakte, per 1 Klick schließbare Gruppen-Nachricht zurück.
+      async sendEphemeralGroupOrPrivateNotice(chatId, userId, text, options = {}) {
+        const apiRef = this && typeof this.sendMessage === "function" ? this : tgApi(env);
+        const isGroup = isGroupOrChannelChatId(chatId);
+        const cleanUserId = userId ? String(userId).trim() : "";
+        if (isGroup && cleanUserId && cleanUserId !== String(chatId).trim()) {
+          const dmOpts = { ...(options || {}), message_thread_id: null };
+          const dmRes = await apiRef.sendMessage(cleanUserId, text, dmOpts);
+          if (dmRes && dmRes.ok) {
+            return { ...dmRes, deliveredPrivately: true, ephemeralMode: "private_dm" };
+          }
+          const groupFallbackOpts = { ...(options || {}) };
+          if (!groupFallbackOpts.reply_markup) {
+            groupFallbackOpts.reply_markup = {
+              inline_keyboard: [[{ text: "✖️ Schließen", callback_data: "close_bot_msg" }]]
+            };
+          }
+          const grpRes = await apiRef.sendMessage(chatId, text, groupFallbackOpts);
+          return grpRes ? { ...grpRes, deliveredPrivately: false, ephemeralMode: "group_dismissible_fallback" } : null;
+        }
+        return await apiRef.sendMessage(chatId, text, options);
       },
 
       async sendPhoto(chatId, photoUrl, caption, options = {}) {
@@ -2110,13 +2390,14 @@
         }
       },
 
-      async answerCallbackQuery(callbackQueryId, text = "", showAlert = false) {
+      async answerCallbackQuery(callbackQueryId, text = "", showAlert = false, url = "") {
         if (!callbackQueryId) return;
         try {
           trackStat("telegramCalls");
           // Telegram-Limit: max. 200 Zeichen für answerCallbackQuery-Text
           const safeText = String(text || "").length > 198 ? (String(text).slice(0, 195) + "…") : String(text || "");
           const body = { callback_query_id: callbackQueryId, text: safeText, show_alert: showAlert };
+          if (url && typeof url === "string") body.url = url;
           await fetchWithTimeout(`${TELEGRAM_API}/answerCallbackQuery`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2280,6 +2561,7 @@
             ? extraOpts.messageThreadId
             : extraOpts?.message_thread_id;
           let threadId = resolveOutboundThreadId(targetChatId, explicitThreadRaw, hasExplicitThread) || undefined;
+          let topicFallbackTriggered = false;
           const resolvedCoverUrl = await resolveVideoCoverUrlForDelivery(env, extraOpts);
           const startTimestamp = Number(extraOpts.startTimestamp) > 0 ? Math.floor(Number(extraOpts.startTimestamp)) : undefined;
 
@@ -2321,6 +2603,7 @@
               if (copyRes.status === 400 && threadId && isTelegramThreadNotFoundError(copyErrDesc)) {
                 clearActiveChatThreadId(targetChatId);
                 threadId = undefined;
+                topicFallbackTriggered = true;
                 const retryNoThreadPayload = { ...copyPayload };
                 delete retryNoThreadPayload.message_thread_id;
                 copyRes = await fetchWithTimeout(`${apiBase}/copyMessage`, {
@@ -2457,6 +2740,7 @@
                 harvestedFileId,
                 coverEmbedded,
                 coverUrl: coverEmbedded ? resolvedCoverUrl : null,
+                topicFallbackTriggered,
                 result: copyData?.result || { message_id: Date.now() }
               };
             }
@@ -2495,6 +2779,7 @@
             if (res.status === 400 && isTelegramThreadNotFoundError(vidErrDesc)) {
               clearActiveChatThreadId(targetChatId);
               threadId = undefined;
+              topicFallbackTriggered = true;
               delete videoBody.message_thread_id;
               res = await fetchWithTimeout(`${apiBase}/sendVideo`, {
                 method: "POST",
@@ -2553,10 +2838,106 @@
             ...jsonRes,
             ok: true,
             coverEmbedded: usedCover,
-            coverUrl: usedCover ? resolvedCoverUrl : null
+            coverUrl: usedCover ? resolvedCoverUrl : null,
+            topicFallbackTriggered
           };
         } catch (e) {
           return null;
+        }
+      },
+
+      // Bot API 9.3 / 10.5: Themen im Privatchat (bei has_topics_enabled) & in Forum-Supergruppen anlegen/bearbeiten/löschen
+      async createForumTopic(chatId, name, options = {}) {
+        if (!chatId || !name) return { ok: false, error: "chat_id und Themenname erforderlich." };
+        try {
+          trackStat("telegramCalls");
+          const customToken = String(options.customBotToken || "").trim();
+          const apiBase = (customToken && /^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken))
+            ? `https://api.telegram.org/bot${customToken}`
+            : TELEGRAM_API;
+          const cleanName = String(name).replace(/\s+/g, " ").trim().slice(0, 128);
+          if (!cleanName) return { ok: false, error: "Leerer Themenname." };
+          const body = { chat_id: chatId, name: cleanName };
+          if (Number.isInteger(options.icon_color)) body.icon_color = options.icon_color;
+          if (options.icon_custom_emoji_id) body.icon_custom_emoji_id = String(options.icon_custom_emoji_id);
+          const res = await fetchWithTimeout(`${apiBase}/createForumTopic`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            _criticalSubrequest: true
+          }, 6000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            registerAntiSpam429FloodWait(Number(err429?.parameters?.retry_after) || 5, chatId);
+            return { ok: false, throttled429: true, error: "Telegram 429 Rate-Limit" };
+          }
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok && json?.result?.message_thread_id) {
+            return {
+              ok: true,
+              message_thread_id: Number(json.result.message_thread_id),
+              name: String(json.result.name || cleanName),
+              icon_color: json.result.icon_color,
+              result: json.result
+            };
+          }
+          const errDesc = String(json?.description || `HTTP ${res.status}`);
+          const low = errDesc.toLowerCase();
+          const notSupported = low.includes("not a forum") || low.includes("topics_disabled") || low.includes("not enough rights") || low.includes("chat_not_modified");
+          return { ok: false, status: res.status, notSupported, error: errDesc };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || "createForumTopic Fehler") };
+        }
+      },
+
+      async editForumTopic(chatId, messageThreadId, options = {}) {
+        const tid = parseValidTelegramThreadId(messageThreadId);
+        if (!chatId || !tid) return { ok: false, error: "Ungültige chat_id oder message_thread_id." };
+        try {
+          trackStat("telegramCalls");
+          const customToken = String(options.customBotToken || "").trim();
+          const apiBase = (customToken && /^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken))
+            ? `https://api.telegram.org/bot${customToken}`
+            : TELEGRAM_API;
+          const body = { chat_id: chatId, message_thread_id: tid };
+          if (typeof options.name === "string" && options.name.trim()) {
+            body.name = options.name.replace(/\s+/g, " ").trim().slice(0, 128);
+          }
+          if (typeof options.icon_custom_emoji_id === "string") {
+            body.icon_custom_emoji_id = options.icon_custom_emoji_id;
+          }
+          const res = await fetchWithTimeout(`${apiBase}/editForumTopic`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            _criticalSubrequest: true
+          }, 5000);
+          const json = await res.json().catch(() => ({}));
+          return (res.ok && json?.ok) ? { ok: true } : { ok: false, status: res.status, error: String(json?.description || `HTTP ${res.status}`) };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || "editForumTopic Fehler") };
+        }
+      },
+
+      async deleteForumTopic(chatId, messageThreadId, options = {}) {
+        const tid = parseValidTelegramThreadId(messageThreadId);
+        if (!chatId || !tid) return { ok: false, error: "Ungültige chat_id oder message_thread_id." };
+        try {
+          trackStat("telegramCalls");
+          const customToken = String(options.customBotToken || "").trim();
+          const apiBase = (customToken && /^\d+:[A-Za-z0-9_-]{20,}$/.test(customToken))
+            ? `https://api.telegram.org/bot${customToken}`
+            : TELEGRAM_API;
+          const res = await fetchWithTimeout(`${apiBase}/deleteForumTopic`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, message_thread_id: tid }),
+            _criticalSubrequest: true
+          }, 5000);
+          const json = await res.json().catch(() => ({}));
+          return (res.ok && json?.ok) ? { ok: true } : { ok: false, status: res.status, error: String(json?.description || `HTTP ${res.status}`) };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || "deleteForumTopic Fehler") };
         }
       },
     };
