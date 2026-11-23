@@ -3927,7 +3927,14 @@
           const startParam = text.replace(/^\/start(?:@\w+)?/i, "").trim();
 
           // WICHTIG: Wenn ein Deep-Link / TextLink im Bot angeklickt wurde, den "/start ..." Befehl sofort aus dem Chat löschen!
-          await deleteMessage(chatId, message.message_id);
+          const isPrivateTopicRootMsg = Boolean(
+            message.chat?.type === "private" &&
+            message.message_thread_id &&
+            Number(message.message_id) === Number(message.message_thread_id)
+          );
+          if (!isPrivateTopicRootMsg) {
+            await deleteMessage(chatId, message.message_id);
+          }
 
           if (startParam.startsWith("webauth_")) {
             if (env._isCustomBotWebhook || isGroupOrChannelChat(chatId)) {

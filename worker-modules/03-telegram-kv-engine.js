@@ -1191,29 +1191,48 @@
       if (memCfg && typeof memCfg === "object") {
         applyStoredObj(memCfg, "memory");
       } else {
-        // D1-first: Strongly consistent across all Cloudflare Edge PoPs & unaffected by KV 1,000 writes/day cap
-        // Da __WEBHOOK_SECURITY_CONFIG_CACHE bereits der primäre 5-Min.-RAM-Cache ist, beim Nachladen stets frisch aus D1/KV lesen!
-        let loadedFromD1 = false;
-        if (typeof getEntityFromD1 === "function") {
-          const d1Cfg = await getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000, {
-            bypassMemoryCache: true,
-            ramTtlMs: WEBHOOK_CONFIG_CACHE_TTL_MS
-          }).catch(() => null);
-          if (d1Cfg && typeof d1Cfg === "object") {
-            loadedFromD1 = applyStoredObj(d1Cfg, "d1");
-          }
-        }
-        // KV fallback only when D1 has no record yet (e.g. legacy install or D1 binding absent)
-        if (!loadedFromD1) {
-          const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", {
+        // D1 & KV parallel laden und per updatedAt vergleichen (D1 gewinnt bei Gleichstand):
+        // Verhindert zuverlässig, dass ein veralteter D1-Eintrag ein neueres KV-Secret überschreibt (401 nach Deploy)
+        // UND dass ein veralteter/limitierter KV-Eintrag ein neueres D1-Secret überschreibt!
+        const [d1Cfg, rawKv] = await Promise.all([
+          typeof getEntityFromD1 === "function"
+            ? getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000, {
+                bypassMemoryCache: true,
+                ramTtlMs: WEBHOOK_CONFIG_CACHE_TTL_MS
+              }).catch(() => null)
+            : Promise.resolve(null),
+          kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", {
             ttlMs: WEBHOOK_CONFIG_CACHE_TTL_MS,
             bypassMemoryCache: true
-          });
-          if (rawKv) {
+          }).catch(() => null)
+        ]);
+        let kvCfg = null;
+        if (rawKv) {
+          try {
             const parsed = JSON.parse(rawKv);
-            if (parsed && typeof parsed === "object") {
-              applyStoredObj(parsed, "kv");
+            if (parsed && typeof parsed === "object") kvCfg = parsed;
+          } catch (_parseErr) {}
+        }
+        const hasD1 = Boolean(d1Cfg && typeof d1Cfg === "object");
+        const hasKv = Boolean(kvCfg && typeof kvCfg === "object");
+        if (hasD1 && hasKv) {
+          const d1Ts = Number(d1Cfg.updatedAt || d1Cfg.loadedAt || 0);
+          const kvTs = Number(kvCfg.updatedAt || kvCfg.loadedAt || 0);
+          if (kvTs > d1Ts) {
+            applyStoredObj(kvCfg, "kv");
+            // D1 still im Hintergrund auf den neueren KV-Stand nachziehen (Self-Healing)
+            if (typeof saveEntityToD1 === "function") {
+              saveEntityToD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "config", kvCfg).catch(() => {});
             }
+          } else {
+            applyStoredObj(d1Cfg, "d1");
+          }
+        } else if (hasD1) {
+          applyStoredObj(d1Cfg, "d1");
+        } else if (hasKv) {
+          applyStoredObj(kvCfg, "kv");
+          if (typeof saveEntityToD1 === "function") {
+            saveEntityToD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "config", kvCfg).catch(() => {});
           }
         }
       }
