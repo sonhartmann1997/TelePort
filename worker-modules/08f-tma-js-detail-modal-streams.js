@@ -628,7 +628,7 @@
         try {
           const d = hasValidCache
             ? cachedEntry.data
-            : await apiFetchJson(API_BASE + "/details?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&id=" + id);
+            : await apiFetchJson(API_BASE + "/details?type=" + type + "&id=" + id);
           if (!d || d.ok === false) {
             throw new Error(d?.error || "Titeldetails konnten nicht geladen werden.");
           }
@@ -1716,7 +1716,7 @@
         const mount = document.getElementById("tmaActivityLogMount");
         if (!mount) return;
         try {
-          const r = await apiFetchJson(API_BASE + "/activity-log?chatId=" + encodeURIComponent(chatId));
+          const r = await apiFetchJson(API_BASE + "/activity-log");
           if (!r || !r.ok) {
             mount.innerHTML = '<div style="font-size:11px;color:#94a3b8">Keine KV-Aktivitätsdaten verfügbar.</div>';
             return;
@@ -2864,7 +2864,7 @@
         const hasValidCache = Boolean(cachedEntry && (Date.now() - cachedEntry.ts < CLIENT_CACHE_TTL_MS));
         const s = hasValidCache
           ? cachedEntry.data
-          : await apiFetchJson(API_BASE + "/season?chatId=" + encodeURIComponent(chatId) + "&seriesId=" + seriesId + "&season=" + parsedSeasonNum);
+          : await apiFetchJson(API_BASE + "/season?seriesId=" + seriesId + "&season=" + parsedSeasonNum);
         if (!hasValidCache && s && s.ok !== false) {
           clientSeasonCache.set(cacheKey, { data: s, ts: Date.now() });
         }

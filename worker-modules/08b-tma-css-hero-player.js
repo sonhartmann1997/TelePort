@@ -4377,6 +4377,8 @@
       .catalog-focus-info-bar.is-title-only .cfi-title {
         max-width: min(56vw, 380px);
       }
+      body.in-hero-slider .catalog-focus-info-bar,
+      body.hero-slider-expanded:not(.hero-scrolled-past) .catalog-focus-info-bar,
       body:has(#filterSidebarDrawer.open) .catalog-focus-info-bar,
       body:has(#tvQuickJumpElevator.has-subpanel) .catalog-focus-info-bar,
       body:has(#searchAutocompleteBox.open) .catalog-focus-info-bar,

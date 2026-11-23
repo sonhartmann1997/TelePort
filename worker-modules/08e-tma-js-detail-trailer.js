@@ -45,8 +45,7 @@
         setBusyState(true, '🌟 Lade Filme & Serien mit "' + (personName || personId) + '"...');
         try {
           const res = await apiFetchJson(
-            API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-            "&personId=" + encodeURIComponent(personId) +
+            API_BASE + "/search?personId=" + encodeURIComponent(personId) +
             "&q=" + encodeURIComponent(personName || "") +
             "&sort=" + encodeURIComponent(state.sort)
           );
@@ -278,72 +277,286 @@
       window._clientApiGetCache = window._clientApiGetCache || new Map();
       window._clientApiInFlightGetMap = window._clientApiInFlightGetMap || new Map();
 
-      function buildBrowserApiCacheKeyClient(urlStr) {
-        let settingsHash = "";
+      const BROWSER_PERSISTENT_CACHE_PREFIX = "tma_api_p_v1_";
+      const BROWSER_PERSISTENT_CACHE_INDEX_KEY = "tma_api_p_v1_idx";
+      const BROWSER_PERSISTENT_CACHE_MAX_ENTRIES = 120;
+      const BROWSER_PERSISTENT_CACHE_MAX_BYTES = 65000;
+
+      function extractBrowserApiPathClient(urlStr) {
+        const raw = String(urlStr || "");
+        const qIdx = raw.indexOf("?");
+        return qIdx >= 0 ? raw.slice(0, qIdx) : raw;
+      }
+
+      function isFilterDependentApiRouteClient(urlStr) {
+        const p = extractBrowserApiPathClient(urlStr);
+        return (
+          p.endsWith("/discover") ||
+          p.endsWith("/search") ||
+          p.endsWith("/collections") ||
+          p.endsWith("/universes") ||
+          p.endsWith("/similar")
+        );
+      }
+
+      function isVipAwareApiRouteClient(urlStr) {
+        const p = extractBrowserApiPathClient(urlStr);
+        return (
+          p.endsWith("/discover") ||
+          p.endsWith("/search") ||
+          p.endsWith("/collections") ||
+          p.endsWith("/universes") ||
+          p.endsWith("/similar") ||
+          p.endsWith("/details") ||
+          p.endsWith("/season") ||
+          p.endsWith("/person")
+        );
+      }
+
+      function isPersistentLocalStorageApiRouteClient(urlStr) {
+        const p = extractBrowserApiPathClient(urlStr);
+        return (
+          p.endsWith("/logo") ||
+          p.endsWith("/logos") ||
+          p.endsWith("/translate") ||
+          p.endsWith("/details") ||
+          p.endsWith("/season") ||
+          p.endsWith("/person") ||
+          p.endsWith("/collections") ||
+          p.endsWith("/universes") ||
+          p.endsWith("/similar")
+        );
+      }
+
+      function isSessionStorageApiRouteClient(urlStr) {
+        const p = extractBrowserApiPathClient(urlStr);
+        return p.endsWith("/discover") || p.endsWith("/search");
+      }
+
+      function isUserScopedApiRouteClient(urlStr) {
+        const p = extractBrowserApiPathClient(urlStr);
+        if (
+          p.endsWith("/wishlist") ||
+          p.endsWith("/reports") ||
+          p.endsWith("/settings") ||
+          p.includes("/admin/")
+        ) {
+          return true;
+        }
+        if (p.endsWith("/discover")) {
+          // Seite 1 enthält nutzerspezifische savedKeys
+          const raw = String(urlStr || "");
+          const hasNonFirstPage = /[?&]page=([2-9]|[1-9][0-9]+)/.test(raw);
+          return !hasNonFirstPage;
+        }
+        return false;
+      }
+
+      function canonicalizeBrowserApiUrlForCacheClient(urlStr) {
+        const raw = String(urlStr || "");
+        const qIdx = raw.indexOf("?");
+        if (qIdx < 0) return raw;
+        const pathPart = raw.slice(0, qIdx);
+        const queryPart = raw.slice(qIdx + 1);
+        const stripChatId = !isUserScopedApiRouteClient(raw) || pathPart.endsWith("/discover");
         try {
-          if (state.settings && Object.keys(state.settings).length > 0) {
-            const s = state.settings;
-            settingsHash = [
-              s.fsk || "",
-              s.onlyVipStreams ? "1" : "0",
-              (s.includedGenres || []).join(","),
-              (s.excludedGenres || []).join(","),
-              (s.providers || []).join(","),
-              s.minRating || "",
-              s.yearFrom || "",
-              s.yearTo || ""
-            ].join("|");
+          const sp = new URLSearchParams(queryPart);
+          if (stripChatId) sp.delete("chatId");
+          const entries = [];
+          sp.forEach((val, key) => {
+            entries.push([key, val]);
+          });
+          entries.sort((a, b) => (a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : (a[0] < b[0] ? -1 : 1)));
+          const rebuilt = entries.map(pair => encodeURIComponent(pair[0]) + "=" + encodeURIComponent(pair[1])).join("&");
+          return rebuilt ? (pathPart + "?" + rebuilt) : pathPart;
+        } catch (e) {
+          return raw;
+        }
+      }
+
+      function buildClientFilterHashForCacheClient(vipFlag) {
+        try {
+          const s = (state && state.settings && typeof state.settings === "object") ? state.settings : {};
+          const filtersActive = s.filtersActive !== false;
+          const showUnreleased = Boolean(s.showUnreleased);
+          const onlyVipStreams = Boolean(vipFlag && s.onlyVipStreams);
+          const normArr = (arr) => {
+            if (!filtersActive || !Array.isArray(arr) || arr.length === 0) return "";
+            const uniq = Array.from(new Set(arr.map(v => String(v == null ? "" : v).trim()).filter(Boolean))).sort();
+            return uniq.join(",");
+          };
+          const parts = [
+            filtersActive ? "1" : "0",
+            showUnreleased ? "1" : "0",
+            onlyVipStreams ? "1" : "0",
+            normArr(s.includedFsk),
+            normArr(s.excludedFsk),
+            normArr(s.includedGenres),
+            normArr(s.excludedGenres),
+            normArr(s.includedEras),
+            normArr(s.excludedEras),
+            normArr(s.includedStudios),
+            normArr(s.excludedStudios),
+            normArr(s.includedPlatforms),
+            normArr(s.excludedPlatforms)
+          ];
+          if (parts[0] === "1" && parts[1] === "0" && parts[2] === "0" && parts.slice(3).every(x => x === "")) {
+            return "def";
           }
-        } catch (e) {}
-        return String(urlStr || "") + "::" + settingsHash;
+          const str = parts.join("|");
+          let h = 2166136261;
+          for (let i = 0; i < str.length; i++) {
+            h ^= str.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+          }
+          return (h >>> 0).toString(36);
+        } catch (e) {
+          return "def";
+        }
+      }
+
+      function hashBrowserCacheKeyClient(cacheKey) {
+        let h1 = 2166136261;
+        let h2 = 16777619;
+        for (let i = 0; i < cacheKey.length; i++) {
+          const c = cacheKey.charCodeAt(i);
+          h1 = Math.imul(h1 ^ c, 16777619);
+          h2 = Math.imul(h2 ^ (c + i), 2246822519);
+        }
+        return (h1 >>> 0).toString(36) + "_" + (h2 >>> 0).toString(36);
+      }
+
+      function buildBrowserApiCacheKeyClient(urlStr) {
+        const raw = String(urlStr || "");
+        const canonicalUrl = canonicalizeBrowserApiUrlForCacheClient(raw);
+        const vipFlag = (typeof isCurrentUserVip === "function") ? Boolean(isCurrentUserVip()) : false;
+        const segments = [canonicalUrl];
+        if (isVipAwareApiRouteClient(raw)) {
+          segments.push(vipFlag ? "v1" : "v0");
+        }
+        if (isFilterDependentApiRouteClient(raw)) {
+          segments.push("f=" + buildClientFilterHashForCacheClient(vipFlag));
+        }
+        if (isUserScopedApiRouteClient(raw)) {
+          const scopeUid = (state && state.isAuthenticated && state.authUser && state.authUser.telegramId)
+            ? String(state.authUser.telegramId)
+            : String(chatId || "guest");
+          segments.push("u=" + scopeUid);
+        }
+        return segments.join("::");
       }
 
       function getBrowserApiCacheTtlMsClient(urlStr) {
         const u = String(urlStr || "");
-        if (u.includes("refresh=1")) return 0;
-        if (
-          u.includes("/discover") ||
-          u.includes("/details") ||
-          u.includes("/similar") ||
-          u.includes("/collections") ||
-          u.includes("/universes") ||
-          u.includes("/person") ||
-          u.includes("/season") ||
-          u.includes("/search") ||
-          u.includes("/logo")
-        ) {
-          return 5 * 60 * 1000; // 5 Minuten direkt aus dem Browser-Cache (0 Worker/D1-Hits!)
+        if (u.includes("refresh=1") || u.includes("mode=random")) return 0;
+        const p = extractBrowserApiPathClient(u);
+        if (p.endsWith("/logo") || p.endsWith("/logos") || p.endsWith("/translate")) {
+          return 24 * 60 * 60 * 1000; // 24 Stunden persistent im Browser (statische Logos & Übersetzungen)
         }
-        if (u.includes("/wishlist") || u.includes("/reports") || u.includes("/admin/overview") || u.includes("/admin/import-logs")) {
+        if (p.endsWith("/details") || p.endsWith("/season") || p.endsWith("/person")) {
+          return 30 * 60 * 1000; // 30 Minuten persistent im Browser (0 Worker-Calls beim erneuten Öffnen!)
+        }
+        if (p.endsWith("/collections") || p.endsWith("/universes") || p.endsWith("/similar")) {
+          return 20 * 60 * 1000; // 20 Minuten persistent im Browser
+        }
+        if (p.endsWith("/discover") || p.endsWith("/search")) {
+          return 5 * 60 * 1000; // 5 Minuten im Session-/RAM-Cache
+        }
+        if (p.endsWith("/wishlist") || p.endsWith("/reports") || p.endsWith("/admin/overview") || p.endsWith("/admin/import-logs")) {
           return 22 * 1000; // 22 Sekunden Kurzzeit-Puffer gegen Doppel-Klicks
         }
-        if (u.includes("/admin/catalog-preseed") || u.includes("/admin/tmdb-candidates")) {
+        if (p.endsWith("/admin/catalog-preseed") || p.endsWith("/admin/tmdb-candidates")) {
           return 2 * 60 * 1000;
         }
         return 0;
       }
 
-      function readBrowserApiCacheEntryClient(cacheKey) {
+      function readPersistentCacheIndexClient() {
+        try {
+          const raw = localStorage.getItem(BROWSER_PERSISTENT_CACHE_INDEX_KEY);
+          if (!raw) return [];
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+          return [];
+        }
+      }
+
+      function writePersistentCacheIndexClient(idxList) {
+        try {
+          localStorage.setItem(BROWSER_PERSISTENT_CACHE_INDEX_KEY, JSON.stringify(Array.isArray(idxList) ? idxList : []));
+        } catch (e) {}
+      }
+
+      function clearPersistentBrowserApiCacheClient(predicateFn) {
+        try {
+          const hasPredicate = typeof predicateFn === "function";
+          const idx = readPersistentCacheIndexClient();
+          const kept = [];
+          const seenKeys = new Set();
+          for (const item of idx) {
+            if (!item || !item.k) continue;
+            seenKeys.add(item.k);
+            const shouldRemove = !hasPredicate || predicateFn(String(item.r || ""), String(item.k || ""));
+            if (shouldRemove) {
+              try { localStorage.removeItem(item.k); } catch (e) {}
+            } else {
+              kept.push(item);
+            }
+          }
+          if (!hasPredicate) {
+            const strayKeys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const lk = localStorage.key(i);
+              if (lk && lk.startsWith(BROWSER_PERSISTENT_CACHE_PREFIX)) strayKeys.push(lk);
+            }
+            for (const lk of strayKeys) {
+              try { localStorage.removeItem(lk); } catch (e) {}
+            }
+            try { localStorage.removeItem(BROWSER_PERSISTENT_CACHE_INDEX_KEY); } catch (e) {}
+          } else {
+            writePersistentCacheIndexClient(kept);
+          }
+        } catch (e) {}
+      }
+
+      function readBrowserApiCacheEntryClient(cacheKey, urlStr) {
         const memMap = window._clientApiGetCache;
         if (memMap instanceof Map && memMap.has(cacheKey)) {
           return memMap.get(cacheKey);
         }
-        try {
-          let h = 2166136261;
-          for (let i = 0; i < cacheKey.length; i++) {
-            h ^= cacheKey.charCodeAt(i);
-            h = Math.imul(h, 16777619);
-          }
-          const ssKey = "tma_api_c_" + (h >>> 0).toString(36);
-          const raw = sessionStorage.getItem(ssKey);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (parsed && parsed.key === cacheKey && parsed.data) {
-              if (memMap instanceof Map) memMap.set(cacheKey, parsed);
-              return parsed;
+        const keyHash = hashBrowserCacheKeyClient(cacheKey);
+        const rawUrl = String(urlStr || cacheKey || "");
+        if (isPersistentLocalStorageApiRouteClient(rawUrl)) {
+          try {
+            const lsKey = BROWSER_PERSISTENT_CACHE_PREFIX + keyHash;
+            const rawLs = localStorage.getItem(lsKey);
+            if (rawLs) {
+              const parsed = JSON.parse(rawLs);
+              if (parsed && parsed.key === cacheKey && parsed.data) {
+                if (parsed.exp && Date.now() > Number(parsed.exp)) {
+                  try { localStorage.removeItem(lsKey); } catch (e) {}
+                } else {
+                  if (memMap instanceof Map) memMap.set(cacheKey, parsed);
+                  return parsed;
+                }
+              }
             }
-          }
-        } catch (e) {}
+          } catch (e) {}
+        }
+        if (isSessionStorageApiRouteClient(rawUrl)) {
+          try {
+            const ssKey = "tma_api_c_" + keyHash;
+            const raw = sessionStorage.getItem(ssKey);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && parsed.key === cacheKey && parsed.data) {
+                if (memMap instanceof Map) memMap.set(cacheKey, parsed);
+                return parsed;
+              }
+            }
+          } catch (e) {}
+        }
         return null;
       }
 
@@ -351,13 +564,16 @@
         const ttl = getBrowserApiCacheTtlMsClient(urlStr);
         if (ttl <= 0) return false;
         const key = buildBrowserApiCacheKeyClient(urlStr);
-        const entry = readBrowserApiCacheEntryClient(key);
+        const entry = readBrowserApiCacheEntryClient(key, urlStr);
         return Boolean(entry && entry.data && (Date.now() - Number(entry.ts || 0)) < ttl);
       }
 
       function writeBrowserApiCacheEntryClient(cacheKey, dataObj, urlStr) {
         if (!dataObj || dataObj.ok === false) return;
-        const entry = { key: cacheKey, data: dataObj, ts: Date.now() };
+        const ttlMs = getBrowserApiCacheTtlMsClient(urlStr);
+        if (ttlMs <= 0) return;
+        const now = Date.now();
+        const entry = { key: cacheKey, data: dataObj, ts: now, exp: now + ttlMs };
         const memMap = window._clientApiGetCache;
         if (memMap instanceof Map) {
           if (memMap.size > 260) {
@@ -367,14 +583,53 @@
           memMap.set(cacheKey, entry);
         }
         const u = String(urlStr || "");
-        if (u.includes("/discover") || u.includes("/details") || u.includes("/similar") || u.includes("/collections") || u.includes("/universes") || u.includes("/season")) {
+        const keyHash = hashBrowserCacheKeyClient(cacheKey);
+        if (isPersistentLocalStorageApiRouteClient(u)) {
           try {
-            let h = 2166136261;
-            for (let i = 0; i < cacheKey.length; i++) {
-              h ^= cacheKey.charCodeAt(i);
-              h = Math.imul(h, 16777619);
+            const serialized = JSON.stringify(entry);
+            if (serialized.length <= BROWSER_PERSISTENT_CACHE_MAX_BYTES) {
+              const lsKey = BROWSER_PERSISTENT_CACHE_PREFIX + keyHash;
+              const routePath = extractBrowserApiPathClient(u);
+              let idx = readPersistentCacheIndexClient().filter(it => {
+                if (!it || !it.k) return false;
+                if (it.k === lsKey) return false;
+                if (it.exp && now > Number(it.exp)) {
+                  try { localStorage.removeItem(it.k); } catch (e) {}
+                  return false;
+                }
+                return true;
+              });
+              while (idx.length >= BROWSER_PERSISTENT_CACHE_MAX_ENTRIES) {
+                const evicted = idx.shift();
+                if (evicted && evicted.k) {
+                  try { localStorage.removeItem(evicted.k); } catch (e) {}
+                }
+              }
+              try {
+                localStorage.setItem(lsKey, serialized);
+              } catch (quotaErr) {
+                // Bei QuotaExceededError älteste 25% aus dem LRU-Index entfernen und einmal neu versuchen
+                const evictCount = Math.max(8, Math.ceil(idx.length * 0.25));
+                for (let j = 0; j < evictCount && idx.length > 0; j++) {
+                  const oldItem = idx.shift();
+                  if (oldItem && oldItem.k) {
+                    try { localStorage.removeItem(oldItem.k); } catch (e) {}
+                  }
+                }
+                try { localStorage.setItem(lsKey, serialized); } catch (e2) {
+                  writePersistentCacheIndexClient(idx);
+                  return;
+                }
+              }
+              idx.push({ k: lsKey, ts: now, exp: entry.exp, r: routePath });
+              writePersistentCacheIndexClient(idx);
             }
-            const ssKey = "tma_api_c_" + (h >>> 0).toString(36);
+          } catch (e) {}
+          return;
+        }
+        if (isSessionStorageApiRouteClient(u)) {
+          try {
+            const ssKey = "tma_api_c_" + keyHash;
             sessionStorage.setItem(ssKey, JSON.stringify(entry));
           } catch (e) {}
         }
@@ -504,7 +759,7 @@
         let staleCacheEntry = null;
 
         if (isGetRequest && cacheKey) {
-          const cached = readBrowserApiCacheEntryClient(cacheKey);
+          const cached = readBrowserApiCacheEntryClient(cacheKey, urlStr);
           if (cached && cached.data) {
             staleCacheEntry = cached;
             if (cacheTtlMs > 0 && (Date.now() - Number(cached.ts || 0)) < cacheTtlMs) {
@@ -515,21 +770,32 @@
           if (inFlightMap instanceof Map && inFlightMap.has(cacheKey) && !opts.signal) {
             return inFlightMap.get(cacheKey);
           }
-        } else if (method !== "GET" && !isImportBatch) {
-          // Bei Schreibzugriffen (Merkliste, Admin-Änderung, Settings) relevante GET-Caches sofort invalidieren
+        } else if (method !== "GET" && !isImportBatch && !isBackgroundImportAux) {
+          // Gezielte Cache-Invalidierung bei Schreibzugriffen:
+          // - /wishlist -> invalidiert /wishlist, /discover?page=1 (savedKeys) sowie /details & /season (isSaved)
+          // - /settings -> invalidiert nur filter-abhängige Routen (NICHT /details, /season, /logo, /logos, /translate!)
+          // - /admin/* -> invalidiert Medien- & Admin-Caches (NICHT /logo, /logos, /translate)
+          const isWishlistMut = urlStr.includes("/wishlist");
+          const isSettingsMut = urlStr.includes("/settings");
+          const isAdminMut = urlStr.includes("/admin/");
           if (window._clientApiGetCache instanceof Map) {
             for (const k of Array.from(window._clientApiGetCache.keys())) {
-              if (
-                urlStr.includes("/wishlist") ||
-                urlStr.includes("/settings") ||
-                urlStr.includes("/admin/") ||
+              const shouldEvictRam =
                 k.includes("/wishlist") ||
                 k.includes("/admin/overview") ||
-                k.includes("/admin/import-logs")
-              ) {
+                k.includes("/admin/import-logs") ||
+                (isWishlistMut && (k.includes("/details") || k.includes("/season") || k.includes("/discover"))) ||
+                (isSettingsMut && (k.includes("/discover") || k.includes("/search") || k.includes("/collections") || k.includes("/universes") || k.includes("/similar") || k.includes("/settings"))) ||
+                (isAdminMut && (k.includes("/details") || k.includes("/season") || k.includes("/discover") || k.includes("/reports")));
+              if (shouldEvictRam) {
                 window._clientApiGetCache.delete(k);
               }
             }
+          }
+          if (isWishlistMut || isAdminMut) {
+            clearPersistentBrowserApiCacheClient((routePath) => (
+              routePath.endsWith("/details") || routePath.endsWith("/season")
+            ));
           }
         }
 
@@ -546,7 +812,7 @@
         if (isHeaderSafeStr(rawLaunchToken)) {
           headers["X-Telegram-Launch-Token"] = rawLaunchToken;
         }
-        if (state.settings && Object.keys(state.settings).length > 0) {
+        if (isFilterDependentApiRouteClient(urlStr) && state.settings && Object.keys(state.settings).length > 0) {
           try {
             const hdrFilterObj = {
               filtersActive: state.settings.filtersActive,
@@ -1026,7 +1292,7 @@
         triggerTmaHapticClient("medium");
         setBusyState(true, "🎲 Ziehe zufälligen " + (isMovie ? "Film" : "Serien-Tipp") + " mit deinen aktiven Filtern...");
         try {
-          const r = await apiFetchJson(API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + state.type + "&genreId=" + state.genreId + "&mode=random&bypass=1");
+          const r = await apiFetchJson(API_BASE + "/discover?type=" + state.type + "&genreId=" + state.genreId + "&mode=random&bypass=1");
           if (r.items && r.items.length > 0) {
             if (!Array.isArray(state.recentRandomKeys)) state.recentRandomKeys = [];
             const recentSet = new Set(state.recentRandomKeys);
@@ -1087,7 +1353,7 @@
         syncSearchGenreSelectDom();
         const root = document.getElementById("appRoot");
         const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
-        const discoverUrl = API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) + "&type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam;
+        const discoverUrl = API_BASE + "/discover?type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam;
         const isInstantFromCache = hasFreshBrowserApiCacheClient(discoverUrl);
         if (!isInstantFromCache) {
           const existingGrid = document.getElementById("resultsGridContainer");
@@ -1199,8 +1465,7 @@
         if (heroRotationTimer) clearInterval(heroRotationTimer);
 
         const root = document.getElementById("appRoot");
-        const searchUrl = API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-          "&q=" + encodeURIComponent(q) +
+        const searchUrl = API_BASE + "/search?q=" + encodeURIComponent(q) +
           "&scope=" + encodeURIComponent(state.searchScope || "all") +
           "&sort=" + encodeURIComponent(state.sort) +
           "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0");
@@ -1380,8 +1645,7 @@
           let res = null;
           if (state.isSearchMode && state.searchQuery) {
             res = await apiFetchJson(
-              API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-              "&q=" + encodeURIComponent(state.searchQuery) +
+              API_BASE + "/search?q=" + encodeURIComponent(state.searchQuery) +
               "&scope=" + encodeURIComponent(state.searchScope || "all") +
               "&sort=" + encodeURIComponent(state.sort) +
               "&page=" + nextPage
@@ -1389,8 +1653,7 @@
           } else {
             const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
             res = await apiFetchJson(
-              API_BASE + "/discover?chatId=" + encodeURIComponent(chatId) +
-              "&type=" + state.type +
+              API_BASE + "/discover?type=" + state.type +
               "&genreId=" + state.genreId +
               "&mode=" + state.mode +
               "&sort=" + state.sort +
@@ -1770,7 +2033,7 @@
         if (q.length >= 2) {
           worldsTraySearchTimer = setTimeout(async () => {
             try {
-              const r = await apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) + "&q=" + encodeURIComponent(q));
+              const r = await apiFetchJson(API_BASE + "/collections?q=" + encodeURIComponent(q));
               if (r && Array.isArray(r.results)) {
                 state.worldsTrayRemoteCols = r.results.slice(0, 12);
                 const g2 = document.getElementById("worldsPortalGridMount");
@@ -2074,8 +2337,8 @@
         setBusyState(true, "⏳ Lade Filmreihen & Filmuniversen...");
         try {
           const [colsRes, unisRes] = await Promise.all([
-            apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId)),
-            apiFetchJson(API_BASE + "/universes?chatId=" + encodeURIComponent(chatId))
+            apiFetchJson(API_BASE + "/collections"),
+            apiFetchJson(API_BASE + "/universes")
           ]);
           const cols = colsRes.collections || [];
           const unis = unisRes.universes || [];
@@ -2120,7 +2383,7 @@
         if (inp && document.activeElement === inp) inp.blur();
         setBusyState(true, '🔍 Suche Filmreihe "' + q + '"...');
         try {
-          const r = await apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) + "&q=" + encodeURIComponent(q));
+          const r = await apiFetchJson(API_BASE + "/collections?q=" + encodeURIComponent(q));
           const grid = document.getElementById("colHubGrid");
           if (!grid) return;
           const list = r.results || [];
@@ -2144,7 +2407,7 @@
         if (sortOverride) state.sort = sortOverride;
         setBusyState(true, "🍿 Lade Filmreihe...");
         try {
-          const r = await apiFetchJson(API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(colId) + "&sort=" + encodeURIComponent(effSort));
+          const r = await apiFetchJson(API_BASE + "/collections?id=" + encodeURIComponent(colId) + "&sort=" + encodeURIComponent(effSort));
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "collection";
@@ -2167,7 +2430,7 @@
         if (sortOverride) state.sort = sortOverride;
         setBusyState(true, "🌌 Lade Filmuniversum...");
         try {
-          const r = await apiFetchJson(API_BASE + "/universes?chatId=" + encodeURIComponent(chatId) + "&id=" + encodeURIComponent(uniId) + "&sort=" + encodeURIComponent(effSort));
+          const r = await apiFetchJson(API_BASE + "/universes?id=" + encodeURIComponent(uniId) + "&sort=" + encodeURIComponent(effSort));
           if (!r || !r.ok) return;
           state.isSearchMode = false;
           state.currentView = "universe";
@@ -4165,8 +4428,8 @@
         '</div>';
 
         try {
-          const url = API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-            (personId ? ("&personId=" + encodeURIComponent(personId)) : "&scope=person") +
+          const url = API_BASE + "/search?" +
+            (personId ? ("personId=" + encodeURIComponent(personId)) : "scope=person") +
             "&q=" + encodeURIComponent(cleanName) +
             "&bypass=1&sort=pop_desc";
           const res = await apiFetchJson(url);
@@ -4209,8 +4472,7 @@
         const onlyVipFlag = state.settings?.onlyVipStreams ? "1" : "0";
         try {
           const r = await apiFetchJson(
-            API_BASE + "/similar?chatId=" + encodeURIComponent(chatId) +
-            "&type=" + encodeURIComponent(type) +
+            API_BASE + "/similar?type=" + encodeURIComponent(type) +
             "&id=" + encodeURIComponent(id) +
             "&onlyVip=" + onlyVipFlag
           );
@@ -4256,8 +4518,7 @@
         if (!track || !colId) return;
         try {
           const r = await apiFetchJson(
-            API_BASE + "/collections?chatId=" + encodeURIComponent(chatId) +
-            "&id=" + encodeURIComponent(colId) +
+            API_BASE + "/collections?id=" + encodeURIComponent(colId) +
             "&sort=year_asc"
           );
           if (!state.activeDetails || !state.activeDetails.collection || String(state.activeDetails.collection.id) !== String(colId)) return;

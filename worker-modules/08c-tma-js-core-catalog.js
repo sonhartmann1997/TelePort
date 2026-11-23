@@ -1891,6 +1891,9 @@
           }
           for (const k of keysToRemove) sessionStorage.removeItem(k);
         } catch (e) {}
+        if (typeof clearPersistentBrowserApiCacheClient === "function") {
+          clearPersistentBrowserApiCacheClient();
+        }
       }
 
       // Prüft strikt, ob der aktuelle Nutzer VIP-Mitglied (oder Admin) ist:
@@ -2254,7 +2257,7 @@
 
         if (tabName === "wishlist" && state.isAuthenticated) {
           try {
-            const r = await apiFetchJson(API_BASE + "/wishlist?chatId=" + encodeURIComponent(chatId));
+            const r = await apiFetchJson(API_BASE + "/wishlist");
             if (r && Array.isArray(r.items)) {
               state.cachedWishlistItems = r.items;
               state.cachedWishlistFolders = r.folders || [];
@@ -2956,7 +2959,7 @@
         }
         if (prewarmedDetailKeysInFlightSet.has(cacheKey)) return;
         prewarmedDetailKeysInFlightSet.add(cacheKey);
-        apiFetchJson(API_BASE + "/details?chatId=" + encodeURIComponent(chatId) + "&type=" + tc + "&id=" + encodeURIComponent(id))
+        apiFetchJson(API_BASE + "/details?type=" + tc + "&id=" + encodeURIComponent(id))
           .then((d) => {
             if (d && d.ok !== false && typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
               clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
@@ -3374,28 +3377,39 @@
 
       async function ensureHeroSlidesOverviewsClient() {
         if (!Array.isArray(state.heroSlides) || state.heroSlides.length === 0) return;
-        const slidesSnapshot = state.heroSlides.slice();
-        for (let i = 0; i < slidesSnapshot.length; i++) {
-          const sl = slidesSnapshot[i];
-          if (!sl || !sl.id) continue;
-          const rawOv = String(sl.overview || "").trim();
-          if (rawOv && !isGenericPlaceholderOverviewClient(rawOv)) continue;
-          const slType = sl.media_type === "tv" || state.type === "s" ? "s" : "m";
-          const key = slType + "_" + sl.id;
-          if (heroDetailsOverviewBackfillSet.has(key)) continue;
-          heroDetailsOverviewBackfillSet.add(key);
-          try {
-            const det = await apiFetchJson(API_BASE + "/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
-            const fetchedOv = String(det?.overview || "").trim();
-            if (fetchedOv && !isGenericPlaceholderOverviewClient(fetchedOv)) {
-              sl.overview = fetchedOv;
-              const curHero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
-              if (curHero && Number(curHero.id) === Number(sl.id)) {
-                updateHeroBannerDomOnly(false);
-              }
-            }
-          } catch (_e) {}
+        // Free-Plan Schutz: Niemals blind alle 6-8 Hero-Slides im Hintergrund per /details abfragen,
+        // sondern ausschließlich den aktuell sichtbaren Slide (falls /discover keinen Overview lieferte).
+        const sl = state.heroSlides[state.heroIndex] || state.heroSlides[0];
+        if (!sl || !sl.id) return;
+        const rawOv = String(sl.overview || "").trim();
+        if (rawOv && !isGenericPlaceholderOverviewClient(rawOv)) return;
+        const slType = sl.media_type === "tv" || state.type === "s" ? "s" : "m";
+        const key = slType + "_" + sl.id;
+        if (heroDetailsOverviewBackfillSet.has(key)) return;
+        heroDetailsOverviewBackfillSet.add(key);
+        const vipAllowed = typeof isCurrentUserVip === "function" ? isCurrentUserVip() : false;
+        const detailCacheKey = slType + "_" + sl.id + "_" + (vipAllowed ? "vip" : "std");
+        let det = null;
+        if (typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
+          const hit = clientDetailsCache.get(detailCacheKey);
+          if (hit && hit.data) det = hit.data;
         }
+        try {
+          if (!det) {
+            det = await apiFetchJson(API_BASE + "/details?type=" + slType + "&id=" + encodeURIComponent(sl.id));
+            if (det && det.ok !== false && typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
+              clientDetailsCache.set(detailCacheKey, { data: det, ts: Date.now() });
+            }
+          }
+          const fetchedOv = String(det?.overview || "").trim();
+          if (fetchedOv && !isGenericPlaceholderOverviewClient(fetchedOv)) {
+            sl.overview = fetchedOv;
+            const curHero = state.heroSlides[state.heroIndex] || state.heroSlides[0];
+            if (curHero && Number(curHero.id) === Number(sl.id)) {
+              updateHeroBannerDomOnly(false);
+            }
+          }
+        } catch (_e) {}
       }
 
       function triggerTmaHapticClient(style) {
@@ -4727,6 +4741,9 @@
         const prevInFrontHero = document.body.classList.contains("in-hero-slider");
         const inFrontHero = typeof isUserInHeroSliderFront === "function" ? isUserInHeroSliderFront() : false;
         document.body.classList.toggle("in-hero-slider", inFrontHero);
+        if (inFrontHero && typeof syncCatalogFocusInfoBarClient === "function") {
+          syncCatalogFocusInfoBarClient(null);
+        }
         if (inFrontHero !== prevInFrontHero && typeof syncSmartPageIndicatorDomClient === "function") {
           syncSmartPageIndicatorDomClient(false);
         }
@@ -4770,6 +4787,9 @@
         if (document.body.classList.contains("hero-scrolled-past")) {
           document.body.classList.remove("hero-scrolled-past");
           syncHeroSearchPlaceholderAndToggleBtnClient();
+        }
+        if (typeof syncCatalogFocusInfoBarClient === "function") {
+          syncCatalogFocusInfoBarClient(null);
         }
         stageWrap.style.setProperty("--hero-scroll-fade", "0");
       }

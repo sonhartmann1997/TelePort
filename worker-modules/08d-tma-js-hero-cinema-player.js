@@ -1494,10 +1494,13 @@
           }
         }
         try {
-          const d = await apiFetchJson(API_BASE + "/details?chatId=" + encodeURIComponent(chatId) + "&type=" + tc + "&id=" + encodeURIComponent(hero.id));
+          const d = await apiFetchJson(API_BASE + "/details?type=" + tc + "&id=" + encodeURIComponent(hero.id));
           if (d && d.ok !== false) {
             if (typeof clientDetailsCache !== "undefined" && clientDetailsCache instanceof Map) {
               clientDetailsCache.set(cacheKey, { data: d, ts: Date.now() });
+            }
+            if ((!hero.overview || !String(hero.overview).trim()) && d.overview && String(d.overview).trim()) {
+              hero.overview = String(d.overview).trim();
             }
             if (d.trailers) {
               hero._cachedTrailers = d.trailers;
@@ -1600,13 +1603,19 @@
           stopHeroBackgroundVideoTeaserClient();
           heroBgTeaserActiveSlideKey = slideKey;
         }
+        const previewDisabled = !immediateForeground && typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled;
         if (hero._trailerChecked) {
           syncHeroTrailerAvailabilityButtonClient(hero._hasEmbeddableTrailer ? "available" : "none", hero._trailerCount || 0);
+        } else if (previewDisabled) {
+          // Wenn Hintergrund-Vorschau aus ist, KEINEN /details-Worker-Call bei jeder Slide-Rotation feuern –
+          // Trailer-Button bleibt direkt klickbar und lädt bei Klick on-demand!
+          syncHeroTrailerAvailabilityButtonClient("available", 1);
+          return;
         } else {
           syncHeroTrailerAvailabilityButtonClient("checking", 0);
         }
-        const previewDisabled = !immediateForeground && typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled;
         if (!immediateForeground) {
+          if (typeof document !== "undefined" && document.hidden) return;
           if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
           if (heroCurtainScrolledToCatalog || (document.body && document.body.classList.contains("hero-scrolled-past"))) return;
         }
@@ -1627,6 +1636,7 @@
           const curSlideKey = curHero ? ((curHero.media_type === "tv" || state.type === "s" ? "s" : "m") + "_" + curHero.id) : "";
           if (!curHero || curSlideKey !== slideKey) return;
           if (!immediateForeground) {
+            if (typeof document !== "undefined" && document.hidden) return;
             if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
             if (heroCurtainScrolledToCatalog || !isHeroStageAvailableForCurrentViewClient()) return;
           }
@@ -2900,8 +2910,12 @@
         if (document.body.classList.contains("hero-slider-expanded") !== isExp) {
           document.body.classList.toggle("hero-slider-expanded", isExp);
         }
+        const inFrontHero = typeof isUserInHeroSliderFront === "function" ? isUserInHeroSliderFront() : false;
         if (typeof isUserInHeroSliderFront === "function") {
-          document.body.classList.toggle("in-hero-slider", isUserInHeroSliderFront());
+          document.body.classList.toggle("in-hero-slider", inFrontHero);
+        }
+        if ((inFrontHero || (isExp && !document.body.classList.contains("hero-scrolled-past"))) && typeof syncCatalogFocusInfoBarClient === "function") {
+          syncCatalogFocusInfoBarClient(null);
         }
         if (typeof syncSmartPageIndicatorDomClient === "function") {
           syncSmartPageIndicatorDomClient(false);
@@ -4134,8 +4148,7 @@
         liveSearchDebounceTimer = setTimeout(async () => {
           try {
             const res = await apiFetchJson(
-              API_BASE + "/search?chatId=" + encodeURIComponent(chatId) +
-              "&q=" + encodeURIComponent(q) +
+              API_BASE + "/search?q=" + encodeURIComponent(q) +
               "&scope=" + encodeURIComponent(state.searchScope || "all") +
               "&sort=" + encodeURIComponent(state.sort)
             );

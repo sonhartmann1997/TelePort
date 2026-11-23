@@ -3374,54 +3374,166 @@
         const colId = url.searchParams.get("id");
         const q = (url.searchParams.get("q") || "").trim();
         const sortBy = url.searchParams.get("sort") || "year_asc";
+        const forceRefresh = url.searchParams.get("refresh") === "1";
+        const edgeCacheCol = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+
         if (colId) {
+          const colFilterHash = buildCatalogEdgeFilterHash(settings, hasVipStreamAccess);
+          const colCacheKey = edgeCacheCol
+            ? new Request(
+                `${url.origin}/__edge_cache/api/tma/collections/id/v1?id=${encodeURIComponent(colId)}&sort=${encodeURIComponent(sortBy)}&vip=${hasVipStreamAccess ? 1 : 0}&fh=${encodeURIComponent(colFilterHash)}`,
+                { method: "GET" }
+              )
+            : null;
+          if (edgeCacheCol && colCacheKey && !forceRefresh) {
+            try {
+              const cachedColRes = await edgeCacheCol.match(colCacheKey);
+              if (cachedColRes && cachedColRes.ok) {
+                const cachedBody = await cachedColRes.text();
+                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+                return new Response(cachedBody, {
+                  status: 200,
+                  headers: {
+                    ...corsHeaders,
+                    "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+                    "X-Edge-Cache": "HIT"
+                  }
+                });
+              }
+            } catch (_e) {}
+          }
+
           const col = await fetchCollectionDetails(env, colId);
           if (!col) return new Response(JSON.stringify({ ok: false, error: "Filmreihe nicht gefunden" }), { status: 404, headers: corsHeaders });
           const rawParts = (col.parts || []).map(p => ({ ...p, media_type: "movie" }));
           let { visibleItems } = await filterAndSortMediaList(env, rawParts, settings, sortBy);
           visibleItems = await attachVipQualitiesToMediaList(env, visibleItems, "m", hasVipStreamAccess);
-          return new Response(JSON.stringify({
+          const colBodyStr = JSON.stringify({
             ok: true,
             id: col.id,
             name: col.name,
             overview: col.overview,
             items: visibleItems
-          }), { status: 200, headers: corsHeaders });
+          });
+          if (edgeCacheCol && colCacheKey && rawParts.length > 0) {
+            const edgeEntry = new Response(colBodyStr, {
+              status: 200,
+              headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=900" }
+            });
+            scheduleBackgroundWork(() => edgeCacheCol.put(colCacheKey, edgeEntry));
+          }
+          return new Response(colBodyStr, {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+              "X-Edge-Cache": "MISS"
+            }
+          });
         }
         if (q) {
+          const qCacheKey = edgeCacheCol
+            ? new Request(`${url.origin}/__edge_cache/api/tma/collections/q/v1?q=${encodeURIComponent(q.toLowerCase())}`, { method: "GET" })
+            : null;
+          if (edgeCacheCol && qCacheKey && !forceRefresh) {
+            try {
+              const cachedQRes = await edgeCacheCol.match(qCacheKey);
+              if (cachedQRes && cachedQRes.ok) {
+                const cachedQBody = await cachedQRes.text();
+                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+                return new Response(cachedQBody, {
+                  status: 200,
+                  headers: { ...corsHeaders, "Cache-Control": "public, max-age=900", "X-Edge-Cache": "HIT" }
+                });
+              }
+            } catch (_e) {}
+          }
           const found = await searchCollectionsTMDB(env, q, 1);
-          return new Response(JSON.stringify({
-            ok: true,
-            results: found?.results || []
-          }), { status: 200, headers: corsHeaders });
+          const qResults = found?.results || [];
+          const qBodyStr = JSON.stringify({ ok: true, results: qResults });
+          if (edgeCacheCol && qCacheKey && qResults.length > 0) {
+            const edgeQEntry = new Response(qBodyStr, {
+              status: 200,
+              headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=900" }
+            });
+            scheduleBackgroundWork(() => edgeCacheCol.put(qCacheKey, edgeQEntry));
+          }
+          return new Response(qBodyStr, {
+            status: 200,
+            headers: { ...corsHeaders, "Cache-Control": "public, max-age=900", "X-Edge-Cache": "MISS" }
+          });
         }
         return new Response(JSON.stringify({
           ok: true,
           collections: FEATURED_COLLECTIONS
-        }), { status: 200, headers: corsHeaders });
+        }), { status: 200, headers: { ...corsHeaders, "Cache-Control": "public, max-age=3600" } });
       }
 
       if (path === "/api/tma/universes" && request.method === "GET") {
         const uniId = url.searchParams.get("id");
         const sortBy = url.searchParams.get("sort") || "year_asc";
+        const forceRefresh = url.searchParams.get("refresh") === "1";
+        const edgeCacheUni = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+
         if (uniId) {
+          const uniFilterHash = buildCatalogEdgeFilterHash(settings, hasVipStreamAccess);
+          const uniCacheKey = edgeCacheUni
+            ? new Request(
+                `${url.origin}/__edge_cache/api/tma/universes/id/v1?id=${encodeURIComponent(uniId)}&sort=${encodeURIComponent(sortBy)}&vip=${hasVipStreamAccess ? 1 : 0}&fh=${encodeURIComponent(uniFilterHash)}`,
+                { method: "GET" }
+              )
+            : null;
+          if (edgeCacheUni && uniCacheKey && !forceRefresh) {
+            try {
+              const cachedUniRes = await edgeCacheUni.match(uniCacheKey);
+              if (cachedUniRes && cachedUniRes.ok) {
+                const cachedUniBody = await cachedUniRes.text();
+                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+                return new Response(cachedUniBody, {
+                  status: 200,
+                  headers: {
+                    ...corsHeaders,
+                    "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+                    "X-Edge-Cache": "HIT"
+                  }
+                });
+              }
+            } catch (_e) {}
+          }
+
           const uni = await fetchUniverseDetails(env, uniId);
           if (!uni) return new Response(JSON.stringify({ ok: false, error: "Filmuniversum nicht gefunden" }), { status: 404, headers: corsHeaders });
-          let { visibleItems } = await filterAndSortMediaList(env, uni.parts || [], settings, sortBy);
+          const rawUniParts = uni.parts || [];
+          let { visibleItems } = await filterAndSortMediaList(env, rawUniParts, settings, sortBy);
           visibleItems = await attachVipQualitiesToMediaList(env, visibleItems, "m", hasVipStreamAccess);
-          return new Response(JSON.stringify({
+          const uniBodyStr = JSON.stringify({
             ok: true,
             id: uni.id,
             name: uni.name,
             icon: uni.icon,
             description: uni.desc,
             items: visibleItems
-          }), { status: 200, headers: corsHeaders });
+          });
+          if (edgeCacheUni && uniCacheKey && rawUniParts.length > 0) {
+            const edgeUniEntry = new Response(uniBodyStr, {
+              status: 200,
+              headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=900" }
+            });
+            scheduleBackgroundWork(() => edgeCacheUni.put(uniCacheKey, edgeUniEntry));
+          }
+          return new Response(uniBodyStr, {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              "Cache-Control": hasVipStreamAccess ? "private, no-store" : "public, max-age=300",
+              "X-Edge-Cache": "MISS"
+            }
+          });
         }
         return new Response(JSON.stringify({
           ok: true,
           universes: CINEMATIC_UNIVERSES
-        }), { status: 200, headers: corsHeaders });
+        }), { status: 200, headers: { ...corsHeaders, "Cache-Control": "public, max-age=3600" } });
       }
 
       if (path === "/api/tma/search" && request.method === "GET") {
@@ -3647,39 +3759,47 @@
       if (path === "/api/tma/details" && request.method === "GET") {
         const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
         const id = String(url.searchParams.get("id") || "").trim();
+        const forceRefresh = url.searchParams.get("refresh") === "1";
         if (!/^\d+$/.test(id)) {
           return new Response(JSON.stringify({ ok: false, error: "Ungültige Medien-ID." }), { status: 400, headers: corsHeaders });
         }
         const isMovie = typeCode === "m";
-        const details = isMovie ? await fetchMovieDetails(env, id) : await fetchSeriesDetails(env, id);
-        if (!details) {
-          return new Response(JSON.stringify({ ok: false, error: "Not found" }), { status: 404, headers: corsHeaders });
-        }
-        const title = (details.title || details.name || "Unbekannt").replace(/\s*\(\d{4}\)$/, "");
-        const rawDate = details.releaseDate && details.releaseDate !== "Keine Angabe"
-          ? details.releaseDate
-          : (details.release_date || details.first_air_date || "");
-        const year = (rawDate.split("-")[0]) || "K.A.";
-        const vote = details.vote_average ? Math.round(details.vote_average * 10) / 10 : "–";
-
         const isAdminUser = Boolean(auth.user?.isAdmin);
         const canSeeStreams = Boolean(hasVipStreamAccess || isAdminUser);
-        // Telegraph wird in TMA-Details NICHT synchron erzeugt (spart externe API-Calls & CPU; bereits vorhandene URL wird direkt genutzt).
-        const telegraphUrl = details.telegraphUrl || "";
 
-        const rawCandidateKeys = Array.isArray(details.trailerCandidates) && details.trailerCandidates.length > 0
-          ? details.trailerCandidates
-          : (details.trailerKey ? [details.trailerKey] : []);
+        // Cloudflare Edge Cache für die schwere, nutzerunabhängige TMDb+Trailer+ClearLogo-Basis (30 Min. TTL).
+        // Spart TMDb-Details, ClearLogo-Abrufe, YouTube-oEmbed & KinoCheck über alle Nutzer hinweg;
+        // VIP-Streams & Merkliste (isSaved) werden pro Request frisch aus D1/KV darübergelegt!
+        const edgeCacheDet = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const detBaseCacheKey = edgeCacheDet
+          ? new Request(`${url.origin}/__edge_cache/api/tma/details/base/v1?type=${typeCode}&id=${encodeURIComponent(id)}`, { method: "GET" })
+          : null;
+
+        let detailsBase = null;
+        let detailsEdgeHit = false;
+        if (edgeCacheDet && detBaseCacheKey && !forceRefresh) {
+          try {
+            const cachedBaseRes = await edgeCacheDet.match(detBaseCacheKey);
+            if (cachedBaseRes && cachedBaseRes.ok) {
+              const parsedBase = await cachedBaseRes.json().catch(() => null);
+              if (parsedBase && parsedBase.id) {
+                detailsBase = parsedBase;
+                detailsEdgeHit = true;
+                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+              }
+            }
+          } catch (_e) {}
+        }
 
         // Serien-D1-Abfrage dedupliziert: 1 einzige episode_files Abfrage liefert sowohl seasonCounts als auch allStreamFiles!
-        const fetchSeriesEpisodeFilesOnce = async () => {
-          if (isMovie || !canSeeStreams) return [];
+        const fetchSeriesEpisodeFilesOnce = async (targetSeriesId) => {
+          if (isMovie || !canSeeStreams || !targetSeriesId) return [];
           const db = await ensureD1Schema(env);
           if (db) {
             try {
               const epFilesRes = await db
                 .prepare("SELECT id, series_id, season_number, episode_number, telegram_file_id, quality, codec, part, tags, version_label, file_size, raw_filename, raw_caption, message_link, updated_at FROM episode_files WHERE series_id = ?1 ORDER BY season_number ASC, episode_number ASC")
-                .bind(details.id)
+                .bind(targetSeriesId)
                 .all();
               if (Array.isArray(epFilesRes?.results) && epFilesRes.results.length > 0) {
                 return epFilesRes.results.map(enrichStreamFileRowMeta);
@@ -3689,7 +3809,7 @@
           if (memoryFallback) {
             const memCollected = [];
             for (const [k, v] of memoryFallback.entries()) {
-              if (k.startsWith(`d1_ep_files_${details.id}_`) && Array.isArray(v)) {
+              if (k.startsWith(`d1_ep_files_${targetSeriesId}_`) && Array.isArray(v)) {
                 memCollected.push(...v.map(enrichStreamFileRowMeta));
               }
             }
@@ -3698,24 +3818,156 @@
           return [];
         };
 
-        const [savedList, movieFiles, botUsername, seriesEpisodeFiles, mediaDownloads, resolvedLogoPath, resolvedTrailersPack] = await Promise.all([
-          auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
-          (isMovie && canSeeStreams) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
-          tgApi(env).getBotUsername(env).catch(() => ""),
-          fetchSeriesEpisodeFilesOnce(),
-          canSeeStreams ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
-          resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || ""),
-          typeof resolveTrailerCandidatesWithFallbacks === "function"
-            ? resolveTrailerCandidatesWithFallbacks(env, typeCode, details, rawCandidateKeys, details.trailerCandidatesMeta).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
-            : (typeof verifyEmbeddableYoutubeCandidates === "function"
-                ? verifyEmbeddableYoutubeCandidates(rawCandidateKeys).then(keys => ({ keys, meta: details.trailerCandidatesMeta || {}, source: keys.length ? "tmdb" : "none" })).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
-                : Promise.resolve({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
-        ]);
+        let savedList = [];
+        let movieFiles = [];
+        let seriesEpisodeFiles = [];
+        let mediaDownloads = [];
+        let botUsername = "";
+
+        if (detailsBase) {
+          // Edge-Cache-Treffer: 0 TMDb/YouTube/KinoCheck/ClearLogo-Subrequests – nur leichte Nutzer-/VIP-Daten nachladen!
+          const targetId = detailsBase.id;
+          [savedList, movieFiles, botUsername, seriesEpisodeFiles, mediaDownloads] = await Promise.all([
+            auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
+            (isMovie && canSeeStreams) ? getMovieFilesFromD1(env, targetId).catch(() => []) : Promise.resolve([]),
+            detailsBase.botUsername ? Promise.resolve(detailsBase.botUsername) : tgApi(env).getBotUsername(env).catch(() => ""),
+            fetchSeriesEpisodeFilesOnce(targetId),
+            canSeeStreams ? getMediaDownloadsFromD1(env, typeCode, targetId, null).catch(() => []) : Promise.resolve([])
+          ]);
+        } else {
+          const details = isMovie ? await fetchMovieDetails(env, id) : await fetchSeriesDetails(env, id);
+          if (!details) {
+            return new Response(JSON.stringify({ ok: false, error: "Not found" }), { status: 404, headers: corsHeaders });
+          }
+          const title = (details.title || details.name || "Unbekannt").replace(/\s*\(\d{4}\)$/, "");
+          const rawDate = details.releaseDate && details.releaseDate !== "Keine Angabe"
+            ? details.releaseDate
+            : (details.release_date || details.first_air_date || "");
+          const year = (rawDate.split("-")[0]) || "K.A.";
+          const vote = details.vote_average ? Math.round(details.vote_average * 10) / 10 : "–";
+          // Telegraph wird in TMA-Details NICHT synchron erzeugt (spart externe API-Calls & CPU; bereits vorhandene URL wird direkt genutzt).
+          const telegraphUrl = details.telegraphUrl || "";
+          const rawCandidateKeys = Array.isArray(details.trailerCandidates) && details.trailerCandidates.length > 0
+            ? details.trailerCandidates
+            : (details.trailerKey ? [details.trailerKey] : []);
+
+          let resolvedLogoPath = "";
+          let resolvedTrailersPack = null;
+          [savedList, movieFiles, botUsername, seriesEpisodeFiles, mediaDownloads, resolvedLogoPath, resolvedTrailersPack] = await Promise.all([
+            auth.isAuthenticated ? getSavedList(env, chatId).catch(() => []) : Promise.resolve([]),
+            (isMovie && canSeeStreams) ? getMovieFilesFromD1(env, details.id).catch(() => []) : Promise.resolve([]),
+            tgApi(env).getBotUsername(env).catch(() => ""),
+            fetchSeriesEpisodeFilesOnce(details.id),
+            canSeeStreams ? getMediaDownloadsFromD1(env, typeCode, details.id, details).catch(() => []) : Promise.resolve([]),
+            resolveMediaClearLogoPath(env, typeCode, details.id, details.logo_path || "").catch(() => details.logo_path || ""),
+            typeof resolveTrailerCandidatesWithFallbacks === "function"
+              ? resolveTrailerCandidatesWithFallbacks(env, typeCode, details, rawCandidateKeys, details.trailerCandidatesMeta).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
+              : (typeof verifyEmbeddableYoutubeCandidates === "function"
+                  ? verifyEmbeddableYoutubeCandidates(rawCandidateKeys).then(keys => ({ keys, meta: details.trailerCandidatesMeta || {}, source: keys.length ? "tmdb" : "none" })).catch(() => ({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
+                  : Promise.resolve({ keys: rawCandidateKeys, meta: details.trailerCandidatesMeta || {}, source: rawCandidateKeys.length ? "tmdb" : "none" }))
+          ]);
+
+          const candidateKeys = Array.isArray(resolvedTrailersPack?.keys) && resolvedTrailersPack.keys.length > 0
+            ? resolvedTrailersPack.keys
+            : [];
+          const trailerSource = String(resolvedTrailersPack?.source || (candidateKeys.length > 0 ? "tmdb" : "none"));
+          const ytKey = candidateKeys[0] || "";
+          const rawMergedMeta = resolvedTrailersPack?.meta || details.trailerCandidatesMeta;
+          const trailerMetaMap = typeof resolveYoutubeTrailerCandidatesMeta === "function"
+            ? resolveYoutubeTrailerCandidatesMeta(candidateKeys, rawMergedMeta)
+            : {};
+          if (ytKey && rawMergedMeta && rawMergedMeta[ytKey]?.source && trailerMetaMap[ytKey]) {
+            trailerMetaMap[ytKey].source = rawMergedMeta[ytKey].source;
+          }
+          const primaryTrailerLang = String(trailerMetaMap[ytKey]?.lang || "").toLowerCase();
+          const autoEnableSubtitles = primaryTrailerLang === "en";
+          const hasTrailer = Boolean(ytKey);
+          const trailers = ytKey ? {
+            key: ytKey,
+            lang: primaryTrailerLang,
+            source: trailerSource,
+            candidates: candidateKeys,
+            meta: trailerMetaMap,
+            youtube: `https://www.youtube.com/watch?v=${ytKey}`,
+            piped: `https://piped.video/watch?v=${ytKey}`,
+            invidious1: `https://yewtu.be/watch?v=${ytKey}`,
+            invidious2: `https://inv.nadeko.net/watch?v=${ytKey}`,
+            invidiousDe: `https://invidious.nerdvpn.de/watch?v=${ytKey}`,
+            poketube: `https://poketube.fun/watch?v=${ytKey}`,
+            embeds: {
+              youtube: `https://www.youtube-nocookie.com/embed/${ytKey}?autoplay=1&mute=0&controls=0&disablekb=1&fs=0&showinfo=0&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=${autoEnableSubtitles ? 1 : 0}${autoEnableSubtitles ? "&cc_lang_pref=de" : ""}&autohide=1&playsinline=1&enablejsapi=1&hl=de`,
+              piped: `https://piped.video/embed/${ytKey}?autoplay=1`,
+              invidious1: `https://yewtu.be/embed/${ytKey}?autoplay=1`,
+              invidious2: `https://inv.nadeko.net/embed/${ytKey}?autoplay=1`,
+              invidiousDe: `https://invidious.nerdvpn.de/embed/${ytKey}?autoplay=1`
+            }
+          } : null;
+
+          const matchedUniverse = detectUniverseForItem(typeCode, details);
+          const providerButtons = buildStreamingProviderButtons(details);
+          const shareData = buildUnifiedTelegramSharePost({
+            typeCode,
+            itemId: details.id,
+            title,
+            releaseYear: year,
+            voteAverage: vote,
+            genres: details.genres || "",
+            fsk: details.fsk || "",
+            overview: details.overview || "",
+            posterUrl: resolvePosterUrl(details.poster_path, "w500", details.external_poster_url || ""),
+            telegraphUrl: telegraphUrl || "",
+            botUsername: botUsername || ""
+          });
+
+          detailsBase = {
+            id: details.id,
+            botUsername: botUsername || "",
+            title,
+            year,
+            vote,
+            fsk: details.fsk || "Ungeprüft",
+            runtime: details.runtime || "",
+            country: details.country || "",
+            statusText: details.statusText || "",
+            numberOfSeasons: Number(details.numberOfSeasons || 0),
+            numberOfEpisodes: details.numberOfEpisodes || 0,
+            genres: details.genres || "",
+            studios: details.studios || "",
+            studiosList: details.studiosList || [],
+            providers: details.providers || details.allProviders || "",
+            providerButtons,
+            directors: details.directors || "",
+            directorsList: details.directorsList || [],
+            casts: details.casts || "",
+            castList: details.castList || [],
+            overview: details.overview || "",
+            poster_path: details.poster_path,
+            external_poster_url: details.external_poster_url || "",
+            backdrop_path: details.backdrop_path,
+            logo_path: resolvedLogoPath || details.logo_path || "",
+            collection: details.collection || null,
+            universe: matchedUniverse,
+            telegraphUrl,
+            hasTrailer,
+            trailerSource,
+            trailers,
+            shareData,
+            activeGroupName: details.activeGroupName || ""
+          };
+
+          if (edgeCacheDet && detBaseCacheKey) {
+            const edgeDetEntry = new Response(JSON.stringify(detailsBase), {
+              status: 200,
+              headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=1800" }
+            });
+            scheduleBackgroundWork(() => edgeCacheDet.put(detBaseCacheKey, edgeDetEntry));
+          }
+        }
 
         // Poster-Backfill NUR asynchron im Hintergrund UND nur wenn der Eintrag in der Merkliste wirklich noch kein Poster hat!
-        const matchedSavedItem = (savedList || []).find(i => String(i.tmdbId) === String(details.id) && i.contentType !== "episode");
-        if (matchedSavedItem && (!matchedSavedItem.poster || String(matchedSavedItem.poster).includes("placeholder")) && (details.poster_path || details.external_poster_url)) {
-          scheduleBackgroundWork(() => backfillMediaPosterInLists(env, typeCode, details.id, details.poster_path, details.external_poster_url || "", auth.isAuthenticated ? chatId : null));
+        const matchedSavedItem = (savedList || []).find(i => String(i.tmdbId) === String(detailsBase.id) && i.contentType !== "episode");
+        if (matchedSavedItem && (!matchedSavedItem.poster || String(matchedSavedItem.poster).includes("placeholder")) && (detailsBase.poster_path || detailsBase.external_poster_url)) {
+          scheduleBackgroundWork(() => backfillMediaPosterInLists(env, typeCode, detailsBase.id, detailsBase.poster_path, detailsBase.external_poster_url || "", auth.isAuthenticated ? chatId : null));
         }
 
         // seasonCounts direkt aus den einmalig geladenen seriesEpisodeFiles berechnen (kein zweiter D1-Read!)
@@ -3739,68 +3991,15 @@
         const vipSeasonsSorted = Object.keys(seasonCounts).map(Number).filter(n => n > 0).sort((a, b) => a - b);
         const firstVipSeason = vipSeasonsSorted[0] ?? (Number(seasonCounts[0] || 0) > 0 ? 0 : 1);
         const isSaved = Boolean(matchedSavedItem);
-        const candidateKeys = Array.isArray(resolvedTrailersPack?.keys) && resolvedTrailersPack.keys.length > 0
-          ? resolvedTrailersPack.keys
-          : [];
-        const trailerSource = String(resolvedTrailersPack?.source || (candidateKeys.length > 0 ? "tmdb" : "none"));
-        const ytKey = candidateKeys[0] || "";
-        const rawMergedMeta = resolvedTrailersPack?.meta || details.trailerCandidatesMeta;
-        const trailerMetaMap = typeof resolveYoutubeTrailerCandidatesMeta === "function"
-          ? resolveYoutubeTrailerCandidatesMeta(candidateKeys, rawMergedMeta)
-          : {};
-        if (ytKey && rawMergedMeta && rawMergedMeta[ytKey]?.source && trailerMetaMap[ytKey]) {
-          trailerMetaMap[ytKey].source = rawMergedMeta[ytKey].source;
-        }
-        const primaryTrailerLang = String(trailerMetaMap[ytKey]?.lang || "").toLowerCase();
-        const autoEnableSubtitles = primaryTrailerLang === "en";
-        const hasTrailer = Boolean(ytKey);
-        const trailers = ytKey ? {
-          key: ytKey,
-          lang: primaryTrailerLang,
-          source: trailerSource,
-          candidates: candidateKeys,
-          meta: trailerMetaMap,
-          youtube: `https://www.youtube.com/watch?v=${ytKey}`,
-          piped: `https://piped.video/watch?v=${ytKey}`,
-          invidious1: `https://yewtu.be/watch?v=${ytKey}`,
-          invidious2: `https://inv.nadeko.net/watch?v=${ytKey}`,
-          invidiousDe: `https://invidious.nerdvpn.de/watch?v=${ytKey}`,
-          poketube: `https://poketube.fun/watch?v=${ytKey}`,
-          embeds: {
-            youtube: `https://www.youtube-nocookie.com/embed/${ytKey}?autoplay=1&mute=0&controls=0&disablekb=1&fs=0&showinfo=0&rel=0&modestbranding=1&iv_load_policy=3&cc_load_policy=${autoEnableSubtitles ? 1 : 0}${autoEnableSubtitles ? "&cc_lang_pref=de" : ""}&autohide=1&playsinline=1&enablejsapi=1&hl=de`,
-            piped: `https://piped.video/embed/${ytKey}?autoplay=1`,
-            invidious1: `https://yewtu.be/embed/${ytKey}?autoplay=1`,
-            invidious2: `https://inv.nadeko.net/embed/${ytKey}?autoplay=1`,
-            invidiousDe: `https://invidious.nerdvpn.de/embed/${ytKey}?autoplay=1`
-          }
-        } : null;
-
-        // Prüfen, ob der Film/die Serie zu einem bekannten Filmuniversum gehört
-        const matchedUniverse = detectUniverseForItem(typeCode, details);
-        const providerButtons = buildStreamingProviderButtons(details);
-        const shareData = buildUnifiedTelegramSharePost({
-          typeCode,
-          itemId: details.id,
-          title,
-          releaseYear: year,
-          voteAverage: vote,
-          genres: details.genres || "",
-          fsk: details.fsk || "",
-          overview: details.overview || "",
-          posterUrl: resolvePosterUrl(details.poster_path, "w500", details.external_poster_url || ""),
-          telegraphUrl: telegraphUrl || "",
-          botUsername: botUsername || ""
-        });
 
         // Für VIPs (Tab "Versionen") & Admins (inkl. Original-Dateiname & Telegram-Link) verknüpfte Episoden-/Film-Dateien bereitstellen
         const allStreamFiles = isMovie ? movieFiles : seriesEpisodeFiles;
-
         const availableVersions = Array.from(new Set(
           (allStreamFiles || []).map(f => extractEpisodeVersionLabel(f)).filter(Boolean)
         ));
         const primaryVersionLabel = availableVersions.find(v => v.toLowerCase().includes("netflix")) ||
           availableVersions[0] ||
-          (details.activeGroupName ? normalizeCompactVersionTags(details.activeGroupName) : "") ||
+          (detailsBase.activeGroupName ? normalizeCompactVersionTags(detailsBase.activeGroupName) : "") ||
           "";
 
         const sanitizedStreamFiles = (hasVipStreamAccess || isAdminUser)
@@ -3824,48 +4023,55 @@
         return new Response(JSON.stringify({
           ok: true,
           botUsername,
-          id: details.id,
+          id: detailsBase.id,
           typeCode,
-          title,
-          year,
-          vote,
-          fsk: details.fsk || "Ungeprüft",
-          runtime: details.runtime || "",
-          country: details.country || "",
-          statusText: details.statusText || "",
-          numberOfSeasons: Math.max(Number(details.numberOfSeasons || 0), vipSeasonsSorted.length),
-          numberOfEpisodes: details.numberOfEpisodes || 0,
+          title: detailsBase.title,
+          year: detailsBase.year,
+          vote: detailsBase.vote,
+          fsk: detailsBase.fsk,
+          runtime: detailsBase.runtime,
+          country: detailsBase.country,
+          statusText: detailsBase.statusText,
+          numberOfSeasons: Math.max(Number(detailsBase.numberOfSeasons || 0), vipSeasonsSorted.length),
+          numberOfEpisodes: detailsBase.numberOfEpisodes,
           seasonCounts,
           firstVipSeason,
-          genres: details.genres || "",
-          studios: details.studios || "",
-          studiosList: details.studiosList || [],
-          providers: details.providers || details.allProviders || "",
-          providerButtons,
-          directors: details.directors || "",
-          directorsList: details.directorsList || [],
-          casts: details.casts || "",
-          castList: details.castList || [],
-          overview: details.overview || "",
-          poster_path: details.poster_path,
-          external_poster_url: details.external_poster_url || "",
-          backdrop_path: details.backdrop_path,
-          logo_path: resolvedLogoPath || details.logo_path || "",
-          collection: details.collection || null,
-          universe: matchedUniverse,
-          telegraphUrl,
-          tmdbDeUrl: `https://www.themoviedb.org/${isMovie ? "movie" : "tv"}/${details.id}?language=de-DE`,
+          genres: detailsBase.genres,
+          studios: detailsBase.studios,
+          studiosList: detailsBase.studiosList,
+          providers: detailsBase.providers,
+          providerButtons: detailsBase.providerButtons,
+          directors: detailsBase.directors,
+          directorsList: detailsBase.directorsList,
+          casts: detailsBase.casts,
+          castList: detailsBase.castList,
+          overview: detailsBase.overview,
+          poster_path: detailsBase.poster_path,
+          external_poster_url: detailsBase.external_poster_url,
+          backdrop_path: detailsBase.backdrop_path,
+          logo_path: detailsBase.logo_path,
+          collection: detailsBase.collection,
+          universe: detailsBase.universe,
+          telegraphUrl: detailsBase.telegraphUrl,
+          tmdbDeUrl: `https://www.themoviedb.org/${isMovie ? "movie" : "tv"}/${detailsBase.id}?language=de-DE`,
           isSaved,
-          hasTrailer,
-          trailerSource,
-          trailers,
+          hasTrailer: detailsBase.hasTrailer,
+          trailerSource: detailsBase.trailerSource,
+          trailers: detailsBase.trailers,
           files: movieFiles,
           downloads: mediaDownloads,
           allStreamFiles: sanitizedStreamFiles,
           availableVersions,
           primaryVersionLabel,
-          shareData
-        }), { status: 200, headers: corsHeaders });
+          shareData: detailsBase.shareData
+        }), {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            "Cache-Control": auth.isAuthenticated ? "private, no-store" : "public, max-age=300",
+            "X-Details-Base-Cache": detailsEdgeHit ? "HIT" : "MISS"
+          }
+        });
       }
 
       if (path === "/api/tma/similar" && request.method === "GET") {
@@ -3979,17 +4185,89 @@
       if (path === "/api/tma/season" && request.method === "GET") {
         const seriesId = String(url.searchParams.get("seriesId") || "").trim();
         const seasonNum = parseInt(String(url.searchParams.get("season") || "1"), 10);
+        const forceRefresh = url.searchParams.get("refresh") === "1";
         if (!/^\d+$/.test(seriesId) || !Number.isFinite(seasonNum) || seasonNum < 0) {
           return new Response(JSON.stringify({ ok: false, error: "Ungültige Serien- oder Staffelnummer." }), { status: 400, headers: corsHeaders });
         }
+
+        // Cloudflare Edge Cache für die nutzerunabhängige TMDb-Serien-/Staffel-Basis (30 Min. TTL).
+        // Spart fetchSeriesDetails + fetchSeasonDetails + Episode-Group-Subrequests;
+        // D1 VIP-Streams, Episodentitel und Merkliste (isSaved) werden pro Request frisch gemergt!
+        const edgeCacheSea = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+        const seaBaseCacheKey = edgeCacheSea
+          ? new Request(`${url.origin}/__edge_cache/api/tma/season/base/v1?seriesId=${encodeURIComponent(seriesId)}&season=${seasonNum}`, { method: "GET" })
+          : null;
+
+        let seasonBase = null;
+        let seasonEdgeHit = false;
+        if (edgeCacheSea && seaBaseCacheKey && !forceRefresh) {
+          try {
+            const cachedSeaRes = await edgeCacheSea.match(seaBaseCacheKey);
+            if (cachedSeaRes && cachedSeaRes.ok) {
+              const parsedSea = await cachedSeaRes.json().catch(() => null);
+              if (parsedSea && Array.isArray(parsedSea.episodes)) {
+                seasonBase = parsedSea;
+                seasonEdgeHit = true;
+                if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+              }
+            }
+          } catch (_e) {}
+        }
+
         // VIP-Regel: Episoden-Streams & Qualitäten werden ausschließlich für VIP-Mitglieder abgefragt und ausgeliefert!
-        const [sDetails, seasonData, savedList, seasonFiles, d1SeasonMeta] = await Promise.all([
-          fetchSeriesDetails(env, seriesId),
-          fetchSeasonDetails(env, seriesId, seasonNum),
-          auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([]),
-          hasVipStreamAccess ? getEpisodeFilesFromD1(env, seriesId, seasonNum, null) : Promise.resolve([]),
-          getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum, hasVipStreamAccess)
-        ]);
+        let sDetails = null;
+        let seasonData = null;
+        let savedList = [];
+        let seasonFiles = [];
+        let d1SeasonMeta = null;
+
+        if (seasonBase) {
+          sDetails = { seasons: seasonBase.seriesSeasons || [] };
+          seasonData = {
+            seasonEpisodeCount: seasonBase.seasonEpisodeCount || 0,
+            isEpisodeGroup: Boolean(seasonBase.isEpisodeGroup),
+            episodes: seasonBase.episodes || []
+          };
+          [savedList, seasonFiles, d1SeasonMeta] = await Promise.all([
+            auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([]),
+            hasVipStreamAccess ? getEpisodeFilesFromD1(env, seriesId, seasonNum, null) : Promise.resolve([]),
+            getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum, hasVipStreamAccess)
+          ]);
+        } else {
+          [sDetails, seasonData, savedList, seasonFiles, d1SeasonMeta] = await Promise.all([
+            fetchSeriesDetails(env, seriesId),
+            fetchSeasonDetails(env, seriesId, seasonNum),
+            auth.isAuthenticated ? getSavedList(env, chatId) : Promise.resolve([]),
+            hasVipStreamAccess ? getEpisodeFilesFromD1(env, seriesId, seasonNum, null) : Promise.resolve([]),
+            getSeriesSeasonsAndEpisodeTitlesFromD1(env, seriesId, seasonNum, hasVipStreamAccess)
+          ]);
+
+          if (edgeCacheSea && seaBaseCacheKey && (sDetails || (Array.isArray(seasonData?.episodes) && seasonData.episodes.length > 0))) {
+            const baseObj = {
+              seriesSeasons: (sDetails?.seasons || []).map(s => ({
+                season_number: s.season_number,
+                episode_count: s.episode_count
+              })),
+              seasonEpisodeCount: Number(seasonData?.seasonEpisodeCount || 0),
+              isEpisodeGroup: Boolean(seasonData?.isEpisodeGroup),
+              episodes: (Array.isArray(seasonData?.episodes) ? seasonData.episodes : []).map(ep => ({
+                episode_number: ep.episode_number,
+                name: ep.name || "",
+                overview: ep.overview || "",
+                vote_average: ep.vote_average || 0,
+                still_path: ep.still_path || "",
+                air_date: ep.air_date || "",
+                runtime: ep.runtime || ""
+              }))
+            };
+            const edgeSeaEntry = new Response(JSON.stringify(baseObj), {
+              status: 200,
+              headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=1800" }
+            });
+            scheduleBackgroundWork(() => edgeCacheSea.put(seaBaseCacheKey, edgeSeaEntry));
+          }
+        }
+
         const seasonCounts = d1SeasonMeta?.seasonCounts || {};
         const epTitleMap = d1SeasonMeta?.episodeTitleMap || new Map();
 
@@ -4134,7 +4412,11 @@
 
         return new Response(JSON.stringify({ ok: true, seriesId, seasonNum, seasons, seasonCounts, seasonEpisodeCount, episodes, downloads: seasonDownloads }), {
           status: 200,
-          headers: corsHeaders
+          headers: {
+            ...corsHeaders,
+            "Cache-Control": auth.isAuthenticated ? "private, no-store" : "public, max-age=300",
+            "X-Season-Base-Cache": seasonEdgeHit ? "HIT" : "MISS"
+          }
         });
       }
 

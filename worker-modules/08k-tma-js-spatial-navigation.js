@@ -34,7 +34,19 @@
         return Boolean(el && el.style.display && el.style.display !== "none");
       }
 
+      function isHeroSliderBlockingCardBarClient() {
+        if (typeof isUserInHeroSliderFront === "function" && isUserInHeroSliderFront()) return true;
+        if (document.body) {
+          if (document.body.classList.contains("in-hero-slider")) return true;
+          if (document.body.classList.contains("hero-slider-expanded") && !document.body.classList.contains("hero-scrolled-past")) {
+            return true;
+          }
+        }
+        return false;
+      }
+
       function isAnyBlockingOverlayOpenForCardBarClient() {
+        if (isHeroSliderBlockingCardBarClient()) return true;
         const elev = document.getElementById("tvQuickJumpElevator");
         const isRightOverlayOpen = Boolean(
           elev && (elev.classList.contains("has-subpanel") || elev.classList.contains("is-visible") || elev.classList.contains("is-hover-expanded"))
@@ -182,7 +194,13 @@
             clearTimeout(catalogFocusBarFadeTimer);
             catalogFocusBarFadeTimer = null;
           }
+          if (hoverFocusBarClearTimer) {
+            clearTimeout(hoverFocusBarClearTimer);
+            hoverFocusBarClearTimer = null;
+          }
+          catalogFocusBarHovered = false;
           bar.classList.remove("visible");
+          lastFocusBarCardEl = null;
           return;
         }
         const isSmallMobile = (window.innerWidth || 1024) <= 640;
@@ -1100,24 +1118,29 @@
         const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
         if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
         if (window.matchMedia && !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
-        const inBar = Boolean(ev.target && typeof ev.target.closest === "function" && ev.target.closest("#catalogFocusInfoBar"));
-        if (inBar) {
+        if (isHeroSliderBlockingCardBarClient()) {
           if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
-          return;
-        }
-        const hoveredCard = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(".card") : null;
-        if (hoveredCard) {
-          if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
-          if (activeInputProfile !== "keyboard" && activeInputProfile !== "firetv" && activeInputProfile !== "tv") {
-            activeInputProfile = resolveDefaultInputProfileClient();
+          syncCatalogFocusInfoBarClient(null);
+        } else {
+          const inBar = Boolean(ev.target && typeof ev.target.closest === "function" && ev.target.closest("#catalogFocusInfoBar"));
+          if (inBar) {
+            if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
+            return;
           }
-          syncCatalogFocusInfoBarClient(hoveredCard);
-        } else if (!currentSpatialEl || !(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"))) {
-          if (!hoverFocusBarClearTimer) {
-            hoverFocusBarClearTimer = setTimeout(() => {
-              hoverFocusBarClearTimer = null;
-              if (!isKeyboardNavActive) syncCatalogFocusInfoBarClient(null);
-            }, 180);
+          const hoveredCard = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(".card") : null;
+          if (hoveredCard) {
+            if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
+            if (activeInputProfile !== "keyboard" && activeInputProfile !== "firetv" && activeInputProfile !== "tv") {
+              activeInputProfile = resolveDefaultInputProfileClient();
+            }
+            syncCatalogFocusInfoBarClient(hoveredCard);
+          } else if (!currentSpatialEl || !(currentSpatialEl.classList && currentSpatialEl.classList.contains("card"))) {
+            if (!hoverFocusBarClearTimer) {
+              hoverFocusBarClearTimer = setTimeout(() => {
+                hoverFocusBarClearTimer = null;
+                if (!isKeyboardNavActive) syncCatalogFocusInfoBarClient(null);
+              }, 180);
+            }
           }
         }
         if (!mouseHoverNavEnabled) return;

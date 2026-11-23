@@ -402,7 +402,7 @@
         if (!q || !resBox) return;
         resBox.innerHTML = '<div style="font-size:11.5px;color:#0284c7;padding:6px">⏳ Suche auf TMDb & Fallback-APIs...</div>';
         try {
-          const r = await apiFetchJson(API_BASE + "/search?chatId=" + encodeURIComponent(chatId) + "&q=" + encodeURIComponent(q) + "&bypass=1");
+          const r = await apiFetchJson(API_BASE + "/search?q=" + encodeURIComponent(q) + "&bypass=1");
           const items = r?.items || [];
           if (items.length === 0) {
             resBox.innerHTML = '<div style="font-size:11.5px;color:#f87171;padding:6px">Keine Treffer gefunden.</div>';
@@ -1483,7 +1483,7 @@
         }
         setBusyState(true, "💾 Lade Merkliste & Custom Playlisten...");
         try {
-          const r = await apiFetchJson(API_BASE + "/wishlist?chatId=" + encodeURIComponent(chatId));
+          const r = await apiFetchJson(API_BASE + "/wishlist");
           const allItems = r.items || [];
           const folders = r.folders || [];
           state.cachedWishlistItems = allItems;
@@ -1597,7 +1597,7 @@
         updateMediaModeIndicatorDom();
         setBusyState(true, "⚙️ Lade Einstellungen...");
         try {
-          const r = await apiFetchJson(API_BASE + "/settings?chatId=" + encodeURIComponent(chatId));
+          const r = await apiFetchJson(API_BASE + "/settings");
           const s = r.settings || {};
           state.settings = s;
           const fskList = r.fskOptions || [];
