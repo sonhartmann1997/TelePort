@@ -2921,17 +2921,29 @@
             return;
           }
           const info = r?.webhookInfo || {};
+          const diag = r?.diagnostics || null;
           const pending = Number(info.pending_update_count || 0);
           const lastErr = info.last_error_message ? String(info.last_error_message) : "Keine Fehler";
           const maxConn = Number(info.max_connections || 8);
+          const diagWarnings = Array.isArray(diag?.warnings) ? diag.warnings : [];
+          const hasProblem = Boolean(diag ? !diag.healthy : (pending > 0 || Boolean(info.last_error_message)));
+          const warnHtml = diagWarnings.length
+            ? ('<div style="margin-top:6px;padding:6px 8px;border-radius:8px;background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.35);color:#fca5a5;font-size:11px;line-height:1.45">' +
+                '<b>⚠️ Diagnose-Hinweise:</b><br/>' +
+                diagWarnings.map(w => '• ' + esc(w)).join('<br/>') +
+              '</div>')
+            : '<div style="margin-top:5px;color:#34d399;font-size:11px">✅ <b>Selbstdiagnose:</b> Webhook-URL, Gatekeeper & Verbindung sind sauber synchronisiert.</div>';
           if (statusBox) {
-            statusBox.style.color = pending > 0 ? "#fbbf24" : "#34d399";
+            statusBox.style.color = hasProblem ? "#fbbf24" : "#34d399";
             statusBox.innerHTML =
               '📡 <b>Telegram Live-Webhook-Status:</b><br/>' +
-              '• <b>Registrierte URL:</b> <code>' + esc(info.url || "Nicht gesetzt") + '</code><br/>' +
+              '• <b>Registrierte URL:</b> <code>' + esc(info.url || "Nicht gesetzt") + '</code>' +
+                (diag && diag.urlMatchesExpected ? ' <span style="color:#34d399">(✓ stimmt)</span>' : (diag ? ' <span style="color:#f87171">(✗ abweichend)</span>' : '')) + '<br/>' +
               '• <b>Wartende Updates (Retry-Stau):</b> <b style="color:' + (pending > 0 ? '#f87171' : '#34d399') + '">' + pending + '</b> • <b>max_connections:</b> <code>' + maxConn + '</code><br/>' +
-              '• <b>Passwort-Gatekeeper:</b> ' + (r?.hasWebhookPassword ? '🔒 Aktiv (<code>X-Telegram-Bot-Api-Secret-Token</code>)' : '⚠️ Kein Passwort gesetzt') + '<br/>' +
-              '• <b>Letzter Telegram-Fehler:</b> <code>' + esc(lastErr) + '</code>';
+              '• <b>Passwort-Gatekeeper:</b> ' + (r?.hasWebhookPassword ? '🔒 Aktiv (<code>X-Telegram-Bot-Api-Secret-Token</code>)' : '⚠️ Kein Passwort gesetzt') +
+                (diag?.configSource ? (' • <b>Quelle:</b> <code>' + esc(String(diag.configSource).toUpperCase()) + '</code>') : '') + '<br/>' +
+              '• <b>Letzter Telegram-Fehler:</b> <code>' + esc(lastErr) + '</code>' +
+              warnHtml;
           }
         } catch (e) {
           if (statusBox) {

@@ -3581,6 +3581,75 @@
     return false;
   }
 
+  // --- Bot API 9.3 / 10.5: Interaktives /themen & /topics Verwaltungsmenü ---
+  async function showTopicsManagerMenu(env, chatId, editMsgId = null, statusNote = "") {
+    const { sendMessage, editMessageText } = tgApi(env);
+    const settings = await getUserSettings(env, chatId);
+    const deliv = (settings && settings.deliveryConfig && typeof settings.deliveryConfig === "object")
+      ? settings.deliveryConfig
+      : {};
+    const mode = normalizeTopicRoutingMode(deliv.topicRoutingMode);
+    const topicMap = sanitizeTopicMap(deliv.topicMap);
+    const targetChatKey = (deliv.targetMode === "group" && deliv.targetGroupChatId)
+      ? String(deliv.targetGroupChatId).trim()
+      : String(chatId).trim();
+    const mappedForTarget = topicMap[targetChatKey] || {};
+    const mappedEntries = Object.entries(mappedForTarget);
+
+    const modeDescMap = {
+      off: "⚪ *Aus / Manuell* (Hauptchat oder manuelle Topic-ID)",
+      by_type: "🎬/📺 *Nach Typ* (automatisch `🎬 Filme` & `📺 Serien`)",
+      per_series: "📺 *Pro Serie ein Thema* (`🎬 Filme` + eigenes Thema je Serie)"
+    };
+    const manualTopicLine = deliv.targetTopicId
+      ? `📌 *Manuelle Topic-ID:* \`${escapeMd(String(deliv.targetTopicId))}\` (überschreibt Auto-Themen)\n`
+      : "";
+
+    let mappedLines = "";
+    if (mappedEntries.length > 0) {
+      const preview = mappedEntries.slice(0, 8).map(([k, v]) => {
+        const label = escapeMd(v?.name || k);
+        return `• ${label}  (ID: \`${v?.threadId}\`)`;
+      }).join("\n");
+      const moreCount = mappedEntries.length > 8 ? `\n_… und ${mappedEntries.length - 8} weitere Themen_` : "";
+      mappedLines = `\n📚 *Gespeicherte Auto-Themen (${mappedEntries.length}):*\n${preview}${moreCount}\n`;
+    } else {
+      mappedLines = `\n📚 *Gespeicherte Auto-Themen:* _Noch keine angelegt (werden beim nächsten Stream oder per Button unten automatisch erstellt)._\n`;
+    }
+
+    const msgText =
+      `🗂️ *THEMEN-ROUTING (BOT API 9.3–10.5)*\n${SEP}\n` +
+      `🎯 *Aktives Ziel:* \`${escapeMd(targetChatKey)}\` (${deliv.targetMode === "group" ? "Ziel-Gruppe" : "Privatchat"})\n` +
+      `⚙️ *Modus:* ${modeDescMap[mode]}\n` +
+      manualTopicLine +
+      mappedLines +
+      (statusNote ? `\n${statusNote}\n` : "") +
+      `\n💡 _Tipp: Aktiviere im Admin-Panel (Bot API 10.5) „Private-Chat-Topics“ bzw. Forum-Modus in deiner Zielgruppe._`;
+
+    const markup = {
+      inline_keyboard: [
+        [
+          { text: `${mode === "off" ? "✅ " : ""}⚪ Aus`, callback_data: "topm_mode_off", style: mode === "off" ? "primary" : "" },
+          { text: `${mode === "by_type" ? "✅ " : ""}🎬/📺 Typ`, callback_data: "topm_mode_by_type", style: mode === "by_type" ? "primary" : "" },
+          { text: `${mode === "per_series" ? "✅ " : ""}📺 Pro Serie`, callback_data: "topm_mode_per_series", style: mode === "per_series" ? "primary" : "" }
+        ],
+        [
+          { text: "➕ Standard-Themen anlegen", callback_data: "topm_create_defaults", style: "success" }
+        ],
+        [
+          { text: "🔄 Zuordnung zurücksetzen", callback_data: "topm_reset_map", style: "danger" },
+          { text: "✖️ Schließen", callback_data: "close_bot_msg" }
+        ]
+      ]
+    };
+
+    if (editMsgId) {
+      const edited = await editMessageText(chatId, editMsgId, msgText, { reply_markup: markup });
+      if (edited) return edited;
+    }
+    return await sendMessage(chatId, msgText, { reply_markup: markup });
+  }
+
   // --- Haupt-Router für Telegram Webhook Updates ---
   async function handleUpdate(env, update) {
     const { sendMessage, sendEphemeralGroupOrPrivateNotice, editMessageText, answerCallbackQuery, deleteMessage, editMessageReplyMarkup, editInlineMessageText, getChatMember } = tgApi(env);
@@ -3660,6 +3729,12 @@
             (repliedVideo?.file_id ? `🎞️ *Geerntete Video File-ID (in D1 gespeichert!):*\n\`${repliedVideo.file_id}\`\n` : "") +
             `\n💡 *Tipp:* Kopiere \`${chatId}\`${threadId ? ` (Topic: \`${threadId}\`)` : ""} und füge sie in der **Mini-App ▸ Film-Modal oder ⚙️ Einstellungen** unter **👥 Eigene Ziel-Gruppe** oder **📦 Quellgruppe** ein!`;
           await sendMessage(chatId, idInfoText, threadId ? { message_thread_id: threadId } : {});
+          return;
+        }
+
+        // /themen oder /topics Befehl: Interaktives Themen-Routing-Menü (Bot API 9.3–10.5)
+        if (/^\/(?:themen|topics)(?:@\w+)?$/i.test(text)) {
+          await showTopicsManagerMenu(env, chatId, null);
           return;
         }
 
@@ -4591,6 +4666,83 @@
         // @ANCHOR: CALLBACK_ROUTER
         if (data === "wl_noop" || data === "noop") {
           await answerCallbackQuery(cq.id);
+          return;
+        }
+
+        // --- BOT API 9.3–10.5: /themen & /topics MANAGER CALLBACKS ---
+        if (data === "topm_mode_off" || data === "topm_mode_by_type" || data === "topm_mode_per_series") {
+          const nextMode = data.replace("topm_mode_", "");
+          const curSettings = await getUserSettings(env, chatId);
+          const curDeliv = (curSettings && curSettings.deliveryConfig && typeof curSettings.deliveryConfig === "object")
+            ? { ...curSettings.deliveryConfig }
+            : {};
+          curDeliv.topicRoutingMode = normalizeTopicRoutingMode(nextMode);
+          await saveUserSettings(env, chatId, { ...curSettings, deliveryConfig: curDeliv });
+          const modeLabelMap = {
+            off: "⚪ Auto-Themen ausgeschaltet",
+            by_type: "🎬/📺 Auto-Themen nach Typ (Filme / Serien) aktiv!",
+            per_series: "📺 Auto-Themen 'Pro Serie ein Thema' aktiv!"
+          };
+          await answerCallbackQuery(cq.id, modeLabelMap[curDeliv.topicRoutingMode] || "✅ Modus gespeichert");
+          await showTopicsManagerMenu(env, chatId, msgId, `✅ _${modeLabelMap[curDeliv.topicRoutingMode]}_`);
+          return;
+        }
+
+        if (data === "topm_create_defaults") {
+          const curSettings = await getUserSettings(env, chatId);
+          const curDeliv = (curSettings && curSettings.deliveryConfig && typeof curSettings.deliveryConfig === "object")
+            ? { ...curSettings.deliveryConfig }
+            : {};
+          const targetChat = (curDeliv.targetMode === "group" && curDeliv.targetGroupChatId)
+            ? String(curDeliv.targetGroupChatId).trim()
+            : String(chatId).trim();
+          const customBotToken = String(curDeliv.customBotToken || "").trim();
+          const movieRes = await resolveOrCreateDeliveryTopic(env, {
+            ownerChatId: chatId,
+            targetChatId: targetChat,
+            savedDeliv: curDeliv,
+            topicRoutingMode: "by_type",
+            typeCode: "m",
+            title: "Filme",
+            customBotToken
+          });
+          // Frische Settings laden, damit das erste gespeicherte Topic beim zweiten nicht überschrieben wird
+          const afterMovSettings = await getUserSettings(env, chatId);
+          const afterMovDeliv = (afterMovSettings && afterMovSettings.deliveryConfig) ? afterMovSettings.deliveryConfig : curDeliv;
+          const seriesRes = await resolveOrCreateDeliveryTopic(env, {
+            ownerChatId: chatId,
+            targetChatId: targetChat,
+            savedDeliv: afterMovDeliv,
+            topicRoutingMode: "by_type",
+            typeCode: "s",
+            title: "Serien",
+            customBotToken
+          });
+          const okCount = (movieRes.topicId ? 1 : 0) + (seriesRes.topicId ? 1 : 0);
+          const createdCount = (movieRes.autoCreated ? 1 : 0) + (seriesRes.autoCreated ? 1 : 0);
+          if (okCount > 0) {
+            const toast = createdCount > 0
+              ? `✅ ${createdCount} Standard-Thema/Themen neu angelegt!`
+              : "✅ Standard-Themen (🎬 Filme & 📺 Serien) sind bereits eingerichtet.";
+            await answerCallbackQuery(cq.id, toast);
+            await showTopicsManagerMenu(env, chatId, msgId, toast);
+          } else {
+            const reason = movieRes.fallbackReason || seriesRes.fallbackReason || "Topics sind in diesem Chat nicht aktiviert.";
+            await answerCallbackQuery(cq.id, `⚠️ Themen nicht verfügbar: ${reason}`, true);
+            await showTopicsManagerMenu(env, chatId, msgId, `⚠️ *Hinweis:* \`${escapeMd(reason)}\``);
+          }
+          return;
+        }
+
+        if (data === "topm_reset_map") {
+          const curSettings = await getUserSettings(env, chatId);
+          const curDeliv = (curSettings && curSettings.deliveryConfig && typeof curSettings.deliveryConfig === "object")
+            ? { ...curSettings.deliveryConfig }
+            : {};
+          curDeliv.topicMap = {};
+          await saveUserSettings(env, chatId, { ...curSettings, deliveryConfig: curDeliv });
+          await answerCallbackQuery(cq.id, "🔄 Themen-Zuordnung zurückgesetzt!");
+          await showTopicsManagerMenu(env, chatId, msgId, "🔄 _Gespeicherte Themen-Zuordnungen wurden geleert (Nachrichten bleiben erhalten)._");
           return;
         }
 
@@ -6216,7 +6368,7 @@
 
           await answerCallbackQuery(cq.id, "💬 Karte bleibt im Chat gespeichert!");
           await clearActiveMenu(env, chatId);
-          if (msgId) untrackTempMessage(chatId, msgId);
+          if (msgId) await untrackTempMessage(env, chatId, msgId);
 
           const frozenKeyboard = {
             inline_keyboard: [

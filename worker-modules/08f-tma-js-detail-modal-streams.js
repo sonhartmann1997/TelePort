@@ -1373,6 +1373,8 @@
           targetMode: "dm", // 'dm' | 'group' | 'custom_bot'
           targetGroupChatId: "",
           targetTopicId: "",
+          topicRoutingMode: "off", // 'off' | 'by_type' | 'per_series'
+          topicMap: {},
           sourceBridgeChatId: "",
           customBotToken: "",
           customBotUsername: "",
@@ -1388,6 +1390,14 @@
           ? state.settings.deliveryConfig
           : {};
         const merged = { ...defaults, ...fromServer, ...local };
+        // Server-side topicMap ist autoritativ (wird bei Auto-Erstellung im Worker aktualisiert)
+        if (fromServer.topicMap && typeof fromServer.topicMap === "object" && Object.keys(fromServer.topicMap).length > 0) {
+          merged.topicMap = fromServer.topicMap;
+        } else if (!merged.topicMap || typeof merged.topicMap !== "object") {
+          merged.topicMap = {};
+        }
+        const tMode = String(merged.topicRoutingMode || "off").trim().toLowerCase();
+        merged.topicRoutingMode = (tMode === "by_type" || tMode === "per_series" || tMode === "off") ? tMode : "off";
         const act = String(merged.afterSendAction || "open_minimize").trim();
         merged.afterSendAction = (act === "open_minimize" || act === "open_close" || act === "stay") ? act : "open_minimize";
         const rDays = Number(merged.retentionDays);
@@ -1432,19 +1442,29 @@
           : mode === "custom_bot"
             ? ("Eigener Bot" + (prefs.customBotUsername ? (" (@" + esc(prefs.customBotUsername) + ")") : ""))
             : "Bot-Privatchat (DM)";
+        const topicMode = prefs.topicRoutingMode || "off";
+        const topicBadgeShort = topicMode === "per_series"
+          ? " · 🗂️ Pro Serie"
+          : (topicMode === "by_type" ? " · 🗂️ Filme/Serien" : "");
         return '<div id="modalDeliveryTargetMount" class="delivery-inline-wrap">' +
           '<div class="delivery-inline-pills" title="Aktives Versandziel: ' + activeModeSummary + '">' +
             '<span class="delivery-inline-label">📤 Senden an:</span>' +
             '<button type="button" class="delivery-pill-btn ' + (mode === 'dm' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'dm\\')" title="An privaten Bot-Chat senden">💬 Bot-Chat</button>' +
             '<button type="button" class="delivery-pill-btn ' + (mode === 'group' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'group\\')" title="In eigene Telegram-Gruppe senden">👥 Gruppe</button>' +
             '<button type="button" class="delivery-pill-btn ' + (mode === 'custom_bot' ? 'active' : '') + '" onclick="switchModalDeliveryModeClient(\\'custom_bot\\')" title="Über eigenen Bot senden">🤖 Eigener Bot</button>' +
-            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Gruppen-ID & Bot-Token ein-/ausklappen">⚙️' + (showConfigInputs ? ' ▴' : '') + '</button>' +
+            '<button type="button" class="delivery-pill-btn ' + (showConfigInputs ? 'active' : '') + '" onclick="toggleModalDeliveryConfigBoxClient()" title="Themen-Routing, Gruppen-ID & Bot-Token ein-/ausklappen">⚙️' + esc(topicBadgeShort) + (showConfigInputs ? ' ▴' : '') + '</button>' +
           '</div>' +
           (showConfigInputs ? (
             '<div class="delivery-config-drawer">' +
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">' +
-                '<span style="font-size:11px;font-weight:800;color:#7dd3fc">⚙️ Ziel-Konfiguration (wird automatisch gespeichert)</span>' +
+                '<span style="font-size:11px;font-weight:800;color:#7dd3fc">⚙️ Ziel- &amp; Themen-Konfiguration (wird automatisch gespeichert)</span>' +
                 '<button type="button" class="btn close-slate" style="padding:2px 8px;font-size:10.5px" onclick="toggleModalDeliveryConfigBoxClient()">✓ Einklappen</button>' +
+              '</div>' +
+              '<div style="margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                '<span style="font-size:10.5px;color:var(--muted);font-weight:700">🗂️ Auto-Themen:</span>' +
+                '<button type="button" class="delivery-pill-btn ' + (topicMode === 'off' ? 'active' : '') + '" onclick="switchTopicRoutingModeClient(\\'off\\')" title="Keine automatischen Themen (Hauptchat oder manuelle Topic-ID)">⚪ Aus</button>' +
+                '<button type="button" class="delivery-pill-btn ' + (topicMode === 'by_type' ? 'active' : '') + '" onclick="switchTopicRoutingModeClient(\\'by_type\\')" title="Legt automatisch 🎬 Filme & 📺 Serien als Themen an">🎬/📺 Typ</button>' +
+                '<button type="button" class="delivery-pill-btn ' + (topicMode === 'per_series' ? 'active' : '') + '" onclick="switchTopicRoutingModeClient(\\'per_series\\')" title="Filme in 🎬 Filme, jede Serie bekommt automatisch ihr eigenes Thema">📺 Pro Serie</button>' +
               '</div>' +
               '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">' +
                 '<div>' +
@@ -1452,8 +1472,8 @@
                   '<input id="modalDelivGroupIdInp" class="tma-input" value="' + esc(prefs.targetGroupChatId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="z.B. -1001987654321" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
-                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">🧵 Topic / Thread-ID (optional):</div>' +
-                  '<input id="modalDelivTopicIdInp" class="tma-input" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Optional (z.B. 42)" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
+                  '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">🧵 Manuelle Topic-ID (Override):</div>' +
+                  '<input id="modalDelivTopicIdInp" class="tma-input" value="' + esc(prefs.targetTopicId || '') + '" oninput="onModalDeliveryFieldInputClient()" placeholder="Leer = Auto-Themen" style="width:100%;padding:5px 8px;font-size:11.5px" />' +
                 '</div>' +
                 '<div>' +
                   '<div style="font-size:10.5px;color:var(--muted);margin-bottom:3px">📦 Quellgruppen-ID (optional):</div>' +
@@ -1517,6 +1537,45 @@
           stay: "📌 Nach dem Senden: In Mini-App bleiben (mit Öffnen-Button)"
         };
         showHudToast(labelMap[clean]);
+      }
+
+      function switchTopicRoutingModeClient(nextMode, reloadSettings = false) {
+        const clean = (nextMode === "by_type" || nextMode === "per_series" || nextMode === "off") ? nextMode : "off";
+        saveDeliveryPreferencesClient({ topicRoutingMode: clean }, true);
+        const mount = document.getElementById("modalDeliveryTargetMount");
+        if (mount) mount.outerHTML = buildModalDeliveryTargetSelectorHtml();
+        if (reloadSettings && typeof loadSettingsView === "function") loadSettingsView();
+        const labelMap = {
+          off: "⚪ Auto-Themen aus (Hauptchat / manuelle Topic-ID)",
+          by_type: "🗂️ Auto-Themen aktiv: 🎬 Filme & 📺 Serien",
+          per_series: "🗂️ Auto-Themen aktiv: 🎬 Filme & eigenes Thema pro Serie"
+        };
+        showHudToast(labelMap[clean]);
+      }
+
+      function resetDeliveryTopicMapClient(reloadSettings = false) {
+        const next = { ...getDeliveryPreferencesClient(), topicMap: {}, resetTopicMap: true };
+        try {
+          const toStore = { ...next };
+          delete toStore.resetTopicMap;
+          localStorage.setItem("tma_delivery_prefs_v1", JSON.stringify(toStore));
+        } catch (e) {}
+        if (!state.settings) state.settings = {};
+        state.settings.deliveryConfig = { ...next, resetTopicMap: undefined };
+        apiFetchJson(API_BASE + "/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId, action: "save_delivery_config", deliveryConfig: next })
+        }).then(() => {
+          if (reloadSettings && typeof loadSettingsView === "function") loadSettingsView();
+        }).catch(() => {});
+        showHudToast("🔄 Themen-Zuordnung zurückgesetzt");
+      }
+
+      function formatResolvedTopicToastSuffixClient(resObj) {
+        if (!resObj || !resObj.resolvedTopicId) return "";
+        const tName = String(resObj.resolvedTopicName || ("Topic #" + resObj.resolvedTopicId)).trim();
+        return " · 🗂️ " + tName + (resObj.topicAutoCreated ? " (neu)" : "");
       }
 
       function openSentTelegramMessageClient(openUrl, opts = {}) {
@@ -2161,6 +2220,8 @@
               targetMode: prefs.targetMode || "dm",
               targetGroupChatId: prefs.targetGroupChatId || "",
               targetTopicId: prefs.targetTopicId || "",
+              topicRoutingMode: prefs.topicRoutingMode || "off",
+              seriesTitle: (state.activeDetails?.typeCode === "s" || metaObj.seriesId) ? String(state.activeDetails?.title || "").trim() : "",
               sourceBridgeChatId: prefs.sourceBridgeChatId || "",
               customBotToken: prefs.customBotToken || "",
               customBotUsername: prefs.customBotUsername || "",
@@ -2179,17 +2240,18 @@
             scheduleAntiSpamPollClient(1000);
           }
           if (r && r.ok) {
+            const topicNote = formatResolvedTopicToastSuffixClient(r);
             if (r.queued && r.job) {
               const etaSec = Math.max(1, Math.ceil((Number(r.job.waitMs) || 1150) / 1000));
               handleAfterTelegramSendClient(
                 r,
-                "⏳ Anti-Spam Schutz: „" + cleanTitle + "“ auf Warteschleifen-Pos. #" + (r.job.position || 1) + " (Zustellung in ~" + etaSec + "s)",
+                "⏳ Anti-Spam Schutz: „" + cleanTitle + "“ auf Warteschleifen-Pos. #" + (r.job.position || 1) + " (Zustellung in ~" + etaSec + "s)" + topicNote,
                 { skipAutoAction: true }
               );
             } else if (isSubtitleOnly) {
               handleAfterTelegramSendClient(
                 r,
-                "💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet!"
+                "💬 " + Number(r.subtitlesSentCount || 1) + " Untertitel-Datei(en) für „" + cleanTitle + "“ an " + destLabel + " gesendet" + topicNote + "!"
               );
             } else {
               const copyNote = r.copiedFromSourceGroup ? " (Auto-Copy)" : "";
@@ -2197,7 +2259,7 @@
               const subNote = Number(r.subtitlesSentCount || 0) > 0 ? (" + 💬 " + r.subtitlesSentCount + " UT") : "";
               handleAfterTelegramSendClient(
                 r,
-                "✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + "!"
+                "✅ „" + cleanTitle + "“ (" + quality + sizeSuffix + ") an " + destLabel + " gesendet" + copyNote + coverNote + subNote + topicNote + "!"
               );
             }
             if (!isSubtitleOnly && metaObj.seriesId && metaObj.season !== undefined && metaObj.season !== null && metaObj.season !== "") {
@@ -2335,9 +2397,13 @@
               chatId,
               batchLabel,
               items: chunk,
+              typeCode: state.activeDetails?.typeCode || chunk[0]?.typeCode || "",
+              tmdbId: state.activeDetails?.id || chunk[0]?.tmdbId || null,
+              seriesTitle: (state.activeDetails?.typeCode === "s" || chunk[0]?.typeCode === "s") ? String(state.activeDetails?.title || "").trim() : "",
               targetMode: prefs.targetMode || "dm",
               targetGroupChatId: prefs.targetGroupChatId || "",
               targetTopicId: prefs.targetTopicId || "",
+              topicRoutingMode: prefs.topicRoutingMode || "off",
               sourceBridgeChatId: prefs.sourceBridgeChatId || "",
               customBotToken: prefs.customBotToken || "",
               customBotUsername: prefs.customBotUsername || ""
@@ -2811,6 +2877,8 @@
                   targetMode: prefs.targetMode || "dm",
                   targetGroupChatId: prefs.targetGroupChatId || "",
                   targetTopicId: prefs.targetTopicId || "",
+                  topicRoutingMode: prefs.topicRoutingMode || "off",
+                  seriesTitle: seriesTitle || "",
                   sourceBridgeChatId: prefs.sourceBridgeChatId || "",
                   customBotToken: prefs.customBotToken || "",
                   customBotUsername: prefs.customBotUsername || ""
@@ -2833,9 +2901,10 @@
         scheduleAntiSpamPollClient(950);
         if (sentCount + queuedCount > 0) {
           const batchBadge = usedCopyMessages ? " ⚡ Batch-API" : "";
+          const topicBadge = formatResolvedTopicToastSuffixClient(lastSentRes);
           const msg = queuedCount > 0
-            ? ("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Warteschleife!" + batchBadge)
-            : ("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!" + batchBadge);
+            ? ("⏳ " + sSummaryPrefix + ": " + sentCount + " sofort, " + queuedCount + " Folge(n) in Warteschleife!" + batchBadge + topicBadge)
+            : ("✅ " + sSummaryPrefix + ": " + sentCount + "/" + episodesWithStreams.length + " Folgen gesendet!" + batchBadge + topicBadge);
           handleAfterTelegramSendClient(lastSentRes, msg, { skipAutoAction: sentCount === 0 });
         } else {
           showHudToast("⚠️ Folgen konnten nicht gesendet werden.");

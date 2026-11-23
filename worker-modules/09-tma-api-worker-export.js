@@ -1258,9 +1258,13 @@
                   message: "Ungültige Webhook-URL: Telegram akzeptiert nur HTTPS-URLs (z. B. https://dein-worker.workers.dev/webhook)."
                 }), { status: 400, headers: corsHeaders });
               }
+              const prevSecretForGrace = String(existingCfg?.secretToken || "").trim();
               const savedCfg = typeof saveWebhookSecurityConfig === "function"
                 ? await saveWebhookSecurityConfig(env, {
                     secretToken: effectiveSecret,
+                    previousSecretToken: prevSecretForGrace && prevSecretForGrace !== effectiveSecret ? prevSecretForGrace : "",
+                    previousSecretExpiresAt: prevSecretForGrace && prevSecretForGrace !== effectiveSecret ? (Date.now() + 300000) : 0,
+                    explicitlyDisabled: Boolean(clearPassword),
                     maxConnections,
                     dropPendingDefault: dropPending
                   })
@@ -1306,23 +1310,36 @@
               let effectiveActiveCfg = savedCfg;
               let effectiveManualLinks = manualLinks;
               let liveWebhookInfo = null;
-              if (whJson?.ok) {
-                try {
-                  const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/getWebhookInfo`, {}, 4500);
-                  const infoJson = await infoRes.json().catch(() => ({}));
-                  if (infoJson?.ok && infoJson?.result) liveWebhookInfo = infoJson.result;
-                } catch (_infoErr) {}
-              } else if (typeof saveWebhookSecurityConfig === "function") {
-                // Rollback auf das vorherige Webhook-Secret, damit Telegram-Updates nicht ausgesperrt werden!
+              let setWebhookSucceeded = Boolean(whJson?.ok);
+              try {
+                const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/getWebhookInfo`, {}, 4500);
+                const infoJson = await infoRes.json().catch(() => ({}));
+                if (infoJson?.ok && infoJson?.result) liveWebhookInfo = infoJson.result;
+              } catch (_infoErr) {}
+              // Timeout-Schutz: Wenn setWebhook ins Timeout lief, Telegram die Ziel-URL aber bereits aktiv meldet,
+              // NICHT blind zurückrollen (sonst entsteht ein 401-Secret-Mismatch!).
+              const telegramAlreadyOnTarget = Boolean(
+                !setWebhookSucceeded &&
+                whErrorMsg &&
+                liveWebhookInfo &&
+                String(liveWebhookInfo.url || "").replace(/\/$/, "") === customWebhookUrl.replace(/\/$/, "")
+              );
+              if (telegramAlreadyOnTarget) {
+                setWebhookSucceeded = true;
+              } else if (!setWebhookSucceeded && typeof saveWebhookSecurityConfig === "function") {
+                // Rollback auf das vorherige Webhook-Secret (mit Grace-Window für das neue Secret falls doch noch kurz aktiv)
                 effectiveActiveCfg = await saveWebhookSecurityConfig(env, {
                   secretToken: String(existingCfg?.secretToken || ""),
+                  previousSecretToken: effectiveSecret && effectiveSecret !== String(existingCfg?.secretToken || "") ? effectiveSecret : "",
+                  previousSecretExpiresAt: effectiveSecret ? (Date.now() + 120000) : 0,
+                  explicitlyDisabled: !String(existingCfg?.secretToken || ""),
                   maxConnections: Number(existingCfg?.maxConnections || 8),
                   dropPendingDefault: Boolean(existingCfg?.dropPendingDefault)
                 }).catch(() => existingCfg);
                 effectiveManualLinks = buildManualWebhookLinks(cleanWorkerOrigin, customWebhookUrl, effectiveActiveCfg.secretToken, effectiveActiveCfg.maxConnections, dropPending);
               }
               return new Response(JSON.stringify({
-                ok: Boolean(whJson?.ok),
+                ok: setWebhookSucceeded,
                 webhookUrl: customWebhookUrl,
                 manualSetWebhookWorkerUrl: effectiveManualLinks.manualSetWebhookWorkerUrl,
                 manualTelegramApiTemplateUrl: effectiveManualLinks.manualTelegramApiTemplateUrl,
@@ -1332,38 +1349,87 @@
                 maxConnections: effectiveActiveCfg.maxConnections,
                 webhookInfo: liveWebhookInfo,
                 telegramResponse: whJson,
-                message: whJson?.ok
-                  ? `Webhook inkl. Passwort-Schutz (${effectiveActiveCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${effectiveActiveCfg.maxConnections}) erfolgreich bei Telegram registriert & verifiziert!`
+                message: setWebhookSucceeded
+                  ? (telegramAlreadyOnTarget
+                    ? `Webhook-Antwort war verzögert, aber getWebhookInfo bestätigt aktive Verbindung (${effectiveActiveCfg.secretToken ? "Passwort aktiv" : "ohne Passwort"}, max_connections=${effectiveActiveCfg.maxConnections}).`
+                    : `Webhook inkl. Passwort-Schutz (${effectiveActiveCfg.secretToken ? "aktiv" : "ohne Passwort"}, max_connections=${effectiveActiveCfg.maxConnections}) erfolgreich bei Telegram registriert & verifiziert!`)
                   : `${whJson?.description || whErrorMsg || "Telegram setWebhook fehlgeschlagen."} (Vorheriges Webhook-Secret wurde zur Sicherheit beibehalten.)`,
                 _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
               }), { status: 200, headers: corsHeaders });
             }
             if (action === "get_webhook_info") {
               const webhookSecurity = typeof getWebhookSecurityConfig === "function"
-                ? await getWebhookSecurityConfig(env)
-                : { secretToken: "", maxConnections: 8 };
+                ? await getWebhookSecurityConfig(env, { forceRefresh: true })
+                : { secretToken: "", maxConnections: 8, source: "none" };
+              const buildWebhookDiag = (infoObj) => {
+                const liveUrl = String(infoObj?.url || "").trim();
+                const normLive = liveUrl.replace(/\/$/, "");
+                const normExpected = officialWebhookUrl.replace(/\/$/, "");
+                const normRoot = cleanWorkerOrigin.replace(/\/$/, "");
+                const isUrlEmpty = !normLive;
+                const isCustomWebhookHijack = /\/api\/telegram\/custom-webhook/i.test(normLive);
+                const urlMatchesExpected = !isUrlEmpty && (normLive === normExpected || normLive === normRoot);
+                const lastErrMsg = String(infoObj?.last_error_message || "").trim();
+                const pendingCount = Number(infoObj?.pending_update_count || 0);
+                const hasAuthError = /401|403|unauthorized|forbidden/i.test(lastErrMsg);
+                const hasServerError = /500|502|503|504|timeout|timed out|connection|ssl|certificate/i.test(lastErrMsg);
+                const warnings = [];
+                if (isUrlEmpty) {
+                  warnings.push("Webhook-URL bei Telegram ist LEER! Ursache ist meist ein externes Skript/Bot, das getUpdates oder deleteWebhook mit demselben Token aufruft. Bitte hier neu registrieren und externe Polling-Skripte stoppen.");
+                } else if (isCustomWebhookHijack) {
+                  warnings.push("Webhook zeigt auf /api/telegram/custom-webhook (wird für den Haupt-Bot mit 403 blockiert)! Bitte hier sofort auf /webhook neu registrieren.");
+                } else if (!urlMatchesExpected) {
+                  warnings.push(`Abweichende Webhook-URL bei Telegram (${liveUrl}) statt erwartet (${officialWebhookUrl}).`);
+                }
+                if (hasAuthError) {
+                  warnings.push("Telegram meldet 401/403 Auth-Fehler (Secret-Token-Mismatch). Bitte einmal 'Speichern & bei Telegram registrieren' klicken.");
+                }
+                if (hasServerError) {
+                  warnings.push("Telegram meldet 5xx/Timeout-Fehler vom Worker (mögliches Free-Plan CPU-Limit oder D1-Spitze). Bei vielen wartenden Updates 'Hängende Updates verwerfen' klicken.");
+                }
+                if (pendingCount > 0) {
+                  warnings.push(`${pendingCount} wartende Updates im Telegram-Retry-Stau.`);
+                }
+                return {
+                  healthy: Boolean(!isUrlEmpty && urlMatchesExpected && !lastErrMsg && pendingCount === 0),
+                  expectedUrl: officialWebhookUrl,
+                  liveUrl,
+                  isUrlEmpty,
+                  urlMatchesExpected,
+                  isCustomWebhookHijack,
+                  hasAuthError,
+                  hasServerError,
+                  configSource: webhookSecurity?.source || "none",
+                  hasEnvSecret: Boolean(webhookSecurity?.hasEnvSecret),
+                  warnings
+                };
+              };
               const effBotToken = getBotToken(env);
               if (!effBotToken) {
+                const simInfo = {
+                  url: officialWebhookUrl,
+                  has_custom_certificate: false,
+                  pending_update_count: 0,
+                  max_connections: webhookSecurity.maxConnections || 8,
+                  ip_address: "104.21.48.1 (Cloudflare Edge Simulator)",
+                  allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
+                };
                 return new Response(JSON.stringify({
                   ok: true,
                   simulated: true,
-                  webhookInfo: {
-                    url: officialWebhookUrl,
-                    has_custom_certificate: false,
-                    pending_update_count: 0,
-                    max_connections: webhookSecurity.maxConnections || 8,
-                    ip_address: "104.21.48.1 (Cloudflare Edge Simulator)",
-                    allowed_updates: ["message", "channel_post", "callback_query", "inline_query"]
-                  },
+                  webhookInfo: simInfo,
+                  diagnostics: buildWebhookDiag(simInfo),
                   hasWebhookPassword: Boolean(webhookSecurity.secretToken),
                   _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
                 }), { status: 200, headers: corsHeaders });
               }
               const infoRes = await fetchWithTimeout(`https://api.telegram.org/bot${effBotToken}/getWebhookInfo`, {}, 5000);
               const infoJson = await infoRes.json().catch(() => ({}));
+              const liveInfo = infoJson?.result || null;
               return new Response(JSON.stringify({
                 ok: Boolean(infoJson?.ok),
-                webhookInfo: infoJson?.result || null,
+                webhookInfo: liveInfo,
+                diagnostics: liveInfo ? buildWebhookDiag(liveInfo) : null,
                 telegramResponse: infoJson,
                 hasWebhookPassword: Boolean(webhookSecurity.secretToken),
                 _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
@@ -5474,6 +5540,21 @@
         const botToken = String(body.botToken || "").trim();
         if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(botToken)) {
           return new Response(JSON.stringify({ ok: false, error: "Ungültiges Telegram Bot-Token Format." }), { status: 400, headers: corsHeaders });
+        }
+        // Selbst-Aussperrung verhindern: Niemals den Haupt-Bot als Custom-Bot registrieren (sonst wird /webhook überschrieben & danach mit 403 blockiert!)
+        const configuredMainToken = getBotToken(env);
+        const isMainBotToken = Boolean(
+          configuredMainToken &&
+          (typeof timingSafeEqualStr === "function"
+            ? timingSafeEqualStr(botToken, configuredMainToken)
+            : botToken === configuredMainToken)
+        );
+        if (isMainBotToken) {
+          return new Response(JSON.stringify({
+            ok: false,
+            code: "MAIN_BOT_PROTECTED",
+            error: "Dieses Token gehört bereits zum Haupt-Bot! Verbinde den Haupt-Bot niemals als Custom-Bot (sonst wird /webhook überschrieben). Nutze stattdessen Admin ▸ Bot & Einstellungen ▸ Webhook."
+          }), { status: 400, headers: corsHeaders });
         }
         const meRes = await fetchWithTimeout(`https://api.telegram.org/bot${botToken}/getMe`, {}, 4000);
         const meJson = meRes.ok ? await meRes.json() : null;

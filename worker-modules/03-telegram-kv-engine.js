@@ -1150,50 +1150,99 @@
     return { rawChannelId, fromChatId, messageId };
   }
 
-  async function getWebhookSecurityConfig(env) {
-    if (globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE && (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < 300000) {
+  const WEBHOOK_CONFIG_CACHE_TTL_MS = 300000;
+  const WEBHOOK_SECRET_GRACE_WINDOW_MS = 300000;
+  const WEBHOOK_MISMATCH_REVAL_MIN_INTERVAL_MS = 10000;
+
+  async function getWebhookSecurityConfig(env, options = {}) {
+    const forceRefresh = Boolean(options?.forceRefresh);
+    if (
+      !forceRefresh &&
+      globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE &&
+      (Date.now() - Number(globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE.loadedAt || 0)) < WEBHOOK_CONFIG_CACHE_TTL_MS
+    ) {
       return globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
     }
-    let secretToken = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
+    const envSecret = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
+    let secretToken = envSecret;
+    let previousSecretToken = "";
+    let previousSecretExpiresAt = 0;
     let maxConnections = 8;
+    let explicitlyDisabled = false;
+    let updatedAt = 0;
+    let source = envSecret ? "env" : "none";
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
+
+    const applyStoredObj = (obj, srcLabel) => {
+      if (!obj || typeof obj !== "object") return false;
+      if (obj.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(obj.secretToken);
+      if (obj.previousSecretToken !== undefined) previousSecretToken = sanitizeWebhookSecretToken(obj.previousSecretToken);
+      if (obj.previousSecretExpiresAt) previousSecretExpiresAt = Number(obj.previousSecretExpiresAt) || 0;
+      if (obj.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(obj.maxConnections) || 8));
+      if (obj.explicitlyDisabled !== undefined) explicitlyDisabled = Boolean(obj.explicitlyDisabled);
+      else if (obj.secretToken === "") explicitlyDisabled = true;
+      updatedAt = Number(obj.updatedAt || 0);
+      source = srcLabel;
+      return true;
+    };
+
     try {
       const memCfg = isBrowserSandbox ? memoryFallback.get("TG_WEBHOOK_SECURITY_CONFIG_V1") : null;
       if (memCfg && typeof memCfg === "object") {
-        if (memCfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(memCfg.secretToken);
-        if (memCfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(memCfg.maxConnections) || 8));
+        applyStoredObj(memCfg, "memory");
       } else {
-        const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", { ttlMs: 300000 });
-        if (rawKv) {
-          const parsed = JSON.parse(rawKv);
-          if (parsed && typeof parsed === "object") {
-            if (parsed.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(parsed.secretToken);
-            if (parsed.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(parsed.maxConnections) || 8));
-            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", { ...parsed, secretToken, maxConnections });
-          }
-        } else if (typeof getEntityFromD1 === "function") {
-          const d1Cfg = await getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000).catch(() => null);
+        // D1-first: Strongly consistent across all Cloudflare Edge PoPs & unaffected by KV 1,000 writes/day cap
+        // Da __WEBHOOK_SECURITY_CONFIG_CACHE bereits der primäre 5-Min.-RAM-Cache ist, beim Nachladen stets frisch aus D1/KV lesen!
+        let loadedFromD1 = false;
+        if (typeof getEntityFromD1 === "function") {
+          const d1Cfg = await getEntityFromD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", 365 * 86400000, {
+            bypassMemoryCache: true,
+            ramTtlMs: WEBHOOK_CONFIG_CACHE_TTL_MS
+          }).catch(() => null);
           if (d1Cfg && typeof d1Cfg === "object") {
-            if (d1Cfg.secretToken !== undefined) secretToken = sanitizeWebhookSecretToken(d1Cfg.secretToken);
-            if (d1Cfg.maxConnections) maxConnections = Math.min(40, Math.max(1, Number(d1Cfg.maxConnections) || 8));
-            memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", { ...d1Cfg, secretToken, maxConnections });
+            loadedFromD1 = applyStoredObj(d1Cfg, "d1");
+          }
+        }
+        // KV fallback only when D1 has no record yet (e.g. legacy install or D1 binding absent)
+        if (!loadedFromD1) {
+          const rawKv = await kvCachedGetRaw(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "MOVIE_SAVED", {
+            ttlMs: WEBHOOK_CONFIG_CACHE_TTL_MS,
+            bypassMemoryCache: true
+          });
+          if (rawKv) {
+            const parsed = JSON.parse(rawKv);
+            if (parsed && typeof parsed === "object") {
+              applyStoredObj(parsed, "kv");
+            }
           }
         }
       }
     } catch (e) {}
+
+    // Expire stale previousSecretToken cleanly
+    if (previousSecretExpiresAt && Date.now() > previousSecretExpiresAt) {
+      previousSecretToken = "";
+      previousSecretExpiresAt = 0;
+    }
+
     const cfg = {
       secretToken,
+      previousSecretToken,
+      previousSecretExpiresAt,
       maxConnections,
-      hasEnvSecret: Boolean(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET),
+      explicitlyDisabled,
+      updatedAt,
+      source,
+      hasEnvSecret: Boolean(envSecret),
       loadedAt: Date.now()
     };
     globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = cfg;
+    memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", cfg);
     return cfg;
   }
 
-  // 0-IO Fast-Path für Telegram Webhook-Secret Prüfung:
-  // Wenn TELEGRAM_WEBHOOK_SECRET im Env gesetzt ist und übereinstimmt (oder komplett fehlt),
-  // werden 0 KV- und 0 D1-Reads benötigt (spart Latenz & schützt Free-Plan gegen POST-Floods).
+  // 0-IO Fast-Path für Telegram Webhook-Secret Prüfung mit Cold-Start-Schutz,
+  // Dual-Secret-Grace-Window (Rotation ohne 401) & rate-limitierter Mismatch-Revalidierung (max. 1x / 10s).
   async function verifyWebhookSecretFast(request, url, env, options = {}) {
     const allowQuerySecret = options.allowQuerySecret !== false;
     const incomingHeader = String(request?.headers?.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
@@ -1205,69 +1254,130 @@
         (incomingQuery && eqSecret(incomingQuery, expected))
       )
     );
+    const matchesCfg = (cfg) => {
+      if (!cfg) return { ok: false, hasSecret: false, matchedPrev: false };
+      const curSec = String(cfg.secretToken || "").trim();
+      const prevSec = String(cfg.previousSecretToken || "").trim();
+      const prevValid = Boolean(prevSec && Number(cfg.previousSecretExpiresAt || 0) > Date.now());
+      if (!curSec) {
+        return { ok: true, hasSecret: false, matchedPrev: false };
+      }
+      if (matchesCandidate(curSec)) {
+        return { ok: true, hasSecret: true, matchedPrev: false };
+      }
+      if (prevValid && matchesCandidate(prevSec)) {
+        return { ok: true, hasSecret: true, matchedPrev: true };
+      }
+      return { ok: false, hasSecret: true, matchedPrev: false };
+    };
 
     const envSecret = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
     const cachedCfg = globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
-    const hasWarmCache = Boolean(cachedCfg && (Date.now() - Number(cachedCfg.loadedAt || 0)) < 300000);
+    const hasWarmCache = Boolean(cachedCfg && (Date.now() - Number(cachedCfg.loadedAt || 0)) < WEBHOOK_CONFIG_CACHE_TTL_MS);
 
-    // Fast-Path 1: Env-Secret stimmt exakt überein -> sofortiger 0-IO Pass!
+    // Fast-Path 1: Warmer RAM-Cache vorhanden -> sofortige 0-IO Entscheidung!
+    if (hasWarmCache) {
+      const check = matchesCfg(cachedCfg);
+      if (check.ok) {
+        return {
+          ok: true,
+          fastPath: !check.hasSecret ? "cache_open" : (check.matchedPrev ? "cache_prev_grace" : "cache_match"),
+          hasSecret: check.hasSecret
+        };
+      }
+      // Bei Mismatch einmalig frisch aus D1 revalidieren (rate-limitiert auf max. 1x pro 10s gegen Scanner-Floods),
+      // damit Secret-Änderungen oder Passwort-Deaktivierungen auf anderen Isolates sofort greifen!
+      const now = Date.now();
+      const lastReval = Number(globalThis.__WEBHOOK_SECRET_LAST_REVAL_AT || 0);
+      if ((now - lastReval) >= WEBHOOK_MISMATCH_REVAL_MIN_INTERVAL_MS) {
+        globalThis.__WEBHOOK_SECRET_LAST_REVAL_AT = now;
+        const freshCfg = await getWebhookSecurityConfig(env, { forceRefresh: true });
+        const freshCheck = matchesCfg(freshCfg);
+        return {
+          ok: freshCheck.ok,
+          fastPath: freshCheck.ok ? (freshCheck.hasSecret ? "revalidated_match" : "revalidated_open") : "revalidated_reject",
+          hasSecret: freshCheck.hasSecret
+        };
+      }
+      return { ok: false, fastPath: "cache_reject", hasSecret: true };
+    }
+
+    // Fast-Path 2: Cold-Start & Request liefert exakt das Env-Secret -> sofortiger 0-IO Pass!
     if (envSecret && matchesCandidate(envSecret)) {
       return { ok: true, fastPath: "env_match", hasSecret: true };
     }
-    // Fast-Path 2: Warmer RAM-Cache vorhanden -> sofortige Entscheidung ohne KV/D1!
-    if (hasWarmCache) {
-      const cachedSecret = String(cachedCfg.secretToken || "").trim();
-      if (!cachedSecret) return { ok: true, fastPath: "cache_open", hasSecret: false };
-      return {
-        ok: matchesCandidate(cachedSecret),
-        fastPath: "cache_check",
-        hasSecret: true
-      };
-    }
-    // Fast-Path 3: Env-Secret aktiv & Request liefert überhaupt keinen Secret-Header/Query -> sofort 401 (0-IO Schutz gegen Bot-Scanner)
-    if (envSecret && !incomingHeader && !incomingQuery) {
-      return { ok: false, fastPath: "env_missing_reject", hasSecret: true };
-    }
 
-    // Fallback: Prüfe gespeicherte UI-Konfiguration (KV/D1)
+    // Cold-Start: Einmalig aus D1/KV laden & 5 Min. cachen (verhindert Cold-Start-401-Aussperrung,
+    // wenn das Passwort in der Admin-UI deaktiviert oder geändert wurde!)
     const webhookSecurity = await getWebhookSecurityConfig(env);
-    const activeSecret = String(webhookSecurity?.secretToken || "").trim();
-    if (!activeSecret) return { ok: true, fastPath: "storage_open", hasSecret: false };
+    const storageCheck = matchesCfg(webhookSecurity);
     return {
-      ok: matchesCandidate(activeSecret),
-      fastPath: "storage_check",
-      hasSecret: true
+      ok: storageCheck.ok,
+      fastPath: !storageCheck.hasSecret
+        ? "storage_open"
+        : (storageCheck.ok ? (storageCheck.matchedPrev ? "storage_prev_grace" : "storage_match") : "storage_reject"),
+      hasSecret: storageCheck.hasSecret
     };
   }
 
   async function saveWebhookSecurityConfig(env, secretOrConfig, maxConnectionsArg = 8) {
-    // Unterstützt sowohl Objekt-Signatur ({ secretToken, maxConnections, dropPendingDefault }) als auch Legacy-Parameter (env, token, maxConnections)
+    // Unterstützt sowohl Objekt-Signatur ({ secretToken, maxConnections, dropPendingDefault, previousSecretToken, previousSecretExpiresAt, explicitlyDisabled }) als auch Legacy-Parameter
     const isConfigObj = Boolean(secretOrConfig && typeof secretOrConfig === "object");
     const rawToken = isConfigObj ? secretOrConfig.secretToken : secretOrConfig;
     const rawMaxConn = isConfigObj ? secretOrConfig.maxConnections : maxConnectionsArg;
     const dropPendingDefault = isConfigObj ? Boolean(secretOrConfig.dropPendingDefault) : true;
     const cleanToken = sanitizeWebhookSecretToken(rawToken);
     const cleanMaxConn = Math.min(40, Math.max(1, Number(rawMaxConn) || 8));
+    const explicitlyDisabled = isConfigObj && secretOrConfig.explicitlyDisabled !== undefined
+      ? Boolean(secretOrConfig.explicitlyDisabled)
+      : !cleanToken;
+
+    let previousSecretToken = "";
+    let previousSecretExpiresAt = 0;
+    if (isConfigObj && secretOrConfig.previousSecretToken !== undefined) {
+      const cleanPrev = sanitizeWebhookSecretToken(secretOrConfig.previousSecretToken);
+      if (cleanPrev && cleanPrev !== cleanToken) {
+        previousSecretToken = cleanPrev;
+        previousSecretExpiresAt = Number(secretOrConfig.previousSecretExpiresAt) || (Date.now() + WEBHOOK_SECRET_GRACE_WINDOW_MS);
+      }
+    }
+
+    const now = Date.now();
     const payload = {
       secretToken: cleanToken,
+      previousSecretToken,
+      previousSecretExpiresAt,
       maxConnections: cleanMaxConn,
       dropPendingDefault,
-      updatedAt: Date.now(),
-      loadedAt: Date.now()
+      explicitlyDisabled,
+      updatedAt: now,
+      loadedAt: now,
+      source: "d1",
+      hasEnvSecret: Boolean(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET)
     };
     globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = payload;
     memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", payload);
+
+    // D1 ZUERST schreiben (stark konsistent über alle Edge-Standorte, kein 1.000 Writes/Tag KV-Limit)
+    let d1Ok = false;
+    try {
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "config", payload);
+        d1Ok = true;
+      }
+    } catch (e) {}
+
+    // KV zusätzlich als Spiegel aktualisieren
+    let kvOk = false;
     try {
       await kvStageWrite(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", JSON.stringify(payload), {
         bindingName: "MOVIE_SAVED",
         flushNow: true
       });
+      kvOk = true;
     } catch (e) {}
-    try {
-      if (typeof saveEntityToD1 === "function") {
-        await saveEntityToD1(env, "TG_WEBHOOK_SECURITY_CONFIG_V1", "config", payload);
-      }
-    } catch (e) {}
+
+    payload.source = d1Ok ? "d1" : (kvOk ? "kv" : "memory");
     return payload;
   }
 
@@ -4827,9 +4937,52 @@
     await stageUserBundleWrite(env, chatId, bundle, options);
   }
 
+  const MAX_TOPIC_SESSION_BUCKETS = 15;
+
+  function resolveSessionThreadScopeKey(chatId, explicitThreadId = null) {
+    const rawTid = explicitThreadId !== null && explicitThreadId !== undefined
+      ? explicitThreadId
+      : (typeof getActiveChatThreadId === "function" ? getActiveChatThreadId(chatId) : null);
+    const tid = typeof parseValidTelegramThreadId === "function"
+      ? parseValidTelegramThreadId(rawTid)
+      : (Number.isInteger(Number(rawTid)) && Number(rawTid) > 0 ? Number(rawTid) : null);
+    return tid ? `t_${tid}` : "main";
+  }
+
+  function getThreadSessionBucket(sess, chatId, createIfMissing = false, explicitThreadId = null) {
+    if (!sess || typeof sess !== "object") return null;
+    const scopeKey = resolveSessionThreadScopeKey(chatId, explicitThreadId);
+    if (scopeKey === "main") return sess;
+    if (!sess.topicStates || typeof sess.topicStates !== "object" || Array.isArray(sess.topicStates)) {
+      if (!createIfMissing) return null;
+      sess.topicStates = {};
+    }
+    let bucket = sess.topicStates[scopeKey];
+    if (!bucket || typeof bucket !== "object") {
+      if (!createIfMissing) return null;
+      bucket = { updatedAt: Date.now() };
+      sess.topicStates[scopeKey] = bucket;
+      const keys = Object.keys(sess.topicStates);
+      if (keys.length > MAX_TOPIC_SESSION_BUCKETS) {
+        keys
+          .filter(k => k !== scopeKey)
+          .sort((a, b) => Number(sess.topicStates[a]?.updatedAt || 0) - Number(sess.topicStates[b]?.updatedAt || 0))
+          .slice(0, keys.length - MAX_TOPIC_SESSION_BUCKETS)
+          .forEach(oldKey => {
+            delete sess.topicStates[oldKey];
+          });
+      }
+    } else if (createIfMissing) {
+      bucket.updatedAt = Date.now();
+    }
+    return bucket;
+  }
+
   async function saveSearchState(env, chatId, query, page, totalResults = 0, movieCount = 0, seriesCount = 0, sortBy = null, ignoreFilters = null) {
     const sess = await getUserSession(env, chatId);
-    const prev = sess.searchState || null;
+    const scopeKey = resolveSessionThreadScopeKey(chatId);
+    const bucket = getThreadSessionBucket(sess, chatId, true);
+    const prev = bucket?.searchState || null;
     const effectiveSort = sortBy || prev?.sortBy || "pop_desc";
     const effectiveIgnoreFilters = ignoreFilters !== null
       ? Boolean(ignoreFilters)
@@ -4843,31 +4996,39 @@
       sortBy: effectiveSort,
       ignoreFilters: effectiveIgnoreFilters
     };
-    sess.searchState = obj;
+    if (bucket) bucket.searchState = obj;
     sess._dirty = true;
-    memoryFallback.set(`search_state_${chatId}`, obj);
+    memoryFallback.set(`search_state_${chatId}_${scopeKey}`, obj);
   }
 
   async function getSearchState(env, chatId) {
     const sess = await getUserSession(env, chatId);
-    return sess.searchState || memoryFallback.get(`search_state_${chatId}`) || null;
+    const scopeKey = resolveSessionThreadScopeKey(chatId);
+    const bucket = getThreadSessionBucket(sess, chatId, false);
+    return bucket?.searchState || memoryFallback.get(`search_state_${chatId}_${scopeKey}`) || null;
   }
 
   async function setUserPromptState(env, chatId, msgId, mode = "search", meta = {}) {
     const sess = await getUserSession(env, chatId);
-    sess.promptState = { msgId: Number(msgId) || null, mode, meta };
-    sess._dirty = true;
+    const bucket = getThreadSessionBucket(sess, chatId, true);
+    if (bucket) {
+      bucket.promptState = { msgId: Number(msgId) || null, mode, meta };
+      sess._dirty = true;
+    }
   }
 
   async function getUserPromptState(env, chatId) {
     const sess = await getUserSession(env, chatId);
-    return sess.promptState || null;
+    const bucket = getThreadSessionBucket(sess, chatId, false);
+    return bucket?.promptState || null;
   }
 
   async function clearUserPromptState(env, chatId) {
     const sess = await getUserSession(env, chatId);
-    if (sess.promptState) {
-      delete sess.promptState;
+    const bucket = getThreadSessionBucket(sess, chatId, false);
+    if (bucket && bucket.promptState) {
+      delete bucket.promptState;
+      if (bucket !== sess) bucket.updatedAt = Date.now();
       sess._dirty = true;
     }
   }
@@ -4875,12 +5036,14 @@
   async function trackTempMessage(env, chatId, msgId) {
     if (!chatId || !msgId) return;
     const sess = await getUserSession(env, chatId);
-    const list = Array.isArray(sess.tempMsgIds) ? sess.tempMsgIds : [];
+    const bucket = getThreadSessionBucket(sess, chatId, true);
+    if (!bucket) return;
+    const list = Array.isArray(bucket.tempMsgIds) ? bucket.tempMsgIds : [];
     const numId = Number(msgId);
     if (numId && !list.includes(numId)) {
       list.push(numId);
       if (list.length > 25) list.splice(0, list.length - 25);
-      sess.tempMsgIds = list;
+      bucket.tempMsgIds = list;
       sess._dirty = true;
     }
   }
@@ -4888,16 +5051,21 @@
   async function untrackTempMessage(env, chatId, msgId) {
     if (!chatId || !msgId) return;
     const sess = await getUserSession(env, chatId);
-    if (Array.isArray(sess.tempMsgIds)) {
-      sess.tempMsgIds = sess.tempMsgIds.filter(id => Number(id) !== Number(msgId));
+    const bucket = getThreadSessionBucket(sess, chatId, false);
+    if (bucket && Array.isArray(bucket.tempMsgIds)) {
+      bucket.tempMsgIds = bucket.tempMsgIds.filter(id => Number(id) !== Number(msgId));
+      if (bucket !== sess) bucket.updatedAt = Date.now();
       sess._dirty = true;
     }
   }
 
   async function clearAllTempMessages(env, chatId, deleteMessageFn, keepMsgId = null) {
     const sess = await getUserSession(env, chatId);
-    const ids = Array.isArray(sess.tempMsgIds) ? [...sess.tempMsgIds] : [];
-    sess.tempMsgIds = keepMsgId ? [Number(keepMsgId)] : [];
+    const bucket = getThreadSessionBucket(sess, chatId, Boolean(keepMsgId));
+    if (!bucket) return;
+    const ids = Array.isArray(bucket.tempMsgIds) ? [...bucket.tempMsgIds] : [];
+    bucket.tempMsgIds = keepMsgId ? [Number(keepMsgId)] : [];
+    if (bucket !== sess) bucket.updatedAt = Date.now();
     sess._dirty = true;
     if (deleteMessageFn) {
       for (const id of ids) {
@@ -4939,37 +5107,48 @@
 
   async function setActiveMenu(env, chatId, msgId) {
     const sess = await getUserSession(env, chatId);
-    sess.activeMenu = Number(msgId) || null;
-    sess._dirty = true;
+    const bucket = getThreadSessionBucket(sess, chatId, true);
+    if (bucket) {
+      bucket.activeMenu = Number(msgId) || null;
+      sess._dirty = true;
+    }
     if (msgId) await trackTempMessage(env, chatId, msgId);
   }
 
   async function getActiveMenu(env, chatId) {
     const sess = await getUserSession(env, chatId);
-    return sess.activeMenu || null;
+    const bucket = getThreadSessionBucket(sess, chatId, false);
+    return bucket?.activeMenu || null;
   }
 
   async function clearActiveMenu(env, chatId) {
     const sess = await getUserSession(env, chatId);
-    if (sess.activeMenu) {
-      await untrackTempMessage(env, chatId, sess.activeMenu);
-      delete sess.activeMenu;
+    const bucket = getThreadSessionBucket(sess, chatId, false);
+    if (bucket && bucket.activeMenu) {
+      await untrackTempMessage(env, chatId, bucket.activeMenu);
+      delete bucket.activeMenu;
+      if (bucket !== sess) bucket.updatedAt = Date.now();
       sess._dirty = true;
     }
   }
 
   async function setExtraMessage(env, chatId, msgId) {
     const sess = await getUserSession(env, chatId);
-    sess.extraMsg = Number(msgId) || null;
-    sess._dirty = true;
+    const bucket = getThreadSessionBucket(sess, chatId, true);
+    if (bucket) {
+      bucket.extraMsg = Number(msgId) || null;
+      sess._dirty = true;
+    }
     if (msgId) await trackTempMessage(env, chatId, msgId);
   }
 
   async function clearExtraMessage(env, chatId, deleteMessageFn) {
     const sess = await getUserSession(env, chatId);
-    const val = sess.extraMsg;
+    const bucket = getThreadSessionBucket(sess, chatId, false);
+    const val = bucket?.extraMsg;
     if (val) {
-      delete sess.extraMsg;
+      delete bucket.extraMsg;
+      if (bucket !== sess) bucket.updatedAt = Date.now();
       sess._dirty = true;
     }
     if (val && deleteMessageFn) {

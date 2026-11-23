@@ -1676,6 +1676,35 @@
                     '<button class="btn ' + (deliv.afterSendAction === 'stay' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'stay\\'});loadSettingsView()">📌 In Mini-App bleiben</button>' +
                   '</div>' +
                 '</div>' +
+                (() => {
+                  const tMode = String(deliv.topicRoutingMode || 'off');
+                  const rawMap = (deliv.topicMap && typeof deliv.topicMap === 'object') ? deliv.topicMap : {};
+                  const allTopics = [];
+                  Object.entries(rawMap).forEach(([cKey, entries]) => {
+                    if (!entries || typeof entries !== 'object') return;
+                    Object.entries(entries).forEach(([tKey, val]) => {
+                      if (val && val.threadId) allTopics.push({ chatKey: cKey, key: tKey, name: val.name || tKey, threadId: val.threadId });
+                    });
+                  });
+                  return '<div style="margin-bottom:12px;padding:9px 10px;border-radius:10px;background:rgba(139,92,246,0.08);border:1px solid rgba(167,139,250,0.24)">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">' +
+                      '<div style="font-size:11.5px;font-weight:700;color:var(--text)">🗂️ Automatisches Themen-Routing (Bot API 9.3–10.5)</div>' +
+                      (allTopics.length > 0 ? '<button type="button" class="btn danger" style="padding:3px 8px;font-size:10.5px" onclick="resetDeliveryTopicMapClient(true)">🔄 Zuordnung zurücksetzen (' + allTopics.length + ')</button>' : '') +
+                    '</div>' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:7px">Sortiert gesendete Filme &amp; Serien automatisch in eigene Telegram-Themen (Privatchat-Topics oder Forum-Zielgruppe). Im Bot steuerbar über <code>/themen</code>.</div>' +
+                    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:' + (allTopics.length > 0 ? '8px' : '0') + '">' +
+                      '<button type="button" class="btn ' + (tMode === 'off' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="switchTopicRoutingModeClient(\\'off\\',true)">⚪ Aus / Manuell</button>' +
+                      '<button type="button" class="btn ' + (tMode === 'by_type' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="switchTopicRoutingModeClient(\\'by_type\\',true)">🎬 Filme &amp; 📺 Serien</button>' +
+                      '<button type="button" class="btn ' + (tMode === 'per_series' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="switchTopicRoutingModeClient(\\'per_series\\',true)">📺 Pro Serie ein Thema</button>' +
+                    '</div>' +
+                    (allTopics.length > 0 ? (
+                      '<div style="display:flex;gap:5px;flex-wrap:wrap;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08)">' +
+                        allTopics.slice(0, 10).map(t => '<span style="font-size:10.5px;padding:2px 7px;border-radius:6px;background:rgba(15,23,42,0.55);border:1px solid rgba(148,163,184,0.22);color:#e2e8f0">' + esc(t.name) + ' <code>#' + esc(String(t.threadId)) + '</code></span>').join('') +
+                        (allTopics.length > 10 ? '<span style="font-size:10.5px;color:var(--muted)">+' + (allTopics.length - 10) + ' weitere</span>' : '') +
+                      '</div>'
+                    ) : '') +
+                  '</div>';
+                })() +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:10px">' +
                   '<div>' +
                     '<div style="font-size:11px;color:var(--muted);margin-bottom:3px">👥 Ziel-Gruppen Chat-ID (z.B. -100...):</div>' +
@@ -1763,6 +1792,7 @@
                 '<div class="shortcut-cheat-card"><b>🌟 Populär / Beliebt</b><code>/p f   • /pop f    • /popular f • /populär f</code><br><code>/p s   • /pop s    • /popular s • /populär s</code></div>' +
                 '<div class="shortcut-cheat-card"><b>💎 Geheimtipps (Secret Gems)</b><code>/sc f  • /sec f    • /secret f  • /geheim f</code><br><code>/sc s  • /sec s    • /secret s  • /geheim s</code></div>' +
                 '<div class="shortcut-cheat-card"><b>🎲 Zufalls-Tipp (mit Genre optional)</b><code>/r f   • /rand f   • /random f  • /r f Action</code><br><code>/r s   • /rand s   • /random s  • /r s Sci-Fi</code></div>' +
+                '<div class="shortcut-cheat-card"><b>🗂️ Themen &amp; Chat-IDs (Bot API 9.3–10.5)</b><code>/themen • /topics</code> (Auto-Themen steuern)<br><code>/id     • /chatid</code> (Chat- &amp; Topic-ID kopieren)</div>' +
               '</div>' +
             '</div>' +
             '</div>' +

@@ -603,7 +603,8 @@ export async function registerCustomBotWebhook(
   botToken: string,
   webhookUrl: string,
   secretToken?: string,
-  kvNamespace?: KVStoreAdapter | null
+  kvNamespace?: KVStoreAdapter | null,
+  mainBotToken?: string
 ): Promise<{ ok: boolean; description?: string; error?: string }> {
   const startedAt = performance.now();
   const clean = (botToken || '').trim();
@@ -618,6 +619,24 @@ export async function registerCustomBotWebhook(
         title: 'Webhook Registration',
         durationMs: Math.round(performance.now() - startedAt),
         summary: 'Fehlende Parameter für setWebhook.',
+        errorDetails: errMsg,
+      },
+      kvNamespace
+    );
+    return { ok: false, error: errMsg };
+  }
+  const cleanMain = (mainBotToken || '').trim();
+  if (cleanMain && clean === cleanMain && /\/api\/telegram\/custom-webhook/i.test(webhookUrl)) {
+    const errMsg = 'Dieses Token gehört zum Haupt-Bot! Bitte niemals auf /api/telegram/custom-webhook registrieren (sonst wird /webhook mit 403 blockiert).';
+    appendTelegramActivityLog(
+      {
+        eventType: 'webhook',
+        status: 'error',
+        deliveryMode: 'custom_bot',
+        method: 'setWebhook',
+        title: 'Webhook Registration Blocked',
+        durationMs: Math.round(performance.now() - startedAt),
+        summary: 'Haupt-Bot-Schutz: Registrierung auf custom-webhook verhindert.',
         errorDetails: errMsg,
       },
       kvNamespace
