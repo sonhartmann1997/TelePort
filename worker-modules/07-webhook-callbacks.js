@@ -3585,6 +3585,15 @@
   async function handleUpdate(env, update) {
     const { sendMessage, editMessageText, answerCallbackQuery, deleteMessage, editMessageReplyMarkup, editInlineMessageText, getChatMember } = tgApi(env);
     const activeSessionChatId = update?.message?.chat?.id || update?.callback_query?.message?.chat?.id || update?.callback_query?.from?.id || null;
+    const incomingThreadChatId = update?.message?.chat?.id ?? update?.callback_query?.message?.chat?.id ?? null;
+    const incomingThreadId = update?.message?.message_thread_id ?? update?.callback_query?.message?.message_thread_id ?? null;
+    if (incomingThreadChatId !== null && incomingThreadChatId !== undefined) {
+      if (incomingThreadId) {
+        setActiveChatThreadId(incomingThreadChatId, incomingThreadId);
+      } else {
+        clearActiveChatThreadId(incomingThreadChatId);
+      }
+    }
 
     try {
       // 0. Inline-Queries (für Gruppen & Kanäle: @BotName Suchbegriff / @BotName f / @BotName s)
@@ -3634,18 +3643,22 @@
 
         const text = (message.text || "").trim();
 
-        // /id oder /chatid Befehl: Zeigt sofort Chat-ID, Topic/Thread-ID & Quellgruppen-ID zum Kopieren für Gruppen-Versand & Backup-Bridge
+        // /id oder /chatid Befehl: Zeigt sofort Chat-ID, Topic/Thread-ID (inkl. Private-Chat-Topics Bot API 9.3/10.5) & Quellgruppen-ID
         if (/^\/(?:id|chatid|groupid)(?:@\w+)?$/i.test(text)) {
-          const threadId = message.message_thread_id || null;
+          const threadId = parseValidTelegramThreadId(message.message_thread_id);
+          const isPrivateTopic = Boolean(threadId && message.chat?.type === "private");
           const rawChannelNum = String(chatId).replace(/^-100/, "").replace(/^-/, "");
+          const topicLabel = isPrivateTopic
+            ? `🧵 *Private-Chat-Topic ID (Bot API 9.3/10.5):* \`${threadId}\`\n✅ *Thread-Routing:* Antworten & Medien bleiben automatisch in diesem Topic.\n`
+            : (threadId ? `🧵 *Forum-Topic / Thread-ID:* \`${threadId}\`\n✅ *Thread-Routing:* Antworten & Medien bleiben automatisch in diesem Topic.\n` : "");
           const idInfoText =
-            `🆔 *TELEGRAM CHAT- & GRUPPEN-ID DIAGNOSE*\n${SEP}\n` +
+            `🆔 *TELEGRAM CHAT- & TOPIC-ID DIAGNOSE*\n${SEP}\n` +
             `💬 *Chat-Name:* \`${escapeMd(message.chat.title || message.chat.first_name || "Privat-Chat")}\`\n` +
             `📌 *Ziel- / Gruppen Chat-ID:* \`${chatId}\`\n` +
-            (threadId ? `🧵 *Topic / Thread-ID:* \`${threadId}\`\n` : "") +
+            topicLabel +
             (Number(chatId) < 0 ? `📦 *result.json Channel-ID:* \`${rawChannelNum}\` (Bridge: \`${chatId}\`)\n` : "") +
             (repliedVideo?.file_id ? `🎞️ *Geerntete Video File-ID (in D1 gespeichert!):*\n\`${repliedVideo.file_id}\`\n` : "") +
-            `\n💡 *Tipp:* Kopiere \`${chatId}\` und füge sie in der **Mini-App ▸ Film-Modal oder ⚙️ Einstellungen** unter **👥 Eigene Ziel-Gruppe** oder **📦 Quellgruppe** ein!`;
+            `\n💡 *Tipp:* Kopiere \`${chatId}\`${threadId ? ` (Topic: \`${threadId}\`)` : ""} und füge sie in der **Mini-App ▸ Film-Modal oder ⚙️ Einstellungen** unter **👥 Eigene Ziel-Gruppe** oder **📦 Quellgruppe** ein!`;
           await sendMessage(chatId, idInfoText, threadId ? { message_thread_id: threadId } : {});
           return;
         }
@@ -6194,7 +6207,11 @@
         await answerCallbackQuery(update.callback_query.id, "⚠️ Vorgang konnte nicht abgeschlossen werden.").catch(() => {});
       }
     } finally {
+      if (incomingThreadChatId !== null && incomingThreadChatId !== undefined) {
+        clearActiveChatThreadId(incomingThreadChatId);
+      }
       if (activeSessionChatId) {
+        clearActiveChatThreadId(activeSessionChatId);
         await flushUserSession(env, activeSessionChatId);
       }
     }

@@ -1439,6 +1439,59 @@
     }
   }
 
+  // Bot API 9.3 / 10.5: Active Thread/Topic Context (Private-Chat-Topics & Supergroup Forum Topics)
+  const activeChatThreadContextMap = new Map();
+  const ACTIVE_CHAT_THREAD_TTL_MS = 15000;
+
+  function parseValidTelegramThreadId(rawId) {
+    if (rawId === null || rawId === undefined || rawId === "" || rawId === false) return null;
+    const str = String(rawId).trim();
+    if (!/^\d+$/.test(str)) return null;
+    const num = parseInt(str, 10);
+    return Number.isInteger(num) && num > 0 ? num : null;
+  }
+
+  function setActiveChatThreadId(chatId, threadId) {
+    if (chatId === null || chatId === undefined) return;
+    const key = String(chatId).trim();
+    if (!key) return;
+    const parsed = parseValidTelegramThreadId(threadId);
+    if (!parsed) {
+      activeChatThreadContextMap.delete(key);
+      return;
+    }
+    if (activeChatThreadContextMap.size > 250) {
+      const now = Date.now();
+      for (const [k, v] of activeChatThreadContextMap.entries()) {
+        if (!v || (now - v.ts) > ACTIVE_CHAT_THREAD_TTL_MS) activeChatThreadContextMap.delete(k);
+      }
+      if (activeChatThreadContextMap.size > 250) {
+        const firstKey = activeChatThreadContextMap.keys().next().value;
+        if (firstKey !== undefined) activeChatThreadContextMap.delete(firstKey);
+      }
+    }
+    activeChatThreadContextMap.set(key, { threadId: parsed, ts: Date.now() });
+  }
+
+  function getActiveChatThreadId(chatId) {
+    if (chatId === null || chatId === undefined) return null;
+    const key = String(chatId).trim();
+    if (!key) return null;
+    const entry = activeChatThreadContextMap.get(key);
+    if (!entry) return null;
+    if ((Date.now() - entry.ts) > ACTIVE_CHAT_THREAD_TTL_MS) {
+      activeChatThreadContextMap.delete(key);
+      return null;
+    }
+    return entry.threadId;
+  }
+
+  function clearActiveChatThreadId(chatId) {
+    if (chatId === null || chatId === undefined) return;
+    const key = String(chatId).trim();
+    if (key) activeChatThreadContextMap.delete(key);
+  }
+
   // @ANCHOR: TELEGRAM_API
   // --- Telegram API Client (Nutzt stabiles HTML-Parsing gegen kaputte Links + 429 Anti-Spam Schutz!) ---
   function tgApi(env) {
@@ -1471,6 +1524,24 @@
         d.includes("byte offset") ||
         d.includes("entity")
       );
+    };
+
+    const isTelegramThreadNotFoundError = (errDesc) => {
+      const d = String(errDesc || "").toLowerCase();
+      return (
+        d.includes("message thread not found") ||
+        d.includes("topic_deleted") ||
+        d.includes("topic_closed") ||
+        d.includes("message_thread_id") ||
+        d.includes("forum_topic_closed")
+      );
+    };
+
+    const resolveOutboundThreadId = (targetChatId, explicitThreadVal, hasExplicitKey = false) => {
+      if (hasExplicitKey) {
+        return parseValidTelegramThreadId(explicitThreadVal);
+      }
+      return getActiveChatThreadId(targetChatId);
     };
 
     return {
@@ -1779,7 +1850,10 @@
         try {
           trackStat("telegramCalls");
           const _fromAntiSpamQueue = Boolean(options?._fromAntiSpamQueue);
+          const hasExplicitThread = Object.prototype.hasOwnProperty.call(options || {}, "message_thread_id");
           const cleanOptions = normalizeLinkPreviewOptions(options, true);
+          const resolvedThreadId = resolveOutboundThreadId(chatId, cleanOptions.message_thread_id, hasExplicitThread);
+          delete cleanOptions.message_thread_id;
           recordActualTelegramSendSlot(chatId);
           const safeMarkup = cleanOptions.reply_markup ? sanitizeReplyMarkup(cleanOptions.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(text, 4090);
@@ -1790,6 +1864,7 @@
             parse_mode: prepared.parse_mode,
             reply_markup: safeMarkup
           };
+          if (resolvedThreadId) body.message_thread_id = resolvedThreadId;
           let res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1808,6 +1883,7 @@
                 quality: "Text",
                 fileId: `tmdb_card_${Date.now()}`,
                 caption: text,
+                targetTopicId: resolvedThreadId ? String(resolvedThreadId) : "",
                 method: "sendMessage",
                 reasonCode: "flood_429",
                 reason: `Telegram 429 retry_after (${retrySec}s)`,
@@ -1818,20 +1894,36 @@
           }
 
           if (!res.ok) {
-            const errJson = await res.clone().json().catch(() => null);
-            const errDesc = String(errJson?.description || "");
-            if (res.status === 400 && isTelegramParseOrEntityError(errDesc)) {
-              const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
-              const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
-              const plainBody = { ...body, text: plainText, parse_mode: undefined, reply_markup: safeMarkup };
+            let errJson = await res.clone().json().catch(() => null);
+            let errDesc = String(errJson?.description || "");
+            if (res.status === 400 && body.message_thread_id && isTelegramThreadNotFoundError(errDesc)) {
+              clearActiveChatThreadId(chatId);
+              delete body.message_thread_id;
               res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(plainBody),
+                body: JSON.stringify(body),
                 _criticalSubrequest: true
               }, 6000);
-            } else {
-              return null;
+              if (!res.ok) {
+                errJson = await res.clone().json().catch(() => null);
+                errDesc = String(errJson?.description || "");
+              }
+            }
+            if (!res.ok) {
+              if (res.status === 400 && isTelegramParseOrEntityError(errDesc)) {
+                const plainTextRaw = unescapeMdChars(String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).replace(/[*_`]/g, "");
+                const plainText = plainTextRaw.length > 4090 ? (plainTextRaw.slice(0, 4087) + "…") : plainTextRaw;
+                const plainBody = { ...body, text: plainText, parse_mode: undefined, reply_markup: safeMarkup };
+                res = await fetchWithTimeout(`${TELEGRAM_API}/sendMessage`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(plainBody),
+                  _criticalSubrequest: true
+                }, 6000);
+              } else {
+                return null;
+              }
             }
           }
           return res.ok ? await res.json() : null;
@@ -1843,17 +1935,22 @@
       async sendPhoto(chatId, photoUrl, caption, options = {}) {
         try {
           trackStat("telegramCalls");
+          const hasExplicitThread = Object.prototype.hasOwnProperty.call(options || {}, "message_thread_id");
+          const resolvedThreadId = resolveOutboundThreadId(chatId, options?.message_thread_id, hasExplicitThread);
+          const cleanPhotoOpts = { ...(options || {}) };
+          delete cleanPhotoOpts.message_thread_id;
           recordActualTelegramSendSlot(chatId);
-          const safeMarkup = options.reply_markup ? sanitizeReplyMarkup(options.reply_markup) : undefined;
+          const safeMarkup = cleanPhotoOpts.reply_markup ? sanitizeReplyMarkup(cleanPhotoOpts.reply_markup) : undefined;
           const prepared = prepareTelegramHtmlPayload(caption || "", 1020);
           const body = {
-            ...options,
+            ...cleanPhotoOpts,
             chat_id: chatId,
             photo: photoUrl,
             caption: prepared.text,
             parse_mode: prepared.parse_mode,
             reply_markup: safeMarkup
           };
+          if (resolvedThreadId) body.message_thread_id = resolvedThreadId;
           let res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1869,26 +1966,42 @@
           }
 
           if (!res.ok) {
-            const errJson = await res.clone().json().catch(() => null);
-            const errDesc = String(errJson?.description || "");
-            if (res.status === 400 && isTelegramParseOrEntityError(errDesc)) {
-              const plainCaption = unescapeMdChars(
-                (caption || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-              ).replace(/[*_`]/g, "");
-              const fallbackBody = {
-                ...body,
-                caption: plainCaption.length > 1020 ? plainCaption.slice(0, 1017) + "…" : plainCaption,
-                parse_mode: undefined,
-                reply_markup: safeMarkup
-              };
+            let errJson = await res.clone().json().catch(() => null);
+            let errDesc = String(errJson?.description || "");
+            if (res.status === 400 && body.message_thread_id && isTelegramThreadNotFoundError(errDesc)) {
+              clearActiveChatThreadId(chatId);
+              delete body.message_thread_id;
               res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(fallbackBody),
+                body: JSON.stringify(body),
                 _criticalSubrequest: true
               }, 7000);
-            } else {
-              return null;
+              if (!res.ok) {
+                errJson = await res.clone().json().catch(() => null);
+                errDesc = String(errJson?.description || "");
+              }
+            }
+            if (!res.ok) {
+              if (res.status === 400 && isTelegramParseOrEntityError(errDesc)) {
+                const plainCaption = unescapeMdChars(
+                  (caption || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+                ).replace(/[*_`]/g, "");
+                const fallbackBody = {
+                  ...body,
+                  caption: plainCaption.length > 1020 ? plainCaption.slice(0, 1017) + "…" : plainCaption,
+                  parse_mode: undefined,
+                  reply_markup: safeMarkup
+                };
+                res = await fetchWithTimeout(`${TELEGRAM_API}/sendPhoto`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(fallbackBody),
+                  _criticalSubrequest: true
+                }, 7000);
+              } else {
+                return null;
+              }
             }
           }
           return res.ok ? await res.json() : null;
@@ -2162,9 +2275,11 @@
           const preparedCap = prepareTelegramHtmlPayload(caption || "", 1020);
           const htmlCaption = preparedCap.text;
           const captionParseMode = preparedCap.parse_mode;
-          const threadId = extraOpts.messageThreadId && /^\d+$/.test(String(extraOpts.messageThreadId).trim())
-            ? parseInt(String(extraOpts.messageThreadId).trim(), 10)
-            : undefined;
+          const hasExplicitThread = Object.prototype.hasOwnProperty.call(extraOpts || {}, "messageThreadId") || Object.prototype.hasOwnProperty.call(extraOpts || {}, "message_thread_id");
+          const explicitThreadRaw = Object.prototype.hasOwnProperty.call(extraOpts || {}, "messageThreadId")
+            ? extraOpts.messageThreadId
+            : extraOpts?.message_thread_id;
+          let threadId = resolveOutboundThreadId(targetChatId, explicitThreadRaw, hasExplicitThread) || undefined;
           const resolvedCoverUrl = await resolveVideoCoverUrlForDelivery(env, extraOpts);
           const startTimestamp = Number(extraOpts.startTimestamp) > 0 ? Math.floor(Number(extraOpts.startTimestamp)) : undefined;
 
@@ -2198,6 +2313,28 @@
               const err429Copy = await copyRes.json().catch(() => ({}));
               registerAntiSpam429FloodWait(Number(err429Copy?.parameters?.retry_after) || 5, targetChatId);
               return null;
+            }
+
+            if (!copyRes.ok) {
+              const copyErrJson = await copyRes.clone().json().catch(() => null);
+              const copyErrDesc = String(copyErrJson?.description || "");
+              if (copyRes.status === 400 && threadId && isTelegramThreadNotFoundError(copyErrDesc)) {
+                clearActiveChatThreadId(targetChatId);
+                threadId = undefined;
+                const retryNoThreadPayload = { ...copyPayload };
+                delete retryNoThreadPayload.message_thread_id;
+                copyRes = await fetchWithTimeout(`${apiBase}/copyMessage`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(retryNoThreadPayload),
+                  _criticalSubrequest: true
+                }, 7000);
+                if (copyRes.status === 429) {
+                  const err429CopyThread = await copyRes.json().catch(() => ({}));
+                  registerAntiSpam429FloodWait(Number(err429CopyThread?.parameters?.retry_after) || 5, targetChatId);
+                  return null;
+                }
+              }
             }
 
             if (!copyRes.ok) {
@@ -2351,6 +2488,26 @@
             const retrySec = Number(err429?.parameters?.retry_after) || 5;
             registerAntiSpam429FloodWait(retrySec, targetChatId);
             return null;
+          }
+          if (!res.ok && threadId) {
+            const vidErrJson = await res.clone().json().catch(() => null);
+            const vidErrDesc = String(vidErrJson?.description || "");
+            if (res.status === 400 && isTelegramThreadNotFoundError(vidErrDesc)) {
+              clearActiveChatThreadId(targetChatId);
+              threadId = undefined;
+              delete videoBody.message_thread_id;
+              res = await fetchWithTimeout(`${apiBase}/sendVideo`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(videoBody),
+                _criticalSubrequest: true
+              }, 8000);
+              if (res.status === 429) {
+                const err429ThreadVid = await res.json().catch(() => ({}));
+                registerAntiSpam429FloodWait(Number(err429ThreadVid?.parameters?.retry_after) || 5, targetChatId);
+                return null;
+              }
+            }
           }
           // Falls Telegram das Cover-Bild ablehnt (z. B. temporärer Fetch-Fehler bei Bild-URL), versuche sendVideo ohne cover
           if (!res.ok && usedCover) {
