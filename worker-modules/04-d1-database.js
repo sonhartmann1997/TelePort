@@ -2403,6 +2403,9 @@
     const mid = Number(movieId);
     const normalizedFid = normalizeExportFileIdChannel(rawFid);
     if (scoreTelegramFileIdValidity(normalizedFid) === 0) return false;
+    if (normalizedFid.startsWith("tg_export_")) {
+      memoryFallback.set("d1_has_tg_export_placeholders", { hasAny: true, ts: Date.now() });
+    }
 
     const rawFilename = String(fileInfo.rawFilename || fileInfo.raw_filename || "").trim();
     const rawCaption = String(fileInfo.rawCaption || fileInfo.raw_caption || "").trim();
@@ -2756,6 +2759,9 @@
     const eNum = Number(episodeNumber || 1);
     const normalizedFid = normalizeExportFileIdChannel(rawFid);
     if (scoreTelegramFileIdValidity(normalizedFid) === 0) return false;
+    if (normalizedFid.startsWith("tg_export_")) {
+      memoryFallback.set("d1_has_tg_export_placeholders", { hasAny: true, ts: Date.now() });
+    }
 
     const epTitle = String(fileInfo.episodeTitle || fileInfo.title || (isBonus ? `Bonus / Special ${eNum}` : `Folge ${eNum}`)).trim();
     const rawFilename = String(fileInfo.rawFilename || fileInfo.raw_filename || "").trim();
@@ -4437,6 +4443,27 @@
   // Ersetzt eine synthetische Export-Referenz (tg_export_<channelId>_<msgId> inkl. -100-Variante) dauerhaft durch eine echte Telegram file_id in D1 + Memory
   async function replaceExportFileIdInD1(env, oldExportFileId, realTelegramFileId, realUniqueId = null) {
     if (!oldExportFileId || !realTelegramFileId || oldExportFileId === realTelegramFileId) return false;
+    const nowTs = Date.now();
+    // Zero-Write-Fast-Exit: Wenn in D1 überhaupt keine tg_export_-Platzhalter existieren, sparen wir bei Videos
+    // aus nicht-aktivierten Kanälen/Gruppen 2 unnötige D1-UPDATEs + Memory-Scan pro Video!
+    const cachedPresence = memoryFallback.get("d1_has_tg_export_placeholders");
+    if (cachedPresence && cachedPresence.hasAny === false && (nowTs - Number(cachedPresence.ts || 0)) < 300000) {
+      return false;
+    }
+    const db = await ensureD1Schema(env);
+    if (db && (!cachedPresence || (nowTs - Number(cachedPresence.ts || 0)) >= (cachedPresence.hasAny ? 60000 : 300000))) {
+      try {
+        trackStat("d1Reads");
+        const probeRes = await db.batch([
+          db.prepare("SELECT 1 AS hit FROM movie_files WHERE telegram_file_id >= 'tg_export_' AND telegram_file_id < 'tg_export`' LIMIT 1"),
+          db.prepare("SELECT 1 AS hit FROM episode_files WHERE telegram_file_id >= 'tg_export_' AND telegram_file_id < 'tg_export`' LIMIT 1")
+        ]);
+        const hasAny = Boolean((probeRes?.[0]?.results?.length || 0) > 0 || (probeRes?.[1]?.results?.length || 0) > 0);
+        memoryFallback.set("d1_has_tg_export_placeholders", { hasAny, ts: nowTs });
+        if (!hasAny) return false;
+      } catch (_probeErr) {}
+    }
+
     const candidateSet = new Set([String(oldExportFileId).trim()]);
     const expMatch = String(oldExportFileId).trim().match(/^tg_export_(-?\d+)_(\d+)$/i);
     if (expMatch) {
@@ -4462,10 +4489,8 @@
           }
         }
       }
-      const db = await ensureD1Schema(env);
       if (db) {
         trackStat("d1Writes");
-        const nowTs = Date.now();
         const placeholders = candidates.map((_, idx) => `?${idx + 4}`).join(", ");
         await db.batch([
           db.prepare(`UPDATE movie_files SET telegram_file_id = ?1, telegram_unique_id = COALESCE(?2, telegram_unique_id), updated_at = ?3 WHERE telegram_file_id IN (${placeholders})`)

@@ -924,33 +924,124 @@ import { AsyncLocalStorage } from "node:async_hooks";
   // In-Memory Cache & State-Speicher (minimiert Cloudflare KV & TMDB API Calls drastisch!)
   // Im Browser-Simulator (AI Studio Vorschau) werden D1-/Playlist-/Import-Einträge automatisch über F5-Reloads hinweg persistiert.
   const SANDBOX_MEM_STORAGE_KEY = "__tma_sandbox_d1_memory_v1__";
+  // Blitzschnelle O(1)/Sampled-RAM-Schätzung (ohne JSON.stringify-CPU-Overhead!) für striktes 128-MB-Edge-Isolate-Budget
+  function estimateWorkerRamBytes(val, depth = 0) {
+    if (val === null || val === undefined) return 8;
+    const t = typeof val;
+    if (t === "string") return 40 + val.length * 2;
+    if (t === "number" || t === "boolean") return 16;
+    if (t !== "object") return 32;
+    if (depth >= 2) {
+      if (Array.isArray(val)) return 64 + val.length * 48;
+      return 128;
+    }
+    if (Array.isArray(val)) {
+      const len = val.length;
+      if (len === 0) return 64;
+      const sampleCount = Math.min(len, 12);
+      let sampleBytes = 0;
+      const step = len <= sampleCount ? 1 : Math.floor(len / sampleCount);
+      let taken = 0;
+      for (let i = 0; i < len && taken < sampleCount; i += step, taken++) {
+        sampleBytes += estimateWorkerRamBytes(val[i], depth + 1);
+      }
+      return 64 + Math.round((sampleBytes / Math.max(1, taken)) * len);
+    }
+    const keys = Object.keys(val);
+    const kLen = keys.length;
+    if (kLen === 0) return 64;
+    const sampleKeys = Math.min(kLen, 16);
+    let sampleBytes = 0;
+    const step = kLen <= sampleKeys ? 1 : Math.floor(kLen / sampleKeys);
+    let taken = 0;
+    for (let i = 0; i < kLen && taken < sampleKeys; i += step, taken++) {
+      const k = keys[i];
+      sampleBytes += 32 + k.length * 2 + estimateWorkerRamBytes(val[k], depth + 1);
+    }
+    return 64 + Math.round((sampleBytes / Math.max(1, taken)) * kLen);
+  }
+
+  function computeFastStringSig(str) {
+    const s = String(str || "");
+    let h1 = 2166136261;
+    let h2 = 5381;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      h1 ^= c;
+      h1 = Math.imul(h1, 16777619);
+      h2 = (Math.imul(h2, 33) ^ c) >>> 0;
+    }
+    return `${s.length}:${(h1 >>> 0).toString(36)}:${(h2 >>> 0).toString(36)}`;
+  }
+
   const memoryFallback = (() => {
     const map = new Map();
     const isBrowserSandbox = typeof localStorage !== "undefined" && typeof window !== "undefined";
     if (!isBrowserSandbox) {
-      // Free-Plan RAM-Schutz (128MB Limit): Begrenze Isolate-Cache auf max. 1400 Einträge (verhindert Error 1102!)
-      const MAX_WORKER_MEM_ENTRIES = 1400;
+      // Free-Plan Edge-RAM-Schutz (128MB Limit): striktes Eintrags- UND Byte-Budget (max. 10 MB / 900 Einträge / 384 KB pro Eintrag)
+      const MAX_WORKER_MEM_ENTRIES = 900;
+      const MAX_WORKER_MEM_BYTES = 10 * 1024 * 1024;
+      const TARGET_EVICT_BYTES = Math.round(MAX_WORKER_MEM_BYTES * 0.75);
+      const MAX_SINGLE_MEM_ENTRY_BYTES = 384 * 1024;
       const PROTECTED_KEYS = new Set([
         "TG_WEBHOOK_SECURITY_CONFIG_V1",
         "TG_VIDEO_COVER_MODE",
         "TG_WORKER_SPEED_PROFILE",
-        "bot_username"
+        "bot_username",
+        "auto_ingest_chats_ram",
+        "d1_has_tg_export_placeholders"
       ]);
+      const sizeMap = new Map();
+      let totalApproxBytes = 0;
       const origSetWorker = map.set.bind(map);
+      const origDelWorker = map.delete.bind(map);
+      const origClearWorker = map.clear.bind(map);
+
+      map.delete = (k) => {
+        const prevSz = sizeMap.get(k) || 0;
+        if (prevSz > 0) {
+          totalApproxBytes = Math.max(0, totalApproxBytes - prevSz);
+          sizeMap.delete(k);
+        }
+        return origDelWorker(k);
+      };
+      map.clear = () => {
+        sizeMap.clear();
+        totalApproxBytes = 0;
+        return origClearWorker();
+      };
       map.set = (k, v) => {
+        const entryBytes = estimateWorkerRamBytes(v) + (String(k || "").length * 2 + 48);
+        // Übergroße Objekte (> 384 KB, z. B. riesiger Gesamt-Katalog-Preseed) niemals dauerhaft im Isolate-Heap pinnen!
+        if (!PROTECTED_KEYS.has(k) && entryBytes > MAX_SINGLE_MEM_ENTRY_BYTES) {
+          if (map.has(k)) map.delete(k);
+          return map;
+        }
         if (map.has(k)) {
-          map.delete(k);
-        } else if (map.size >= MAX_WORKER_MEM_ENTRIES) {
+          const prevSz = sizeMap.get(k) || 0;
+          totalApproxBytes = Math.max(0, totalApproxBytes - prevSz);
+          sizeMap.delete(k);
+          origDelWorker(k);
+        }
+        if (map.size >= MAX_WORKER_MEM_ENTRIES || (totalApproxBytes + entryBytes) > MAX_WORKER_MEM_BYTES) {
           let evicted = 0;
           for (const existingKey of map.keys()) {
             if (PROTECTED_KEYS.has(existingKey)) continue;
-            map.delete(existingKey);
+            const prevSz = sizeMap.get(existingKey) || 0;
+            totalApproxBytes = Math.max(0, totalApproxBytes - prevSz);
+            sizeMap.delete(existingKey);
+            origDelWorker(existingKey);
             evicted++;
-            if (evicted >= 150) break;
+            if (map.size < (MAX_WORKER_MEM_ENTRIES - 80) && (totalApproxBytes + entryBytes) <= TARGET_EVICT_BYTES) {
+              break;
+            }
           }
         }
+        sizeMap.set(k, entryBytes);
+        totalApproxBytes += entryBytes;
         return origSetWorker(k, v);
       };
+      map.getApproxBytes = () => totalApproxBytes;
       return map;
     }
 
@@ -1067,22 +1158,46 @@ import { AsyncLocalStorage } from "node:async_hooks";
     globalThis.__workerMemoryFallback = memoryFallback;
   }
 
+  const MAX_TMDB_CACHE_ENTRIES = 220;
+  const MAX_TMDB_CACHE_BYTES = 4 * 1024 * 1024;
+  const MAX_TMDB_SINGLE_BYTES = 192 * 1024;
+  let tmdbCacheApproxBytes = 0;
+
   function getCachedTmdb(key) {
     const entry = tmdbCache.get(key);
     if (!entry) return null;
     if (Date.now() > entry.exp) {
+      tmdbCacheApproxBytes = Math.max(0, tmdbCacheApproxBytes - (entry.sz || 0));
       tmdbCache.delete(key);
       return null;
     }
+    // Echtes LRU-Refresh: häufig genutzte Titel bleiben im heißen L1-Cache
+    tmdbCache.delete(key);
+    tmdbCache.set(key, entry);
     return entry.val;
   }
 
   function setCachedTmdb(key, val, ttlMs = 1800000) {
-    if (tmdbCache.size > 400) {
-      const firstKey = tmdbCache.keys().next().value;
-      if (firstKey) tmdbCache.delete(firstKey);
+    const now = Date.now();
+    const sz = estimateWorkerRamBytes(val) + 64;
+    if (sz > MAX_TMDB_SINGLE_BYTES) return val;
+    if (tmdbCache.has(key)) {
+      const prev = tmdbCache.get(key);
+      tmdbCacheApproxBytes = Math.max(0, tmdbCacheApproxBytes - (prev?.sz || 0));
+      tmdbCache.delete(key);
     }
-    tmdbCache.set(key, { val, exp: Date.now() + ttlMs });
+    if (tmdbCache.size >= MAX_TMDB_CACHE_ENTRIES || (tmdbCacheApproxBytes + sz) > MAX_TMDB_CACHE_BYTES) {
+      for (const [k, ent] of tmdbCache.entries()) {
+        if (!ent || now > ent.exp || tmdbCache.size >= MAX_TMDB_CACHE_ENTRIES || (tmdbCacheApproxBytes + sz) > (MAX_TMDB_CACHE_BYTES * 0.75)) {
+          tmdbCacheApproxBytes = Math.max(0, tmdbCacheApproxBytes - (ent?.sz || 0));
+          tmdbCache.delete(k);
+        } else {
+          break;
+        }
+      }
+    }
+    tmdbCache.set(key, { val, exp: now + ttlMs, sz });
+    tmdbCacheApproxBytes += sz;
     return val;
   }
 
@@ -1248,7 +1363,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
           const strVal = typeof raw === "string" ? raw : JSON.stringify(raw);
           memoryFallback.set(cacheKey, strVal);
           memoryFallback.set(cacheTsKey, now);
-          memoryFallback.set(`kv_last_saved_${cleanKey}`, strVal);
+          // Nur 24-Byte-Signatur statt vollständigem String-Duplikat speichern (halbiert KV-RAM-Verbrauch!)
+          memoryFallback.set(`kv_last_saved_${cleanKey}`, computeFastStringSig(strVal));
           return strVal;
         }
         memoryFallback.set(cacheKey, KV_EMPTY_SENTINEL);
@@ -1263,6 +1379,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
     const cleanKey = String(key || "");
     if (!cleanKey) return false;
     const valueStr = typeof rawOrObj === "string" ? rawOrObj : JSON.stringify(rawOrObj);
+    const valueSig = computeFastStringSig(valueStr);
     const cacheKey = `kv_raw_${cleanKey}`;
     const cacheTsKey = `kv_raw_ts_${cleanKey}`;
     const lastSavedKey = `kv_last_saved_${cleanKey}`;
@@ -1270,7 +1387,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
     memoryFallback.set(cacheTsKey, Date.now());
 
     const forceWrite = Boolean(options.forceKvWrite || options.flushNow);
-    if (!forceWrite && memoryFallback.get(lastSavedKey) === valueStr) {
+    if (!forceWrite && memoryFallback.get(lastSavedKey) === valueSig) {
       kvDirtyBuffer.delete(cleanKey);
       return false;
     }
@@ -1280,6 +1397,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
     const nextEntry = {
       key: cleanKey,
       valueStr,
+      valueSig,
       bindingName: options.bindingName || prev?.bindingName || "MOVIE_SAVED",
       expirationTtl: options.expirationTtl || prev?.expirationTtl || null,
       periodicOnly: options.periodicOnly !== undefined ? Boolean(options.periodicOnly) : Boolean(prev?.periodicOnly),
@@ -1287,6 +1405,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
       firstDirtiedAt: prev?.firstDirtiedAt || now,
       updatedAt: now
     };
+    if (!kvDirtyBuffer.has(cleanKey) && kvDirtyBuffer.size >= 60) {
+      for (const [oldK, oldV] of kvDirtyBuffer.entries()) {
+        if (oldV?.periodicOnly) {
+          kvDirtyBuffer.delete(oldK);
+          if (kvDirtyBuffer.size < 50) break;
+        }
+      }
+    }
     kvDirtyBuffer.set(cleanKey, nextEntry);
 
     if (options.flushNow === true) {
@@ -1335,7 +1461,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
     await Promise.allSettled(entriesToFlush.map(async (entry) => {
       kvDirtyBuffer.delete(entry.key);
       const lastSavedKey = `kv_last_saved_${entry.key}`;
-      if (!force && memoryFallback.get(lastSavedKey) === entry.valueStr) {
+      const entrySig = entry.valueSig || computeFastStringSig(entry.valueStr);
+      if (!force && memoryFallback.get(lastSavedKey) === entrySig) {
         return;
       }
       const kv = resolveKvBinding(env, entry.bindingName);
@@ -1351,7 +1478,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
         } else {
           await kv.put(entry.key, entry.valueStr);
         }
-        memoryFallback.set(lastSavedKey, entry.valueStr);
+        memoryFallback.set(lastSavedKey, entrySig);
         writtenCount += 1;
       } catch (_kvPutErr) {
         if (!kvDirtyBuffer.has(entry.key)) {
