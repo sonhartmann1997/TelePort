@@ -10,7 +10,7 @@
   let activeD1WriteBuffer = null;
   let activeD1WriteBufferStartedAt = 0;
   let activeD1WriteBufferDepth = 0;
-  const D1_SCHEMA_VERSION = "20261124_v5";
+  const D1_SCHEMA_VERSION = "20261124_v6";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
@@ -557,7 +557,8 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_status_chat_msg ON channel_ingest_inbox(status, chat_id, message_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_reaction_pending ON channel_ingest_inbox(reaction_pending, chat_id, message_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_status_processed ON channel_ingest_inbox(status, processed_at)"),
-          db.prepare("CREATE INDEX IF NOT EXISTS idx_entity_cache_type_updated ON entity_cache(entity_type, updated_at DESC)")
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_entity_cache_type_updated ON entity_cache(entity_type, updated_at DESC)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_search_cache_updated ON search_cache(updated_at)")
         ]));
       } catch (e) {}
 
@@ -7252,17 +7253,49 @@
     const db = await ensureD1Schema(env);
     if (!db) return 0;
     try {
-      const cutoff = Date.now() - Math.max(1, Number(retentionDays || 7)) * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const inboxCutoff = now - Math.max(1, Number(retentionDays || 7)) * 24 * 60 * 60 * 1000;
+      const webauthCutoff = now - 60 * 60 * 1000; // Abgelaufene 5-Minuten-Login-Challenges (> 1 Stunde)
+      const searchCacheCutoff = now - 14 * 24 * 60 * 60 * 1000; // Veralteter Such-Cache (> 14 Tage)
       trackStat("d1Writes");
-      const res = await db.prepare(
-        `DELETE FROM channel_ingest_inbox
-         WHERE id IN (
-           SELECT id FROM channel_ingest_inbox
-           WHERE status IN ('done', 'ignored') AND reaction_pending = 0 AND processed_at > 0 AND processed_at < ?1
-           LIMIT 500
-         )`
-      ).bind(cutoff).run();
-      return Number(res?.meta?.changes || 0);
+      const rawDb = getRawD1Binding(env) || db;
+      const stmts = [
+        db.prepare(
+          `DELETE FROM channel_ingest_inbox
+           WHERE id IN (
+             SELECT id FROM channel_ingest_inbox
+             WHERE status IN ('done', 'ignored') AND reaction_pending = 0 AND processed_at > 0 AND processed_at < ?1
+             LIMIT 500
+           )`
+        ).bind(inboxCutoff),
+        db.prepare(
+          `DELETE FROM entity_cache
+           WHERE cache_key IN (
+             SELECT cache_key FROM entity_cache
+             WHERE entity_type = 'webauth' AND updated_at < ?1
+             LIMIT 500
+           )`
+        ).bind(webauthCutoff),
+        db.prepare(
+          `DELETE FROM search_cache
+           WHERE cache_key IN (
+             SELECT cache_key FROM search_cache
+             WHERE updated_at < ?1
+             LIMIT 500
+           )`
+        ).bind(searchCacheCutoff)
+      ];
+      let totalDeleted = 0;
+      if (rawDb && typeof rawDb.batch === "function") {
+        const resArr = await rawDb.batch(unwrapRawD1Statements(stmts));
+        for (const r of (resArr || [])) totalDeleted += Number(r?.meta?.changes || 0);
+      } else {
+        for (const st of stmts) {
+          const r = await st.run();
+          totalDeleted += Number(r?.meta?.changes || 0);
+        }
+      }
+      return totalDeleted;
     } catch (_e) {
       return 0;
     }
