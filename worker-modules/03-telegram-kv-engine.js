@@ -2544,9 +2544,19 @@
           }
         };
 
-        const first = await attemptReaction(emoji);
+        const invalidCacheKey = emoji ? `tg_invalid_react_${chatId}_${emoji}` : "";
+        const cachedInvalidTs = invalidCacheKey ? Number(memoryFallback.get(invalidCacheKey) || 0) : 0;
+        const effectiveEmoji = (cachedInvalidTs && (Date.now() - cachedInvalidTs) < 600000 && fallbackEmoji)
+          ? fallbackEmoji
+          : emoji;
+
+        const first = await attemptReaction(effectiveEmoji);
         if (first.ok || first.rateLimited) return first;
-        if (first.invalidReaction && fallbackEmoji && String(fallbackEmoji) !== String(emoji)) {
+        if (first.invalidReaction && fallbackEmoji && String(fallbackEmoji) !== String(effectiveEmoji)) {
+          if (invalidCacheKey) memoryFallback.set(invalidCacheKey, Date.now());
+          if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(40)) {
+            return first;
+          }
           return await attemptReaction(fallbackEmoji);
         }
         return first;

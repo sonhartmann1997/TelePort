@@ -4196,7 +4196,7 @@
 
       let chatsMapForLease = null;
       if (!forceFlush && eligibleChats.length > 0) {
-        chatsMapForLease = await getAutoIngestChatsMap(env, false).catch(() => ({}));
+        chatsMapForLease = await getAutoIngestChatsMap(env, true).catch(() => ({}));
       }
 
       let remainingBudgetResolves = maxResolvePerRun;
@@ -4316,7 +4316,7 @@
     const chatCfg = chatsMap[cid] || { chatId: cid, title: dbRows[0]?.chatTitle || cid };
 
     const seriesTmdbCache = new Map();
-    for (const [k, v] of Object.entries(incomingHints)) {
+    for (const [k, v] of Object.entries(incomingHints).slice(-100)) {
       const tid = Number(v || 0);
       if (k && tid > 0) seriesTmdbCache.set(String(k).toLowerCase().trim(), tid);
     }
@@ -4388,10 +4388,13 @@
         raw_file_name: srcRow.payload?.file_name || clientEntry.raw_file_name || "",
         file_name: srcRow.payload?.file_name || clientEntry.file_name || "",
         file_size: srcRow.payload?.file_size || null,
+        width: srcRow.payload?.width || null,
+        height: srcRow.payload?.height || null,
         duration: srcRow.payload?.duration_seconds || srcRow.payload?.duration || null,
         duration_seconds: srcRow.payload?.duration_seconds || srcRow.payload?.duration || null,
         mime_type: srcRow.payload?.mime_type || "video/mp4",
         raw_text: srcRow.payload?.text || clientEntry.raw_text || "",
+        message_link: srcRow.payload?.message_link || clientEntry.message_link || "",
         subtitle_files: subtitleFiles
       };
 

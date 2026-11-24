@@ -4805,7 +4805,11 @@
               tb.reactionsDeferred += Number(s.reactionsDeferred || 0);
               tb.remainingPending = Number(batchRes.remainingPending ?? tb.remainingPending);
               if (batchRes.seriesTmdbHints && typeof batchRes.seriesTmdbHints === "object") {
-                tb.seriesTmdbHints = { ...tb.seriesTmdbHints, ...batchRes.seriesTmdbHints };
+                const mergedHints = { ...tb.seriesTmdbHints, ...batchRes.seriesTmdbHints };
+                const hintEntries = Object.entries(mergedHints);
+                tb.seriesTmdbHints = hintEntries.length > 100
+                  ? Object.fromEntries(hintEntries.slice(-100))
+                  : mergedHints;
               }
               if (s.stoppedByBudget) {
                 if (handledInSlice <= 0) {

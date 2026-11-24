@@ -6898,7 +6898,9 @@
     }
     let map = {};
     try {
-      const saved = await getEntityFromD1(env, AUTO_INGEST_CHATS_CACHE_KEY, 365 * 24 * 60 * 60 * 1000);
+      const saved = await getEntityFromD1(env, AUTO_INGEST_CHATS_CACHE_KEY, 365 * 24 * 60 * 60 * 1000, {
+        bypassMemoryCache: true
+      });
       if (saved && typeof saved === "object" && !Array.isArray(saved)) {
         map = { ...saved };
       }
