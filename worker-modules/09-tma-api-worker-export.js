@@ -6911,7 +6911,7 @@
             await runScheduledChannelIngestFlush(env, {
               source: "cron",
               forceFlush: false,
-              maxResolvePerRun: 10
+              maxResolvePerRun: 6
             });
           }
         }

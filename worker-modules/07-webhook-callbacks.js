@@ -3837,7 +3837,9 @@
       stoppedByBudget: false
     };
 
-    const claimedRows = await claimPendingChannelIngestWindowFromD1(env, cid, windowLimit, 90000);
+    const claimedRows = await claimPendingChannelIngestWindowFromD1(env, cid, windowLimit, 90000, {
+      skipLockRelease: Boolean(options.skipLockRelease)
+    });
     if (!claimedRows || claimedRows.length === 0) return summary;
     summary.claimed = claimedRows.length;
 
@@ -4192,14 +4194,26 @@
         );
       });
 
+      let chatsMapForLease = null;
+      if (!forceFlush && eligibleChats.length > 0) {
+        chatsMapForLease = await getAutoIngestChatsMap(env, false).catch(() => ({}));
+      }
+
       let remainingBudgetResolves = maxResolvePerRun;
       let anyReactionRateLimited = false;
       for (const ch of eligibleChats) {
         if (remainingBudgetResolves <= 0 || !hasSubrequestBudget(28)) break;
+        // Wenn der Admin gerade den Browser-Turbo für diesen Chat laufen lässt, Cron-Kollision vermeiden!
+        if (!forceFlush) {
+          const ramLease = Number(memoryFallback.get(`browser_turbo_active_${ch.chatId}`) || 0);
+          const d1Lease = Number(chatsMapForLease?.[ch.chatId]?.lastContextSnapshot?.browserTurboUntil || 0);
+          if (ramLease > now || d1Lease > now) continue;
+        }
         const res = await flushChannelIngestWindow(env, ch.chatId, {
           forceFlush,
-          windowLimit: 50,
-          maxResolvePerRun: remainingBudgetResolves
+          windowLimit: 40,
+          maxResolvePerRun: remainingBudgetResolves,
+          skipLockRelease: true
         });
         totals.chatsProcessed++;
         totals.processedVideos += res.processedVideos;
@@ -4323,12 +4337,20 @@
       ? { normTitle: chatCfg.lastContextSnapshot.lastSeriesNormTitle || "", tmdbId: Number(chatCfg.lastContextSnapshot.lastSeriesTmdbId) }
       : null;
 
+    const batchNowMs = Date.now();
+    memoryFallback.set(`browser_turbo_active_${cid}`, batchNowMs + 90000);
+
     for (let i = 0; i < rawEntries.length; i++) {
       const clientEntry = rawEntries[i] || {};
       const rid = Number(clientEntry.inboxRowId || 0);
       const srcRow = rowById.get(rid);
       if (!srcRow) continue;
-      if (srcRow.status === "done" || srcRow.status === "review" || srcRow.status === "ignored") {
+      if (
+        srcRow.status === "done" ||
+        srcRow.status === "review" ||
+        srcRow.status === "ignored" ||
+        (srcRow.status === "processing" && Number(srcRow.lockedUntil || 0) > batchNowMs)
+      ) {
         summary.skippedAlreadyDone++;
         handledRowIds.add(srcRow.id);
         continue;
@@ -4366,7 +4388,8 @@
         raw_file_name: srcRow.payload?.file_name || clientEntry.raw_file_name || "",
         file_name: srcRow.payload?.file_name || clientEntry.file_name || "",
         file_size: srcRow.payload?.file_size || null,
-        duration: srcRow.payload?.duration || null,
+        duration: srcRow.payload?.duration_seconds || srcRow.payload?.duration || null,
+        duration_seconds: srcRow.payload?.duration_seconds || srcRow.payload?.duration || null,
         mime_type: srcRow.payload?.mime_type || "video/mp4",
         raw_text: srcRow.payload?.text || clientEntry.raw_text || "",
         subtitle_files: subtitleFiles
@@ -4584,29 +4607,39 @@
       await markChannelIngestRowsStatusInD1(env, rowUpdates);
     }
 
-    // Kontext-Überhang nur dann in D1 schreiben, wenn er explizit mitgegeben wurde ODER sich die Serie wirklich geändert hat
+    const remainingPending = await countPendingChannelIngestInD1(env, cid);
+    const nextTurboLeaseUntil = remainingPending > 0 ? (Date.now() + 150000) : 0;
+    if (remainingPending === 0) {
+      memoryFallback.delete(`browser_turbo_active_${cid}`);
+    }
+
+    // Kontext-Überhang nur dann in D1 schreiben, wenn er explizit mitgegeben wurde, sich die Serie geändert hat
+    // oder der Cross-Isolate Browser-Turbo-Lease für den 2-Min-Cron erstmals gesetzt/beendet werden muss
     // (spart bei 500-Folgen-Serien-Drops ~80 unnötige D1-Reads + D1-Writes!).
     const prevCarryTmdbId = Number(chatCfg?.lastContextSnapshot?.lastSeriesTmdbId || 0);
+    const prevTurboLeaseUntil = Number(chatCfg?.lastContextSnapshot?.browserTurboUntil || 0);
+    const needLeaseUpdate = (remainingPending > 0 && prevTurboLeaseUntil < (Date.now() + 45000)) || (remainingPending === 0 && prevTurboLeaseUntil > Date.now());
     if (payload.nextContextSnapshot && typeof payload.nextContextSnapshot === "object") {
       const snap = payload.nextContextSnapshot;
       await updateAutoIngestChatContextSnapshot(env, cid, {
         anchorMessages: Array.isArray(snap.anchorMessages) ? snap.anchorMessages.slice(-2) : [],
         lastSeriesNormTitle: lastSeriesCarry?.normTitle || snap.lastSeriesNormTitle || null,
         lastSeriesTmdbId: lastSeriesCarry?.tmdbId || snap.lastSeriesTmdbId || null,
+        browserTurboUntil: nextTurboLeaseUntil,
         updatedAt: Date.now()
       });
-    } else if (lastSeriesCarry && Number(lastSeriesCarry.tmdbId || 0) !== prevCarryTmdbId) {
+    } else if ((lastSeriesCarry && Number(lastSeriesCarry.tmdbId || 0) !== prevCarryTmdbId) || needLeaseUpdate) {
       await updateAutoIngestChatContextSnapshot(env, cid, {
         anchorMessages: Array.isArray(chatCfg?.lastContextSnapshot?.anchorMessages) ? chatCfg.lastContextSnapshot.anchorMessages : [],
-        lastSeriesNormTitle: lastSeriesCarry.normTitle,
-        lastSeriesTmdbId: lastSeriesCarry.tmdbId,
+        lastSeriesNormTitle: lastSeriesCarry?.normTitle || chatCfg?.lastContextSnapshot?.lastSeriesNormTitle || null,
+        lastSeriesTmdbId: lastSeriesCarry?.tmdbId || chatCfg?.lastContextSnapshot?.lastSeriesTmdbId || null,
+        browserTurboUntil: nextTurboLeaseUntil,
         updatedAt: Date.now()
       });
     }
 
     const updatedHints = {};
     for (const [k, v] of seriesTmdbCache.entries()) updatedHints[k] = v;
-    const remainingPending = await countPendingChannelIngestInD1(env, cid);
     return {
       ok: true,
       summary,
@@ -4615,18 +4648,21 @@
     };
   }
 
-
   // --- Verarbeitet eingehende Videodateien & .json Titel-Listen / Telegram Chat-Backups beim Bot ---
   async function handleIncomingMediaOrJson(env, message) {
     const { sendMessage, editMessageText, getFileText } = tgApi(env);
     const chatId = message.chat.id;
     const senderId = message.from?.id || chatId;
-    const videoObj = message.video || (message.document && /^video\//i.test(message.document.mime_type || "") ? message.document : null);
     const docObj = message.document;
-    const isJsonDoc = Boolean(docObj && (String(docObj.file_name || "").toLowerCase().endsWith(".json") || docObj.mime_type === "application/json"));
-    const isSubDoc = Boolean(docObj && SUBTITLE_EXTENSIONS.test(String(docObj.file_name || "")));
+    const docName = String(docObj?.file_name || "").trim();
+    const docMime = String(docObj?.mime_type || "").toLowerCase();
+    const isVideoDoc = Boolean(docObj && (/^video\//i.test(docMime) || /\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d)$/i.test(docName)));
+    const videoObj = message.video || (isVideoDoc ? docObj : null);
+    const isJsonDoc = Boolean(docObj && (docName.toLowerCase().endsWith(".json") || docMime === "application/json"));
+    const isSubDoc = Boolean(!videoObj && docObj && SUBTITLE_EXTENSIONS.test(docName));
+    const isArchiveDoc = Boolean(!videoObj && !isSubDoc && !isJsonDoc && docObj && /\.(?:rar|zip|7z|iso|tar|gz)$/i.test(docName));
 
-    if (!isJsonDoc && !isSubDoc && !videoObj) return false;
+    if (!isJsonDoc && !isSubDoc && !videoObj && !(isArchiveDoc && isGroupOrChannelChat(chatId))) return false;
 
     // GRUPPEN-/KANAL-SCHUTZ (Zero Chat-Spam + 500+ Staging-Inbox):
     // In Gruppen niemals sofortige Lade-Nachrichten, Fehlermeldungen oder Detailkarten posten!
@@ -5044,7 +5080,10 @@
         const stagedRes = await stageGroupOrChannelMessageIfEnabled(env, chPost);
         // Passive tg_export_ Ernte nur für NICHT aktivierte Kanäle (spart bei 500-Video-Drops 1.000 unnötige D1-UPDATEs!)
         if (!stagedRes?.enabled) {
-          const chMedia = chPost.video || (chPost.document && /^video\//i.test(chPost.document.mime_type || "") ? chPost.document : null);
+          const chDocName = String(chPost.document?.file_name || "").trim();
+          const chDocMime = String(chPost.document?.mime_type || "").toLowerCase();
+          const chIsVideoDoc = Boolean(chPost.document && (/^video\//i.test(chDocMime) || /\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d)$/i.test(chDocName)));
+          const chMedia = chPost.video || (chIsVideoDoc ? chPost.document : null);
           if (chId && Number(chId) < 0 && chPost.message_id && chMedia?.file_id) {
             const rawChannelId = String(chId).replace(/^-100/, "").replace(/^-/, "");
             const candidateExportId = `tg_export_${rawChannelId}_${chPost.message_id}`;
@@ -5065,37 +5104,50 @@
 
         registerChatType(message.chat);
         const chatId = message.chat.id;
+        const isGroupChat = isGroupOrChannelChat(chatId);
 
-        // Wenn in einer Gruppe auf eine alte Video-Nachricht geantwortet wird (z.B. mit /resolve oder /id), ernte sofort deren echte file_id für D1!
-        const repliedVideo = message.reply_to_message?.video || (message.reply_to_message?.document && /^video\//i.test(message.reply_to_message.document.mime_type || "") ? message.reply_to_message.document : null);
+        // Wenn in einer NICHT für Auto-Ingest aktivierten Gruppe auf eine alte Video-Nachricht geantwortet wird (z.B. /id), ernte deren file_id!
+        // (In aktivierten Auto-Ingest-Gruppen spart das 2 D1-Writes pro Antwort/Untertitel-Reply!)
+        const repliedDoc = message.reply_to_message?.document || null;
+        const repliedVideo = message.reply_to_message?.video || (repliedDoc && (/^video\//i.test(repliedDoc.mime_type || "") || /\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d)$/i.test(String(repliedDoc.file_name || ""))) ? repliedDoc : null);
         if (repliedVideo && repliedVideo.file_id && Number(chatId) < 0 && message.reply_to_message?.message_id) {
-          const rawChannelId = String(chatId).replace(/^-100/, "").replace(/^-/, "");
-          const exportKey = `tg_export_${rawChannelId}_${message.reply_to_message.message_id}`;
-          await replaceExportFileIdInD1(env, exportKey, repliedVideo.file_id, repliedVideo.file_unique_id || null);
+          const skipExportHarvest = !env._isCustomBotWebhook && await isAutoIngestChatEnabled(env, chatId);
+          if (!skipExportHarvest) {
+            const rawChannelId = String(chatId).replace(/^-100/, "").replace(/^-/, "");
+            const exportKey = `tg_export_${rawChannelId}_${message.reply_to_message.message_id}`;
+            await replaceExportFileIdInD1(env, exportKey, repliedVideo.file_id, repliedVideo.file_unique_id || null);
+          }
         }
 
-        // Opt-in Befehle (/ingest_on, /ingest_off, /ingest_status) für Gruppen & Privat-Chat
+        // Opt-in Befehle (/ingest_on, /ingest_off, /ingest_status, /ingest_flush) für Gruppen & Privat-Chat
         if (await handleAutoIngestCommand(env, message, { isChannelPost: false })) {
           return;
         }
 
-        // Prüfe zuerst auf eingehende Videodateien oder .json-Titeldateien (Projekt 1 - Punkt 1 & 2)
+        // Prüfe zuerst auf eingehende Videodateien, Untertitel oder .json-Titeldateien
         if (message.video || message.document) {
           const handledMedia = await handleIncomingMediaOrJson(env, message);
           if (handledMedia) return;
         }
 
-        // In freigeschalteten Gruppen auch Poster-/Foto-/Text-Kontext-Posts still in die D1-Staging-Inbox aufnehmen (für Smart-Gruppierung!)
-        if (isGroupOrChannelChat(chatId) && !env._isCustomBotWebhook) {
+        const text = (message.text || "").trim();
+
+        // GRUPPEN-SCHUTZ & ZERO-WASTE FAST-EXIT (essentiell bei deaktiviertem Privacy Mode!):
+        // In Gruppen nur Slash-Befehle oder direkte Antworten auf Bot-Prompts weiterverarbeiten;
+        // reguläre Gruppen-Nachrichten, Poster, Smalltalk, Sticker & Join-Events erzeugen 0 Session-/Prompt-D1-Calls & 0 Gruppen-Spam!
+        if (isGroupChat) {
           const rawGroupText = String(message.text || message.caption || "").trim();
           const isSlashCmd = /^\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(rawGroupText);
-          if (!isSlashCmd && (message.photo || rawGroupText.length >= 4)) {
-            const stagedRes = await stageGroupOrChannelMessageIfEnabled(env, message);
-            if (stagedRes?.staged) return;
+          if (!isSlashCmd) {
+            if (!env._isCustomBotWebhook && (message.photo || rawGroupText.length >= 4)) {
+              await stageGroupOrChannelMessageIfEnabled(env, message);
+            }
+            // Nur durchlassen, wenn jemand direkt auf eine Bot-Prompt-Nachricht antwortet
+            if (!text || !message.reply_to_message?.from?.is_bot) {
+              return;
+            }
           }
         }
-
-        const text = (message.text || "").trim();
 
         // /id oder /chatid Befehl: Zeigt sofort Chat-ID, Topic/Thread-ID (inkl. Private-Chat-Topics Bot API 9.3/10.5) & Quellgruppen-ID
         if (/^\/(?:id|chatid|groupid)(?:@\w+)?$/i.test(text)) {
@@ -5890,8 +5942,8 @@
           return;
         }
 
-        // Freitext als Direktsuche behandeln (Vorherige Menüs & eigene Sucheingabe löschen, gespeicherte Karten bleiben erhalten!)
-        if (!text.startsWith("/")) {
+        // Freitext als Direktsuche behandeln – NUR im Privat-Chat & nur bei echtem Text (niemals in Gruppen oder bei Stickern/Join-Events!)
+        if (!isGroupOrChannelChat(chatId) && text.length > 0 && !text.startsWith("/")) {
           await deleteMessage(chatId, message.message_id);
           await clearAllTempMessages(env, chatId, deleteMessage);
           const cleanQuery = text.slice(0, 150);

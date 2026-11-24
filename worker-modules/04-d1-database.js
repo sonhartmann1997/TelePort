@@ -7054,14 +7054,21 @@
     }
   }
 
-  async function claimPendingChannelIngestWindowFromD1(env, chatId, limit = 50, leaseMs = 90000) {
+  async function claimPendingChannelIngestWindowFromD1(env, chatId, limit = 50, leaseMs = 90000, options = {}) {
     const db = await ensureD1Schema(env);
     if (!db || !chatId) return [];
     const now = Date.now();
     const safeLimit = Math.max(1, Math.min(250, Number(limit || 50)));
     const lockUntil = now + Math.max(15000, Number(leaseMs || 90000));
     try {
-      await releaseExpiredChannelIngestLocksInD1(env, now);
+      if (!options?.skipLockRelease) {
+        const hasExpired = await db.prepare(
+          "SELECT 1 AS hit FROM channel_ingest_inbox WHERE status = 'processing' AND locked_until > 0 AND locked_until < ?1 LIMIT 1"
+        ).bind(now).first();
+        if (hasExpired) {
+          await releaseExpiredChannelIngestLocksInD1(env, now);
+        }
+      }
       trackStat("d1Reads");
       const sel = await db.prepare(
         `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at
@@ -7233,21 +7240,39 @@
     const db = await ensureD1Schema(env);
     if (!db || !chatId) return { rows: [], totalPending: 0 };
     const safeLimit = Math.max(1, Math.min(250, Number(limit || 200)));
+    const now = Date.now();
     try {
-      await releaseExpiredChannelIngestLocksInD1(env, Date.now());
       trackStat("d1Reads");
-      const [sel, cntRow] = await Promise.all([
-        db.prepare(
-          `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at
-           FROM channel_ingest_inbox
-           WHERE chat_id = ?1 AND status = 'pending'
-           ORDER BY message_id ASC
-           LIMIT ?2`
-        ).bind(String(chatId), safeLimit).all(),
-        db.prepare(
-          `SELECT COUNT(*) AS cnt FROM channel_ingest_inbox WHERE chat_id = ?1 AND status = 'pending'`
-        ).bind(String(chatId)).first()
-      ]);
+      const rawDb = getRawD1Binding(env) || db;
+      const expStmt = db.prepare(
+        "SELECT 1 AS hit FROM channel_ingest_inbox WHERE status = 'processing' AND chat_id = ?1 AND locked_until > 0 AND locked_until < ?2 LIMIT 1"
+      ).bind(String(chatId), now);
+      const selStmt = db.prepare(
+        `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at
+         FROM channel_ingest_inbox
+         WHERE chat_id = ?1 AND status = 'pending'
+         ORDER BY message_id ASC
+         LIMIT ?2`
+      ).bind(String(chatId), safeLimit);
+      const cntStmt = db.prepare(
+        `SELECT COUNT(*) AS cnt FROM channel_ingest_inbox WHERE chat_id = ?1 AND status = 'pending'`
+      ).bind(String(chatId));
+
+      let expRes, sel, cntRow;
+      if (rawDb && typeof rawDb.batch === "function") {
+        const b = await rawDb.batch(unwrapRawD1Statements([expStmt, selStmt, cntStmt]));
+        expRes = b?.[0]?.results?.[0] || null;
+        sel = b?.[1];
+        cntRow = b?.[2]?.results?.[0] || null;
+      } else {
+        [expRes, sel, cntRow] = await Promise.all([expStmt.first(), selStmt.all(), cntStmt.first()]);
+      }
+      if (expRes) {
+        const released = await releaseExpiredChannelIngestLocksInD1(env, now);
+        if (released > 0) {
+          [sel, cntRow] = await Promise.all([selStmt.all(), cntStmt.first()]);
+        }
+      }
       const rows = (sel?.results || []).map(r => {
         let payload = {};
         try { payload = JSON.parse(r.payload_json || "{}"); } catch (_e) {}
@@ -7282,7 +7307,7 @@
         const part = cleanIds.slice(i, i + CHUNK);
         const placeholders = part.map((_, idx) => `?${idx + 2}`).join(", ");
         const res = await db.prepare(
-          `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, created_at
+          `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, locked_until, created_at
            FROM channel_ingest_inbox
            WHERE chat_id = ?1 AND id IN (${placeholders})
            ORDER BY message_id ASC`
@@ -7299,6 +7324,7 @@
             mediaGroupId: r.media_group_id ? String(r.media_group_id) : null,
             msgKind: String(r.msg_kind || "context"),
             status: String(r.status || "pending"),
+            lockedUntil: Number(r.locked_until || 0),
             payload,
             createdAt: Number(r.created_at || 0)
           });
@@ -7386,7 +7412,3 @@
       return 0;
     }
   }
-
-
-
-
