@@ -3540,7 +3540,12 @@
 
     try {
       const allSeriesRes = await db.prepare(
-        "SELECT tmdb_id, title, release_date, release_year, vote_average, poster_path, backdrop_path, details_json FROM series"
+        `SELECT tmdb_id, title, release_date, release_year, vote_average, poster_path, backdrop_path,
+                json_extract(details_json, '$.poster_path') AS detail_poster_path,
+                json_extract(details_json, '$.external_poster_url') AS detail_ext_poster
+         FROM series
+         ORDER BY updated_at DESC
+         LIMIT 1500`
       ).all().catch(() => ({ results: [] }));
       const seriesRows = Array.isArray(allSeriesRes?.results) ? allSeriesRes.results : [];
       if (!seriesRows.length) return { mergedDuplicates, healedPosters, upgradedSynthetic };
@@ -3585,9 +3590,7 @@
         if (!sid || deletedSeriesIds.has(sid)) continue;
         if (apiHealsUsed >= maxApiHeals || !hasSubrequestBudget(25)) break;
 
-        let parsedDetails = {};
-        try { parsedDetails = JSON.parse(row.details_json || "{}"); } catch (e) {}
-        const rawTitle = String(row.title || parsedDetails.title || "").trim();
+        const rawTitle = String(row.title || "").trim();
         const cleanLookupTitle = rawTitle.replace(/\s+\d{1,2}$/, "").trim() || rawTitle;
         const normTitle = normalizeCompareString(cleanLookupTitle);
         const rowYear = Number(row.release_year || String(row.release_date || "").slice(0, 4) || 0) || null;
@@ -3595,8 +3598,8 @@
         const isSyntheticId = sid >= 8000000;
         const hasAnyPoster = Boolean(
           (row.poster_path && String(row.poster_path).trim()) ||
-          (parsedDetails.poster_path && String(parsedDetails.poster_path).trim()) ||
-          (parsedDetails.external_poster_url && String(parsedDetails.external_poster_url).trim())
+          (row.detail_poster_path && String(row.detail_poster_path).trim()) ||
+          (row.detail_ext_poster && String(row.detail_ext_poster).trim())
         );
 
         if (isSyntheticId || isWrongBlackBox2014) {
@@ -3677,6 +3680,11 @@
               if (omdb?.external_poster_url) foundExternalPoster = omdb.external_poster_url;
             }
             if (foundPosterPath || foundExternalPoster) {
+              let parsedDetails = {};
+              try {
+                const detRow = await db.prepare("SELECT details_json FROM series WHERE tmdb_id = ?1").bind(sid).first();
+                if (detRow?.details_json) parsedDetails = JSON.parse(detRow.details_json);
+              } catch (_e) {}
               const updatedDetails = {
                 ...parsedDetails,
                 id: sid,
