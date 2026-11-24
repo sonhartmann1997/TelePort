@@ -3684,8 +3684,9 @@
       .filter(m => m.id > 0);
 
     // Falls Carryover-Anker eine ältere message_id haben als das aktuelle Fenster, bleiben sie sauber vorn
+    // (Distanz bis 250 erlaubt, damit Serien-Poster auch über mehrere 40er-/200er-Fenster bei 500+ Folgen erhalten bleiben!)
     const firstCurId = currentMessages.length > 0 ? currentMessages[0].id : 0;
-    const safeAnchors = anchorMessages.filter(a => firstCurId === 0 || (firstCurId - Number(a.id)) <= 24 && Number(a.id) < firstCurId);
+    const safeAnchors = anchorMessages.filter(a => firstCurId === 0 || ((firstCurId - Number(a.id)) <= 250 && Number(a.id) < firstCurId));
 
     const syntheticBackupJson = {
       id: String(chatMeta?.chatId || ""),
@@ -4139,13 +4140,23 @@
 
     await markChannelIngestRowsStatusInD1(env, rowUpdates);
 
-    // Kontext-Überhang für das nächste Fenster speichern
-    await updateAutoIngestChatContextSnapshot(env, cid, {
-      anchorMessages: nextAnchorMessages,
-      lastSeriesNormTitle: lastSeriesCarry?.normTitle || null,
-      lastSeriesTmdbId: lastSeriesCarry?.tmdbId || null,
-      updatedAt: Date.now()
-    });
+    // Kontext-Überhang nur dann in D1 schreiben, wenn sich Anker-IDs oder Serien-Kontext tatsächlich geändert haben
+    const prevAnchorSig = Array.isArray(carryover?.anchorMessages)
+      ? carryover.anchorMessages.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
+      : "";
+    const nextAnchorSig = Array.isArray(nextAnchorMessages)
+      ? nextAnchorMessages.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
+      : "";
+    const prevSeriesId = Number(carryover?.lastSeriesTmdbId || 0);
+    const nextSeriesId = Number(lastSeriesCarry?.tmdbId || 0);
+    if (prevAnchorSig !== nextAnchorSig || prevSeriesId !== nextSeriesId) {
+      await updateAutoIngestChatContextSnapshot(env, cid, {
+        anchorMessages: nextAnchorMessages,
+        lastSeriesNormTitle: lastSeriesCarry?.normTitle || null,
+        lastSeriesTmdbId: lastSeriesCarry?.tmdbId || null,
+        updatedAt: Date.now()
+      });
+    }
 
     return summary;
   }

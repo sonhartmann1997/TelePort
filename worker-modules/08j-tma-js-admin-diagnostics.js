@@ -4328,7 +4328,7 @@
               '<span>👌 Duplikat: <b>' + Number(tb.duplicates || 0) + '</b></span>' +
               '<span>✍ UT: <b style="color:#38bdf8">' + Number(tb.subtitlesLinked || 0) + '</b></span>' +
               '<span>👀 Review: <b style="color:#f87171">' + Number(tb.review || 0) + '</b></span>' +
-              '<span>📦 Batch: <b>' + Number(tb.batchSize || 8) + '</b></span>' +
+              '<span>📦 Batch: <b>' + Number(tb.batchSize || 6) + '</b></span>' +
             '</div>' +
             (tb.lastError ? (
               '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(239,68,68,0.16);border:1px solid rgba(248,113,113,0.45);font-size:11.5px;color:#fecaca">' +
@@ -4344,7 +4344,7 @@
               '<span>📥 Kanal- & Gruppen-Inbox (Nachträgliches Smart-Grouping & 500+ Browser-Turbo)</span>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button type="button" class="btn blue" onclick="refreshAdminChannelInboxClient(true)">🔄 Aktualisieren</button>' +
-                (Number(t.pending || 0) > 0 ? '<button type="button" class="btn green" onclick="flushAdminChannelInboxServerClient(\\'\\')">⚡ Server-Batch (10er)</button>' : '') +
+                (Number(t.pending || 0) > 0 ? '<button type="button" class="btn green" onclick="flushAdminChannelInboxServerClient(\\'\\')">⚡ Server-Batch (6er)</button>' : '') +
                 '<button type="button" class="btn" onclick="openAdminTabDirectClient(\\'diaglog\\')">👀 Review-Logs öffnen</button>' +
               '</div>' +
             '</div>' +
@@ -4398,7 +4398,7 @@
                       '<button type="button" class="btn ' + (isThisTurbo ? 'amber' : 'green') + '" ' + (tb.running && !isThisTurbo ? 'disabled' : '') + ' onclick="startAdminChannelInboxBrowserTurboClient(\\'' + escJs(ch.chatId) + '\\',\\'' + escJs(ch.title || ch.chatId) + '\\')">' +
                         (isThisTurbo ? '⏳ Läuft...' : '🚀 Browser-Turbo (' + Number(ch.pending) + ')') +
                       '</button>' +
-                      '<button type="button" class="btn blue" ' + (tb.running ? 'disabled' : '') + ' onclick="flushAdminChannelInboxServerClient(\\'' + escJs(ch.chatId) + '\\')">⚡ 10er Server</button>'
+                      '<button type="button" class="btn blue" ' + (tb.running ? 'disabled' : '') + ' onclick="flushAdminChannelInboxServerClient(\\'' + escJs(ch.chatId) + '\\')">⚡ 6er Server</button>'
                     ) : '') +
                     '<button type="button" class="btn ' + (ch.enabled ? '' : 'green') + '" onclick="toggleAdminChannelInboxChatClient(\\'' + escJs(ch.chatId) + '\\',' + (!ch.enabled) + ',\\'' + escJs(ch.title || ch.chatId) + '\\',\\'' + escJs(ch.type || 'channel') + '\\')">' +
                       (ch.enabled ? '⏸️ Pausieren' : '▶️ Aktivieren') +
@@ -4466,12 +4466,12 @@
       }
 
       async function flushAdminChannelInboxServerClient(targetChatId) {
-        setBusyState(true, "⚡ Verarbeite nächsten 10er Server-Batch...");
+        setBusyState(true, "⚡ Verarbeite nächsten 6er Server-Batch...");
         try {
           const r = await apiFetchJson(API_BASE + "/admin/ingest-inbox/flush", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: "server", chatId: targetChatId || null, maxResolve: 10 })
+            body: JSON.stringify({ mode: "server", chatId: targetChatId || null, maxResolve: 6 })
           });
           if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
             showHudToast("⛔ Abgebrochen (HTTP " + Number(r._httpStatus || 403) + "): " + (r.error || "Keine Admin-Rechte"));
