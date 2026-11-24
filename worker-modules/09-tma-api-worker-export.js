@@ -2594,7 +2594,7 @@
             const batchRes = await processBrowserGroupedChannelIngestBatch(env, cid, body);
             return new Response(JSON.stringify({ ok: true, mode: "browser_batch", ...batchRes }), { status: 200, headers: corsHeaders });
           }
-          const maxResolve = Math.max(1, Math.min(10, Number(body.maxResolve || 10)));
+          const maxResolve = Math.max(1, Math.min(8, Number(body.maxResolve || 6)));
           const flushRes = await runScheduledChannelIngestFlush(env, {
             source: "admin_tma",
             forceFlush: true,

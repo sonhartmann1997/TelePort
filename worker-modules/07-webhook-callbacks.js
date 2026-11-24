@@ -3522,7 +3522,7 @@
         source: "command_flush",
         forceFlush: true,
         filterChatId: targetFlushChat,
-        maxResolvePerRun: 12
+        maxResolvePerRun: 6
       });
       if (isChannelPost) {
         await setMessageReaction(chatId, tgMsg.message_id, "👍").catch(() => {});
@@ -3818,8 +3818,8 @@
 
   async function flushChannelIngestWindow(env, chatId, options = {}) {
     const cid = String(chatId || "").trim();
-    const windowLimit = Math.max(5, Math.min(80, Number(options.windowLimit || 50)));
-    const maxResolvePerRun = Math.max(1, Math.min(25, Number(options.maxResolvePerRun || 10)));
+    const windowLimit = Math.max(5, Math.min(60, Number(options.windowLimit || 40)));
+    const maxResolvePerRun = Math.max(1, Math.min(10, Number(options.maxResolvePerRun || 6)));
     const forceFlush = Boolean(options.forceFlush);
     const now = Date.now();
 
@@ -4164,7 +4164,7 @@
   async function runScheduledChannelIngestFlush(env, options = {}) {
     const forceFlush = Boolean(options.forceFlush);
     const filterChatId = options.filterChatId ? String(options.filterChatId).trim() : null;
-    const maxResolvePerRun = Math.max(1, Math.min(25, Number(options.maxResolvePerRun || 10)));
+    const maxResolvePerRun = Math.max(1, Math.min(10, Number(options.maxResolvePerRun || 6)));
     const now = Date.now();
 
     const totals = {
@@ -4284,7 +4284,7 @@
     const cid = String(chatId || "").trim();
     const rawEntries = Array.isArray(payload.entries) ? payload.entries.slice(0, 10) : [];
     const contextRowIds = Array.isArray(payload.contextRowIds)
-      ? payload.contextRowIds.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0).slice(0, 150)
+      ? payload.contextRowIds.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0).slice(0, 200)
       : [];
     const standaloneSubRowIds = Array.isArray(payload.standaloneSubtitleRowIds)
       ? payload.standaloneSubtitleRowIds.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0).slice(0, 40)
@@ -6136,7 +6136,7 @@
           }
           if (data === "ingst_flush_all") {
             await answerCallbackQuery(cq.id, "⚡ Verarbeite wartende Inbox-Posts...");
-            const fl = await runScheduledChannelIngestFlush(env, { source: "callback_flush", forceFlush: true, maxResolvePerRun: 12 });
+            const fl = await runScheduledChannelIngestFlush(env, { source: "callback_flush", forceFlush: true, maxResolvePerRun: 6 });
             const note = `⚡ *Flush:* \`${fl.processedVideos}\` Video(s) · \`${fl.added}\` neu · \`${fl.upgraded}\` Upgrade · \`${fl.review}\` Review` +
               (fl.remainingPending > 0 ? ` · _${fl.remainingPending} noch wartend_` : "");
             await renderAutoIngestStatusMenu(env, chatId, msgId, note);
