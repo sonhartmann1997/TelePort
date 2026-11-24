@@ -10,15 +10,15 @@
   let activeD1WriteBuffer = null;
   let activeD1WriteBufferStartedAt = 0;
   let activeD1WriteBufferDepth = 0;
-  const D1_SCHEMA_VERSION = "20261122_v3";
+  const D1_SCHEMA_VERSION = "20261124_v5";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
   function isD1BufferEligibleWrite(sqlStr) {
     const s = String(sqlStr || "");
     if (!/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(s)) return false;
-    // Kritische Nutzer-, Auth-, Checkpoint-, Meldungs-, Anti-Spam- & Konfig-Tabellen NIEMALS im Import-Batch-Puffer verzögern!
-    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue|d1_import_checkpoints)\b/i.test(s)) {
+    // Kritische Nutzer-, Auth-, Checkpoint-, Meldungs-, Anti-Spam-, Staging-Inbox- & Konfig-Tabellen NIEMALS im Import-Batch-Puffer verzögern!
+    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue|d1_import_checkpoints|channel_ingest_inbox)\b/i.test(s)) {
       return false;
     }
     return true;
@@ -535,6 +535,28 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_series_updated_at ON series(updated_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_movie_files_updated_at ON movie_files(updated_at DESC)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_episode_files_updated_at ON episode_files(updated_at DESC)"),
+          db.prepare(`CREATE TABLE IF NOT EXISTS channel_ingest_inbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            chat_title TEXT,
+            message_id INTEGER NOT NULL,
+            reply_to_message_id INTEGER,
+            media_group_id TEXT,
+            msg_kind TEXT NOT NULL DEFAULT 'context',
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            locked_until INTEGER DEFAULT 0,
+            result_emoji TEXT,
+            reaction_pending INTEGER DEFAULT 0,
+            resolved_tmdb_id INTEGER,
+            resolved_type TEXT,
+            created_at INTEGER NOT NULL,
+            processed_at INTEGER DEFAULT 0
+          )`),
+          db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_inbox_chat_msg ON channel_ingest_inbox(chat_id, message_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_status_chat_msg ON channel_ingest_inbox(status, chat_id, message_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_reaction_pending ON channel_ingest_inbox(reaction_pending, chat_id, message_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_status_processed ON channel_ingest_inbox(status, processed_at)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_entity_cache_type_updated ON entity_cache(entity_type, updated_at DESC)")
         ]));
       } catch (e) {}
@@ -6859,3 +6881,512 @@
       return { ok: false, error: String(e?.message || e || "Migrationsfehler") };
     }
   }
+
+  // ============================================================================
+  // HIGH-VOLUME GRUPPEN- & KANAL-INGEST: OPT-IN REGISTRY & D1 STAGING-INBOX (500+ TITEL)
+  // ============================================================================
+  const AUTO_INGEST_CHATS_CACHE_KEY = "AUTO_INGEST_CHATS_V1";
+  const AUTO_INGEST_CHATS_RAM_TTL_MS = 5 * 60 * 1000;
+
+  async function getAutoIngestChatsMap(env, forceRefresh = false) {
+    const now = Date.now();
+    if (!forceRefresh) {
+      const cached = memoryFallback.get("auto_ingest_chats_ram");
+      if (cached && cached.map && (now - cached.ts) < AUTO_INGEST_CHATS_RAM_TTL_MS) {
+        return cached.map;
+      }
+    }
+    let map = {};
+    try {
+      const saved = await getEntityFromD1(env, AUTO_INGEST_CHATS_CACHE_KEY, 365 * 24 * 60 * 60 * 1000);
+      if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+        map = { ...saved };
+      }
+    } catch (_e) {}
+    memoryFallback.set("auto_ingest_chats_ram", { map, ts: now });
+    return map;
+  }
+
+  async function isAutoIngestChatEnabled(env, chatId) {
+    const cid = String(chatId || "").trim();
+    if (!cid || !cid.startsWith("-")) return false;
+    const map = await getAutoIngestChatsMap(env, false);
+    const entry = map[cid];
+    return Boolean(entry && entry.enabled === true);
+  }
+
+  async function setAutoIngestChatEnabled(env, chatId, opts = {}) {
+    const cid = String(chatId || "").trim();
+    if (!cid || !/^-\d{4,}$/.test(cid)) {
+      return { ok: false, error: "Ungültige Gruppen-/Kanal-ID (muss negativ sein, z. B. -1001234567890)." };
+    }
+    const map = await getAutoIngestChatsMap(env, true);
+    const prev = (map[cid] && typeof map[cid] === "object") ? map[cid] : {};
+    const enabled = opts.enabled !== false;
+    const now = Date.now();
+    const nextEntry = {
+      ...prev,
+      chatId: cid,
+      title: String(opts.title || prev.title || `Chat ${cid}`).trim().slice(0, 120),
+      chatType: String(opts.chatType || prev.chatType || (cid.startsWith("-100") ? "channel" : "group")),
+      enabled,
+      updatedAt: now,
+      activatedAt: enabled ? (prev.activatedAt || now) : (prev.activatedAt || null),
+      activatedBy: opts.activatedBy ? String(opts.activatedBy) : (prev.activatedBy || null),
+      lastContextSnapshot: prev.lastContextSnapshot || null
+    };
+    const nextMap = { ...map, [cid]: nextEntry };
+    await saveEntityToD1(env, AUTO_INGEST_CHATS_CACHE_KEY, "config", nextMap);
+    memoryFallback.set("auto_ingest_chats_ram", { map: nextMap, ts: now });
+    return { ok: true, entry: nextEntry, map: nextMap };
+  }
+
+  async function updateAutoIngestChatContextSnapshot(env, chatId, snapshot = null) {
+    const cid = String(chatId || "").trim();
+    if (!cid) return false;
+    try {
+      const map = await getAutoIngestChatsMap(env, true);
+      if (!map[cid]) return false;
+      const now = Date.now();
+      const nextMap = {
+        ...map,
+        [cid]: {
+          ...map[cid],
+          lastContextSnapshot: snapshot || null,
+          updatedAt: now
+        }
+      };
+      await saveEntityToD1(env, AUTO_INGEST_CHATS_CACHE_KEY, "config", nextMap);
+      memoryFallback.set("auto_ingest_chats_ram", { map: nextMap, ts: now });
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  async function enqueueChannelIngestMessageToD1(env, rec) {
+    const db = await ensureD1Schema(env);
+    if (!db || !rec || !rec.chatId || !rec.messageId) return { ok: false, skipped: true };
+    try {
+      trackStat("d1Writes");
+      const now = Number(rec.createdAt || Date.now());
+      const res = await db.prepare(
+        `INSERT OR IGNORE INTO channel_ingest_inbox
+         (chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, locked_until, reaction_pending, created_at, processed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', 0, 0, ?8, 0)`
+      ).bind(
+        String(rec.chatId),
+        String(rec.chatTitle || "").slice(0, 120),
+        Number(rec.messageId),
+        rec.replyToMessageId ? Number(rec.replyToMessageId) : null,
+        rec.mediaGroupId ? String(rec.mediaGroupId).slice(0, 64) : null,
+        String(rec.msgKind || "context"),
+        JSON.stringify(rec.payload || {}),
+        now
+      ).run();
+      const inserted = Number(res?.meta?.changes || 0) > 0;
+      return { ok: true, inserted };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || e) };
+    }
+  }
+
+  async function releaseExpiredChannelIngestLocksInD1(env, now = Date.now()) {
+    const db = await ensureD1Schema(env);
+    if (!db) return 0;
+    try {
+      trackStat("d1Writes");
+      const res = await db.prepare(
+        "UPDATE channel_ingest_inbox SET status = 'pending', locked_until = 0 WHERE status = 'processing' AND locked_until > 0 AND locked_until < ?1"
+      ).bind(Number(now)).run();
+      return Number(res?.meta?.changes || 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function getChannelIngestInboxStatsFromD1(env, filterChatId = null) {
+    const db = await ensureD1Schema(env);
+    if (!db) return { chats: [], totals: { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 } };
+    try {
+      trackStat("d1Reads");
+      const baseSql = `SELECT
+        chat_id,
+        MAX(chat_title) AS chat_title,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+        SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing_count,
+        SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done_count,
+        SUM(CASE WHEN status = 'review' THEN 1 ELSE 0 END) AS review_count,
+        SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) AS ignored_count,
+        SUM(CASE WHEN reaction_pending = 1 THEN 1 ELSE 0 END) AS reaction_pending_count,
+        MIN(CASE WHEN status = 'pending' THEN created_at ELSE NULL END) AS oldest_pending_at,
+        MAX(CASE WHEN status = 'pending' THEN created_at ELSE NULL END) AS newest_pending_at
+      FROM channel_ingest_inbox`;
+      const res = filterChatId
+        ? await db.prepare(`${baseSql} WHERE chat_id = ?1 GROUP BY chat_id`).bind(String(filterChatId)).all()
+        : await db.prepare(`${baseSql} GROUP BY chat_id ORDER BY pending_count DESC, newest_pending_at DESC`).all();
+
+      const totals = { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 };
+      const chats = (res?.results || []).map(r => {
+        const item = {
+          chatId: String(r.chat_id),
+          chatTitle: String(r.chat_title || r.chat_id),
+          pending: Number(r.pending_count || 0),
+          processing: Number(r.processing_count || 0),
+          done: Number(r.done_count || 0),
+          review: Number(r.review_count || 0),
+          ignored: Number(r.ignored_count || 0),
+          reactionPending: Number(r.reaction_pending_count || 0),
+          oldestPendingAt: r.oldest_pending_at ? Number(r.oldest_pending_at) : null,
+          newestPendingAt: r.newest_pending_at ? Number(r.newest_pending_at) : null
+        };
+        totals.pending += item.pending;
+        totals.processing += item.processing;
+        totals.done += item.done;
+        totals.review += item.review;
+        totals.ignored += item.ignored;
+        totals.reactionPending += item.reactionPending;
+        return item;
+      });
+      return { chats, totals };
+    } catch (_e) {
+      return { chats: [], totals: { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 } };
+    }
+  }
+
+  async function claimPendingChannelIngestWindowFromD1(env, chatId, limit = 50, leaseMs = 90000) {
+    const db = await ensureD1Schema(env);
+    if (!db || !chatId) return [];
+    const now = Date.now();
+    const safeLimit = Math.max(1, Math.min(250, Number(limit || 50)));
+    const lockUntil = now + Math.max(15000, Number(leaseMs || 90000));
+    try {
+      await releaseExpiredChannelIngestLocksInD1(env, now);
+      trackStat("d1Reads");
+      const sel = await db.prepare(
+        `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at
+         FROM channel_ingest_inbox
+         WHERE chat_id = ?1 AND status = 'pending'
+         ORDER BY message_id ASC
+         LIMIT ?2`
+      ).bind(String(chatId), safeLimit).all();
+      const rows = sel?.results || [];
+      if (rows.length === 0) return [];
+      const ids = rows.map(r => Number(r.id)).filter(n => Number.isFinite(n));
+      if (ids.length > 0) {
+        trackStat("d1Writes");
+        const CHUNK = 80; // Strikt unter Cloudflare D1 Limit (max. 100 SQL Bind-Parameter pro Statement!)
+        const lockStmts = [];
+        for (let i = 0; i < ids.length; i += CHUNK) {
+          const part = ids.slice(i, i + CHUNK);
+          const placeholders = part.map((_, idx) => `?${idx + 2}`).join(", ");
+          lockStmts.push(
+            db.prepare(
+              `UPDATE channel_ingest_inbox SET status = 'processing', locked_until = ?1 WHERE id IN (${placeholders}) AND status = 'pending'`
+            ).bind(lockUntil, ...part)
+          );
+        }
+        const rawDb = getRawD1Binding(env) || db;
+        if (lockStmts.length > 1 && rawDb && typeof rawDb.batch === "function") {
+          await rawDb.batch(unwrapRawD1Statements(lockStmts));
+        } else {
+          for (const st of lockStmts) await st.run();
+        }
+      }
+      return rows.map(r => {
+        let payload = {};
+        try { payload = JSON.parse(r.payload_json || "{}"); } catch (_e) {}
+        return {
+          id: Number(r.id),
+          chatId: String(r.chat_id),
+          chatTitle: String(r.chat_title || ""),
+          messageId: Number(r.message_id),
+          replyToMessageId: r.reply_to_message_id ? Number(r.reply_to_message_id) : null,
+          mediaGroupId: r.media_group_id ? String(r.media_group_id) : null,
+          msgKind: String(r.msg_kind || "context"),
+          payload,
+          createdAt: Number(r.created_at || 0)
+        };
+      });
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  async function markChannelIngestRowsStatusInD1(env, updates = []) {
+    const db = await ensureD1Schema(env);
+    if (!db || !Array.isArray(updates) || updates.length === 0) return 0;
+    const now = Date.now();
+    const stmts = [];
+    for (const u of updates) {
+      if (!u || !u.id) continue;
+      const nextStatus = String(u.status || "done");
+      const lockedUntil = nextStatus === "pending" ? 0 : 0;
+      const processedAt = nextStatus === "pending" ? 0 : now;
+      stmts.push(
+        db.prepare(
+          `UPDATE channel_ingest_inbox
+           SET status = ?1, locked_until = ?2, result_emoji = ?3, reaction_pending = ?4, resolved_tmdb_id = ?5, resolved_type = ?6, processed_at = ?7
+           WHERE id = ?8`
+        ).bind(
+          nextStatus,
+          lockedUntil,
+          u.resultEmoji ? String(u.resultEmoji) : null,
+          u.reactionPending ? 1 : 0,
+          u.resolvedTmdbId ? Number(u.resolvedTmdbId) : null,
+          u.resolvedType ? String(u.resolvedType) : null,
+          processedAt,
+          Number(u.id)
+        )
+      );
+    }
+    if (stmts.length === 0) return 0;
+    try {
+      trackStat("d1Writes");
+      const rawDb = getRawD1Binding(env) || db;
+      const CHUNK = 50;
+      for (let i = 0; i < stmts.length; i += CHUNK) {
+        await rawDb.batch(unwrapRawD1Statements(stmts.slice(i, i + CHUNK)));
+      }
+      return stmts.length;
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function cleanupOldChannelIngestRowsInD1(env, retentionDays = 7) {
+    const db = await ensureD1Schema(env);
+    if (!db) return 0;
+    try {
+      const cutoff = Date.now() - Math.max(1, Number(retentionDays || 7)) * 24 * 60 * 60 * 1000;
+      trackStat("d1Writes");
+      const res = await db.prepare(
+        `DELETE FROM channel_ingest_inbox
+         WHERE id IN (
+           SELECT id FROM channel_ingest_inbox
+           WHERE status IN ('done', 'ignored') AND reaction_pending = 0 AND processed_at > 0 AND processed_at < ?1
+           LIMIT 500
+         )`
+      ).bind(cutoff).run();
+      return Number(res?.meta?.changes || 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function getPendingReactionInboxRowsFromD1(env, limit = 12) {
+    const db = await ensureD1Schema(env);
+    if (!db) return [];
+    const safeLimit = Math.max(1, Math.min(30, Number(limit || 12)));
+    try {
+      trackStat("d1Reads");
+      const res = await db.prepare(
+        `SELECT id, chat_id, message_id, result_emoji
+         FROM channel_ingest_inbox
+         WHERE reaction_pending = 1 AND result_emoji IS NOT NULL AND result_emoji != ''
+         ORDER BY
+           CASE result_emoji
+             WHEN '👀' THEN 1
+             WHEN '🔥' THEN 2
+             WHEN '👍' THEN 3
+             WHEN '✍' THEN 4
+             ELSE 5
+           END ASC,
+           id ASC
+         LIMIT ?1`
+      ).bind(safeLimit).all();
+      return (res?.results || []).map(r => ({
+        id: Number(r.id),
+        chatId: String(r.chat_id),
+        messageId: Number(r.message_id),
+        emoji: String(r.result_emoji)
+      }));
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  async function clearPendingReactionInD1(env, rowIds = []) {
+    const db = await ensureD1Schema(env);
+    if (!db || !Array.isArray(rowIds) || rowIds.length === 0) return 0;
+    const cleanIds = rowIds.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0);
+    if (cleanIds.length === 0) return 0;
+    try {
+      trackStat("d1Writes");
+      const CHUNK = 80; // Strikt unter Cloudflare D1 100-Parameter-Limit
+      let totalChanged = 0;
+      for (let i = 0; i < cleanIds.length; i += CHUNK) {
+        const part = cleanIds.slice(i, i + CHUNK);
+        const placeholders = part.map((_, idx) => `?${idx + 1}`).join(", ");
+        const res = await db.prepare(
+          `UPDATE channel_ingest_inbox SET reaction_pending = 0 WHERE id IN (${placeholders})`
+        ).bind(...part).run();
+        totalChanged += Number(res?.meta?.changes || 0);
+      }
+      return totalChanged;
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function fetchPendingChannelIngestMessagesForBrowserFromD1(env, chatId, limit = 200) {
+    const db = await ensureD1Schema(env);
+    if (!db || !chatId) return { rows: [], totalPending: 0 };
+    const safeLimit = Math.max(1, Math.min(250, Number(limit || 200)));
+    try {
+      await releaseExpiredChannelIngestLocksInD1(env, Date.now());
+      trackStat("d1Reads");
+      const [sel, cntRow] = await Promise.all([
+        db.prepare(
+          `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at
+           FROM channel_ingest_inbox
+           WHERE chat_id = ?1 AND status = 'pending'
+           ORDER BY message_id ASC
+           LIMIT ?2`
+        ).bind(String(chatId), safeLimit).all(),
+        db.prepare(
+          `SELECT COUNT(*) AS cnt FROM channel_ingest_inbox WHERE chat_id = ?1 AND status = 'pending'`
+        ).bind(String(chatId)).first()
+      ]);
+      const rows = (sel?.results || []).map(r => {
+        let payload = {};
+        try { payload = JSON.parse(r.payload_json || "{}"); } catch (_e) {}
+        return {
+          id: Number(r.id),
+          chatId: String(r.chat_id),
+          chatTitle: String(r.chat_title || ""),
+          messageId: Number(r.message_id),
+          replyToMessageId: r.reply_to_message_id ? Number(r.reply_to_message_id) : null,
+          mediaGroupId: r.media_group_id ? String(r.media_group_id) : null,
+          msgKind: String(r.msg_kind || "context"),
+          payload,
+          createdAt: Number(r.created_at || 0)
+        };
+      });
+      return { rows, totalPending: Number(cntRow?.cnt || rows.length) };
+    } catch (_e) {
+      return { rows: [], totalPending: 0 };
+    }
+  }
+
+  async function getChannelIngestRowsByIdsFromD1(env, chatId, rowIds = []) {
+    const db = await ensureD1Schema(env);
+    if (!db || !chatId || !Array.isArray(rowIds) || rowIds.length === 0) return [];
+    const cleanIds = Array.from(new Set(rowIds.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0))).slice(0, 250);
+    if (cleanIds.length === 0) return [];
+    try {
+      trackStat("d1Reads");
+      const out = [];
+      const CHUNK = 80;
+      for (let i = 0; i < cleanIds.length; i += CHUNK) {
+        const part = cleanIds.slice(i, i + CHUNK);
+        const placeholders = part.map((_, idx) => `?${idx + 2}`).join(", ");
+        const res = await db.prepare(
+          `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, created_at
+           FROM channel_ingest_inbox
+           WHERE chat_id = ?1 AND id IN (${placeholders})
+           ORDER BY message_id ASC`
+        ).bind(String(chatId), ...part).all();
+        for (const r of (res?.results || [])) {
+          let payload = {};
+          try { payload = JSON.parse(r.payload_json || "{}"); } catch (_e) {}
+          out.push({
+            id: Number(r.id),
+            chatId: String(r.chat_id),
+            chatTitle: String(r.chat_title || ""),
+            messageId: Number(r.message_id),
+            replyToMessageId: r.reply_to_message_id ? Number(r.reply_to_message_id) : null,
+            mediaGroupId: r.media_group_id ? String(r.media_group_id) : null,
+            msgKind: String(r.msg_kind || "context"),
+            status: String(r.status || "pending"),
+            payload,
+            createdAt: Number(r.created_at || 0)
+          });
+        }
+      }
+      return out;
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  // O(1)-Index-Fast-Probe für den 2-Minuten-Cron: liest im Leerlauf 0 Zeilen und macht 0 D1-Writes
+  // (verhindert Millionen unnötiger Full-Table-Scan-Reads über alte 'done'-Zeilen auf dem Cloudflare Free Plan!).
+  async function getChannelIngestCronFastProbeFromD1(env, now = Date.now(), filterChatId = null) {
+    const db = await ensureD1Schema(env);
+    if (!db) {
+      return { chats: [], totalPending: 0, hasExpiredLocks: false, hasPendingReactions: false };
+    }
+    try {
+      trackStat("d1Reads");
+      const rawDb = getRawD1Binding(env) || db;
+      const pendingStmt = filterChatId
+        ? db.prepare(
+            `SELECT chat_id, COUNT(*) AS pending_count, MIN(created_at) AS oldest_pending_at, MAX(created_at) AS newest_pending_at
+             FROM channel_ingest_inbox
+             WHERE status = 'pending' AND chat_id = ?1
+             GROUP BY chat_id`
+          ).bind(String(filterChatId))
+        : db.prepare(
+            `SELECT chat_id, COUNT(*) AS pending_count, MIN(created_at) AS oldest_pending_at, MAX(created_at) AS newest_pending_at
+             FROM channel_ingest_inbox
+             WHERE status = 'pending'
+             GROUP BY chat_id`
+          );
+      const lockStmt = db.prepare(
+        `SELECT 1 AS hit FROM channel_ingest_inbox WHERE status = 'processing' AND locked_until > 0 AND locked_until < ?1 LIMIT 1`
+      ).bind(Number(now));
+      const reactStmt = db.prepare(
+        `SELECT 1 AS hit FROM channel_ingest_inbox WHERE reaction_pending = 1 LIMIT 1`
+      );
+
+      let pendingRes, lockRes, reactRes;
+      if (rawDb && typeof rawDb.batch === "function") {
+        const batchOut = await rawDb.batch(unwrapRawD1Statements([pendingStmt, lockStmt, reactStmt]));
+        pendingRes = batchOut?.[0];
+        lockRes = batchOut?.[1];
+        reactRes = batchOut?.[2];
+      } else {
+        [pendingRes, lockRes, reactRes] = await Promise.all([pendingStmt.all(), lockStmt.all(), reactStmt.all()]);
+      }
+
+      let totalPending = 0;
+      const chats = (pendingRes?.results || []).map(r => {
+        const p = Number(r.pending_count || 0);
+        totalPending += p;
+        return {
+          chatId: String(r.chat_id),
+          pending: p,
+          oldestPendingAt: r.oldest_pending_at ? Number(r.oldest_pending_at) : null,
+          newestPendingAt: r.newest_pending_at ? Number(r.newest_pending_at) : null
+        };
+      }).sort((a, b) => (b.pending - a.pending) || ((a.oldestPendingAt || 0) - (b.oldestPendingAt || 0)));
+
+      return {
+        chats,
+        totalPending,
+        hasExpiredLocks: Array.isArray(lockRes?.results) && lockRes.results.length > 0,
+        hasPendingReactions: Array.isArray(reactRes?.results) && reactRes.results.length > 0
+      };
+    } catch (_e) {
+      return { chats: [], totalPending: 0, hasExpiredLocks: false, hasPendingReactions: false };
+    }
+  }
+
+  async function countPendingChannelIngestInD1(env, filterChatId = null) {
+    const db = await ensureD1Schema(env);
+    if (!db) return 0;
+    try {
+      trackStat("d1Reads");
+      const row = filterChatId
+        ? await db.prepare("SELECT COUNT(*) AS cnt FROM channel_ingest_inbox WHERE status = 'pending' AND chat_id = ?1").bind(String(filterChatId)).first()
+        : await db.prepare("SELECT COUNT(*) AS cnt FROM channel_ingest_inbox WHERE status = 'pending'").first();
+      return Number(row?.cnt || 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+
+
+

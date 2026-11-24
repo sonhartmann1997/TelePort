@@ -3266,6 +3266,1356 @@
     }
   }
 
+  // --- STUFE 1 (HIGH-VOLUME 500+): Roh-Nachrichten aus freigeschalteten Gruppen/Kanälen im JSON-Export-Format stagen ---
+  function buildStagingPayloadFromTelegramMessage(tgMsg) {
+    if (!tgMsg || !tgMsg.chat?.id || !tgMsg.message_id) return { msgKind: "skip", payload: null };
+    if (tgMsg.via_bot) return { msgKind: "skip", payload: null };
+    if (tgMsg.sticker || tgMsg.animation || tgMsg.voice || tgMsg.video_note || tgMsg.audio || tgMsg.poll || tgMsg.contact || tgMsg.location) {
+      return { msgKind: "skip", payload: null };
+    }
+
+    const rawText = String(tgMsg.caption || tgMsg.text || "").trim();
+    if (/^\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(rawText) && !tgMsg.video && !tgMsg.document && !tgMsg.photo) {
+      return { msgKind: "skip", payload: null };
+    }
+
+    const docObj = tgMsg.document || null;
+    const docName = String(docObj?.file_name || "").trim();
+    const docMime = String(docObj?.mime_type || "").toLowerCase();
+    const isVideoDoc = Boolean(docObj && (/^video\//i.test(docMime) || /\.(?:mp4|mkv|avi|mov|wmv|flv|webm|m4v|ts|mk3d)$/i.test(docName)));
+    const videoObj = tgMsg.video || (isVideoDoc ? docObj : null);
+    const isSubDoc = Boolean(!videoObj && docObj && SUBTITLE_EXTENSIONS.test(docName));
+    const isArchiveDoc = Boolean(!videoObj && !isSubDoc && docObj && /\.(?:rar|zip|7z|iso|tar|gz)$/i.test(docName));
+    const hasPhoto = Boolean(Array.isArray(tgMsg.photo) && tgMsg.photo.length > 0);
+
+    let msgKind = "skip";
+    let mediaType = null;
+    let fileName = "";
+    let mimeType = "";
+    let fileSize = null;
+    let width = null;
+    let height = null;
+    let durationSec = null;
+    let telegramFileId = null;
+    let telegramUniqueId = null;
+
+    if (videoObj) {
+      msgKind = "video";
+      mediaType = "video_file";
+      fileName = String(videoObj.file_name || "").trim();
+      mimeType = String(videoObj.mime_type || "video/mp4");
+      fileSize = Number(videoObj.file_size || 0) || null;
+      width = Number(videoObj.width || 0) || null;
+      height = Number(videoObj.height || 0) || null;
+      durationSec = Number(videoObj.duration || 0) || null;
+      telegramFileId = String(videoObj.file_id || "");
+      telegramUniqueId = videoObj.file_unique_id ? String(videoObj.file_unique_id) : null;
+    } else if (isSubDoc) {
+      msgKind = "subtitle";
+      mediaType = "document";
+      fileName = docName;
+      mimeType = docMime || "application/x-subrip";
+      fileSize = Number(docObj.file_size || 0) || null;
+      telegramFileId = String(docObj.file_id || "");
+      telegramUniqueId = docObj.file_unique_id ? String(docObj.file_unique_id) : null;
+    } else if (isArchiveDoc) {
+      msgKind = "video";
+      mediaType = "document";
+      fileName = docName;
+      mimeType = docMime || "application/octet-stream";
+      fileSize = Number(docObj.file_size || 0) || null;
+      telegramFileId = String(docObj.file_id || "");
+      telegramUniqueId = docObj.file_unique_id ? String(docObj.file_unique_id) : null;
+    } else if (hasPhoto || rawText.length >= 4) {
+      // Nur sinnvollen Kontext stagen (Poster-Posts, Titel-Ankündigungen, Staffel-Header, TMDB/IMDb-Links) – kein Chat-Smalltalk!
+      const isCasualChatter = !hasPhoto && rawText.length <= 45 && /^(?:danke(?:\s+dir|\s+sch[oö]n)?|vielen\s+dank|thx|ty|ok+|okay|nice|geil|super|top|cool|lol+|haha+|hihi+|bitte|gerne|👍+|🔥+|❤️+|😂+|👌+)[\s!?.]*$/i.test(rawText);
+      if (isCasualChatter || (!hasPhoto && !/[a-zA-Z0-9äöüÄÖÜß]{2,}/.test(rawText))) {
+        return { msgKind: "skip", payload: null };
+      }
+      msgKind = "context";
+      mediaType = hasPhoto ? "photo" : null;
+    } else {
+      return { msgKind: "skip", payload: null };
+    }
+
+    const rawChannelNum = String(tgMsg.chat.id).replace(/^-100/, "").replace(/^-/, "");
+    const messageLink = String(tgMsg.chat.id).startsWith("-100")
+      ? `https://t.me/c/${rawChannelNum}/${tgMsg.message_id}`
+      : "";
+
+    const payload = {
+      id: Number(tgMsg.message_id),
+      msg_id: Number(tgMsg.message_id),
+      type: "message",
+      date_unixtime: String(tgMsg.date || Math.floor(Date.now() / 1000)),
+      chat_id: String(tgMsg.chat.id),
+      chat_title: String(tgMsg.chat.title || tgMsg.chat.username || "").slice(0, 120),
+      text: rawText.slice(0, 1500),
+      photo: hasPhoto ? "photo" : undefined,
+      media_type: mediaType || undefined,
+      file_name: fileName || undefined,
+      mime_type: mimeType || undefined,
+      file_size: fileSize || undefined,
+      width: width || undefined,
+      height: height || undefined,
+      duration_seconds: durationSec || undefined,
+      reply_to_message_id: tgMsg.reply_to_message?.message_id ? Number(tgMsg.reply_to_message.message_id) : undefined,
+      media_group_id: tgMsg.media_group_id ? String(tgMsg.media_group_id) : undefined,
+      telegram_file_id: telegramFileId || undefined,
+      telegram_unique_id: telegramUniqueId || undefined,
+      message_link: messageLink || undefined
+    };
+
+    return { msgKind, payload };
+  }
+
+  async function stageGroupOrChannelMessageIfEnabled(env, tgMsg) {
+    if (!tgMsg || !tgMsg.chat?.id || env._isCustomBotWebhook) {
+      return { enabled: false, staged: false };
+    }
+    const chatId = tgMsg.chat.id;
+    const enabled = await isAutoIngestChatEnabled(env, chatId);
+    if (!enabled) {
+      return { enabled: false, staged: false };
+    }
+    const built = buildStagingPayloadFromTelegramMessage(tgMsg);
+    if (!built.payload || built.msgKind === "skip") {
+      return { enabled: true, staged: false, skipped: true };
+    }
+    const res = await enqueueChannelIngestMessageToD1(env, {
+      chatId: String(chatId),
+      chatTitle: String(tgMsg.chat.title || tgMsg.chat.username || `Chat ${chatId}`),
+      messageId: Number(tgMsg.message_id),
+      replyToMessageId: tgMsg.reply_to_message?.message_id || null,
+      mediaGroupId: tgMsg.media_group_id || null,
+      msgKind: built.msgKind,
+      payload: built.payload,
+      createdAt: tgMsg.date ? Number(tgMsg.date) * 1000 : Date.now()
+    });
+    return { enabled: true, staged: Boolean(res?.ok), inserted: Boolean(res?.inserted), msgKind: built.msgKind };
+  }
+
+  async function verifyChannelAutoIngestAdminAccess(env, chatId) {
+    try {
+      const admins = await tgApi(env).getChatAdministrators(chatId);
+      if (!Array.isArray(admins) || admins.length === 0) return false;
+      for (const adm of admins) {
+        const uid = adm?.user?.id;
+        if (uid && await isTelegramBotAdmin(env, uid)) {
+          return true;
+        }
+      }
+    } catch (_e) {}
+    return false;
+  }
+
+  async function renderAutoIngestStatusMenu(env, targetChatId, editMsgId = null, note = "") {
+    const { sendMessage, editMessageText } = tgApi(env);
+    const chatsMap = await getAutoIngestChatsMap(env, true);
+    const statsRes = await getChannelIngestInboxStatsFromD1(env);
+    const statsByChat = new Map((statsRes.chats || []).map(c => [String(c.chatId), c]));
+    const entries = Object.values(chatsMap || {}).sort((a, b) => Number(b.enabled) - Number(a.enabled) || (b.updatedAt || 0) - (a.updatedAt || 0));
+
+    let lines = "";
+    const inline_keyboard = [];
+    if (entries.length === 0) {
+      lines = `_Noch keine Gruppen oder Kanäle freigeschaltet._\n\n` +
+        `💡 *Aktivieren:*\n` +
+        `• In einer Gruppe oder einem Kanal \`/ingest_on\` senden\n` +
+        `• Oder hier im Privat-Chat: \`/ingest_on -1001234567890\``;
+    } else {
+      lines = entries.slice(0, 12).map(e => {
+        const st = statsByChat.get(String(e.chatId));
+        const icon = e.enabled ? "🟢" : "⚪";
+        const qInfo = st
+          ? `📥 ${st.pending} wartend · ✅ ${st.done} · 👀 ${st.review}`
+          : `📥 0 wartend`;
+        return `${icon} *${escapeMd(e.title || e.chatId)}*\n   \`${escapeMd(String(e.chatId))}\` · ${qInfo}`;
+      }).join("\n");
+      for (const e of entries.slice(0, 6)) {
+        const cid = String(e.chatId);
+        const shortName = String(e.title || cid).slice(0, 18);
+        inline_keyboard.push([
+          {
+            text: e.enabled ? `⏸️ ${shortName} pausieren` : `▶️ ${shortName} aktivieren`,
+            callback_data: e.enabled ? `ingst_off_${cid}` : `ingst_on_${cid}`
+          }
+        ]);
+      }
+    }
+
+    inline_keyboard.push([
+      { text: "⚡ Wartende jetzt verarbeiten", callback_data: "ingst_flush_all" }
+    ]);
+    inline_keyboard.push([
+      { text: "🔄 Status aktualisieren", callback_data: "ingst_refresh" },
+      { text: "✖️ Schließen", callback_data: "close_bot_msg" }
+    ]);
+
+    const t = statsRes.totals || {};
+    const msgText =
+      `📥 *AUTO-INGEST QUELLEN & STAGING-INBOX*\n${SEP}\n` +
+      `📊 *Gesamt-Inbox:* \`${t.pending || 0}\` wartend • \`${t.processing || 0}\` aktiv • \`${t.done || 0}\` fertig • \`${t.review || 0}\` Review\n\n` +
+      `${lines}` +
+      (note ? `\n\n${note}` : "") +
+      `\n\n💡 _Eingehende Posts aus 🟢 aktiven Quellen werden still in der D1-Inbox gesammelt und anschließend im Kontext (Poster + Folgen + Untertitel) verarbeitet._`;
+
+    if (editMsgId) {
+      const edited = await editMessageText(targetChatId, editMsgId, msgText, { reply_markup: { inline_keyboard } });
+      if (edited) return edited;
+    }
+    return await sendMessage(targetChatId, msgText, { reply_markup: { inline_keyboard } });
+  }
+
+  async function handleAutoIngestCommand(env, tgMsg, { isChannelPost = false } = {}) {
+    if (!tgMsg || !tgMsg.chat?.id || env._isCustomBotWebhook) return false;
+    const rawText = String(tgMsg.text || tgMsg.caption || "").trim();
+    const cmdMatch = rawText.match(/^\/(ingest_on|ingest_off|ingest_status|ingest_flush|autoingest)(?:@\w+)?(?:\s+([^\s]+))?(?:\s+(.*))?$/i);
+    if (!cmdMatch) return false;
+
+    const rawCmd = cmdMatch[1].toLowerCase();
+    let action = rawCmd === "ingest_on"
+      ? "on"
+      : (rawCmd === "ingest_off" ? "off" : (rawCmd === "ingest_flush" ? "flush" : "status"));
+    let argTarget = String(cmdMatch[2] || "").trim();
+    let argExtra = String(cmdMatch[3] || "").trim();
+    if (rawCmd === "autoingest") {
+      if (/^(?:on|an|1|enable)$/i.test(argTarget)) {
+        action = "on";
+        argTarget = argExtra.split(/\s+/)[0] || "";
+      } else if (/^(?:off|aus|0|disable)$/i.test(argTarget)) {
+        action = "off";
+        argTarget = argExtra.split(/\s+/)[0] || "";
+      } else if (/^(?:flush|run|now)$/i.test(argTarget)) {
+        action = "flush";
+        argTarget = argExtra.split(/\s+/)[0] || "";
+      } else {
+        action = "status";
+      }
+    }
+
+    const chatId = tgMsg.chat.id;
+    const isGroupOrChannel = isChannelPost || isGroupOrChannelChat(chatId);
+    const { sendMessage, deleteMessage, setMessageReaction } = tgApi(env);
+
+    // Striktes Admin-Gate (Privat/Gruppe via senderId, Kanal via getChatAdministrators)
+    let authorized = false;
+    let actorId = tgMsg.from?.id ? String(tgMsg.from.id) : (isChannelPost ? "channel_admin" : "");
+    if (isChannelPost) {
+      authorized = await verifyChannelAutoIngestAdminAccess(env, chatId);
+    } else if (tgMsg.from?.id) {
+      authorized = await isTelegramBotAdmin(env, tgMsg.from.id);
+    }
+
+    if (!authorized) {
+      if (!isGroupOrChannel) {
+        await sendMessage(chatId, `🔒 *Nur für Bot-Administratoren.*`, {
+          reply_markup: { inline_keyboard: [buildFooterRow(chatId, true)] }
+        });
+      }
+      return true;
+    }
+
+    if (action === "flush") {
+      const targetFlushChat = isGroupOrChannel ? String(chatId) : (argTarget && /^-\d{4,}$/.test(argTarget) ? argTarget : null);
+      const flushRes = await runScheduledChannelIngestFlush(env, {
+        source: "command_flush",
+        forceFlush: true,
+        filterChatId: targetFlushChat,
+        maxResolvePerRun: 12
+      });
+      if (isChannelPost) {
+        await setMessageReaction(chatId, tgMsg.message_id, "👍").catch(() => {});
+        await deleteMessage(chatId, tgMsg.message_id).catch(() => {});
+        return true;
+      }
+      const note =
+        `⚡ *Sammel-Flush abgeschlossen:* ` +
+        `\`${flushRes.processedVideos}\` Video(s) · \`${flushRes.added}\` neu · \`${flushRes.upgraded}\` Upgrade/4K · ` +
+        `\`${flushRes.duplicates}\` Duplikat · \`${flushRes.review}\` Review · \`${flushRes.subtitlesLinked}\` Untertitel` +
+        (flushRes.remainingPending > 0 ? ` · _${flushRes.remainingPending} noch wartend_` : "");
+      if (isGroupOrChannel) {
+        const sent = await sendMessage(chatId, note);
+        const ctx = typeof getActiveWorkerCtx === "function" ? getActiveWorkerCtx() : null;
+        if (sent?.result?.message_id && ctx && typeof ctx.waitUntil === "function") {
+          ctx.waitUntil((async () => {
+            await new Promise(r => setTimeout(r, 12000));
+            await deleteMessage(chatId, sent.result.message_id).catch(() => {});
+          })());
+        }
+        return true;
+      }
+      await renderAutoIngestStatusMenu(env, chatId, null, note);
+      return true;
+    }
+
+    if (action === "status") {
+      if (isChannelPost) {
+        const enabled = await isAutoIngestChatEnabled(env, chatId);
+        await setMessageReaction(chatId, tgMsg.message_id, enabled ? "👍" : "👌").catch(() => {});
+        return true;
+      }
+      if (isGroupOrChannel) {
+        const enabled = await isAutoIngestChatEnabled(env, chatId);
+        const stRes = await getChannelIngestInboxStatsFromD1(env, String(chatId));
+        const st = stRes.chats?.[0] || { pending: 0, done: 0, review: 0 };
+        const sent = await sendMessage(
+          chatId,
+          `📥 *Auto-Ingest Status:* ${enabled ? "🟢 *AKTIV*" : "⚪ *INAKTIV*"}\n` +
+          `Wartend: \`${st.pending}\` • Fertig: \`${st.done}\` • Review: \`${st.review}\``
+        );
+        const ctx = typeof getActiveWorkerCtx === "function" ? getActiveWorkerCtx() : null;
+        if (sent?.result?.message_id && ctx && typeof ctx.waitUntil === "function") {
+          ctx.waitUntil((async () => {
+            await new Promise(r => setTimeout(r, 12000));
+            await deleteMessage(chatId, sent.result.message_id).catch(() => {});
+          })());
+        }
+        return true;
+      }
+      await renderAutoIngestStatusMenu(env, chatId);
+      return true;
+    }
+
+    // Ziel-Chat bestimmen: in Gruppe/Kanal immer der aktuelle Chat, im Privat-Chat per Argument (z. B. /ingest_on -1001234567890)
+    const targetChatId = isGroupOrChannel ? String(chatId) : argTarget;
+    if (!targetChatId || !/^-\d{4,}$/.test(targetChatId)) {
+      if (!isGroupOrChannel) {
+        await sendMessage(
+          chatId,
+          `ℹ️ *Verwendung im Privat-Chat:*\n\`/ingest_${action} -1001234567890\`\n\n_Oder schreibe \`/ingest_${action}\` direkt in die gewünschte Gruppe bzw. den Kanal._`
+        );
+      }
+      return true;
+    }
+
+    const enableFlag = action === "on";
+    const title = isGroupOrChannel
+      ? String(tgMsg.chat.title || tgMsg.chat.username || `Chat ${targetChatId}`)
+      : (argExtra || `Chat ${targetChatId}`);
+    const chatType = isChannelPost ? "channel" : (isGroupOrChannel ? String(tgMsg.chat.type || "group") : (targetChatId.startsWith("-100") ? "channel" : "group"));
+
+    const res = await setAutoIngestChatEnabled(env, targetChatId, {
+      enabled: enableFlag,
+      title,
+      chatType,
+      activatedBy: actorId
+    });
+
+    if (isChannelPost) {
+      await setMessageReaction(chatId, tgMsg.message_id, enableFlag ? "👍" : "👌").catch(() => {});
+      await deleteMessage(chatId, tgMsg.message_id).catch(() => {});
+      return true;
+    }
+
+    if (isGroupOrChannel) {
+      const sent = await sendMessage(
+        chatId,
+        enableFlag
+          ? `✅ *Stiller Auto-Ingest für diese Gruppe aktiviert.*\n_Neue Filme, Serien & Untertitel werden still gesammelt und im Kontext verarbeitet (nur Emoji-Reaktion, kein Chat-Spam)._`
+          : `⏸️ *Auto-Ingest für diese Gruppe deaktiviert.*`
+      );
+      const ctx = typeof getActiveWorkerCtx === "function" ? getActiveWorkerCtx() : null;
+      if (sent?.result?.message_id && ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil((async () => {
+          await new Promise(r => setTimeout(r, 12000));
+          await deleteMessage(chatId, sent.result.message_id).catch(() => {});
+        })());
+      }
+      return true;
+    }
+
+    if (!res.ok) {
+      await sendMessage(chatId, `⚠️ ${escapeMd(res.error || "Konnte Chat nicht speichern.")}`);
+      return true;
+    }
+    await renderAutoIngestStatusMenu(
+      env,
+      chatId,
+      null,
+      enableFlag
+        ? `✅ *Quelle \`${escapeMd(targetChatId)}\` erfolgreich aktiviert.*`
+        : `⏸️ *Quelle \`${escapeMd(targetChatId)}\` deaktiviert.*`
+    );
+    return true;
+  }
+
+  // ============================================================================
+  // STUFE 2 (HIGH-VOLUME 500+): VERZÖGERTE SMART-SAMMEL-ENGINE + PARSER-ADAPTER
+  // ============================================================================
+  const INGEST_SETTLE_WINDOW_MS = 2 * 60 * 1000; // 2 Min. Ruhezeit nach letztem Post
+  const INGEST_BACKLOG_THRESHOLD = 40;           // Ab 40 wartenden Posts schon während des Uploads starten
+  const INGEST_MAX_AGE_TRIGGER_MS = 5 * 60 * 1000; // Oder sobald ältester Post >= 5 Min. wartet
+
+  function getQualityRankForUpgrade(qualityStr) {
+    const q = String(qualityStr || "").toLowerCase();
+    if (/2160|4k|uhd/.test(q)) return 5;
+    if (/1080|fhd|fullhd/.test(q)) return 4;
+    if (/720|\bhd\b/.test(q)) return 3;
+    if (/480|576|\bsd\b|dvd/.test(q)) return 2;
+    if (/360/.test(q)) return 1;
+    return 0;
+  }
+
+  // ZENTRALER AUSTAUSCHBARER PARSER-ADAPTER (für das morgige Parsing-Update an genau 1 Stelle gekapselt!)
+  function extractSmartGroupedEntriesFromInboxWindow(chatMeta, windowRows = [], contextCarryover = null) {
+    const anchorMessages = Array.isArray(contextCarryover?.anchorMessages)
+      ? contextCarryover.anchorMessages
+          .filter(m => m && typeof m === "object")
+          .slice(-3)
+          .map((m, idx) => ({
+            ...m,
+            id: Number(m.id || m.msg_id || (idx + 1)),
+            msg_id: Number(m.id || m.msg_id || (idx + 1)),
+            _isCarryoverAnchor: true
+          }))
+      : [];
+    const anchorMsgIdSet = new Set(anchorMessages.map(m => Number(m.id || m.msg_id)));
+
+    const currentMessages = (windowRows || [])
+      .map(r => {
+        const p = (r.payload && typeof r.payload === "object") ? { ...r.payload } : {};
+        p.id = Number(r.messageId || p.id || p.msg_id || 0);
+        p.msg_id = p.id;
+        p.type = "message";
+        if (!p.chat_id) p.chat_id = String(chatMeta?.chatId || r.chatId || "");
+        return p;
+      })
+      .filter(m => m.id > 0);
+
+    // Falls Carryover-Anker eine ältere message_id haben als das aktuelle Fenster, bleiben sie sauber vorn
+    const firstCurId = currentMessages.length > 0 ? currentMessages[0].id : 0;
+    const safeAnchors = anchorMessages.filter(a => firstCurId === 0 || (firstCurId - Number(a.id)) <= 24 && Number(a.id) < firstCurId);
+
+    const syntheticBackupJson = {
+      id: String(chatMeta?.chatId || ""),
+      name: String(chatMeta?.title || chatMeta?.chatId || "Kanal-Inbox"),
+      messages: [...safeAnchors, ...currentMessages]
+    };
+
+    // Nutzt 1:1 dieselbe Smart-Kontext-Logik wie der JSON-Backup-Importer!
+    const detected = detectAndExtractTelegramBackupOrJson(syntheticBackupJson, null);
+    const entries = (detected?.entries || []).filter(e => {
+      const mid = Number(e?.msg_id || e?.message_id || 0);
+      return mid > 0 && !anchorMsgIdSet.has(mid);
+    });
+
+    // Finde Untertitel-Zeilen, die bereits an ein Video gekoppelt wurden vs. eigenständige (z. B. nachgereicht im nächsten Fenster)
+    const boundSubtitleMsgIds = new Set();
+    for (const ent of entries) {
+      if (Array.isArray(ent.subtitle_files)) {
+        for (const sf of ent.subtitle_files) {
+          if (sf?.message_id) boundSubtitleMsgIds.add(Number(sf.message_id));
+        }
+      }
+    }
+    const standaloneSubtitles = (windowRows || []).filter(
+      r => r.msgKind === "subtitle" && !boundSubtitleMsgIds.has(Number(r.messageId))
+    );
+
+    // Kontext-Anker für das nächste Fenster sichern (letzte max. 2 Kontext-/Header-Posts)
+    const trailingAnchors = currentMessages
+      .filter(m => !m.telegram_file_id || m.media_type === "photo" || /\b(?:Staffel|Season)\s*0*\d{1,2}\b/i.test(String(m.text || "")))
+      .slice(-2)
+      .map(m => ({
+        id: m.id,
+        msg_id: m.id,
+        type: "message",
+        chat_id: m.chat_id,
+        text: String(m.text || "").slice(0, 600),
+        photo: m.photo,
+        media_type: m.media_type === "photo" ? "photo" : undefined
+      }));
+
+    return {
+      entries,
+      boundSubtitleMsgIds,
+      standaloneSubtitles,
+      nextAnchorMessages: trailingAnchors.length > 0 ? trailingAnchors : safeAnchors
+    };
+  }
+
+  // SMART WINDOW CUT: Schneidet niemals einen offenen Kontext-Header oder eine laufende Media-Group am Batch-Ende ab!
+  function applySmartWindowCut(rows, { windowLimit = 50, forceFlush = false, now = Date.now() } = {}) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { processRows: [], holdBackRows: [] };
+    }
+    const lastRow = rows[rows.length - 1];
+    const isFullWindow = rows.length >= windowLimit;
+    const newestAgeMs = lastRow?.createdAt ? (now - Number(lastRow.createdAt)) : INGEST_SETTLE_WINDOW_MS;
+    const isActivelyUploading = newestAgeMs < 90 * 1000;
+
+    if (forceFlush || (!isFullWindow && !isActivelyUploading)) {
+      return { processRows: rows, holdBackRows: [] };
+    }
+
+    let cutIdx = rows.length;
+    // 1. Falls am Fensterende eine Media-Group mitten im Block endet, diese komplett fürs nächste Fenster aufheben
+    const tailGroupId = rows[cutIdx - 1]?.mediaGroupId;
+    if (tailGroupId) {
+      let gStart = cutIdx - 1;
+      while (gStart > 0 && rows[gStart - 1]?.mediaGroupId === tailGroupId) {
+        gStart--;
+      }
+      if (gStart > 0) cutIdx = gStart;
+    }
+
+    // 2. Nachlaufende reine Kontext-/Poster-Posts am Fensterende aufheben (deren Videos kommen wahrscheinlich gleich!)
+    while (cutIdx > 1 && rows[cutIdx - 1]?.msgKind === "context") {
+      const ctxAge = rows[cutIdx - 1]?.createdAt ? (now - Number(rows[cutIdx - 1].createdAt)) : 0;
+      if (ctxAge > INGEST_MAX_AGE_TRIGGER_MS && !isFullWindow) break;
+      cutIdx--;
+    }
+
+    if (cutIdx <= 0) {
+      return { processRows: rows, holdBackRows: [] };
+    }
+    return {
+      processRows: rows.slice(0, cutIdx),
+      holdBackRows: rows.slice(cutIdx)
+    };
+  }
+
+  async function dispatchAdaptiveInboxReactions(env, chatId, reactionQueue = []) {
+    if (!Array.isArray(reactionQueue) || reactionQueue.length === 0) {
+      return { sent: 0, deferredIds: [], skippedIds: [], rateLimited: false };
+    }
+    const prioOf = (emoji) => {
+      if (emoji === "👀") return 1;
+      if (emoji === "🔥") return 2;
+      if (emoji === "👍") return 3;
+      if (emoji === "✍") return 4;
+      return 5;
+    };
+    const sorted = [...reactionQueue].sort((a, b) => prioOf(a.emoji) - prioOf(b.emoji) || Number(a.messageId) - Number(b.messageId));
+    const { setMessageReaction } = tgApi(env);
+    let sent = 0;
+    let rateLimited = false;
+    const deferredIds = [];
+    const skippedIds = [];
+
+    for (const item of sorted) {
+      const p = prioOf(item.emoji);
+      if (rateLimited || !hasSubrequestBudget(38)) {
+        if (p <= 3) deferredIds.push(item.rowId);
+        else skippedIds.push(item.rowId);
+        continue;
+      }
+      const res = await setMessageReaction(chatId, item.messageId, item.emoji, { fallbackEmoji: "👍" });
+      if (res?.ok) {
+        sent++;
+      } else if (res?.rateLimited) {
+        rateLimited = true;
+        if (p <= 3) deferredIds.push(item.rowId);
+        else skippedIds.push(item.rowId);
+      } else {
+        skippedIds.push(item.rowId);
+      }
+    }
+    return { sent, deferredIds, skippedIds, rateLimited };
+  }
+
+  async function flushChannelIngestWindow(env, chatId, options = {}) {
+    const cid = String(chatId || "").trim();
+    const windowLimit = Math.max(5, Math.min(80, Number(options.windowLimit || 50)));
+    const maxResolvePerRun = Math.max(1, Math.min(25, Number(options.maxResolvePerRun || 10)));
+    const forceFlush = Boolean(options.forceFlush);
+    const now = Date.now();
+
+    const summary = {
+      chatId: cid,
+      claimed: 0,
+      heldBack: 0,
+      processedVideos: 0,
+      added: 0,
+      upgraded: 0,
+      duplicates: 0,
+      review: 0,
+      subtitlesLinked: 0,
+      reactionsSent: 0,
+      reactionsDeferred: 0,
+      stoppedByBudget: false
+    };
+
+    const claimedRows = await claimPendingChannelIngestWindowFromD1(env, cid, windowLimit, 90000);
+    if (!claimedRows || claimedRows.length === 0) return summary;
+    summary.claimed = claimedRows.length;
+
+    const { processRows, holdBackRows } = applySmartWindowCut(claimedRows, { windowLimit, forceFlush, now });
+    summary.heldBack = holdBackRows.length;
+
+    const rowUpdates = [];
+    for (const hr of holdBackRows) {
+      rowUpdates.push({ id: hr.id, status: "pending", reactionPending: 0 });
+    }
+    if (processRows.length === 0) {
+      await markChannelIngestRowsStatusInD1(env, rowUpdates);
+      return summary;
+    }
+
+    const chatsMap = await getAutoIngestChatsMap(env, false);
+    const chatCfg = chatsMap[cid] || { chatId: cid, title: processRows[0]?.chatTitle || cid };
+    const carryover = chatCfg.lastContextSnapshot || null;
+
+    const { entries, boundSubtitleMsgIds, standaloneSubtitles, nextAnchorMessages } =
+      extractSmartGroupedEntriesFromInboxWindow(chatCfg, processRows, carryover);
+
+    const rowByMsgId = new Map(processRows.map(r => [Number(r.messageId), r]));
+    const handledRowIds = new Set();
+    const reactionQueue = [];
+    const reviewLogsToSave = [];
+    const vipPlaylistItems = [];
+
+    // In-Batch Serien-Kontext-Cache (spart bei 500+ Serien-Drops bis zu 80% TMDB-Suchanfragen!)
+    const seriesTmdbCache = new Map();
+    if (carryover?.lastSeriesNormTitle && carryover?.lastSeriesTmdbId) {
+      seriesTmdbCache.set(String(carryover.lastSeriesNormTitle), Number(carryover.lastSeriesTmdbId));
+    }
+
+    let lastResolvedRef = memoryFallback.get(`last_ingested_media_${cid}`) || null;
+    let lastSeriesCarry = carryover?.lastSeriesTmdbId
+      ? { normTitle: carryover.lastSeriesNormTitle || "", tmdbId: Number(carryover.lastSeriesTmdbId) }
+      : null;
+
+    let resolvedCountInRun = 0;
+    let budgetExhaustedAtIdx = -1;
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      const msgId = Number(entry?.msg_id || entry?.message_id || 0);
+      const srcRow = rowByMsgId.get(msgId);
+      if (!srcRow) continue;
+
+      if (resolvedCountInRun >= maxResolvePerRun || !hasSubrequestBudget(30)) {
+        budgetExhaustedAtIdx = i;
+        summary.stoppedByBudget = true;
+        break;
+      }
+
+      // Serien-Cache-Treffer im Batch nutzen, wenn kein expliziter tmdb_id vorliegt
+      const enrichedEntry = { ...entry };
+      if (enrichedEntry.isSeries && !enrichedEntry.tmdb_id && enrichedEntry.cleanTitle) {
+        const normSeriesKey = normalizeText(enrichedEntry.cleanTitle).toLowerCase().trim();
+        if (normSeriesKey && seriesTmdbCache.has(normSeriesKey)) {
+          enrichedEntry.tmdb_id = seriesTmdbCache.get(normSeriesKey);
+        }
+      }
+
+      // Bestehende Maximal-Qualität vor dem Speichern prüfen (für präzise 🔥 4K-Upgrade-Erkennung!)
+      let prevBestQualityRank = 0;
+      const incomingRank = getQualityRankForUpgrade(enrichedEntry.quality || detectVideoQuality(srcRow.payload || {}, enrichedEntry.raw_text || "", enrichedEntry.raw_file_name || ""));
+
+      const resolved = await resolveAndIngestMediaEntry(env, enrichedEntry, null, {
+        returnUnmatched: true,
+        registerAsVipStream: false
+      });
+      resolvedCountInRun++;
+      summary.processedVideos++;
+      handledRowIds.add(srcRow.id);
+
+      const isReviewCase = Boolean(
+        !resolved ||
+        !resolved.ok ||
+        resolved.unmatched ||
+        resolved.contextError ||
+        resolved.isUncertain
+      );
+
+      if (isReviewCase) {
+        summary.review++;
+        rowUpdates.push({
+          id: srcRow.id,
+          status: "review",
+          resultEmoji: "👀",
+          reactionPending: 0,
+          resolvedTmdbId: resolved?.tmdbId || null,
+          resolvedType: resolved?.typeCode || null
+        });
+        reactionQueue.push({ rowId: srcRow.id, messageId: msgId, emoji: "👀" });
+        reviewLogsToSave.push({
+          msgId,
+          stage: "CHANNEL_INGEST",
+          status: resolved?.contextError || resolved?.isUncertain ? "CONFLICT" : "TMDB_NOT_FOUND",
+          reviewReasonCode: resolved?.reviewReasonCode || "TMDB_NOT_FOUND",
+          reason: resolved?.errorReason || `Kanal-/Gruppen-Upload aus "${chatCfg.title || cid}" konnte nicht sicher zugeordnet werden.`,
+          fileName: String(enrichedEntry.raw_file_name || enrichedEntry.filename || srcRow.payload?.file_name || ""),
+          textPreview: String(enrichedEntry.raw_text || srcRow.payload?.text || "").slice(0, 240),
+          parsedTitle: String(resolved?.parsedTitle || resolved?.parsed?.cleanTitle || enrichedEntry.cleanTitle || ""),
+          matchedTitle: resolved?.matchedTitle || resolved?.cleanTitle || null,
+          season: resolved?.season ?? enrichedEntry.season ?? null,
+          episode: resolved?.episode ?? enrichedEntry.episode ?? null,
+          tmdbQuery: String(resolved?.parsed?.cleanTitle || enrichedEntry.cleanTitle || ""),
+          tmdbResult: resolved?.matchedTitle || "Kein Treffer",
+          tmdbId: resolved?.tmdbId || null,
+          typeCode: resolved?.typeCode || (enrichedEntry.isSeries ? "s" : "m"),
+          details: {
+            chatId: cid,
+            chatTitle: chatCfg.title || cid,
+            rawEntry: {
+              ...enrichedEntry,
+              telegram_file_id: srcRow.payload?.telegram_file_id || enrichedEntry.telegram_file_id || null,
+              telegram_unique_id: srcRow.payload?.telegram_unique_id || enrichedEntry.telegram_unique_id || null,
+              file_size: srcRow.payload?.file_size || enrichedEntry.file_size || null,
+              mime_type: srcRow.payload?.mime_type || enrichedEntry.mime_type || "video/mp4",
+              msg_id: msgId,
+              message_id: msgId,
+              chat_id: cid
+            },
+            candidates: Array.isArray(resolved?.candidates) ? resolved.candidates.slice(0, 5) : []
+          }
+        });
+      } else {
+        // Prüfe echtes Qualitäts-Upgrade (z. B. 720p -> 1080p, 1080p -> 4K/2160p oder Clean ersetzt CAM/TS)
+        if (resolved.ingestStatus === "merged_quality") {
+          try {
+            const existingFiles = resolved.typeCode === "s"
+              ? await getEpisodeFilesFromD1(env, resolved.tmdbId, resolved.season || 1, resolved.episode || 1)
+              : await getMovieFilesFromD1(env, resolved.tmdbId, false);
+            for (const f of (existingFiles || [])) {
+              if (String(f.telegram_file_id || "") === String(srcRow.payload?.telegram_file_id || "")) continue;
+              const rRank = getQualityRankForUpgrade(f.quality);
+              if (rRank > prevBestQualityRank) prevBestQualityRank = rRank;
+            }
+          } catch (_e) {}
+        }
+
+        let emoji = "👍";
+        const isTrueQualityUpgrade =
+          resolved.ingestStatus === "replaced_prerelease" ||
+          (resolved.ingestStatus === "merged_quality" && prevBestQualityRank > 0 && incomingRank > prevBestQualityRank);
+        const isDuplicateOrLowerQuality =
+          resolved.ingestStatus === "duplicate" ||
+          resolved.ingestStatus === "skipped_prerelease" ||
+          (resolved.ingestStatus === "merged_quality" && !isTrueQualityUpgrade);
+
+        if (isTrueQualityUpgrade) {
+          emoji = "🔥";
+          summary.upgraded++;
+        } else if (isDuplicateOrLowerQuality) {
+          emoji = "👌";
+          summary.duplicates++;
+        } else {
+          emoji = "👍";
+          summary.added++;
+        }
+
+        rowUpdates.push({
+          id: srcRow.id,
+          status: "done",
+          resultEmoji: emoji,
+          reactionPending: 0,
+          resolvedTmdbId: resolved.tmdbId,
+          resolvedType: resolved.typeCode
+        });
+        reactionQueue.push({ rowId: srcRow.id, messageId: msgId, emoji });
+        vipPlaylistItems.push(resolved);
+
+        lastResolvedRef = {
+          typeCode: resolved.typeCode,
+          tmdbId: resolved.tmdbId,
+          season: resolved.season || 1,
+          episode: resolved.episode || 1,
+          fileId: srcRow.payload?.telegram_file_id || "",
+          title: resolved.cleanTitle
+        };
+
+        if (resolved.typeCode === "s" && resolved.tmdbId) {
+          const normKey = normalizeText(resolved.cleanTitle || enrichedEntry.cleanTitle || "").toLowerCase().trim();
+          if (normKey) {
+            seriesTmdbCache.set(normKey, Number(resolved.tmdbId));
+            lastSeriesCarry = { normTitle: normKey, tmdbId: Number(resolved.tmdbId) };
+          }
+        }
+
+        // Gekoppelte Untertitel-Zeilen direkt als done + ✍ markieren
+        if (Array.isArray(enrichedEntry.subtitle_files)) {
+          for (const sf of enrichedEntry.subtitle_files) {
+            const subRow = rowByMsgId.get(Number(sf?.message_id || 0));
+            if (subRow && !handledRowIds.has(subRow.id)) {
+              handledRowIds.add(subRow.id);
+              summary.subtitlesLinked++;
+              rowUpdates.push({
+                id: subRow.id,
+                status: "done",
+                resultEmoji: "✍",
+                reactionPending: 0,
+                resolvedTmdbId: resolved.tmdbId,
+                resolvedType: resolved.typeCode
+              });
+              reactionQueue.push({ rowId: subRow.id, messageId: subRow.messageId, emoji: "✍" });
+            }
+          }
+        }
+      }
+    }
+
+    // Falls Budget mitten im Fenster voll war: restliche noch nicht verarbeitete Video-/Untertitel-Zeilen sauber auf pending zurücksetzen!
+    const cutoffUnprocessedMsgId = budgetExhaustedAtIdx >= 0
+      ? Number(entries[budgetExhaustedAtIdx]?.msg_id || entries[budgetExhaustedAtIdx]?.message_id || Infinity)
+      : Infinity;
+
+    // Eigenständige Untertitel (z. B. Reply auf Video aus vorherigem Batch oder direkt nach letztem Video)
+    for (const subRow of standaloneSubtitles) {
+      if (handledRowIds.has(subRow.id)) continue;
+      if (Number(subRow.messageId) >= cutoffUnprocessedMsgId) {
+        handledRowIds.add(subRow.id);
+        rowUpdates.push({ id: subRow.id, status: "pending", reactionPending: 0 });
+        continue;
+      }
+      let targetMedia = lastResolvedRef;
+      if (!targetMedia && typeof getEntityFromD1 === "function") {
+        targetMedia = await getEntityFromD1(env, `last_ingested_media_${cid}`, 6 * 3600 * 1000).catch(() => null);
+      }
+      if (targetMedia && targetMedia.tmdbId && subRow.payload?.telegram_file_id) {
+        const subItem = {
+          telegram_file_id: String(subRow.payload.telegram_file_id),
+          file_name: String(subRow.payload.file_name || "Untertitel.srt"),
+          lang: "de",
+          message_id: subRow.messageId
+        };
+        const boundOk = await attachSubtitleToMediaInD1(env, targetMedia, subItem).catch(() => false);
+        handledRowIds.add(subRow.id);
+        if (boundOk) {
+          summary.subtitlesLinked++;
+          rowUpdates.push({
+            id: subRow.id,
+            status: "done",
+            resultEmoji: "✍",
+            reactionPending: 0,
+            resolvedTmdbId: targetMedia.tmdbId,
+            resolvedType: targetMedia.typeCode
+          });
+          reactionQueue.push({ rowId: subRow.id, messageId: subRow.messageId, emoji: "✍" });
+          continue;
+        }
+      }
+      handledRowIds.add(subRow.id);
+      rowUpdates.push({ id: subRow.id, status: "ignored", reactionPending: 0 });
+    }
+
+    // Alle übrigen Zeilen im Fenster abschließen (Kontext-Header -> done, nach Budget-Stopp -> pending)
+    for (const r of processRows) {
+      if (handledRowIds.has(r.id)) continue;
+      if (Number(r.messageId) >= cutoffUnprocessedMsgId) {
+        rowUpdates.push({ id: r.id, status: "pending", reactionPending: 0 });
+      } else if (r.msgKind === "context") {
+        rowUpdates.push({ id: r.id, status: "done", reactionPending: 0 });
+      } else {
+        rowUpdates.push({ id: r.id, status: "ignored", reactionPending: 0 });
+      }
+    }
+
+    // Persistiere Review-Logs, Bot-VIP-Playlist & letztes Medium
+    if (reviewLogsToSave.length > 0 && typeof saveImportDiagnosticLogsToD1 === "function") {
+      await saveImportDiagnosticLogsToD1(env, reviewLogsToSave).catch(() => {});
+    }
+    if (vipPlaylistItems.length > 0) {
+      try {
+        const botVipFolder = await getOrCreateBotVipMainFolderFast(env);
+        if (botVipFolder) {
+          await batchSaveIngestedItemsToPlaylist(env, "bot_vip", botVipFolder.id, vipPlaylistItems, "vip_stream");
+        }
+      } catch (_e) {}
+    }
+    if (lastResolvedRef) {
+      memoryFallback.set(`last_ingested_media_${cid}`, lastResolvedRef);
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, `last_ingested_media_${cid}`, "last_ingested_media", lastResolvedRef).catch(() => {});
+      }
+    }
+
+    // Stille Emoji-Reaktionen mit adaptivem Telegram-429-Schutz ausliefern
+    const reactRes = await dispatchAdaptiveInboxReactions(env, cid, reactionQueue);
+    summary.reactionsSent = reactRes.sent;
+    summary.reactionsDeferred = reactRes.deferredIds.length;
+    if (reactRes.deferredIds.length > 0) {
+      const defSet = new Set(reactRes.deferredIds);
+      for (const u of rowUpdates) {
+        if (defSet.has(u.id)) u.reactionPending = 1;
+      }
+    }
+
+    await markChannelIngestRowsStatusInD1(env, rowUpdates);
+
+    // Kontext-Überhang für das nächste Fenster speichern
+    await updateAutoIngestChatContextSnapshot(env, cid, {
+      anchorMessages: nextAnchorMessages,
+      lastSeriesNormTitle: lastSeriesCarry?.normTitle || null,
+      lastSeriesTmdbId: lastSeriesCarry?.tmdbId || null,
+      updatedAt: Date.now()
+    });
+
+    return summary;
+  }
+
+  async function runScheduledChannelIngestFlush(env, options = {}) {
+    const forceFlush = Boolean(options.forceFlush);
+    const filterChatId = options.filterChatId ? String(options.filterChatId).trim() : null;
+    const maxResolvePerRun = Math.max(1, Math.min(25, Number(options.maxResolvePerRun || 10)));
+    const now = Date.now();
+
+    const totals = {
+      source: String(options.source || "cron"),
+      chatsProcessed: 0,
+      processedVideos: 0,
+      added: 0,
+      upgraded: 0,
+      duplicates: 0,
+      review: 0,
+      subtitlesLinked: 0,
+      reactionsSent: 0,
+      reactionsDeferred: 0,
+      reactionsRetried: 0,
+      remainingPending: 0,
+      cleanedOldRows: 0
+    };
+
+    try {
+      // O(1)-Index-Fast-Probe (1 gebündelter D1-Batch: liest im Leerlauf 0 Zeilen und macht 0 D1-Writes!)
+      let probe = await getChannelIngestCronFastProbeFromD1(env, now, filterChatId);
+      if (probe.hasExpiredLocks) {
+        const released = await releaseExpiredChannelIngestLocksInD1(env, now);
+        if (released > 0) {
+          probe = await getChannelIngestCronFastProbeFromD1(env, now, filterChatId);
+        }
+      }
+
+      const eligibleChats = (probe.chats || []).filter(c => {
+        if (c.pending <= 0) return false;
+        if (forceFlush) return true;
+        const quietMs = c.newestPendingAt ? (now - c.newestPendingAt) : INGEST_SETTLE_WINDOW_MS;
+        const oldestAgeMs = c.oldestPendingAt ? (now - c.oldestPendingAt) : 0;
+        return (
+          quietMs >= INGEST_SETTLE_WINDOW_MS ||
+          c.pending >= INGEST_BACKLOG_THRESHOLD ||
+          oldestAgeMs >= INGEST_MAX_AGE_TRIGGER_MS
+        );
+      });
+
+      let remainingBudgetResolves = maxResolvePerRun;
+      let anyReactionRateLimited = false;
+      for (const ch of eligibleChats) {
+        if (remainingBudgetResolves <= 0 || !hasSubrequestBudget(28)) break;
+        const res = await flushChannelIngestWindow(env, ch.chatId, {
+          forceFlush,
+          windowLimit: 50,
+          maxResolvePerRun: remainingBudgetResolves
+        });
+        totals.chatsProcessed++;
+        totals.processedVideos += res.processedVideos;
+        totals.added += res.added;
+        totals.upgraded += res.upgraded;
+        totals.duplicates += res.duplicates;
+        totals.review += res.review;
+        totals.subtitlesLinked += res.subtitlesLinked;
+        totals.reactionsSent += res.reactionsSent;
+        totals.reactionsDeferred += Number(res.reactionsDeferred || 0);
+        if (Number(res.reactionsDeferred || 0) > 0) anyReactionRateLimited = true;
+        remainingBudgetResolves = Math.max(0, remainingBudgetResolves - res.processedVideos);
+      }
+
+      // Nachgelagerte Reaktionen (aus früheren Telegram 429-Pausen) nur abrufen, wenn überhaupt welche offen sind
+      // und nicht unmittelbar nach einem frischen 429 im selben Cron-Zyklus.
+      if (!anyReactionRateLimited && probe.hasPendingReactions && hasSubrequestBudget(34)) {
+        const pendingReactions = await getPendingReactionInboxRowsFromD1(env, 10);
+        if (pendingReactions.length > 0) {
+          const { setMessageReaction } = tgApi(env);
+          const clearedIds = [];
+          for (const pr of pendingReactions) {
+            if (!hasSubrequestBudget(38)) break;
+            const r = await setMessageReaction(pr.chatId, pr.messageId, pr.emoji, { fallbackEmoji: "👍" });
+            if (r?.ok) {
+              clearedIds.push(pr.id);
+              totals.reactionsRetried++;
+            } else if (r?.rateLimited) {
+              break;
+            } else {
+              clearedIds.push(pr.id);
+            }
+          }
+          if (clearedIds.length > 0) {
+            await clearPendingReactionInD1(env, clearedIds);
+          }
+        }
+      }
+
+      totals.remainingPending = totals.chatsProcessed > 0
+        ? await countPendingChannelIngestInD1(env, filterChatId)
+        : Number(probe.totalPending || 0);
+
+      // Aufräumen alter erledigter Einträge (>7 Tage) nur 1x pro Stunde statt alle 2 Minuten (spart 696 D1-Writes/Tag!)
+      if (options.source === "cron" && new Date(now).getUTCMinutes() < 2 && hasSubrequestBudget(40)) {
+        totals.cleanedOldRows = await cleanupOldChannelIngestRowsInD1(env, 7);
+      }
+    } catch (e) {
+      console.error("[ChannelIngestFlush] Fehler:", e?.message || e);
+    }
+    return totals;
+  }
+
+  // Browser-Turbo-Offload (Schritt 3): Nimmt bereits im Browser des Admins gruppierte Kanal-/Gruppen-Batches
+  // entgegen (max. 10 Videos pro Request -> 0ms Server-Parser-CPU, sicher unter dem 50-Subrequest-Limit!).
+  async function processBrowserGroupedChannelIngestBatch(env, chatId, payload = {}) {
+    const cid = String(chatId || "").trim();
+    const rawEntries = Array.isArray(payload.entries) ? payload.entries.slice(0, 10) : [];
+    const contextRowIds = Array.isArray(payload.contextRowIds)
+      ? payload.contextRowIds.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0).slice(0, 150)
+      : [];
+    const standaloneSubRowIds = Array.isArray(payload.standaloneSubtitleRowIds)
+      ? payload.standaloneSubtitleRowIds.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0).slice(0, 40)
+      : [];
+    const incomingHints = (payload.seriesTmdbHints && typeof payload.seriesTmdbHints === "object")
+      ? payload.seriesTmdbHints
+      : {};
+
+    const summary = {
+      chatId: cid,
+      processedVideos: 0,
+      skippedAlreadyDone: 0,
+      added: 0,
+      upgraded: 0,
+      duplicates: 0,
+      review: 0,
+      subtitlesLinked: 0,
+      contextDone: 0,
+      reactionsSent: 0,
+      reactionsDeferred: 0,
+      stoppedByBudget: false
+    };
+
+    const allIds = [];
+    for (const e of rawEntries) {
+      const rid = Number(e?.inboxRowId || 0);
+      if (rid > 0) allIds.push(rid);
+      if (Array.isArray(e?.subtitleRowIds)) {
+        for (const srid of e.subtitleRowIds) {
+          if (Number(srid) > 0) allIds.push(Number(srid));
+        }
+      }
+    }
+    for (const id of contextRowIds) allIds.push(id);
+    for (const id of standaloneSubRowIds) allIds.push(id);
+
+    const dbRows = allIds.length > 0 ? await getChannelIngestRowsByIdsFromD1(env, cid, allIds) : [];
+    const rowById = new Map(dbRows.map(r => [Number(r.id), r]));
+    const chatsMap = await getAutoIngestChatsMap(env, false);
+    const chatCfg = chatsMap[cid] || { chatId: cid, title: dbRows[0]?.chatTitle || cid };
+
+    const seriesTmdbCache = new Map();
+    for (const [k, v] of Object.entries(incomingHints)) {
+      const tid = Number(v || 0);
+      if (k && tid > 0) seriesTmdbCache.set(String(k).toLowerCase().trim(), tid);
+    }
+    if (chatCfg?.lastContextSnapshot?.lastSeriesNormTitle && chatCfg?.lastContextSnapshot?.lastSeriesTmdbId) {
+      const normK = String(chatCfg.lastContextSnapshot.lastSeriesNormTitle).toLowerCase().trim();
+      if (normK && !seriesTmdbCache.has(normK)) {
+        seriesTmdbCache.set(normK, Number(chatCfg.lastContextSnapshot.lastSeriesTmdbId));
+      }
+    }
+
+    const rowUpdates = [];
+    const handledRowIds = new Set();
+    const reactionQueue = [];
+    const reviewLogsToSave = [];
+    const vipPlaylistItems = [];
+    let lastResolvedRef = memoryFallback.get(`last_ingested_media_${cid}`) || null;
+    let lastSeriesCarry = chatCfg?.lastContextSnapshot?.lastSeriesTmdbId
+      ? { normTitle: chatCfg.lastContextSnapshot.lastSeriesNormTitle || "", tmdbId: Number(chatCfg.lastContextSnapshot.lastSeriesTmdbId) }
+      : null;
+
+    for (let i = 0; i < rawEntries.length; i++) {
+      const clientEntry = rawEntries[i] || {};
+      const rid = Number(clientEntry.inboxRowId || 0);
+      const srcRow = rowById.get(rid);
+      if (!srcRow) continue;
+      if (srcRow.status === "done" || srcRow.status === "review" || srcRow.status === "ignored") {
+        summary.skippedAlreadyDone++;
+        handledRowIds.add(srcRow.id);
+        continue;
+      }
+      if (!hasSubrequestBudget(30)) {
+        summary.stoppedByBudget = true;
+        break;
+      }
+
+      // Autoritative Datei-/Nachrichtenfelder immer aus D1 übernehmen (Client liefert nur Gruppierungs-Metadaten!)
+      const subtitleFiles = [];
+      const linkedSubRows = [];
+      if (Array.isArray(clientEntry.subtitleRowIds)) {
+        for (const srid of clientEntry.subtitleRowIds) {
+          const sRow = rowById.get(Number(srid));
+          if (sRow && sRow.msgKind === "subtitle" && sRow.payload?.telegram_file_id) {
+            linkedSubRows.push(sRow);
+            subtitleFiles.push({
+              telegram_file_id: String(sRow.payload.telegram_file_id),
+              file_name: String(sRow.payload.file_name || "Untertitel.srt"),
+              lang: "de",
+              message_id: sRow.messageId
+            });
+          }
+        }
+      }
+
+      const enrichedEntry = {
+        ...clientEntry,
+        msg_id: srcRow.messageId,
+        message_id: srcRow.messageId,
+        chat_id: cid,
+        telegram_file_id: srcRow.payload?.telegram_file_id || null,
+        telegram_unique_id: srcRow.payload?.telegram_unique_id || null,
+        raw_file_name: srcRow.payload?.file_name || clientEntry.raw_file_name || "",
+        file_name: srcRow.payload?.file_name || clientEntry.file_name || "",
+        file_size: srcRow.payload?.file_size || null,
+        duration: srcRow.payload?.duration || null,
+        mime_type: srcRow.payload?.mime_type || "video/mp4",
+        raw_text: srcRow.payload?.text || clientEntry.raw_text || "",
+        subtitle_files: subtitleFiles
+      };
+
+      if (enrichedEntry.isSeries && !enrichedEntry.tmdb_id && enrichedEntry.cleanTitle) {
+        const normSeriesKey = normalizeText(enrichedEntry.cleanTitle).toLowerCase().trim();
+        if (normSeriesKey && seriesTmdbCache.has(normSeriesKey)) {
+          enrichedEntry.tmdb_id = seriesTmdbCache.get(normSeriesKey);
+        }
+      }
+
+      let prevBestQualityRank = 0;
+      const incomingRank = getQualityRankForUpgrade(
+        enrichedEntry.quality || detectVideoQuality(srcRow.payload || {}, enrichedEntry.raw_text || "", enrichedEntry.raw_file_name || "")
+      );
+
+      const resolved = await resolveAndIngestMediaEntry(env, enrichedEntry, null, {
+        returnUnmatched: true,
+        registerAsVipStream: false
+      });
+      summary.processedVideos++;
+      handledRowIds.add(srcRow.id);
+
+      const isReviewCase = Boolean(
+        !resolved || !resolved.ok || resolved.unmatched || resolved.contextError || resolved.isUncertain
+      );
+
+      if (isReviewCase) {
+        summary.review++;
+        rowUpdates.push({
+          id: srcRow.id,
+          status: "review",
+          resultEmoji: "👀",
+          reactionPending: 0,
+          resolvedTmdbId: resolved?.tmdbId || null,
+          resolvedType: resolved?.typeCode || null
+        });
+        reactionQueue.push({ rowId: srcRow.id, messageId: srcRow.messageId, emoji: "👀" });
+        reviewLogsToSave.push({
+          msgId: srcRow.messageId,
+          stage: "CHANNEL_INGEST_TURBO",
+          status: resolved?.contextError || resolved?.isUncertain ? "CONFLICT" : "TMDB_NOT_FOUND",
+          reviewReasonCode: resolved?.reviewReasonCode || "TMDB_NOT_FOUND",
+          reason: resolved?.errorReason || `Kanal-/Gruppen-Upload aus "${chatCfg.title || cid}" konnte nicht sicher zugeordnet werden.`,
+          fileName: String(enrichedEntry.raw_file_name || ""),
+          textPreview: String(enrichedEntry.raw_text || "").slice(0, 240),
+          parsedTitle: String(resolved?.parsedTitle || resolved?.parsed?.cleanTitle || enrichedEntry.cleanTitle || ""),
+          matchedTitle: resolved?.matchedTitle || resolved?.cleanTitle || null,
+          season: resolved?.season ?? enrichedEntry.season ?? null,
+          episode: resolved?.episode ?? enrichedEntry.episode ?? null,
+          tmdbQuery: String(resolved?.parsed?.cleanTitle || enrichedEntry.cleanTitle || ""),
+          tmdbResult: resolved?.matchedTitle || "Kein Treffer",
+          tmdbId: resolved?.tmdbId || null,
+          typeCode: resolved?.typeCode || (enrichedEntry.isSeries ? "s" : "m"),
+          details: {
+            chatId: cid,
+            chatTitle: chatCfg.title || cid,
+            rawEntry: enrichedEntry,
+            candidates: Array.isArray(resolved?.candidates) ? resolved.candidates.slice(0, 5) : []
+          }
+        });
+      } else {
+        if (resolved.ingestStatus === "merged_quality") {
+          try {
+            const existingFiles = resolved.typeCode === "s"
+              ? await getEpisodeFilesFromD1(env, resolved.tmdbId, resolved.season || 1, resolved.episode || 1)
+              : await getMovieFilesFromD1(env, resolved.tmdbId, false);
+            for (const f of (existingFiles || [])) {
+              if (String(f.telegram_file_id || "") === String(srcRow.payload?.telegram_file_id || "")) continue;
+              const rRank = getQualityRankForUpgrade(f.quality);
+              if (rRank > prevBestQualityRank) prevBestQualityRank = rRank;
+            }
+          } catch (_e) {}
+        }
+
+        const isTrueQualityUpgrade =
+          resolved.ingestStatus === "replaced_prerelease" ||
+          (resolved.ingestStatus === "merged_quality" && prevBestQualityRank > 0 && incomingRank > prevBestQualityRank);
+        const isDuplicateOrLowerQuality =
+          resolved.ingestStatus === "duplicate" ||
+          resolved.ingestStatus === "skipped_prerelease" ||
+          (resolved.ingestStatus === "merged_quality" && !isTrueQualityUpgrade);
+
+        let emoji = "👍";
+        if (isTrueQualityUpgrade) {
+          emoji = "🔥";
+          summary.upgraded++;
+        } else if (isDuplicateOrLowerQuality) {
+          emoji = "👌";
+          summary.duplicates++;
+        } else {
+          emoji = "👍";
+          summary.added++;
+        }
+
+        rowUpdates.push({
+          id: srcRow.id,
+          status: "done",
+          resultEmoji: emoji,
+          reactionPending: 0,
+          resolvedTmdbId: resolved.tmdbId,
+          resolvedType: resolved.typeCode
+        });
+        reactionQueue.push({ rowId: srcRow.id, messageId: srcRow.messageId, emoji });
+        vipPlaylistItems.push(resolved);
+
+        lastResolvedRef = {
+          typeCode: resolved.typeCode,
+          tmdbId: resolved.tmdbId,
+          season: resolved.season || 1,
+          episode: resolved.episode || 1,
+          fileId: srcRow.payload?.telegram_file_id || "",
+          title: resolved.cleanTitle
+        };
+        if (resolved.typeCode === "s" && resolved.tmdbId) {
+          const normKey = normalizeText(resolved.cleanTitle || enrichedEntry.cleanTitle || "").toLowerCase().trim();
+          if (normKey) {
+            seriesTmdbCache.set(normKey, Number(resolved.tmdbId));
+            lastSeriesCarry = { normTitle: normKey, tmdbId: Number(resolved.tmdbId) };
+          }
+        }
+        for (const sRow of linkedSubRows) {
+          if (handledRowIds.has(sRow.id)) continue;
+          handledRowIds.add(sRow.id);
+          summary.subtitlesLinked++;
+          rowUpdates.push({
+            id: sRow.id,
+            status: "done",
+            resultEmoji: "✍",
+            reactionPending: 0,
+            resolvedTmdbId: resolved.tmdbId,
+            resolvedType: resolved.typeCode
+          });
+          reactionQueue.push({ rowId: sRow.id, messageId: sRow.messageId, emoji: "✍" });
+        }
+      }
+    }
+
+    // Eigenständige Untertitel an zuletzt erkanntes Medium binden
+    if (!summary.stoppedByBudget) {
+      for (const srid of standaloneSubRowIds) {
+        const sRow = rowById.get(srid);
+        if (!sRow || handledRowIds.has(sRow.id) || sRow.status !== "pending") continue;
+        let targetMedia = lastResolvedRef;
+        if (!targetMedia && typeof getEntityFromD1 === "function") {
+          targetMedia = await getEntityFromD1(env, `last_ingested_media_${cid}`, 6 * 3600 * 1000).catch(() => null);
+        }
+        handledRowIds.add(sRow.id);
+        if (targetMedia && targetMedia.tmdbId && sRow.payload?.telegram_file_id) {
+          const boundOk = await attachSubtitleToMediaInD1(env, targetMedia, {
+            telegram_file_id: String(sRow.payload.telegram_file_id),
+            file_name: String(sRow.payload.file_name || "Untertitel.srt"),
+            lang: "de",
+            message_id: sRow.messageId
+          }).catch(() => false);
+          if (boundOk) {
+            summary.subtitlesLinked++;
+            rowUpdates.push({
+              id: sRow.id,
+              status: "done",
+              resultEmoji: "✍",
+              reactionPending: 0,
+              resolvedTmdbId: targetMedia.tmdbId,
+              resolvedType: targetMedia.typeCode
+            });
+            reactionQueue.push({ rowId: sRow.id, messageId: sRow.messageId, emoji: "✍" });
+            continue;
+          }
+        }
+        rowUpdates.push({ id: sRow.id, status: "ignored", reactionPending: 0 });
+      }
+
+      // Verbrauchte Kontext-Zeilen (Poster/Text-Header) als done markieren
+      for (const crid of contextRowIds) {
+        const cRow = rowById.get(crid);
+        if (!cRow || handledRowIds.has(cRow.id) || cRow.status !== "pending") continue;
+        handledRowIds.add(cRow.id);
+        summary.contextDone++;
+        rowUpdates.push({ id: cRow.id, status: "done", reactionPending: 0 });
+      }
+    }
+
+    if (reviewLogsToSave.length > 0 && typeof saveImportDiagnosticLogsToD1 === "function") {
+      await saveImportDiagnosticLogsToD1(env, reviewLogsToSave).catch(() => {});
+    }
+    if (vipPlaylistItems.length > 0) {
+      try {
+        const botVipFolder = await getOrCreateBotVipMainFolderFast(env);
+        if (botVipFolder) {
+          await batchSaveIngestedItemsToPlaylist(env, "bot_vip", botVipFolder.id, vipPlaylistItems, "vip_stream");
+        }
+      } catch (_e) {}
+    }
+    if (lastResolvedRef) {
+      memoryFallback.set(`last_ingested_media_${cid}`, lastResolvedRef);
+      if (typeof saveEntityToD1 === "function") {
+        await saveEntityToD1(env, `last_ingested_media_${cid}`, "last_ingested_media", lastResolvedRef).catch(() => {});
+      }
+    }
+
+    if (reactionQueue.length > 0) {
+      const reactRes = await dispatchAdaptiveInboxReactions(env, cid, reactionQueue);
+      summary.reactionsSent = reactRes.sent;
+      summary.reactionsDeferred = reactRes.deferredIds.length;
+      if (reactRes.deferredIds.length > 0) {
+        const defSet = new Set(reactRes.deferredIds);
+        for (const u of rowUpdates) {
+          if (defSet.has(u.id)) u.reactionPending = 1;
+        }
+      }
+    }
+
+    if (rowUpdates.length > 0) {
+      await markChannelIngestRowsStatusInD1(env, rowUpdates);
+    }
+
+    // Kontext-Überhang nur dann in D1 schreiben, wenn er explizit mitgegeben wurde ODER sich die Serie wirklich geändert hat
+    // (spart bei 500-Folgen-Serien-Drops ~80 unnötige D1-Reads + D1-Writes!).
+    const prevCarryTmdbId = Number(chatCfg?.lastContextSnapshot?.lastSeriesTmdbId || 0);
+    if (payload.nextContextSnapshot && typeof payload.nextContextSnapshot === "object") {
+      const snap = payload.nextContextSnapshot;
+      await updateAutoIngestChatContextSnapshot(env, cid, {
+        anchorMessages: Array.isArray(snap.anchorMessages) ? snap.anchorMessages.slice(-2) : [],
+        lastSeriesNormTitle: lastSeriesCarry?.normTitle || snap.lastSeriesNormTitle || null,
+        lastSeriesTmdbId: lastSeriesCarry?.tmdbId || snap.lastSeriesTmdbId || null,
+        updatedAt: Date.now()
+      });
+    } else if (lastSeriesCarry && Number(lastSeriesCarry.tmdbId || 0) !== prevCarryTmdbId) {
+      await updateAutoIngestChatContextSnapshot(env, cid, {
+        anchorMessages: Array.isArray(chatCfg?.lastContextSnapshot?.anchorMessages) ? chatCfg.lastContextSnapshot.anchorMessages : [],
+        lastSeriesNormTitle: lastSeriesCarry.normTitle,
+        lastSeriesTmdbId: lastSeriesCarry.tmdbId,
+        updatedAt: Date.now()
+      });
+    }
+
+    const updatedHints = {};
+    for (const [k, v] of seriesTmdbCache.entries()) updatedHints[k] = v;
+    const remainingPending = await countPendingChannelIngestInD1(env, cid);
+    return {
+      ok: true,
+      summary,
+      seriesTmdbHints: updatedHints,
+      remainingPending
+    };
+  }
+
+
   // --- Verarbeitet eingehende Videodateien & .json Titel-Listen / Telegram Chat-Backups beim Bot ---
   async function handleIncomingMediaOrJson(env, message) {
     const { sendMessage, editMessageText, getFileText } = tgApi(env);
@@ -3278,18 +4628,33 @@
 
     if (!isJsonDoc && !isSubDoc && !videoObj) return false;
 
-    // Sicherheits-Weiche: Nur autorisierte Admins über den Haupt-Bot dürfen globale D1-Medien, Backups oder Untertitel einspeisen!
+    // GRUPPEN-/KANAL-SCHUTZ (Zero Chat-Spam + 500+ Staging-Inbox):
+    // In Gruppen niemals sofortige Lade-Nachrichten, Fehlermeldungen oder Detailkarten posten!
+    if (isGroupOrChannelChat(chatId)) {
+      let stagedEnabled = false;
+      if (!isJsonDoc) {
+        const stagedRes = await stageGroupOrChannelMessageIfEnabled(env, message);
+        stagedEnabled = Boolean(stagedRes?.enabled);
+      }
+      // Passive tg_export_ Ernte nur in NICHT aktivierten Gruppen (in aktivierten Chats speichert Stufe 2 die echte file_id direkt -> spart 2 D1-Writes pro Video!)
+      if (!stagedEnabled && videoObj && Number(chatId) < 0 && message.message_id && videoObj.file_id) {
+        const rawChannelId = String(chatId).replace(/^-100/, "").replace(/^-/, "");
+        const candidateExportId = `tg_export_${rawChannelId}_${message.message_id}`;
+        await replaceExportFileIdInD1(env, candidateExportId, videoObj.file_id, videoObj.file_unique_id || null);
+      }
+      return true;
+    }
+
+    // Sicherheits-Weiche (Privat-Chat): Nur autorisierte Admins über den Haupt-Bot dürfen globale D1-Medien, Backups oder Untertitel einspeisen!
     const isAdminSender = !env._isCustomBotWebhook && typeof isTelegramBotAdmin === "function"
       ? await isTelegramBotAdmin(env, senderId)
       : false;
     if (!isAdminSender) {
-      if (!isGroupOrChannelChat(chatId)) {
-        await sendMessage(
-          chatId,
-          `🔒 *NUR FÜR ADMINISTRATOREN*\n${SEP}\nDas direkte Einspeisen von Videodateien, JSON-Backups oder Untertiteln in die globale Mediathek ist ausschließlich für autorisierte Administratoren freigeschaltet.`,
-          { reply_markup: { inline_keyboard: [buildFooterRow(chatId, true)] } }
-        );
-      }
+      await sendMessage(
+        chatId,
+        `🔒 *NUR FÜR ADMINISTRATOREN*\n${SEP}\nDas direkte Einspeisen von Videodateien, JSON-Backups oder Untertiteln in die globale Mediathek ist ausschließlich für autorisierte Administratoren freigeschaltet.`,
+        { reply_markup: { inline_keyboard: [buildFooterRow(chatId, true)] } }
+      );
       return true;
     }
 
@@ -3670,15 +5035,21 @@
         return;
       }
 
-      // 0b. Kanal-Beiträge (channel_post): Ernte automatisch echte file_id für passende tg_export_<channelId>_<msgId> Einträge in D1
+      // 0b. Kanal-Beiträge (channel_post): Opt-in Befehle (/ingest_on/off/status/flush) + High-Volume Staging-Inbox (1 D1-INSERT) + passive tg_export_ Ernte
       if (update.channel_post && !env._isCustomBotWebhook) {
         const chPost = update.channel_post;
         const chId = chPost.chat?.id;
-        const chMedia = chPost.video || (chPost.document && /^video\//i.test(chPost.document.mime_type || "") ? chPost.document : null);
-        if (chId && Number(chId) < 0 && chPost.message_id && chMedia?.file_id) {
-          const rawChannelId = String(chId).replace(/^-100/, "").replace(/^-/, "");
-          const candidateExportId = `tg_export_${rawChannelId}_${chPost.message_id}`;
-          await replaceExportFileIdInD1(env, candidateExportId, chMedia.file_id, chMedia.file_unique_id || null);
+        const handledCmd = await handleAutoIngestCommand(env, chPost, { isChannelPost: true });
+        if (handledCmd) return;
+        const stagedRes = await stageGroupOrChannelMessageIfEnabled(env, chPost);
+        // Passive tg_export_ Ernte nur für NICHT aktivierte Kanäle (spart bei 500-Video-Drops 1.000 unnötige D1-UPDATEs!)
+        if (!stagedRes?.enabled) {
+          const chMedia = chPost.video || (chPost.document && /^video\//i.test(chPost.document.mime_type || "") ? chPost.document : null);
+          if (chId && Number(chId) < 0 && chPost.message_id && chMedia?.file_id) {
+            const rawChannelId = String(chId).replace(/^-100/, "").replace(/^-/, "");
+            const candidateExportId = `tg_export_${rawChannelId}_${chPost.message_id}`;
+            await replaceExportFileIdInD1(env, candidateExportId, chMedia.file_id, chMedia.file_unique_id || null);
+          }
         }
         return;
       }
@@ -3703,10 +5074,25 @@
           await replaceExportFileIdInD1(env, exportKey, repliedVideo.file_id, repliedVideo.file_unique_id || null);
         }
 
+        // Opt-in Befehle (/ingest_on, /ingest_off, /ingest_status) für Gruppen & Privat-Chat
+        if (await handleAutoIngestCommand(env, message, { isChannelPost: false })) {
+          return;
+        }
+
         // Prüfe zuerst auf eingehende Videodateien oder .json-Titeldateien (Projekt 1 - Punkt 1 & 2)
         if (message.video || message.document) {
           const handledMedia = await handleIncomingMediaOrJson(env, message);
           if (handledMedia) return;
+        }
+
+        // In freigeschalteten Gruppen auch Poster-/Foto-/Text-Kontext-Posts still in die D1-Staging-Inbox aufnehmen (für Smart-Gruppierung!)
+        if (isGroupOrChannelChat(chatId) && !env._isCustomBotWebhook) {
+          const rawGroupText = String(message.text || message.caption || "").trim();
+          const isSlashCmd = /^\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(rawGroupText);
+          if (!isSlashCmd && (message.photo || rawGroupText.length >= 4)) {
+            const stagedRes = await stageGroupOrChannelMessageIfEnabled(env, message);
+            if (stagedRes?.staged) return;
+          }
         }
 
         const text = (message.text || "").trim();
@@ -4672,6 +6058,34 @@
         // @ANCHOR: CALLBACK_ROUTER
         if (data === "wl_noop" || data === "noop") {
           await answerCallbackQuery(cq.id);
+          return;
+        }
+
+        // --- AUTO-INGEST QUELLEN-MANAGER CALLBACKS (/ingest_status) ---
+        if (data === "ingst_refresh" || data === "ingst_flush_all" || data.startsWith("ingst_on_") || data.startsWith("ingst_off_")) {
+          const isAdminClick = !env._isCustomBotWebhook && cq.from?.id && await isTelegramBotAdmin(env, cq.from.id);
+          if (!isAdminClick) {
+            await answerCallbackQuery(cq.id, "🔒 Nur für Bot-Administratoren.", true);
+            return;
+          }
+          if (data === "ingst_flush_all") {
+            await answerCallbackQuery(cq.id, "⚡ Verarbeite wartende Inbox-Posts...");
+            const fl = await runScheduledChannelIngestFlush(env, { source: "callback_flush", forceFlush: true, maxResolvePerRun: 12 });
+            const note = `⚡ *Flush:* \`${fl.processedVideos}\` Video(s) · \`${fl.added}\` neu · \`${fl.upgraded}\` Upgrade · \`${fl.review}\` Review` +
+              (fl.remainingPending > 0 ? ` · _${fl.remainingPending} noch wartend_` : "");
+            await renderAutoIngestStatusMenu(env, chatId, msgId, note);
+            return;
+          }
+          if (data === "ingst_refresh") {
+            await answerCallbackQuery(cq.id, "🔄 Aktualisiert");
+            await renderAutoIngestStatusMenu(env, chatId, msgId);
+            return;
+          }
+          const enableNext = data.startsWith("ingst_on_");
+          const targetCid = data.replace(/^ingst_(?:on|off)_/, "");
+          const res = await setAutoIngestChatEnabled(env, targetCid, { enabled: enableNext, activatedBy: String(cq.from.id) });
+          await answerCallbackQuery(cq.id, res.ok ? (enableNext ? "🟢 Quelle aktiviert" : "⏸️ Quelle pausiert") : "⚠️ Fehler");
+          await renderAutoIngestStatusMenu(env, chatId, msgId);
           return;
         }
 

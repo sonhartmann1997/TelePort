@@ -8,6 +8,9 @@
   "observability": {
     "enabled": true
   },
+  "triggers": {
+    "crons": ["*/2 * * * *"]
+  },
   "vars": {
     "WEBHOOK_URL": "https://teleport.sonhartmann-1997.workers.dev/"
   },

@@ -2489,6 +2489,120 @@
           const queueStats = await getImportQueueStatsFromD1(env);
           return new Response(JSON.stringify({ ok: true, queueStats }), { status: 200, headers: corsHeaders });
         }
+        // --- Kanal- & Gruppen-Inbox (500+ Staging & Browser-Turbo-Offload) ---
+        if (path === "/api/tma/admin/ingest-inbox" && request.method === "GET") {
+          let [chatsMap, statsRes] = await Promise.all([
+            getAutoIngestChatsMap(env, false),
+            getChannelIngestInboxStatsFromD1(env, null)
+          ]);
+          if (Number(statsRes?.totals?.processing || 0) > 0) {
+            const released = await releaseExpiredChannelIngestLocksInD1(env, Date.now());
+            if (released > 0) {
+              statsRes = await getChannelIngestInboxStatsFromD1(env, null);
+            }
+          }
+          const statById = new Map((statsRes?.chats || []).map(c => [String(c.chatId), c]));
+          const mergedIds = new Set([...Object.keys(chatsMap || {}), ...Array.from(statById.keys())]);
+          const mergedChats = [];
+          for (const cid of mergedIds) {
+            const cfg = chatsMap[cid] || null;
+            const st = statById.get(cid) || null;
+            mergedChats.push({
+              chatId: cid,
+              title: String(cfg?.title || st?.chatTitle || cid),
+              type: String(cfg?.chatType || cfg?.type || (cid.startsWith("-100") ? "channel" : "supergroup")),
+              enabled: Boolean(cfg?.enabled),
+              enabledAt: Number(cfg?.activatedAt || cfg?.enabledAt || 0),
+              pending: Number(st?.pending || 0),
+              processing: Number(st?.processing || 0),
+              done: Number(st?.done || 0),
+              review: Number(st?.review || 0),
+              ignored: Number(st?.ignored || 0),
+              reactionPending: Number(st?.reactionPending || 0),
+              oldestPendingAt: st?.oldestPendingAt || null,
+              newestPendingAt: st?.newestPendingAt || null
+            });
+          }
+          mergedChats.sort((a, b) => (b.pending - a.pending) || (Number(b.enabled) - Number(a.enabled)) || a.title.localeCompare(b.title));
+          return new Response(JSON.stringify({
+            ok: true,
+            chats: mergedChats,
+            totals: statsRes?.totals || { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 }
+          }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/ingest-inbox/messages" && request.method === "GET") {
+          const cid = String(url.searchParams.get("chatId") || "").trim();
+          if (!cid || !/^-?\d{4,20}$/.test(cid)) {
+            return new Response(JSON.stringify({ ok: false, error: "Ungültige chatId." }), { status: 400, headers: corsHeaders });
+          }
+          const lim = Math.max(1, Math.min(250, Number(url.searchParams.get("limit") || 200)));
+          const forceAll = url.searchParams.get("force") === "1";
+          const [chatsMap, fetched] = await Promise.all([
+            getAutoIngestChatsMap(env, false),
+            fetchPendingChannelIngestMessagesForBrowserFromD1(env, cid, lim)
+          ]);
+          const chatCfg = chatsMap[cid] || { chatId: cid, title: fetched.rows[0]?.chatTitle || cid, chatType: "channel", enabled: false };
+          const cut = applySmartWindowCut(fetched.rows || [], {
+            windowLimit: lim,
+            forceFlush: forceAll || (fetched.totalPending <= lim),
+            now: Date.now()
+          });
+          return new Response(JSON.stringify({
+            ok: true,
+            chat: {
+              chatId: cid,
+              title: String(chatCfg.title || cid),
+              type: String(chatCfg.chatType || chatCfg.type || "channel"),
+              enabled: Boolean(chatCfg.enabled)
+            },
+            carryover: chatCfg.lastContextSnapshot || null,
+            rows: cut.processRows,
+            heldBackCount: cut.holdBackRows.length,
+            totalPending: Number(fetched.totalPending || 0)
+          }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/ingest-inbox/toggle" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const cid = String(body.chatId || "").trim();
+          if (!cid || !/^-\d{4,20}$/.test(cid)) {
+            return new Response(JSON.stringify({ ok: false, error: "Ungültige Gruppen-/Kanal-ID (muss mit - beginnen)." }), { status: 400, headers: corsHeaders });
+          }
+          const chatsMap = await getAutoIngestChatsMap(env, false);
+          const existing = chatsMap[cid] || {};
+          const resToggle = await setAutoIngestChatEnabled(env, cid, {
+            enabled: Boolean(body.enabled),
+            title: String(body.title || existing.title || cid).slice(0, 140),
+            chatType: String(body.type || existing.chatType || existing.type || "channel").slice(0, 32),
+            activatedBy: auth.user?.telegramId || auth.chatId || null
+          });
+          if (!resToggle?.ok) {
+            return new Response(JSON.stringify({ ok: false, error: resToggle?.error || "Status konnte nicht gespeichert werden." }), { status: 400, headers: corsHeaders });
+          }
+          return new Response(JSON.stringify({ ok: true, chat: resToggle.entry }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/ingest-inbox/flush" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const mode = String(body.mode || "server").trim().toLowerCase();
+          const cid = body.chatId ? String(body.chatId).trim() : null;
+          if (cid && !/^-?\d{4,20}$/.test(cid)) {
+            return new Response(JSON.stringify({ ok: false, error: "Ungültige chatId." }), { status: 400, headers: corsHeaders });
+          }
+          if (mode === "browser_batch") {
+            if (!cid) {
+              return new Response(JSON.stringify({ ok: false, error: "chatId erforderlich für browser_batch." }), { status: 400, headers: corsHeaders });
+            }
+            const batchRes = await processBrowserGroupedChannelIngestBatch(env, cid, body);
+            return new Response(JSON.stringify({ ok: true, mode: "browser_batch", ...batchRes }), { status: 200, headers: corsHeaders });
+          }
+          const maxResolve = Math.max(1, Math.min(10, Number(body.maxResolve || 10)));
+          const flushRes = await runScheduledChannelIngestFlush(env, {
+            source: "admin_tma",
+            forceFlush: true,
+            filterChatId: cid,
+            maxResolvePerRun: maxResolve
+          });
+          return new Response(JSON.stringify({ ok: true, mode: "server", result: flushRes }), { status: 200, headers: corsHeaders });
+        }
         if (path === "/api/tma/admin/vip" && request.method === "POST") {
           const body = await request.json().catch(() => ({}));
           const rawTid = String(body.telegramId || "").trim();
@@ -6787,6 +6901,21 @@
         }
       }
       });
+    },
+
+    async scheduled(controller, env, ctx) {
+      await runWithWorkerRequestContext(
+        { env, ctx, origin: "", route: `cron:${controller?.cron || "scheduled"}` },
+        async () => {
+          if (typeof runScheduledChannelIngestFlush === "function") {
+            await runScheduledChannelIngestFlush(env, {
+              source: "cron",
+              forceFlush: false,
+              maxResolvePerRun: 10
+            });
+          }
+        }
+      );
     },
   };
 

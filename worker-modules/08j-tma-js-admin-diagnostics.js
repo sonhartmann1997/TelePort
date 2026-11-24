@@ -3195,7 +3195,7 @@
         // niemals durch /admin/overview blockieren oder ein HTTP 503 riskieren!
         const canUseInstantCache = Boolean(
           !forceNetworkRefresh &&
-          (backupImportJob.running || ((state.adminTab === "backup" || state.adminTab === "diaglog") && window._lastAdminOverviewCache))
+          (backupImportJob.running || ((state.adminTab === "backup" || state.adminTab === "diaglog" || state.adminTab === "inbox") && window._lastAdminOverviewCache))
         );
 
         let r = null;
@@ -3861,6 +3861,7 @@
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button class="btn ' + (state.adminTab === 'bot' ? 'active' : 'blue') + '" onclick="state.adminTab=\\'bot\\';loadAdminPanelView()">🤖 Bot & Einstellungen</button>' +
+                '<button class="btn ' + (state.adminTab === 'inbox' ? 'active' : (Number(window._adminChannelInboxData?.totals?.pending || 0) > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'inbox\\';loadAdminPanelView()">📥 Kanal-Inbox' + (Number(window._adminChannelInboxData?.totals?.pending || 0) > 0 ? (' (' + Number(window._adminChannelInboxData.totals.pending) + ')') : '') + '</button>' +
                 '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 JSON-Import</button>' +
                 '<button class="btn ' + (state.adminTab === 'playlists' ? 'active' : '') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten (' + adminPlaylists.length + ')</button>' +
                 '<button class="btn ' + (state.adminTab === 'users' ? 'active' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
@@ -3873,6 +3874,8 @@
             '</div>' +
             (state.adminTab === "bot" ? (
               botAndSettingsDedicatedPageHtml
+            ) : state.adminTab === "inbox" ? (
+              buildAdminChannelInboxTabHtmlClient()
             ) : state.adminTab === "users" ? (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>👥 Registrierte Telegram- & Web-Nutzer (' + users.length + ')</span></div>' +
@@ -4168,6 +4171,9 @@
           if (state.adminTab === "backup") {
             renderBackupImportBoxDom();
           }
+          if (state.adminTab === "inbox") {
+            refreshAdminChannelInboxClient(Boolean(forceNetworkRefresh));
+          }
           if (typeof pollAntiSpamQueueClient === "function") {
             pollAntiSpamQueueClient(true);
           }
@@ -4251,6 +4257,600 @@
         showHudToast("🗑️ Eintrag #" + tmdbId + " gelöscht");
         loadAdminPanelView();
       }
+      // =========================================================================
+      // SCHRITT 3: KANAL- & GRUPPEN-INBOX + BROWSER-TURBO-OFFLOAD (500+ DROPS)
+      // =========================================================================
+      if (!window._adminChannelInboxData) {
+        window._adminChannelInboxData = {
+          loaded: false,
+          loading: false,
+          error: null,
+          authErrorStatus: 0,
+          chats: [],
+          totals: { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 }
+        };
+      }
+      if (!window._channelInboxTurboState) {
+        window._channelInboxTurboState = {
+          running: false,
+          paused: false,
+          stopRequested: false,
+          chatId: "",
+          chatTitle: "",
+          initialPending: 0,
+          remainingPending: 0,
+          processedVideos: 0,
+          added: 0,
+          upgraded: 0,
+          duplicates: 0,
+          review: 0,
+          subtitlesLinked: 0,
+          reactionsSent: 0,
+          reactionsDeferred: 0,
+          batchSize: 6,
+          statusText: "",
+          lastError: "",
+          authErrorStatus: 0,
+          backoffMs: 0,
+          seriesTmdbHints: {}
+        };
+      }
+
+      function buildAdminChannelInboxTabHtmlClient() {
+        const d = window._adminChannelInboxData || {};
+        const t = d.totals || { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 };
+        const chats = Array.isArray(d.chats) ? d.chats : [];
+        const tb = window._channelInboxTurboState || {};
+
+        const pct = tb.initialPending > 0
+          ? Math.min(100, Math.max(0, Math.round(((tb.initialPending - tb.remainingPending) / tb.initialPending) * 100)))
+          : (tb.processedVideos > 0 && tb.remainingPending === 0 ? 100 : 0);
+
+        const turboBoxHtml = (tb.running || tb.paused || tb.statusText || tb.lastError) ? (
+          '<div id="adminChannelInboxTurboBox" class="panel-box" style="margin-bottom:12px;border-color:' +
+            (tb.authErrorStatus ? 'rgba(239,68,68,0.65);background:rgba(127,29,29,0.22)' : (tb.running ? 'rgba(56,189,248,0.55);background:rgba(14,165,233,0.08)' : 'rgba(16,185,129,0.45)')) + '">' +
+            '<div class="section-title" style="margin-bottom:6px">' +
+              '<span>🚀 Browser-Turbo-Offload: ' + esc(tb.chatTitle || tb.chatId || "Kanal") + '</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                (tb.running && !tb.paused ? '<button type="button" class="btn amber" onclick="pauseAdminChannelInboxBrowserTurboClient()">⏸️ Pause</button>' : '') +
+                (tb.paused ? '<button type="button" class="btn green" onclick="resumeAdminChannelInboxBrowserTurboClient()">▶️ Fortsetzen</button>' : '') +
+                ((tb.running || tb.paused) ? '<button type="button" class="btn danger" onclick="stopAdminChannelInboxBrowserTurboClient()">⏹️ Stopp</button>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div style="height:8px;border-radius:999px;background:rgba(148,163,184,0.2);overflow:hidden;margin-bottom:8px">' +
+              '<div style="height:100%;width:' + pct + '%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
+            '</div>' +
+            '<div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:6px">' + esc(tb.statusText || "Bereit") + '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:#cbd5e1">' +
+              '<span>⏳ Offen: <b>' + Number(tb.remainingPending || 0) + '</b></span>' +
+              '<span>👍 Neu: <b style="color:#34d399">' + Number(tb.added || 0) + '</b></span>' +
+              '<span>🔥 Upgrade: <b style="color:#fbbf24">' + Number(tb.upgraded || 0) + '</b></span>' +
+              '<span>👌 Duplikat: <b>' + Number(tb.duplicates || 0) + '</b></span>' +
+              '<span>✍ UT: <b style="color:#38bdf8">' + Number(tb.subtitlesLinked || 0) + '</b></span>' +
+              '<span>👀 Review: <b style="color:#f87171">' + Number(tb.review || 0) + '</b></span>' +
+              '<span>📦 Batch: <b>' + Number(tb.batchSize || 8) + '</b></span>' +
+            '</div>' +
+            (tb.lastError ? (
+              '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(239,68,68,0.16);border:1px solid rgba(248,113,113,0.45);font-size:11.5px;color:#fecaca">' +
+                '⛔ ' + esc(tb.lastError) +
+              '</div>'
+            ) : '') +
+          '</div>'
+        ) : '';
+
+        return '<div id="adminChannelInboxSection">' +
+          '<div class="panel-box" style="border-color:rgba(14,165,233,0.4);margin-bottom:12px">' +
+            '<div class="section-title" style="margin-bottom:8px">' +
+              '<span>📥 Kanal- & Gruppen-Inbox (Nachträgliches Smart-Grouping & 500+ Browser-Turbo)</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button type="button" class="btn blue" onclick="refreshAdminChannelInboxClient(true)">🔄 Aktualisieren</button>' +
+                (Number(t.pending || 0) > 0 ? '<button type="button" class="btn green" onclick="flushAdminChannelInboxServerClient(\\'\\')">⚡ Server-Batch (10er)</button>' : '') +
+                '<button type="button" class="btn" onclick="openAdminTabDirectClient(\\'diaglog\\')">👀 Review-Logs öffnen</button>' +
+              '</div>' +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">' +
+              'Freigeschaltete Gruppen & Kanäle (<code>/ingest_on</code>) puffern neue Posts lautlos in D1. Der Cloudflare Cron verarbeitet sie alle 2 Min. automatisch mit stillen Emoji-Reaktionen (<code>👍</code> <code>🔥</code> <code>👌</code> <code>✍</code> <code>👀</code>). Bei <b>500–2.000+ Drops</b> gruppiert der <b>Browser-Turbo</b> direkt in deinem Browser ohne Worker-CPU-Limit.' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:11px;color:var(--muted)">⏳ Wartend</div><div style="font-size:20px;font-weight:900;color:#fbbf24">' + Number(t.pending || 0) + '</div></div>' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:11px;color:var(--muted)">✅ Verarbeitet</div><div style="font-size:20px;font-weight:900;color:#34d399">' + Number(t.done || 0) + '</div></div>' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:11px;color:var(--muted)">👀 Review</div><div style="font-size:20px;font-weight:900;color:#f87171">' + Number(t.review || 0) + '</div></div>' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:11px;color:var(--muted)">⏱️ 429-Reaktionen</div><div style="font-size:20px;font-weight:900;color:#38bdf8">' + Number(t.reactionPending || 0) + '</div></div>' +
+            '</div>' +
+          '</div>' +
+          turboBoxHtml +
+          (d.error ? (
+            '<div class="panel-box" style="border-color:rgba(239,68,68,0.55);background:rgba(127,29,29,0.2);margin-bottom:12px;color:#fecaca;font-size:12.5px">' +
+              '⛔ ' + esc(d.error) +
+            '</div>'
+          ) : '') +
+          '<div class="panel-box">' +
+            '<div class="section-title" style="margin-bottom:8px"><span>📡 Freigeschaltete & bekannte Kanäle / Gruppen (' + chats.length + ')</span></div>' +
+            (d.loading && !d.loaded ? (
+              '<div class="admin-sub-box" style="padding:14px;text-align:center;color:var(--muted)">⏳ Lade Kanal-Inbox aus D1...</div>'
+            ) : chats.length === 0 ? (
+              '<div class="admin-sub-box" style="padding:14px;text-align:center;color:var(--muted);font-size:12px">' +
+                'Noch kein Kanal oder keine Gruppe für Auto-Ingest freigeschaltet.<br>' +
+                'Sende in einer Gruppe oder einem Kanal (als Admin) einmalig <code>/ingest_on</code>.' +
+              '</div>'
+            ) : (
+              chats.map(ch => {
+                const isThisTurbo = Boolean(tb.running && String(tb.chatId) === String(ch.chatId));
+                const icon = ch.type === "channel" ? "📢" : "👥";
+                return '<div class="ep-row" style="' + (ch.enabled ? 'border-color:rgba(16,185,129,0.38);' : 'opacity:0.75;') + '">' +
+                  '<div style="flex:1;min-width:210px">' +
+                    '<div style="font-size:13px;font-weight:800;color:var(--text)">' +
+                      '<span style="font-size:10.5px;padding:2px 7px;border-radius:999px;margin-right:6px;background:' + (ch.enabled ? 'rgba(16,185,129,0.2);color:#34d399' : 'rgba(148,163,184,0.2);color:#94a3b8') + '">' +
+                        (ch.enabled ? '🟢 Aktiv' : '⚪ Pausiert') +
+                      '</span>' +
+                      icon + ' ' + esc(ch.title || ch.chatId) +
+                    '</div>' +
+                    '<div style="font-size:11px;color:var(--muted);margin-top:3px">' +
+                      'ID: <code>' + esc(ch.chatId) + '</code>' +
+                      ' • ⏳ Wartend: <b style="color:#fbbf24">' + Number(ch.pending || 0) + '</b>' +
+                      ' • ✅ Fertig: <b style="color:#34d399">' + Number(ch.done || 0) + '</b>' +
+                      ' • 👀 Review: <b style="color:#f87171">' + Number(ch.review || 0) + '</b>' +
+                      (Number(ch.reactionPending || 0) > 0 ? (' • ⏱️ 429-Queue: <b>' + Number(ch.reactionPending) + '</b>') : '') +
+                    '</div>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                    (Number(ch.pending || 0) > 0 ? (
+                      '<button type="button" class="btn ' + (isThisTurbo ? 'amber' : 'green') + '" ' + (tb.running && !isThisTurbo ? 'disabled' : '') + ' onclick="startAdminChannelInboxBrowserTurboClient(\\'' + escJs(ch.chatId) + '\\',\\'' + escJs(ch.title || ch.chatId) + '\\')">' +
+                        (isThisTurbo ? '⏳ Läuft...' : '🚀 Browser-Turbo (' + Number(ch.pending) + ')') +
+                      '</button>' +
+                      '<button type="button" class="btn blue" ' + (tb.running ? 'disabled' : '') + ' onclick="flushAdminChannelInboxServerClient(\\'' + escJs(ch.chatId) + '\\')">⚡ 10er Server</button>'
+                    ) : '') +
+                    '<button type="button" class="btn ' + (ch.enabled ? '' : 'green') + '" onclick="toggleAdminChannelInboxChatClient(\\'' + escJs(ch.chatId) + '\\',' + (!ch.enabled) + ',\\'' + escJs(ch.title || ch.chatId) + '\\',\\'' + escJs(ch.type || 'channel') + '\\')">' +
+                      (ch.enabled ? '⏸️ Pausieren' : '▶️ Aktivieren') +
+                    '</button>' +
+                  '</div>' +
+                '</div>';
+              }).join("")
+            )) +
+          '</div>' +
+        '</div>';
+      }
+
+      function renderAdminChannelInboxDomInPlace() {
+        const el = document.getElementById("adminChannelInboxSection");
+        if (el) {
+          el.outerHTML = buildAdminChannelInboxTabHtmlClient();
+        }
+      }
+
+      async function refreshAdminChannelInboxClient(forceNetwork = false) {
+        const d = window._adminChannelInboxData;
+        if (d.loading && !forceNetwork) return;
+        d.loading = true;
+        d.error = null;
+        d.authErrorStatus = 0;
+        renderAdminChannelInboxDomInPlace();
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/ingest-inbox", { bypassCache: true });
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            d.authErrorStatus = Number(r._httpStatus || 403);
+            d.error = "HTTP " + d.authErrorStatus + " – " + (r.error || "Admin-Berechtigung fehlt oder Sitzung abgelaufen.");
+            return;
+          }
+          if (!r || !r.ok) {
+            d.error = r?.error || "Kanal-Inbox konnte nicht geladen werden (HTTP " + Number(r?._httpStatus || 503) + ").";
+            return;
+          }
+          d.loaded = true;
+          d.chats = Array.isArray(r.chats) ? r.chats : [];
+          d.totals = r.totals || { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 };
+        } catch (err) {
+          d.error = "Netzwerkfehler beim Laden der Kanal-Inbox: " + (err?.message || "unbekannt");
+        } finally {
+          d.loading = false;
+          renderAdminChannelInboxDomInPlace();
+        }
+      }
+
+      async function toggleAdminChannelInboxChatClient(targetChatId, nextEnabled, chatTitle, chatType) {
+        const r = await apiFetchJson(API_BASE + "/admin/ingest-inbox/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId: targetChatId, enabled: Boolean(nextEnabled), title: chatTitle, type: chatType })
+        });
+        if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+          showHudToast("⛔ Abgebrochen (HTTP " + Number(r._httpStatus || 403) + "): " + (r.error || "Keine Admin-Rechte"));
+          return;
+        }
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Status konnte nicht geändert werden."));
+          return;
+        }
+        showHudToast(nextEnabled ? "🟢 Auto-Ingest aktiviert" : "⚪ Auto-Ingest pausiert");
+        await refreshAdminChannelInboxClient(true);
+      }
+
+      async function flushAdminChannelInboxServerClient(targetChatId) {
+        setBusyState(true, "⚡ Verarbeite nächsten 10er Server-Batch...");
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/ingest-inbox/flush", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "server", chatId: targetChatId || null, maxResolve: 10 })
+          });
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            showHudToast("⛔ Abgebrochen (HTTP " + Number(r._httpStatus || 403) + "): " + (r.error || "Keine Admin-Rechte"));
+            return;
+          }
+          if (!r || !r.ok) {
+            showHudToast("⚠️ Server-Flush fehlgeschlagen: " + (r?.error || ("HTTP " + Number(r?._httpStatus || 503))));
+            return;
+          }
+          const res = r.result || {};
+          showHudToast("✅ Verarbeitet: " + Number(res.processedVideos || 0) + " (👍" + Number(res.added || 0) + " 🔥" + Number(res.upgraded || 0) + " 👀" + Number(res.review || 0) + ")");
+          await refreshAdminChannelInboxClient(true);
+        } finally {
+          setBusyState(false);
+        }
+      }
+
+      // Zentraler Browser-Parser-Adapter für die Kanal-Inbox (nutzt 1:1 detectAndParseClientBackupJson;
+      // übernimmt morgen dein Parsing-Update automatisch mit!).
+      async function extractSmartGroupedInboxWindowInBrowserClient(chatObj, rows, carryover) {
+        const anchorMsgs = Array.isArray(carryover?.anchorMessages)
+          ? carryover.anchorMessages.filter(m => m && typeof m === "object").slice(-2)
+          : [];
+        const syntheticMessages = [...anchorMsgs, ...rows.map(r => r.payload).filter(Boolean)];
+        const parsed = await detectAndParseClientBackupJson(
+          {
+            id: chatObj?.chatId || "inbox",
+            name: chatObj?.title || "Kanal-Inbox",
+            type: chatObj?.type || "channel",
+            messages: syntheticMessages
+          },
+          "channel_inbox.json",
+          0
+        );
+
+        const rowByMsgId = new Map(rows.map(r => [Number(r.messageId), r]));
+        const subsByReplyMsgId = new Map();
+        const allSubRows = [];
+        const contextRowIds = [];
+        const videoRows = [];
+
+        for (const r of rows) {
+          if (r.msgKind === "video") {
+            videoRows.push(r);
+          } else if (r.msgKind === "subtitle") {
+            allSubRows.push(r);
+            if (r.replyToMessageId) {
+              const arr = subsByReplyMsgId.get(Number(r.replyToMessageId)) || [];
+              arr.push(r);
+              subsByReplyMsgId.set(Number(r.replyToMessageId), arr);
+            }
+          } else {
+            contextRowIds.push(r.id);
+          }
+        }
+
+        const parsedEntries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+        const entryByMsgId = new Map();
+        for (const e of parsedEntries) {
+          const mid = Number(e?.msg_id || e?.message_id || 0);
+          if (mid > 0 && rowByMsgId.has(mid)) {
+            entryByMsgId.set(mid, e);
+          }
+        }
+
+        const boundSubRowIds = new Set();
+        const groupedEntries = [];
+
+        // Chronologisch über ALLE Video-Zeilen im Fenster laufen (garantiert 0 vergessene Zeilen!)
+        for (const vr of videoRows) {
+          const matched = entryByMsgId.get(Number(vr.messageId)) || null;
+          const replySubs = subsByReplyMsgId.get(Number(vr.messageId)) || [];
+          const subRowIds = [];
+          for (const sr of replySubs) {
+            subRowIds.push(sr.id);
+            boundSubRowIds.add(sr.id);
+          }
+          // Falls kein explizites Reply: direkt nachfolgende Untertitel-Datei (+1..+2) koppeln
+          for (const sr of allSubRows) {
+            if (boundSubRowIds.has(sr.id) || sr.replyToMessageId) continue;
+            if (sr.messageId > vr.messageId && (sr.messageId - vr.messageId) <= 2) {
+              subRowIds.push(sr.id);
+              boundSubRowIds.add(sr.id);
+            }
+          }
+
+          groupedEntries.push({
+            ...(matched || {}),
+            inboxRowId: vr.id,
+            msg_id: vr.messageId,
+            cleanTitle: matched?.cleanTitle || vr.payload?.file_name || "",
+            raw_file_name: vr.payload?.file_name || matched?.raw_file_name || "",
+            raw_text: vr.payload?.text || matched?.raw_text || "",
+            subtitleRowIds: subRowIds
+          });
+        }
+
+        const standaloneSubtitleRowIds = allSubRows
+          .filter(sr => !boundSubRowIds.has(sr.id))
+          .map(sr => sr.id);
+
+        // Letzte 2 Kontext-Header für Kontext-Überhang ins nächste Fenster sichern
+        const contextMsgs = rows.filter(r => r.msgKind === "context" && r.payload).map(r => r.payload);
+        const nextAnchorMessages = contextMsgs.length > 0 ? contextMsgs.slice(-2) : anchorMsgs;
+
+        return {
+          groupedEntries,
+          contextRowIds,
+          standaloneSubtitleRowIds,
+          nextContextSnapshot: {
+            anchorMessages: nextAnchorMessages,
+            lastSeriesNormTitle: carryover?.lastSeriesNormTitle || null,
+            lastSeriesTmdbId: carryover?.lastSeriesTmdbId || null
+          }
+        };
+      }
+
+      function pauseAdminChannelInboxBrowserTurboClient() {
+        const tb = window._channelInboxTurboState;
+        tb.paused = true;
+        tb.statusText = "⏸️ Pausiert. Klicke auf Fortsetzen, um nahtlos weiterzumachen.";
+        renderAdminChannelInboxDomInPlace();
+      }
+
+      function resumeAdminChannelInboxBrowserTurboClient() {
+        const tb = window._channelInboxTurboState;
+        if (!tb.paused) return;
+        tb.paused = false;
+        tb.statusText = "▶️ Setze Browser-Turbo fort...";
+        renderAdminChannelInboxDomInPlace();
+        if (!tb.running && tb.chatId) {
+          startAdminChannelInboxBrowserTurboClient(tb.chatId, tb.chatTitle, true);
+        }
+      }
+
+      function stopAdminChannelInboxBrowserTurboClient() {
+        const tb = window._channelInboxTurboState;
+        tb.stopRequested = true;
+        tb.paused = false;
+        tb.running = false;
+        tb.statusText = "⏹️ Browser-Turbo vom Admin gestoppt.";
+        renderAdminChannelInboxDomInPlace();
+      }
+
+      async function callInboxTurboWithBackoffClient(url, opts) {
+        const tb = window._channelInboxTurboState;
+        const maxAttempts = 5;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          if (tb.stopRequested) return { ok: false, _stopped: true };
+          const r = await apiFetchJson(url, opts);
+          const status = Number(r?._httpStatus || (r?.ok ? 200 : 0));
+
+          // HARTER ABBRUCH BEI HTTP 401 / 403 – niemals endlos weiterfeuern!
+          if (status === 401 || status === 403 || r?._authError) {
+            tb.running = false;
+            tb.paused = false;
+            tb.stopRequested = true;
+            tb.authErrorStatus = status || 403;
+            tb.lastError = "Harter Abbruch bei HTTP " + tb.authErrorStatus + ": " + (r?.error || "Sitzung abgelaufen oder keine Admin-Rechte. Bitte neu einloggen.");
+            tb.statusText = "⛔ Gestoppt wegen Authentifizierungsfehler (HTTP " + tb.authErrorStatus + ").";
+            renderAdminChannelInboxDomInPlace();
+            showHudToast("⛔ " + tb.lastError);
+            return { ok: false, _hardAuthAbort: true, _httpStatus: tb.authErrorStatus };
+          }
+
+          if (r && r.ok) {
+            tb.backoffMs = 0;
+            return r;
+          }
+
+          const isRetryable = status === 503 || status === 429 || status === 502 || status === 504 || status === 0 || Boolean(r?.skippedDueToCooldown);
+          if (!isRetryable || attempt >= maxAttempts) {
+            return r || { ok: false, _httpStatus: status, error: "Unbekannter Fehler" };
+          }
+
+          // Bei 503/429 Batch-Größe automatisch verkleinern & Exponential Backoff warten
+          if (tb.batchSize > 3) tb.batchSize = Math.max(3, tb.batchSize - 2);
+          const retryAfterSec = Number(r?.retryAfterSec || r?.retry_after || 0);
+          const expDelay = Math.min(24000, Math.round(1500 * Math.pow(2, attempt - 1)));
+          const waitMs = Math.max(expDelay, retryAfterSec > 0 ? (retryAfterSec * 1000) : 0);
+          tb.backoffMs = waitMs;
+          tb.statusText = "⏳ Worker/Rate-Limit (HTTP " + (status || 503) + ") – Exponential Backoff " + (waitMs / 1000).toFixed(1) + "s (Versuch " + attempt + "/" + maxAttempts + ", Batch " + tb.batchSize + ")...";
+          renderAdminChannelInboxDomInPlace();
+          await new Promise(resolve => setTimeout(resolve, waitMs));
+        }
+        return { ok: false, error: "Maximale Wiederholungen erreicht." };
+      }
+
+      async function startAdminChannelInboxBrowserTurboClient(targetChatId, targetChatTitle, isResume = false) {
+        const tb = window._channelInboxTurboState;
+        if (tb.running) return;
+        if (!isResume) {
+          const chatInfo = (window._adminChannelInboxData?.chats || []).find(c => String(c.chatId) === String(targetChatId));
+          tb.chatId = String(targetChatId);
+          tb.chatTitle = String(targetChatTitle || chatInfo?.title || targetChatId);
+          tb.initialPending = Number(chatInfo?.pending || 0);
+          tb.remainingPending = tb.initialPending;
+          tb.processedVideos = 0;
+          tb.added = 0;
+          tb.upgraded = 0;
+          tb.duplicates = 0;
+          tb.review = 0;
+          tb.subtitlesLinked = 0;
+          tb.reactionsSent = 0;
+          tb.reactionsDeferred = 0;
+          tb.batchSize = 6;
+          tb.seriesTmdbHints = {};
+        }
+        tb.running = true;
+        tb.paused = false;
+        tb.stopRequested = false;
+        tb.lastError = "";
+        tb.authErrorStatus = 0;
+        tb.statusText = "📥 Lade rohes Inbox-Fenster (bis 200 Posts) in den Browser...";
+        renderAdminChannelInboxDomInPlace();
+
+        try {
+          let safetyWindows = 0;
+          while (tb.running && !tb.stopRequested && safetyWindows < 80) {
+            while (tb.paused && !tb.stopRequested) {
+              await new Promise(resolve => setTimeout(resolve, 400));
+            }
+            if (tb.stopRequested) break;
+            safetyWindows++;
+
+            const winRes = await callInboxTurboWithBackoffClient(
+              API_BASE + "/admin/ingest-inbox/messages?chatId=" + encodeURIComponent(tb.chatId) + "&limit=200",
+              { bypassCache: true }
+            );
+            if (!winRes || !winRes.ok) {
+              if (!winRes?._hardAuthAbort && !winRes?._stopped) {
+                tb.lastError = winRes?.error || "Konnte Inbox-Fenster nicht laden.";
+                tb.statusText = "⚠️ Pausiert nach Fehler beim Fenster-Abruf.";
+              }
+              break;
+            }
+
+            const rows = Array.isArray(winRes.rows) ? winRes.rows : [];
+            tb.remainingPending = Number(winRes.totalPending || rows.length);
+            if (tb.initialPending < tb.remainingPending) tb.initialPending = tb.remainingPending;
+
+            if (rows.length === 0) {
+              tb.remainingPending = 0;
+              tb.statusText = "✅ Alle wartenden Posts für " + tb.chatTitle + " vollständig verarbeitet!";
+              break;
+            }
+
+            tb.statusText = "🧠 Gruppiere " + rows.length + " Posts lokal im Browser (0ms Worker-CPU)...";
+            renderAdminChannelInboxDomInPlace();
+
+            const grouped = await extractSmartGroupedInboxWindowInBrowserClient(winRes.chat, rows, winRes.carryover);
+            const entries = grouped.groupedEntries || [];
+
+            if (entries.length === 0) {
+              // Nur Kontext-/Untertitel-Zeilen im Fenster -> in einem einzigen Call abschließen
+              const ctxRes = await callInboxTurboWithBackoffClient(API_BASE + "/admin/ingest-inbox/flush", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  mode: "browser_batch",
+                  chatId: tb.chatId,
+                  entries: [],
+                  contextRowIds: grouped.contextRowIds,
+                  standaloneSubtitleRowIds: grouped.standaloneSubtitleRowIds,
+                  nextContextSnapshot: grouped.nextContextSnapshot,
+                  seriesTmdbHints: tb.seriesTmdbHints
+                })
+              });
+              if (!ctxRes || !ctxRes.ok) {
+                if (!ctxRes?._hardAuthAbort && !ctxRes?._stopped) {
+                  tb.lastError = ctxRes?.error || "Fehler beim Abschließen des Kontext-Fensters.";
+                }
+                break;
+              }
+              tb.remainingPending = Number(ctxRes.remainingPending || 0);
+              if (tb.remainingPending === 0) {
+                tb.statusText = "✅ Alle wartenden Posts für " + tb.chatTitle + " verarbeitet!";
+                break;
+              }
+              continue;
+            }
+
+            // Gruppierte Videos in schonenden Mikro-Batches (6 -> bei 503/Subrequest-Limit automatisch 3) an den Worker senden
+            let cursor = 0;
+            let zeroProgressStops = 0;
+            while (cursor < entries.length && !tb.stopRequested) {
+              while (tb.paused && !tb.stopRequested) {
+                await new Promise(resolve => setTimeout(resolve, 400));
+              }
+              if (tb.stopRequested) break;
+
+              const chunkSize = Math.max(2, Math.min(6, Number(tb.batchSize || 6)));
+              const slice = entries.slice(cursor, cursor + chunkSize);
+              const isLastSliceInWindow = (cursor + slice.length) >= entries.length;
+
+              tb.statusText = "⚡ Speichere Browser-Batch (" + (cursor + 1) + "–" + (cursor + slice.length) + " von " + entries.length + " im Fenster | noch " + tb.remainingPending + " offen)...";
+              renderAdminChannelInboxDomInPlace();
+
+              const batchRes = await callInboxTurboWithBackoffClient(API_BASE + "/admin/ingest-inbox/flush", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  mode: "browser_batch",
+                  chatId: tb.chatId,
+                  entries: slice,
+                  contextRowIds: isLastSliceInWindow ? grouped.contextRowIds : [],
+                  standaloneSubtitleRowIds: isLastSliceInWindow ? grouped.standaloneSubtitleRowIds : [],
+                  nextContextSnapshot: isLastSliceInWindow ? grouped.nextContextSnapshot : null,
+                  seriesTmdbHints: tb.seriesTmdbHints
+                })
+              });
+
+              if (!batchRes || !batchRes.ok) {
+                if (!batchRes?._hardAuthAbort && !batchRes?._stopped) {
+                  tb.lastError = batchRes?.error || "Batch-Verarbeitung fehlgeschlagen (HTTP " + Number(batchRes?._httpStatus || 503) + ").";
+                  tb.statusText = "⚠️ Browser-Turbo nach wiederholtem Fehler gestoppt.";
+                }
+                tb.stopRequested = true;
+                break;
+              }
+
+              const s = batchRes.summary || {};
+              const handledInSlice = Number(s.processedVideos || 0) + Number(s.skippedAlreadyDone || 0);
+              tb.processedVideos += Number(s.processedVideos || 0);
+              tb.added += Number(s.added || 0);
+              tb.upgraded += Number(s.upgraded || 0);
+              tb.duplicates += Number(s.duplicates || 0);
+              tb.review += Number(s.review || 0);
+              tb.subtitlesLinked += Number(s.subtitlesLinked || 0);
+              tb.reactionsSent += Number(s.reactionsSent || 0);
+              tb.reactionsDeferred += Number(s.reactionsDeferred || 0);
+              tb.remainingPending = Number(batchRes.remainingPending ?? tb.remainingPending);
+              if (batchRes.seriesTmdbHints && typeof batchRes.seriesTmdbHints === "object") {
+                tb.seriesTmdbHints = { ...tb.seriesTmdbHints, ...batchRes.seriesTmdbHints };
+              }
+              if (s.stoppedByBudget) {
+                if (handledInSlice <= 0) {
+                  zeroProgressStops++;
+                  if (tb.batchSize > 2) tb.batchSize = Math.max(2, tb.batchSize - 2);
+                  if (zeroProgressStops >= 2) {
+                    tb.lastError = "Subrequest-Limit erreicht bevor ein Eintrag verarbeitet werden konnte – bitte kurz warten und Fortsetzen klicken.";
+                    tb.paused = true;
+                    tb.statusText = "⏸️ Pausiert wegen Worker-Subrequest-Limit.";
+                    renderAdminChannelInboxDomInPlace();
+                    continue;
+                  }
+                  await new Promise(resolve => setTimeout(resolve, 1500));
+                } else {
+                  zeroProgressStops = 0;
+                  const step = Math.min(slice.length, handledInSlice);
+                  cursor += step;
+                  if (tb.batchSize > 3) tb.batchSize = Math.max(3, Math.min(tb.batchSize - 1, step));
+                }
+              } else {
+                zeroProgressStops = 0;
+                cursor += slice.length;
+              }
+              renderAdminChannelInboxDomInPlace();
+
+              // Kurze Atempause (250ms) für Cloudflare D1 & Telegram-API
+              if (!tb.stopRequested && cursor < entries.length) {
+                await new Promise(resolve => setTimeout(resolve, 250));
+              }
+            }
+
+            if (tb.remainingPending === 0 && !tb.stopRequested) {
+              tb.statusText = "✅ Fertig! " + tb.processedVideos + " Videos verarbeitet (👍" + tb.added + " 🔥" + tb.upgraded + " 👌" + tb.duplicates + " ✍" + tb.subtitlesLinked + " 👀" + tb.review + ").";
+              break;
+            }
+          }
+        } finally {
+          tb.running = false;
+          renderAdminChannelInboxDomInPlace();
+          if (!tb.authErrorStatus) {
+            await refreshAdminChannelInboxClient(true);
+          }
+        }
+      }
+
       if (typeof window !== "undefined") {
         window.__tmaRealLoadAdminPanelView = loadAdminPanelView;
         window.__tmaRealRestoreBackupImportSession = restoreBackupImportSessionAfterReload;

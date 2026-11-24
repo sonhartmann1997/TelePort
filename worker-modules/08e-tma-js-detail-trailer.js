@@ -742,7 +742,7 @@
       async function apiFetchJson(url, opts = {}) {
         const method = String(opts.method || "GET").toUpperCase();
         const urlStr = String(url || "");
-        const isImportBatch = urlStr.includes("/admin/import-batch");
+        const isImportBatch = urlStr.includes("/admin/import-batch") || urlStr.includes("/admin/ingest-inbox/flush");
         const isBackgroundImportAux = method !== "GET" && (urlStr.includes("/admin/import-logs") || urlStr.includes("/admin/import-checkpoint"));
         const circuitSt = getClientWorkerCircuitState();
         if (isBackgroundImportAux && circuitSt.cooldownUntil > Date.now()) {

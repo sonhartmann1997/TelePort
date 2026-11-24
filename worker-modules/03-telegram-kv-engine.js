@@ -2482,6 +2482,76 @@
         return null;
       },
 
+      async getChatAdministrators(chatId) {
+        if (!chatId) return [];
+        const cacheKey = `chat_admins_${chatId}`;
+        const cached = memoryFallback.get(cacheKey);
+        if (cached && (Date.now() - cached.ts < 120000)) {
+          return cached.admins;
+        }
+        try {
+          trackStat("telegramCalls");
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/getChatAdministrators`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId }),
+          }, 4000);
+          if (res.ok) {
+            const data = await res.json().catch(() => null);
+            if (data?.ok && Array.isArray(data.result)) {
+              memoryFallback.set(cacheKey, { admins: data.result, ts: Date.now() });
+              return data.result;
+            }
+          }
+        } catch (_e) {}
+        return [];
+      },
+
+      async setMessageReaction(chatId, messageId, emoji = "👍", options = {}) {
+        const msgIdNum = Number(messageId);
+        if (!chatId || !Number.isFinite(msgIdNum) || msgIdNum <= 0) {
+          return { ok: false, skipped: true };
+        }
+        const fallbackEmoji = options?.fallbackEmoji !== undefined ? options.fallbackEmoji : "👍";
+        const isBig = Boolean(options?.isBig);
+        const attemptReaction = async (targetEmoji) => {
+          try {
+            trackStat("telegramCalls");
+            const reactionArr = targetEmoji ? [{ type: "emoji", emoji: String(targetEmoji) }] : [];
+            const res = await fetchWithTimeout(`${TELEGRAM_API}/setMessageReaction`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                message_id: msgIdNum,
+                reaction: reactionArr,
+                is_big: isBig
+              })
+            }, 3500);
+            const data = await res.json().catch(() => null);
+            if (res.ok && data?.ok) {
+              return { ok: true, emoji: targetEmoji };
+            }
+            const desc = String(data?.description || `HTTP ${res.status}`);
+            if (res.status === 429) {
+              const retryAfter = Math.max(1, Number(data?.parameters?.retry_after || 15));
+              return { ok: false, rateLimited: true, retryAfter, error: desc };
+            }
+            const invalidReaction = /reaction_invalid|reactions_too_many|reaction_empty/i.test(desc);
+            return { ok: false, status: res.status, invalidReaction, error: desc };
+          } catch (e) {
+            return { ok: false, error: e?.message || "setMessageReaction failed" };
+          }
+        };
+
+        const first = await attemptReaction(emoji);
+        if (first.ok || first.rateLimited) return first;
+        if (first.invalidReaction && fallbackEmoji && String(fallbackEmoji) !== String(emoji)) {
+          return await attemptReaction(fallbackEmoji);
+        }
+        return first;
+      },
+
       async sendMessage(chatId, text, options = {}) {
         try {
           trackStat("telegramCalls");
@@ -4567,6 +4637,30 @@
     }
     const res = await syncD1CatalogIntoBotVipPlaylist(env, null, options);
     return res.mainFolder;
+  }
+
+  // O(1) Cold-Start-sicherer Folder-Lookup für Ingest-Batches: löst NIEMALS einen Full-Catalog-Sync über alle D1-Medien aus!
+  async function getOrCreateBotVipMainFolderFast(env) {
+    const cached = memoryFallback.get("bot_vip_main_folder_fast");
+    if (cached && cached.folder && (Date.now() - cached.ts) < 5 * 60 * 1000) {
+      return cached.folder;
+    }
+    const folders = await getFolders(env, "bot_vip");
+    let mainFolder = folders.find(f => f.type === "playlist" || f.isJsonPlaylist) || folders[0] || null;
+    if (!mainFolder) {
+      mainFolder = {
+        id: "bot_vip_default",
+        name: "🤖 Bot VIP-Mediathek",
+        type: "playlist",
+        isJsonPlaylist: true,
+        playlistMode: "vip_stream",
+        enabled: true,
+        createdAt: Date.now()
+      };
+      await saveFolders(env, "bot_vip", [mainFolder]);
+    }
+    memoryFallback.set("bot_vip_main_folder_fast", { folder: mainFolder, ts: Date.now() });
+    return mainFolder;
   }
 
   async function setPlaylistFolderMode(env, chatId, folderId, playlistMode, options = {}) {
