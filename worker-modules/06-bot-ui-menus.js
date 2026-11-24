@@ -138,7 +138,11 @@
       inline_keyboard.unshift([
         { text: "🍿 Netflix Mini-App öffnen", web_app: { url: signedMainWebAppUrl } }
       ]);
-      tgApi(env).setChatMenuButton(chatId, effectiveWebAppBase, "🍿 Mediathek").catch(() => {});
+      if (typeof ensureChatMenuButtonThrottled === "function") {
+        ensureChatMenuButtonThrottled(env, chatId, effectiveWebAppBase, "🍿 Mediathek").catch(() => {});
+      } else {
+        tgApi(env).setChatMenuButton(chatId, effectiveWebAppBase, "🍿 Mediathek").catch(() => {});
+      }
     }
 
     if (isGroupOrChannelChat(chatId)) {

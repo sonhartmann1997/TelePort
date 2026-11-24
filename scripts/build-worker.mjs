@@ -12,7 +12,58 @@ export const TMA_STATIC_MARKERS = {
   cssEnd: '<!-- @TMA_STATIC_CSS_END -->',
   jsStart: '<!-- @TMA_STATIC_JS_START -->',
   jsEnd: '<!-- @TMA_STATIC_JS_END -->',
+  adminJsStart: '/* @TMA_LAZY_ADMIN_JS_START */',
+  adminJsEnd: '/* @TMA_LAZY_ADMIN_JS_END */',
 };
+
+function buildTmaAdminLazyShim(adminPublicPath) {
+  const safePathJson = JSON.stringify(adminPublicPath);
+  return `
+window.__TMA_ADMIN_ASSET_URL__ = ${safePathJson};
+window.__TMA_ADMIN_LOADED__ = false;
+window.__tmaAdminBundlePromise = null;
+window.ensureTmaAdminBundleLoaded = function ensureTmaAdminBundleLoaded() {
+  if (window.__TMA_ADMIN_LOADED__) return Promise.resolve(true);
+  if (window.__tmaAdminBundlePromise) return window.__tmaAdminBundlePromise;
+  window.__tmaAdminBundlePromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = window.__TMA_ADMIN_ASSET_URL__;
+    s.async = true;
+    s.onload = () => {
+      window.__TMA_ADMIN_LOADED__ = true;
+      resolve(true);
+    };
+    s.onerror = () => {
+      window.__tmaAdminBundlePromise = null;
+      reject(new Error("Admin-Modul konnte nicht geladen werden."));
+    };
+    document.head.appendChild(s);
+  });
+  return window.__tmaAdminBundlePromise;
+};
+window.loadAdminPanelView = async function loadAdminPanelViewLazy(...args) {
+  try {
+    if (typeof setBusyState === "function") setBusyState(true, "👑 Lade Admin-Dashboard...");
+    await window.ensureTmaAdminBundleLoaded();
+    if (typeof window.__tmaRealLoadAdminPanelView === "function") {
+      return await window.__tmaRealLoadAdminPanelView(...args);
+    }
+  } catch (err) {
+    if (typeof showHudToast === "function") showHudToast("⚠️ " + (err && err.message ? err.message : "Admin-Modul Fehler"));
+  } finally {
+    if (typeof setBusyState === "function") setBusyState(false);
+  }
+};
+window.restoreBackupImportSessionAfterReload = async function restoreBackupImportSessionLazy(...args) {
+  try {
+    await window.ensureTmaAdminBundleLoaded();
+    if (typeof window.__tmaRealRestoreBackupImportSession === "function") {
+      return await window.__tmaRealRestoreBackupImportSession(...args);
+    }
+  } catch (_err) {}
+};
+`;
+}
 
 function unescapeTemplateLiteralSlice(rawSlice, label) {
   // Security/integrity check: extracted static blocks must contain ZERO unescaped ${...} interpolations
@@ -27,7 +78,7 @@ function unescapeTemplateLiteralSlice(rawSlice, label) {
   return new Function('"use strict"; return `' + rawSlice + '`;')();
 }
 
-export async function extractStaticTmaAssets(assembledCode, { minify = true } = {}) {
+export async function extractStaticTmaAssets(assembledCode, { minify = true, minifyWorker = minify } = {}) {
   if (typeof assembledCode !== 'string' || assembledCode.length < 1000) {
     throw new Error('[extractStaticTmaAssets] Ungültiger Worker-Quellcode übergeben.');
   }
@@ -74,7 +125,40 @@ export async function extractStaticTmaAssets(assembledCode, { minify = true } = 
   }
 
   const rawCss = cssMatch[1];
-  const rawJs = jsMatch[1];
+  const fullRawJs = jsMatch[1];
+
+  const adminStartIdx = fullRawJs.indexOf(TMA_STATIC_MARKERS.adminJsStart);
+  const adminEndIdx =
+    adminStartIdx !== -1
+      ? fullRawJs.indexOf(TMA_STATIC_MARKERS.adminJsEnd, adminStartIdx + TMA_STATIC_MARKERS.adminJsStart.length)
+      : -1;
+  if (adminStartIdx === -1 || adminEndIdx === -1) {
+    throw new Error(
+      `[extractStaticTmaAssets] Lazy-Admin-JS-Marker fehlen (${TMA_STATIC_MARKERS.adminJsStart} / ${TMA_STATIC_MARKERS.adminJsEnd}).`
+    );
+  }
+
+  const rawAdminJs = fullRawJs.slice(
+    adminStartIdx + TMA_STATIC_MARKERS.adminJsStart.length,
+    adminEndIdx
+  );
+
+  const adminJsTransformed = await esbuildTransform(rawAdminJs, {
+    loader: 'js',
+    target: 'es2022',
+    minify,
+    sourcefile: 'tma-admin.js',
+    logLevel: 'silent',
+  });
+  const adminJsOutput = adminJsTransformed.code;
+  const adminJsHash = crypto.createHash('sha256').update(adminJsOutput).digest('hex').slice(0, 10);
+  const adminJsFileName = `tma-admin.${adminJsHash}.js`;
+  const adminJsPublicPath = `/assets/${adminJsFileName}`;
+
+  const rawJs =
+    fullRawJs.slice(0, adminStartIdx) +
+    buildTmaAdminLazyShim(adminJsPublicPath) +
+    fullRawJs.slice(adminEndIdx + TMA_STATIC_MARKERS.adminJsEnd.length);
 
   const cssTransformed = await esbuildTransform(rawCss, {
     loader: 'css',
@@ -103,14 +187,29 @@ export async function extractStaticTmaAssets(assembledCode, { minify = true } = 
   const jsReplacement = `<script src="/assets/${jsFileName}"></script>`;
 
   // Splice from end to start so indices remain exact
-  const slimWorkerCode =
+  const unminifiedSlimWorkerCode =
     assembledCode.slice(0, cssStartIdx) +
     cssReplacement +
     assembledCode.slice(cssEndIdx + TMA_STATIC_MARKERS.cssEnd.length, jsStartIdx) +
     jsReplacement +
     assembledCode.slice(jsEndIdx + TMA_STATIC_MARKERS.jsEnd.length);
 
+  let slimWorkerCode = unminifiedSlimWorkerCode;
+  if (minifyWorker) {
+    const workerTransformed = await esbuildTransform(unminifiedSlimWorkerCode, {
+      loader: 'js',
+      target: 'es2022',
+      format: 'esm',
+      minify: true,
+      legalComments: 'none',
+      sourcefile: 'worker.js',
+      logLevel: 'silent',
+    });
+    slimWorkerCode = workerTransformed.code;
+  }
+
   const originalWorkerBytes = Buffer.byteLength(assembledCode, 'utf8');
+  const unminifiedSlimWorkerBytes = Buffer.byteLength(unminifiedSlimWorkerCode, 'utf8');
   const slimWorkerBytes = Buffer.byteLength(slimWorkerCode, 'utf8');
   const savedBytes = Math.max(0, originalWorkerBytes - slimWorkerBytes);
   const savedPercent = originalWorkerBytes > 0 ? Number(((savedBytes / originalWorkerBytes) * 100).toFixed(1)) : 0;
@@ -119,6 +218,8 @@ export async function extractStaticTmaAssets(assembledCode, { minify = true } = 
   const cssBytes = Buffer.byteLength(cssOutput, 'utf8');
   const jsRawBytes = Buffer.byteLength(rawJs, 'utf8');
   const jsBytes = Buffer.byteLength(jsOutput, 'utf8');
+  const adminJsRawBytes = Buffer.byteLength(rawAdminJs, 'utf8');
+  const adminJsBytes = Buffer.byteLength(adminJsOutput, 'utf8');
 
   return {
     slimWorkerCode,
@@ -139,18 +240,31 @@ export async function extractStaticTmaAssets(assembledCode, { minify = true } = 
         bytes: jsBytes,
         type: 'js',
       },
+      {
+        fileName: adminJsFileName,
+        publicPath: adminJsPublicPath,
+        content: adminJsOutput,
+        rawBytes: adminJsRawBytes,
+        bytes: adminJsBytes,
+        type: 'js',
+      },
     ],
     stats: {
       originalWorkerBytes,
+      unminifiedSlimWorkerBytes,
       slimWorkerBytes,
       savedBytes,
       savedPercent,
+      workerMinified: Boolean(minifyWorker),
       cssFileName,
       jsFileName,
+      adminJsFileName,
       cssRawBytes,
       cssBytes,
       jsRawBytes,
       jsBytes,
+      adminJsRawBytes,
+      adminJsBytes,
     },
   };
 }

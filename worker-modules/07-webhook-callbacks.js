@@ -1350,7 +1350,7 @@
       }
 
       if (!seriesDetails) {
-        const hitSubreqLimit = Boolean((typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34));
+        const hitSubreqLimit = Boolean(isSubrequestBudgetExhausted() || !hasSubrequestBudget(34));
         // Nur dann negativ cachen, wenn noch genügend Subrequest-Budget vorhanden war (kein Abbruch mitten in der Kaskade!)
         if (!hitSubreqLimit && typeof saveTitleResolutionCacheToD1 === "function") {
           await saveTitleResolutionCacheToD1(env, parsed, "s", {
@@ -1790,7 +1790,7 @@
       }
 
       if (!movieDetails) {
-        const hitSubreqLimit = Boolean((typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(34));
+        const hitSubreqLimit = Boolean(isSubrequestBudgetExhausted() || !hasSubrequestBudget(34));
         if (!hitSubreqLimit && typeof saveTitleResolutionCacheToD1 === "function") {
           await saveTitleResolutionCacheToD1(env, parsed, "m", {
             notFound: true,
@@ -2696,6 +2696,7 @@
     if (typeof prefetchBatchMediaFromD1 === "function") {
       await prefetchBatchMediaFromD1(env, entriesList);
     }
+    let d1BatchFlushed = false;
     if (typeof beginD1BatchBuffer === "function") {
       beginD1BatchBuffer();
     }
@@ -2761,12 +2762,8 @@
           midBatchPauseReason = stepElapsedWallMs >= BATCH_WALL_CLOCK_LIMIT_MS ? "TIME_LIMIT_GUARD" : "SUBREQUEST_LIMIT_GUARD";
           break;
         }
-        if (typeof subrequestBudgetExhausted !== "undefined") {
-          subrequestBudgetExhausted = false;
-        }
-        if (typeof tmdbRateLimitHitInBatch !== "undefined") {
-          tmdbRateLimitHitInBatch = false;
-        }
+        setSubrequestBudgetExhausted(false);
+        setTmdbRateLimitHitInBatch(false);
         let entry = batch[bStep];
         const hasPreResolvedTmdbId = typeof entry === "object" && entry !== null && Boolean(entry.tmdb_id || entry.tmdbId);
         if (!hasPreResolvedTmdbId && typeof tmdbRateLimitUntilMs === "number" && tmdbRateLimitUntilMs > Date.now()) {
@@ -2838,14 +2835,14 @@
         if (
           (!stepRes || stepRes.unmatched) &&
           !stepRes?.fromNegativeCache &&
-          (stepRes?.abortedDueToSubrequestBudget || (typeof subrequestBudgetExhausted !== "undefined" && subrequestBudgetExhausted) || !hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT)) &&
+          (stepRes?.abortedDueToSubrequestBudget || isSubrequestBudgetExhausted() || !hasSubrequestBudget(SUBREQUEST_GUARD_LIMIT)) &&
           (i + bStep) > 0
         ) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           break;
         }
-        if (typeof tmdbRateLimitHitInBatch !== "undefined" && tmdbRateLimitHitInBatch && (!stepRes || stepRes.unmatched)) {
+        if (isTmdbRateLimitHitInBatch() && (!stepRes || stepRes.unmatched)) {
           abortedMidBatchDueToBudget = true;
           abortBatchIndex = i + bStep;
           midBatchPauseReason = "TMDB_RATE_LIMIT";
@@ -3073,7 +3070,7 @@
         } catch (e) {}
       }
 
-      if (i + JSON_INGEST_CONCURRENCY < total && currentInvocationSubrequests > 2) {
+      if (i + JSON_INGEST_CONCURRENCY < total && getInvocationSubrequests() > 2) {
         await new Promise(r => setTimeout(r, JSON_INGEST_DELAY_MS));
       }
     }
@@ -3125,7 +3122,8 @@
     }
 
     // Alle gepufferten D1-Writes des gesamten Batches ZUERST committen, damit neue Episoden vor dem Leere-Serien-Cleanup in D1 liegen!
-    if (typeof flushD1BatchBuffer === "function") {
+    if (!d1BatchFlushed && typeof flushD1BatchBuffer === "function") {
+      d1BatchFlushed = true;
       await flushD1BatchBuffer(env);
     }
 
@@ -3140,7 +3138,7 @@
       nextStartIndex: partialBatch ? nextStartIndex : total,
       pauseReason,
       subrequestPauseCount,
-      subrequestCount: currentInvocationSubrequests,
+      subrequestCount: getInvocationSubrequests(),
       moviesAdded,
       seriesAdded,
       failedItems,
@@ -3152,7 +3150,8 @@
       batchItems
     };
     } finally {
-      if (typeof flushD1BatchBuffer === "function") {
+      if (!d1BatchFlushed && typeof flushD1BatchBuffer === "function") {
+        d1BatchFlushed = true;
         await flushD1BatchBuffer(env).catch(() => {});
       }
     }

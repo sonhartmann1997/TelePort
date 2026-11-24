@@ -16,13 +16,14 @@
   function attachWorkerDiagHeader(res, path) {
     try {
       if (!res || !String(path || "").startsWith("/api/tma/")) return res;
-      const startMs = typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry?.requestStartMs
-        ? activeWorkerTelemetry.requestStartMs
-        : Date.now();
+      const tel = typeof getActiveWorkerTelemetry === "function"
+        ? getActiveWorkerTelemetry()
+        : (typeof activeWorkerTelemetry === "object" ? activeWorkerTelemetry : null);
+      const startMs = tel?.requestStartMs ? tel.requestStartMs : Date.now();
       const wallMs = Math.max(1, Date.now() - startMs);
-      const subs = typeof currentInvocationSubrequests === "number" ? currentInvocationSubrequests : 0;
-      const d1Ops = typeof activeWorkerTelemetry === "object" ? (activeWorkerTelemetry.d1OpsCount || 0) : 0;
-      const cacheState = (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry.cacheHit) ? "hit" : "miss";
+      const subs = typeof getInvocationSubrequests === "function" ? getInvocationSubrequests() : 0;
+      const d1Ops = tel ? (tel.d1OpsCount || 0) : 0;
+      const cacheState = tel?.cacheHit ? "hit" : "miss";
       const clonedHeaders = new Headers(res.headers);
       clonedHeaders.set("X-Worker-Diag", `sub=${subs};d1=${d1Ops};cache=${cacheState};ms=${wallMs}`);
       return new Response(res.body, {
@@ -79,9 +80,14 @@
   }
 
   async function handleTmaRequest(request, env, ctx = null) {
-    globalThis._activeWorkerEnv = env;
-    if (ctx) globalThis._activeWorkerCtx = ctx;
-    resetSubrequestBudget();
+    const reqCtx = typeof getActiveWorkerRequestContext === "function" ? getActiveWorkerRequestContext() : null;
+    if (reqCtx) {
+      if (env && !reqCtx.env) reqCtx.env = env;
+      if (ctx && !reqCtx.ctx) reqCtx.ctx = ctx;
+    } else {
+      globalThis._activeWorkerEnv = env;
+      if (ctx) globalThis._activeWorkerCtx = ctx;
+    }
     const url = new URL(request.url);
     const path = url.pathname;
     if (typeof beginWorkerRequestTelemetry === "function") {
@@ -986,7 +992,12 @@
               updatedAt: new Date().toISOString()
             };
             memoryFallback.set("tma_verified_source_channel_v1", verifiedPayload);
-            await kvStageWrite(env, "tma_verified_source_channel_v1", verifiedPayload, { bindingName: "MOVIE_SAVED" });
+            const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+            if (hasD1 && typeof saveEntityToD1 === "function") {
+              await saveEntityToD1(env, "tma_verified_source_channel_v1", "config", verifiedPayload);
+            } else {
+              await kvStageWrite(env, "tma_verified_source_channel_v1", verifiedPayload, { bindingName: "MOVIE_SAVED" });
+            }
           }
           return new Response(JSON.stringify({
             ok: readable,
@@ -1387,11 +1398,15 @@
                 if (hasServerError) {
                   warnings.push("Telegram meldet 5xx/Timeout-Fehler vom Worker (mögliches Free-Plan CPU-Limit oder D1-Spitze). Bei vielen wartenden Updates 'Hängende Updates verwerfen' klicken.");
                 }
+                const envSecretConflict = Boolean(webhookSecurity?.envSecretConflict);
+                if (envSecretConflict) {
+                  warnings.push("Cloudflare-Secret TELEGRAM_WEBHOOK_SECRET weicht vom gespeicherten D1/KV-Passwort ab (oder Passwort wurde in der UI entfernt). Bitte einmal 'Speichern & bei Telegram registrieren' klicken oder das alte Cloudflare-Secret aktualisieren/löschen.");
+                }
                 if (pendingCount > 0) {
                   warnings.push(`${pendingCount} wartende Updates im Telegram-Retry-Stau.`);
                 }
                 return {
-                  healthy: Boolean(!isUrlEmpty && urlMatchesExpected && !lastErrMsg && pendingCount === 0),
+                  healthy: Boolean(!isUrlEmpty && urlMatchesExpected && !lastErrMsg && pendingCount === 0 && !envSecretConflict),
                   expectedUrl: officialWebhookUrl,
                   liveUrl,
                   isUrlEmpty,
@@ -1399,11 +1414,15 @@
                   isCustomWebhookHijack,
                   hasAuthError,
                   hasServerError,
+                  envSecretConflict,
                   configSource: webhookSecurity?.source || "none",
                   hasEnvSecret: Boolean(webhookSecurity?.hasEnvSecret),
                   warnings
                 };
               };
+              const webhookDiag = typeof getWebhookDiagSnapshot === "function"
+                ? await getWebhookDiagSnapshot(env)
+                : null;
               const effBotToken = getBotToken(env);
               if (!effBotToken) {
                 const simInfo = {
@@ -1419,6 +1438,7 @@
                   simulated: true,
                   webhookInfo: simInfo,
                   diagnostics: buildWebhookDiag(simInfo),
+                  webhookDiag,
                   hasWebhookPassword: Boolean(webhookSecurity.secretToken),
                   _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
                 }), { status: 200, headers: corsHeaders });
@@ -1430,6 +1450,7 @@
                 ok: Boolean(infoJson?.ok),
                 webhookInfo: liveInfo,
                 diagnostics: liveInfo ? buildWebhookDiag(liveInfo) : null,
+                webhookDiag,
                 telegramResponse: infoJson,
                 hasWebhookPassword: Boolean(webhookSecurity.secretToken),
                 _workerHealth: typeof buildWorkerHealthSnapshot === "function" ? buildWorkerHealthSnapshot({ route: path }) : null
@@ -1872,12 +1893,25 @@
           let verifiedChannelId = parsedBodyChannel.channelId || "";
           if (!verifiedChannelId) {
             let savedCh = memoryFallback.get("tma_verified_source_channel_v1") || null;
+            const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+            if (!savedCh && hasD1 && typeof getEntityFromD1 === "function") {
+              const fromD1 = await getEntityFromD1(env, "tma_verified_source_channel_v1", 3650 * 86400000, { ramTtlMs: 300000 }).catch(() => null);
+              if (fromD1 && typeof fromD1 === "object") {
+                savedCh = fromD1;
+                memoryFallback.set("tma_verified_source_channel_v1", savedCh);
+              }
+            }
             if (!savedCh) {
               const rawCh = await kvCachedGetRaw(env, "tma_verified_source_channel_v1", "MOVIE_SAVED");
               if (rawCh) {
                 try {
                   savedCh = JSON.parse(rawCh);
-                  if (savedCh) memoryFallback.set("tma_verified_source_channel_v1", savedCh);
+                  if (savedCh) {
+                    memoryFallback.set("tma_verified_source_channel_v1", savedCh);
+                    if (hasD1 && typeof saveEntityToD1 === "function") {
+                      saveEntityToD1(env, "tma_verified_source_channel_v1", "config", savedCh).catch(() => {});
+                    }
+                  }
                 } catch (e) {}
               }
             }
@@ -6342,13 +6376,21 @@
   // --- Cloudflare Workers Export ---
   export default {
     async fetch(request, env, ctx) {
+      let initialOrigin = "";
+      let initialRoute = "";
+      try {
+        const parsedReqUrl = new URL(request.url);
+        initialOrigin = parsedReqUrl.origin;
+        initialRoute = parsedReqUrl.pathname;
+      } catch (_urlErr) {}
+
+      return await runWithWorkerRequestContext({ env, ctx, origin: initialOrigin, route: initialRoute }, async () => {
       let deferKvFlushForThisRequest = false;
-      globalThis._activeWorkerEnv = env;
-      globalThis._activeWorkerCtx = ctx;
-      resetSubrequestBudget();
       try {
         const url = new URL(request.url);
-        globalThis._activeWorkerOrigin = url.origin;
+        if (typeof globalThis !== "undefined" && !globalThis._activeWorkerOrigin) {
+          globalThis._activeWorkerOrigin = url.origin;
+        }
 
         // Statische Assets & Worker Studio UI (/studio, /assets/*, /favicon.svg, /worker.js) über Cloudflare Workers Assets Binding
         if (request.method === "GET" && env && env.ASSETS && typeof env.ASSETS.fetch === "function") {
@@ -6627,21 +6669,58 @@
         }
 
         if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/webhook")) {
-          // 0-IO Edge-Gatekeeper: Fast-Path über env.TELEGRAM_WEBHOOK_SECRET + RAM-Cache (0 KV/D1-Reads bei gültigem Secret!)
+          const webhookStartMs = Date.now();
+          // 0-IO Edge-Gatekeeper (Warm Cache) + konsistenter Cold-Start-Sync
           const secCheck = typeof verifyWebhookSecretFast === "function"
             ? await verifyWebhookSecretFast(request, url, env, { allowQuerySecret: true })
-            : { ok: true };
+            : { ok: true, fastPath: "bypass" };
           if (!secCheck.ok) {
+            if (typeof recordWebhookDiagEvent === "function") {
+              recordWebhookDiagEvent(env, {
+                status: 401,
+                fastPath: secCheck.fastPath || "reject",
+                configSource: secCheck.configSource || "",
+                hasHeader: secCheck.hasHeader,
+                hasQuery: secCheck.hasQuery,
+                durationMs: Date.now() - webhookStartMs,
+                error: secCheck.hasHeader || secCheck.hasQuery
+                  ? "Webhook-Secret stimmt nicht mit aktiver Konfiguration überein"
+                  : "Kein X-Telegram-Bot-Api-Secret-Token Header gesendet"
+              }, { persistFailure: true, ctx });
+            }
             return new Response("Unauthorized: Invalid Telegram Webhook Secret Password", { status: 401 });
           }
 
           const update = await request.json().catch(() => null);
           if (!update || typeof update !== "object") {
+            if (typeof recordWebhookDiagEvent === "function") {
+              recordWebhookDiagEvent(env, {
+                status: 200,
+                fastPath: "invalid_json",
+                configSource: secCheck.configSource || "",
+                durationMs: Date.now() - webhookStartMs
+              });
+            }
             return new Response("OK", { status: 200 });
           }
 
+          const updSummary = typeof extractWebhookUpdateSummary === "function"
+            ? extractWebhookUpdateSummary(update)
+            : { updateId: update.update_id ?? null, updateType: "update", command: "" };
+
           // Anti-Retry-Storm: Doppelte update_id aus Telegram-Retries in <0.1ms im RAM abfangen
           if (typeof isDuplicateTelegramUpdateId === "function" && isDuplicateTelegramUpdateId(update.update_id)) {
+            if (typeof recordWebhookDiagEvent === "function") {
+              recordWebhookDiagEvent(env, {
+                status: 200,
+                fastPath: "duplicate_skip",
+                updateId: updSummary.updateId,
+                updateType: updSummary.updateType,
+                command: updSummary.command,
+                configSource: secCheck.configSource || "",
+                durationMs: Date.now() - webhookStartMs
+              });
+            }
             return new Response("OK", { status: 200 });
           }
 
@@ -6649,8 +6728,31 @@
           const runAll = async () => {
             try {
               await handleUpdate(env, update);
+              if (typeof recordWebhookDiagEvent === "function") {
+                recordWebhookDiagEvent(env, {
+                  status: 200,
+                  fastPath: secCheck.fastPath || "ok",
+                  updateId: updSummary.updateId,
+                  updateType: updSummary.updateType,
+                  command: updSummary.command,
+                  configSource: secCheck.configSource || "",
+                  durationMs: Date.now() - webhookStartMs
+                });
+              }
             } catch (err) {
               console.error("[webhook] handleUpdate Fehler:", err);
+              if (typeof recordWebhookDiagEvent === "function") {
+                recordWebhookDiagEvent(env, {
+                  status: 500,
+                  fastPath: "handle_error",
+                  updateId: updSummary.updateId,
+                  updateType: updSummary.updateType,
+                  command: updSummary.command,
+                  configSource: secCheck.configSource || "",
+                  durationMs: Date.now() - webhookStartMs,
+                  error: err?.message || String(err || "handleUpdate Fehler")
+                }, { persistFailure: true });
+              }
             } finally {
               await flushDirtyKvBatch(env).catch(() => {});
             }
@@ -6684,6 +6786,7 @@
           }
         }
       }
+      });
     },
   };
 

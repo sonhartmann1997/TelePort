@@ -1,3 +1,4 @@
+      /* @TMA_LAZY_ADMIN_JS_START */
       // =========================================================================
       // ADMIN-PANEL: USER-LISTE, VIP-STATUS TOGGLE, SMART PLAYLIST MANAGER, FILM-CRUD & 100K+ BACKUP-IMPORTER
       // =========================================================================

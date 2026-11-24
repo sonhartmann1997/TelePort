@@ -916,12 +916,28 @@
     if (memoryFallback.has("TG_VIDEO_COVER_MODE") && (isBrowserSandbox || (Date.now() - coverTs) < 60000)) {
       return normalizeVideoCoverMode(memoryFallback.get("TG_VIDEO_COVER_MODE"));
     }
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function") {
+      try {
+        const fromD1 = await getEntityFromD1(env, "TG_VIDEO_COVER_MODE", 3650 * 86400000, { ramTtlMs: 60000 });
+        const d1Val = typeof fromD1 === "string" ? fromD1 : (fromD1 && typeof fromD1 === "object" ? fromD1.mode : "");
+        if (d1Val) {
+          const mode = normalizeVideoCoverMode(d1Val);
+          memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
+          memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
+          return mode;
+        }
+      } catch (e) {}
+    }
     try {
       const raw = await kvCachedGetRaw(env, "TG_VIDEO_COVER_MODE", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const mode = normalizeVideoCoverMode(raw);
         memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
         memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
+        if (hasD1 && typeof saveEntityToD1 === "function") {
+          saveEntityToD1(env, "TG_VIDEO_COVER_MODE", "config", { mode, updatedAt: Date.now() }).catch(() => {});
+        }
         return mode;
       }
     } catch (e) {}
@@ -934,6 +950,13 @@
     const mode = normalizeVideoCoverMode(modeInput);
     memoryFallback.set("TG_VIDEO_COVER_MODE", mode);
     memoryFallback.set("TG_VIDEO_COVER_MODE_ts", Date.now());
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      try {
+        await saveEntityToD1(env, "TG_VIDEO_COVER_MODE", "config", { mode, updatedAt: Date.now() });
+        return mode;
+      } catch (e) {}
+    }
     try {
       await kvStageWrite(env, "TG_VIDEO_COVER_MODE", mode, {
         bindingName: "MOVIE_SAVED",
@@ -1045,32 +1068,41 @@
     route: ""
   };
 
+  function getActiveWorkerTelemetry() {
+    const reqCtx = typeof getActiveWorkerRequestContext === "function" ? getActiveWorkerRequestContext() : null;
+    if (reqCtx && reqCtx.telemetry) return reqCtx.telemetry;
+    return activeWorkerTelemetry;
+  }
+
   function beginWorkerRequestTelemetry(route = "") {
-    activeWorkerTelemetry.requestStartMs = Date.now();
-    activeWorkerTelemetry.syncCpuAccumMs = 0;
-    activeWorkerTelemetry.d1OpsCount = 0;
-    activeWorkerTelemetry.jsonBytesParsed = 0;
-    activeWorkerTelemetry.cacheHit = false;
-    activeWorkerTelemetry.route = String(route || "");
+    const tel = getActiveWorkerTelemetry();
+    tel.requestStartMs = Date.now();
+    tel.syncCpuAccumMs = 0;
+    tel.d1OpsCount = 0;
+    tel.jsonBytesParsed = 0;
+    tel.cacheHit = false;
+    tel.route = String(route || "");
   }
 
   function recordWorkerSyncCpuSpan(ms = 0, jsonBytes = 0, d1Ops = 0) {
-    if (ms > 0) activeWorkerTelemetry.syncCpuAccumMs += Number(ms);
-    if (jsonBytes > 0) activeWorkerTelemetry.jsonBytesParsed += Number(jsonBytes);
-    if (d1Ops > 0) activeWorkerTelemetry.d1OpsCount += Number(d1Ops);
+    const tel = getActiveWorkerTelemetry();
+    if (ms > 0) tel.syncCpuAccumMs += Number(ms);
+    if (jsonBytes > 0) tel.jsonBytesParsed += Number(jsonBytes);
+    if (d1Ops > 0) tel.d1OpsCount += Number(d1Ops);
   }
 
   function buildWorkerHealthSnapshot(extra = {}) {
+    const tel = getActiveWorkerTelemetry();
     const now = Date.now();
-    const wallMs = activeWorkerTelemetry.requestStartMs > 0
-      ? Math.max(1, now - activeWorkerTelemetry.requestStartMs)
+    const wallMs = tel.requestStartMs > 0
+      ? Math.max(1, now - tel.requestStartMs)
       : 1;
-    const subreqs = typeof currentInvocationSubrequests === "number" ? currentInvocationSubrequests : 0;
-    const d1Ops = Math.max(activeWorkerTelemetry.d1OpsCount, Number(extra.d1Ops || 0));
-    const jsonKb = activeWorkerTelemetry.jsonBytesParsed / 1024;
+    const subreqs = typeof getInvocationSubrequests === "function" ? getInvocationSubrequests() : 0;
+    const d1Ops = Math.max(tel.d1OpsCount, Number(extra.d1Ops || 0));
+    const jsonKb = tel.jsonBytesParsed / 1024;
     // Realistische Cloudflare V8 Isolate CPU-Kalkulation (Sync-JS + JSON-Serialisierung + Subrequest/D1-Binding-Overhead)
     const rawCpuEst = 0.45 +
-      activeWorkerTelemetry.syncCpuAccumMs +
+      tel.syncCpuAccumMs +
       (jsonKb * 0.085) +
       (d1Ops * 0.38) +
       (subreqs * 0.28);
@@ -1082,12 +1114,12 @@
     const cooldownMs = criticalLimit ? 2600 : approachingLimit ? 1200 : 0;
     const entry = {
       ts: now,
-      route: activeWorkerTelemetry.route || extra.route || "/api/tma",
+      route: tel.route || extra.route || "/api/tma",
       cpuMs,
       wallMs,
       subrequests: subreqs,
       d1Ops,
-      cacheHit: Boolean(activeWorkerTelemetry.cacheHit || extra.cacheHit),
+      cacheHit: Boolean(tel.cacheHit || extra.cacheHit),
       status,
       recommendedBatchSize,
       cooldownMs
@@ -1244,6 +1276,13 @@
       previousSecretExpiresAt = 0;
     }
 
+    const envSecretConflict = Boolean(
+      envSecret && (
+        explicitlyDisabled ||
+        (source !== "env" && secretToken !== envSecret)
+      )
+    );
+
     const cfg = {
       secretToken,
       previousSecretToken,
@@ -1253,6 +1292,7 @@
       updatedAt,
       source,
       hasEnvSecret: Boolean(envSecret),
+      envSecretConflict,
       loadedAt: Date.now()
     };
     globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = cfg;
@@ -1260,12 +1300,14 @@
     return cfg;
   }
 
-  // 0-IO Fast-Path für Telegram Webhook-Secret Prüfung mit Cold-Start-Schutz,
+  // 0-IO Fast-Path für Telegram Webhook-Secret Prüfung mit konsistentem Cold-Start/Warm-Cache-Verhalten,
   // Dual-Secret-Grace-Window (Rotation ohne 401) & rate-limitierter Mismatch-Revalidierung (max. 1x / 10s).
   async function verifyWebhookSecretFast(request, url, env, options = {}) {
     const allowQuerySecret = options.allowQuerySecret !== false;
     const incomingHeader = String(request?.headers?.get("X-Telegram-Bot-Api-Secret-Token") || "").trim();
     const incomingQuery = allowQuerySecret ? String(url?.searchParams?.get("secret") || "").trim() : "";
+    const hasHeader = Boolean(incomingHeader);
+    const hasQuery = Boolean(incomingQuery);
     const eqSecret = typeof timingSafeEqualStr === "function" ? timingSafeEqualStr : ((a, b) => a === b);
     const matchesCandidate = (expected) => Boolean(
       expected && (
@@ -1290,7 +1332,6 @@
       return { ok: false, hasSecret: true, matchedPrev: false };
     };
 
-    const envSecret = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
     const cachedCfg = globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE;
     const hasWarmCache = Boolean(cachedCfg && (Date.now() - Number(cachedCfg.loadedAt || 0)) < WEBHOOK_CONFIG_CACHE_TTL_MS);
 
@@ -1301,10 +1342,13 @@
         return {
           ok: true,
           fastPath: !check.hasSecret ? "cache_open" : (check.matchedPrev ? "cache_prev_grace" : "cache_match"),
-          hasSecret: check.hasSecret
+          hasSecret: check.hasSecret,
+          hasHeader,
+          hasQuery,
+          configSource: cachedCfg.source || "cache"
         };
       }
-      // Bei Mismatch einmalig frisch aus D1 revalidieren (rate-limitiert auf max. 1x pro 10s gegen Scanner-Floods),
+      // Bei Mismatch einmalig frisch aus D1/KV revalidieren (rate-limitiert auf max. 1x pro 10s gegen Scanner-Floods),
       // damit Secret-Änderungen oder Passwort-Deaktivierungen auf anderen Isolates sofort greifen!
       const now = Date.now();
       const lastReval = Number(globalThis.__WEBHOOK_SECRET_LAST_REVAL_AT || 0);
@@ -1315,19 +1359,24 @@
         return {
           ok: freshCheck.ok,
           fastPath: freshCheck.ok ? (freshCheck.hasSecret ? "revalidated_match" : "revalidated_open") : "revalidated_reject",
-          hasSecret: freshCheck.hasSecret
+          hasSecret: freshCheck.hasSecret,
+          hasHeader,
+          hasQuery,
+          configSource: freshCfg?.source || "none"
         };
       }
-      return { ok: false, fastPath: "cache_reject", hasSecret: true };
+      return {
+        ok: false,
+        fastPath: "cache_reject",
+        hasSecret: true,
+        hasHeader,
+        hasQuery,
+        configSource: cachedCfg.source || "cache"
+      };
     }
 
-    // Fast-Path 2: Cold-Start & Request liefert exakt das Env-Secret -> sofortiger 0-IO Pass!
-    if (envSecret && matchesCandidate(envSecret)) {
-      return { ok: true, fastPath: "env_match", hasSecret: true };
-    }
-
-    // Cold-Start: Einmalig aus D1/KV laden & 5 Min. cachen (verhindert Cold-Start-401-Aussperrung,
-    // wenn das Passwort in der Admin-UI deaktiviert oder geändert wurde!)
+    // Cold-Start (einmalig pro Isolate / 5 Min.): Immer konsistent aus D1/KV/Env laden & cachen!
+    // Verhindert den "ging kurz nach Cold-Start, dann plötzlich 401"-Konflikt zwischen envSecret und gespeichertem D1/KV-Secret.
     const webhookSecurity = await getWebhookSecurityConfig(env);
     const storageCheck = matchesCfg(webhookSecurity);
     return {
@@ -1335,7 +1384,10 @@
       fastPath: !storageCheck.hasSecret
         ? "storage_open"
         : (storageCheck.ok ? (storageCheck.matchedPrev ? "storage_prev_grace" : "storage_match") : "storage_reject"),
-      hasSecret: storageCheck.hasSecret
+      hasSecret: storageCheck.hasSecret,
+      hasHeader,
+      hasQuery,
+      configSource: webhookSecurity?.source || "none"
     };
   }
 
@@ -1362,6 +1414,7 @@
     }
 
     const now = Date.now();
+    const envSecret = sanitizeWebhookSecretToken(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET || "");
     const payload = {
       secretToken: cleanToken,
       previousSecretToken,
@@ -1372,7 +1425,8 @@
       updatedAt: now,
       loadedAt: now,
       source: "d1",
-      hasEnvSecret: Boolean(env?.TELEGRAM_WEBHOOK_SECRET || env?.WEBHOOK_SECRET)
+      hasEnvSecret: Boolean(envSecret),
+      envSecretConflict: Boolean(envSecret && (explicitlyDisabled || cleanToken !== envSecret))
     };
     globalThis.__WEBHOOK_SECURITY_CONFIG_CACHE = payload;
     memoryFallback.set("TG_WEBHOOK_SECURITY_CONFIG_V1", payload);
@@ -1400,6 +1454,189 @@
     return payload;
   }
 
+  // --- Kompaktes Webhook-Diagnose-Ringbuffer-Log (max. 15 Events im RAM + rate-limitiertes letztes Fehler-Event in D1, 0 KV-Writes) ---
+  const WEBHOOK_DIAG_MAX_EVENTS = 15;
+  const WEBHOOK_DIAG_LAST_FAILURE_KEY = "TG_WEBHOOK_LAST_FAILURE_V1";
+  const WEBHOOK_DIAG_D1_PERSIST_MIN_INTERVAL_MS = 30000;
+
+  function sanitizeWebhookDiagError(raw) {
+    if (!raw) return "";
+    return String(raw)
+      .replace(/bot\d+:[A-Za-z0-9_-]{10,}/gi, "bot<REDACTED>")
+      .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer <REDACTED>")
+      .replace(/([?&](?:secret|token|key)=)[^&\s]+/gi, "$1<REDACTED>")
+      .slice(0, 180);
+  }
+
+  function extractWebhookUpdateSummary(update) {
+    if (!update || typeof update !== "object") {
+      return { updateId: null, updateType: "invalid", command: "" };
+    }
+    const updateId = Number.isFinite(Number(update.update_id)) ? Number(update.update_id) : null;
+    let updateType = "other";
+    let command = "";
+    if (update.message) {
+      updateType = update.message.message_thread_id ? "message_topic" : "message";
+      const txt = String(update.message.text || "").trim();
+      if (txt.startsWith("/")) {
+        command = txt.split(/\s+/)[0].slice(0, 28);
+      }
+    } else if (update.callback_query) {
+      updateType = "callback_query";
+    } else if (update.inline_query) {
+      updateType = "inline_query";
+    } else if (update.channel_post) {
+      updateType = "channel_post";
+    } else if (update.edited_message || update.edited_channel_post) {
+      updateType = "edited";
+    }
+    return { updateId, updateType, command };
+  }
+
+  function ensureWebhookDiagStore() {
+    if (!Array.isArray(globalThis.__WEBHOOK_DIAG_EVENTS)) {
+      globalThis.__WEBHOOK_DIAG_EVENTS = [];
+    }
+    if (!globalThis.__WEBHOOK_DIAG_STATS || typeof globalThis.__WEBHOOK_DIAG_STATS !== "object") {
+      globalThis.__WEBHOOK_DIAG_STATS = {
+        isolateStartedAt: Date.now(),
+        totalOk: 0,
+        total401: 0,
+        totalErrors: 0,
+        totalDuplicates: 0,
+        lastOkAt: 0,
+        last401At: 0,
+        lastErrorAt: 0
+      };
+    }
+    return {
+      events: globalThis.__WEBHOOK_DIAG_EVENTS,
+      stats: globalThis.__WEBHOOK_DIAG_STATS
+    };
+  }
+
+  function recordWebhookDiagEvent(env, entry = {}, options = {}) {
+    try {
+      const { events, stats } = ensureWebhookDiagStore();
+      const now = Date.now();
+      const status = Number(entry.status || 200);
+      const fastPath = String(entry.fastPath || "unknown").slice(0, 40);
+      const cleanError = sanitizeWebhookDiagError(entry.error || "");
+      const record = {
+        ts: now,
+        status,
+        fastPath,
+        updateId: entry.updateId ?? null,
+        updateType: String(entry.updateType || "").slice(0, 24),
+        command: String(entry.command || "").slice(0, 28),
+        configSource: String(entry.configSource || "").slice(0, 16),
+        hasHeader: entry.hasHeader === undefined ? undefined : Boolean(entry.hasHeader),
+        hasQuery: entry.hasQuery === undefined ? undefined : Boolean(entry.hasQuery),
+        durationMs: Number.isFinite(Number(entry.durationMs)) ? Math.max(0, Math.round(Number(entry.durationMs))) : null,
+        error: cleanError
+      };
+
+      if (fastPath === "duplicate_skip") {
+        stats.totalDuplicates += 1;
+      } else if (status === 401) {
+        stats.total401 += 1;
+        stats.last401At = now;
+      } else if (status >= 500 || cleanError) {
+        stats.totalErrors += 1;
+        stats.lastErrorAt = now;
+      } else {
+        stats.totalOk += 1;
+        stats.lastOkAt = now;
+      }
+
+      events.unshift(record);
+      if (events.length > WEBHOOK_DIAG_MAX_EVENTS) {
+        events.length = WEBHOOK_DIAG_MAX_EVENTS;
+      }
+
+      const isFailure = Boolean(options.persistFailure || status === 401 || status >= 500 || cleanError);
+      if (isFailure && env && typeof saveEntityToD1 === "function") {
+        const lastPersistAt = Number(globalThis.__WEBHOOK_DIAG_LAST_D1_PERSIST_AT || 0);
+        if ((now - lastPersistAt) >= WEBHOOK_DIAG_D1_PERSIST_MIN_INTERVAL_MS) {
+          globalThis.__WEBHOOK_DIAG_LAST_D1_PERSIST_AT = now;
+          const persistPromise = saveEntityToD1(env, WEBHOOK_DIAG_LAST_FAILURE_KEY, "diag", record).catch(() => {});
+          if (options.ctx && typeof options.ctx.waitUntil === "function") {
+            options.ctx.waitUntil(persistPromise);
+          }
+        }
+      }
+      return record;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  async function getWebhookDiagSnapshot(env) {
+    const { events, stats } = ensureWebhookDiagStore();
+    let lastPersistedFailure = null;
+    try {
+      if (env && typeof getEntityFromD1 === "function") {
+        const stored = await getEntityFromD1(env, WEBHOOK_DIAG_LAST_FAILURE_KEY, 7 * 86400000, { ramTtlMs: 5000 }).catch(() => null);
+        if (stored && typeof stored === "object") {
+          lastPersistedFailure = stored;
+        }
+      }
+    } catch (_e) {}
+    return {
+      stats: { ...stats },
+      recentEvents: events.slice(0, WEBHOOK_DIAG_MAX_EVENTS),
+      lastPersistedFailure
+    };
+  }
+
+  // --- 24h-Drosselung für setChatMenuButton bei /start (spart 1 Telegram-API-Subrequest pro wiederholtem /start) ---
+  const MENU_BUTTON_SYNC_TTL_MS = 24 * 60 * 60 * 1000;
+  const MENU_BUTTON_CACHE_MAX_ENTRIES = 500;
+
+  async function ensureChatMenuButtonThrottled(env, chatId, webAppUrl, buttonText = "🍿 Mediathek") {
+    const cleanChatId = String(chatId || "").trim();
+    const cleanUrl = String(webAppUrl || "").trim().replace(/\/$/, "");
+    if (!cleanChatId || !cleanUrl) return { ok: false, skipped: true };
+
+    if (!(globalThis.__MENU_BUTTON_SYNC_CACHE instanceof Map)) {
+      globalThis.__MENU_BUTTON_SYNC_CACHE = new Map();
+    }
+    const cache = globalThis.__MENU_BUTTON_SYNC_CACHE;
+    const cacheKey = `${cleanChatId}|${cleanUrl}`;
+    const now = Date.now();
+    const lastRamSync = Number(cache.get(cacheKey) || 0);
+    if (lastRamSync > 0 && (now - lastRamSync) < MENU_BUTTON_SYNC_TTL_MS) {
+      return { ok: true, skipped: true, reason: "ram_cache_24h" };
+    }
+
+    // Zusätzlicher 0-IO Check gegen bereits geladene In-Memory-Session (falls Isolate nach Neustart User-Bundle schon lud)
+    const memSess = memoryFallback.get(`sess_${cleanChatId}`);
+    if (
+      memSess &&
+      typeof memSess === "object" &&
+      memSess._menuBtnUrl === cleanUrl &&
+      Number(memSess._menuBtnSyncedAt || 0) > 0 &&
+      (now - Number(memSess._menuBtnSyncedAt)) < MENU_BUTTON_SYNC_TTL_MS
+    ) {
+      cache.set(cacheKey, Number(memSess._menuBtnSyncedAt));
+      return { ok: true, skipped: true, reason: "session_cache_24h" };
+    }
+
+    const res = await tgApi(env).setChatMenuButton(cleanChatId, cleanUrl, buttonText).catch(() => ({ ok: false }));
+    if (res && res.ok) {
+      if (cache.size >= MENU_BUTTON_CACHE_MAX_ENTRIES) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey !== undefined) cache.delete(oldestKey);
+      }
+      cache.set(cacheKey, now);
+      if (memSess && typeof memSess === "object") {
+        memSess._menuBtnUrl = cleanUrl;
+        memSess._menuBtnSyncedAt = now;
+      }
+    }
+    return res || { ok: false };
+  }
+
   // Offizielles BotFather 512x512 Single-<path> SVG (Exakt 1 <path>-Element im 512x512 Canvas, 100% BotFather-konform!)
   const BOTFATHER_SINGLE_PATH_SVG_512 = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path fill="#00E5FF" fill-rule="evenodd" d="M256 32C379.712 32 480 132.288 480 256C480 379.712 379.712 480 256 480C132.288 480 32 379.712 32 256C32 132.288 132.288 32 256 32ZM256 56C145.543 56 56 145.543 56 256C56 366.457 145.543 456 256 456C366.457 456 456 366.457 456 256C456 145.543 366.457 56 256 56ZM256 96C344.366 96 416 167.634 416 256C416 344.366 344.366 416 256 416C167.634 416 96 344.366 96 256C96 167.634 167.634 96 256 96ZM256 116C178.68 116 116 178.68 116 256C116 333.32 178.68 396 256 396C333.32 396 396 333.32 396 256C396 178.68 333.32 116 256 116ZM208 168L352 256L208 344V168Z"/></svg>`;
 
@@ -1420,12 +1657,28 @@
       return WORKER_SPEED_PROFILES[cached];
     }
 
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function") {
+      try {
+        const fromD1 = await getEntityFromD1(env, memKey, 3650 * 86400000, { ramTtlMs: 60000 });
+        const d1Key = normalizeKey(typeof fromD1 === "string" ? fromD1 : (fromD1 && typeof fromD1 === "object" ? fromD1.profile : ""));
+        if (d1Key) {
+          memoryFallback.set(memKey, d1Key);
+          memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
+          return WORKER_SPEED_PROFILES[d1Key];
+        }
+      } catch (e) {}
+    }
+
     try {
       const raw = await kvCachedGetRaw(env, memKey, "MOVIE_SAVED", { ttlMs: 60000 });
       const kvVal = normalizeKey(raw);
       if (kvVal) {
         memoryFallback.set(memKey, kvVal);
         memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
+        if (hasD1 && typeof saveEntityToD1 === "function") {
+          saveEntityToD1(env, memKey, "config", { profile: kvVal, updatedAt: Date.now() }).catch(() => {});
+        }
         return WORKER_SPEED_PROFILES[kvVal];
       }
     } catch (e) {}
@@ -1440,6 +1693,11 @@
     const valid = (clean === "balanced" || clean === "paid_pro") ? clean : "free_turbo";
     memoryFallback.set("TG_WORKER_SPEED_PROFILE", valid);
     memoryFallback.set("TG_WORKER_SPEED_PROFILE_ts", Date.now());
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      await saveEntityToD1(env, "TG_WORKER_SPEED_PROFILE", "config", { profile: valid, updatedAt: Date.now() });
+      return WORKER_SPEED_PROFILES[valid];
+    }
     await kvStageWrite(env, "TG_WORKER_SPEED_PROFILE", valid, {
       bindingName: "MOVIE_SAVED",
       flushNow: true

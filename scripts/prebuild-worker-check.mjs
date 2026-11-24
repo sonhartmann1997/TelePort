@@ -290,6 +290,7 @@ async function verifyAndAssembleWorker() {
     bundle: true,
     format: 'esm',
     platform: 'browser',
+    external: ['node:async_hooks'],
     write: false,
     logLevel: 'silent',
   }).catch((err) => err);
@@ -341,6 +342,7 @@ async function verifyAndAssembleWorker() {
     bundle: true,
     format: 'esm',
     platform: 'browser',
+    external: ['node:async_hooks'],
     write: false,
     logLevel: 'silent',
   }).catch((err) => err);
@@ -351,13 +353,23 @@ async function verifyAndAssembleWorker() {
     }
     process.exit(1);
   }
+  for (const asset of extracted.assets) {
+    if (asset.type === 'js') {
+      try {
+        new Function(asset.content);
+      } catch (err) {
+        console.error(`[Pre-Build Check] Extrahiertes JS-Asset ${asset.fileName} hat einen Syntaxfehler:`, err.message);
+        process.exit(1);
+      }
+    }
+  }
   const { stats } = extracted;
 
   console.log(
     `[Pre-Build Check] Statische Analyse für ${staticReport.moduleMap.length} Module in worker-modules/ bestanden (0 Fehler, ${staticReport.warnings.length + buildWarnings.length} Warnungen, ${tmaScriptCheck.scriptCount} eingebettete TMA-Skripte verifiziert).`
   );
   console.log(
-    `[Pre-Build Check] Static Asset Offload verifiziert: worker.js ${(stats.originalWorkerBytes / 1024).toFixed(1)} KB -> ${(stats.slimWorkerBytes / 1024).toFixed(1)} KB (-${stats.savedPercent}%) | ${stats.cssFileName} (${(stats.cssBytes / 1024).toFixed(1)} KB, roh ${(stats.cssRawBytes / 1024).toFixed(1)} KB) | ${stats.jsFileName} (${(stats.jsBytes / 1024).toFixed(1)} KB, roh ${(stats.jsRawBytes / 1024).toFixed(1)} KB).`
+    `[Pre-Build Check] Static Asset Offload verifiziert: worker.js ${(stats.originalWorkerBytes / 1024).toFixed(1)} KB -> ${(stats.slimWorkerBytes / 1024).toFixed(1)} KB (-${stats.savedPercent}%) | ${stats.cssFileName} (${(stats.cssBytes / 1024).toFixed(1)} KB, roh ${(stats.cssRawBytes / 1024).toFixed(1)} KB) | ${stats.jsFileName} (${(stats.jsBytes / 1024).toFixed(1)} KB, roh ${(stats.jsRawBytes / 1024).toFixed(1)} KB) | ${stats.adminJsFileName} (${(stats.adminJsBytes / 1024).toFixed(1)} KB, roh ${(stats.adminJsRawBytes / 1024).toFixed(1)} KB).`
   );
 }
 

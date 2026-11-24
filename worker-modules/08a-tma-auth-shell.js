@@ -337,20 +337,26 @@
       return globalThis.__persistentTmaSessionSecret;
     }
     const secretKey = "TMA_PERSISTENT_SESSION_SECRET_V1";
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
     try {
-      const fromKv = typeof kvCachedGetRaw === "function"
-        ? await kvCachedGetRaw(env, secretKey, "MOVIE_SAVED", { ttlMs: 3600000 }).catch(() => null)
-        : null;
-      if (fromKv && String(fromKv).trim().length >= 32) {
-        globalThis.__persistentTmaSessionSecret = String(fromKv).trim();
-        return globalThis.__persistentTmaSessionSecret;
-      }
-      if (typeof getEntityFromD1 === "function") {
-        const fromD1 = await getEntityFromD1(env, secretKey, 3650 * 86400000).catch(() => null);
+      // D1-first: stark konsistent über alle Edge-Standorte, schont Free-Plan KV-Write-Limit
+      if (hasD1 && typeof getEntityFromD1 === "function") {
+        const fromD1 = await getEntityFromD1(env, secretKey, 3650 * 86400000, { ramTtlMs: 3600000 }).catch(() => null);
         if (fromD1 && typeof fromD1.secret === "string" && fromD1.secret.length >= 32) {
           globalThis.__persistentTmaSessionSecret = fromD1.secret;
           return globalThis.__persistentTmaSessionSecret;
         }
+      }
+      const fromKv = typeof kvCachedGetRaw === "function"
+        ? await kvCachedGetRaw(env, secretKey, "MOVIE_SAVED", { ttlMs: 3600000 }).catch(() => null)
+        : null;
+      if (fromKv && String(fromKv).trim().length >= 32) {
+        const cleanKvSecret = String(fromKv).trim();
+        globalThis.__persistentTmaSessionSecret = cleanKvSecret;
+        if (hasD1 && typeof saveEntityToD1 === "function") {
+          saveEntityToD1(env, secretKey, "config", { secret: cleanKvSecret, createdAt: Date.now() }).catch(() => {});
+        }
+        return globalThis.__persistentTmaSessionSecret;
       }
     } catch (_e) {}
     const randBytes = new Uint8Array(32);
@@ -358,11 +364,10 @@
     const generated = bytesToHex(randBytes);
     globalThis.__persistentTmaSessionSecret = generated;
     try {
-      if (typeof kvStageWrite === "function") {
-        await kvStageWrite(env, secretKey, generated, { bindingName: "MOVIE_SAVED", flushNow: true });
-      }
-      if (typeof saveEntityToD1 === "function") {
+      if (hasD1 && typeof saveEntityToD1 === "function") {
         await saveEntityToD1(env, secretKey, "config", { secret: generated, createdAt: Date.now() });
+      } else if (typeof kvStageWrite === "function") {
+        await kvStageWrite(env, secretKey, generated, { bindingName: "MOVIE_SAVED", flushNow: true });
       }
     } catch (_e) {}
     return generated;

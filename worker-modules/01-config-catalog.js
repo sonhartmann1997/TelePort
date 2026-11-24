@@ -1,4 +1,149 @@
   // @DEPARTMENT: 01-config-catalog | 1. Konfiguration, Filmreihen & Genres
+import { AsyncLocalStorage } from "node:async_hooks";
+
+  // --- Per-Request Concurrency-Isolation (Cloudflare nodejs_als AsyncLocalStorage + sicherer Sandbox-Fallback) ---
+  // Verhindert Race-Conditions bei parallelen Requests im selben V8-Isolate (D1-Batch-Buffer, Subrequest-Budget, Telemetrie, env/ctx).
+  const __WORKER_REQUEST_ALS = (typeof AsyncLocalStorage === "function") ? new AsyncLocalStorage() : null;
+  let __fallbackRequestContext = null;
+  let __fallbackInvocationSubrequests = 0;
+  let __fallbackSubrequestBudgetExhausted = false;
+  let __fallbackTmdbRateLimitHitInBatch = false;
+
+  function createWorkerRequestContext(init = {}) {
+    return {
+      env: init.env || null,
+      ctx: init.ctx || null,
+      origin: String(init.origin || ""),
+      subrequests: 0,
+      subrequestBudgetExhausted: false,
+      tmdbRateLimitHitInBatch: false,
+      d1WriteBuffer: null,
+      d1WriteBufferStartedAt: 0,
+      d1WriteBufferDepth: 0,
+      telemetry: {
+        requestStartMs: Date.now(),
+        syncCpuAccumMs: 0,
+        d1OpsCount: 0,
+        jsonBytesParsed: 0,
+        cacheHit: false,
+        route: String(init.route || "")
+      }
+    };
+  }
+
+  function getActiveWorkerRequestContext() {
+    if (__WORKER_REQUEST_ALS) {
+      const store = __WORKER_REQUEST_ALS.getStore();
+      if (store) return store;
+    }
+    return __fallbackRequestContext;
+  }
+
+  function runWithWorkerRequestContext(init, fn) {
+    const reqCtx = createWorkerRequestContext(init);
+    if (__WORKER_REQUEST_ALS) {
+      return __WORKER_REQUEST_ALS.run(reqCtx, fn);
+    }
+    const prev = __fallbackRequestContext;
+    __fallbackRequestContext = reqCtx;
+    try {
+      const res = fn();
+      if (res && typeof res.finally === "function") {
+        return res.finally(() => {
+          if (__fallbackRequestContext === reqCtx) __fallbackRequestContext = prev;
+        });
+      }
+      __fallbackRequestContext = prev;
+      return res;
+    } catch (err) {
+      __fallbackRequestContext = prev;
+      throw err;
+    }
+  }
+
+  function getActiveWorkerEnv(explicitEnv = null) {
+    if (explicitEnv) return explicitEnv;
+    const reqCtx = getActiveWorkerRequestContext();
+    if (reqCtx && reqCtx.env) return reqCtx.env;
+    return typeof globalThis !== "undefined" ? (globalThis._activeWorkerEnv || null) : null;
+  }
+
+  function getActiveWorkerCtx(explicitCtx = null) {
+    if (explicitCtx) return explicitCtx;
+    const reqCtx = getActiveWorkerRequestContext();
+    if (reqCtx && reqCtx.ctx) return reqCtx.ctx;
+    return typeof globalThis !== "undefined" ? (globalThis._activeWorkerCtx || null) : null;
+  }
+
+  function getActiveWorkerOrigin() {
+    const reqCtx = getActiveWorkerRequestContext();
+    if (reqCtx && reqCtx.origin) return reqCtx.origin;
+    return typeof globalThis !== "undefined" ? String(globalThis._activeWorkerOrigin || "") : "";
+  }
+
+  function getInvocationSubrequests() {
+    const reqCtx = getActiveWorkerRequestContext();
+    return reqCtx ? Number(reqCtx.subrequests || 0) : __fallbackInvocationSubrequests;
+  }
+
+  function incrementInvocationSubrequests(delta = 1) {
+    const step = Number(delta || 1);
+    const reqCtx = getActiveWorkerRequestContext();
+    if (reqCtx) {
+      reqCtx.subrequests = Number(reqCtx.subrequests || 0) + step;
+      return reqCtx.subrequests;
+    }
+    __fallbackInvocationSubrequests += step;
+    return __fallbackInvocationSubrequests;
+  }
+
+  function isSubrequestBudgetExhausted() {
+    const reqCtx = getActiveWorkerRequestContext();
+    return reqCtx ? Boolean(reqCtx.subrequestBudgetExhausted) : Boolean(__fallbackSubrequestBudgetExhausted);
+  }
+
+  function setSubrequestBudgetExhausted(flag) {
+    const v = Boolean(flag);
+    const reqCtx = getActiveWorkerRequestContext();
+    if (reqCtx) {
+      reqCtx.subrequestBudgetExhausted = v;
+      return;
+    }
+    __fallbackSubrequestBudgetExhausted = v;
+  }
+
+  function isTmdbRateLimitHitInBatch() {
+    const reqCtx = getActiveWorkerRequestContext();
+    return reqCtx ? Boolean(reqCtx.tmdbRateLimitHitInBatch) : Boolean(__fallbackTmdbRateLimitHitInBatch);
+  }
+
+  function setTmdbRateLimitHitInBatch(flag) {
+    const v = Boolean(flag);
+    const reqCtx = getActiveWorkerRequestContext();
+    if (reqCtx) {
+      reqCtx.tmdbRateLimitHitInBatch = v;
+      return;
+    }
+    __fallbackTmdbRateLimitHitInBatch = v;
+  }
+
+  function resetSubrequestBudget() {
+    const reqCtx = getActiveWorkerRequestContext();
+    if (reqCtx) {
+      reqCtx.subrequests = 0;
+      reqCtx.subrequestBudgetExhausted = false;
+      reqCtx.tmdbRateLimitHitInBatch = false;
+      return;
+    }
+    __fallbackInvocationSubrequests = 0;
+    __fallbackSubrequestBudgetExhausted = false;
+    __fallbackTmdbRateLimitHitInBatch = false;
+  }
+
+  function hasSubrequestBudget(limit = 36) {
+    return getInvocationSubrequests() < limit;
+  }
+
   /**
    * ============================================================================
    * Cloudflare Workers Script - Telegram Film & Serien Empfehlungs-Bot (v3.2)
@@ -1066,9 +1211,7 @@
   }
 
   function countKvSubrequest() {
-    if (typeof currentInvocationSubrequests === "number") {
-      currentInvocationSubrequests++;
-    }
+    incrementInvocationSubrequests(1);
   }
 
   async function kvCachedGetRaw(env, key, bindingName = "MOVIE_SAVED", options = {}) {
@@ -1226,12 +1369,27 @@
     if (memoryFallback.has("admin_active_tiers") && (isBrowserSandbox || (Date.now() - cachedTs) < 60000)) {
       return memoryFallback.get("admin_active_tiers");
     }
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof getEntityFromD1 === "function") {
+      try {
+        const fromD1 = await getEntityFromD1(env, "admin_active_tiers", 3650 * 86400000, { ramTtlMs: 60000 });
+        if (fromD1 && typeof fromD1 === "object") {
+          const parsed = { ...DEFAULT_ACTIVE_TIERS, ...fromD1 };
+          memoryFallback.set("admin_active_tiers", parsed);
+          memoryFallback.set("admin_active_tiers_ts", Date.now());
+          return parsed;
+        }
+      } catch (e) {}
+    }
     try {
       const raw = await kvCachedGetRaw(env, "admin_active_tiers", "MOVIE_SAVED", { ttlMs: 60000 });
       if (raw) {
         const parsed = { ...DEFAULT_ACTIVE_TIERS, ...JSON.parse(raw) };
         memoryFallback.set("admin_active_tiers", parsed);
         memoryFallback.set("admin_active_tiers_ts", Date.now());
+        if (hasD1 && typeof saveEntityToD1 === "function") {
+          saveEntityToD1(env, "admin_active_tiers", "config", parsed).catch(() => {});
+        }
         return parsed;
       }
     } catch (e) {}
@@ -1245,6 +1403,11 @@
     const merged = { ...DEFAULT_ACTIVE_TIERS, ...tiersObj };
     memoryFallback.set("admin_active_tiers", merged);
     memoryFallback.set("admin_active_tiers_ts", Date.now());
+    const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+    if (hasD1 && typeof saveEntityToD1 === "function") {
+      await saveEntityToD1(env, "admin_active_tiers", "config", merged);
+      return merged;
+    }
     await kvStageWrite(env, "admin_active_tiers", merged, { bindingName: "MOVIE_SAVED", flushNow: true });
     return merged;
   }

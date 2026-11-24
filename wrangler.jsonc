@@ -3,6 +3,8 @@
   "name": "teleport",
   "main": "worker.js",
   "compatibility_date": "2026-11-03",
+  "compatibility_flags": ["nodejs_als"],
+  "minify": true,
   "observability": {
     "enabled": true
   },

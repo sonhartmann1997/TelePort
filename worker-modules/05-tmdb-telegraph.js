@@ -481,18 +481,7 @@
     return { results: results || [] };
   }
 
-  var currentInvocationSubrequests = 0;
-  var subrequestBudgetExhausted = false;
-  function resetSubrequestBudget() {
-    currentInvocationSubrequests = 0;
-    subrequestBudgetExhausted = false;
-    if (typeof tmdbRateLimitHitInBatch !== "undefined") {
-      tmdbRateLimitHitInBatch = false;
-    }
-  }
-  function hasSubrequestBudget(limit = 36) {
-    return currentInvocationSubrequests < limit;
-  }
+  // Subrequest-Budget & Exhaustion-Flags werden zentral request-isoliert in 01-config-catalog.js verwaltet (AsyncLocalStorage)
 
   async function cachedExternalFetchJson(url, options = {}, timeoutMs = 4000, ttlSeconds = 86400) {
     const memKey = `ext_json_${url}`;
@@ -500,7 +489,7 @@
     if (memHit) return memHit;
 
     if (!hasSubrequestBudget(38)) {
-      subrequestBudgetExhausted = true;
+      setSubrequestBudgetExhausted(true);
       return null;
     }
 
@@ -2497,7 +2486,7 @@
     // 3. Bei Cache-Miss: Synthetische Fallback-IDs (>= 8.000.000) niemals an TMDb senden (immer 404!)
     if (!isRealTmdbId(movieId)) return null;
     if (!hasSubrequestBudget(42)) {
-      subrequestBudgetExhausted = true;
+      setSubrequestBudgetExhausted(true);
       return null;
     }
     const urlDe = `https://api.themoviedb.org/3/movie/${movieId}?append_to_response=credits,release_dates,images,watch/providers,videos&include_image_language=de,en,null&include_video_language=de,en,null&language=de-DE`;
@@ -2749,7 +2738,7 @@
       });
     }
     if (!hasSubrequestBudget(42)) {
-      subrequestBudgetExhausted = true;
+      setSubrequestBudgetExhausted(true);
       return null;
     }
     const urlDe = `https://api.themoviedb.org/3/tv/${seriesId}?append_to_response=credits,content_ratings,images,watch/providers,videos&include_image_language=de,en,null&include_video_language=de,en,null&language=de-DE`;

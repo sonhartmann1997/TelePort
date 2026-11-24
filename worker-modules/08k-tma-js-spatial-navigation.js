@@ -3561,8 +3561,22 @@
       initAuthSession();
       setTimeout(() => {
         if (typeof pollAntiSpamQueueClient === "function") pollAntiSpamQueueClient(true);
-        if (state.authUser?.isAdmin || loadBackupCheckpointClient()) {
-          restoreBackupImportSessionAfterReload();
+        const hasLocalBackupCp = typeof loadBackupCheckpointClient === "function"
+          ? Boolean(loadBackupCheckpointClient())
+          : (() => {
+              try {
+                const raw = localStorage.getItem("tma_backup_import_checkpoint_v1");
+                if (!raw) return false;
+                const cp = JSON.parse(raw);
+                return Boolean(cp && typeof cp === "object" && (Number(cp.cursor) > 0 || Number(cp.totalEntries || cp.total) > 0));
+              } catch (_e) {
+                return false;
+              }
+            })();
+        if (state.authUser?.isAdmin || hasLocalBackupCp) {
+          if (typeof restoreBackupImportSessionAfterReload === "function") {
+            restoreBackupImportSessionAfterReload();
+          }
         }
       }, 900);
     </script>

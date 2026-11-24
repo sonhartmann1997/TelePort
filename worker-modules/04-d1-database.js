@@ -24,7 +24,25 @@
     return true;
   }
 
+  function getD1BufferScope() {
+    const reqCtx = typeof getActiveWorkerRequestContext === "function" ? getActiveWorkerRequestContext() : null;
+    if (reqCtx) return reqCtx;
+    return null;
+  }
+
   function hasLiveD1WriteBuffer() {
+    const scope = getD1BufferScope();
+    if (scope) {
+      if (!Array.isArray(scope.d1WriteBuffer) || scope.d1WriteBufferDepth <= 0) return false;
+      if (scope.d1WriteBufferStartedAt > 0 && (Date.now() - scope.d1WriteBufferStartedAt) > 25000) {
+        scope.d1WriteBuffer = null;
+        scope.d1WriteBufferStartedAt = 0;
+        scope.d1WriteBufferDepth = 0;
+        return false;
+      }
+      if (scope.d1WriteBuffer.length >= 250) return false;
+      return true;
+    }
     if (!Array.isArray(activeD1WriteBuffer) || activeD1WriteBufferDepth <= 0) return false;
     // Sicherheits-Timeout & Größen-Cap: verhindert unkontrolliertes Anwachsen oder hängende Buffer nach Absturz
     if (activeD1WriteBufferStartedAt > 0 && (Date.now() - activeD1WriteBufferStartedAt) > 25000) {
@@ -37,11 +55,25 @@
     return true;
   }
 
+  function pushToD1WriteBuffer(rawStmt) {
+    const scope = getD1BufferScope();
+    if (scope && Array.isArray(scope.d1WriteBuffer)) {
+      scope.d1WriteBuffer.push(rawStmt);
+      return;
+    }
+    if (Array.isArray(activeD1WriteBuffer)) {
+      activeD1WriteBuffer.push(rawStmt);
+    }
+  }
+
   function countD1Subrequest() {
     // D1-Queries zählen bei Cloudflare Workers NICHT gegen das 50-fetch/KV-Subrequest-Limit,
     // werden aber sauber als d1OpsCount für Telemetrie & CPU-Budget gezählt!
-    if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
-      activeWorkerTelemetry.d1OpsCount = (activeWorkerTelemetry.d1OpsCount || 0) + 1;
+    const tel = typeof getActiveWorkerTelemetry === "function"
+      ? getActiveWorkerTelemetry()
+      : (typeof activeWorkerTelemetry === "object" ? activeWorkerTelemetry : null);
+    if (tel) {
+      tel.d1OpsCount = (tel.d1OpsCount || 0) + 1;
     }
   }
 
@@ -82,7 +114,7 @@
       },
       async run(...args) {
         if (hasLiveD1WriteBuffer() && bufferEligible) {
-          activeD1WriteBuffer.push(rawStmt);
+          pushToD1WriteBuffer(rawStmt);
           return { success: true, buffered: true, meta: { changes: 1 } };
         }
         countD1Subrequest();
@@ -106,7 +138,7 @@
         const rawStmts = unwrapRawD1Statements(stmts);
         if (hasLiveD1WriteBuffer() && allBufferEligible) {
           for (const rs of rawStmts) {
-            activeD1WriteBuffer.push(rs);
+            pushToD1WriteBuffer(rs);
           }
           return rawStmts.map(() => ({ success: true, buffered: true }));
         }
@@ -125,6 +157,15 @@
   }
 
   function beginD1BatchBuffer() {
+    const scope = getD1BufferScope();
+    if (scope) {
+      scope.d1WriteBufferDepth = Math.max(0, Number(scope.d1WriteBufferDepth || 0)) + 1;
+      if (!Array.isArray(scope.d1WriteBuffer)) {
+        scope.d1WriteBuffer = [];
+      }
+      scope.d1WriteBufferStartedAt = Date.now();
+      return;
+    }
     activeD1WriteBufferDepth = Math.max(0, Number(activeD1WriteBufferDepth || 0)) + 1;
     if (!Array.isArray(activeD1WriteBuffer)) {
       activeD1WriteBuffer = [];
@@ -133,12 +174,24 @@
   }
 
   async function flushD1BatchBuffer(env) {
-    activeD1WriteBufferDepth = Math.max(0, Number(activeD1WriteBufferDepth || 0) - 1);
-    const pending = Array.isArray(activeD1WriteBuffer) ? activeD1WriteBuffer.splice(0, activeD1WriteBuffer.length) : [];
-    if (activeD1WriteBufferDepth <= 0) {
-      activeD1WriteBuffer = null;
-      activeD1WriteBufferStartedAt = 0;
-      activeD1WriteBufferDepth = 0;
+    const scope = getD1BufferScope();
+    let pending = [];
+    if (scope) {
+      scope.d1WriteBufferDepth = Math.max(0, Number(scope.d1WriteBufferDepth || 0) - 1);
+      pending = Array.isArray(scope.d1WriteBuffer) ? scope.d1WriteBuffer.splice(0, scope.d1WriteBuffer.length) : [];
+      if (scope.d1WriteBufferDepth <= 0) {
+        scope.d1WriteBuffer = null;
+        scope.d1WriteBufferStartedAt = 0;
+        scope.d1WriteBufferDepth = 0;
+      }
+    } else {
+      activeD1WriteBufferDepth = Math.max(0, Number(activeD1WriteBufferDepth || 0) - 1);
+      pending = Array.isArray(activeD1WriteBuffer) ? activeD1WriteBuffer.splice(0, activeD1WriteBuffer.length) : [];
+      if (activeD1WriteBufferDepth <= 0) {
+        activeD1WriteBuffer = null;
+        activeD1WriteBufferStartedAt = 0;
+        activeD1WriteBufferDepth = 0;
+      }
     }
     if (pending.length === 0) return 0;
     memoryFallback.delete("d1_series_gaps_cache");
@@ -2409,7 +2462,7 @@
     const db = await ensureD1Schema(env);
     let existingDbRows = [];
     const memFresh = memoryFallback.has(memLoadedTsKey) && (Date.now() - Number(memoryFallback.get(memLoadedTsKey) || 0)) < 300000;
-    if (db && !memFresh && (!Array.isArray(activeD1WriteBuffer) || hasSubrequestBudget(32))) {
+    if (db && !memFresh && (!hasLiveD1WriteBuffer() || hasSubrequestBudget(32))) {
       try {
         const res = await db
           .prepare("SELECT id, telegram_file_id, file_fingerprint, quality, codec, part, part_number, edition_label, is_bonus, is_download_only, tags, file_size, raw_filename, raw_caption, subtitles_json FROM movie_files WHERE movie_id = ?1")
@@ -2761,7 +2814,7 @@
     let existingMem = Array.isArray(memoryFallback.get(memKey)) ? memoryFallback.get(memKey) : [];
     const memSeasonFresh = memoryFallback.has(memSeasonTsKey) && (Date.now() - Number(memoryFallback.get(memSeasonTsKey) || 0)) < 300000;
     const db = await ensureD1Schema(env);
-    if (db && !memSeasonFresh && (!Array.isArray(activeD1WriteBuffer) || hasSubrequestBudget(32))) {
+    if (db && !memSeasonFresh && (!hasLiveD1WriteBuffer() || hasSubrequestBudget(32))) {
       try {
         // Lade alle vorhandenen Episoden-Dateien dieser Staffel in 1 einziger Abfrage (statt 1 Abfrage pro Folge!)
         const res = await db
@@ -3757,7 +3810,7 @@
   // Berechnet für alle Serien in D1 + RAM fehlende Folgen (Priorität 1: Interne Staffel-Lücken wie E01+E02 fehlt vor E03 sowie komplett fehlende Zwischen-Staffeln; Priorität 2: Fehlende Folgen bis Staffelende)
   async function computeSeriesGapsOverview(env, forceRefresh = false) {
     const cachedGaps = memoryFallback.get("d1_series_gaps_cache");
-    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 180000) {
+    if (!forceRefresh && cachedGaps && cachedGaps.data && (Date.now() - Number(cachedGaps.ts || 0)) < 300000) {
       return cachedGaps.data;
     }
     const db = await ensureD1Schema(env);
@@ -3771,7 +3824,8 @@
       try {
         trackStat("d1Reads");
         if (typeof countD1Subrequest === "function") countD1Subrequest();
-        // Free-Plan Schutz: Nur Serien mit tatsächlich vorhandenen episode_files prüfen + json_extract statt Full-details_json / Full-episodes_json!
+        // Free-Plan CPU/RAM-Schutz: Aggregiert episode_files direkt in SQLite (GROUP BY + Prerelease-Check in C++),
+        // sodass weder raw_caption/raw_filename noch Duplikate über die IPC-Grenze in den Worker-RAM gelangen!
         const [sRes, ssRes, seCountRes, efRes] = await rawDb.batch([
           rawDb.prepare(`
             SELECT s.tmdb_id, s.title, s.release_year, s.poster_path, s.number_of_seasons, s.number_of_episodes,
@@ -3800,11 +3854,33 @@
             LIMIT 2500
           `),
           rawDb.prepare(`
-            SELECT series_id, season_number, episode_number, quality, version_label, raw_filename, raw_caption, tags
+            SELECT series_id,
+                   COALESCE(season_number, 1) AS season_number,
+                   episode_number,
+                   MAX(COALESCE(quality, '1080p')) AS quality,
+                   MAX(
+                     CASE
+                       WHEN LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '') || ' ' || COALESCE(raw_caption, '')) LIKE '%vorabversion%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%telesync%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%camrip%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%hdcam%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%micdub%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%mic.dub%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%mic dub%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%linedub%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%dvdscr%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%screener%'
+                         OR LOWER(COALESCE(tags, '') || ' ' || COALESCE(version_label, '') || ' ' || COALESCE(raw_filename, '')) LIKE '%workprint%'
+                       THEN 0
+                       ELSE 1
+                     END
+                   ) AS has_clean
             FROM episode_files
             WHERE telegram_file_id IS NOT NULL AND telegram_file_id != ''
               AND telegram_file_id NOT LIKE 'vip_playlist_%' AND telegram_file_id NOT LIKE 'tmdb_card_%'
-            LIMIT 8000
+              AND series_id > 0 AND episode_number > 0
+            GROUP BY series_id, COALESCE(season_number, 1), episode_number
+            LIMIT 12000
           `)
         ]);
         for (const r of (sRes?.results || [])) {
@@ -3853,7 +3929,9 @@
           const key = `${sid}_${sNum}`;
           if (!uploadedBySeriesSeason.has(key)) uploadedBySeriesSeason.set(key, new Map());
           const epMap = uploadedBySeriesSeason.get(key);
-          const isPre = isPrereleaseOrMicDub(ef.raw_caption, ef.raw_filename, ef.tags || ef.version_label);
+          const isPre = ef.has_clean !== undefined && ef.has_clean !== null
+            ? Number(ef.has_clean) === 0
+            : isPrereleaseOrMicDub(ef.raw_caption, ef.raw_filename, ef.tags || ef.version_label);
           const existing = epMap.get(eNum);
           if (!existing || (existing.isPrerelease && !isPre)) {
             epMap.set(eNum, { episode: eNum, quality: ef.quality || "1080p", isPrerelease: isPre });

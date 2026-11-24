@@ -103,7 +103,7 @@ function cloudflareStudioPlugin(): Plugin {
         }
         fs.writeFileSync(workerFile, slimWorkerCode, 'utf8');
         console.log(
-          `[Cloudflare Static Asset Offload] Slim worker.js: ${(stats.slimWorkerBytes / 1024).toFixed(1)} KB (vorher ${(stats.originalWorkerBytes / 1024).toFixed(1)} KB, -${stats.savedPercent}%) | Assets: ${stats.cssFileName} (${(stats.cssBytes / 1024).toFixed(1)} KB), ${stats.jsFileName} (${(stats.jsBytes / 1024).toFixed(1)} KB)`
+          `[Cloudflare Static Asset Offload] Slim worker.js: ${(stats.slimWorkerBytes / 1024).toFixed(1)} KB (vorher ${(stats.originalWorkerBytes / 1024).toFixed(1)} KB, -${stats.savedPercent}%) | Assets: ${stats.cssFileName} (${(stats.cssBytes / 1024).toFixed(1)} KB), ${stats.jsFileName} (${(stats.jsBytes / 1024).toFixed(1)} KB), ${stats.adminJsFileName} (${(stats.adminJsBytes / 1024).toFixed(1)} KB)`
         );
       }
 

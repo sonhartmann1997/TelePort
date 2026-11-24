@@ -2922,17 +2922,64 @@
           }
           const info = r?.webhookInfo || {};
           const diag = r?.diagnostics || null;
+          const wDiag = r?.webhookDiag || null;
           const pending = Number(info.pending_update_count || 0);
           const lastErr = info.last_error_message ? String(info.last_error_message) : "Keine Fehler";
           const maxConn = Number(info.max_connections || 8);
           const diagWarnings = Array.isArray(diag?.warnings) ? diag.warnings : [];
           const hasProblem = Boolean(diag ? !diag.healthy : (pending > 0 || Boolean(info.last_error_message)));
+          const fmtShortTime = (ts) => {
+            if (!ts) return "–";
+            try { return new Date(Number(ts)).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch (_e) { return "–"; }
+          };
           const warnHtml = diagWarnings.length
             ? ('<div style="margin-top:6px;padding:6px 8px;border-radius:8px;background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.35);color:#fca5a5;font-size:11px;line-height:1.45">' +
                 '<b>⚠️ Diagnose-Hinweise:</b><br/>' +
                 diagWarnings.map(w => '• ' + esc(w)).join('<br/>') +
               '</div>')
             : '<div style="margin-top:5px;color:#34d399;font-size:11px">✅ <b>Selbstdiagnose:</b> Webhook-URL, Gatekeeper & Verbindung sind sauber synchronisiert.</div>';
+          let eventLogHtml = "";
+          if (wDiag && typeof wDiag === "object") {
+            const st = wDiag.stats || {};
+            const evs = Array.isArray(wDiag.recentEvents) ? wDiag.recentEvents : [];
+            const lastFail = wDiag.lastPersistedFailure && typeof wDiag.lastPersistedFailure === "object" ? wDiag.lastPersistedFailure : null;
+            const lastFailHtml = lastFail
+              ? ('<div style="margin-top:4px;padding:4px 7px;border-radius:6px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);color:#fcd34d;font-size:10.5px">' +
+                  '🕵️ <b>Letzter gespeicherter Worker-Fehler (D1):</b> ' + esc(fmtShortTime(lastFail.ts)) +
+                  ' • HTTP <code>' + esc(String(lastFail.status || "?")) + '</code>' +
+                  ' • <code>' + esc(String(lastFail.fastPath || "")) + '</code>' +
+                  (lastFail.error ? (' — ' + esc(String(lastFail.error))) : '') +
+                '</div>')
+              : "";
+            const rowsHtml = evs.length
+              ? ('<div style="margin-top:5px;max-height:130px;overflow-y:auto;font-family:monospace;font-size:10.5px;line-height:1.45;color:#cbd5e1">' +
+                  evs.map(ev => {
+                    const stNum = Number(ev.status || 200);
+                    const icon = stNum === 401 ? "🔒" : (stNum >= 500 || ev.error ? "❌" : (ev.fastPath === "duplicate_skip" ? "♻️" : "✅"));
+                    const color = stNum === 401 ? "#fbbf24" : (stNum >= 500 || ev.error ? "#f87171" : "#86efac");
+                    return '<div><span style="color:' + color + '">' + icon + ' ' + esc(fmtShortTime(ev.ts)) + ' [HTTP ' + stNum + ']</span> ' +
+                      '<code>' + esc(String(ev.fastPath || "")) + '</code>' +
+                      (ev.updateType ? (' · ' + esc(String(ev.updateType))) : '') +
+                      (ev.command ? (' <b>' + esc(String(ev.command)) + '</b>') : '') +
+                      (ev.updateId ? (' #' + esc(String(ev.updateId))) : '') +
+                      (ev.durationMs !== null && ev.durationMs !== undefined ? (' (' + Number(ev.durationMs) + 'ms)') : '') +
+                      (ev.error ? (' — <span style="color:#fca5a5">' + esc(String(ev.error)) + '</span>') : '') +
+                    '</div>';
+                  }).join("") +
+                '</div>')
+              : '<div style="margin-top:4px;font-size:10.5px;color:var(--muted)">Noch keine Webhook-Events in diesem frischen Isolate aufgezeichnet.</div>';
+            eventLogHtml =
+              '<div style="margin-top:7px;padding:7px 9px;border-radius:8px;background:rgba(15,23,42,0.55);border:1px solid rgba(56,189,248,0.28)">' +
+                '<div style="font-size:11px;font-weight:800;color:#7dd3fc">🧾 Worker Webhook-Diagnose (aktuelles Isolate): ' +
+                  '<span style="color:#34d399">✅ ' + Number(st.totalOk || 0) + ' OK</span> · ' +
+                  '<span style="color:#fbbf24">🔒 ' + Number(st.total401 || 0) + '× 401</span> · ' +
+                  '<span style="color:#f87171">❌ ' + Number(st.totalErrors || 0) + ' Fehler</span> · ' +
+                  '<span style="color:#94a3b8">♻️ ' + Number(st.totalDuplicates || 0) + ' Duplikate</span>' +
+                '</div>' +
+                lastFailHtml +
+                rowsHtml +
+              '</div>';
+          }
           if (statusBox) {
             statusBox.style.color = hasProblem ? "#fbbf24" : "#34d399";
             statusBox.innerHTML =
@@ -2943,7 +2990,8 @@
               '• <b>Passwort-Gatekeeper:</b> ' + (r?.hasWebhookPassword ? '🔒 Aktiv (<code>X-Telegram-Bot-Api-Secret-Token</code>)' : '⚠️ Kein Passwort gesetzt') +
                 (diag?.configSource ? (' • <b>Quelle:</b> <code>' + esc(String(diag.configSource).toUpperCase()) + '</code>') : '') + '<br/>' +
               '• <b>Letzter Telegram-Fehler:</b> <code>' + esc(lastErr) + '</code>' +
-              warnHtml;
+              warnHtml +
+              eventLogHtml;
           }
         } catch (e) {
           if (statusBox) {
@@ -3645,7 +3693,7 @@
                       '</span>' +
                     '</div>' +
                     '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                      '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="adminCheckWebhookLiveStatusClient()">🔍 Live-Status (getWebhookInfo)</button>' +
+                      '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="adminCheckWebhookLiveStatusClient()">📡 Webhook Live-Status (getWebhookInfo)</button>' +
                       '<button type="button" class="btn amber" style="padding:4px 9px;font-size:11px" onclick="adminDropPendingWebhookUpdatesClient()" title="Verwirft alle bei Telegram angestauten Alt-Updates (stoppt Retry-Stürme sofort)">🧹 Hängende Updates verwerfen</button>' +
                     '</div>' +
                   '</div>' +
@@ -3714,7 +3762,7 @@
                   return '<div class="panel-box" style="border-color:rgba(16,185,129,0.45)">' +
                     '<div class="section-title" style="margin-bottom:6px">' +
                       '<span>🚀 Telegram Bot API 10.5 Steuerung (<code>setMySettings</code>, <code>BotFullInfo</code> &amp; <code>botinvite</code>)</span>' +
-                      '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="adminLoadBotFullInfoClient()">🔍 BotFullInfo live laden (getMe)</button>' +
+                      '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11px" onclick="adminLoadBotFullInfoClient()">🤖 Bot-Profil laden (getMe / BotFullInfo)</button>' +
                     '</div>' +
                     '<div id="adminBot105InfoBadges" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;font-size:11px">' +
                       '<span class="admin-pill">🆔 @' + esc(effBotUsername) + '</span>' +
@@ -4203,6 +4251,12 @@
         showHudToast("🗑️ Eintrag #" + tmdbId + " gelöscht");
         loadAdminPanelView();
       }
+      if (typeof window !== "undefined") {
+        window.__tmaRealLoadAdminPanelView = loadAdminPanelView;
+        window.__tmaRealRestoreBackupImportSession = restoreBackupImportSessionAfterReload;
+        window.__TMA_ADMIN_LOADED__ = true;
+      }
+      /* @TMA_LAZY_ADMIN_JS_END */
 
       async function startTmdbAuth() {
         const st = document.getElementById("tmdbSyncStatus");

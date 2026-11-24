@@ -2420,7 +2420,9 @@
       const p = typeof promiseOrFn === "function" ? promiseOrFn() : promiseOrFn;
       if (!p || typeof p.then !== "function") return;
       const safeP = p.catch(() => {});
-      const activeCtx = typeof globalThis !== "undefined" ? globalThis._activeWorkerCtx : null;
+      const activeCtx = typeof getActiveWorkerCtx === "function"
+        ? getActiveWorkerCtx()
+        : (typeof globalThis !== "undefined" ? globalThis._activeWorkerCtx : null);
       if (activeCtx && typeof activeCtx.waitUntil === "function") {
         activeCtx.waitUntil(safeP);
       }
@@ -2440,7 +2442,9 @@
   }
 
   function hasTmdbCredentials(env) {
-    const activeEnv = env || (typeof globalThis !== "undefined" ? globalThis._activeWorkerEnv : null);
+    const activeEnv = typeof getActiveWorkerEnv === "function"
+      ? getActiveWorkerEnv(env)
+      : (env || (typeof globalThis !== "undefined" ? globalThis._activeWorkerEnv : null));
     return Boolean(
       String(activeEnv?.TMDB_BEARER_TOKEN || activeEnv?.TMDB_API_KEY || activeEnv?.TMDB_KEY || "").trim()
     );
@@ -2474,7 +2478,6 @@
   }
 
   var tmdbRateLimitUntilMs = 0;
-  var tmdbRateLimitHitInBatch = false;
 
   // --- Fetch mit Timeout, Edge-Cache (caches.default), Subrequest-Circuit-Breaker, TMDb-429-Guard & Auth-Normalisierung ---
   async function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
@@ -2499,9 +2502,8 @@
           const cachedEdgeRes = await edgeCacheApi.match(edgeCacheKey);
           if (cachedEdgeRes && cachedEdgeRes.ok) {
             clearTimeout(id);
-            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) {
-              activeWorkerTelemetry.cacheHit = true;
-            }
+            const tel = typeof getActiveWorkerTelemetry === "function" ? getActiveWorkerTelemetry() : null;
+            if (tel) tel.cacheHit = true;
             return cachedEdgeRes;
           }
         } catch (_cacheErr) {}
@@ -2510,7 +2512,9 @@
       // 1b. Zentraler TMDb-429-Cooldown: Bei aktivem TMDb-Rate-Limit keine weiteren Subrequests verbrennen!
       if (isTmdbReq && typeof tmdbRateLimitUntilMs === "number" && tmdbRateLimitUntilMs > Date.now()) {
         clearTimeout(id);
-        tmdbRateLimitHitInBatch = true;
+        if (typeof setTmdbRateLimitHitInBatch === "function") {
+          setTmdbRateLimitHitInBatch(true);
+        }
         const remRetryMs = Math.max(500, tmdbRateLimitUntilMs - Date.now());
         return new Response(JSON.stringify({ ok: false, tmdb_rate_limited: true, retry_after_ms: remRetryMs }), {
           status: 429,
@@ -2523,10 +2527,10 @@
 
       // 2. Harter Subrequest-Circuit-Breaker für Cloudflare Free Plan (50 Subrequests Limit)
       const hardSubrequestCap = effectiveOptions._criticalSubrequest ? 47 : 42;
-      if (typeof currentInvocationSubrequests === "number" && currentInvocationSubrequests >= hardSubrequestCap) {
+      if (typeof getInvocationSubrequests === "function" && getInvocationSubrequests() >= hardSubrequestCap) {
         clearTimeout(id);
-        if (typeof subrequestBudgetExhausted !== "undefined") {
-          subrequestBudgetExhausted = true;
+        if (typeof setSubrequestBudgetExhausted === "function") {
+          setSubrequestBudgetExhausted(true);
         }
         return new Response(JSON.stringify({ ok: false, budget_exhausted: true }), {
           status: 429,
@@ -2542,7 +2546,9 @@
           .replace(/^["']+|["']+$/g, "")
           .trim();
         if (!rawToken || rawToken === "undefined" || rawToken === "null") {
-          const activeEnv = typeof globalThis !== "undefined" ? globalThis._activeWorkerEnv : null;
+          const activeEnv = typeof getActiveWorkerEnv === "function"
+            ? getActiveWorkerEnv()
+            : (typeof globalThis !== "undefined" ? globalThis._activeWorkerEnv : null);
           rawToken = String(
             activeEnv?.TMDB_BEARER_TOKEN ||
             activeEnv?.TMDB_API_KEY ||
@@ -2574,8 +2580,8 @@
         }
         effectiveOptions.headers = hdrs;
       }
-      if (!options?._countedSubrequest && typeof currentInvocationSubrequests === "number") {
-        currentInvocationSubrequests++;
+      if (!options?._countedSubrequest && typeof incrementInvocationSubrequests === "function") {
+        incrementInvocationSubrequests(1);
       }
       const res = await fetch(targetUrl, { ...effectiveOptions, signal: controller.signal });
       clearTimeout(id);
@@ -2588,7 +2594,9 @@
           ? Math.min(15000, Math.max(1500, Math.round(parsedSec * 1000)))
           : 4000;
         tmdbRateLimitUntilMs = Math.max(Number(tmdbRateLimitUntilMs || 0), Date.now() + waitMs);
-        tmdbRateLimitHitInBatch = true;
+        if (typeof setTmdbRateLimitHitInBatch === "function") {
+          setTmdbRateLimitHitInBatch(true);
+        }
         return res;
       }
 

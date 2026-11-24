@@ -1125,6 +1125,11 @@ export class SimulatedKVNamespace {
 
 export function stripEsModuleExportsForSandbox(rawCode: string): string {
   let transformed = rawCode;
+  // Strip Cloudflare runtime `node:async_hooks` import so browser `new Function()` uses the clean single-request fallback
+  transformed = transformed.replace(
+    /^\s*import\s*\{\s*AsyncLocalStorage\s*\}\s*from\s*["']node:async_hooks["'];?\s*$/gm,
+    'const AsyncLocalStorage = null;'
+  );
   // Strip named `export { ... };` blocks so `new Function()` does not fail with SyntaxError
   transformed = transformed.replace(/\bexport\s*\{[\s\S]*?\};?/g, '');
   if (/export\s+default\s+/.test(transformed)) {
