@@ -1144,7 +1144,7 @@
     const set = globalThis.__RECENT_TG_UPDATE_IDS;
     if (set.has(idNum)) return true;
     set.add(idNum);
-    if (set.size > 250) {
+    if (set.size > 1000) {
       const firstVal = set.values().next().value;
       if (firstVal !== undefined) set.delete(firstVal);
     }
@@ -5239,11 +5239,22 @@
       await flushDirtyKvBatch(env, { force: Boolean(options?.force) });
       return;
     }
-    if (String(chatId) === "bot_vip") {
+    const cleanId = String(chatId).trim();
+    if (cleanId === "bot_vip") {
+      return;
+    }
+    // Zero-IO Fast-Exit: Wenn die Session im RAM gar nicht verändert wurde (!_dirty),
+    // niemals getUserBundle() aufrufen (spart D1- & KV-Reads bei jedem Gruppen-Post / Webhook)!
+    const ramBundle = memoryFallback.get(`u_bundle_${cleanId}`);
+    const ramSess = memoryFallback.get(`sess_${cleanId}`) || ramBundle?.session;
+    if (!ramSess || !ramSess._dirty) {
+      if (options?.force || (typeof kvDirtyBuffer !== "undefined" && kvDirtyBuffer.size > 0)) {
+        await flushDirtyKvBatch(env, { force: Boolean(options?.force) });
+      }
       return;
     }
     const bundle = await getUserBundle(env, chatId);
-    const sess = bundle.session || memoryFallback.get(`sess_${chatId}`);
+    const sess = bundle.session || memoryFallback.get(`sess_${cleanId}`);
     if (sess && sess._dirty) {
       delete sess._dirty;
       bundle.session = sess;

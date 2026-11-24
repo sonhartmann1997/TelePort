@@ -6782,7 +6782,7 @@
           });
         }
 
-        if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/webhook")) {
+        if (request.method === "POST" && (url.pathname === "/" || url.pathname === "/webhook" || url.pathname === "/webhook/")) {
           const webhookStartMs = Date.now();
           // 0-IO Edge-Gatekeeper (Warm Cache) + konsistenter Cold-Start-Sync
           const secCheck = typeof verifyWebhookSecretFast === "function"
@@ -6865,7 +6865,7 @@
                   configSource: secCheck.configSource || "",
                   durationMs: Date.now() - webhookStartMs,
                   error: err?.message || String(err || "handleUpdate Fehler")
-                }, { persistFailure: true });
+                }, { persistFailure: true, ctx });
               }
             } finally {
               await flushDirtyKvBatch(env).catch(() => {});

@@ -7126,20 +7126,73 @@
     const db = await ensureD1Schema(env);
     if (!db || !Array.isArray(updates) || updates.length === 0) return 0;
     const now = Date.now();
-    const stmts = [];
+    const pendingResetIds = [];
+    const plainDoneIds = [];
+    const plainIgnoredIds = [];
+    const customUpdates = [];
+
     for (const u of updates) {
       if (!u || !u.id) continue;
+      const rowId = Number(u.id);
+      if (!Number.isFinite(rowId) || rowId <= 0) continue;
       const nextStatus = String(u.status || "done");
-      const lockedUntil = nextStatus === "pending" ? 0 : 0;
+      const hasRichMeta = Boolean(u.resultEmoji || u.reactionPending || u.resolvedTmdbId || u.resolvedType);
+      if (nextStatus === "pending" && !hasRichMeta) {
+        pendingResetIds.push(rowId);
+      } else if (nextStatus === "done" && !hasRichMeta) {
+        plainDoneIds.push(rowId);
+      } else if (nextStatus === "ignored" && !hasRichMeta) {
+        plainIgnoredIds.push(rowId);
+      } else {
+        customUpdates.push(u);
+      }
+    }
+
+    const stmts = [];
+    const ID_CHUNK = 80; // Strikt unter Cloudflare D1 Limit (max. 100 SQL Bind-Parameter!)
+    for (let i = 0; i < pendingResetIds.length; i += ID_CHUNK) {
+      const part = pendingResetIds.slice(i, i + ID_CHUNK);
+      const ph = part.map((_, idx) => `?${idx + 1}`).join(", ");
+      stmts.push(
+        db.prepare(
+          `UPDATE channel_ingest_inbox
+           SET status = 'pending', locked_until = 0, result_emoji = NULL, reaction_pending = 0, resolved_tmdb_id = NULL, resolved_type = NULL, processed_at = 0
+           WHERE id IN (${ph})`
+        ).bind(...part)
+      );
+    }
+    for (let i = 0; i < plainDoneIds.length; i += ID_CHUNK) {
+      const part = plainDoneIds.slice(i, i + ID_CHUNK);
+      const ph = part.map((_, idx) => `?${idx + 2}`).join(", ");
+      stmts.push(
+        db.prepare(
+          `UPDATE channel_ingest_inbox
+           SET status = 'done', locked_until = 0, result_emoji = NULL, reaction_pending = 0, resolved_tmdb_id = NULL, resolved_type = NULL, processed_at = ?1
+           WHERE id IN (${ph})`
+        ).bind(now, ...part)
+      );
+    }
+    for (let i = 0; i < plainIgnoredIds.length; i += ID_CHUNK) {
+      const part = plainIgnoredIds.slice(i, i + ID_CHUNK);
+      const ph = part.map((_, idx) => `?${idx + 2}`).join(", ");
+      stmts.push(
+        db.prepare(
+          `UPDATE channel_ingest_inbox
+           SET status = 'ignored', locked_until = 0, result_emoji = NULL, reaction_pending = 0, resolved_tmdb_id = NULL, resolved_type = NULL, processed_at = ?1
+           WHERE id IN (${ph})`
+        ).bind(now, ...part)
+      );
+    }
+    for (const u of customUpdates) {
+      const nextStatus = String(u.status || "done");
       const processedAt = nextStatus === "pending" ? 0 : now;
       stmts.push(
         db.prepare(
           `UPDATE channel_ingest_inbox
-           SET status = ?1, locked_until = ?2, result_emoji = ?3, reaction_pending = ?4, resolved_tmdb_id = ?5, resolved_type = ?6, processed_at = ?7
-           WHERE id = ?8`
+           SET status = ?1, locked_until = 0, result_emoji = ?2, reaction_pending = ?3, resolved_tmdb_id = ?4, resolved_type = ?5, processed_at = ?6
+           WHERE id = ?7`
         ).bind(
           nextStatus,
-          lockedUntil,
           u.resultEmoji ? String(u.resultEmoji) : null,
           u.reactionPending ? 1 : 0,
           u.resolvedTmdbId ? Number(u.resolvedTmdbId) : null,
@@ -7149,15 +7202,22 @@
         )
       );
     }
+
+    const totalUpdated = pendingResetIds.length + plainDoneIds.length + plainIgnoredIds.length + customUpdates.length;
     if (stmts.length === 0) return 0;
     try {
       trackStat("d1Writes");
       const rawDb = getRawD1Binding(env) || db;
-      const CHUNK = 50;
-      for (let i = 0; i < stmts.length; i += CHUNK) {
-        await rawDb.batch(unwrapRawD1Statements(stmts.slice(i, i + CHUNK)));
+      const STMT_CHUNK = 50;
+      for (let i = 0; i < stmts.length; i += STMT_CHUNK) {
+        const slice = stmts.slice(i, i + STMT_CHUNK);
+        if (slice.length > 1 && rawDb && typeof rawDb.batch === "function") {
+          await rawDb.batch(unwrapRawD1Statements(slice));
+        } else {
+          for (const st of slice) await st.run();
+        }
       }
-      return stmts.length;
+      return totalUpdated;
     } catch (_e) {
       return 0;
     }

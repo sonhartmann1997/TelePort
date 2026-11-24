@@ -3274,7 +3274,24 @@
       return { msgKind: "skip", payload: null };
     }
 
-    const rawText = String(tgMsg.caption || tgMsg.text || "").trim();
+    let rawText = String(tgMsg.caption || tgMsg.text || "").trim();
+    const msgEntities = Array.isArray(tgMsg.caption_entities)
+      ? tgMsg.caption_entities
+      : (Array.isArray(tgMsg.entities) ? tgMsg.entities : []);
+    if (msgEntities.length > 0) {
+      const hiddenUrls = [];
+      for (const ent of msgEntities) {
+        if (ent && ent.type === "text_link" && ent.url && /(?:themoviedb\.org|imdb\.com)/i.test(String(ent.url))) {
+          const cleanU = String(ent.url).trim();
+          if (cleanU && !rawText.includes(cleanU) && !hiddenUrls.includes(cleanU)) {
+            hiddenUrls.push(cleanU);
+          }
+        }
+      }
+      if (hiddenUrls.length > 0) {
+        rawText = rawText ? `${rawText}\n${hiddenUrls.join("\n")}` : hiddenUrls.join("\n");
+      }
+    }
     if (/^\/[a-z0-9_]+(?:@\w+)?(?:\s|$)/i.test(rawText) && !tgMsg.video && !tgMsg.document && !tgMsg.photo) {
       return { msgKind: "skip", payload: null };
     }
@@ -3818,8 +3835,9 @@
 
   async function flushChannelIngestWindow(env, chatId, options = {}) {
     const cid = String(chatId || "").trim();
-    const windowLimit = Math.max(5, Math.min(60, Number(options.windowLimit || 40)));
     const maxResolvePerRun = Math.max(1, Math.min(10, Number(options.maxResolvePerRun || 6)));
+    const defaultWindowLimit = Math.max(12, Math.min(20, maxResolvePerRun * 2 + 6));
+    const windowLimit = Math.max(5, Math.min(60, Number(options.windowLimit || defaultWindowLimit)));
     const forceFlush = Boolean(options.forceFlush);
     const now = Date.now();
 
@@ -3856,8 +3874,9 @@
       return summary;
     }
 
-    const chatsMap = await getAutoIngestChatsMap(env, false);
-    const chatCfg = chatsMap[cid] || { chatId: cid, title: processRows[0]?.chatTitle || cid };
+    const chatCfg = options.chatCfg && typeof options.chatCfg === "object"
+      ? options.chatCfg
+      : ((await getAutoIngestChatsMap(env, false))[cid] || { chatId: cid, title: processRows[0]?.chatTitle || cid });
     const carryover = chatCfg.lastContextSnapshot || null;
 
     const { entries, boundSubtitleMsgIds, standaloneSubtitles, nextAnchorMessages } =
@@ -4140,18 +4159,45 @@
 
     await markChannelIngestRowsStatusInD1(env, rowUpdates);
 
+    // Kontext-Überhang nur aus tatsächlich verbrauchten Zeilen (< cutoffUnprocessedMsgId) übernehmen,
+    // damit ein zukünftiges Staffel-2-Poster aus dem zurückgestellten Rest niemals das aktive Staffel-1-Poster überschreibt!
+    let effectiveNextAnchors = nextAnchorMessages;
+    if (budgetExhaustedAtIdx >= 0 && Number.isFinite(cutoffUnprocessedMsgId)) {
+      const consumedAnchors = processRows
+        .filter(r => Number(r.messageId) < cutoffUnprocessedMsgId)
+        .map(r => {
+          const p = (r.payload && typeof r.payload === "object") ? r.payload : {};
+          return {
+            id: Number(r.messageId),
+            msg_id: Number(r.messageId),
+            type: "message",
+            chat_id: String(chatCfg.chatId || cid),
+            text: String(p.text || "").slice(0, 600),
+            photo: p.photo,
+            media_type: p.media_type === "photo" ? "photo" : undefined,
+            _hasFile: Boolean(p.telegram_file_id)
+          };
+        })
+        .filter(m => !m._hasFile || m.media_type === "photo" || /\b(?:Staffel|Season)\s*0*\d{1,2}\b/i.test(m.text))
+        .slice(-2)
+        .map(({ _hasFile, ...rest }) => rest);
+      effectiveNextAnchors = consumedAnchors.length > 0
+        ? consumedAnchors
+        : (Array.isArray(carryover?.anchorMessages) ? carryover.anchorMessages : []);
+    }
+
     // Kontext-Überhang nur dann in D1 schreiben, wenn sich Anker-IDs oder Serien-Kontext tatsächlich geändert haben
     const prevAnchorSig = Array.isArray(carryover?.anchorMessages)
       ? carryover.anchorMessages.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
       : "";
-    const nextAnchorSig = Array.isArray(nextAnchorMessages)
-      ? nextAnchorMessages.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
+    const nextAnchorSig = Array.isArray(effectiveNextAnchors)
+      ? effectiveNextAnchors.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
       : "";
     const prevSeriesId = Number(carryover?.lastSeriesTmdbId || 0);
     const nextSeriesId = Number(lastSeriesCarry?.tmdbId || 0);
     if (prevAnchorSig !== nextAnchorSig || prevSeriesId !== nextSeriesId) {
       await updateAutoIngestChatContextSnapshot(env, cid, {
-        anchorMessages: nextAnchorMessages,
+        anchorMessages: effectiveNextAnchors,
         lastSeriesNormTitle: lastSeriesCarry?.normTitle || null,
         lastSeriesTmdbId: lastSeriesCarry?.tmdbId || null,
         updatedAt: Date.now()
@@ -4220,11 +4266,13 @@
           const d1Lease = Number(chatsMapForLease?.[ch.chatId]?.lastContextSnapshot?.browserTurboUntil || 0);
           if (ramLease > now || d1Lease > now) continue;
         }
+        const dynamicWindowLimit = Math.max(12, Math.min(20, remainingBudgetResolves * 2 + 6));
         const res = await flushChannelIngestWindow(env, ch.chatId, {
           forceFlush,
-          windowLimit: 40,
+          windowLimit: dynamicWindowLimit,
           maxResolvePerRun: remainingBudgetResolves,
-          skipLockRelease: true
+          skipLockRelease: true,
+          chatCfg: chatsMapForLease?.[ch.chatId] || null
         });
         totals.chatsProcessed++;
         totals.processedVideos += res.processedVideos;
