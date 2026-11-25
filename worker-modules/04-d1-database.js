@@ -3470,10 +3470,9 @@
       try {
         const oldEps = await db.prepare("SELECT * FROM episode_files WHERE series_id = ?1").bind(Number(oldSid)).all().catch(() => ({ results: [] }));
         const epRows = Array.isArray(oldEps?.results) ? oldEps.results : [];
-        let migratedOk = 0;
-        for (const ep of epRows) {
-          if (!ep || !ep.telegram_file_id) continue;
-          const insRes = await db.prepare(`
+        const validEps = epRows.filter(ep => ep && ep.telegram_file_id);
+        const insStmts = validEps.map(ep =>
+          db.prepare(`
             INSERT INTO episode_files (
               series_id, season_number, episode_number, telegram_file_id, telegram_unique_id,
               file_fingerprint, quality, codec, part, part_number, edition_label,
@@ -3511,12 +3510,26 @@
             ep.message_link || null,
             ep.subtitles_json || "[]",
             now
-          ).run().catch(() => null);
-          if (insRes) migratedOk++;
+          )
+        );
+        // Gebündelte D1-Migration (40er-Chunks statt 200 sequentieller Einzel-Writes) mit striktem Datenverlust-Schutz!
+        let migratedOk = 0;
+        const rawDbMig = getRawD1Binding(env) || db;
+        const MIG_CHUNK = 40;
+        for (let i = 0; i < insStmts.length; i += MIG_CHUNK) {
+          const slice = insStmts.slice(i, i + MIG_CHUNK);
+          if (slice.length > 1 && rawDbMig && typeof rawDbMig.batch === "function") {
+            const batchOut = await rawDbMig.batch(unwrapRawD1Statements(slice)).catch(() => null);
+            if (!Array.isArray(batchOut) || batchOut.length < slice.length) break;
+            migratedOk += batchOut.filter(r => r && r.success !== false).length;
+          } else {
+            for (const st of slice) {
+              const insRes = await st.run().catch(() => null);
+              if (insRes && insRes.success !== false) migratedOk++;
+            }
+          }
         }
-        // Datenverlust-Schutz: Alte Episoden NUR löschen, wenn alle vorhandenen Episoden erfolgreich migriert wurden!
-        const expectedCount = epRows.filter(ep => ep && ep.telegram_file_id).length;
-        if (expectedCount > 0 && migratedOk < expectedCount) {
+        if (validEps.length > 0 && migratedOk < validEps.length) {
           return false;
         }
         await db.batch([

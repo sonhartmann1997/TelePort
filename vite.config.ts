@@ -109,7 +109,7 @@ function cloudflareStudioPlugin(): Plugin {
 
       fs.writeFileSync(
         path.join(distDir, '_headers'),
-        '/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n',
+        '/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n\n/favicon.svg\n  Cache-Control: public, max-age=86400\n\n/manifest.json\n  Cache-Control: public, max-age=86400\n\n/sw.js\n  Cache-Control: no-cache, no-store, must-revalidate\n  Service-Worker-Allowed: /\n',
         'utf8'
       );
       fs.writeFileSync(
