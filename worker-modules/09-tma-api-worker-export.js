@@ -2855,10 +2855,12 @@
         }
         // --- Kanal- & Gruppen-Inbox (500+ Staging & Browser-Turbo-Offload) ---
         if (path === "/api/tma/admin/ingest-inbox" && request.method === "GET") {
-          let [chatsMap, statsRes] = await Promise.all([
+          let [chatsMap, statsRes, archiveForums] = await Promise.all([
             getAutoIngestChatsMap(env, false),
-            getChannelIngestInboxStatsFromD1(env, null)
+            getChannelIngestInboxStatsFromD1(env, null),
+            getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true })
           ]);
+          const activeArchiveForum = archiveForums[0] || null;
           if (Number(statsRes?.totals?.processing || 0) > 0) {
             const released = await releaseExpiredChannelIngestLocksInD1(env, Date.now());
             if (released > 0) {
@@ -2876,6 +2878,7 @@
               title: String(cfg?.title || st?.chatTitle || cid),
               type: String(cfg?.chatType || cfg?.type || (cid.startsWith("-100") ? "channel" : "supergroup")),
               enabled: Boolean(cfg?.enabled),
+              archiveMirrorEnabled: Boolean(cfg?.archiveMirrorEnabled),
               enabledAt: Number(cfg?.activatedAt || cfg?.enabledAt || 0),
               pending: Number(st?.pending || 0),
               processing: Number(st?.processing || 0),
@@ -2890,6 +2893,8 @@
           mergedChats.sort((a, b) => (b.pending - a.pending) || (Number(b.enabled) - Number(a.enabled)) || a.title.localeCompare(b.title));
           return new Response(JSON.stringify({
             ok: true,
+            hasArchiveForum: Boolean(activeArchiveForum),
+            archiveForumLabel: activeArchiveForum ? String(activeArchiveForum.label || activeArchiveForum.channelId) : "",
             chats: mergedChats,
             totals: statsRes?.totals || { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 }
           }), { status: 200, headers: corsHeaders });
@@ -2942,14 +2947,33 @@
           if (!cid || !/^-\d{4,20}$/.test(cid)) {
             return new Response(JSON.stringify({ ok: false, error: "Ungültige Gruppen-/Kanal-ID (muss mit - beginnen)." }), { status: 400, headers: corsHeaders });
           }
+          const wantsEnableIngest = body.enabled === true;
+          const wantsEnableArch = body.archiveMirrorEnabled === true;
+          if ((wantsEnableIngest || wantsEnableArch) && await isHistorySystemBlockedChat(env, cid)) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: "Diese Chat-ID ist als Index-Kanal oder Themen-Archiv konfiguriert und darf nicht als Quelle aktiviert werden."
+            }), { status: 400, headers: corsHeaders });
+          }
+          if (wantsEnableArch) {
+            const forums = await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true });
+            if (forums.length === 0) {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: "Bitte zuerst ein Sortiertes Themen-Archiv konfigurieren (/archiv_set oder im Tab Verlauf-Crawler)."
+              }), { status: 400, headers: corsHeaders });
+            }
+          }
           const chatsMap = await getAutoIngestChatsMap(env, false);
           const existing = chatsMap[cid] || {};
-          const resToggle = await setAutoIngestChatEnabled(env, cid, {
-            enabled: Boolean(body.enabled),
+          const patch = {
             title: String(body.title || existing.title || cid).slice(0, 140),
             chatType: String(body.type || existing.chatType || existing.type || "channel").slice(0, 32),
             activatedBy: auth.user?.telegramId || auth.chatId || null
-          });
+          };
+          if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
+          if (body.archiveMirrorEnabled !== undefined) patch.archiveMirrorEnabled = Boolean(body.archiveMirrorEnabled);
+          const resToggle = await setAutoIngestChatEnabled(env, cid, patch);
           if (!resToggle?.ok) {
             return new Response(JSON.stringify({ ok: false, error: resToggle?.error || "Status konnte nicht gespeichert werden." }), { status: 400, headers: corsHeaders });
           }

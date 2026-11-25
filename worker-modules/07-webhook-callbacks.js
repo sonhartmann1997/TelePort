@@ -3539,7 +3539,9 @@
 
   // Führt genau 1 budget- & rate-limit-gesicherten Stufe-A-Crawl-Step aus (für 2-Min-Cron ODER Browser-Turbo)
   async function runHistoryCrawlStep(env, options = {}) {
-    const source = options.source === "browser_turbo" ? "browser_turbo" : "cron";
+    const source = options.source === "browser_turbo"
+      ? "browser_turbo"
+      : (options.source === "chat_manual" ? "chat_manual" : "cron");
     const now = Date.now();
     const subrequestCeiling = Number(options.subrequestCeiling || (source === "cron" ? 30 : 28));
     const maxHitsPerStep = Math.max(1, Math.min(18, Number(options.maxHitsPerStep || (source === "cron" ? 12 : 15))));
@@ -3561,8 +3563,8 @@
     if (job.status === "paused" || job.status === "completed" || job.status === "error") {
       return { ok: true, idle: true, reason: `job_${job.status}`, job };
     }
-    // Kollisionsschutz: Wenn Browser-Turbo aktiven Lease hält, überlässt der 2-Min-Cron Stufe A kampflos dem Browser
-    if (source === "cron" && job.workerLeaseUntil > now) {
+    // Kollisionsschutz: Wenn Browser-Turbo aktiven Lease hält, überlassen Cron & Chat-Manuell Stufe A kampflos dem Browser
+    if ((source === "cron" || source === "chat_manual") && job.workerLeaseUntil > now) {
       return { ok: true, skippedByLease: true, waitMs: job.workerLeaseUntil - now, job };
     }
     // Verteilte D1-429-Sperre respektieren
@@ -4140,23 +4142,57 @@
   }
 
   async function collectArchiveMirrorQueueCandidate(env, { resolved, srcRow, sourceChatId, ctxCache }) {
+    if (!resolved || !resolved.ok || !srcRow) return null;
     const jobId = Number(srcRow?.sourceJobId || srcRow?.payload?._historyJobId || 0);
-    if (!resolved || !resolved.ok || !srcRow || jobId <= 0) return null;
+    const effSourceChatId = String(sourceChatId || srcRow.chatId || "").trim();
 
     const rawFid = String(srcRow.payload?.telegram_file_id || resolved.fileMeta?.fileId || "").trim();
     if (!rawFid || rawFid.startsWith("tg_export_") || rawFid.startsWith("vip_playlist_") || rawFid.startsWith("tmdb_card_")) {
       return null;
     }
 
-    if (!ctxCache.jobsById) ctxCache.jobsById = new Map();
-    let job = ctxCache.jobsById.get(jobId);
-    if (job === undefined) {
-      job = typeof getHistoryCrawlJobByIdFromD1 === "function"
-        ? await getHistoryCrawlJobByIdFromD1(env, jobId)
-        : null;
-      ctxCache.jobsById.set(jobId, job || null);
+    let topicMode = "type_genre";
+    let pinSeriesCard = false;
+    let initialStatus = "pending";
+    let resolvedSourceChatId = effSourceChatId;
+
+    if (jobId > 0) {
+      if (!ctxCache.jobsById) ctxCache.jobsById = new Map();
+      let job = ctxCache.jobsById.get(jobId);
+      if (job === undefined) {
+        job = typeof getHistoryCrawlJobByIdFromD1 === "function"
+          ? await getHistoryCrawlJobByIdFromD1(env, jobId)
+          : null;
+        ctxCache.jobsById.set(jobId, job || null);
+      }
+      if (!job || !job.enableArchiveMirror) return null;
+      topicMode = job.archiveTopicMode || "type_genre";
+      pinSeriesCard = Boolean(job.archivePinSeriesCard);
+      // Wenn 'after_scan' aktiv ist UND der Job noch nicht fertig ist -> zurückhalten; bei bereits abgeschlossenem Job sofort 'pending'
+      initialStatus = (job.archiveTiming === "after_scan" && job.status !== "completed")
+        ? "held_until_scan"
+        : "pending";
+      resolvedSourceChatId = String(sourceChatId || job.sourceChatId || "");
+    } else {
+      // Live-Post aus /ingest_on (jobId === 0): nur spiegeln, wenn pro Gruppe archiveMirrorEnabled === true!
+      if (!effSourceChatId) return null;
+      if (ctxCache.autoIngestChatsMap === undefined) {
+        ctxCache.autoIngestChatsMap = typeof getAutoIngestChatsMap === "function"
+          ? await getAutoIngestChatsMap(env, false)
+          : {};
+      }
+      const chatCfg = ctxCache.autoIngestChatsMap?.[effSourceChatId] || null;
+      if (!chatCfg || chatCfg.archiveMirrorEnabled !== true) return null;
+
+      if (ctxCache.archiveDefaults === undefined) {
+        ctxCache.archiveDefaults = typeof getHistoryArchiveDefaultsFromD1 === "function"
+          ? await getHistoryArchiveDefaultsFromD1(env)
+          : { topicMode: "type_genre", timing: "live", pinSeriesCard: true };
+      }
+      topicMode = ctxCache.archiveDefaults?.topicMode || "type_genre";
+      pinSeriesCard = Boolean(ctxCache.archiveDefaults?.pinSeriesCard);
+      initialStatus = "pending";
     }
-    if (!job || !job.enableArchiveMirror) return null;
 
     if (ctxCache.archiveForum === undefined) {
       const channels = typeof getHistoryIndexChannelsFromD1 === "function"
@@ -4166,6 +4202,7 @@
     }
     const archiveForum = ctxCache.archiveForum;
     if (!archiveForum || !archiveForum.channelId) return null;
+    if (resolvedSourceChatId && resolvedSourceChatId === archiveForum.channelId) return null;
 
     const mediaType = resolved.typeCode === "s" ? "series" : "movie";
     const details = (resolved.details && typeof resolved.details === "object") ? resolved.details : {};
@@ -4175,7 +4212,7 @@
       cleanTitle: resolved.cleanTitle || details.title || "",
       year: resolved.year || "",
       genres: details.genres || "",
-      topicMode: job.archiveTopicMode || "type_genre"
+      topicMode
     });
 
     const rawFileName = String(srcRow.payload?.file_name || "").trim();
@@ -4194,7 +4231,7 @@
     }
 
     const wantPinSeriesCard = Boolean(
-      job.archivePinSeriesCard &&
+      pinSeriesCard &&
       mediaType === "series" &&
       topicDesc.isPerSeriesTopic
     );
@@ -4205,20 +4242,15 @@
       `fid_${rawFid.slice(-48)}`
     ).trim();
 
-    // Wenn 'after_scan' aktiv ist UND der Job noch nicht fertig ist -> zurückhalten; bei bereits abgeschlossenem Job sofort 'pending'
-    const initialStatus = (job.archiveTiming === "after_scan" && job.status !== "completed")
-      ? "held_until_scan"
-      : "pending";
-
     return {
-      jobId,
+      jobId: jobId > 0 ? jobId : 0,
       archiveChatId: archiveForum.channelId,
       mediaType,
       tmdbId: Number(resolved.tmdbId || 0),
       seasonNumber: mediaType === "series" ? Number(resolved.season ?? 1) : 0,
       episodeNumber: mediaType === "series" ? Number(resolved.episode ?? 1) : 0,
       partNumber: mediaType === "series" ? 1 : Math.max(1, Number(resolved.partNumber || 1)),
-      sourceChatId: String(sourceChatId || job.sourceChatId || ""),
+      sourceChatId: resolvedSourceChatId,
       sourceMessageId: Number(srcRow.messageId || 0),
       fileUniqueId,
       fileId: rawFid,
@@ -4542,24 +4574,1271 @@
     };
   }
 
-  async function verifyChannelAutoIngestAdminAccess(env, chatId) {
+  async function resolveBotAdminIdForChannelChat(env, chatId) {
     try {
       const admins = await tgApi(env).getChatAdministrators(chatId);
-      if (!Array.isArray(admins) || admins.length === 0) return false;
+      if (!Array.isArray(admins) || admins.length === 0) return "";
       for (const adm of admins) {
         const uid = adm?.user?.id;
         if (uid && await isTelegramBotAdmin(env, uid)) {
-          return true;
+          return String(uid);
         }
       }
     } catch (_e) {}
+    return "";
+  }
+
+  async function verifyChannelAutoIngestAdminAccess(env, chatId) {
+    const matchedAdminId = await resolveBotAdminIdForChannelChat(env, chatId);
+    return Boolean(matchedAdminId);
+  }
+
+  // =========================================================================
+  // CHAT-STEUERUNG SCHRITT 1: INDEX-KANÄLE & THEMEN-ARCHIV + FORWARD-GATE
+  // =========================================================================
+  const HISTORY_CHAT_FORWARD_TTL_MS = 10 * 60 * 1000;
+  const HISTORY_CHAT_STATE_TTL_MS = 30 * 60 * 1000;
+
+  async function getHistoryChatAdminState(env, adminId) {
+    const aid = String(adminId || "").trim();
+    if (!aid) return null;
+    const key = `hist_chat_state_${aid}`;
+    const mem = memoryFallback.get(key);
+    if (mem && typeof mem === "object" && (Date.now() - Number(mem.updatedAt || 0)) < HISTORY_CHAT_STATE_TTL_MS) {
+      return mem;
+    }
+    if (typeof getEntityFromD1 === "function") {
+      const stored = await getEntityFromD1(env, key, HISTORY_CHAT_STATE_TTL_MS, { ramTtlMs: 3000 }).catch(() => null);
+      if (stored && typeof stored === "object") {
+        memoryFallback.set(key, stored);
+        return stored;
+      }
+    }
+    return null;
+  }
+
+  async function saveHistoryChatAdminState(env, adminId, patch = {}) {
+    const aid = String(adminId || "").trim();
+    if (!aid) return null;
+    const key = `hist_chat_state_${aid}`;
+    const prev = (await getHistoryChatAdminState(env, aid)) || {};
+    const next = {
+      ...prev,
+      ...patch,
+      updatedAt: Date.now()
+    };
+    memoryFallback.set(key, next);
+    if (typeof saveEntityToD1 === "function") {
+      await saveEntityToD1(env, key, "system", next).catch(() => {});
+    }
+    return next;
+  }
+
+  async function resolveHistoryChatAdminContext(env, tgMsg, { isChannelPost = false } = {}) {
+    if (!tgMsg || !tgMsg.chat?.id || env._isCustomBotWebhook) {
+      return { authorized: false };
+    }
+    const chatId = String(tgMsg.chat.id);
+    const isGroupOrChannel = isChannelPost || isGroupOrChannelChat(tgMsg.chat.id);
+    const actorId = tgMsg.from?.id ? String(tgMsg.from.id) : "";
+    const isAnonymousGroupAdmin = Boolean(
+      isGroupOrChannel &&
+      !isChannelPost &&
+      (
+        actorId === "1087968824" ||
+        (tgMsg.sender_chat?.id && String(tgMsg.sender_chat.id) === chatId) ||
+        !actorId
+      )
+    );
+
+    let adminDmId = "";
+    if (!isGroupOrChannel) {
+      if (actorId && await isTelegramBotAdmin(env, actorId)) {
+        adminDmId = actorId;
+      }
+    } else if (!isChannelPost && !isAnonymousGroupAdmin && actorId) {
+      if (await isTelegramBotAdmin(env, actorId)) {
+        adminDmId = actorId;
+      }
+    } else {
+      adminDmId = await resolveBotAdminIdForChannelChat(env, chatId);
+    }
+
+    if (!adminDmId) {
+      return { authorized: false };
+    }
+    return {
+      authorized: true,
+      adminDmId,
+      isGroupOrChannel,
+      isChannelPost,
+      sourceChatId: chatId,
+      sourceTitle: String(tgMsg.chat.title || tgMsg.chat.username || chatId),
+      messageId: Number(tgMsg.message_id || 0),
+      threadId: tgMsg.message_thread_id ? Number(tgMsg.message_thread_id) : undefined
+    };
+  }
+
+  async function sendHistoryGroupDmFallbackNotice(env, sourceChatId, threadId, isChannelPost) {
+    if (isChannelPost || !sourceChatId) return;
+    const { sendMessage, deleteMessage } = tgApi(env);
+    const opts = threadId ? { message_thread_id: threadId } : {};
+    const sent = await sendMessage(
+      sourceChatId,
+      `ℹ️ *Bitte starte mich einmalig im Privat-Chat mit \`/start\`*, damit ich dir das Admin-Menü dort privat zustellen kann.`,
+      opts
+    );
+    const ctx = typeof getActiveWorkerCtx === "function" ? getActiveWorkerCtx() : null;
+    if (sent?.result?.message_id && ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil((async () => {
+        await new Promise(r => setTimeout(r, 10000));
+        await deleteMessage(sourceChatId, sent.result.message_id).catch(() => {});
+      })());
+    }
+  }
+
+  function formatArchiveModeShortLabel(mode) {
+    if (mode === "per_series_plus_genre") return "Je Serie + Film-Genres";
+    if (mode === "compact_type") return "Kompakt";
+    return "Typ + Genre";
+  }
+
+  function formatValidationChecksMarkdown(resObj) {
+    if (!resObj) return "";
+    const parts = [];
+    if (Array.isArray(resObj.checks) && resObj.checks.length > 0) {
+      parts.push(resObj.checks.map(c => `${c.ok ? "✅" : "❌"} ${escapeMd(c.label)}`).join("\n"));
+    }
+    if (resObj.error) {
+      parts.push(`⛔ ${escapeMd(resObj.error)}`);
+    }
+    if (Array.isArray(resObj.warnings) && resObj.warnings.length > 0) {
+      parts.push(resObj.warnings.map(w => `⚠️ ${escapeMd(w)}`).join("\n"));
+    }
+    return parts.join("\n");
+  }
+
+  async function resolveHistoryCanonicalChannelIdFromChat(env, rawTarget) {
+    const str = String(rawTarget || "").trim();
+    if (!str) return { ok: false, error: "Keine Chat-ID oder Telegram-Link angegeben." };
+    const parsed = parseTelegramMessageLink(str);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    if (/^-\d{5,20}$/.test(parsed.chatId)) {
+      return { ok: true, chatId: parsed.chatId, messageId: parsed.messageId || 0, title: "" };
+    }
+    const chatInfo = await tgApi(env).getChat(parsed.chatId, { bypassCache: true });
+    if (!chatInfo.ok || !chatInfo.canonicalChatId) {
+      return { ok: false, error: `Chat '${str}' konnte nicht aufgelöst werden (${chatInfo.error || "nicht erreichbar"}).` };
+    }
+    return {
+      ok: true,
+      chatId: chatInfo.canonicalChatId,
+      messageId: parsed.messageId || 0,
+      title: String(chatInfo.title || "")
+    };
+  }
+
+  async function addHistoryProbeIndexChannelFromChat(env, rawTarget, labelHint = "") {
+    const resolved = await resolveHistoryCanonicalChannelIdFromChat(env, rawTarget);
+    if (!resolved.ok) return { ok: false, error: escapeMd(resolved.error) };
+    const targetId = resolved.chatId;
+
+    const [channels, archiveDefaults] = await Promise.all([
+      getHistoryIndexChannelsFromD1(env),
+      getHistoryArchiveDefaultsFromD1(env)
+    ]);
+    const existingProbes = channels.filter(c => c.role === "probe_index");
+    const existingArchive = channels.find(c => c.role === "archive_forum") || null;
+
+    if (existingArchive && existingArchive.channelId === targetId) {
+      return {
+        ok: false,
+        error: "Dieser Chat ist bereits als Sortiertes Themen-Archiv hinterlegt und darf nicht gleichzeitig ein Index-Kanal mit Auto-Löschung sein."
+      };
+    }
+
+    const alreadyIdx = existingProbes.findIndex(c => c.channelId === targetId);
+    if (alreadyIdx < 0 && existingProbes.length >= 3) {
+      return {
+        ok: false,
+        error: "Es sind bereits 3 Index-Kanäle konfiguriert (Maximum). Bitte entferne zuerst einen bestehenden Index-Kanal mit `/index_del`."
+      };
+    }
+
+    const check = await validateHistoryChannelAccess(env, targetId, "probe_index");
+    if (!check.ok) {
+      return {
+        ok: false,
+        error: `Rechteprüfung für Index-Kanal fehlgeschlagen:\n${formatValidationChecksMarkdown(check)}`,
+        validation: check
+      };
+    }
+
+    const nextProbes = existingProbes.map(c => ({
+      channelId: c.channelId,
+      label: c.label,
+      enabled: c.enabled
+    }));
+    const finalLabel = String(labelHint || check.title || resolved.title || `Index-Kanal ${nextProbes.length + 1}`).trim().slice(0, 80);
+    if (alreadyIdx >= 0) {
+      nextProbes[alreadyIdx] = { channelId: targetId, label: finalLabel, enabled: true };
+    } else {
+      nextProbes.push({ channelId: targetId, label: finalLabel, enabled: true });
+    }
+
+    const saveRes = await saveHistoryIndexChannelsInD1(env, {
+      probeChannels: nextProbes,
+      archiveForum: existingArchive
+        ? { channelId: existingArchive.channelId, label: existingArchive.label, enabled: existingArchive.enabled }
+        : null,
+      archiveDefaults
+    });
+    if (!saveRes.ok) return { ok: false, error: escapeMd(saveRes.error || "Konnte Index-Kanal nicht speichern.") };
+
+    await updateHistoryIndexChannelVerificationInD1(env, targetId, {
+      verifiedAt: Date.now(),
+      caps: { ok: true, title: check.title, chatType: check.chatType, checks: check.checks },
+      label: finalLabel
+    });
+
+    return {
+      ok: true,
+      channelId: targetId,
+      title: finalLabel,
+      totalProbes: nextProbes.length,
+      alreadyExisted: alreadyIdx >= 0
+    };
+  }
+
+  async function removeHistoryProbeIndexChannelFromChat(env, targetIdOrIndex) {
+    const [channels, archiveDefaults] = await Promise.all([
+      getHistoryIndexChannelsFromD1(env),
+      getHistoryArchiveDefaultsFromD1(env)
+    ]);
+    const existingProbes = channels.filter(c => c.role === "probe_index");
+    const existingArchive = channels.find(c => c.role === "archive_forum") || null;
+
+    let targetChannel = null;
+    if (typeof targetIdOrIndex === "number" && Number.isInteger(targetIdOrIndex)) {
+      targetChannel = existingProbes[targetIdOrIndex] || null;
+    } else {
+      const resolved = await resolveHistoryCanonicalChannelIdFromChat(env, String(targetIdOrIndex || ""));
+      const targetId = resolved.ok ? resolved.chatId : String(targetIdOrIndex || "").trim();
+      targetChannel = existingProbes.find(c => c.channelId === targetId) || null;
+    }
+
+    if (!targetChannel) {
+      return { ok: false, error: "Dieser Kanal ist aktuell nicht als Index-Kanal eingetragen." };
+    }
+
+    const nextProbes = existingProbes
+      .filter(c => c.channelId !== targetChannel.channelId)
+      .map(c => ({ channelId: c.channelId, label: c.label, enabled: c.enabled }));
+
+    const saveRes = await saveHistoryIndexChannelsInD1(env, {
+      probeChannels: nextProbes,
+      archiveForum: existingArchive
+        ? { channelId: existingArchive.channelId, label: existingArchive.label, enabled: existingArchive.enabled }
+        : null,
+      archiveDefaults
+    });
+    if (!saveRes.ok) return saveRes;
+
+    return {
+      ok: true,
+      removedTitle: targetChannel.label || targetChannel.channelId,
+      removedId: targetChannel.channelId,
+      hadPendingDeletes: Number(targetChannel.pendingDeleteCount || 0) > 0
+    };
+  }
+
+  async function setHistoryArchiveForumFromChat(env, rawTarget, labelHint = "") {
+    const resolved = await resolveHistoryCanonicalChannelIdFromChat(env, rawTarget);
+    if (!resolved.ok) return { ok: false, error: escapeMd(resolved.error) };
+    const targetId = resolved.chatId;
+
+    const [channels, archiveDefaults] = await Promise.all([
+      getHistoryIndexChannelsFromD1(env),
+      getHistoryArchiveDefaultsFromD1(env)
+    ]);
+    const existingProbes = channels.filter(c => c.role === "probe_index");
+
+    if (existingProbes.some(c => c.channelId === targetId)) {
+      return {
+        ok: false,
+        error: "Dieser Chat ist bereits ein Index-Kanal mit Auto-Löschung und darf nicht gleichzeitig als Themen-Archiv genutzt werden."
+      };
+    }
+
+    const check = await validateHistoryChannelAccess(env, targetId, "archive_forum");
+    if (!check.ok) {
+      return {
+        ok: false,
+        error: `Rechteprüfung für Themen-Archiv fehlgeschlagen:\n${formatValidationChecksMarkdown(check)}`,
+        validation: check
+      };
+    }
+
+    const finalLabel = String(labelHint || check.title || resolved.title || "Sortiertes Themen-Archiv").trim().slice(0, 80);
+    const saveRes = await saveHistoryIndexChannelsInD1(env, {
+      probeChannels: existingProbes.map(c => ({ channelId: c.channelId, label: c.label, enabled: c.enabled })),
+      archiveForum: { channelId: targetId, label: finalLabel, enabled: true },
+      archiveDefaults
+    });
+    if (!saveRes.ok) return { ok: false, error: escapeMd(saveRes.error || "Konnte Themen-Archiv nicht speichern.") };
+
+    await updateHistoryIndexChannelVerificationInD1(env, targetId, {
+      verifiedAt: Date.now(),
+      caps: { ok: true, title: check.title, isForum: check.isForum, checks: check.checks, warnings: check.warnings },
+      label: finalLabel
+    });
+
+    return {
+      ok: true,
+      channelId: targetId,
+      title: finalLabel,
+      warnings: Array.isArray(check.warnings) ? check.warnings : []
+    };
+  }
+
+  async function removeHistoryArchiveForumFromChat(env) {
+    const [channels, archiveDefaults] = await Promise.all([
+      getHistoryIndexChannelsFromD1(env),
+      getHistoryArchiveDefaultsFromD1(env)
+    ]);
+    const existingProbes = channels.filter(c => c.role === "probe_index");
+    const existingArchive = channels.find(c => c.role === "archive_forum") || null;
+    if (!existingArchive) {
+      return { ok: false, error: "Es ist aktuell kein Sortiertes Themen-Archiv konfiguriert." };
+    }
+    const saveRes = await saveHistoryIndexChannelsInD1(env, {
+      probeChannels: existingProbes.map(c => ({ channelId: c.channelId, label: c.label, enabled: c.enabled })),
+      archiveForum: null,
+      archiveDefaults
+    });
+    if (!saveRes.ok) return saveRes;
+    return { ok: true, removedTitle: existingArchive.label || existingArchive.channelId };
+  }
+
+  async function renderHistoryConfigChatMenu(env, adminDmId, editMsgId = null, note = "") {
+    const { sendMessage, editMessageText } = tgApi(env);
+    const [channels, archiveDefaults, adminState] = await Promise.all([
+      getHistoryIndexChannelsFromD1(env),
+      getHistoryArchiveDefaultsFromD1(env),
+      getHistoryChatAdminState(env, adminDmId)
+    ]);
+    const probes = channels.filter(c => c.role === "probe_index");
+    const enabledProbes = probes.filter(p => p.enabled);
+    const archiveForum = channels.find(c => c.role === "archive_forum") || null;
+    const pendingDeletesTotal = probes.reduce((acc, p) => acc + Number(p.pendingDeleteCount || 0), 0);
+
+    const activeForwardWait = Boolean(
+      adminState?.awaitingForwardRole &&
+      Number(adminState?.awaitingForwardExpiresAt || 0) > Date.now()
+    );
+
+    const probeLines = probes.length === 0
+      ? `_Noch kein Index-Kanal eingerichtet._\n💡 Sende \`/index_add\` direkt in deinen privaten Index-Kanal oder klicke unten auf *Per Weiterleitung hinzufügen*.`
+      : probes.map((p, idx) => {
+          const icon = !p.enabled ? "⚪" : (p.verifiedCaps?.ok ? "✅" : (p.verifiedCaps?.ok === false ? "⛔" : "🟢"));
+          const delInfo = p.pendingDeleteCount > 0 ? ` · 🧹 ${p.pendingDeleteCount} Rest-Probes` : "";
+          return `${icon} *#${idx + 1} ${escapeMd(p.label || p.channelId)}*\n   \`${escapeMd(p.channelId)}\`${delInfo}`;
+        }).join("\n");
+
+    const archiveLine = archiveForum
+      ? `${archiveForum.enabled ? (archiveForum.verifiedCaps?.ok === false ? "⛔" : "✅") : "⚪"} *${escapeMd(archiveForum.label || archiveForum.channelId)}*\n   \`${escapeMd(archiveForum.channelId)}\`\n   📁 *Standard:* ${escapeMd(formatArchiveModeShortLabel(archiveDefaults.topicMode))} · ${archiveDefaults.timing === "after_scan" ? "Nach Scan-Ende" : "Live"} · Pin: ${archiveDefaults.pinSeriesCard ? "AN" : "AUS"}`
+      : `_Kein Themen-Archiv eingerichtet (optional)._\n💡 Sende \`/archiv_set\` direkt in deiner privaten Forum-Supergruppe oder nutze den Button unten.`;
+
+    const forwardBanner = activeForwardWait
+      ? `\n\n📨 *Weiterleitungs-Modus aktiv (${adminState.awaitingForwardRole === "archive_forum" ? "Themen-Archiv" : "Index-Kanal"}):*\n_Leite jetzt einfach eine Nachricht aus dem gewünschten Kanal weiter (oder sende hier einen t.me/c/... Link bzw. die -100... ID)._`
+      : "";
+
+    const speedInfo = enabledProbes.length > 0
+      ? `~${enabledProbes.length * 15} IDs/Min (${enabledProbes.length}/3 aktiv)`
+      : `0/3 aktiv`;
+
+    const msgText =
+      `⚙️ *INDEX-KANÄLE & SORTIERTES THEMEN-ARCHIV*\n${SEP}\n` +
+      `📡 *Private Index-Kanäle (Auto-Löschung):* ${speedInfo}\n${probeLines}\n\n` +
+      `🗂️ *Sortiertes Themen-Archiv (optional):*\n${archiveLine}` +
+      forwardBanner +
+      (note ? `\n\n${note}` : "") +
+      `\n\n📌 *Chat-Befehle:* \`/index_add\`, \`/index_del\`, \`/archiv_set\`, \`/archiv_del\` (direkt im Kanal/Forum oder hier mit Link/ID).`;
+
+    const inline_keyboard = [];
+    if (activeForwardWait) {
+      inline_keyboard.push([{ text: "❌ Weiterleitungs-Modus abbrechen", callback_data: "hc:cfg_fcancel" }]);
+    } else {
+      const addRow = [];
+      if (probes.length < 3) {
+        addRow.push({ text: `➕ Index per Weiterleitung (${probes.length}/3)`, callback_data: "hc:cfg_fidx" });
+      }
+      addRow.push({ text: archiveForum ? "🔄 Archiv neu setzen" : "🗂️ Archiv setzen", callback_data: "hc:cfg_farch" });
+      inline_keyboard.push(addRow);
+    }
+
+    if (probes.length > 0) {
+      inline_keyboard.push(
+        probes.slice(0, 3).map((p, idx) => ({
+          text: `🗑️ Index #${idx + 1}`,
+          callback_data: `hc:cfg_rm:${idx}`
+        }))
+      );
+    }
+    if (archiveForum) {
+      inline_keyboard.push([
+        { text: `📁 ${formatArchiveModeShortLabel(archiveDefaults.topicMode)}`, callback_data: "hc:cfg_mode" },
+        { text: archiveDefaults.timing === "after_scan" ? "🕒 Nach Scan" : "🕒 Live", callback_data: "hc:cfg_time" }
+      ]);
+      inline_keyboard.push([
+        { text: archiveDefaults.pinSeriesCard ? "📌 Serien-Pin: AN" : "📌 Serien-Pin: AUS", callback_data: "hc:cfg_pin" },
+        { text: "🗑️ Archiv lösen", callback_data: "hc:cfg_rmarch" }
+      ]);
+    }
+
+    const diagRow = [{ text: "🩺 Rechte prüfen", callback_data: "hc:cfg_val" }];
+    if (pendingDeletesTotal > 0) {
+      diagRow.push({ text: `🧹 ${pendingDeletesTotal} Rest-Probes löschen`, callback_data: "hc:cfg_delp" });
+    }
+    inline_keyboard.push(diagRow);
+    inline_keyboard.push([
+      { text: "📋 Jobs & Archiv", callback_data: "hc:jobs" },
+      { text: "🔄 Aktualisieren", callback_data: "hc:cfg_ref" },
+      { text: "✖️ Schließen", callback_data: "close_bot_msg" }
+    ]);
+
+    if (editMsgId) {
+      const edited = await editMessageText(adminDmId, editMsgId, msgText, { reply_markup: { inline_keyboard } });
+      if (edited) return edited;
+    }
+    return await sendMessage(adminDmId, msgText, { reply_markup: { inline_keyboard } });
+  }
+
+  async function handleHistoryChatSetupCommand(env, tgMsg, { isChannelPost = false } = {}) {
+    if (!tgMsg || !tgMsg.chat?.id || env._isCustomBotWebhook) return false;
+    const rawText = String(tgMsg.text || tgMsg.caption || "").trim();
+    const cmdMatch = rawText.match(/^\/(index|index_add|index_del|index_remove|archiv_set|archiv_del|archiv_remove)(?:@\w+)?(?:\s+([^\s]+))?(?:\s+(.*))?$/i);
+    if (!cmdMatch) return false;
+
+    const cmd = cmdMatch[1].toLowerCase();
+    const argTarget = String(cmdMatch[2] || "").trim();
+    const argExtra = String(cmdMatch[3] || "").trim();
+
+    const adminCtx = await resolveHistoryChatAdminContext(env, tgMsg, { isChannelPost });
+    if (!adminCtx.authorized) {
+      // Unberechtigte Nutzer in Gruppen/Kanälen lautlos ignorieren (0 Spam, 0 D1-Writes)
+      if (!isChannelPost && !isGroupOrChannelChat(tgMsg.chat.id)) {
+        await tgApi(env).sendMessage(tgMsg.chat.id, "🔒 Dieser Befehl steht nur Bot-Administratoren zur Verfügung.");
+      }
+      return true;
+    }
+
+    let deleteWarning = "";
+    if (adminCtx.isGroupOrChannel && adminCtx.messageId > 0) {
+      const deleted = await tgApi(env).deleteMessage(adminCtx.sourceChatId, adminCtx.messageId).catch(() => false);
+      if (!deleted) {
+        deleteWarning = "\n_ℹ️ Hinweis: Befehl konnte im Quellchat nicht automatisch gelöscht werden (fehlendes Löschrecht)._";
+      }
+    }
+
+    let note = "";
+    if (cmd === "index") {
+      await saveHistoryChatAdminState(env, adminCtx.adminDmId, { awaitingForwardRole: "", awaitingForwardExpiresAt: 0 });
+    } else if (cmd === "index_add") {
+      const target = argTarget || (adminCtx.isGroupOrChannel ? adminCtx.sourceChatId : "");
+      if (!target) {
+        await saveHistoryChatAdminState(env, adminCtx.adminDmId, {
+          awaitingForwardRole: "probe_index",
+          awaitingForwardExpiresAt: Date.now() + HISTORY_CHAT_FORWARD_TTL_MS
+        });
+        note = "📨 *Weiterleitungs-Modus gestartet:* Leite jetzt eine Nachricht aus deinem privaten Index-Kanal hierher weiter (oder sende dessen `t.me/c/...` Link bzw. `-100...` ID).";
+      } else {
+        await saveHistoryChatAdminState(env, adminCtx.adminDmId, { awaitingForwardRole: "", awaitingForwardExpiresAt: 0 });
+        const addRes = await addHistoryProbeIndexChannelFromChat(env, target, argExtra || (adminCtx.isGroupOrChannel ? adminCtx.sourceTitle : ""));
+        note = addRes.ok
+          ? `✅ *Index-Kanal gespeichert:* *${escapeMd(addRes.title)}* (\`${escapeMd(addRes.channelId)}\`) — ${addRes.totalProbes}/3 aktiv.`
+          : `⚠️ ${addRes.error}`;
+      }
+    } else if (cmd === "index_del" || cmd === "index_remove") {
+      const target = argTarget || (adminCtx.isGroupOrChannel ? adminCtx.sourceChatId : "");
+      if (!target) {
+        note = "ℹ️ Tippe unten auf den gewünschten *🗑️ Index #…* Button oder sende `/index_del -100...` (bzw. direkt im Index-Kanal).";
+      } else {
+        const rmRes = await removeHistoryProbeIndexChannelFromChat(env, target);
+        note = rmRes.ok
+          ? (rmRes.hadPendingDeletes
+              ? `⏸️ *Index-Kanal deaktiviert:* *${escapeMd(rmRes.removedTitle)}* (hat noch offene Rest-Probes zur Löschung).`
+              : `🗑️ *Index-Kanal entfernt:* *${escapeMd(rmRes.removedTitle)}*.`)
+          : `⚠️ ${escapeMd(rmRes.error || "Konnte Index-Kanal nicht entfernen.")}`;
+      }
+    } else if (cmd === "archiv_set") {
+      const target = argTarget || (adminCtx.isGroupOrChannel ? adminCtx.sourceChatId : "");
+      if (!target) {
+        await saveHistoryChatAdminState(env, adminCtx.adminDmId, {
+          awaitingForwardRole: "archive_forum",
+          awaitingForwardExpiresAt: Date.now() + HISTORY_CHAT_FORWARD_TTL_MS
+        });
+        note = "📨 *Themen-Archiv einrichten:* Sende `/archiv_set` am einfachsten direkt in deiner privaten Forum-Supergruppe — oder füge hier deren `t.me/c/...` Link bzw. `-100...` ID ein.";
+      } else {
+        await saveHistoryChatAdminState(env, adminCtx.adminDmId, { awaitingForwardRole: "", awaitingForwardExpiresAt: 0 });
+        const setRes = await setHistoryArchiveForumFromChat(env, target, argExtra || (adminCtx.isGroupOrChannel ? adminCtx.sourceTitle : ""));
+        if (setRes.ok) {
+          const wText = setRes.warnings?.length > 0 ? `\n⚠️ ${setRes.warnings.map(w => escapeMd(w)).join("\n⚠️ ")}` : "";
+          note = `✅ *Sortiertes Themen-Archiv gesetzt:* *${escapeMd(setRes.title)}* (\`${escapeMd(setRes.channelId)}\`).${wText}`;
+        } else {
+          note = `⚠️ ${setRes.error}`;
+        }
+      }
+    } else if (cmd === "archiv_del" || cmd === "archiv_remove") {
+      const rmRes = await removeHistoryArchiveForumFromChat(env);
+      note = rmRes.ok
+        ? `🗑️ *Themen-Archiv gelöst:* *${escapeMd(rmRes.removedTitle)}* (bestehende Posts in Telegram bleiben unberührt).`
+        : `⚠️ ${escapeMd(rmRes.error || "Konnte Themen-Archiv nicht entfernen.")}`;
+    }
+
+    const dmRes = await renderHistoryConfigChatMenu(env, adminCtx.adminDmId, null, `${note}${deleteWarning}`.trim());
+    if (!dmRes || !dmRes.ok) {
+      await sendHistoryGroupDmFallbackNotice(env, adminCtx.sourceChatId, adminCtx.threadId, isChannelPost);
+    }
+    return true;
+  }
+
+  // Forward-Vorrang im Privat-Chat (VOR handleIncomingMediaOrJson!):
+  // Fängt weitergeleitete Videos/Texte oder Links ab, wenn der Admin im Setup- oder Scan-Weiterleitungsmodus ist (0 Extra-D1-Reads für normale Nutzer!).
+  async function handleHistoryChatForwardInput(env, message) {
+    if (!message || !message.chat?.id || env._isCustomBotWebhook) return false;
+    if (isGroupOrChannelChat(message.chat.id)) return false;
+    const rawText = String(message.text || message.caption || "").trim();
+    if (rawText.startsWith("/")) return false;
+
+    const isForwarded = Boolean(
+      message.forward_origin ||
+      message.forward_from_chat ||
+      message.forward_from ||
+      message.forward_sender_name
+    );
+    const firstToken = rawText ? rawText.split(/\s+/)[0] : "";
+    const restTokens = rawText ? rawText.slice(firstToken.length).trim() : "";
+    const looksLikeTargetInput = Boolean(
+      firstToken &&
+      (/^-100\d{5,20}$/.test(firstToken) || /(?:t\.me|telegram\.me)\//i.test(firstToken) || /^@[A-Za-z0-9_]{4,64}$/.test(firstToken))
+    );
+    if (!isForwarded && !looksLikeTargetInput) return false;
+
+    const adminId = message.from?.id ? String(message.from.id) : "";
+    if (!adminId || !(await isTelegramBotAdmin(env, adminId))) return false;
+
+    const state = await getHistoryChatAdminState(env, adminId);
+    const role = String(state?.awaitingForwardRole || "");
+    if (!role || Number(state?.awaitingForwardExpiresAt || 0) <= Date.now()) {
+      return false;
+    }
+
+    let extractedChatId = "";
+    let extractedTitle = "";
+    let extractedMsgId = 0;
+    let privacyHiddenGroup = false;
+
+    if (isForwarded) {
+      const origin = message.forward_origin || null;
+      if (origin && origin.type === "channel" && origin.chat?.id) {
+        extractedChatId = String(origin.chat.id);
+        extractedTitle = String(origin.chat.title || origin.chat.username || "");
+        extractedMsgId = Number(origin.message_id || message.forward_from_message_id || 0);
+      } else if (origin && origin.type === "chat" && origin.sender_chat?.id) {
+        extractedChatId = String(origin.sender_chat.id);
+        extractedTitle = String(origin.sender_chat.title || origin.sender_chat.username || "");
+        extractedMsgId = Number(message.forward_from_message_id || 0);
+      } else if (message.forward_from_chat?.id) {
+        extractedChatId = String(message.forward_from_chat.id);
+        extractedTitle = String(message.forward_from_chat.title || message.forward_from_chat.username || "");
+        extractedMsgId = Number(message.forward_from_message_id || 0);
+      } else {
+        privacyHiddenGroup = true;
+      }
+    } else if (looksLikeTargetInput) {
+      extractedChatId = firstToken;
+    }
+
+    if (privacyHiddenGroup || !extractedChatId) {
+      const targetCmd = role === "archive_forum" ? "/archiv_set" : (role === "scan_source" ? "/scan" : "/index_add");
+      const privacyHint =
+        `ℹ️ *Telegram verbirgt bei normalen Gruppen-Weiterleitungen die Gruppen-ID.*\n` +
+        `Sende stattdessen einfach \`${targetCmd}\` direkt in der gewünschten Gruppe/Forum-Supergruppe *oder* füge hier einen Nachrichten-Link (\`https://t.me/c/.../123\`) ein.`;
+      if (role === "scan_source") {
+        await tgApi(env).sendMessage(adminId, privacyHint, {
+          reply_markup: { inline_keyboard: [[{ text: "❌ Abbrechen", callback_data: "hc:d_cancel" }, { text: "📋 Laufende Jobs", callback_data: "hc:jobs" }]] }
+        });
+      } else {
+        await renderHistoryConfigChatMenu(env, adminId, null, privacyHint);
+      }
+      return true;
+    }
+
+    await saveHistoryChatAdminState(env, adminId, { awaitingForwardRole: "", awaitingForwardExpiresAt: 0 });
+
+    if (role === "probe_index") {
+      const addRes = await addHistoryProbeIndexChannelFromChat(env, extractedChatId, extractedTitle);
+      const note = addRes.ok
+        ? `✅ *Index-Kanal per Weiterleitung hinzugefügt:* *${escapeMd(addRes.title)}* (\`${escapeMd(addRes.channelId)}\`) — ${addRes.totalProbes}/3 aktiv.`
+        : `⚠️ ${addRes.error}`;
+      await renderHistoryConfigChatMenu(env, adminId, null, note);
+      return true;
+    }
+
+    if (role === "archive_forum") {
+      const setRes = await setHistoryArchiveForumFromChat(env, extractedChatId, extractedTitle);
+      const wText = setRes.ok && setRes.warnings?.length > 0 ? `\n⚠️ ${setRes.warnings.map(w => escapeMd(w)).join("\n⚠️ ")}` : "";
+      const note = setRes.ok
+        ? `✅ *Sortiertes Themen-Archiv gesetzt:* *${escapeMd(setRes.title)}* (\`${escapeMd(setRes.channelId)}\`).${wText}`
+        : `⚠️ ${setRes.error}`;
+      await renderHistoryConfigChatMenu(env, adminId, null, note);
+      return true;
+    }
+
+    if (role === "scan_source") {
+      await openHistoryScanDraftForAdmin(env, adminId, {
+        rawTarget: extractedChatId,
+        titleHint: extractedTitle,
+        detectedEndId: extractedMsgId,
+        rangeArg: isForwarded ? "" : restTokens,
+        preferArchive: Boolean(state?.awaitingScanPreferArchive)
+      });
+      return true;
+    }
+
     return false;
+  }
+
+  // =========================================================================
+  // CHAT-STEUERUNG SCHRITT 2: INTERAKTIVER SCAN-START (/scan, /archiv) & /jobs
+  // =========================================================================
+  function computeHistoryJobProgressPct(job) {
+    if (!job) return 0;
+    if (job.status === "completed") return 100;
+    const startId = Math.max(1, Number(job.startMsgId || 1));
+    const endId = Math.max(startId, Number(job.endMsgId || startId));
+    const totalSpan = Math.max(1, (endId - startId) + 1);
+    const cur = Number(job.currentCursorId || startId);
+    if (job.direction === "desc") {
+      const floor = Math.max(startId, Number(job.chunkFloorId || startId));
+      const ceil = Math.min(endId, floor + HISTORY_REVERSE_BLOCK_SIZE - 1);
+      const doneAboveBlock = Math.max(0, endId - ceil);
+      const doneInBlock = Math.max(0, Math.min(ceil - floor + 1, cur - floor));
+      return Math.max(0, Math.min(99, Math.round(((doneAboveBlock + doneInBlock) / totalSpan) * 100)));
+    }
+    const doneAsc = Math.max(0, cur - startId);
+    return Math.max(0, Math.min(99, Math.round((doneAsc / totalSpan) * 100)));
+  }
+
+  function formatHistoryJobStatusBadge(status) {
+    if (status === "running") return "🟢 Läuft";
+    if (status === "queued") return "🕒 Warteschlange";
+    if (status === "paused") return "⏸️ Pausiert";
+    if (status === "flood_wait") return "⏳ Flood-Pause";
+    if (status === "completed") return "✅ Fertig";
+    if (status === "error") return "⛔ Fehler";
+    return `ℹ️ ${String(status || "?")}`;
+  }
+
+  function formatDeInt(n) {
+    return Number(n || 0).toLocaleString("de-DE");
+  }
+
+  function parseHistoryScanRangeArg(rawRangeStr, fallbackEndId = 0) {
+    const str = String(rawRangeStr || "").trim();
+    const safeFallbackEnd = Math.max(0, Math.min(2000000000, Math.floor(Number(fallbackEndId || 0))));
+
+    if (!str) {
+      if (safeFallbackEnd <= 0) {
+        return { ok: false, missingEndId: true };
+      }
+      const startMsgId = Math.max(1, safeFallbackEnd - 2000 + 1);
+      return { ok: true, startMsgId, endMsgId: safeFallbackEnd, rangePreset: "2000" };
+    }
+
+    if (/^(?:all|alle|komplett|full)$/i.test(str)) {
+      if (safeFallbackEnd <= 0) return { ok: false, missingEndId: true };
+      return { ok: true, startMsgId: 1, endMsgId: safeFallbackEnd, rangePreset: "all" };
+    }
+
+    // Bereich: "1200-4500", "1200..4500", "1200:4500", "1200 4500"
+    const rangeMatch = str.match(/^(\d{1,10})\s*(?:-|\.\.|:|\s+)\s*(\d{1,10})$/);
+    if (rangeMatch) {
+      const a = Math.max(1, Math.min(2000000000, parseInt(rangeMatch[1], 10)));
+      const b = Math.max(1, Math.min(2000000000, parseInt(rangeMatch[2], 10)));
+      const startMsgId = Math.min(a, b);
+      const endMsgId = Math.max(a, b);
+      return { ok: true, startMsgId, endMsgId, rangePreset: "custom" };
+    }
+
+    // Einzelzahl: "500" -> letzte N IDs bis fallbackEndId
+    const singleMatch = str.match(/^(\d{1,8})$/);
+    if (singleMatch) {
+      const count = Math.max(1, Math.min(20000000, parseInt(singleMatch[1], 10)));
+      if (safeFallbackEnd <= 0) {
+        return { ok: false, missingEndId: true, requestedCount: count };
+      }
+      const startMsgId = Math.max(1, safeFallbackEnd - count + 1);
+      const preset = (count === 500 || count === 2000 || count === 5000) ? String(count) : "custom";
+      return { ok: true, startMsgId, endMsgId: safeFallbackEnd, rangePreset: preset };
+    }
+
+    return { ok: false, error: `Unbekanntes Bereichsformat '${escapeMd(str)}'. Erlaubt sind z. B. \`500\`, \`1200-4500\` oder \`komplett\`.` };
+  }
+
+  function applyHistoryDraftRangePreset(draft, preset) {
+    if (!draft) return draft;
+    const baseEnd = Math.max(1, Number(draft.detectedEndId || draft.endMsgId || 1));
+    if (preset === "all") {
+      return { ...draft, startMsgId: 1, endMsgId: baseEnd, rangePreset: "all" };
+    }
+    const n = parseInt(String(preset || "2000"), 10);
+    if (Number.isInteger(n) && n > 0) {
+      return { ...draft, startMsgId: Math.max(1, baseEnd - n + 1), endMsgId: baseEnd, rangePreset: String(n) };
+    }
+    return draft;
+  }
+
+  async function openHistoryScanDraftForAdmin(env, adminDmId, {
+    rawTarget = "",
+    titleHint = "",
+    detectedEndId = 0,
+    usedReplyEndId = false,
+    rangeArg = "",
+    preferArchive = false,
+    extraNote = ""
+  } = {}) {
+    const { sendMessage } = tgApi(env);
+    const resolved = await resolveHistoryCanonicalChannelIdFromChat(env, rawTarget);
+    if (!resolved.ok) {
+      return await sendMessage(
+        adminDmId,
+        `⚠️ *Quelle konnte nicht erkannt werden:* ${escapeMd(resolved.error || "Ungültige Eingabe.")}\n\n` +
+        `💡 Sende \`/scan\` direkt in der Quellgruppe oder hier mit einem Nachrichten-Link (\`https://t.me/c/.../4500\`).${extraNote}`,
+        { reply_markup: { inline_keyboard: [[{ text: "📋 Jobs & Archiv", callback_data: "hc:jobs" }, { text: "⚙️ Index/Archiv", callback_data: "hc:cfg_ref" }]] } }
+      );
+    }
+
+    const canonicalChatId = resolved.chatId;
+    if (await isHistorySystemBlockedChat(env, canonicalChatId)) {
+      return await sendMessage(
+        adminDmId,
+        `⛔ *Scan blockiert:* \`${escapeMd(canonicalChatId)}\` ist als Index-Kanal oder Themen-Archiv konfiguriert und darf nicht selbst als Scan-Quelle genutzt werden (Endlosschleifen-Schutz).${extraNote}`,
+        { reply_markup: { inline_keyboard: [[{ text: "⚙️ Index/Archiv öffnen", callback_data: "hc:cfg_ref" }]] } }
+      );
+    }
+
+    // Chat-Info & Speicherschutz-Prüfung (has_protected_content)
+    const chatInfo = await tgApi(env).getChat(canonicalChatId, { bypassCache: false });
+    if (chatInfo?.ok && chatInfo.hasProtectedContent) {
+      return await sendMessage(
+        adminDmId,
+        `⛔ *Weiterleitungssperre aktiv:* In *${escapeMd(chatInfo.title || titleHint || canonicalChatId)}* ist \`has_protected_content\` aktiviert.\n` +
+        `Telegram blockiert dort \`forwardMessage\`, weshalb kein automatischer Verlaufs-Scan möglich ist.${extraNote}`,
+        { reply_markup: { inline_keyboard: [[{ text: "📋 Laufende Jobs", callback_data: "hc:jobs" }]] } }
+      );
+    }
+
+    const finalTitle = String(titleHint || chatInfo?.title || resolved.title || canonicalChatId).trim().slice(0, 120);
+    const effectiveDetectedEnd = Math.max(0, Number(detectedEndId || resolved.messageId || 0));
+    const parsedRange = parseHistoryScanRangeArg(rangeArg, effectiveDetectedEnd);
+    if (!parsedRange.ok) {
+      if (parsedRange.missingEndId) {
+        return await sendMessage(
+          adminDmId,
+          `ℹ️ *Für* *${escapeMd(finalTitle)}* (\`${escapeMd(canonicalChatId)}\`) *fehlt noch die Bis-ID.*\n\n` +
+          `So startest du sofort:\n` +
+          `• \`/scan\` direkt in der Quellgruppe senden *(Befehl wird dort sofort gelöscht)*\n` +
+          `• Oder hier mit Bereich: \`/scan ${escapeMd(canonicalChatId)} 1-5000\`\n` +
+          `• Oder einen Nachrichten-Link einfügen: \`https://t.me/c/.../4500\`${extraNote}`,
+          { reply_markup: { inline_keyboard: [[{ text: "📋 Jobs & Archiv", callback_data: "hc:jobs" }, { text: "✖️ Schließen", callback_data: "close_bot_msg" }]] } }
+        );
+      }
+      return await sendMessage(adminDmId, `⚠️ ${parsedRange.error}${extraNote}`);
+    }
+
+    const [channels, archiveDefaults] = await Promise.all([
+      getHistoryIndexChannelsFromD1(env),
+      getHistoryArchiveDefaultsFromD1(env)
+    ]);
+    const archiveForum = channels.find(c => c.role === "archive_forum" && c.enabled) || null;
+    const enableArchiveMirror = Boolean(preferArchive && archiveForum);
+
+    let archiveMissingNote = "";
+    if (preferArchive && !archiveForum) {
+      archiveMissingNote = "\nℹ️ _Hinweis: Noch kein aktives Themen-Archiv eingerichtet. Mit `/archiv_set` im Forum kannst du es jederzeit ergänzen._";
+    }
+
+    const draft = {
+      sourceChatId: canonicalChatId,
+      sourceTitle: finalTitle,
+      startMsgId: parsedRange.startMsgId,
+      endMsgId: parsedRange.endMsgId,
+      detectedEndId: effectiveDetectedEnd > 0 ? effectiveDetectedEnd : parsedRange.endMsgId,
+      usedReplyEndId: Boolean(usedReplyEndId),
+      rangePreset: parsedRange.rangePreset,
+      direction: "desc",
+      enableArchiveMirror,
+      archiveTopicMode: archiveDefaults.topicMode || "type_genre",
+      archiveTiming: archiveDefaults.timing || "live",
+      archivePinSeriesCard: Boolean(archiveDefaults.pinSeriesCard),
+      archiveMaxSeriesTopics: Number(archiveDefaults.maxSeriesTopics || 250),
+      enableReactions: false,
+      cronEnabled: true,
+      createdAt: Date.now()
+    };
+
+    await saveHistoryChatAdminState(env, adminDmId, {
+      draft,
+      awaitingForwardRole: "",
+      awaitingForwardExpiresAt: 0,
+      awaitingScanPreferArchive: false
+    });
+
+    return await renderHistoryScanDraftMenu(env, adminDmId, null, `${extraNote}${archiveMissingNote}`.trim());
+  }
+
+  async function renderHistoryScanDraftMenu(env, adminDmId, editMsgId = null, note = "") {
+    const { sendMessage, editMessageText } = tgApi(env);
+    const [adminState, channels, jobs] = await Promise.all([
+      getHistoryChatAdminState(env, adminDmId),
+      getHistoryIndexChannelsFromD1(env),
+      listHistoryCrawlJobsFromD1(env, 30)
+    ]);
+    const draft = adminState?.draft || null;
+    if (!draft || !draft.sourceChatId) {
+      const emptyText = "ℹ️ *Kein aktiver Scan-Entwurf vorhanden* (nach 30 Min. abgelaufen).\nSende `/scan` oder `/archiv` in einer Gruppe oder im Privat-Chat, um neu zu starten.";
+      const kb = [[{ text: "📋 Laufende Jobs", callback_data: "hc:jobs" }, { text: "⚙️ Index/Archiv", callback_data: "hc:cfg_ref" }]];
+      if (editMsgId) {
+        const ed = await editMessageText(adminDmId, editMsgId, emptyText, { reply_markup: { inline_keyboard: kb } });
+        if (ed) return ed;
+      }
+      return await sendMessage(adminDmId, emptyText, { reply_markup: { inline_keyboard: kb } });
+    }
+
+    const enabledProbes = channels.filter(c => c.role === "probe_index" && c.enabled);
+    const archiveForum = channels.find(c => c.role === "archive_forum" && c.enabled) || null;
+    const effectiveArchiveOn = Boolean(draft.enableArchiveMirror && archiveForum);
+
+    // Doppel-Job-Schutz: Prüfen, ob für dieselbe Quelle bereits ein offener Job existiert
+    const existingOpenJob = jobs.find(
+      j => j.sourceChatId === draft.sourceChatId && ["running", "queued", "paused", "flood_wait"].includes(j.status)
+    ) || null;
+
+    const spanCount = Math.max(1, Number(draft.endMsgId) - Number(draft.startMsgId) + 1);
+    const estMinutes = enabledProbes.length > 0 ? Math.max(1, Math.ceil(spanCount / (enabledProbes.length * 15))) : 0;
+    const estLabel = enabledProbes.length > 0
+      ? (estMinutes >= 120 ? `~${(estMinutes / 60).toFixed(1)} Std.` : `~${estMinutes} Min.`)
+      : "—";
+
+    const replyTag = draft.usedReplyEndId ? " *(aus Antwort-Nachricht)*" : "";
+    const dupBanner = existingOpenJob
+      ? `\n⚠️ *Doppel-Job-Hinweis:* Für diese Quelle existiert bereits *Job #${existingOpenJob.id}* (${formatHistoryJobStatusBadge(existingOpenJob.status)}, \`${computeHistoryJobProgressPct(existingOpenJob)} %\`, #${formatDeInt(existingOpenJob.startMsgId)}–#${formatDeInt(existingOpenJob.endMsgId)}).\n`
+      : "";
+    const noProbeBanner = enabledProbes.length === 0
+      ? `\n⛔ *Kein aktiver Index-Kanal!* Richte zuerst mit \`/index_add\` mindestens 1 privaten Index-Kanal ein.\n`
+      : "";
+
+    const archSummary = !archiveForum
+      ? "⚪ Nicht eingerichtet (`/archiv_set`)"
+      : (effectiveArchiveOn
+          ? `✅ *AN* → *${escapeMd(archiveForum.label || archiveForum.channelId)}*\n   📁 ${escapeMd(formatArchiveModeShortLabel(draft.archiveTopicMode))} · 🕒 ${draft.archiveTiming === "after_scan" ? "Nach Scan-Ende" : "Live"}${draft.archiveTopicMode === "per_series_plus_genre" ? ` · 📌 Pin: ${draft.archivePinSeriesCard ? "AN" : "AUS"}` : ""}`
+          : "⚪ AUS *(nur Mediathek)*");
+
+    const msgText =
+      `🚀 *VERLAUFS-SCAN & ARCHIVIERUNG KONFIGURIEREN*\n${SEP}\n` +
+      `📡 *Quelle:* *${escapeMd(draft.sourceTitle)}*\n` +
+      `   \`${escapeMd(draft.sourceChatId)}\`${replyTag}\n` +
+      `🔢 *Bereich:* \`#${formatDeInt(draft.startMsgId)}\` bis \`#${formatDeInt(draft.endMsgId)}\` (\`${formatDeInt(spanCount)}\` IDs · ${estLabel})\n` +
+      `🧭 *Richtung:* ${draft.direction === "desc" ? "⬇️ Neueste zuerst (50er-Kontext)" : "⬆️ Älteste zuerst"}\n` +
+      `🗂️ *Themen-Archiv:* ${archSummary}\n` +
+      `👍 *Reaktionen:* ${draft.enableReactions ? "AN" : "AUS"} · ⏱️ *2-Min-Cron:* ${draft.cronEnabled ? "AN" : "AUS"}\n` +
+      `📡 *Index-Pool:* \`${enabledProbes.length}/3\` aktiv` +
+      dupBanner +
+      noProbeBanner +
+      (note ? `\n\n${note}` : "");
+
+    const p = String(draft.rangePreset || "");
+    const inline_keyboard = [];
+    if (existingOpenJob) {
+      inline_keyboard.push([{ text: `📋 Zu bestehendem Job #${existingOpenJob.id} wechseln`, callback_data: `hc:job_v:${existingOpenJob.id}` }]);
+    }
+
+    inline_keyboard.push([
+      { text: `${p === "500" ? "● " : ""}500`, callback_data: "hc:d_r:500" },
+      { text: `${p === "2000" ? "● " : ""}2.000`, callback_data: "hc:d_r:2000" },
+      { text: `${p === "5000" ? "● " : ""}5.000`, callback_data: "hc:d_r:5000" },
+      { text: `${p === "all" ? "● " : ""}Ab #1`, callback_data: "hc:d_r:all" }
+    ]);
+
+    inline_keyboard.push([
+      { text: draft.direction === "desc" ? "⬇️ Neueste zuerst" : "⬆️ Älteste zuerst", callback_data: "hc:d_dir" },
+      { text: effectiveArchiveOn ? "🗂️ Archiv: AN" : "🗂️ Archiv: AUS", callback_data: "hc:d_arch" }
+    ]);
+
+    if (effectiveArchiveOn) {
+      const archOptsRow = [
+        { text: `📁 ${formatArchiveModeShortLabel(draft.archiveTopicMode)}`, callback_data: "hc:d_mode" },
+        { text: draft.archiveTiming === "after_scan" ? "🕒 Nach Scan" : "🕒 Live", callback_data: "hc:d_time" }
+      ];
+      inline_keyboard.push(archOptsRow);
+      if (draft.archiveTopicMode === "per_series_plus_genre") {
+        inline_keyboard.push([
+          { text: draft.archivePinSeriesCard ? "📌 Serien-Karte anpinnen: AN" : "📌 Serien-Karte anpinnen: AUS", callback_data: "hc:d_pin" }
+        ]);
+      }
+    }
+
+    inline_keyboard.push([
+      { text: draft.enableReactions ? "👍 Reaktionen: AN" : "👍 Reaktionen: AUS", callback_data: "hc:d_react" },
+      { text: draft.cronEnabled ? "⏱️ 2-Min-Cron: AN" : "⏱️ 2-Min-Cron: AUS", callback_data: "hc:d_cron" }
+    ]);
+
+    if (enabledProbes.length > 0) {
+      inline_keyboard.push([
+        { text: "🚀 Scan jetzt starten", callback_data: "hc:go" },
+        { text: "🔎 1-ID-Testprobe", callback_data: "hc:probe" }
+      ]);
+    } else {
+      inline_keyboard.push([{ text: "⚙️ Index-Kanal jetzt einrichten", callback_data: "hc:cfg_ref" }]);
+    }
+
+    inline_keyboard.push([
+      { text: "📋 Laufende Jobs", callback_data: "hc:jobs" },
+      { text: "❌ Abbrechen", callback_data: "hc:d_cancel" }
+    ]);
+
+    if (editMsgId) {
+      const edited = await editMessageText(adminDmId, editMsgId, msgText, { reply_markup: { inline_keyboard } });
+      if (edited) return edited;
+    }
+    return await sendMessage(adminDmId, msgText, { reply_markup: { inline_keyboard } });
+  }
+
+  async function renderHistoryJobsAndArchiveMenu(env, adminDmId, editMsgId = null, { selectedJobId = 0, note = "", confirmDeleteJobId = 0 } = {}) {
+    const { sendMessage, editMessageText } = tgApi(env);
+    const [jobs, channels] = await Promise.all([
+      listHistoryCrawlJobsFromD1(env, 16),
+      getHistoryIndexChannelsFromD1(env)
+    ]);
+    const enabledProbes = channels.filter(c => c.role === "probe_index" && c.enabled);
+    const archiveForum = channels.find(c => c.role === "archive_forum") || null;
+    const archiveStats = await getArchiveMirrorStatsFromD1(env, archiveForum?.channelId || "");
+
+    const openJobs = jobs.filter(j => ["running", "flood_wait", "queued", "paused", "error"].includes(j.status));
+    const displayJobs = openJobs.length > 0 ? openJobs.slice(0, 6) : jobs.slice(0, 4);
+
+    let focusJob = null;
+    if (selectedJobId > 0) {
+      focusJob = jobs.find(j => j.id === selectedJobId) || null;
+    }
+    if (!focusJob) {
+      focusJob = jobs.find(j => j.status === "running" || j.status === "flood_wait") ||
+        openJobs[0] ||
+        jobs[0] ||
+        null;
+    }
+
+    let jobsBlock = "";
+    if (displayJobs.length === 0) {
+      jobsBlock = `_Noch keine Verlaufs-Scans angelegt._\n💡 Sende \`/scan\` oder \`/archiv\` in einer Quellgruppe, um den ersten Scan zu starten.`;
+    } else {
+      jobsBlock = displayJobs.map(j => {
+        const pct = computeHistoryJobProgressPct(j);
+        const selMark = focusJob && focusJob.id === j.id ? "👉 " : "";
+        const archTag = j.enableArchiveMirror ? " · 🗂️" : "";
+        const cronTag = j.cronEnabled ? " · ⏱️" : " · 🔕";
+        return `${selMark}*#${j.id} ${escapeMd(j.sourceTitle || j.sourceChatId)}* (${pct} %)\n` +
+          `   ${formatHistoryJobStatusBadge(j.status)} · \`#${formatDeInt(j.startMsgId)}–#${formatDeInt(j.endMsgId)}\` · 🎬 \`${j.mediaFoundCount}\`${archTag}${cronTag}`;
+      }).join("\n");
+    }
+
+    let focusDetail = "";
+    if (focusJob) {
+      const span = Math.max(1, focusJob.endMsgId - focusJob.startMsgId + 1);
+      const pct = computeHistoryJobProgressPct(focusJob);
+      const errLine = focusJob.lastError ? `\n   ⚠️ _${escapeMd(focusJob.lastError)}_` : "";
+      const turboActive = Number(focusJob.workerLeaseUntil || 0) > Date.now();
+      const turboLine = turboActive ? `\n   🚀 _Browser-Turbo aktiv (Cron pausiert kurz automatisch)_` : "";
+      focusDetail =
+        `\n\n🎯 *Fokus: Job #${focusJob.id}* (\`${pct} %\` · \`${formatDeInt(focusJob.scannedCount)}/${formatDeInt(span)}\`)\n` +
+        `   ${focusJob.direction === "desc" ? "⬇️ Neueste zuerst" : "⬆️ Älteste zuerst"} · 🎬 \`${focusJob.mediaFoundCount}\` Medien · ⏭️ \`${focusJob.skippedExistingCount}\` Skip · ⏱️ Cron: *${focusJob.cronEnabled ? "AN" : "AUS"}*` +
+        turboLine +
+        errLine;
+    }
+
+    const archBlock = archiveForum
+      ? `\n\n🗂️ *Themen-Archiv:* *${escapeMd(archiveForum.label || archiveForum.channelId)}*${archiveForum.enabled ? "" : " _(deaktiviert)_"}\n` +
+        `   ⏳ Wartend: \`${archiveStats.pending}\` · 🧷 Bis Scan-Ende: \`${archiveStats.held}\` · ✅ Archiviert: \`${archiveStats.posted}\` · ⛔ Fehler: \`${archiveStats.failed}\` · 📁 Themen: \`${archiveStats.topicCount}\``
+      : `\n\n🗂️ *Themen-Archiv:* _Nicht konfiguriert (\`/archiv_set\`)._`;
+
+    const turboHint = openJobs.some(j => (j.endMsgId - j.startMsgId) >= 2500)
+      ? `\n\n💡 _Tipp für sehr große Verläufe: Im Admin-Panel steht zusätzlich der 🚀 Browser-Turbo zur Verfügung._`
+      : "";
+
+    const msgText =
+      `📋 *VERLAUFS-JOBS & THEMEN-ARCHIV*\n${SEP}\n` +
+      `📡 *Index-Pool:* \`${enabledProbes.length}/3\` aktiv\n\n` +
+      `${jobsBlock}` +
+      focusDetail +
+      archBlock +
+      turboHint +
+      (note ? `\n\n${note}` : "");
+
+    const inline_keyboard = [];
+
+    // Job-Auswahlleiste bei mehreren Jobs
+    if (displayJobs.length > 1) {
+      inline_keyboard.push(
+        displayJobs.slice(0, 4).map(j => {
+          const isSel = focusJob && focusJob.id === j.id;
+          const ic = j.status === "running" ? "🟢" : (j.status === "paused" ? "⏸️" : (j.status === "queued" ? "🕒" : (j.status === "completed" ? "✅" : "⚠️")));
+          return {
+            text: `${isSel ? "● " : ""}#${j.id} ${ic}`,
+            callback_data: `hc:job_v:${j.id}`
+          };
+        })
+      );
+    }
+
+    // Aktionen für den fokussierten Job
+    if (focusJob) {
+      const jid = focusJob.id;
+      const isRunnable = ["running", "queued", "flood_wait"].includes(focusJob.status);
+      const isPausedOrErr = ["paused", "error"].includes(focusJob.status);
+      if (confirmDeleteJobId === jid) {
+        inline_keyboard.push([
+          { text: `🗑️ Ja, Job #${jid} wirklich löschen`, callback_data: `hc:job_delc:${jid}` },
+          { text: "↩️ Abbrechen", callback_data: `hc:job_v:${jid}` }
+        ]);
+      } else {
+        const row1 = [];
+        if (isRunnable) {
+          row1.push({ text: `⏸️ #${jid} Pause`, callback_data: `hc:job_p:${jid}` });
+          row1.push({ text: `⚡ 1 Scan-Schritt`, callback_data: `hc:job_s:${jid}` });
+        } else if (isPausedOrErr) {
+          row1.push({ text: `▶️ #${jid} Fortsetzen`, callback_data: `hc:job_r:${jid}` });
+        }
+        if (focusJob.status !== "completed") {
+          row1.push({ text: focusJob.cronEnabled ? "⏱️ Cron: AN" : "🔕 Cron: AUS", callback_data: `hc:job_c:${jid}` });
+        }
+        if (row1.length > 0) inline_keyboard.push(row1);
+        if (!isRunnable) {
+          inline_keyboard.push([{ text: `🗑️ Job #${jid} entfernen`, callback_data: `hc:job_del:${jid}` }]);
+        }
+      }
+    }
+
+    // Archiv-Queue-Aktionen
+    if (archiveForum || archiveStats.total > 0) {
+      const archRow = [];
+      if (archiveStats.pending > 0 && archiveForum?.enabled) {
+        archRow.push({ text: "⚡ 4 Archiv-Posts senden", callback_data: "hc:arch_s" });
+      }
+      if (archiveStats.held > 0) {
+        archRow.push({ text: `🔓 ${archiveStats.held} freigeben`, callback_data: "hc:arch_rel" });
+      }
+      if (archiveStats.failed > 0) {
+        archRow.push({ text: `🔁 ${archiveStats.failed} Fehler neu`, callback_data: "hc:arch_ret" });
+      }
+      if (archRow.length > 0) inline_keyboard.push(archRow);
+    }
+
+    inline_keyboard.push([
+      { text: "🔄 Aktualisieren", callback_data: focusJob ? `hc:job_v:${focusJob.id}` : "hc:jobs" },
+      { text: "⚙️ Index/Archiv", callback_data: "hc:cfg_ref" },
+      { text: "✖️ Schließen", callback_data: "close_bot_msg" }
+    ]);
+
+    if (editMsgId) {
+      const edited = await editMessageText(adminDmId, editMsgId, msgText, { reply_markup: { inline_keyboard } });
+      if (edited) return edited;
+    }
+    return await sendMessage(adminDmId, msgText, { reply_markup: { inline_keyboard } });
+  }
+
+  async function handleHistoryScanAndJobsCommand(env, tgMsg, { isChannelPost = false } = {}) {
+    if (!tgMsg || !tgMsg.chat?.id || env._isCustomBotWebhook) return false;
+    const rawText = String(tgMsg.text || tgMsg.caption || "").trim();
+    const cmdMatch = rawText.match(/^\/(scan|archiv|scan_start|archiv_start|jobs|archiv_status|scan_status|archiv_live|live_archiv)(?:@\w+)?(?:\s+(.*))?$/i);
+    if (!cmdMatch) return false;
+
+    const cmd = cmdMatch[1].toLowerCase();
+    const rawRest = String(cmdMatch[2] || "").trim();
+
+    const adminCtx = await resolveHistoryChatAdminContext(env, tgMsg, { isChannelPost });
+    if (!adminCtx.authorized) {
+      if (!isChannelPost && !isGroupOrChannelChat(tgMsg.chat.id)) {
+        await tgApi(env).sendMessage(tgMsg.chat.id, "🔒 Dieser Befehl steht nur Bot-Administratoren zur Verfügung.");
+      }
+      return true;
+    }
+
+    let deleteWarning = "";
+    let commandDeleted = false;
+    if (adminCtx.isGroupOrChannel && adminCtx.messageId > 0) {
+      commandDeleted = await tgApi(env).deleteMessage(adminCtx.sourceChatId, adminCtx.messageId).catch(() => false);
+      if (!commandDeleted) {
+        deleteWarning = "\n_ℹ️ Hinweis: Befehl konnte im Quellchat nicht automatisch gelöscht werden (fehlendes Löschrecht)._";
+      }
+    }
+
+    // 0. /archiv_live oder /live_archiv -> Pro-Gruppe Live-Spiegeln ins Themen-Archiv umschalten
+    if (cmd === "archiv_live" || cmd === "live_archiv") {
+      let targetCid = "";
+      let targetTitle = "";
+      let modeArg = "";
+      if (adminCtx.isGroupOrChannel) {
+        targetCid = adminCtx.sourceChatId;
+        targetTitle = adminCtx.sourceTitle;
+        modeArg = rawRest.split(/\s+/)[0] || "";
+      } else {
+        if (!rawRest) {
+          await renderAutoIngestStatusMenu(
+            env,
+            adminCtx.adminDmId,
+            null,
+            "ℹ️ Tippe unten bei der gewünschten Gruppe auf *🗂️ Archiv: AN/AUS* — oder sende `/archiv_live` direkt in einer Gruppe."
+          );
+          return true;
+        }
+        const parts = rawRest.split(/\s+/);
+        const resolved = await resolveHistoryCanonicalChannelIdFromChat(env, parts[0]);
+        if (!resolved.ok) {
+          await renderAutoIngestStatusMenu(env, adminCtx.adminDmId, null, `⚠️ ${escapeMd(resolved.error || "Ungültige Gruppe/Kanal.")}`);
+          return true;
+        }
+        targetCid = resolved.chatId;
+        targetTitle = resolved.title || targetCid;
+        modeArg = parts[1] || "";
+      }
+
+      const [chatsMap, archiveForums] = await Promise.all([
+        getAutoIngestChatsMap(env, true),
+        getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true })
+      ]);
+      const prevEntry = chatsMap[targetCid] || null;
+      let nextArchFlag = !Boolean(prevEntry?.archiveMirrorEnabled);
+      if (/^(?:on|an|1|ein|enable|true)$/i.test(modeArg)) nextArchFlag = true;
+      else if (/^(?:off|aus|0|disable|false)$/i.test(modeArg)) nextArchFlag = false;
+
+      let note = "";
+      if (nextArchFlag && await isHistorySystemBlockedChat(env, targetCid)) {
+        note = `⛔ *Live-Archiv blockiert:* \`${escapeMd(targetCid)}\` ist ein Index-Kanal oder das Themen-Archiv selbst (Endlosschleifen-Schutz).`;
+      } else if (nextArchFlag && archiveForums.length === 0) {
+        note = `⚠️ *Noch kein aktives Themen-Archiv eingerichtet.* Sende zuerst \`/archiv_set\` in deiner privaten Forum-Supergruppe.`;
+      } else {
+        const res = await setAutoIngestChatEnabled(env, targetCid, {
+          archiveMirrorEnabled: nextArchFlag,
+          title: targetTitle || prevEntry?.title || targetCid,
+          chatType: isChannelPost ? "channel" : (adminCtx.isGroupOrChannel ? String(tgMsg.chat.type || "group") : (prevEntry?.chatType || (targetCid.startsWith("-100") ? "channel" : "group"))),
+          activatedBy: adminCtx.adminDmId
+        });
+        if (!res.ok) {
+          note = `⚠️ ${escapeMd(res.error || "Konnte Live-Archiv-Status nicht speichern.")}`;
+        } else {
+          const ingestHint = nextArchFlag && !res.entry?.enabled
+            ? "\n_💡 Hinweis: Für diese Gruppe ist `/ingest_on` aktuell pausiert — aktiviere Auto-Ingest unten, damit neue Live-Posts eingesammelt & gespiegelt werden._"
+            : "";
+          note = nextArchFlag
+            ? `🗂️ *Live-Archiv für* *${escapeMd(res.entry.title)}* *eingeschaltet.* Neue Live-Posts werden nach Erkennung automatisch ins Themen-Archiv gespiegelt.${ingestHint}`
+            : `⚪ *Live-Archiv für* *${escapeMd(res.entry.title)}* *ausgeschaltet.*`;
+        }
+      }
+
+      const dmRes = await renderAutoIngestStatusMenu(env, adminCtx.adminDmId, null, `${note}${deleteWarning}`.trim());
+      if (!dmRes || !dmRes.ok) {
+        await sendHistoryGroupDmFallbackNotice(env, adminCtx.sourceChatId, adminCtx.threadId, isChannelPost);
+      }
+      return true;
+    }
+
+    // 1. /jobs, /archiv_status, /scan_status -> Zentrale im Admin-DM
+    if (cmd === "jobs" || cmd === "archiv_status" || cmd === "scan_status") {
+      const dmRes = await renderHistoryJobsAndArchiveMenu(env, adminCtx.adminDmId, null, { note: deleteWarning.trim() });
+      if (!dmRes || !dmRes.ok) {
+        await sendHistoryGroupDmFallbackNotice(env, adminCtx.sourceChatId, adminCtx.threadId, isChannelPost);
+      }
+      return true;
+    }
+
+    // 2. /scan oder /archiv
+    const preferArchive = cmd === "archiv" || cmd === "archiv_start";
+
+    if (adminCtx.isGroupOrChannel) {
+      // Echte Antwort (Reply) erkennen — in Forum-Supergruppen NICHT die automatische Topic-Root-Nachricht als Reply werten!
+      const isRealReply = Boolean(
+        tgMsg.reply_to_message?.message_id &&
+        !tgMsg.reply_to_message?.forum_topic_created &&
+        (!tgMsg.is_topic_message || Number(tgMsg.reply_to_message.message_id) !== Number(tgMsg.message_thread_id || 0))
+      );
+      const rawOwnMsgId = Number(tgMsg.message_id || 0);
+      const detectedEndId = isRealReply
+        ? Number(tgMsg.reply_to_message.message_id)
+        : (commandDeleted && rawOwnMsgId > 1 ? rawOwnMsgId - 1 : rawOwnMsgId);
+
+      const dmRes = await openHistoryScanDraftForAdmin(env, adminCtx.adminDmId, {
+        rawTarget: adminCtx.sourceChatId,
+        titleHint: adminCtx.sourceTitle,
+        detectedEndId,
+        usedReplyEndId: isRealReply,
+        rangeArg: rawRest,
+        preferArchive,
+        extraNote: deleteWarning
+      });
+      if (!dmRes || !dmRes.ok) {
+        await sendHistoryGroupDmFallbackNotice(env, adminCtx.sourceChatId, adminCtx.threadId, isChannelPost);
+      }
+      return true;
+    }
+
+    // Im Privat-Chat: ohne Argumente -> Weiterleitungs-/Link-Prompt aktivieren
+    if (!rawRest) {
+      await saveHistoryChatAdminState(env, adminCtx.adminDmId, {
+        awaitingForwardRole: "scan_source",
+        awaitingForwardExpiresAt: Date.now() + HISTORY_CHAT_FORWARD_TTL_MS,
+        awaitingScanPreferArchive: preferArchive
+      });
+      const modeTitle = preferArchive ? "ARCHIVIERUNG & VERLAUFS-SCAN" : "VERLAUFS-SCAN STARTEN";
+      await tgApi(env).sendMessage(
+        adminCtx.adminDmId,
+        `🚀 *${modeTitle}*\n${SEP}\n` +
+        `Wähle deine Quellgruppe bzw. deinen Quellkanal auf einem dieser 3 Wege:\n\n` +
+        `1️⃣ *Direkt in der Quellgruppe:* Sende dort \`/${preferArchive ? "archiv" : "scan"}\` *(optional als Antwort auf einen Post oder mit \`500\` / \`1200-4500\`)* — der Befehl wird in der Gruppe sofort gelöscht.\n` +
+        `2️⃣ *Kanal-Post weiterleiten:* Leite jetzt einfach einen Beitrag aus dem Quellkanal hierher weiter.\n` +
+        `3️⃣ *Link / ID senden:* Füge jetzt hier einen Nachrichten-Link (\`https://t.me/c/.../4500\`) oder \`-100... 1-5000\` ein.`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📋 Laufende Jobs & Archiv", callback_data: "hc:jobs" }, { text: "⚙️ Index/Archiv", callback_data: "hc:cfg_ref" }],
+              [{ text: "❌ Abbrechen", callback_data: "hc:d_cancel" }]
+            ]
+          }
+        }
+      );
+      return true;
+    }
+
+    // Im Privat-Chat mit Argumenten: /scan <link|-100...|@user> [N | Von-Bis]
+    const firstTok = rawRest.split(/\s+/)[0];
+    const restRange = rawRest.slice(firstTok.length).trim();
+    await openHistoryScanDraftForAdmin(env, adminCtx.adminDmId, {
+      rawTarget: firstTok,
+      rangeArg: restRange,
+      preferArchive
+    });
+    return true;
   }
 
   async function renderAutoIngestStatusMenu(env, targetChatId, editMsgId = null, note = "") {
     const { sendMessage, editMessageText } = tgApi(env);
-    const chatsMap = await getAutoIngestChatsMap(env, true);
-    const statsRes = await getChannelIngestInboxStatsFromD1(env);
+    const [chatsMap, statsRes, archiveForums] = await Promise.all([
+      getAutoIngestChatsMap(env, true),
+      getChannelIngestInboxStatsFromD1(env),
+      getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true })
+    ]);
+    const activeArchiveForum = archiveForums[0] || null;
     const statsByChat = new Map((statsRes.chats || []).map(c => [String(c.chatId), c]));
     const entries = Object.values(chatsMap || {}).sort((a, b) => Number(b.enabled) - Number(a.enabled) || (b.updatedAt || 0) - (a.updatedAt || 0));
 
@@ -4574,38 +5853,49 @@
       lines = entries.slice(0, 12).map(e => {
         const st = statsByChat.get(String(e.chatId));
         const icon = e.enabled ? "🟢" : "⚪";
+        const archBadge = e.archiveMirrorEnabled ? " · 🗂️ *Live-Archiv*" : "";
         const qInfo = st
           ? `📥 ${st.pending} wartend · ✅ ${st.done} · 👀 ${st.review}`
           : `📥 0 wartend`;
-        return `${icon} *${escapeMd(e.title || e.chatId)}*\n   \`${escapeMd(String(e.chatId))}\` · ${qInfo}`;
+        return `${icon} *${escapeMd(e.title || e.chatId)}*${archBadge}\n   \`${escapeMd(String(e.chatId))}\` · ${qInfo}`;
       }).join("\n");
       for (const e of entries.slice(0, 6)) {
         const cid = String(e.chatId);
-        const shortName = String(e.title || cid).slice(0, 18);
+        const shortName = String(e.title || cid).slice(0, 14);
+        const archOn = Boolean(e.archiveMirrorEnabled);
         inline_keyboard.push([
           {
-            text: e.enabled ? `⏸️ ${shortName} pausieren` : `▶️ ${shortName} aktivieren`,
+            text: e.enabled ? `⏸️ ${shortName}` : `▶️ ${shortName}`,
             callback_data: e.enabled ? `ingst_off_${cid}` : `ingst_on_${cid}`
+          },
+          {
+            text: archOn ? "🗂️ Archiv: AN" : "🗂️ Archiv: AUS",
+            callback_data: archOn ? `ingst_arch_off_${cid}` : `ingst_arch_on_${cid}`
           }
         ]);
       }
     }
 
     inline_keyboard.push([
-      { text: "⚡ Wartende jetzt verarbeiten", callback_data: "ingst_flush_all" }
+      { text: "⚡ Wartende jetzt verarbeiten", callback_data: "ingst_flush_all" },
+      { text: "📋 Jobs & Archiv", callback_data: "hc:jobs" }
     ]);
     inline_keyboard.push([
-      { text: "🔄 Status aktualisieren", callback_data: "ingst_refresh" },
+      { text: "🔄 Aktualisieren", callback_data: "ingst_refresh" },
       { text: "✖️ Schließen", callback_data: "close_bot_msg" }
     ]);
 
     const t = statsRes.totals || {};
+    const archHeader = activeArchiveForum
+      ? `🗂️ *Themen-Archiv:* *${escapeMd(activeArchiveForum.label || activeArchiveForum.channelId)}* _(Live-Spiegeln pro Gruppe umschaltbar)_\n`
+      : `🗂️ *Themen-Archiv:* _Nicht konfiguriert (\`/archiv_set\`)_\n`;
     const msgText =
       `📥 *AUTO-INGEST QUELLEN & STAGING-INBOX*\n${SEP}\n` +
-      `📊 *Gesamt-Inbox:* \`${t.pending || 0}\` wartend • \`${t.processing || 0}\` aktiv • \`${t.done || 0}\` fertig • \`${t.review || 0}\` Review\n\n` +
+      `📊 *Gesamt-Inbox:* \`${t.pending || 0}\` wartend • \`${t.processing || 0}\` aktiv • \`${t.done || 0}\` fertig • \`${t.review || 0}\` Review\n` +
+      `${archHeader}\n` +
       `${lines}` +
       (note ? `\n\n${note}` : "") +
-      `\n\n💡 _Eingehende Posts aus 🟢 aktiven Quellen werden still in der D1-Inbox gesammelt und anschließend im Kontext (Poster + Folgen + Untertitel) verarbeitet._`;
+      `\n\n💡 _Eingehende Posts aus 🟢 aktiven Quellen werden still gesammelt und mit \`/archiv_live\` optional auch automatisch ins Themen-Archiv gespiegelt._`;
 
     if (editMsgId) {
       const edited = await editMessageText(targetChatId, editMsgId, msgText, { reply_markup: { inline_keyboard } });
@@ -6365,6 +7655,10 @@
         const chId = chPost.chat?.id;
         const handledCmd = await handleAutoIngestCommand(env, chPost, { isChannelPost: true });
         if (handledCmd) return;
+        const handledHistCmd = await handleHistoryChatSetupCommand(env, chPost, { isChannelPost: true });
+        if (handledHistCmd) return;
+        const handledScanCmd = await handleHistoryScanAndJobsCommand(env, chPost, { isChannelPost: true });
+        if (handledScanCmd) return;
         const stagedRes = await stageGroupOrChannelMessageIfEnabled(env, chPost);
         // Passive tg_export_ Ernte nur für NICHT aktivierte Kanäle (spart bei 500-Video-Drops 1.000 unnötige D1-UPDATEs!)
         if (!stagedRes?.enabled) {
@@ -6409,6 +7703,18 @@
 
         // Opt-in Befehle (/ingest_on, /ingest_off, /ingest_status, /ingest_flush) für Gruppen & Privat-Chat
         if (await handleAutoIngestCommand(env, message, { isChannelPost: false })) {
+          return;
+        }
+        // History-Index- & Themen-Archiv-Setup-Befehle (/index, /index_add, /index_del, /archiv_set, /archiv_del)
+        if (await handleHistoryChatSetupCommand(env, message, { isChannelPost: false })) {
+          return;
+        }
+        // Interaktiver Scan-Start & Job-/Archiv-Steuerung (/scan, /archiv, /jobs, /archiv_status)
+        if (await handleHistoryScanAndJobsCommand(env, message, { isChannelPost: false })) {
+          return;
+        }
+        // Forward-Gate im Admin-Privat-Chat VOR dem Video-Upload (fängt weitergeleitete Kanal-Videos im Setup-Modus sicher ab!)
+        if (!isGroupChat && await handleHistoryChatForwardInput(env, message)) {
           return;
         }
 
@@ -7401,8 +8707,15 @@
           return;
         }
 
-        // --- AUTO-INGEST QUELLEN-MANAGER CALLBACKS (/ingest_status) ---
-        if (data === "ingst_refresh" || data === "ingst_flush_all" || data.startsWith("ingst_on_") || data.startsWith("ingst_off_")) {
+        // --- AUTO-INGEST QUELLEN-MANAGER CALLBACKS (/ingest_status & Live-Archiv) ---
+        if (
+          data === "ingst_refresh" ||
+          data === "ingst_flush_all" ||
+          data.startsWith("ingst_on_") ||
+          data.startsWith("ingst_off_") ||
+          data.startsWith("ingst_arch_on_") ||
+          data.startsWith("ingst_arch_off_")
+        ) {
           const isAdminClick = !env._isCustomBotWebhook && cq.from?.id && await isTelegramBotAdmin(env, cq.from.id);
           if (!isAdminClick) {
             await answerCallbackQuery(cq.id, "🔒 Nur für Bot-Administratoren.", true);
@@ -7421,12 +8734,454 @@
             await renderAutoIngestStatusMenu(env, chatId, msgId);
             return;
           }
+          if (data.startsWith("ingst_arch_on_") || data.startsWith("ingst_arch_off_")) {
+            const enableArch = data.startsWith("ingst_arch_on_");
+            const targetCid = data.replace(/^ingst_arch_(?:on|off)_/, "");
+            if (enableArch) {
+              if (await isHistorySystemBlockedChat(env, targetCid)) {
+                await answerCallbackQuery(cq.id, "⛔ Chat ist als Index-Kanal/Archiv gesperrt.", true);
+                return;
+              }
+              const forums = await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true });
+              if (forums.length === 0) {
+                await answerCallbackQuery(cq.id, "ℹ️ Bitte zuerst mit /archiv_set ein Themen-Archiv einrichten.", true);
+                return;
+              }
+            }
+            const res = await setAutoIngestChatEnabled(env, targetCid, { archiveMirrorEnabled: enableArch, activatedBy: String(cq.from.id) });
+            await answerCallbackQuery(cq.id, res.ok ? (enableArch ? "🗂️ Live-Archiv: AN" : "⚪ Live-Archiv: AUS") : "⚠️ Fehler");
+            await renderAutoIngestStatusMenu(env, chatId, msgId);
+            return;
+          }
           const enableNext = data.startsWith("ingst_on_");
           const targetCid = data.replace(/^ingst_(?:on|off)_/, "");
+          if (enableNext && await isHistorySystemBlockedChat(env, targetCid)) {
+            await answerCallbackQuery(cq.id, "⛔ Index-Kanal/Archiv darf nicht als Quelle laufen.", true);
+            return;
+          }
           const res = await setAutoIngestChatEnabled(env, targetCid, { enabled: enableNext, activatedBy: String(cq.from.id) });
           await answerCallbackQuery(cq.id, res.ok ? (enableNext ? "🟢 Quelle aktiviert" : "⏸️ Quelle pausiert") : "⚠️ Fehler");
           await renderAutoIngestStatusMenu(env, chatId, msgId);
           return;
+        }
+
+        // --- HISTORY INDEX-KANÄLE & THEMEN-ARCHIV CHAT-SETUP CALLBACKS (`hc:cfg_*`) ---
+        if (data.startsWith("hc:cfg_")) {
+          const isAdminClick = !env._isCustomBotWebhook && cq.from?.id && await isTelegramBotAdmin(env, cq.from.id);
+          if (!isAdminClick) {
+            await answerCallbackQuery(cq.id, "🔒 Nur für Bot-Administratoren.", true);
+            return;
+          }
+          const adminId = String(cq.from.id);
+          if (data === "hc:cfg_ref") {
+            await answerCallbackQuery(cq.id, "🔄 Aktualisiert");
+            await renderHistoryConfigChatMenu(env, chatId, msgId);
+            return;
+          }
+          if (data === "hc:cfg_fidx" || data === "hc:cfg_farch") {
+            const nextRole = data === "hc:cfg_farch" ? "archive_forum" : "probe_index";
+            await saveHistoryChatAdminState(env, adminId, {
+              awaitingForwardRole: nextRole,
+              awaitingForwardExpiresAt: Date.now() + HISTORY_CHAT_FORWARD_TTL_MS
+            });
+            await answerCallbackQuery(cq.id, "📨 Weiterleitungs-Modus aktiv");
+            await renderHistoryConfigChatMenu(env, chatId, msgId);
+            return;
+          }
+          if (data === "hc:cfg_fcancel") {
+            await saveHistoryChatAdminState(env, adminId, { awaitingForwardRole: "", awaitingForwardExpiresAt: 0 });
+            await answerCallbackQuery(cq.id, "❌ Abgebrochen");
+            await renderHistoryConfigChatMenu(env, chatId, msgId);
+            return;
+          }
+          if (data.startsWith("hc:cfg_rm:")) {
+            const idx = parseInt(data.slice("hc:cfg_rm:".length), 10);
+            const rmRes = await removeHistoryProbeIndexChannelFromChat(env, idx);
+            await answerCallbackQuery(cq.id, rmRes.ok ? "🗑️ Index-Kanal aktualisiert" : "⚠️ Nicht gefunden");
+            const note = rmRes.ok
+              ? (rmRes.hadPendingDeletes
+                  ? `⏸️ *Index-Kanal deaktiviert:* *${escapeMd(rmRes.removedTitle)}* (noch offene Rest-Probes).`
+                  : `🗑️ *Index-Kanal entfernt:* *${escapeMd(rmRes.removedTitle)}*.`)
+              : `⚠️ ${escapeMd(rmRes.error || "Fehler beim Entfernen.")}`;
+            await renderHistoryConfigChatMenu(env, chatId, msgId, note);
+            return;
+          }
+          if (data === "hc:cfg_rmarch") {
+            const rmRes = await removeHistoryArchiveForumFromChat(env);
+            await answerCallbackQuery(cq.id, rmRes.ok ? "🗑️ Themen-Archiv gelöst" : "⚠️ Fehler");
+            await renderHistoryConfigChatMenu(
+              env,
+              chatId,
+              msgId,
+              rmRes.ok ? `🗑️ *Themen-Archiv gelöst:* *${escapeMd(rmRes.removedTitle)}*.` : `⚠️ ${escapeMd(rmRes.error || "Fehler.")}`
+            );
+            return;
+          }
+          if (data === "hc:cfg_mode" || data === "hc:cfg_time" || data === "hc:cfg_pin") {
+            const [channels, curDef] = await Promise.all([
+              getHistoryIndexChannelsFromD1(env),
+              getHistoryArchiveDefaultsFromD1(env)
+            ]);
+            const nextDef = { ...curDef };
+            if (data === "hc:cfg_mode") {
+              const order = ["type_genre", "per_series_plus_genre", "compact_type"];
+              nextDef.topicMode = order[(order.indexOf(curDef.topicMode) + 1) % order.length];
+            } else if (data === "hc:cfg_time") {
+              nextDef.timing = curDef.timing === "after_scan" ? "live" : "after_scan";
+            } else if (data === "hc:cfg_pin") {
+              nextDef.pinSeriesCard = !curDef.pinSeriesCard;
+            }
+            const probes = channels.filter(c => c.role === "probe_index").map(c => ({ channelId: c.channelId, label: c.label, enabled: c.enabled }));
+            const arch = channels.find(c => c.role === "archive_forum") || null;
+            await saveHistoryIndexChannelsInD1(env, {
+              probeChannels: probes,
+              archiveForum: arch ? { channelId: arch.channelId, label: arch.label, enabled: arch.enabled } : null,
+              archiveDefaults: nextDef
+            });
+            await answerCallbackQuery(cq.id, "✅ Archiv-Standard gespeichert");
+            await renderHistoryConfigChatMenu(env, chatId, msgId);
+            return;
+          }
+          if (data === "hc:cfg_delp") {
+            await answerCallbackQuery(cq.id, "🧹 Lösche Rest-Probes...");
+            const flRes = await flushPendingHistoryProbeDeletes(env, { subrequestCeiling: 36 });
+            await renderHistoryConfigChatMenu(
+              env,
+              chatId,
+              msgId,
+              `🧹 *Rest-Probes bereinigt:* \`${Number(flRes.deleted || 0)}\` gelöscht` + (Number(flRes.remaining || 0) > 0 ? ` · \`${flRes.remaining}\` noch offen.` : ".")
+            );
+            return;
+          }
+          if (data === "hc:cfg_val") {
+            await answerCallbackQuery(cq.id, "🩺 Prüfe Telegram-Rechte...");
+            const channels = await getHistoryIndexChannelsFromD1(env);
+            const probes = channels.filter(c => c.role === "probe_index");
+            const arch = channels.find(c => c.role === "archive_forum") || null;
+            const summaryLines = [];
+            for (const p of probes) {
+              const res = await validateHistoryChannelAccess(env, p.channelId, "probe_index");
+              await updateHistoryIndexChannelVerificationInD1(env, p.channelId, {
+                verifiedAt: Date.now(),
+                caps: res.ok
+                  ? { ok: true, title: res.title, chatType: res.chatType, checks: res.checks }
+                  : { ok: false, error: res.error || "", warnings: res.warnings || [], checks: res.checks || [] },
+                label: res.title || p.label
+              });
+              summaryLines.push(`${res.ok ? "✅" : "⛔"} *${escapeMd(res.title || p.label || p.channelId)}*${res.ok ? "" : ` — ${escapeMd(res.error || "Rechte fehlen")}`}`);
+            }
+            if (arch) {
+              const res = await validateHistoryChannelAccess(env, arch.channelId, "archive_forum");
+              await updateHistoryIndexChannelVerificationInD1(env, arch.channelId, {
+                verifiedAt: Date.now(),
+                caps: { ok: res.ok, title: res.title, isForum: res.isForum, checks: res.checks, warnings: res.warnings },
+                label: res.title || arch.label
+              });
+              summaryLines.push(`${res.ok ? "✅" : "⛔"} *Archiv ${escapeMd(res.title || arch.label || arch.channelId)}*${res.ok ? "" : ` — ${escapeMd(res.error || "Forum/Rechte fehlen")}`}`);
+            }
+            const note = summaryLines.length > 0
+              ? `🩺 *Rechteprüfung abgeschlossen:*\n${summaryLines.join("\n")}`
+              : "ℹ️ Noch keine Kanäle zum Prüfen eingetragen.";
+            await renderHistoryConfigChatMenu(env, chatId, msgId, note);
+            return;
+          }
+        }
+
+        // --- HISTORY SCAN-ENTWURF & JOBS-/ARCHIV-ZENTRALE CALLBACKS (`hc:*`) ---
+        if (data.startsWith("hc:")) {
+          const isAdminClick = !env._isCustomBotWebhook && cq.from?.id && await isTelegramBotAdmin(env, cq.from.id);
+          if (!isAdminClick) {
+            await answerCallbackQuery(cq.id, "🔒 Nur für Bot-Administratoren.", true);
+            return;
+          }
+          const adminId = String(cq.from.id);
+
+          if (data === "hc:jobs") {
+            await answerCallbackQuery(cq.id, "📋 Jobs aktualisiert");
+            await renderHistoryJobsAndArchiveMenu(env, chatId, msgId);
+            return;
+          }
+
+          if (data === "hc:d_cancel") {
+            await saveHistoryChatAdminState(env, adminId, {
+              draft: null,
+              awaitingForwardRole: "",
+              awaitingForwardExpiresAt: 0,
+              awaitingScanPreferArchive: false
+            });
+            await answerCallbackQuery(cq.id, "❌ Abgebrochen");
+            await tgApi(env).editMessageText(chatId, msgId, "❌ *Scan-Vorgang abgebrochen.*", {
+              reply_markup: { inline_keyboard: [[{ text: "📋 Jobs & Archiv", callback_data: "hc:jobs" }, { text: "✖️ Schließen", callback_data: "close_bot_msg" }]] }
+            }).catch(() => {});
+            return;
+          }
+
+          if (data.startsWith("hc:d_")) {
+            const st = await getHistoryChatAdminState(env, adminId);
+            const curDraft = st?.draft || null;
+            if (!curDraft || !curDraft.sourceChatId) {
+              await answerCallbackQuery(cq.id, "ℹ️ Entwurf abgelaufen — bitte /scan neu senden.", true);
+              await renderHistoryScanDraftMenu(env, chatId, msgId);
+              return;
+            }
+            let nextDraft = { ...curDraft };
+            let toast = "✅ Aktualisiert";
+            if (data.startsWith("hc:d_r:")) {
+              const preset = data.slice("hc:d_r:".length);
+              nextDraft = applyHistoryDraftRangePreset(nextDraft, preset);
+              toast = preset === "all" ? "🔢 Bereich: Komplett ab #1" : `🔢 Bereich: Letzte ${preset}`;
+            } else if (data === "hc:d_dir") {
+              nextDraft.direction = curDraft.direction === "desc" ? "asc" : "desc";
+              toast = nextDraft.direction === "desc" ? "⬇️ Neueste zuerst" : "⬆️ Älteste zuerst";
+            } else if (data === "hc:d_arch") {
+              const activeForum = (await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true }))[0] || null;
+              if (!activeForum) {
+                await answerCallbackQuery(cq.id, "ℹ️ Bitte zuerst ein Themen-Archiv mit /archiv_set einrichten.", true);
+                return;
+              }
+              nextDraft.enableArchiveMirror = !curDraft.enableArchiveMirror;
+              toast = nextDraft.enableArchiveMirror ? "🗂️ Themen-Archiv: AN" : "🗂️ Themen-Archiv: AUS";
+            } else if (data === "hc:d_time") {
+              nextDraft.archiveTiming = curDraft.archiveTiming === "after_scan" ? "live" : "after_scan";
+              toast = nextDraft.archiveTiming === "after_scan" ? "🕒 Nach Scan-Ende" : "🕒 Live spiegeln";
+            } else if (data === "hc:d_mode") {
+              const order = ["type_genre", "per_series_plus_genre", "compact_type"];
+              nextDraft.archiveTopicMode = order[(order.indexOf(curDraft.archiveTopicMode) + 1) % order.length];
+              toast = `📁 ${formatArchiveModeShortLabel(nextDraft.archiveTopicMode)}`;
+            } else if (data === "hc:d_pin") {
+              nextDraft.archivePinSeriesCard = !curDraft.archivePinSeriesCard;
+              toast = nextDraft.archivePinSeriesCard ? "📌 Serien-Karte: AN" : "📌 Serien-Karte: AUS";
+            } else if (data === "hc:d_react") {
+              nextDraft.enableReactions = !curDraft.enableReactions;
+              toast = nextDraft.enableReactions ? "👍 Reaktionen: AN" : "👍 Reaktionen: AUS";
+            } else if (data === "hc:d_cron") {
+              nextDraft.cronEnabled = !curDraft.cronEnabled;
+              toast = nextDraft.cronEnabled ? "⏱️ 2-Min-Cron: AN" : "🔕 2-Min-Cron: AUS";
+            }
+            await saveHistoryChatAdminState(env, adminId, { draft: nextDraft });
+            await answerCallbackQuery(cq.id, toast);
+            await renderHistoryScanDraftMenu(env, chatId, msgId);
+            return;
+          }
+
+          if (data === "hc:probe") {
+            const st = await getHistoryChatAdminState(env, adminId);
+            const curDraft = st?.draft || null;
+            if (!curDraft || !curDraft.sourceChatId) {
+              await answerCallbackQuery(cq.id, "ℹ️ Entwurf abgelaufen.", true);
+              return;
+            }
+            const enabledProbes = await getHistoryIndexChannelsFromD1(env, { role: "probe_index", onlyEnabled: true });
+            if (enabledProbes.length === 0) {
+              await answerCallbackQuery(cq.id, "⛔ Kein aktiver Index-Kanal vorhanden.", true);
+              return;
+            }
+            await answerCallbackQuery(cq.id, `🔎 Teste ID #${curDraft.endMsgId}...`);
+            const testRes = await validateHistoryChannelAccess(env, curDraft.sourceChatId, "source", {
+              testMessageId: Number(curDraft.endMsgId || 0),
+              probeIndexChannelId: enabledProbes[0].channelId
+            });
+            const tp = testRes?.testProbe || null;
+            let probeNote = "";
+            if (tp && tp.ok) {
+              probeNote = `✅ *1-ID-Testprobe (#${formatDeInt(curDraft.endMsgId)}) erfolgreich!*\n   Typ: \`${escapeMd(tp.kind || "nachricht")}\`${tp.deleted ? " · 🧹 Probe sauber gelöscht" : ""}`;
+            } else if (testRes?.ok) {
+              probeNote = `⚠️ *Quelle erreichbar, aber ID #${formatDeInt(curDraft.endMsgId)}:* ${escapeMd(tp?.error || "Nachricht nicht vorhanden / gelöscht")}`;
+            } else {
+              probeNote = `⛔ *Testprobe fehlgeschlagen:*\n${formatValidationChecksMarkdown(testRes)}`;
+            }
+            await renderHistoryScanDraftMenu(env, chatId, msgId, probeNote);
+            return;
+          }
+
+          if (data === "hc:go") {
+            const st = await getHistoryChatAdminState(env, adminId);
+            const curDraft = st?.draft || null;
+            if (!curDraft || !curDraft.sourceChatId) {
+              await answerCallbackQuery(cq.id, "ℹ️ Entwurf abgelaufen — bitte /scan neu senden.", true);
+              await renderHistoryScanDraftMenu(env, chatId, msgId);
+              return;
+            }
+            if (await isHistorySystemBlockedChat(env, curDraft.sourceChatId)) {
+              await answerCallbackQuery(cq.id, "⛔ Chat ist als Index-Kanal/Archiv gesperrt.", true);
+              return;
+            }
+            const enabledProbes = await getHistoryIndexChannelsFromD1(env, { role: "probe_index", onlyEnabled: true });
+            if (enabledProbes.length === 0) {
+              await answerCallbackQuery(cq.id, "⛔ Bitte zuerst mindestens 1 Index-Kanal einrichten (/index_add).", true);
+              return;
+            }
+            const activeForum = (await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true }))[0] || null;
+            const createRes = await createHistoryCrawlJobInD1(env, {
+              sourceChatId: curDraft.sourceChatId,
+              sourceTitle: curDraft.sourceTitle,
+              startMsgId: curDraft.startMsgId,
+              endMsgId: curDraft.endMsgId,
+              direction: curDraft.direction,
+              enableReactions: curDraft.enableReactions,
+              enableArchiveMirror: Boolean(curDraft.enableArchiveMirror && activeForum),
+              archiveTopicMode: curDraft.archiveTopicMode,
+              archiveTiming: curDraft.archiveTiming,
+              archivePinSeriesCard: curDraft.archivePinSeriesCard,
+              archiveMaxSeriesTopics: curDraft.archiveMaxSeriesTopics,
+              cronEnabled: curDraft.cronEnabled
+            });
+            if (!createRes.ok || !createRes.job) {
+              await answerCallbackQuery(cq.id, "⚠️ Job konnte nicht gestartet werden.", true);
+              await renderHistoryScanDraftMenu(env, chatId, msgId, `⚠️ ${escapeMd(createRes.error || "Fehler beim Anlegen des Jobs.")}`);
+              return;
+            }
+            await saveHistoryChatAdminState(env, adminId, { draft: null });
+            const j = createRes.job;
+            await answerCallbackQuery(cq.id, `🚀 Job #${j.id} gestartet!`);
+            const startNote = j.status === "queued"
+              ? `🕒 *Job #${j.id} in Warteschlange eingereiht* (startet automatisch, sobald der aktuelle Job fertig ist).`
+              : `🚀 *Job #${j.id} gestartet!* Der 2-Minuten-Cron verarbeitet ihn automatisch — oder tippe unten auf *⚡ 1 Scan-Schritt*.`;
+            await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { selectedJobId: j.id, note: startNote });
+            return;
+          }
+
+          if (data.startsWith("hc:job_")) {
+            const m = data.match(/^hc:job_(v|p|r|c|s|del|delc):(\d+)$/);
+            if (!m) {
+              await answerCallbackQuery(cq.id, "⚠️ Ungültige Job-Aktion.");
+              return;
+            }
+            const act = m[1];
+            const jid = parseInt(m[2], 10);
+            const job = await getHistoryCrawlJobByIdFromD1(env, jid);
+            if (!job) {
+              await answerCallbackQuery(cq.id, "ℹ️ Job nicht mehr vorhanden.");
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId);
+              return;
+            }
+            const now = Date.now();
+            if (act === "v") {
+              await answerCallbackQuery(cq.id, `🎯 Job #${jid}`);
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { selectedJobId: jid });
+              return;
+            }
+            if (act === "p") {
+              await updateHistoryCrawlJobStateInD1(env, jid, { status: "paused", workerLeaseUntil: 0, now });
+              await answerCallbackQuery(cq.id, `⏸️ Job #${jid} pausiert`);
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { selectedJobId: jid, note: `⏸️ *Job #${jid} pausiert.*` });
+              return;
+            }
+            if (act === "r") {
+              const existingJobs = await listHistoryCrawlJobsFromD1(env, 12);
+              const anotherActive = existingJobs.some(j => j.id !== jid && (j.status === "running" || j.status === "flood_wait"));
+              await updateHistoryCrawlJobStateInD1(env, jid, {
+                status: anotherActive ? "queued" : "running",
+                floodUntil: 0,
+                lastError: "",
+                now
+              });
+              await answerCallbackQuery(cq.id, anotherActive ? `🕒 Job #${jid} eingereiht` : `▶️ Job #${jid} fortgesetzt`);
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, {
+                selectedJobId: jid,
+                note: anotherActive ? `🕒 *Job #${jid} in Warteschlange eingereiht.*` : `▶️ *Job #${jid} läuft wieder.*`
+              });
+              return;
+            }
+            if (act === "c") {
+              const nextCron = !job.cronEnabled;
+              await updateHistoryCrawlJobStateInD1(env, jid, { cronEnabled: nextCron, now });
+              await answerCallbackQuery(cq.id, nextCron ? "⏱️ Cron aktiviert" : "🔕 Cron deaktiviert");
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { selectedJobId: jid });
+              return;
+            }
+            if (act === "del") {
+              await answerCallbackQuery(cq.id, `🗑️ Löschen von Job #${jid} bestätigen`);
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { selectedJobId: jid, confirmDeleteJobId: jid });
+              return;
+            }
+            if (act === "delc") {
+              await deleteHistoryCrawlJobInD1(env, jid);
+              await answerCallbackQuery(cq.id, `🗑️ Job #${jid} entfernt`);
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { note: `🗑️ *Job #${jid} wurde entfernt.*` });
+              return;
+            }
+            if (act === "s") {
+              await answerCallbackQuery(cq.id, `⚡ Führe 1 Scan-Schritt für #${jid} aus...`);
+              const stepRes = await runHistoryCrawlStep(env, {
+                source: "chat_manual",
+                jobId: jid,
+                maxHitsPerStep: 12,
+                maxProbesPerStep: 16,
+                subrequestCeiling: 28,
+                leaseMs: 35000
+              });
+              let stepNote = "";
+              if (stepRes?.skippedByLease) {
+                stepNote = `🚀 *Browser-Turbo läuft gerade* für Job #${jid} (bitte dort laufen lassen, kein Parallel-Konflikt).`;
+              } else if (stepRes?.rateLimited) {
+                stepNote = `⏳ *Telegram-Limit aktiv:* Pause für ca. \`${stepRes.retryAfterSec || 10}s\`.`;
+              } else if (stepRes?.pacingWait) {
+                stepNote = `⏱️ *Index-Kanal-Pacing:* Nächster Slot in \`${Math.max(1, Math.ceil(Number(stepRes.waitMs || 1000) / 1000))}s\` frei.`;
+              } else if (stepRes?.backpressured) {
+                const fl = await runScheduledChannelIngestFlush(env, {
+                  source: "chat_manual",
+                  forceFlush: true,
+                  filterChatId: job.sourceChatId,
+                  maxResolvePerRun: 4
+                }).catch(() => null);
+                stepNote = fl
+                  ? `📦 *Staging-Puffer abgebaut:* \`${fl.processedVideos || 0}\` Video(s) verarbeitet (\`${fl.added || 0}\` neu, \`${fl.remainingPending || 0}\` noch wartend).`
+                  : `📦 *Staging-Puffer voll* (\`${stepRes.openHistoryRows || 0}\` offen) — der 2-Minuten-Cron arbeitet ihn zuerst ab.`;
+              } else if (stepRes?.ok && stepRes?.stats) {
+                const st = stepRes.stats;
+                stepNote = stepRes.jobCompleted
+                  ? `🎉 *Job #${jid} abgeschlossen!* Letzter Schritt: \`${st.hitsCount}\` Treffer, \`${st.mediaFound}\` Medien, \`${st.deletedProbeMsgs}\` Probes gelöscht.`
+                  : `⚡ *Schritt fertig:* \`${st.probesFired}\` Probes · \`${st.hitsCount}\` Treffer · 🎬 \`${st.mediaFound}\` Medien · 🧹 \`${st.deletedProbeMsgs}\` gelöscht` +
+                    (st.skippedExistingCount > 0 ? ` · ⏭️ \`${st.skippedExistingCount}\` Skip` : "");
+              } else {
+                stepNote = `⚠️ ${escapeMd(stepRes?.error || stepRes?.reason || "Kein Schritt ausgeführt.")}`;
+              }
+              await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { selectedJobId: jid, note: stepNote });
+              return;
+            }
+          }
+
+          if (data === "hc:arch_s") {
+            await answerCallbackQuery(cq.id, "⚡ Sende bis zu 4 Archiv-Posts...");
+            const res = await processArchiveMirrorQueueBatch(env, { maxPosts: 4, maxNewTopics: 2, subrequestCeiling: 36 });
+            let note = "";
+            if (res?.waiting || res?.rateLimited) {
+              const waitSec = Math.max(1, Number(res.retryAfterSec || Math.ceil(Number(res.waitMs || 4300) / 1000)));
+              const postedBeforeLimit = Number(res.postedCount || 0);
+              note = postedBeforeLimit > 0
+                ? `🗂️ *Archiv-Schritt:* \`${postedBeforeLimit}\` gepostet · ⏳ Pacing-Pause für ca. \`${waitSec}s\`.`
+                : `⏳ *Telegram-Pacing im Archiv:* Nächster Post in ca. \`${waitSec}s\` bereit.`;
+            } else if (res?.idle) {
+              note = "ℹ️ *Archiv-Warteschlange:* Aktuell keine fälligen Posts zum Senden.";
+            } else if (res?.ok) {
+              note = `🗂️ *Archiv-Schritt:* \`${Number(res.postedCount || 0)}\` gepostet · \`${Number(res.newTopicsCreated || 0)}\` Thema neu` +
+                (Number(res.failedCount || 0) > 0 ? ` · ⛔ \`${res.failedCount}\` Fehler` : "");
+            } else {
+              note = `⚠️ ${escapeMd(res?.error || "Archiv-Schritt fehlgeschlagen.")}`;
+            }
+            await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { note });
+            return;
+          }
+
+          if (data === "hc:arch_rel") {
+            const released = await releaseHeldArchiveMirrorItemsForJobInD1(env, 0, Date.now(), { releaseAll: true });
+            await answerCallbackQuery(cq.id, `🔓 ${released} Einträge freigegeben`);
+            await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, {
+              note: `🔓 *${released} zurückgehaltene Archiv-Einträge* wurden zur Auslieferung freigegeben.`
+            });
+            return;
+          }
+
+          if (data === "hc:arch_ret") {
+            const archCh = (await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: false }))[0] || null;
+            const retried = await retryFailedArchiveMirrorItemsInD1(env, archCh?.channelId || "");
+            await answerCallbackQuery(cq.id, `🔁 ${retried} Fehler zurückgesetzt`);
+            await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, {
+              note: `🔁 *${retried} fehlgeschlagene Archiv-Einträge* wurden erneut eingereiht.`
+            });
+            return;
+          }
         }
 
         // --- BOT API 9.3–10.5: /themen & /topics MANAGER CALLBACKS ---

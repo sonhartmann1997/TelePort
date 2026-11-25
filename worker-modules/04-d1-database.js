@@ -7069,7 +7069,10 @@
     }
     const map = await getAutoIngestChatsMap(env, true);
     const prev = (map[cid] && typeof map[cid] === "object") ? map[cid] : {};
-    const enabled = opts.enabled !== false;
+    const enabled = opts.enabled !== undefined ? Boolean(opts.enabled) : Boolean(prev.enabled);
+    const archiveMirrorEnabled = opts.archiveMirrorEnabled !== undefined
+      ? Boolean(opts.archiveMirrorEnabled)
+      : Boolean(prev.archiveMirrorEnabled);
     const now = Date.now();
     const nextEntry = {
       ...prev,
@@ -7077,6 +7080,7 @@
       title: String(opts.title || prev.title || `Chat ${cid}`).trim().slice(0, 120),
       chatType: String(opts.chatType || prev.chatType || (cid.startsWith("-100") ? "channel" : "group")),
       enabled,
+      archiveMirrorEnabled,
       updatedAt: now,
       activatedAt: enabled ? (prev.activatedAt || now) : (prev.activatedAt || null),
       activatedBy: opts.activatedBy ? String(opts.activatedBy) : (prev.activatedBy || null),

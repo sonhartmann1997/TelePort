@@ -4383,12 +4383,14 @@
               chats.map(ch => {
                 const isThisTurbo = Boolean(tb.running && String(tb.chatId) === String(ch.chatId));
                 const icon = ch.type === "channel" ? "📢" : "👥";
+                const archOn = Boolean(ch.archiveMirrorEnabled);
                 return '<div class="ep-row" style="' + (ch.enabled ? 'border-color:rgba(16,185,129,0.38);' : 'opacity:0.75;') + '">' +
                   '<div style="flex:1;min-width:210px">' +
                     '<div style="font-size:13px;font-weight:800;color:var(--text)">' +
                       '<span style="font-size:10.5px;padding:2px 7px;border-radius:999px;margin-right:6px;background:' + (ch.enabled ? 'rgba(16,185,129,0.2);color:#34d399' : 'rgba(148,163,184,0.2);color:#94a3b8') + '">' +
                         (ch.enabled ? '🟢 Aktiv' : '⚪ Pausiert') +
                       '</span>' +
+                      (archOn ? '<span style="font-size:10.5px;padding:2px 7px;border-radius:999px;margin-right:6px;background:rgba(139,92,246,0.22);color:#c4b5fd">🗂️ Live-Archiv</span>' : '') +
                       icon + ' ' + esc(ch.title || ch.chatId) +
                     '</div>' +
                     '<div style="font-size:11px;color:var(--muted);margin-top:3px">' +
@@ -4406,6 +4408,9 @@
                       '</button>' +
                       '<button type="button" class="btn blue" ' + (tb.running ? 'disabled' : '') + ' onclick="flushAdminChannelInboxServerClient(\\'' + escJs(ch.chatId) + '\\')">⚡ 6er Server</button>'
                     ) : '') +
+                    '<button type="button" class="btn ' + (archOn ? 'blue' : '') + '" title="Neue Live-Posts automatisch ins Sortierte Themen-Archiv spiegeln (/archiv_live)" onclick="toggleAdminChannelInboxArchiveMirrorClient(\\'' + escJs(ch.chatId) + '\\',' + (!archOn) + ',\\'' + escJs(ch.title || ch.chatId) + '\\',\\'' + escJs(ch.type || 'channel') + '\\')">' +
+                      (archOn ? '🗂️ Live-Archiv: AN' : '🗂️ Live-Archiv: AUS') +
+                    '</button>' +
                     '<button type="button" class="btn ' + (ch.enabled ? '' : 'green') + '" onclick="toggleAdminChannelInboxChatClient(\\'' + escJs(ch.chatId) + '\\',' + (!ch.enabled) + ',\\'' + escJs(ch.title || ch.chatId) + '\\',\\'' + escJs(ch.type || 'channel') + '\\')">' +
                       (ch.enabled ? '⏸️ Pausieren' : '▶️ Aktivieren') +
                     '</button>' +
@@ -4443,6 +4448,8 @@
             return;
           }
           d.loaded = true;
+          d.hasArchiveForum = Boolean(r.hasArchiveForum);
+          d.archiveForumLabel = String(r.archiveForumLabel || "");
           d.chats = Array.isArray(r.chats) ? r.chats : [];
           d.totals = r.totals || { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 };
         } catch (err) {
@@ -4468,6 +4475,24 @@
           return;
         }
         showHudToast(nextEnabled ? "🟢 Auto-Ingest aktiviert" : "⚪ Auto-Ingest pausiert");
+        await refreshAdminChannelInboxClient(true);
+      }
+
+      async function toggleAdminChannelInboxArchiveMirrorClient(targetChatId, nextArchEnabled, chatTitle, chatType) {
+        const r = await apiFetchJson(API_BASE + "/admin/ingest-inbox/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chatId: targetChatId, archiveMirrorEnabled: Boolean(nextArchEnabled), title: chatTitle, type: chatType })
+        });
+        if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+          showHudToast("⛔ Abgebrochen (HTTP " + Number(r._httpStatus || 403) + "): " + (r.error || "Keine Admin-Rechte"));
+          return;
+        }
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Live-Archiv-Status konnte nicht geändert werden."));
+          return;
+        }
+        showHudToast(nextArchEnabled ? "🗂️ Live-Archiv für diese Quelle aktiviert" : "⚪ Live-Archiv für diese Quelle pausiert");
         await refreshAdminChannelInboxClient(true);
       }
 

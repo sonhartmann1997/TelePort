@@ -2878,17 +2878,21 @@
       },
 
       async deleteMessage(chatId, messageId) {
-        if (!messageId) return;
+        if (!messageId) return false;
         try {
           trackStat("telegramCalls");
           const body = { chat_id: chatId, message_id: messageId };
-          await fetchWithTimeout(`${TELEGRAM_API}/deleteMessage`, {
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/deleteMessage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
             _criticalSubrequest: true
           }, 4000);
-        } catch (e) {}
+          const json = await res.json().catch(() => ({}));
+          return Boolean(res.ok && json?.ok);
+        } catch (e) {
+          return false;
+        }
       },
 
       async getBotUsername(env) {
