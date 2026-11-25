@@ -10,15 +10,15 @@
   let activeD1WriteBuffer = null;
   let activeD1WriteBufferStartedAt = 0;
   let activeD1WriteBufferDepth = 0;
-  const D1_SCHEMA_VERSION = "20261124_v6";
+  const D1_SCHEMA_VERSION = "20261125_v7";
   const D1_MOVIE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 Tage gültig für Film-/Serien-Details
   const D1_SEARCH_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 Tage gültig für Suchseiten & Listen
 
   function isD1BufferEligibleWrite(sqlStr) {
     const s = String(sqlStr || "");
     if (!/^\s*(?:INSERT|UPDATE|DELETE|REPLACE)\b/i.test(s)) return false;
-    // Kritische Nutzer-, Auth-, Checkpoint-, Meldungs-, Anti-Spam-, Staging-Inbox- & Konfig-Tabellen NIEMALS im Import-Batch-Puffer verzögern!
-    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue|d1_import_checkpoints|channel_ingest_inbox)\b/i.test(s)) {
+    // Kritische Nutzer-, Auth-, Checkpoint-, Meldungs-, Anti-Spam-, Staging-Inbox- & History-Tabellen NIEMALS im Import-Batch-Puffer verzögern!
+    if (/\b(?:users|media_reports|tg_anti_spam_queue|entity_cache|import_queue|d1_import_checkpoints|channel_ingest_inbox|history_index_channels|history_crawl_jobs|archive_topic_map|archive_mirror_queue)\b/i.test(s)) {
       return false;
     }
     return true;
@@ -558,7 +558,94 @@
           db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_reaction_pending ON channel_ingest_inbox(reaction_pending, chat_id, message_id)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_status_processed ON channel_ingest_inbox(status, processed_at)"),
           db.prepare("CREATE INDEX IF NOT EXISTS idx_entity_cache_type_updated ON entity_cache(entity_type, updated_at DESC)"),
-          db.prepare("CREATE INDEX IF NOT EXISTS idx_search_cache_updated ON search_cache(updated_at)")
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_search_cache_updated ON search_cache(updated_at)"),
+          db.prepare(`CREATE TABLE IF NOT EXISTS history_index_channels (
+            channel_id TEXT PRIMARY KEY,
+            label TEXT,
+            role TEXT NOT NULL DEFAULT 'probe_index',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            next_allowed_at INTEGER NOT NULL DEFAULT 0,
+            cooldown_until INTEGER NOT NULL DEFAULT 0,
+            pending_delete_ids_json TEXT NOT NULL DEFAULT '[]',
+            last_verified_at INTEGER NOT NULL DEFAULT 0,
+            verified_caps_json TEXT,
+            updated_at INTEGER NOT NULL
+          )`),
+          db.prepare(`CREATE TABLE IF NOT EXISTS history_crawl_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_chat_id TEXT NOT NULL,
+            source_title TEXT,
+            start_msg_id INTEGER NOT NULL,
+            end_msg_id INTEGER NOT NULL,
+            direction TEXT NOT NULL DEFAULT 'asc',
+            current_cursor_id INTEGER NOT NULL,
+            chunk_floor_id INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'queued',
+            enable_reactions INTEGER NOT NULL DEFAULT 0,
+            enable_archive_mirror INTEGER NOT NULL DEFAULT 0,
+            archive_topic_mode TEXT NOT NULL DEFAULT 'type_genre',
+            archive_timing TEXT NOT NULL DEFAULT 'live',
+            archive_pin_series_card INTEGER NOT NULL DEFAULT 0,
+            archive_max_series_topics INTEGER NOT NULL DEFAULT 250,
+            cron_enabled INTEGER NOT NULL DEFAULT 1,
+            scanned_count INTEGER NOT NULL DEFAULT 0,
+            media_found_count INTEGER NOT NULL DEFAULT 0,
+            context_found_count INTEGER NOT NULL DEFAULT 0,
+            missing_count INTEGER NOT NULL DEFAULT 0,
+            skipped_existing_count INTEGER NOT NULL DEFAULT 0,
+            noise_skipped_count INTEGER NOT NULL DEFAULT 0,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            worker_lease_until INTEGER NOT NULL DEFAULT 0,
+            flood_until INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            completed_at INTEGER NOT NULL DEFAULT 0
+          )`),
+          db.prepare(`CREATE TABLE IF NOT EXISTS archive_topic_map (
+            archive_chat_id TEXT NOT NULL,
+            topic_key TEXT NOT NULL,
+            message_thread_id INTEGER NOT NULL,
+            topic_name TEXT,
+            icon_color INTEGER DEFAULT 0,
+            pinned_header_msg_id INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (archive_chat_id, topic_key)
+          )`),
+          db.prepare(`CREATE TABLE IF NOT EXISTS archive_mirror_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL DEFAULT 0,
+            archive_chat_id TEXT NOT NULL,
+            media_type TEXT NOT NULL,
+            tmdb_id INTEGER NOT NULL DEFAULT 0,
+            season_number INTEGER NOT NULL DEFAULT 0,
+            episode_number INTEGER NOT NULL DEFAULT 0,
+            part_number INTEGER NOT NULL DEFAULT 1,
+            source_chat_id TEXT,
+            source_message_id INTEGER NOT NULL DEFAULT 0,
+            file_unique_id TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            file_kind TEXT NOT NULL DEFAULT 'video',
+            topic_key TEXT NOT NULL,
+            topic_name TEXT,
+            topic_icon_color INTEGER DEFAULT 0,
+            series_header_html TEXT,
+            series_poster_url TEXT,
+            caption_html TEXT NOT NULL,
+            cover_url TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            archive_message_id INTEGER NOT NULL DEFAULT 0,
+            archive_thread_id INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          )`),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_history_index_channels_role_en ON history_index_channels(role, enabled)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_history_crawl_jobs_status ON history_crawl_jobs(status, id ASC)"),
+          db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_mirror_unique ON archive_mirror_queue(archive_chat_id, file_unique_id)"),
+          db.prepare("CREATE INDEX IF NOT EXISTS idx_archive_mirror_status_order ON archive_mirror_queue(status, next_attempt_at, media_type, tmdb_id, season_number, episode_number, part_number, id)")
         ]));
       } catch (e) {}
 
@@ -598,7 +685,10 @@
           ["movie_files", "is_download_only", "ALTER TABLE movie_files ADD COLUMN is_download_only INTEGER DEFAULT 0"],
           ["episode_files", "is_download_only", "ALTER TABLE episode_files ADD COLUMN is_download_only INTEGER DEFAULT 0"],
           ["import_diagnostic_logs", "review_reason_code", "ALTER TABLE import_diagnostic_logs ADD COLUMN review_reason_code TEXT"],
-          ["import_diagnostic_logs", "matched_title", "ALTER TABLE import_diagnostic_logs ADD COLUMN matched_title TEXT"]
+          ["import_diagnostic_logs", "matched_title", "ALTER TABLE import_diagnostic_logs ADD COLUMN matched_title TEXT"],
+          ["channel_ingest_inbox", "ingest_priority", "ALTER TABLE channel_ingest_inbox ADD COLUMN ingest_priority INTEGER NOT NULL DEFAULT 10"],
+          ["channel_ingest_inbox", "suppress_reaction", "ALTER TABLE channel_ingest_inbox ADD COLUMN suppress_reaction INTEGER NOT NULL DEFAULT 0"],
+          ["channel_ingest_inbox", "source_job_id", "ALTER TABLE channel_ingest_inbox ADD COLUMN source_job_id INTEGER NOT NULL DEFAULT 0"]
         ];
         const alterStmts = [];
         for (const [tbl, col, ddl] of requiredCols) {
@@ -621,6 +711,14 @@
             }
           }
         }
+        // Nach den Spalten-Migrationen die neuen Inbox-Prioritäts- & Job-Staging-Indizes sicher anlegen
+        try {
+          countD1Subrequest();
+          await rawDb.batch(unwrapRawD1Statements([
+            db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_status_prio_msg ON channel_ingest_inbox(status, chat_id, ingest_priority DESC, message_id ASC)"),
+            db.prepare("CREATE INDEX IF NOT EXISTS idx_ingest_inbox_job_status_msg ON channel_ingest_inbox(source_job_id, status, message_id ASC)")
+          ]));
+        } catch (_idxErr) {}
         try {
           countD1Subrequest();
           await rawDb
@@ -6990,17 +7088,26 @@
     return { ok: true, entry: nextEntry, map: nextMap };
   }
 
-  async function updateAutoIngestChatContextSnapshot(env, chatId, snapshot = null) {
+  async function updateAutoIngestChatContextSnapshot(env, chatId, snapshot = null, meta = {}) {
     const cid = String(chatId || "").trim();
     if (!cid) return false;
     try {
       const map = await getAutoIngestChatsMap(env, true);
-      if (!map[cid]) return false;
+      const existing = map[cid] || null;
+      if (!existing && !snapshot) return false;
       const now = Date.now();
+      const baseEntry = existing || {
+        chatId: cid,
+        enabled: false,
+        title: String(meta?.title || cid).slice(0, 140),
+        chatType: String(meta?.chatType || (cid.startsWith("-100") ? "channel" : "group")).slice(0, 32),
+        activatedBy: null,
+        updatedAt: now
+      };
       const nextMap = {
         ...map,
         [cid]: {
-          ...map[cid],
+          ...baseEntry,
           lastContextSnapshot: snapshot || null,
           updatedAt: now
         }
@@ -7016,28 +7123,45 @@
   async function enqueueChannelIngestMessageToD1(env, rec) {
     const db = await ensureD1Schema(env);
     if (!db || !rec || !rec.chatId || !rec.messageId) return { ok: false, skipped: true };
-    try {
-      trackStat("d1Writes");
-      const now = Number(rec.createdAt || Date.now());
-      const res = await db.prepare(
-        `INSERT OR IGNORE INTO channel_ingest_inbox
-         (chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, locked_until, reaction_pending, created_at, processed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', 0, 0, ?8, 0)`
-      ).bind(
-        String(rec.chatId),
-        String(rec.chatTitle || "").slice(0, 120),
-        Number(rec.messageId),
-        rec.replyToMessageId ? Number(rec.replyToMessageId) : null,
-        rec.mediaGroupId ? String(rec.mediaGroupId).slice(0, 64) : null,
-        String(rec.msgKind || "context"),
-        JSON.stringify(rec.payload || {}),
-        now
-      ).run();
-      const inserted = Number(res?.meta?.changes || 0) > 0;
-      return { ok: true, inserted };
-    } catch (e) {
-      return { ok: false, error: String(e?.message || e) };
+    const now = Number(rec.createdAt || Date.now());
+    const chatIdStr = String(rec.chatId);
+    const chatTitleStr = String(rec.chatTitle || "").slice(0, 120);
+    const msgIdNum = Number(rec.messageId);
+    const replyIdNum = rec.replyToMessageId ? Number(rec.replyToMessageId) : null;
+    const mediaGrpStr = rec.mediaGroupId ? String(rec.mediaGroupId).slice(0, 64) : null;
+    const msgKindStr = String(rec.msgKind || "context");
+    const payloadStr = JSON.stringify(rec.payload || {});
+    let lastErr = null;
+    // INSERT OR IGNORE ist 100% idempotent (UNIQUE chat_id, message_id) -> 2 kurze Jitter-Retries fangen
+    // kurzzeitige D1-Write-Locks bei Tausenden parallelen Kanal-Posts verlustfrei ab (0 ms Overhead im Normalfall).
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        trackStat("d1Writes");
+        const res = await db.prepare(
+          `INSERT OR IGNORE INTO channel_ingest_inbox
+           (chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, locked_until, reaction_pending, created_at, processed_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', 0, 0, ?8, 0)`
+        ).bind(
+          chatIdStr,
+          chatTitleStr,
+          msgIdNum,
+          replyIdNum,
+          mediaGrpStr,
+          msgKindStr,
+          payloadStr,
+          now
+        ).run();
+        const inserted = Number(res?.meta?.changes || 0) > 0;
+        return { ok: true, inserted };
+      } catch (e) {
+        lastErr = e;
+        if (attempt < 2) {
+          const baseDelay = attempt === 0 ? 120 : 350;
+          await new Promise(r => setTimeout(r, baseDelay + Math.floor(Math.random() * 80)));
+        }
+      }
     }
+    return { ok: false, error: String(lastErr?.message || lastErr || "D1 enqueue failed") };
   }
 
   async function releaseExpiredChannelIngestLocksInD1(env, now = Date.now()) {
@@ -7056,13 +7180,14 @@
 
   async function getChannelIngestInboxStatsFromD1(env, filterChatId = null) {
     const db = await ensureD1Schema(env);
-    if (!db) return { chats: [], totals: { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 } };
+    if (!db) return { chats: [], totals: { pending: 0, staging: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 } };
     try {
       trackStat("d1Reads");
       const baseSql = `SELECT
         chat_id,
         MAX(chat_title) AS chat_title,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+        SUM(CASE WHEN status = 'staging' THEN 1 ELSE 0 END) AS staging_count,
         SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing_count,
         SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done_count,
         SUM(CASE WHEN status = 'review' THEN 1 ELSE 0 END) AS review_count,
@@ -7075,12 +7200,13 @@
         ? await db.prepare(`${baseSql} WHERE chat_id = ?1 GROUP BY chat_id`).bind(String(filterChatId)).all()
         : await db.prepare(`${baseSql} GROUP BY chat_id ORDER BY pending_count DESC, newest_pending_at DESC`).all();
 
-      const totals = { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 };
+      const totals = { pending: 0, staging: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 };
       const chats = (res?.results || []).map(r => {
         const item = {
           chatId: String(r.chat_id),
           chatTitle: String(r.chat_title || r.chat_id),
           pending: Number(r.pending_count || 0),
+          staging: Number(r.staging_count || 0),
           processing: Number(r.processing_count || 0),
           done: Number(r.done_count || 0),
           review: Number(r.review_count || 0),
@@ -7090,6 +7216,7 @@
           newestPendingAt: r.newest_pending_at ? Number(r.newest_pending_at) : null
         };
         totals.pending += item.pending;
+        totals.staging += item.staging;
         totals.processing += item.processing;
         totals.done += item.done;
         totals.review += item.review;
@@ -7099,7 +7226,7 @@
       });
       return { chats, totals };
     } catch (_e) {
-      return { chats: [], totals: { pending: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 } };
+      return { chats: [], totals: { pending: 0, staging: 0, processing: 0, done: 0, review: 0, ignored: 0, reactionPending: 0 } };
     }
   }
 
@@ -7120,14 +7247,20 @@
       }
       trackStat("d1Reads");
       const sel = await db.prepare(
-        `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at
+        `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at, ingest_priority, suppress_reaction, source_job_id
          FROM channel_ingest_inbox
          WHERE chat_id = ?1 AND status = 'pending'
-         ORDER BY message_id ASC
+         ORDER BY ingest_priority DESC, message_id ASC
          LIMIT ?2`
       ).bind(String(chatId), safeLimit).all();
-      const rows = sel?.results || [];
-      if (rows.length === 0) return [];
+      const rawRows = sel?.results || [];
+      if (rawRows.length === 0) return [];
+      // Live-vor-History-Priorität OHNE Fenster-Vermischung: Enthält der Batch Live-Posts (>=10),
+      // werden in diesem Fenster ausschließlich die Live-Posts geclaimed, damit Live & History niemals im selben Parser-Kontext kollidieren!
+      const hasLive = rawRows.some(r => Number(r.ingest_priority ?? 10) >= 10);
+      const rows = hasLive
+        ? rawRows.filter(r => Number(r.ingest_priority ?? 10) >= 10)
+        : rawRows;
       const ids = rows.map(r => Number(r.id)).filter(n => Number.isFinite(n));
       if (ids.length > 0) {
         trackStat("d1Writes");
@@ -7160,6 +7293,9 @@
           replyToMessageId: r.reply_to_message_id ? Number(r.reply_to_message_id) : null,
           mediaGroupId: r.media_group_id ? String(r.media_group_id) : null,
           msgKind: String(r.msg_kind || "context"),
+          ingestPriority: Number(r.ingest_priority ?? 10),
+          suppressReaction: Number(r.suppress_reaction || 0) === 1 || Boolean(payload?._suppressReaction),
+          sourceJobId: Number(r.source_job_id || payload?._historyJobId || 0),
           payload,
           createdAt: Number(r.created_at || 0)
         };
@@ -7389,10 +7525,10 @@
         "SELECT 1 AS hit FROM channel_ingest_inbox WHERE status = 'processing' AND chat_id = ?1 AND locked_until > 0 AND locked_until < ?2 LIMIT 1"
       ).bind(String(chatId), now);
       const selStmt = db.prepare(
-        `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at
+        `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, created_at, ingest_priority, suppress_reaction, source_job_id
          FROM channel_ingest_inbox
          WHERE chat_id = ?1 AND status = 'pending'
-         ORDER BY message_id ASC
+         ORDER BY ingest_priority DESC, message_id ASC
          LIMIT ?2`
       ).bind(String(chatId), safeLimit);
       const cntStmt = db.prepare(
@@ -7414,7 +7550,12 @@
           [sel, cntRow] = await Promise.all([selStmt.all(), cntStmt.first()]);
         }
       }
-      const rows = (sel?.results || []).map(r => {
+      const rawBrowserRows = sel?.results || [];
+      const hasLiveBrowser = rawBrowserRows.some(r => Number(r.ingest_priority ?? 10) >= 10);
+      const scopedBrowserRows = hasLiveBrowser
+        ? rawBrowserRows.filter(r => Number(r.ingest_priority ?? 10) >= 10)
+        : rawBrowserRows;
+      const rows = scopedBrowserRows.map(r => {
         let payload = {};
         try { payload = JSON.parse(r.payload_json || "{}"); } catch (_e) {}
         return {
@@ -7425,6 +7566,9 @@
           replyToMessageId: r.reply_to_message_id ? Number(r.reply_to_message_id) : null,
           mediaGroupId: r.media_group_id ? String(r.media_group_id) : null,
           msgKind: String(r.msg_kind || "context"),
+          ingestPriority: Number(r.ingest_priority ?? 10),
+          suppressReaction: Number(r.suppress_reaction || 0) === 1 || Boolean(payload?._suppressReaction),
+          sourceJobId: Number(r.source_job_id || payload?._historyJobId || 0),
           payload,
           createdAt: Number(r.created_at || 0)
         };
@@ -7448,7 +7592,7 @@
         const part = cleanIds.slice(i, i + CHUNK);
         const placeholders = part.map((_, idx) => `?${idx + 2}`).join(", ");
         const res = await db.prepare(
-          `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, locked_until, created_at
+          `SELECT id, chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, locked_until, created_at, ingest_priority, suppress_reaction, source_job_id
            FROM channel_ingest_inbox
            WHERE chat_id = ?1 AND id IN (${placeholders})
            ORDER BY message_id ASC`
@@ -7466,6 +7610,9 @@
             msgKind: String(r.msg_kind || "context"),
             status: String(r.status || "pending"),
             lockedUntil: Number(r.locked_until || 0),
+            ingestPriority: Number(r.ingest_priority ?? 10),
+            suppressReaction: Number(r.suppress_reaction || 0) === 1 || Boolean(payload?._suppressReaction),
+            sourceJobId: Number(r.source_job_id || payload?._historyJobId || 0),
             payload,
             createdAt: Number(r.created_at || 0)
           });
@@ -7553,3 +7700,1241 @@
       return 0;
     }
   }
+
+  // ============================================================================
+  // HISTORY CRAWLER & SORTIERTES THEMEN-ARCHIV — D1 KONFIGURATION & FAST-PROBE
+  // ============================================================================
+  const HISTORY_ARCHIVE_SETTINGS_KEY = "history_archive_settings_v1";
+
+  function parseHistoryChannelRow(r) {
+    if (!r) return null;
+    let pendingDeleteIds = [];
+    let verifiedCaps = null;
+    try {
+      const parsedDel = JSON.parse(r.pending_delete_ids_json || "[]");
+      if (Array.isArray(parsedDel)) {
+        pendingDeleteIds = parsedDel.map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0);
+      }
+    } catch (_e) {}
+    try {
+      if (r.verified_caps_json) {
+        verifiedCaps = JSON.parse(r.verified_caps_json);
+      }
+    } catch (_e) {}
+    return {
+      channelId: String(r.channel_id || ""),
+      label: String(r.label || ""),
+      role: r.role === "archive_forum" ? "archive_forum" : "probe_index",
+      enabled: Number(r.enabled || 0) === 1,
+      nextAllowedAt: Number(r.next_allowed_at || 0),
+      cooldownUntil: Number(r.cooldown_until || 0),
+      pendingDeleteIds,
+      pendingDeleteCount: pendingDeleteIds.length,
+      lastVerifiedAt: Number(r.last_verified_at || 0),
+      verifiedCaps,
+      updatedAt: Number(r.updated_at || 0)
+    };
+  }
+
+  async function getHistoryIndexChannelsFromD1(env, options = {}) {
+    const db = await ensureD1Schema(env);
+    if (!db) return [];
+    const roleFilter = options.role === "probe_index" || options.role === "archive_forum" ? options.role : null;
+    const onlyEnabled = Boolean(options.onlyEnabled || options.enabledOnly);
+    try {
+      trackStat("d1Reads");
+      let sql = `SELECT channel_id, label, role, enabled, next_allowed_at, cooldown_until, pending_delete_ids_json, last_verified_at, verified_caps_json, updated_at
+                 FROM history_index_channels`;
+      const binds = [];
+      const clauses = [];
+      if (roleFilter) {
+        clauses.push(`role = ?${binds.length + 1}`);
+        binds.push(roleFilter);
+      }
+      if (onlyEnabled) {
+        clauses.push(`enabled = 1`);
+      }
+      if (clauses.length > 0) sql += ` WHERE ${clauses.join(" AND ")}`;
+      sql += ` ORDER BY role DESC, updated_at ASC`;
+      const stmt = binds.length > 0 ? db.prepare(sql).bind(...binds) : db.prepare(sql);
+      const res = await stmt.all();
+      return (res?.results || []).map(parseHistoryChannelRow).filter(Boolean);
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  async function getHistoryArchiveDefaultsFromD1(env) {
+    const fallback = {
+      topicMode: "type_genre",
+      timing: "live",
+      pinSeriesCard: false,
+      maxSeriesTopics: 250
+    };
+    const db = await ensureD1Schema(env);
+    if (!db) return fallback;
+    try {
+      trackStat("d1Reads");
+      const row = await db.prepare("SELECT data_json FROM entity_cache WHERE cache_key = ?1").bind(HISTORY_ARCHIVE_SETTINGS_KEY).first();
+      if (!row?.data_json) return fallback;
+      const parsed = JSON.parse(row.data_json);
+      const validModes = new Set(["type_genre", "per_series_plus_genre", "compact_type"]);
+      const validTimings = new Set(["live", "after_scan"]);
+      return {
+        topicMode: validModes.has(parsed?.topicMode) ? parsed.topicMode : "type_genre",
+        timing: validTimings.has(parsed?.timing) ? parsed.timing : "live",
+        pinSeriesCard: Boolean(parsed?.pinSeriesCard),
+        maxSeriesTopics: Math.max(10, Math.min(1000, Number(parsed?.maxSeriesTopics || 250)))
+      };
+    } catch (_e) {
+      return fallback;
+    }
+  }
+
+  async function saveHistoryIndexChannelsInD1(env, { probeChannels = [], archiveForum = null, archiveDefaults = null } = {}) {
+    const db = await ensureD1Schema(env);
+    if (!db) return { ok: false, error: "D1 Datenbank nicht verfügbar." };
+    const now = Date.now();
+    const cleanProbeList = [];
+    const seenIds = new Set();
+
+    for (const item of (Array.isArray(probeChannels) ? probeChannels : [])) {
+      const cid = String(item?.channelId || "").trim();
+      if (!cid) continue;
+      if (!/^-\d{5,20}$/.test(cid)) {
+        return { ok: false, error: `Ungültige Index-Kanal-ID: ${cid}. Erwartet wird eine numerische Kanal-/Gruppen-ID (z. B. -100...).` };
+      }
+      if (seenIds.has(cid)) continue;
+      seenIds.add(cid);
+      cleanProbeList.push({
+        channelId: cid,
+        label: String(item?.label || "").replace(/\s+/g, " ").trim().slice(0, 80) || `Index-Kanal ${cleanProbeList.length + 1}`,
+        role: "probe_index",
+        enabled: item?.enabled !== false ? 1 : 0
+      });
+      if (cleanProbeList.length >= 3) break;
+    }
+
+    let cleanArchive = null;
+    if (archiveForum && String(archiveForum.channelId || "").trim()) {
+      const acid = String(archiveForum.channelId).trim();
+      if (!/^-\d{5,20}$/.test(acid)) {
+        return { ok: false, error: `Ungültige Themen-Archiv-ID: ${acid}. Erwartet wird eine numerische Supergruppen-ID (z. B. -100...).` };
+      }
+      if (seenIds.has(acid)) {
+        return { ok: false, error: "Das Themen-Archiv darf nicht dieselbe Chat-ID wie ein Index-Kanal mit Auto-Löschung haben." };
+      }
+      seenIds.add(acid);
+      cleanArchive = {
+        channelId: acid,
+        label: String(archiveForum.label || "").replace(/\s+/g, " ").trim().slice(0, 80) || "Sortiertes Themen-Archiv",
+        role: "archive_forum",
+        enabled: archiveForum.enabled !== false ? 1 : 0
+      };
+    }
+
+    const desiredRows = [...cleanProbeList, ...(cleanArchive ? [cleanArchive] : [])];
+    const desiredIds = new Set(desiredRows.map(r => r.channelId));
+    const existing = await getHistoryIndexChannelsFromD1(env);
+    const toRemove = existing.filter(e => !desiredIds.has(e.channelId) && e.pendingDeleteCount === 0);
+    const toDisableWithPendingDeletes = existing.filter(e => !desiredIds.has(e.channelId) && e.pendingDeleteCount > 0);
+
+    try {
+      const stmts = [];
+      for (const r of desiredRows) {
+        stmts.push(
+          db.prepare(
+            `INSERT INTO history_index_channels
+             (channel_id, label, role, enabled, next_allowed_at, cooldown_until, pending_delete_ids_json, last_verified_at, verified_caps_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 0, 0, '[]', 0, NULL, ?5)
+             ON CONFLICT(channel_id) DO UPDATE SET
+               label = excluded.label,
+               role = excluded.role,
+               enabled = excluded.enabled,
+               updated_at = excluded.updated_at`
+          ).bind(r.channelId, r.label, r.role, r.enabled, now)
+        );
+      }
+      for (const rem of toRemove) {
+        stmts.push(db.prepare("DELETE FROM history_index_channels WHERE channel_id = ?1").bind(rem.channelId));
+      }
+      for (const dis of toDisableWithPendingDeletes) {
+        stmts.push(db.prepare("UPDATE history_index_channels SET enabled = 0, updated_at = ?2 WHERE channel_id = ?1").bind(dis.channelId, now));
+      }
+
+      if (archiveDefaults && typeof archiveDefaults === "object") {
+        const validModes = new Set(["type_genre", "per_series_plus_genre", "compact_type"]);
+        const validTimings = new Set(["live", "after_scan"]);
+        const cleanDefaults = {
+          topicMode: validModes.has(archiveDefaults.topicMode) ? archiveDefaults.topicMode : "type_genre",
+          timing: validTimings.has(archiveDefaults.timing) ? archiveDefaults.timing : "live",
+          pinSeriesCard: Boolean(archiveDefaults.pinSeriesCard),
+          maxSeriesTopics: Math.max(10, Math.min(1000, Number(archiveDefaults.maxSeriesTopics || 250)))
+        };
+        stmts.push(
+          db.prepare(
+            `INSERT INTO entity_cache (cache_key, entity_type, data_json, updated_at)
+             VALUES (?1, 'system', ?2, ?3)
+             ON CONFLICT(cache_key) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at`
+          ).bind(HISTORY_ARCHIVE_SETTINGS_KEY, JSON.stringify(cleanDefaults), now)
+        );
+      }
+
+      if (stmts.length > 0) {
+        trackStat("d1Writes");
+        const rawDb = getRawD1Binding(env) || db;
+        if (rawDb && typeof rawDb.batch === "function") {
+          await rawDb.batch(unwrapRawD1Statements(stmts));
+        } else {
+          for (const st of stmts) await st.run();
+        }
+      }
+      memoryFallback.delete("history_blocked_chat_ids_v1");
+      const savedChannels = await getHistoryIndexChannelsFromD1(env);
+      const savedDefaults = await getHistoryArchiveDefaultsFromD1(env);
+      return {
+        ok: true,
+        probeChannels: savedChannels.filter(c => c.role === "probe_index"),
+        archiveForum: savedChannels.find(c => c.role === "archive_forum") || null,
+        archiveDefaults: savedDefaults
+      };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || "Konnte History-Konfiguration nicht speichern.") };
+    }
+  }
+
+  async function updateHistoryIndexChannelVerificationInD1(env, channelId, { verifiedAt = Date.now(), caps = null, label = null } = {}) {
+    const db = await ensureD1Schema(env);
+    if (!db || !channelId) return false;
+    try {
+      trackStat("d1Writes");
+      const capsJson = caps ? JSON.stringify(caps).slice(0, 2000) : null;
+      if (label && String(label).trim()) {
+        await db.prepare(
+          `UPDATE history_index_channels
+           SET last_verified_at = ?2, verified_caps_json = ?3, label = COALESCE(NULLIF(label, ''), ?4), updated_at = ?2
+           WHERE channel_id = ?1`
+        ).bind(String(channelId), Number(verifiedAt), capsJson, String(label).trim().slice(0, 80)).run();
+      } else {
+        await db.prepare(
+          `UPDATE history_index_channels
+           SET last_verified_at = ?2, verified_caps_json = ?3, updated_at = ?2
+           WHERE channel_id = ?1`
+        ).bind(String(channelId), Number(verifiedAt), capsJson).run();
+      }
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  // Webhook-Loop-Blacklist: 60s RAM-gecached (0 extra D1-Reads pro Live-Webhook!)
+  async function getHistorySystemBlockedChatIds(env, forceRefresh = false) {
+    const cacheKey = "history_blocked_chat_ids_v1";
+    const now = Date.now();
+    if (!forceRefresh) {
+      const cached = memoryFallback.get(cacheKey);
+      if (cached && cached.ids instanceof Set && (now - cached.ts) < 60000) {
+        return cached.ids;
+      }
+    }
+    const channels = await getHistoryIndexChannelsFromD1(env);
+    const idSet = new Set(channels.map(c => String(c.channelId)));
+    memoryFallback.set(cacheKey, { ids: idSet, ts: now });
+    return idSet;
+  }
+
+  async function isHistorySystemBlockedChat(env, chatId) {
+    const cid = String(chatId || "").trim();
+    if (!cid) return false;
+    const blocked = await getHistorySystemBlockedChatIds(env, false);
+    return blocked.has(cid);
+  }
+
+  // O(1)-Leerlauf-Fast-Probe für 2-Min-Cron: 1 gebündelter D1-Batch, 0 D1-Writes im Leerlauf!
+  async function getHistorySystemCronFastProbeFromD1(env, now = Date.now()) {
+    const db = await ensureD1Schema(env);
+    if (!db) {
+      return { hasActiveOrQueuedJob: false, activeJob: null, hasPendingArchive: false, hasPendingProbeDeletes: false };
+    }
+    try {
+      trackStat("d1Reads");
+      const rawDb = getRawD1Binding(env) || db;
+      const jobStmt = db.prepare(
+        `SELECT id, source_chat_id, status, cron_enabled, worker_lease_until, flood_until
+         FROM history_crawl_jobs
+         WHERE status IN ('running', 'queued', 'flood_wait')
+         ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'flood_wait' THEN 1 ELSE 2 END, id ASC
+         LIMIT 1`
+      );
+      const archStmt = db.prepare(
+        `SELECT 1 AS hit FROM archive_mirror_queue WHERE status = 'pending' AND next_attempt_at <= ?1 LIMIT 1`
+      ).bind(Number(now));
+      const cleanupStmt = db.prepare(
+        `SELECT 1 AS hit FROM history_index_channels WHERE pending_delete_ids_json IS NOT NULL AND pending_delete_ids_json != '[]' LIMIT 1`
+      );
+
+      let jobRes, archRes, cleanupRes;
+      if (rawDb && typeof rawDb.batch === "function") {
+        const out = await rawDb.batch(unwrapRawD1Statements([jobStmt, archStmt, cleanupStmt]));
+        jobRes = out?.[0];
+        archRes = out?.[1];
+        cleanupRes = out?.[2];
+      } else {
+        [jobRes, archRes, cleanupRes] = await Promise.all([jobStmt.all(), archStmt.all(), cleanupStmt.all()]);
+      }
+      const activeJobRow = jobRes?.results?.[0] || null;
+      return {
+        hasActiveOrQueuedJob: Boolean(activeJobRow),
+        activeJob: activeJobRow
+          ? {
+              id: Number(activeJobRow.id),
+              sourceChatId: String(activeJobRow.source_chat_id),
+              status: String(activeJobRow.status),
+              cronEnabled: Number(activeJobRow.cron_enabled || 0) === 1,
+              workerLeaseUntil: Number(activeJobRow.worker_lease_until || 0),
+              floodUntil: Number(activeJobRow.flood_until || 0)
+            }
+          : null,
+        hasPendingArchive: Array.isArray(archRes?.results) && archRes.results.length > 0,
+        hasPendingProbeDeletes: Array.isArray(cleanupRes?.results) && cleanupRes.results.length > 0
+      };
+    } catch (_e) {
+      return { hasActiveOrQueuedJob: false, activeJob: null, hasPendingArchive: false, hasPendingProbeDeletes: false };
+    }
+  }
+
+  // ============================================================================
+  // SCHRITT 2: HISTORY CRAWL JOBS, D1-VORAB-SKIP, BACKPRESSURE & STAGING-GATE
+  // ============================================================================
+  const HISTORY_REVERSE_BLOCK_SIZE = 50;
+
+  function computeReverseBlockCeiling(startMsgId, endMsgId, chunkFloorId) {
+    const start = Number(startMsgId);
+    const end = Number(endMsgId);
+    const floor = Number(chunkFloorId);
+    if (floor > start) {
+      return Math.min(end, floor + HISTORY_REVERSE_BLOCK_SIZE - 1);
+    }
+    const totalSpan = Math.max(1, end - start + 1);
+    if (totalSpan <= HISTORY_REVERSE_BLOCK_SIZE) return end;
+    return Math.min(end, start + ((totalSpan - 1) % HISTORY_REVERSE_BLOCK_SIZE));
+  }
+
+  function parseHistoryJobRow(r) {
+    if (!r) return null;
+    const startMsgId = Number(r.start_msg_id || 1);
+    const endMsgId = Number(r.end_msg_id || startMsgId);
+    const totalSpan = Math.max(1, endMsgId - startMsgId + 1);
+    const scannedCount = Number(r.scanned_count || 0);
+    const skippedExistingCount = Number(r.skipped_existing_count || 0);
+    const completedIds = Math.min(totalSpan, scannedCount + skippedExistingCount);
+    const progressPct = r.status === "completed"
+      ? 100
+      : Math.min(99.9, Math.round((completedIds / totalSpan) * 1000) / 10);
+    return {
+      id: Number(r.id),
+      sourceChatId: String(r.source_chat_id || ""),
+      sourceTitle: String(r.source_title || r.source_chat_id || ""),
+      startMsgId,
+      endMsgId,
+      totalSpan,
+      direction: r.direction === "desc" ? "desc" : "asc",
+      currentCursorId: Number(r.current_cursor_id || startMsgId),
+      chunkFloorId: Number(r.chunk_floor_id || startMsgId),
+      status: String(r.status || "queued"),
+      enableReactions: Number(r.enable_reactions || 0) === 1,
+      enableArchiveMirror: Number(r.enable_archive_mirror || 0) === 1,
+      archiveTopicMode: String(r.archive_topic_mode || "type_genre"),
+      archiveTiming: r.archive_timing === "after_scan" ? "after_scan" : "live",
+      archivePinSeriesCard: Number(r.archive_pin_series_card || 0) === 1,
+      archiveMaxSeriesTopics: Math.max(10, Math.min(1000, Number(r.archive_max_series_topics || 250))),
+      cronEnabled: Number(r.cron_enabled || 0) === 1,
+      scannedCount,
+      mediaFoundCount: Number(r.media_found_count || 0),
+      contextFoundCount: Number(r.context_found_count || 0),
+      missingCount: Number(r.missing_count || 0),
+      skippedExistingCount,
+      noiseSkippedCount: Number(r.noise_skipped_count || 0),
+      errorCount: Number(r.error_count || 0),
+      progressPct,
+      workerLeaseUntil: Number(r.worker_lease_until || 0),
+      floodUntil: Number(r.flood_until || 0),
+      lastError: r.last_error ? String(r.last_error) : "",
+      createdAt: Number(r.created_at || 0),
+      updatedAt: Number(r.updated_at || 0),
+      completedAt: Number(r.completed_at || 0)
+    };
+  }
+
+  async function listHistoryCrawlJobsFromD1(env, limit = 30) {
+    const db = await ensureD1Schema(env);
+    if (!db) return [];
+    const safeLimit = Math.max(1, Math.min(100, Number(limit || 30)));
+    try {
+      trackStat("d1Reads");
+      const res = await db.prepare(
+        `SELECT * FROM history_crawl_jobs
+         ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'flood_wait' THEN 1 WHEN 'queued' THEN 2 WHEN 'paused' THEN 3 ELSE 4 END, id DESC
+         LIMIT ?1`
+      ).bind(safeLimit).all();
+      return (res?.results || []).map(parseHistoryJobRow).filter(Boolean);
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  async function getHistoryCrawlJobByIdFromD1(env, jobId) {
+    const db = await ensureD1Schema(env);
+    const jid = Number(jobId);
+    if (!db || !Number.isInteger(jid) || jid <= 0) return null;
+    try {
+      trackStat("d1Reads");
+      const row = await db.prepare("SELECT * FROM history_crawl_jobs WHERE id = ?1").bind(jid).first();
+      return parseHistoryJobRow(row);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  // Serielle Multi-Job-Queue: gibt laufenden Job zurück oder aktiviert automatisch den ältesten wartenden ('queued') Job
+  async function getActiveOrNextQueuedHistoryJobFromD1(env, options = {}) {
+    const db = await ensureD1Schema(env);
+    if (!db) return null;
+    const requestedJobId = Number(options.jobId || 0);
+    const onlyCronEnabled = Boolean(options.onlyCronEnabled);
+    const now = Number(options.now || Date.now());
+    try {
+      trackStat("d1Reads");
+      if (requestedJobId > 0) {
+        const specific = await db.prepare("SELECT * FROM history_crawl_jobs WHERE id = ?1").bind(requestedJobId).first();
+        return parseHistoryJobRow(specific);
+      }
+      const activeSql = onlyCronEnabled
+        ? `SELECT * FROM history_crawl_jobs WHERE status IN ('running', 'flood_wait') AND cron_enabled = 1 ORDER BY id ASC LIMIT 1`
+        : `SELECT * FROM history_crawl_jobs WHERE status IN ('running', 'flood_wait') ORDER BY id ASC LIMIT 1`;
+      const activeRow = await db.prepare(activeSql).first();
+      if (activeRow) {
+        const parsed = parseHistoryJobRow(activeRow);
+        if (parsed.status === "flood_wait" && parsed.floodUntil <= now) {
+          trackStat("d1Writes");
+          await db.prepare("UPDATE history_crawl_jobs SET status = 'running', updated_at = ?2 WHERE id = ?1").bind(parsed.id, now).run();
+          parsed.status = "running";
+        }
+        return parsed;
+      }
+      // Prüfen, ob überhaupt irgendein anderer Job noch aktiv ist (auch wenn cron_enabled = 0 -> max. 1 Job gleichzeitig!)
+      if (onlyCronEnabled) {
+        const anyActive = await db.prepare("SELECT id FROM history_crawl_jobs WHERE status IN ('running', 'flood_wait') LIMIT 1").first();
+        if (anyActive) return null;
+      }
+      const queuedSql = onlyCronEnabled
+        ? `SELECT * FROM history_crawl_jobs WHERE status = 'queued' AND cron_enabled = 1 ORDER BY id ASC LIMIT 1`
+        : `SELECT * FROM history_crawl_jobs WHERE status = 'queued' ORDER BY id ASC LIMIT 1`;
+      const nextQueued = await db.prepare(queuedSql).first();
+      if (!nextQueued) return null;
+      trackStat("d1Writes");
+      await db.prepare("UPDATE history_crawl_jobs SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'queued'")
+        .bind(Number(nextQueued.id), now)
+        .run();
+      const activated = parseHistoryJobRow(nextQueued);
+      activated.status = "running";
+      activated.updatedAt = now;
+      return activated;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  async function createHistoryCrawlJobInD1(env, payload = {}) {
+    const db = await ensureD1Schema(env);
+    if (!db) return { ok: false, error: "D1 Datenbank nicht verfügbar." };
+    const sourceChatId = String(payload.sourceChatId || "").trim();
+    if (!/^-\d{5,20}$/.test(sourceChatId)) {
+      return { ok: false, error: "Ungültige Quell-Chat-ID (numerische -100... ID erforderlich)." };
+    }
+    const startMsgId = Number(payload.startMsgId);
+    const endMsgId = Number(payload.endMsgId);
+    if (!Number.isInteger(startMsgId) || !Number.isInteger(endMsgId) || startMsgId < 1 || endMsgId < startMsgId || endMsgId > 2000000000) {
+      return { ok: false, error: "Ungültiger ID-Bereich (Von muss >= 1 und <= Bis sein)." };
+    }
+    const direction = payload.direction === "desc" ? "desc" : "asc";
+    const initialFloor = direction === "desc"
+      ? Math.max(startMsgId, endMsgId - HISTORY_REVERSE_BLOCK_SIZE + 1)
+      : startMsgId;
+    const initialCursor = initialFloor;
+    const now = Date.now();
+    const validModes = new Set(["type_genre", "per_series_plus_genre", "compact_type"]);
+    const archiveTopicMode = validModes.has(payload.archiveTopicMode) ? payload.archiveTopicMode : "type_genre";
+    const archiveTiming = payload.archiveTiming === "after_scan" ? "after_scan" : "live";
+    const archiveMaxSeriesTopics = Math.max(10, Math.min(1000, Number(payload.archiveMaxSeriesTopics || 250)));
+
+    try {
+      const existingActive = await db.prepare("SELECT id FROM history_crawl_jobs WHERE status IN ('running', 'flood_wait') LIMIT 1").first();
+      const initialStatus = existingActive ? "queued" : "running";
+      trackStat("d1Writes");
+      const res = await db.prepare(
+        `INSERT INTO history_crawl_jobs
+         (source_chat_id, source_title, start_msg_id, end_msg_id, direction, current_cursor_id, chunk_floor_id, status,
+          enable_reactions, enable_archive_mirror, archive_topic_mode, archive_timing, archive_pin_series_card, archive_max_series_topics,
+          cron_enabled, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)`
+      ).bind(
+        sourceChatId,
+        String(payload.sourceTitle || sourceChatId).replace(/\s+/g, " ").trim().slice(0, 120),
+        startMsgId,
+        endMsgId,
+        direction,
+        initialCursor,
+        initialFloor,
+        initialStatus,
+        payload.enableReactions ? 1 : 0,
+        payload.enableArchiveMirror ? 1 : 0,
+        archiveTopicMode,
+        archiveTiming,
+        payload.archivePinSeriesCard ? 1 : 0,
+        archiveMaxSeriesTopics,
+        payload.cronEnabled !== false ? 1 : 0,
+        now
+      ).run();
+      const newId = Number(res?.meta?.last_row_id || 0);
+      const job = newId > 0 ? await getHistoryCrawlJobByIdFromD1(env, newId) : null;
+      return { ok: true, job };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || "Job konnte nicht angelegt werden.") };
+    }
+  }
+
+  async function updateHistoryCrawlJobStateInD1(env, jobId, patch = {}) {
+    const db = await ensureD1Schema(env);
+    const jid = Number(jobId);
+    if (!db || !Number.isInteger(jid) || jid <= 0) return false;
+    const now = Number(patch.now || Date.now());
+    const sets = ["updated_at = ?1"];
+    const binds = [now];
+    const addSet = (expr, val) => {
+      binds.push(val);
+      sets.push(`${expr} = ?${binds.length}`);
+    };
+    const addInc = (col, delta) => {
+      const n = Number(delta || 0);
+      if (!n) return;
+      binds.push(n);
+      sets.push(`${col} = ${col} + ?${binds.length}`);
+    };
+
+    if (typeof patch.status === "string" && patch.status) addSet("status", patch.status);
+    if (Number.isInteger(patch.currentCursorId)) addSet("current_cursor_id", patch.currentCursorId);
+    if (Number.isInteger(patch.chunkFloorId)) addSet("chunk_floor_id", patch.chunkFloorId);
+    if (Number.isFinite(patch.workerLeaseUntil)) addSet("worker_lease_until", Math.max(0, Math.floor(patch.workerLeaseUntil)));
+    if (Number.isFinite(patch.floodUntil)) addSet("flood_until", Math.max(0, Math.floor(patch.floodUntil)));
+    if (typeof patch.lastError === "string") addSet("last_error", patch.lastError.slice(0, 400));
+    if (Number.isFinite(patch.completedAt)) addSet("completed_at", Math.max(0, Math.floor(patch.completedAt)));
+    if (typeof patch.cronEnabled === "boolean") addSet("cron_enabled", patch.cronEnabled ? 1 : 0);
+
+    addInc("scanned_count", patch.incScanned);
+    addInc("media_found_count", patch.incMediaFound);
+    addInc("context_found_count", patch.incContextFound);
+    addInc("missing_count", patch.incMissing);
+    addInc("skipped_existing_count", patch.incSkippedExisting);
+    addInc("noise_skipped_count", patch.incNoiseSkipped);
+    addInc("error_count", patch.incErrors);
+
+    binds.push(jid);
+    try {
+      trackStat("d1Writes");
+      await db.prepare(`UPDATE history_crawl_jobs SET ${sets.join(", ")} WHERE id = ?${binds.length}`).bind(...binds).run();
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  // D1-Vorab-Skip: 1 leichter Covering-Index-Query überspringt bereits gescannte IDs mit 0 Telegram-Calls!
+  async function getExistingInboxMessageIdsInRangeFromD1(env, chatId, minMsgId, maxMsgId) {
+    const db = await ensureD1Schema(env);
+    const out = new Set();
+    if (!db || !chatId || minMsgId > maxMsgId) return out;
+    try {
+      trackStat("d1Reads");
+      const res = await db.prepare(
+        `SELECT message_id FROM channel_ingest_inbox
+         WHERE chat_id = ?1 AND message_id >= ?2 AND message_id <= ?3`
+      ).bind(String(chatId), Number(minMsgId), Number(maxMsgId)).all();
+      for (const r of (res?.results || [])) {
+        const mid = Number(r?.message_id || 0);
+        if (mid > 0) out.add(mid);
+      }
+    } catch (_e) {}
+    return out;
+  }
+
+  // Backpressure-Zähler: zählt offene History-Zeilen ('pending'/'staging') für einen Quell-Chat
+  async function countOpenHistoryInboxRowsInD1(env, sourceChatId) {
+    const db = await ensureD1Schema(env);
+    if (!db || !sourceChatId) return 0;
+    try {
+      trackStat("d1Reads");
+      const row = await db.prepare(
+        `SELECT COUNT(*) AS cnt FROM channel_ingest_inbox
+         WHERE chat_id = ?1 AND status IN ('pending', 'staging') AND ingest_priority < 10`
+      ).bind(String(sourceChatId)).first();
+      return Number(row?.cnt || 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  // 1x D1-Batch-Insert für gecrawlte History-Nachrichten (strikte Zeitstempel-Trennung: created_at = Date.now(), payload.date_unixtime = Originaldatum)
+  async function bulkInsertHistoryInboxRowsInD1(env, records = []) {
+    const db = await ensureD1Schema(env);
+    if (!db || !Array.isArray(records) || records.length === 0) return { ok: true, inserted: 0 };
+    const stmts = [];
+    for (const rec of records) {
+      if (!rec || !rec.chatId || !rec.messageId || !rec.payload) continue;
+      stmts.push(
+        db.prepare(
+          `INSERT OR IGNORE INTO channel_ingest_inbox
+           (chat_id, chat_title, message_id, reply_to_message_id, media_group_id, msg_kind, payload_json, status, locked_until, reaction_pending, created_at, processed_at, ingest_priority, suppress_reaction, source_job_id)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 0, ?9, 0, 1, ?10, ?11)`
+        ).bind(
+          String(rec.chatId),
+          String(rec.chatTitle || "").slice(0, 120),
+          Number(rec.messageId),
+          rec.replyToMessageId ? Number(rec.replyToMessageId) : null,
+          rec.mediaGroupId ? String(rec.mediaGroupId).slice(0, 64) : null,
+          String(rec.msgKind || "context"),
+          JSON.stringify(rec.payload),
+          rec.initialStatus === "pending" ? "pending" : "staging",
+          Number(rec.createdAt || Date.now()),
+          rec.suppressReaction ? 1 : 0,
+          Number(rec.sourceJobId || 0)
+        )
+      );
+    }
+    if (stmts.length === 0) return { ok: true, inserted: 0 };
+    try {
+      trackStat("d1Writes");
+      const rawDb = getRawD1Binding(env) || db;
+      let inserted = 0;
+      if (rawDb && typeof rawDb.batch === "function") {
+        const resArr = await rawDb.batch(unwrapRawD1Statements(stmts));
+        for (const r of (resArr || [])) inserted += Number(r?.meta?.changes || 0);
+      } else {
+        for (const st of stmts) {
+          const r = await st.run();
+          inserted += Number(r?.meta?.changes || 0);
+        }
+      }
+      return { ok: true, inserted };
+    } catch (e) {
+      return { ok: false, inserted: 0, error: String(e?.message || "Bulk-Insert in Inbox fehlgeschlagen") };
+    }
+  }
+
+  // Kontext-treues staging → pending Gate (Vorwärts: hält offene Nachlauf-Header; Rückwärts: hält führende Videos ohne Poster bis Vorblock da ist!)
+  async function promoteHistoryStagingRowsToPendingInD1(env, jobId, options = {}) {
+    const db = await ensureD1Schema(env);
+    const jid = Number(jobId);
+    if (!db || !Number.isInteger(jid) || jid <= 0) return 0;
+    const promoteAll = Boolean(options.promoteAll);
+    const direction = options.direction === "desc" ? "desc" : "asc";
+    const now = Number(options.now || Date.now());
+
+    try {
+      if (promoteAll) {
+        trackStat("d1Writes");
+        const res = await db.prepare(
+          `UPDATE channel_ingest_inbox
+           SET status = 'pending', created_at = ?2
+           WHERE source_job_id = ?1 AND status = 'staging'`
+        ).bind(jid, now).run();
+        return Number(res?.meta?.changes || 0);
+      }
+
+      trackStat("d1Reads");
+      const sel = await db.prepare(
+        `SELECT id, message_id, msg_kind, media_group_id, payload_json
+         FROM channel_ingest_inbox
+         WHERE source_job_id = ?1 AND status = 'staging'
+         ORDER BY message_id ASC
+         LIMIT 250`
+      ).bind(jid).all();
+      const rows = sel?.results || [];
+      if (rows.length === 0) return 0;
+
+      let promoteIds = [];
+      if (direction === "asc") {
+        // Vorwärts: Nachlaufende reine Kontext-Header oder eine offene Media-Group ganz am Ende zurückhalten
+        let cut = rows.length;
+        const tailGrp = rows[cut - 1]?.media_group_id;
+        if (tailGrp) {
+          let gStart = cut - 1;
+          while (gStart > 0 && rows[gStart - 1]?.media_group_id === tailGrp) gStart--;
+          if (gStart > 0) cut = gStart;
+        }
+        while (cut > 0 && rows[cut - 1]?.msg_kind === "context") {
+          cut--;
+        }
+        promoteIds = rows.slice(0, cut).map(r => Number(r.id)).filter(n => n > 0);
+      } else {
+        // Rückwärts-Block abgeschlossen: ersten Kontext-Anker (Poster/Text-Header oder >= 15 IDs / >= 10 Min Lücke) suchen
+        // und alles AB diesem Anker nach oben freigeben — führende Videos davor warten in 'staging' auf den direkt darunterliegenden Block!
+        let anchorIdx = -1;
+        for (let i = 0; i < rows.length; i++) {
+          if (rows[i].msg_kind === "context") {
+            anchorIdx = i;
+            break;
+          }
+          if (i > 0) {
+            const idGap = Number(rows[i].message_id) - Number(rows[i - 1].message_id);
+            let timeGapSec = 0;
+            try {
+              const pPrev = JSON.parse(rows[i - 1].payload_json || "{}");
+              const pCur = JSON.parse(rows[i].payload_json || "{}");
+              const tPrev = Number(pPrev.date_unixtime || 0);
+              const tCur = Number(pCur.date_unixtime || 0);
+              if (tPrev > 0 && tCur > 0) timeGapSec = Math.abs(tCur - tPrev);
+            } catch (_e) {}
+            if (idGap >= 15 || timeGapSec >= 600) {
+              anchorIdx = i;
+              break;
+            }
+          }
+        }
+        // Sicherheits-Überlauf: falls in > 100 staging-Zeilen gar kein Poster-Anker existiert, ältesten Teil ab Hälfte freigeben
+        if (anchorIdx < 0 && rows.length >= 100) {
+          anchorIdx = Math.floor(rows.length / 2);
+        }
+        if (anchorIdx >= 0) {
+          promoteIds = rows.slice(anchorIdx).map(r => Number(r.id)).filter(n => n > 0);
+        }
+      }
+
+      if (promoteIds.length === 0) return 0;
+      trackStat("d1Writes");
+      const rawDb = getRawD1Binding(env) || db;
+      const stmts = [];
+      for (let i = 0; i < promoteIds.length; i += 80) {
+        const part = promoteIds.slice(i, i + 80);
+        const placeholders = part.map((_, idx) => `?${idx + 2}`).join(", ");
+        stmts.push(
+          db.prepare(
+            `UPDATE channel_ingest_inbox SET status = 'pending', created_at = ?1 WHERE id IN (${placeholders}) AND status = 'staging'`
+          ).bind(now, ...part)
+        );
+      }
+      let promoted = 0;
+      if (stmts.length > 1 && rawDb && typeof rawDb.batch === "function") {
+        const resArr = await rawDb.batch(unwrapRawD1Statements(stmts));
+        for (const r of (resArr || [])) promoted += Number(r?.meta?.changes || 0);
+      } else {
+        for (const st of stmts) {
+          const r = await st.run();
+          promoted += Number(r?.meta?.changes || 0);
+        }
+      }
+      return promoted;
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function updateHistoryChannelsRuntimeInD1(env, channelUpdates = []) {
+    const db = await ensureD1Schema(env);
+    if (!db || !Array.isArray(channelUpdates) || channelUpdates.length === 0) return false;
+    const now = Date.now();
+    const stmts = [];
+    for (const u of channelUpdates) {
+      if (!u || !u.channelId) continue;
+      const cleanPendingIds = Array.from(
+        new Set((Array.isArray(u.pendingDeleteIds) ? u.pendingDeleteIds : []).map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0))
+      ).slice(0, 500);
+      stmts.push(
+        db.prepare(
+          `UPDATE history_index_channels
+           SET next_allowed_at = ?2, cooldown_until = ?3, pending_delete_ids_json = ?4, updated_at = ?5
+           WHERE channel_id = ?1`
+        ).bind(
+          String(u.channelId),
+          Math.max(0, Math.floor(Number(u.nextAllowedAt || 0))),
+          Math.max(0, Math.floor(Number(u.cooldownUntil || 0))),
+          JSON.stringify(cleanPendingIds),
+          now
+        )
+      );
+    }
+    if (stmts.length === 0) return false;
+    try {
+      trackStat("d1Writes");
+      const rawDb = getRawD1Binding(env) || db;
+      if (stmts.length > 1 && rawDb && typeof rawDb.batch === "function") {
+        await rawDb.batch(unwrapRawD1Statements(stmts));
+      } else {
+        for (const st of stmts) await st.run();
+      }
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  async function deleteHistoryCrawlJobInD1(env, jobId) {
+    const db = await ensureD1Schema(env);
+    const jid = Number(jobId);
+    if (!db || !Number.isInteger(jid) || jid <= 0) return false;
+    try {
+      trackStat("d1Writes");
+      const rawDb = getRawD1Binding(env) || db;
+      const stmts = [
+        db.prepare("DELETE FROM channel_ingest_inbox WHERE source_job_id = ?1 AND status = 'staging'").bind(jid),
+        db.prepare("DELETE FROM archive_mirror_queue WHERE job_id = ?1 AND status = 'held_until_scan'").bind(jid),
+        db.prepare("DELETE FROM history_crawl_jobs WHERE id = ?1").bind(jid)
+      ];
+      if (rawDb && typeof rawDb.batch === "function") {
+        await rawDb.batch(unwrapRawD1Statements(stmts));
+      } else {
+        for (const st of stmts) await st.run();
+      }
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  // =========================================================================
+  // STUFE C: OPTIONALES SORTIERTES THEMEN-ARCHIV (D1 QUEUE & TOPIC-MAP)
+  // =========================================================================
+  function parseArchiveMirrorRow(r) {
+    if (!r) return null;
+    return {
+      id: Number(r.id || 0),
+      jobId: Number(r.job_id || 0),
+      archiveChatId: String(r.archive_chat_id || ""),
+      mediaType: String(r.media_type || "movie"),
+      tmdbId: Number(r.tmdb_id || 0),
+      seasonNumber: Number(r.season_number || 0),
+      episodeNumber: Number(r.episode_number || 0),
+      partNumber: Number(r.part_number || 1),
+      sourceChatId: String(r.source_chat_id || ""),
+      sourceMessageId: Number(r.source_message_id || 0),
+      fileUniqueId: String(r.file_unique_id || ""),
+      fileId: String(r.file_id || ""),
+      fileKind: String(r.file_kind || "video"),
+      topicKey: String(r.topic_key || ""),
+      topicName: String(r.topic_name || ""),
+      topicIconColor: Number(r.topic_icon_color || 0),
+      seriesHeaderHtml: String(r.series_header_html || ""),
+      seriesPosterUrl: String(r.series_poster_url || ""),
+      captionHtml: String(r.caption_html || ""),
+      coverUrl: String(r.cover_url || ""),
+      status: String(r.status || "pending"),
+      archiveMessageId: Number(r.archive_message_id || 0),
+      archiveThreadId: Number(r.archive_thread_id || 0),
+      attempts: Number(r.attempts || 0),
+      nextAttemptAt: Number(r.next_attempt_at || 0),
+      lastError: String(r.last_error || ""),
+      createdAt: Number(r.created_at || 0),
+      updatedAt: Number(r.updated_at || 0)
+    };
+  }
+
+  async function enqueueArchiveMirrorItemsInD1(env, items = []) {
+    const db = await ensureD1Schema(env);
+    if (!db || !Array.isArray(items) || items.length === 0) return { ok: true, inserted: 0 };
+    const now = Date.now();
+    const stmts = [];
+    for (const it of items) {
+      if (!it || !it.archiveChatId || !it.fileUniqueId || !it.fileId || !it.topicKey || !it.captionHtml) continue;
+      const status = it.status === "held_until_scan" ? "held_until_scan" : "pending";
+      stmts.push(
+        db.prepare(
+          `INSERT OR IGNORE INTO archive_mirror_queue (
+            job_id, archive_chat_id, media_type, tmdb_id, season_number, episode_number, part_number,
+            source_chat_id, source_message_id, file_unique_id, file_id, file_kind,
+            topic_key, topic_name, topic_icon_color, series_header_html, series_poster_url,
+            caption_html, cover_url, status, archive_message_id, archive_thread_id,
+            attempts, next_attempt_at, last_error, created_at, updated_at
+          ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+            ?8, ?9, ?10, ?11, ?12,
+            ?13, ?14, ?15, ?16, ?17,
+            ?18, ?19, ?20, 0, 0,
+            0, 0, '', ?21, ?21
+          )`
+        ).bind(
+          Number(it.jobId || 0),
+          String(it.archiveChatId),
+          it.mediaType === "series" ? "series" : "movie",
+          Math.max(0, Math.floor(Number(it.tmdbId || 0))),
+          Math.max(0, Math.floor(Number(it.seasonNumber || 0))),
+          Math.max(0, Math.floor(Number(it.episodeNumber || 0))),
+          Math.max(1, Math.floor(Number(it.partNumber || 1))),
+          String(it.sourceChatId || ""),
+          Math.max(0, Math.floor(Number(it.sourceMessageId || 0))),
+          String(it.fileUniqueId).slice(0, 180),
+          String(it.fileId).slice(0, 320),
+          it.fileKind === "document" ? "document" : "video",
+          String(it.topicKey).slice(0, 96),
+          String(it.topicName || "").slice(0, 128),
+          Math.max(0, Math.floor(Number(it.topicIconColor || 0))),
+          String(it.seriesHeaderHtml || "").slice(0, 1020),
+          String(it.seriesPosterUrl || "").slice(0, 500),
+          String(it.captionHtml).slice(0, 1020),
+          String(it.coverUrl || "").slice(0, 500),
+          status,
+          now
+        )
+      );
+    }
+    if (stmts.length === 0) return { ok: true, inserted: 0 };
+    try {
+      trackStat("d1Writes");
+      const rawDb = getRawD1Binding(env) || db;
+      let inserted = 0;
+      if (rawDb && typeof rawDb.batch === "function") {
+        const resArr = await rawDb.batch(unwrapRawD1Statements(stmts));
+        for (const r of (resArr || [])) inserted += Number(r?.meta?.changes || 0);
+      } else {
+        for (const st of stmts) {
+          const r = await st.run();
+          inserted += Number(r?.meta?.changes || 0);
+        }
+      }
+      return { ok: true, inserted };
+    } catch (e) {
+      return { ok: false, inserted: 0, error: String(e?.message || "Archiv-Queue-Insert fehlgeschlagen") };
+    }
+  }
+
+  async function releaseHeldArchiveMirrorItemsForJobInD1(env, jobId, now = Date.now(), options = {}) {
+    const db = await ensureD1Schema(env);
+    if (!db) return 0;
+    const jid = Number(jobId || 0);
+    const releaseAll = Boolean(options?.releaseAll) || jid <= 0;
+    try {
+      trackStat("d1Writes");
+      const res = releaseAll
+        ? await db.prepare(
+            `UPDATE archive_mirror_queue
+             SET status = 'pending', next_attempt_at = 0, updated_at = ?1
+             WHERE status = 'held_until_scan'`
+          ).bind(now).run()
+        : await db.prepare(
+            `UPDATE archive_mirror_queue
+             SET status = 'pending', next_attempt_at = 0, updated_at = ?2
+             WHERE job_id = ?1 AND status = 'held_until_scan'`
+          ).bind(jid, now).run();
+      return Number(res?.meta?.changes || 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function claimPendingArchiveMirrorBatchFromD1(env, limit = 6, now = Date.now(), archiveChatId = "") {
+    const db = await ensureD1Schema(env);
+    if (!db) return [];
+    const safeLimit = Math.max(1, Math.min(20, Number(limit || 6)));
+    const cid = String(archiveChatId || "").trim();
+    try {
+      trackStat("d1Reads");
+      const res = cid
+        ? await db.prepare(
+            `SELECT * FROM archive_mirror_queue
+             WHERE archive_chat_id = ?1 AND status = 'pending' AND next_attempt_at <= ?2
+             ORDER BY media_type ASC, tmdb_id ASC, season_number ASC, episode_number ASC, part_number ASC, id ASC
+             LIMIT ?3`
+          ).bind(cid, now, safeLimit).all()
+        : await db.prepare(
+            `SELECT * FROM archive_mirror_queue
+             WHERE status = 'pending' AND next_attempt_at <= ?1
+             ORDER BY media_type ASC, tmdb_id ASC, season_number ASC, episode_number ASC, part_number ASC, id ASC
+             LIMIT ?2`
+          ).bind(now, safeLimit).all();
+      return (res?.results || []).map(parseArchiveMirrorRow).filter(Boolean);
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  async function getArchiveTopicFromD1(env, archiveChatId, topicKey) {
+    const db = await ensureD1Schema(env);
+    const cid = String(archiveChatId || "").trim();
+    const key = String(topicKey || "").trim();
+    if (!db || !cid || !key) return null;
+    try {
+      trackStat("d1Reads");
+      const r = await db.prepare(
+        `SELECT archive_chat_id, topic_key, message_thread_id, topic_name, icon_color, pinned_header_msg_id, updated_at
+         FROM archive_topic_map
+         WHERE archive_chat_id = ?1 AND topic_key = ?2
+         LIMIT 1`
+      ).bind(cid, key).first();
+      if (!r) return null;
+      return {
+        archiveChatId: String(r.archive_chat_id),
+        topicKey: String(r.topic_key),
+        messageThreadId: Number(r.message_thread_id || 0),
+        topicName: String(r.topic_name || ""),
+        iconColor: Number(r.icon_color || 0),
+        pinnedHeaderMsgId: Number(r.pinned_header_msg_id || 0),
+        updatedAt: Number(r.updated_at || 0)
+      };
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  async function countSeriesTopicsInArchiveFromD1(env, archiveChatId) {
+    const db = await ensureD1Schema(env);
+    const cid = String(archiveChatId || "").trim();
+    if (!db || !cid) return 0;
+    try {
+      trackStat("d1Reads");
+      const r = await db.prepare(
+        `SELECT COUNT(*) AS cnt FROM archive_topic_map
+         WHERE archive_chat_id = ?1
+           AND topic_key LIKE 'series_%'
+           AND topic_key NOT LIKE 'series_genre_%'
+           AND topic_key != 'series_archive_overflow'`
+      ).bind(cid).first();
+      return Number(r?.cnt || 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function upsertArchiveTopicInD1(env, rec = {}) {
+    const db = await ensureD1Schema(env);
+    const cid = String(rec.archiveChatId || "").trim();
+    const key = String(rec.topicKey || "").trim();
+    const threadId = Number(rec.messageThreadId || 0);
+    if (!db || !cid || !key || threadId <= 0) return false;
+    try {
+      trackStat("d1Writes");
+      await db.prepare(
+        `INSERT INTO archive_topic_map (
+          archive_chat_id, topic_key, message_thread_id, topic_name, icon_color, pinned_header_msg_id, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT(archive_chat_id, topic_key) DO UPDATE SET
+          message_thread_id = excluded.message_thread_id,
+          topic_name = CASE WHEN excluded.topic_name != '' THEN excluded.topic_name ELSE archive_topic_map.topic_name END,
+          icon_color = CASE WHEN excluded.icon_color > 0 THEN excluded.icon_color ELSE archive_topic_map.icon_color END,
+          pinned_header_msg_id = CASE WHEN excluded.pinned_header_msg_id > 0 THEN excluded.pinned_header_msg_id ELSE archive_topic_map.pinned_header_msg_id END,
+          updated_at = excluded.updated_at`
+      ).bind(
+        cid,
+        key,
+        threadId,
+        String(rec.topicName || "").slice(0, 128),
+        Math.max(0, Math.floor(Number(rec.iconColor || 0))),
+        Math.max(0, Math.floor(Number(rec.pinnedHeaderMsgId || 0))),
+        Number(rec.updatedAt || Date.now())
+      ).run();
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  async function deleteArchiveTopicFromD1(env, archiveChatId, topicKey) {
+    const db = await ensureD1Schema(env);
+    const cid = String(archiveChatId || "").trim();
+    const key = String(topicKey || "").trim();
+    if (!db || !cid || !key) return false;
+    try {
+      trackStat("d1Writes");
+      await db.prepare(
+        "DELETE FROM archive_topic_map WHERE archive_chat_id = ?1 AND topic_key = ?2"
+      ).bind(cid, key).run();
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  async function listArchiveTopicsFromD1(env, archiveChatId = "", limit = 80) {
+    const db = await ensureD1Schema(env);
+    if (!db) return [];
+    const safeLimit = Math.max(1, Math.min(200, Number(limit || 80)));
+    const cid = String(archiveChatId || "").trim();
+    try {
+      trackStat("d1Reads");
+      const res = cid
+        ? await db.prepare(
+            `SELECT archive_chat_id, topic_key, message_thread_id, topic_name, icon_color, pinned_header_msg_id, updated_at
+             FROM archive_topic_map
+             WHERE archive_chat_id = ?1
+             ORDER BY updated_at DESC
+             LIMIT ?2`
+          ).bind(cid, safeLimit).all()
+        : await db.prepare(
+            `SELECT archive_chat_id, topic_key, message_thread_id, topic_name, icon_color, pinned_header_msg_id, updated_at
+             FROM archive_topic_map
+             ORDER BY updated_at DESC
+             LIMIT ?1`
+          ).bind(safeLimit).all();
+      return (res?.results || []).map(r => ({
+        archiveChatId: String(r.archive_chat_id),
+        topicKey: String(r.topic_key),
+        messageThreadId: Number(r.message_thread_id || 0),
+        topicName: String(r.topic_name || ""),
+        iconColor: Number(r.icon_color || 0),
+        pinnedHeaderMsgId: Number(r.pinned_header_msg_id || 0),
+        updatedAt: Number(r.updated_at || 0)
+      }));
+    } catch (_e) {
+      return [];
+    }
+  }
+
+  async function markArchiveMirrorItemResultInD1(env, id, patch = {}) {
+    const db = await ensureD1Schema(env);
+    const itemId = Number(id);
+    if (!db || !Number.isInteger(itemId) || itemId <= 0) return false;
+    const sets = ["updated_at = ?1"];
+    const binds = [Number(patch.now || Date.now())];
+    const pushSet = (expr, val) => {
+      binds.push(val);
+      sets.push(`${expr} = ?${binds.length}`);
+    };
+    if (patch.status) pushSet("status", String(patch.status));
+    if (patch.archiveMessageId !== undefined) pushSet("archive_message_id", Math.max(0, Math.floor(Number(patch.archiveMessageId || 0))));
+    if (patch.archiveThreadId !== undefined) pushSet("archive_thread_id", Math.max(0, Math.floor(Number(patch.archiveThreadId || 0))));
+    if (patch.topicKey !== undefined) pushSet("topic_key", String(patch.topicKey).slice(0, 96));
+    if (patch.topicName !== undefined) pushSet("topic_name", String(patch.topicName).slice(0, 128));
+    if (patch.attempts !== undefined) pushSet("attempts", Math.max(0, Math.floor(Number(patch.attempts || 0))));
+    if (patch.nextAttemptAt !== undefined) pushSet("next_attempt_at", Math.max(0, Math.floor(Number(patch.nextAttemptAt || 0))));
+    if (patch.lastError !== undefined) pushSet("last_error", String(patch.lastError || "").slice(0, 400));
+    binds.push(itemId);
+    try {
+      trackStat("d1Writes");
+      await db.prepare(`UPDATE archive_mirror_queue SET ${sets.join(", ")} WHERE id = ?${binds.length}`).bind(...binds).run();
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  async function getArchiveMirrorStatsFromD1(env, archiveChatId = "") {
+    const db = await ensureD1Schema(env);
+    const stats = { pending: 0, held: 0, posted: 0, failed: 0, total: 0, topicCount: 0 };
+    if (!db) return stats;
+    const cid = String(archiveChatId || "").trim();
+    try {
+      trackStat("d1Reads");
+      const rawDb = getRawD1Binding(env) || db;
+      const stQueue = cid
+        ? db.prepare("SELECT status, COUNT(*) AS cnt FROM archive_mirror_queue WHERE archive_chat_id = ?1 GROUP BY status").bind(cid)
+        : db.prepare("SELECT status, COUNT(*) AS cnt FROM archive_mirror_queue GROUP BY status");
+      const stTopics = cid
+        ? db.prepare("SELECT COUNT(*) AS cnt FROM archive_topic_map WHERE archive_chat_id = ?1").bind(cid)
+        : db.prepare("SELECT COUNT(*) AS cnt FROM archive_topic_map");
+      let qRows = [];
+      let tCount = 0;
+      if (rawDb && typeof rawDb.batch === "function") {
+        const resArr = await rawDb.batch(unwrapRawD1Statements([stQueue, stTopics]));
+        qRows = resArr?.[0]?.results || [];
+        tCount = Number(resArr?.[1]?.results?.[0]?.cnt || 0);
+      } else {
+        const r1 = await stQueue.all();
+        const r2 = await stTopics.first();
+        qRows = r1?.results || [];
+        tCount = Number(r2?.cnt || 0);
+      }
+      for (const row of qRows) {
+        const st = String(row.status || "");
+        const cnt = Number(row.cnt || 0);
+        stats.total += cnt;
+        if (st === "pending") stats.pending += cnt;
+        else if (st === "held_until_scan") stats.held += cnt;
+        else if (st === "posted") stats.posted += cnt;
+        else if (st === "failed") stats.failed += cnt;
+      }
+      stats.topicCount = tCount;
+      return stats;
+    } catch (_e) {
+      return stats;
+    }
+  }
+
+  async function retryFailedArchiveMirrorItemsInD1(env, archiveChatId = "") {
+    const db = await ensureD1Schema(env);
+    if (!db) return 0;
+    const cid = String(archiveChatId || "").trim();
+    const now = Date.now();
+    try {
+      trackStat("d1Writes");
+      const res = cid
+        ? await db.prepare(
+            `UPDATE archive_mirror_queue
+             SET status = 'pending', attempts = 0, next_attempt_at = 0, last_error = '', updated_at = ?2
+             WHERE archive_chat_id = ?1 AND status = 'failed'`
+          ).bind(cid, now).run()
+        : await db.prepare(
+            `UPDATE archive_mirror_queue
+             SET status = 'pending', attempts = 0, next_attempt_at = 0, last_error = '', updated_at = ?1
+             WHERE status = 'failed'`
+          ).bind(now).run();
+      return Number(res?.meta?.changes || 0);
+    } catch (_e) {
+      return 0;
+    }
+  }
+
+  async function listRecentArchivedItemsFromD1(env, archiveChatId = "", limit = 25) {
+    const db = await ensureD1Schema(env);
+    if (!db) return [];
+    const safeLimit = Math.max(1, Math.min(60, Number(limit || 25)));
+    const cid = String(archiveChatId || "").trim();
+    try {
+      trackStat("d1Reads");
+      const res = cid
+        ? await db.prepare(
+            `SELECT id, job_id, archive_chat_id, media_type, tmdb_id, season_number, episode_number, part_number,
+                    topic_key, topic_name, status, archive_message_id, archive_thread_id, attempts, last_error, updated_at
+             FROM archive_mirror_queue
+             WHERE archive_chat_id = ?1 AND status IN ('posted', 'failed')
+             ORDER BY updated_at DESC
+             LIMIT ?2`
+          ).bind(cid, safeLimit).all()
+        : await db.prepare(
+            `SELECT id, job_id, archive_chat_id, media_type, tmdb_id, season_number, episode_number, part_number,
+                    topic_key, topic_name, status, archive_message_id, archive_thread_id, attempts, last_error, updated_at
+             FROM archive_mirror_queue
+             WHERE status IN ('posted', 'failed')
+             ORDER BY updated_at DESC
+             LIMIT ?1`
+          ).bind(safeLimit).all();
+      return (res?.results || []).map(r => {
+        const rawForumNum = String(r.archive_chat_id || "").replace(/^-100/, "").replace(/^-/, "");
+        const msgId = Number(r.archive_message_id || 0);
+        const threadId = Number(r.archive_thread_id || 0);
+        const telegramLink = (rawForumNum && msgId > 0)
+          ? (threadId > 0 ? `https://t.me/c/${rawForumNum}/${threadId}/${msgId}` : `https://t.me/c/${rawForumNum}/${msgId}`)
+          : "";
+        return {
+          id: Number(r.id || 0),
+          jobId: Number(r.job_id || 0),
+          archiveChatId: String(r.archive_chat_id || ""),
+          mediaType: String(r.media_type || "movie"),
+          tmdbId: Number(r.tmdb_id || 0),
+          seasonNumber: Number(r.season_number || 0),
+          episodeNumber: Number(r.episode_number || 0),
+          partNumber: Number(r.part_number || 1),
+          topicKey: String(r.topic_key || ""),
+          topicName: String(r.topic_name || ""),
+          status: String(r.status || ""),
+          archiveMessageId: msgId,
+          archiveThreadId: threadId,
+          telegramLink,
+          attempts: Number(r.attempts || 0),
+          lastError: String(r.last_error || ""),
+          updatedAt: Number(r.updated_at || 0)
+        };
+      });
+    } catch (_e) {
+      return [];
+    }
+  }
+

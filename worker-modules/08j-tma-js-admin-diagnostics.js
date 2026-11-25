@@ -3195,7 +3195,7 @@
         // niemals durch /admin/overview blockieren oder ein HTTP 503 riskieren!
         const canUseInstantCache = Boolean(
           !forceNetworkRefresh &&
-          (backupImportJob.running || ((state.adminTab === "backup" || state.adminTab === "diaglog" || state.adminTab === "inbox") && window._lastAdminOverviewCache))
+          (backupImportJob.running || ((state.adminTab === "backup" || state.adminTab === "diaglog" || state.adminTab === "inbox" || state.adminTab === "history") && window._lastAdminOverviewCache))
         );
 
         let r = null;
@@ -3862,6 +3862,7 @@
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button class="btn ' + (state.adminTab === 'bot' ? 'active' : 'blue') + '" onclick="state.adminTab=\\'bot\\';loadAdminPanelView()">🤖 Bot & Einstellungen</button>' +
                 '<button class="btn ' + (state.adminTab === 'inbox' ? 'active' : (Number(window._adminChannelInboxData?.totals?.pending || 0) > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'inbox\\';loadAdminPanelView()">📥 Kanal-Inbox' + (Number(window._adminChannelInboxData?.totals?.pending || 0) > 0 ? (' (' + Number(window._adminChannelInboxData.totals.pending) + ')') : '') + '</button>' +
+                '<button class="btn ' + (state.adminTab === 'history' ? 'active' : ((window._historyTurboState?.running || (Array.isArray(window._adminHistoryData?.jobs) && window._adminHistoryData.jobs.some(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait'))) ? 'amber' : '')) + '" onclick="state.adminTab=\\'history\\';loadAdminPanelView()">📜 Verlaufs-Scan' + (Array.isArray(window._adminHistoryData?.jobs) && window._adminHistoryData.jobs.filter(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait').length > 0 ? (' (' + window._adminHistoryData.jobs.filter(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait').length + ')') : '') + '</button>' +
                 '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 JSON-Import</button>' +
                 '<button class="btn ' + (state.adminTab === 'playlists' ? 'active' : '') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten (' + adminPlaylists.length + ')</button>' +
                 '<button class="btn ' + (state.adminTab === 'users' ? 'active' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
@@ -3876,6 +3877,8 @@
               botAndSettingsDedicatedPageHtml
             ) : state.adminTab === "inbox" ? (
               buildAdminChannelInboxTabHtmlClient()
+            ) : state.adminTab === "history" ? (
+              buildAdminHistoryScanTabHtmlClient()
             ) : state.adminTab === "users" ? (
               '<div class="panel-box">' +
                 '<div class="section-title"><span>👥 Registrierte Telegram- & Web-Nutzer (' + users.length + ')</span></div>' +
@@ -4173,6 +4176,9 @@
           }
           if (state.adminTab === "inbox") {
             refreshAdminChannelInboxClient(Boolean(forceNetworkRefresh));
+          }
+          if (state.adminTab === "history") {
+            refreshAdminHistoryScanClient(Boolean(forceNetworkRefresh));
           }
           if (typeof pollAntiSpamQueueClient === "function") {
             pollAntiSpamQueueClient(true);
@@ -4851,6 +4857,1198 @@
           renderAdminChannelInboxDomInPlace();
           if (!tb.authErrorStatus) {
             await refreshAdminChannelInboxClient(true);
+          }
+        }
+      }
+
+      // =========================================================================
+      // ADMIN-PANEL TAB: VERLAUFS-SCAN & SORTIERTES THEMEN-ARCHIV (SCHRITT 5)
+      // =========================================================================
+      if (!window._adminHistoryData) {
+        window._adminHistoryData = {
+          loading: false,
+          loaded: false,
+          savingConfig: false,
+          validatingPool: false,
+          validatingSource: false,
+          creatingJob: false,
+          error: "",
+          authErrorStatus: 0,
+          probeChannels: [],
+          archiveForum: null,
+          archiveDefaults: { topicMode: "type_genre", timing: "live", pinSeriesCard: false, maxSeriesTopics: 250 },
+          jobs: [],
+          inboxByChat: {},
+          archiveStats: { pending: 0, held: 0, posted: 0, failed: 0, total: 0, topicCount: 0 },
+          archiveTopics: [],
+          archiveRecent: [],
+          validationResult: null,
+          sourceValidationResult: null,
+          setupExpanded: null,
+          pendingDeleteJobId: 0,
+          cfgHydrated: false,
+          cfgProbes: [
+            { channelId: "", label: "Index-Kanal 1", enabled: true },
+            { channelId: "", label: "Index-Kanal 2", enabled: true },
+            { channelId: "", label: "Index-Kanal 3", enabled: true }
+          ],
+          cfgArchive: {
+            channelId: "",
+            label: "Themen-Archiv",
+            enabled: true,
+            topicMode: "type_genre",
+            timing: "live",
+            pinSeriesCard: false,
+            maxSeriesTopics: 250
+          },
+          form: {
+            sourceInput: "",
+            sourceTitle: "",
+            startMsgId: "1",
+            endMsgId: "",
+            direction: "desc",
+            enableReactions: false,
+            cronEnabled: true,
+            enableArchiveMirror: false,
+            archiveTopicMode: "type_genre",
+            archiveTiming: "live",
+            archivePinSeriesCard: false,
+            archiveMaxSeriesTopics: 250,
+            detectedLinkMsgId: 0
+          }
+        };
+      }
+
+      if (!window._historyTurboState) {
+        window._historyTurboState = {
+          running: false,
+          paused: false,
+          stopRequested: false,
+          jobId: 0,
+          sourceChatId: "",
+          sourceTitle: "",
+          phase: "",
+          statusText: "",
+          lastError: "",
+          authErrorStatus: 0,
+          countdownSec: 0,
+          batchSize: 6,
+          runArchiveStep: true,
+          stepsRun: 0,
+          probesFired: 0,
+          mediaFound: 0,
+          skippedExisting: 0,
+          videosImported: 0,
+          added: 0,
+          upgraded: 0,
+          duplicates: 0,
+          review: 0,
+          archivedPosted: 0,
+          newTopicsCreated: 0,
+          seriesTmdbHints: {}
+        };
+      }
+
+      function formatHistoryStatusBadgeClient(status) {
+        const s = String(status || "");
+        if (s === "running") return '<span style="font-size:10.5px;padding:2px 7px;border-radius:6px;background:rgba(16,185,129,0.2);color:#34d399;font-weight:700">🟢 Läuft</span>';
+        if (s === "queued") return '<span style="font-size:10.5px;padding:2px 7px;border-radius:6px;background:rgba(56,189,248,0.2);color:#38bdf8;font-weight:700">🕒 Warteschlange</span>';
+        if (s === "flood_wait") return '<span style="font-size:10.5px;padding:2px 7px;border-radius:6px;background:rgba(245,158,11,0.22);color:#fbbf24;font-weight:700">⏳ 429-Pause</span>';
+        if (s === "paused") return '<span style="font-size:10.5px;padding:2px 7px;border-radius:6px;background:rgba(148,163,184,0.22);color:#cbd5e1;font-weight:700">⏸️ Pausiert</span>';
+        if (s === "completed") return '<span style="font-size:10.5px;padding:2px 7px;border-radius:6px;background:rgba(16,185,129,0.28);color:#6ee7b7;font-weight:700">✅ Fertig</span>';
+        return '<span style="font-size:10.5px;padding:2px 7px;border-radius:6px;background:rgba(239,68,68,0.22);color:#fca5a5;font-weight:700">⛔ Fehler</span>';
+      }
+
+      function computeHistoryJobProgressPctClient(job) {
+        if (!job) return 0;
+        if (job.status === "completed") return 100;
+        const startId = Math.max(1, Number(job.startMsgId || 1));
+        const endId = Math.max(startId, Number(job.endMsgId || startId));
+        const totalSpan = Math.max(1, (endId - startId) + 1);
+        const cur = Number(job.currentCursorId || startId);
+        if (job.direction === "desc") {
+          const floor = Math.max(startId, Number(job.chunkFloorId || startId));
+          const ceil = Math.min(endId, floor + 49);
+          const doneAboveBlock = Math.max(0, endId - ceil);
+          const doneInBlock = Math.max(0, Math.min(ceil - floor + 1, cur - floor));
+          return Math.max(0, Math.min(99, Math.round(((doneAboveBlock + doneInBlock) / totalSpan) * 100)));
+        }
+        const doneAsc = Math.max(0, cur - startId);
+        return Math.max(0, Math.min(99, Math.round((doneAsc / totalSpan) * 100)));
+      }
+
+      function syncHistoryFormFromDomClient() {
+        const d = window._adminHistoryData;
+        if (!d) return;
+        for (let i = 0; i < 3; i++) {
+          const idEl = document.getElementById("histProbeId_" + i);
+          const lblEl = document.getElementById("histProbeLbl_" + i);
+          const enEl = document.getElementById("histProbeEn_" + i);
+          if (idEl) d.cfgProbes[i].channelId = idEl.value.trim();
+          if (lblEl) d.cfgProbes[i].label = lblEl.value.trim();
+          if (enEl) d.cfgProbes[i].enabled = Boolean(enEl.checked);
+        }
+        const archIdEl = document.getElementById("histArchiveId");
+        const archLblEl = document.getElementById("histArchiveLbl");
+        const archEnEl = document.getElementById("histArchiveEn");
+        const archModeEl = document.getElementById("histArchiveDefaultMode");
+        const archTimeEl = document.getElementById("histArchiveDefaultTiming");
+        const archPinEl = document.getElementById("histArchiveDefaultPin");
+        const archMaxEl = document.getElementById("histArchiveDefaultMax");
+        if (archIdEl) d.cfgArchive.channelId = archIdEl.value.trim();
+        if (archLblEl) d.cfgArchive.label = archLblEl.value.trim();
+        if (archEnEl) d.cfgArchive.enabled = Boolean(archEnEl.checked);
+        if (archModeEl) d.cfgArchive.topicMode = archModeEl.value;
+        if (archTimeEl) d.cfgArchive.timing = archTimeEl.value;
+        if (archPinEl) d.cfgArchive.pinSeriesCard = Boolean(archPinEl.checked);
+        if (archMaxEl) d.cfgArchive.maxSeriesTopics = Math.max(10, Math.min(500, parseInt(archMaxEl.value, 10) || 250));
+
+        const srcEl = document.getElementById("histJobSourceInput");
+        const startEl = document.getElementById("histJobStartId");
+        const endEl = document.getElementById("histJobEndId");
+        const dirEl = document.getElementById("histJobDirection");
+        const reactEl = document.getElementById("histJobReactions");
+        const cronEl = document.getElementById("histJobCron");
+        const mirEl = document.getElementById("histJobArchiveMirror");
+        const jModeEl = document.getElementById("histJobArchiveMode");
+        const jTimeEl = document.getElementById("histJobArchiveTiming");
+        const jPinEl = document.getElementById("histJobArchivePin");
+        if (srcEl) d.form.sourceInput = srcEl.value;
+        if (startEl) d.form.startMsgId = startEl.value;
+        if (endEl) d.form.endMsgId = endEl.value;
+        if (dirEl) d.form.direction = dirEl.value === "asc" ? "asc" : "desc";
+        if (reactEl) d.form.enableReactions = Boolean(reactEl.checked);
+        if (cronEl) d.form.cronEnabled = Boolean(cronEl.checked);
+        if (mirEl) d.form.enableArchiveMirror = Boolean(mirEl.checked);
+        if (jModeEl) d.form.archiveTopicMode = jModeEl.value;
+        if (jTimeEl) d.form.archiveTiming = jTimeEl.value;
+        if (jPinEl) d.form.archivePinSeriesCard = Boolean(jPinEl.checked);
+      }
+
+      function onHistorySourceInputChangedClient(rawVal) {
+        const d = window._adminHistoryData;
+        d.form.sourceInput = String(rawVal || "");
+        const s = d.form.sourceInput.trim();
+        let foundMsgId = 0;
+        const mPrivate = s.match(/t\\.me\\/c\\/\\d+(?:\\/\\d+)?\\/(\\d+)/i);
+        const mPublic = !mPrivate ? s.match(/t\\.me\\/[a-zA-Z][a-zA-Z0-9_]{3,}(?:\\/\\d+)?\\/(\\d+)/i) : null;
+        if (mPrivate) foundMsgId = parseInt(mPrivate[1], 10) || 0;
+        else if (mPublic) foundMsgId = parseInt(mPublic[1], 10) || 0;
+        d.form.detectedLinkMsgId = foundMsgId;
+        const endEl = document.getElementById("histJobEndId");
+        if (foundMsgId > 0 && endEl && !endEl.value.trim()) {
+          endEl.value = String(foundMsgId);
+          d.form.endMsgId = String(foundMsgId);
+        }
+        const hintEl = document.getElementById("histSourceLinkHint");
+        if (hintEl) {
+          hintEl.textContent = foundMsgId > 0
+            ? ("✅ Nachrichten-ID #" + foundMsgId + " automatisch aus Telegram-Link erkannt.")
+            : "";
+        }
+      }
+
+      function applyHistoryRangePresetClient(spanCount) {
+        syncHistoryFormFromDomClient();
+        const d = window._adminHistoryData;
+        const endVal = parseInt(d.form.endMsgId, 10) || d.form.detectedLinkMsgId || 0;
+        if (spanCount === 0) {
+          d.form.startMsgId = "1";
+          if (endVal > 0) d.form.endMsgId = String(endVal);
+        } else if (endVal > 0) {
+          d.form.endMsgId = String(endVal);
+          d.form.startMsgId = String(Math.max(1, endVal - spanCount + 1));
+        } else {
+          showHudToast("ℹ️ Bitte zuerst eine Bis-ID eintragen oder einen Telegram-Nachrichtenlink oben einfügen.");
+          return;
+        }
+        const sEl = document.getElementById("histJobStartId");
+        const eEl = document.getElementById("histJobEndId");
+        if (sEl) sEl.value = d.form.startMsgId;
+        if (eEl) eEl.value = d.form.endMsgId;
+      }
+
+      function toggleHistorySetupExpandedClient() {
+        syncHistoryFormFromDomClient();
+        const d = window._adminHistoryData;
+        const currentlyOpen = d.setupExpanded !== null ? Boolean(d.setupExpanded) : (d.probeChannels.length === 0);
+        d.setupExpanded = !currentlyOpen;
+        renderAdminHistoryScanDomInPlace();
+      }
+
+      function buildAdminHistoryScanTabHtmlClient() {
+        const d = window._adminHistoryData || {};
+        const tb = window._historyTurboState || {};
+        const probes = Array.isArray(d.probeChannels) ? d.probeChannels : [];
+        const enabledProbes = probes.filter(p => p.enabled);
+        const archiveForum = d.archiveForum || null;
+        const jobs = Array.isArray(d.jobs) ? d.jobs : [];
+        const inboxByChat = d.inboxByChat || {};
+        const aStats = d.archiveStats || { pending: 0, held: 0, posted: 0, failed: 0, total: 0, topicCount: 0 };
+        const aTopics = Array.isArray(d.archiveTopics) ? d.archiveTopics : [];
+        const aRecent = Array.isArray(d.archiveRecent) ? d.archiveRecent : [];
+        const pendingDeletesTotal = probes.reduce((acc, p) => acc + (Array.isArray(p.pendingDeleteIds) ? p.pendingDeleteIds.length : 0), 0);
+        const setupOpen = d.setupExpanded !== null ? Boolean(d.setupExpanded) : (enabledProbes.length === 0);
+
+        const activeJobForTurbo = jobs.find(j => Number(j.id) === Number(tb.jobId)) || null;
+        const turboPct = activeJobForTurbo ? computeHistoryJobProgressPctClient(activeJobForTurbo) : (tb.phase === "done" ? 100 : 0);
+
+        const turboBoxHtml = (tb.running || tb.paused || tb.statusText || tb.lastError) ? (
+          '<div id="adminHistoryTurboBox" class="panel-box" style="margin-bottom:12px;border-color:' +
+            (tb.authErrorStatus ? 'rgba(239,68,68,0.65);background:rgba(127,29,29,0.22)' : (tb.running ? 'rgba(56,189,248,0.55);background:rgba(14,165,233,0.08)' : 'rgba(16,185,129,0.45)')) + '">' +
+            '<div class="section-title" style="margin-bottom:6px">' +
+              '<span>🚀 Verlaufs-Browser-Turbo (Stufe A + B Browser-Offload' + (tb.runArchiveStep ? ' + C Archiv' : '') + '): ' + esc(tb.sourceTitle || tb.sourceChatId || ("Job #" + tb.jobId)) + '</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                (tb.running && !tb.paused ? '<button type="button" class="btn amber" onclick="pauseHistoryBrowserTurboClient()">⏸️ Pause</button>' : '') +
+                (tb.paused ? '<button type="button" class="btn green" onclick="resumeHistoryBrowserTurboClient()">▶️ Fortsetzen</button>' : '') +
+                ((tb.running || tb.paused) ? '<button type="button" class="btn danger" onclick="stopHistoryBrowserTurboClient()">⏹️ Stopp</button>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div style="height:8px;border-radius:999px;background:rgba(148,163,184,0.2);overflow:hidden;margin-bottom:8px">' +
+              '<div style="height:100%;width:' + turboPct + '%;background:linear-gradient(90deg,#0ea5e9,#10b981);transition:width 0.25s ease"></div>' +
+            '</div>' +
+            '<div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:6px">' +
+              esc(tb.statusText || "Bereit") +
+              (tb.countdownSec > 0 ? (' <span style="color:#fbbf24">(' + Number(tb.countdownSec) + 's)</span>') : '') +
+            '</div>' +
+            '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:#cbd5e1">' +
+              '<span>🔍 Schritte: <b>' + Number(tb.stepsRun || 0) + '</b></span>' +
+              '<span>🎞 Gefunden: <b style="color:#38bdf8">' + Number(tb.mediaFound || 0) + '</b></span>' +
+              '<span>⏭️ Vorab-Skip: <b>' + Number(tb.skippedExisting || 0) + '</b></span>' +
+              '<span>🧠 Importiert: <b style="color:#34d399">' + Number(tb.videosImported || 0) + '</b> (👍' + Number(tb.added || 0) + ' 🔥' + Number(tb.upgraded || 0) + ' 👌' + Number(tb.duplicates || 0) + ' 👀' + Number(tb.review || 0) + ')</span>' +
+              (tb.archivedPosted > 0 ? ('<span>🗂️ Archiviert: <b style="color:#a78bfa">' + Number(tb.archivedPosted) + '</b></span>') : '') +
+              '<span>📦 Batch: <b>' + Number(tb.batchSize || 6) + '</b></span>' +
+            '</div>' +
+            (tb.lastError ? (
+              '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(239,68,68,0.16);border:1px solid rgba(248,113,113,0.45);font-size:11.5px;color:#fecaca">' +
+                '⛔ ' + esc(tb.lastError) +
+              '</div>'
+            ) : '') +
+          '</div>'
+        ) : '';
+
+        const renderCheckSummary = (resObj) => {
+          if (!resObj) return "";
+          const badge = resObj.ok
+            ? '<span style="color:#34d399;font-weight:700">✅ Bereit</span>'
+            : '<span style="color:#f87171;font-weight:700">⛔ Problem</span>';
+          const checksHtml = Array.isArray(resObj.checks) && resObj.checks.length > 0
+            ? resObj.checks.map(c => '<span style="margin-right:8px;color:' + (c.ok ? '#34d399' : '#f87171') + '">' + (c.ok ? '✓' : '✗') + ' ' + esc(c.label) + '</span>').join("")
+            : '';
+          const warnsHtml = Array.isArray(resObj.warnings) && resObj.warnings.length > 0
+            ? ('<div style="color:#fbbf24;margin-top:3px">⚠️ ' + resObj.warnings.map(w => esc(w)).join(" · ") + '</div>')
+            : '';
+          const probeInfoHtml = resObj.testProbe
+            ? ('<div style="margin-top:4px;color:' + (resObj.testProbe.ok ? '#34d399' : '#fbbf24') + '">' +
+                (resObj.testProbe.ok
+                  ? ('🧪 1-ID-Probe #' + Number(resObj.testProbe.messageId) + ' erfolgreich gelesen' + (resObj.testProbe.cleanedUp ? ' &amp; sofort im Index-Kanal gelöscht' : ' (Löschung vorgemerkt)') + (resObj.testProbe.hasMedia ? ' · 🎞 Medium erkannt' : (resObj.testProbe.hasText ? ' · 📝 Text erkannt' : '')))
+                  : ('🧪 1-ID-Probe #' + Number(resObj.testProbe.messageId) + ': ' + esc(resObj.testProbe.error || 'nicht gefunden'))) +
+              '</div>')
+            : '';
+          return '<div style="margin-top:6px;padding:7px 9px;border-radius:8px;background:rgba(15,23,42,0.55);border:1px solid rgba(148,163,184,0.2);font-size:11px">' +
+            '<div>' + badge + ' <b>' + esc(resObj.title || resObj.canonicalChatId || resObj.chatId || "") + '</b>' + (resObj.error ? (' — <span style="color:#fca5a5">' + esc(resObj.error) + '</span>') : '') + '</div>' +
+            (checksHtml ? ('<div style="margin-top:3px">' + checksHtml + '</div>') : '') +
+            probeInfoHtml +
+            warnsHtml +
+          '</div>';
+        };
+
+        const poolSpeedHint = enabledProbes.length > 0
+          ? (enabledProbes.length + ' Index-Kanal' + (enabledProbes.length === 1 ? '' : 'e') + ' aktiv (~' + (enabledProbes.length * 15) + ' IDs/Min)')
+          : 'Noch kein Index-Kanal aktiv';
+
+        const setupHtml = '<div class="panel-box" style="margin-bottom:12px;border-color:' + (enabledProbes.length > 0 ? 'rgba(16,185,129,0.38)' : 'rgba(245,158,11,0.55)') + '">' +
+          '<div class="section-title" style="margin-bottom:' + (setupOpen ? '10px' : '0') + '">' +
+            '<span>⚙️ Einrichtung: 1–3 Private Index-Kanäle & Optionales Themen-Archiv <span style="font-size:11px;font-weight:600;color:var(--muted)">(' + esc(poolSpeedHint) + ')</span></span>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+              (pendingDeletesTotal > 0 ? '<button type="button" class="btn amber" onclick="flushHistoryProbeDeletesClient()">🧹 ' + pendingDeletesTotal + ' Rest-Probes löschen</button>' : '') +
+              '<button type="button" class="btn" onclick="toggleHistorySetupExpandedClient()">' + (setupOpen ? '▲ Einklappen' : '▼ Einrichten / Bearbeiten') + '</button>' +
+            '</div>' +
+          '</div>' +
+          (setupOpen ? (
+            '<div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:10px">' +
+              'Lege 1 bis 3 private Telegram-Kanäle an, mache deinen Bot dort zum Admin (Rechte: <b>Nachrichten senden &amp; löschen</b>) und trage ihre IDs (<code>-100...</code>) oder einen <code>t.me/c/...</code>-Link ein. Weitergeleitete Prüf-Nachrichten werden direkt im selben Schritt per <code>deleteMessages</code> wieder gelöscht.' +
+            '</div>' +
+            '<div style="display:grid;gap:8px;margin-bottom:12px">' +
+              d.cfgProbes.map((p, idx) => {
+                const saved = probes.find(sp => String(sp.channelId) === String(p.channelId) && p.channelId);
+                const valRes = Array.isArray(d.validationResult?.probeResults)
+                  ? (d.validationResult.probeResults.find(pr => p.channelId && (String(pr.canonicalChatId || "") === String(p.channelId) || String(pr.input || "") === String(p.channelId))) || null)
+                  : null;
+                const badge = saved?.verifiedCaps?.ok
+                  ? '<span style="font-size:10.5px;color:#34d399;font-weight:700">✅ Verifiziert</span>'
+                  : (saved?.verifiedCaps && saved.verifiedCaps.ok === false ? '<span style="font-size:10.5px;color:#f87171;font-weight:700">⛔ Prüffehler</span>' : '');
+                return '<div class="admin-sub-box" style="padding:8px 10px">' +
+                  '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                    '<span style="font-size:11.5px;font-weight:800;min-width:86px;color:#38bdf8">Index #' + (idx + 1) + '</span>' +
+                    '<input id="histProbeId_' + idx + '" class="inp" style="flex:1;min-width:170px" placeholder="-100... oder https://t.me/c/..." value="' + esc(p.channelId || "") + '">' +
+                    '<input id="histProbeLbl_' + idx + '" class="inp" style="width:140px" placeholder="Name (optional)" value="' + esc(p.label || "") + '">' +
+                    '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer"><input id="histProbeEn_' + idx + '" type="checkbox"' + (p.enabled ? ' checked' : '') + '> Aktiv</label>' +
+                    badge +
+                  '</div>' +
+                  (valRes ? renderCheckSummary(valRes) : '') +
+                '</div>';
+              }).join("") +
+            '</div>' +
+            '<div class="admin-sub-box" style="padding:10px;border-color:rgba(167,139,250,0.35);margin-bottom:10px">' +
+              '<div style="font-size:12px;font-weight:800;color:#c4b5fd;margin-bottom:6px">🗂️ Optionales Sortiertes Themen-Archiv (Private Forum-Supergruppe)</div>' +
+              '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Erstelle eine private Supergruppe mit aktivierten <b>Themen (Topics)</b> und mache den Bot dort zum Admin (inkl. Recht <code>can_manage_topics</code>). Der Bot legt automatisch saubere Themen nach Genre oder je Serie an und postet mit max. 14 Posts/Min.</div>' +
+              '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">' +
+                '<input id="histArchiveId" class="inp" style="flex:1;min-width:180px" placeholder="Forum-Supergruppe (-100... oder t.me/c/... Link, optional)" value="' + esc(d.cfgArchive.channelId || "") + '">' +
+                '<input id="histArchiveLbl" class="inp" style="width:150px" placeholder="Bezeichnung" value="' + esc(d.cfgArchive.label || "") + '">' +
+                '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer"><input id="histArchiveEn" type="checkbox"' + (d.cfgArchive.enabled ? ' checked' : '') + '> Aktiv</label>' +
+              '</div>' +
+              '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                '<select id="histArchiveDefaultMode" class="inp" style="min-width:190px">' +
+                  '<option value="type_genre"' + (d.cfgArchive.topicMode === "type_genre" ? ' selected' : '') + '>Themen: Typ + Genre (Standard)</option>' +
+                  '<option value="per_series_plus_genre"' + (d.cfgArchive.topicMode === "per_series_plus_genre" ? ' selected' : '') + '>Themen: Eigener Thread je Serie + Film-Genres</option>' +
+                  '<option value="compact_type"' + (d.cfgArchive.topicMode === "compact_type" ? ' selected' : '') + '>Themen: Kompakt (Filme / Serien / Anime)</option>' +
+                '</select>' +
+                '<select id="histArchiveDefaultTiming" class="inp" style="min-width:180px">' +
+                  '<option value="live"' + (d.cfgArchive.timing === "live" ? ' selected' : '') + '>Zeitpunkt: Live während des Scans</option>' +
+                  '<option value="after_scan"' + (d.cfgArchive.timing === "after_scan" ? ' selected' : '') + '>Zeitpunkt: Erst nach Scan-Abschluss</option>' +
+                '</select>' +
+                '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer"><input id="histArchiveDefaultPin" type="checkbox"' + (d.cfgArchive.pinSeriesCard ? ' checked' : '') + '> Serien-Info-Karte anpinnen</label>' +
+                '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px">Max. Serien-Topics: <input id="histArchiveDefaultMax" class="inp" type="number" min="10" max="500" style="width:72px" value="' + Number(d.cfgArchive.maxSeriesTopics || 250) + '"></label>' +
+              '</div>' +
+              (d.validationResult?.archiveResult ? renderCheckSummary(d.validationResult.archiveResult) : '') +
+            '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+              '<button type="button" class="btn green" ' + (d.savingConfig ? 'disabled' : '') + ' onclick="saveHistoryConfigClient()">' + (d.savingConfig ? '⏳ Speichere...' : '💾 Konfiguration speichern') + '</button>' +
+              '<button type="button" class="btn blue" ' + (d.validatingPool ? 'disabled' : '') + ' onclick="validateHistoryPoolClient()">' + (d.validatingPool ? '⏳ Prüfe Telegram-Rechte...' : '🩺 Rechte & Kanäle prüfen') + '</button>' +
+            '</div>'
+          ) : '') +
+        '</div>';
+
+        const newJobHtml = '<div class="panel-box" style="margin-bottom:12px;border-color:rgba(14,165,233,0.4)">' +
+          '<div class="section-title" style="margin-bottom:8px">' +
+            '<span>➕ Neuen Gruppen- oder Kanal-Verlauf einlesen</span>' +
+            '<button type="button" class="btn blue" ' + (d.validatingSource ? 'disabled' : '') + ' onclick="validateHistorySourceClient()">' + (d.validatingSource ? '⏳ Teste Quelle...' : '🔎 Quelle & 1-ID-Probe testen') + '</button>' +
+          '</div>' +
+          '<div style="display:grid;gap:8px">' +
+            '<div>' +
+              '<input id="histJobSourceInput" class="inp" style="width:100%" placeholder="Quellgruppe/Kanal: Telegram-Nachrichtenlink (https://t.me/c/.../14820), -100... oder @username" value="' + esc(d.form.sourceInput || "") + '" oninput="onHistorySourceInputChangedClient(this.value)">' +
+              '<div id="histSourceLinkHint" style="font-size:11px;color:#34d399;margin-top:3px">' +
+                (d.form.detectedLinkMsgId > 0 ? ('✅ Nachrichten-ID #' + Number(d.form.detectedLinkMsgId) + ' automatisch aus Telegram-Link erkannt.') : '') +
+              '</div>' +
+            '</div>' +
+            (d.sourceValidationResult ? renderCheckSummary(d.sourceValidationResult) : '') +
+            '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+              '<label style="font-size:11.5px;color:var(--muted)">Von-ID: <input id="histJobStartId" class="inp" type="number" min="1" style="width:108px" value="' + esc(d.form.startMsgId || "1") + '"></label>' +
+              '<label style="font-size:11.5px;color:var(--muted)">Bis-ID: <input id="histJobEndId" class="inp" type="number" min="1" style="width:108px" placeholder="z.B. 14820" value="' + esc(d.form.endMsgId || "") + '"></label>' +
+              '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="applyHistoryRangePresetClient(500)">Letzte 500</button>' +
+              '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="applyHistoryRangePresetClient(2000)">Letzte 2.000</button>' +
+              '<button type="button" class="btn" style="padding:5px 9px;font-size:11px" onclick="applyHistoryRangePresetClient(0)">Komplett ab #1</button>' +
+              '<select id="histJobDirection" class="inp" style="min-width:215px">' +
+                '<option value="desc"' + (d.form.direction === "desc" ? ' selected' : '') + '>⬇️ Neueste zuerst (50er-Kontext-Blöcke)</option>' +
+                '<option value="asc"' + (d.form.direction === "asc" ? ' selected' : '') + '>⬆️ Älteste zuerst (chronologisch)</option>' +
+              '</select>' +
+            '</div>' +
+            '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:6px 2px">' +
+              '<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;cursor:pointer"><input id="histJobCron" type="checkbox"' + (d.form.cronEnabled ? ' checked' : '') + '> ⏱️ Automatisch per 2-Min-Cron fortführen</label>' +
+              '<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;cursor:pointer"><input id="histJobReactions" type="checkbox"' + (d.form.enableReactions ? ' checked' : '') + '> 👍 Emoji-Reaktionen in der Quellgruppe setzen</label>' +
+              '<label style="display:flex;align-items:center;gap:6px;font-size:11.5px;cursor:pointer;' + (!archiveForum || !archiveForum.enabled ? 'opacity:0.55' : '') + '"><input id="histJobArchiveMirror" type="checkbox"' + (d.form.enableArchiveMirror && archiveForum?.enabled ? ' checked' : '') + (!archiveForum || !archiveForum.enabled ? ' disabled' : '') + ' onchange="syncHistoryFormFromDomClient();renderAdminHistoryScanDomInPlace()"> 🗂️ Ins Sortierte Themen-Archiv spiegeln</label>' +
+            '</div>' +
+            (d.form.enableArchiveMirror && archiveForum?.enabled ? (
+              '<div class="admin-sub-box" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-color:rgba(167,139,250,0.35)">' +
+                '<span style="font-size:11px;font-weight:700;color:#c4b5fd">Archiv-Optionen für diesen Scan:</span>' +
+                '<select id="histJobArchiveMode" class="inp" style="min-width:185px">' +
+                  '<option value="type_genre"' + (d.form.archiveTopicMode === "type_genre" ? ' selected' : '') + '>Typ + Genre</option>' +
+                  '<option value="per_series_plus_genre"' + (d.form.archiveTopicMode === "per_series_plus_genre" ? ' selected' : '') + '>Thread je Serie + Film-Genres</option>' +
+                  '<option value="compact_type"' + (d.form.archiveTopicMode === "compact_type" ? ' selected' : '') + '>Kompakt (Filme/Serien/Anime)</option>' +
+                '</select>' +
+                '<select id="histJobArchiveTiming" class="inp" style="min-width:170px">' +
+                  '<option value="live"' + (d.form.archiveTiming === "live" ? ' selected' : '') + '>Live während des Scans</option>' +
+                  '<option value="after_scan"' + (d.form.archiveTiming === "after_scan" ? ' selected' : '') + '>Erst nach Scan-Abschluss</option>' +
+                '</select>' +
+                '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer"><input id="histJobArchivePin" type="checkbox"' + (d.form.archivePinSeriesCard ? ' checked' : '') + '> Serien-Karte anpinnen</label>' +
+              '</div>'
+            ) : '') +
+            '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+              '<button type="button" class="btn green" ' + (d.creatingJob || enabledProbes.length === 0 ? 'disabled' : '') + ' onclick="createHistoryCrawlJobClient()">' + (d.creatingJob ? '⏳ Lege Job an...' : '🚀 Verlaufs-Scan anlegen & starten') + '</button>' +
+              (enabledProbes.length === 0 ? '<span style="font-size:11px;color:#fbbf24">⚠️ Bitte oben zuerst mindestens 1 Index-Kanal speichern.</span>' : '') +
+            '</div>' +
+          '</div>' +
+        '</div>';
+
+        const jobsListHtml = '<div class="panel-box" style="margin-bottom:12px">' +
+          '<div class="section-title" style="margin-bottom:8px">' +
+            '<span>📋 Verlaufs-Scan-Jobs (' + jobs.length + ')</span>' +
+            '<button type="button" class="btn blue" onclick="refreshAdminHistoryScanClient(true)">🔄 Aktualisieren</button>' +
+          '</div>' +
+          (d.loading && !d.loaded ? (
+            '<div class="admin-sub-box" style="padding:14px;text-align:center;color:var(--muted)">⏳ Lade Verlaufs-Jobs & Archiv-Status aus D1...</div>'
+          ) : jobs.length === 0 ? (
+            '<div class="admin-sub-box" style="padding:14px;text-align:center;color:var(--muted);font-size:12px">Noch kein Verlaufs-Scan angelegt. Füge oben einen Telegram-Nachrichtenlink aus deiner Gruppe ein, um loszulegen.</div>'
+          ) : (
+            jobs.map(job => {
+              const pct = computeHistoryJobProgressPctClient(job);
+              const inb = inboxByChat[String(job.sourceChatId)] || { pending: 0, staging: 0, done: 0, review: 0 };
+              const isThisTurbo = Boolean(tb.running && Number(tb.jobId) === Number(job.id));
+              const isPendingDel = Number(d.pendingDeleteJobId) === Number(job.id);
+              const canRun = job.status !== "completed";
+              return '<div class="ep-row" style="flex-direction:column;align-items:stretch;gap:8px;' + (job.status === "running" ? 'border-color:rgba(16,185,129,0.45);' : '') + '">' +
+                '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">' +
+                  '<div style="flex:1;min-width:220px">' +
+                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;font-weight:800;color:var(--text)">' +
+                      formatHistoryStatusBadgeClient(job.status) +
+                      '<span>#' + Number(job.id) + ' · ' + esc(job.sourceTitle || job.sourceChatId) + '</span>' +
+                    '</div>' +
+                    '<div style="font-size:11px;color:var(--muted);margin-top:3px">' +
+                      'ID: <code>' + esc(job.sourceChatId) + '</code>' +
+                      ' • Bereich: <b>#' + Number(job.startMsgId) + ' – #' + Number(job.endMsgId) + '</b>' +
+                      ' • Cursor: <b>#' + Number(job.currentCursorId) + '</b>' +
+                      ' • ' + (job.direction === "desc" ? '⬇️ Neueste zuerst' : '⬆️ Älteste zuerst') +
+                      (job.enableReactions ? ' • 👍 Reaktionen AN' : ' • 🔇 Still') +
+                      (job.enableArchiveMirror ? (' • 🗂️ Archiv (' + (job.archiveTiming === "after_scan" ? 'nach Scan' : 'Live') + ')') : '') +
+                    '</div>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
+                    (canRun ? (
+                      '<button type="button" class="btn ' + (isThisTurbo ? 'amber' : 'green') + '" ' + (tb.running && !isThisTurbo ? 'disabled' : '') + ' onclick="startHistoryBrowserTurboClient(' + Number(job.id) + ')">' +
+                        (isThisTurbo ? '⏳ Turbo aktiv' : '🚀 Browser-Turbo') +
+                      '</button>'
+                    ) : '') +
+                    (job.status === "running" || job.status === "flood_wait" || job.status === "queued" ? (
+                      '<button type="button" class="btn amber" onclick="runHistoryJobActionClient(' + Number(job.id) + ',\\'pause\\')">⏸️ Pause</button>'
+                    ) : (job.status === "paused" || job.status === "error") ? (
+                      '<button type="button" class="btn blue" onclick="runHistoryJobActionClient(' + Number(job.id) + ',\\'resume\\')">▶️ Fortsetzen</button>'
+                    ) : '') +
+                    (canRun ? (
+                      '<button type="button" class="btn" onclick="runHistoryJobActionClient(' + Number(job.id) + ',\\'toggle_cron\\')">' + (job.cronEnabled ? '⏱️ Cron AN' : '⏱️ Cron AUS') + '</button>'
+                    ) : '') +
+                    (isPendingDel ? (
+                      '<button type="button" class="btn danger" onclick="runHistoryJobActionClient(' + Number(job.id) + ',\\'delete\\')">⚠️ Wirklich löschen</button>' +
+                      '<button type="button" class="btn" onclick="window._adminHistoryData.pendingDeleteJobId=0;renderAdminHistoryScanDomInPlace()">Abbrechen</button>'
+                    ) : (
+                      '<button type="button" class="btn" onclick="window._adminHistoryData.pendingDeleteJobId=' + Number(job.id) + ';renderAdminHistoryScanDomInPlace()" title="Job entfernen">🗑️</button>'
+                    )) +
+                  '</div>' +
+                '</div>' +
+                '<div style="height:6px;border-radius:999px;background:rgba(148,163,184,0.18);overflow:hidden">' +
+                  '<div style="height:100%;width:' + pct + '%;background:' + (job.status === "completed" ? '#10b981' : 'linear-gradient(90deg,#0284c7,#34d399)') + ';transition:width 0.25s ease"></div>' +
+                '</div>' +
+                '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:#cbd5e1">' +
+                  '<span>📊 Fortschritt: <b>' + pct + '%</b></span>' +
+                  '<span>🎞 Medien: <b style="color:#38bdf8">' + Number(job.mediaFoundCount || 0) + '</b></span>' +
+                  '<span>🖼️ Kontext: <b>' + Number(job.contextFoundCount || 0) + '</b></span>' +
+                  '<span>⏭️ Vorab-Skip: <b>' + Number(job.skippedExistingCount || 0) + '</b></span>' +
+                  '<span>🕳️ Lücken: <b>' + Number(job.missingCount || 0) + '</b></span>' +
+                  '<span>📥 Inbox: <b style="color:#fbbf24">' + Number(inb.pending || 0) + '</b> wartend' + (Number(inb.staging || 0) > 0 ? (' / ' + Number(inb.staging) + ' Staging') : '') + ' · <b style="color:#34d399">' + Number(inb.done || 0) + '</b> fertig</span>' +
+                '</div>' +
+                (job.lastError ? (
+                  '<div style="font-size:11px;color:#fca5a5;background:rgba(239,68,68,0.12);padding:5px 8px;border-radius:6px">⚠️ ' + esc(job.lastError) + '</div>'
+                ) : '') +
+              '</div>';
+            }).join("")
+          )) +
+        '</div>';
+
+        const archiveSectionHtml = (archiveForum || aStats.total > 0 || aTopics.length > 0) ? (
+          '<div class="panel-box" style="border-color:rgba(167,139,250,0.4)">' +
+            '<div class="section-title" style="margin-bottom:8px">' +
+              '<span>🗂️ Sortiertes Themen-Archiv (Stufe C) ' + (archiveForum ? ('<span style="font-size:11px;color:var(--muted)">(' + esc(archiveForum.label || archiveForum.channelId) + ')</span>') : '') + '</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                (aStats.pending > 0 ? '<button type="button" class="btn green" onclick="runHistoryArchiveActionClient(\\'step\\')">⚡ 4 Posts jetzt senden</button>' : '') +
+                (aStats.held > 0 ? '<button type="button" class="btn blue" onclick="runHistoryArchiveActionClient(\\'release_held\\')">🔓 ' + Number(aStats.held) + ' Zurückgehaltene freigeben</button>' : '') +
+                (aStats.failed > 0 ? '<button type="button" class="btn amber" onclick="runHistoryArchiveActionClient(\\'retry_failed\\')">🔁 ' + Number(aStats.failed) + ' Fehler wiederholen</button>' : '') +
+              '</div>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:10px">' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:10.5px;color:var(--muted)">⏳ Wartend</div><div style="font-size:18px;font-weight:900;color:#fbbf24">' + Number(aStats.pending || 0) + '</div></div>' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:10.5px;color:var(--muted)">📦 Bis Scan-Ende</div><div style="font-size:18px;font-weight:900;color:#38bdf8">' + Number(aStats.held || 0) + '</div></div>' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:10.5px;color:var(--muted)">✅ Archiviert</div><div style="font-size:18px;font-weight:900;color:#34d399">' + Number(aStats.posted || 0) + '</div></div>' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:10.5px;color:var(--muted)">⚠️ Fehler</div><div style="font-size:18px;font-weight:900;color:#f87171">' + Number(aStats.failed || 0) + '</div></div>' +
+              '<div class="admin-sub-box" style="text-align:center"><div style="font-size:10.5px;color:var(--muted)">🗂️ Themen</div><div style="font-size:18px;font-weight:900;color:#c4b5fd">' + Number(aStats.topicCount || 0) + '</div></div>' +
+            '</div>' +
+            (aTopics.length > 0 ? (
+              '<div style="margin-bottom:10px">' +
+                '<div style="font-size:11.5px;font-weight:700;color:#cbd5e1;margin-bottom:5px">Angelegte Forum-Themen (' + aTopics.length + '):</div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                  aTopics.slice(0, 24).map(t => '<span style="font-size:11px;padding:3px 8px;border-radius:6px;background:rgba(167,139,250,0.14);border:1px solid rgba(167,139,250,0.3);color:#e9d5ff">' + esc(t.topicName || t.topicKey) + ' <span style="opacity:0.65">#' + Number(t.messageThreadId) + '</span></span>').join("") +
+                '</div>' +
+              '</div>'
+            ) : '') +
+            (aRecent.length > 0 ? (
+              '<div>' +
+                '<div style="font-size:11.5px;font-weight:700;color:#cbd5e1;margin-bottom:5px">Letzte Archiv-Aktionen:</div>' +
+                '<div style="display:grid;gap:5px">' +
+                  aRecent.slice(0, 10).map(it => {
+                    const safeLink = /^https:\\/\\/t\\.me\\/c\\/\\d+\\/\\d+(?:\\/\\d+)?$/.test(String(it.telegramLink || "")) ? it.telegramLink : "";
+                    const epBadge = it.mediaType === "series" ? (' S' + String(it.seasonNumber || 1).padStart(2, "0") + 'E' + String(it.episodeNumber || 1).padStart(2, "0")) : '';
+                    return '<div class="admin-sub-box" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 9px;font-size:11px">' +
+                      '<div>' +
+                        (it.status === "posted" ? '✅ ' : '⚠️ ') +
+                        '<b>' + esc(it.topicName || it.topicKey) + '</b> · ' +
+                        (it.mediaType === "series" ? 'Serie' : 'Film') + ' #' + Number(it.tmdbId) + esc(epBadge) +
+                        (it.lastError ? (' <span style="color:#fca5a5">— ' + esc(it.lastError) + '</span>') : '') +
+                      '</div>' +
+                      (safeLink ? ('<a href="' + esc(safeLink) + '" target="_blank" rel="noopener noreferrer" class="btn" style="padding:3px 7px;font-size:10.5px;text-decoration:none">↗️ Öffnen</a>') : '') +
+                    '</div>';
+                  }).join("") +
+                '</div>' +
+              '</div>'
+            ) : '') +
+          '</div>'
+        ) : '';
+
+        return '<div id="adminHistoryScanSection">' +
+          '<div class="panel-box" style="border-color:rgba(14,165,233,0.4);margin-bottom:12px">' +
+            '<div class="section-title" style="margin-bottom:6px">' +
+              '<span>📜 Gruppenverlaufs-Crawler & Sortiertes Themen-Archiv</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                '<button type="button" class="btn blue" onclick="refreshAdminHistoryScanClient(true)">🔄 Aktualisieren</button>' +
+                '<button type="button" class="btn" onclick="state.adminTab=\\'inbox\\';loadAdminPanelView()">📥 Kanal-Inbox</button>' +
+              '</div>' +
+            '</div>' +
+            '<div style="font-size:12px;color:var(--muted);line-height:1.5">' +
+              'Liest bestehende Telegram-Gruppen &amp; Kanäle über 1–3 private Index-Kanäle (mit sofortiger Auto-Löschung) inkl. vollem Kontext ein, schleust alle Funde 1:1 durch den zentralen Parser und spiegelt sie auf Wunsch sortiert in ein privates Themen-Archiv. Arbeitet automatisch per 2-Min-Cron oder sofort beschleunigt über deinen Browser.' +
+            '</div>' +
+          '</div>' +
+          (d.error ? (
+            '<div class="panel-box" style="border-color:rgba(239,68,68,0.55);background:rgba(127,29,29,0.2);margin-bottom:12px;color:#fecaca;font-size:12px">⛔ ' + esc(d.error) + '</div>'
+          ) : '') +
+          turboBoxHtml +
+          setupHtml +
+          newJobHtml +
+          jobsListHtml +
+          archiveSectionHtml +
+        '</div>';
+      }
+
+      function renderAdminHistoryScanDomInPlace() {
+        const el = document.getElementById("adminHistoryScanSection");
+        if (el) {
+          el.outerHTML = buildAdminHistoryScanTabHtmlClient();
+        }
+      }
+
+      async function refreshAdminHistoryScanClient(forceNetwork = false) {
+        const d = window._adminHistoryData;
+        if (d.loading && !forceNetwork) return;
+        syncHistoryFormFromDomClient();
+        d.loading = true;
+        d.error = "";
+        d.authErrorStatus = 0;
+        renderAdminHistoryScanDomInPlace();
+        try {
+          const [jobsRes, archRes] = await Promise.all([
+            apiFetchJson(API_BASE + "/admin/history-jobs", { bypassCache: true }),
+            apiFetchJson(API_BASE + "/admin/history-archive", { bypassCache: true })
+          ]);
+          const authHit = [jobsRes, archRes].find(r => r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError));
+          if (authHit) {
+            d.authErrorStatus = Number(authHit._httpStatus || 403);
+            d.error = "HTTP " + d.authErrorStatus + " – " + (authHit.error || "Admin-Berechtigung fehlt oder Sitzung abgelaufen.");
+            return;
+          }
+          if (!jobsRes || !jobsRes.ok) {
+            d.error = jobsRes?.error || "Verlaufs-Daten konnten nicht geladen werden (HTTP " + Number(jobsRes?._httpStatus || 503) + ").";
+            return;
+          }
+          d.loaded = true;
+          d.jobs = Array.isArray(jobsRes.jobs) ? jobsRes.jobs : [];
+          d.probeChannels = Array.isArray(jobsRes.probeChannels) ? jobsRes.probeChannels : [];
+          d.archiveForum = jobsRes.archiveForum || null;
+          d.archiveDefaults = jobsRes.archiveDefaults || d.archiveDefaults;
+          d.inboxByChat = jobsRes.inboxByChat || {};
+          if (archRes && archRes.ok) {
+            d.archiveStats = archRes.stats || d.archiveStats;
+            d.archiveTopics = Array.isArray(archRes.topics) ? archRes.topics : [];
+            d.archiveRecent = Array.isArray(archRes.recentItems) ? archRes.recentItems : [];
+          }
+          if (!d.cfgHydrated || forceNetwork) {
+            for (let i = 0; i < 3; i++) {
+              const p = d.probeChannels[i];
+              d.cfgProbes[i] = p
+                ? { channelId: String(p.channelId || ""), label: String(p.label || ("Index-Kanal " + (i + 1))), enabled: p.enabled !== false }
+                : { channelId: "", label: "Index-Kanal " + (i + 1), enabled: true };
+            }
+            d.cfgArchive = {
+              channelId: d.archiveForum ? String(d.archiveForum.channelId || "") : "",
+              label: d.archiveForum ? String(d.archiveForum.label || "Themen-Archiv") : "Themen-Archiv",
+              enabled: d.archiveForum ? (d.archiveForum.enabled !== false) : true,
+              topicMode: d.archiveDefaults?.topicMode || "type_genre",
+              timing: d.archiveDefaults?.timing || "live",
+              pinSeriesCard: Boolean(d.archiveDefaults?.pinSeriesCard),
+              maxSeriesTopics: Number(d.archiveDefaults?.maxSeriesTopics || 250)
+            };
+            if (!d.cfgHydrated) {
+              d.form.archiveTopicMode = d.cfgArchive.topicMode;
+              d.form.archiveTiming = d.cfgArchive.timing;
+              d.form.archivePinSeriesCard = d.cfgArchive.pinSeriesCard;
+              d.form.archiveMaxSeriesTopics = d.cfgArchive.maxSeriesTopics;
+            }
+            d.cfgHydrated = true;
+          }
+        } catch (err) {
+          d.error = "Netzwerkfehler beim Laden des Verlaufs-Scans: " + (err?.message || "unbekannt");
+        } finally {
+          d.loading = false;
+          renderAdminHistoryScanDomInPlace();
+        }
+      }
+
+      async function saveHistoryConfigClient() {
+        syncHistoryFormFromDomClient();
+        const d = window._adminHistoryData;
+        if (d.savingConfig) return;
+        d.savingConfig = true;
+        d.error = "";
+        renderAdminHistoryScanDomInPlace();
+        try {
+          const probeChannels = d.cfgProbes
+            .filter(p => String(p.channelId || "").trim().length > 0)
+            .map(p => ({ channelId: p.channelId.trim(), label: p.label.trim(), enabled: Boolean(p.enabled) }));
+          const archiveForum = String(d.cfgArchive.channelId || "").trim()
+            ? { channelId: d.cfgArchive.channelId.trim(), label: d.cfgArchive.label.trim(), enabled: Boolean(d.cfgArchive.enabled) }
+            : null;
+          const r = await apiFetchJson(API_BASE + "/admin/history-config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              probeChannels,
+              archiveForum,
+              archiveDefaults: {
+                topicMode: d.cfgArchive.topicMode,
+                timing: d.cfgArchive.timing,
+                pinSeriesCard: Boolean(d.cfgArchive.pinSeriesCard),
+                maxSeriesTopics: Number(d.cfgArchive.maxSeriesTopics || 250)
+              }
+            })
+          });
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            d.error = "⛔ HTTP " + Number(r._httpStatus || 403) + ": " + (r.error || "Keine Admin-Rechte.");
+            showHudToast(d.error);
+            return;
+          }
+          if (!r || !r.ok) {
+            d.error = r?.error || "Konfiguration konnte nicht gespeichert werden.";
+            showHudToast("⚠️ " + d.error);
+            return;
+          }
+          showHudToast("✅ Index-Kanäle & Archiv-Einstellungen gespeichert!");
+          d.cfgHydrated = false;
+          await refreshAdminHistoryScanClient(true);
+        } finally {
+          d.savingConfig = false;
+          renderAdminHistoryScanDomInPlace();
+        }
+      }
+
+      async function validateHistoryPoolClient() {
+        syncHistoryFormFromDomClient();
+        const d = window._adminHistoryData;
+        if (d.validatingPool) return;
+        d.validatingPool = true;
+        d.error = "";
+        renderAdminHistoryScanDomInPlace();
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/history-validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ validatePool: true })
+          });
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            d.error = "⛔ HTTP " + Number(r._httpStatus || 403) + ": " + (r.error || "Keine Admin-Rechte.");
+            showHudToast(d.error);
+            return;
+          }
+          if (!r || !r.ok) {
+            d.error = r?.error || "Prüfung fehlgeschlagen.";
+            return;
+          }
+          d.validationResult = r;
+          showHudToast(r.readyToCrawl ? "✅ Alle aktiven Index-Kanäle bereit!" : "⚠️ Bitte Prüf-Hinweise bei den Kanälen beachten.");
+          await refreshAdminHistoryScanClient(true);
+        } finally {
+          d.validatingPool = false;
+          renderAdminHistoryScanDomInPlace();
+        }
+      }
+
+      async function validateHistorySourceClient() {
+        syncHistoryFormFromDomClient();
+        const d = window._adminHistoryData;
+        if (d.validatingSource) return;
+        const src = String(d.form.sourceInput || "").trim();
+        if (!src) {
+          showHudToast("ℹ️ Bitte zuerst eine Quellgruppe oder einen Telegram-Link eintragen.");
+          return;
+        }
+        d.validatingSource = true;
+        d.error = "";
+        renderAdminHistoryScanDomInPlace();
+        try {
+          const testMsgId = parseInt(d.form.endMsgId, 10) || d.form.detectedLinkMsgId || 0;
+          const r = await apiFetchJson(API_BASE + "/admin/history-validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              validatePool: false,
+              sourceInput: src,
+              testMessageId: testMsgId,
+              runTestProbe: testMsgId > 0
+            })
+          });
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            d.error = "⛔ HTTP " + Number(r._httpStatus || 403) + ": " + (r.error || "Keine Admin-Rechte.");
+            return;
+          }
+          d.sourceValidationResult = r?.sourceResult || { ok: false, error: r?.error || "Quelle konnte nicht geprüft werden." };
+          if (d.sourceValidationResult.ok) {
+            showHudToast("✅ Quellgruppe erreichbar" + (testMsgId > 0 ? " & 1-ID-Probe erfolgreich!" : "!"));
+          } else {
+            showHudToast("⚠️ " + (d.sourceValidationResult.error || "Quelle hat ein Problem."));
+          }
+        } finally {
+          d.validatingSource = false;
+          renderAdminHistoryScanDomInPlace();
+        }
+      }
+
+      async function createHistoryCrawlJobClient() {
+        syncHistoryFormFromDomClient();
+        const d = window._adminHistoryData;
+        if (d.creatingJob) return;
+        const src = String(d.form.sourceInput || "").trim();
+        const startId = parseInt(d.form.startMsgId, 10) || 1;
+        const endId = parseInt(d.form.endMsgId, 10) || d.form.detectedLinkMsgId || 0;
+        if (!src) {
+          showHudToast("⚠️ Bitte eine Quellgruppe oder einen Telegram-Link angeben.");
+          return;
+        }
+        if (!endId || endId < startId) {
+          showHudToast("⚠️ Bitte eine gültige Bis-ID (>= Von-ID) angeben oder einen Nachrichtenlink einfügen.");
+          return;
+        }
+        d.creatingJob = true;
+        d.error = "";
+        renderAdminHistoryScanDomInPlace();
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/history-jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sourceInput: src,
+              startMsgId: startId,
+              endMsgId: endId,
+              direction: d.form.direction,
+              enableReactions: Boolean(d.form.enableReactions),
+              cronEnabled: Boolean(d.form.cronEnabled),
+              enableArchiveMirror: Boolean(d.form.enableArchiveMirror),
+              archiveTopicMode: d.form.archiveTopicMode,
+              archiveTiming: d.form.archiveTiming,
+              archivePinSeriesCard: Boolean(d.form.archivePinSeriesCard),
+              archiveMaxSeriesTopics: Number(d.form.archiveMaxSeriesTopics || d.cfgArchive.maxSeriesTopics || 250)
+            })
+          });
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            d.error = "⛔ HTTP " + Number(r._httpStatus || 403) + ": " + (r.error || "Keine Admin-Rechte.");
+            showHudToast(d.error);
+            return;
+          }
+          if (!r || !r.ok) {
+            d.error = r?.error || "Job konnte nicht angelegt werden.";
+            showHudToast("⚠️ " + d.error);
+            return;
+          }
+          showHudToast("🚀 Verlaufs-Job #" + Number(r.job?.id || 0) + " angelegt!");
+          d.sourceValidationResult = null;
+          await refreshAdminHistoryScanClient(true);
+        } finally {
+          d.creatingJob = false;
+          renderAdminHistoryScanDomInPlace();
+        }
+      }
+
+      async function runHistoryJobActionClient(jobId, action) {
+        const d = window._adminHistoryData;
+        if (action === "delete") d.pendingDeleteJobId = 0;
+        if (action === "pause" && window._historyTurboState?.running && Number(window._historyTurboState.jobId) === Number(jobId)) {
+          stopHistoryBrowserTurboClient();
+        }
+        const r = await apiFetchJson(API_BASE + "/admin/history-jobs/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId, action })
+        });
+        if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+          showHudToast("⛔ HTTP " + Number(r._httpStatus || 403) + ": " + (r.error || "Keine Admin-Rechte."));
+          return;
+        }
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Aktion fehlgeschlagen."));
+          return;
+        }
+        showHudToast("✅ Job #" + jobId + " aktualisiert.");
+        await refreshAdminHistoryScanClient(true);
+      }
+
+      async function flushHistoryProbeDeletesClient() {
+        const r = await apiFetchJson(API_BASE + "/admin/history-jobs/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "flush_deletes" })
+        });
+        if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+          showHudToast("⛔ HTTP " + Number(r._httpStatus || 403) + ": Keine Admin-Rechte.");
+          return;
+        }
+        showHudToast("🧹 " + Number(r?.deleted || 0) + " Rest-Probes gelöscht" + (Number(r?.remaining || 0) > 0 ? (" (" + Number(r.remaining) + " offen)") : "!"));
+        await refreshAdminHistoryScanClient(true);
+      }
+
+      async function runHistoryArchiveActionClient(action) {
+        const r = await apiFetchJson(API_BASE + "/admin/history-archive/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action })
+        });
+        if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+          showHudToast("⛔ HTTP " + Number(r._httpStatus || 403) + ": Keine Admin-Rechte.");
+          return;
+        }
+        if (!r || !r.ok) {
+          showHudToast("⚠️ " + (r?.error || "Archiv-Aktion fehlgeschlagen."));
+          return;
+        }
+        if (action === "step") {
+          showHudToast(r.waiting
+            ? ("⏳ Archiv-Pacing aktiv – bitte " + Math.ceil(Number(r.waitMs || 3000) / 1000) + "s warten.")
+            : ("🗂️ " + Number(r.postedCount || 0) + " Medien ins Archiv gesendet (" + Number(r.newTopicsCreated || 0) + " neue Themen)."));
+        } else if (action === "release_held") {
+          showHudToast("🔓 " + Number(r.released || 0) + " zurückgehaltene Archiv-Einträge freigegeben!");
+        } else if (action === "retry_failed") {
+          showHudToast("🔁 " + Number(r.retried || 0) + " fehlgeschlagene Archiv-Einträge erneut eingereiht!");
+        }
+        await refreshAdminHistoryScanClient(true);
+      }
+
+      function pauseHistoryBrowserTurboClient() {
+        const tb = window._historyTurboState;
+        tb.paused = true;
+        tb.statusText = "⏸️ Verlaufs-Browser-Turbo pausiert.";
+        renderAdminHistoryScanDomInPlace();
+      }
+
+      function resumeHistoryBrowserTurboClient() {
+        const tb = window._historyTurboState;
+        if (!tb.paused) return;
+        tb.paused = false;
+        tb.statusText = "▶️ Setze Verlaufs-Browser-Turbo fort...";
+        renderAdminHistoryScanDomInPlace();
+        if (!tb.running && tb.jobId > 0) {
+          startHistoryBrowserTurboClient(tb.jobId, true);
+        }
+      }
+
+      function stopHistoryBrowserTurboClient() {
+        const tb = window._historyTurboState;
+        tb.stopRequested = true;
+        tb.paused = false;
+        tb.running = false;
+        tb.countdownSec = 0;
+        tb.statusText = "⏹️ Verlaufs-Browser-Turbo gestoppt.";
+        renderAdminHistoryScanDomInPlace();
+      }
+
+      async function callHistoryTurboApiWithBackoffClient(url, opts) {
+        const tb = window._historyTurboState;
+        const maxAttempts = 5;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          if (tb.stopRequested) return { ok: false, _stopped: true };
+          const r = await apiFetchJson(url, opts);
+          const status = Number(r?._httpStatus || (r?.ok ? 200 : 0));
+
+          // HARTER ABBRUCH BEI HTTP 401 / 403 – sofort stoppen, niemals endlos weiterfeuern!
+          if (status === 401 || status === 403 || r?._authError) {
+            tb.running = false;
+            tb.paused = false;
+            tb.stopRequested = true;
+            tb.countdownSec = 0;
+            tb.authErrorStatus = status || 403;
+            tb.phase = "error";
+            tb.lastError = "Harter Abbruch bei HTTP " + tb.authErrorStatus + ": " + (r?.error || "Sitzung abgelaufen oder keine Admin-Rechte. Bitte neu einloggen.");
+            tb.statusText = "⛔ Gestoppt wegen Authentifizierungsfehler (HTTP " + tb.authErrorStatus + ").";
+            renderAdminHistoryScanDomInPlace();
+            showHudToast("⛔ " + tb.lastError);
+            return { ok: false, _hardAuthAbort: true, _httpStatus: tb.authErrorStatus };
+          }
+
+          if (r && r.ok) return r;
+
+          const isRetryable = status === 503 || status === 429 || status === 502 || status === 504 || status === 0 || Boolean(r?.skippedDueToCooldown);
+          if (!isRetryable || attempt >= maxAttempts) {
+            return r || { ok: false, _httpStatus: status, error: "Unbekannter Fehler" };
+          }
+
+          if (tb.batchSize > 3) tb.batchSize = Math.max(3, tb.batchSize - 2);
+          const retrySec = Number(r?.retryAfterSec || r?.retry_after || 0);
+          const expMs = Math.min(25000, Math.round(1600 * Math.pow(2, attempt - 1)));
+          const waitMs = Math.max(expMs, retrySec > 0 ? retrySec * 1000 : 0);
+          tb.phase = "wait";
+          tb.statusText = "⏳ Worker/Rate-Limit (HTTP " + (status || 503) + ") – Exponential Backoff (Versuch " + attempt + "/" + maxAttempts + ", Batch " + tb.batchSize + ")";
+          await waitWithHistoryTurboCountdownClient(waitMs);
+        }
+        return { ok: false, error: "Maximale Wiederholungen erreicht." };
+      }
+
+      async function waitWithHistoryTurboCountdownClient(totalMs) {
+        const tb = window._historyTurboState;
+        let remain = Math.max(0, Number(totalMs || 0));
+        while (remain > 0 && !tb.stopRequested) {
+          while (tb.paused && !tb.stopRequested) {
+            await new Promise(resolve => setTimeout(resolve, 350));
+          }
+          if (tb.stopRequested) break;
+          tb.countdownSec = Math.ceil(remain / 1000);
+          renderAdminHistoryScanDomInPlace();
+          const slice = Math.min(1000, remain);
+          await new Promise(resolve => setTimeout(resolve, slice));
+          remain -= slice;
+        }
+        tb.countdownSec = 0;
+      }
+
+      // Stufe-B Browser-Offload innerhalb des Verlaufs-Turbos (gruppiert Inbox lokal im User-Browser -> 0ms Worker-CPU!)
+      async function drainHistoryInboxInBrowserClient(sourceChatId, forceFlush = false) {
+        const tb = window._historyTurboState;
+        const winRes = await callHistoryTurboApiWithBackoffClient(
+          API_BASE + "/admin/ingest-inbox/messages?chatId=" + encodeURIComponent(sourceChatId) + "&limit=120" + (forceFlush ? "&force=1" : ""),
+          { bypassCache: true }
+        );
+        if (!winRes || !winRes.ok) return winRes;
+        const rows = Array.isArray(winRes.rows) ? winRes.rows : [];
+        if (rows.length === 0) return { ok: true, remainingPending: 0 };
+
+        tb.phase = "ingest";
+        tb.statusText = "🧠 Stufe B (Browser-Offload): Gruppiere " + rows.length + " gescannte Posts lokal im Browser...";
+        renderAdminHistoryScanDomInPlace();
+
+        const grouped = await extractSmartGroupedInboxWindowInBrowserClient(winRes.chat, rows, winRes.carryover);
+        const entries = grouped.groupedEntries || [];
+        if (entries.length === 0) {
+          return await callHistoryTurboApiWithBackoffClient(API_BASE + "/admin/ingest-inbox/flush", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "browser_batch",
+              chatId: sourceChatId,
+              entries: [],
+              contextRowIds: grouped.contextRowIds,
+              standaloneSubtitleRowIds: grouped.standaloneSubtitleRowIds,
+              nextContextSnapshot: grouped.nextContextSnapshot,
+              seriesTmdbHints: tb.seriesTmdbHints
+            })
+          });
+        }
+
+        let cursor = 0;
+        let lastRemaining = Number(winRes.totalPending || entries.length);
+        while (cursor < entries.length && !tb.stopRequested) {
+          while (tb.paused && !tb.stopRequested) {
+            await new Promise(resolve => setTimeout(resolve, 350));
+          }
+          if (tb.stopRequested) break;
+          const chunkSize = Math.max(2, Math.min(6, Number(tb.batchSize || 6)));
+          const slice = entries.slice(cursor, cursor + chunkSize);
+          const isLast = (cursor + slice.length) >= entries.length;
+
+          tb.statusText = "⚡ Stufe B (Browser-Batch): Speichere " + (cursor + 1) + "–" + (cursor + slice.length) + " von " + entries.length + " erkannten Videos...";
+          renderAdminHistoryScanDomInPlace();
+
+          const bRes = await callHistoryTurboApiWithBackoffClient(API_BASE + "/admin/ingest-inbox/flush", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode: "browser_batch",
+              chatId: sourceChatId,
+              entries: slice,
+              contextRowIds: isLast ? grouped.contextRowIds : [],
+              standaloneSubtitleRowIds: isLast ? grouped.standaloneSubtitleRowIds : [],
+              nextContextSnapshot: isLast ? grouped.nextContextSnapshot : null,
+              seriesTmdbHints: tb.seriesTmdbHints
+            })
+          });
+          if (!bRes || !bRes.ok) return bRes;
+
+          const s = bRes.summary || {};
+          const handled = Number(s.processedVideos || 0) + Number(s.skippedAlreadyDone || 0);
+          tb.videosImported += Number(s.processedVideos || 0);
+          tb.added += Number(s.added || 0);
+          tb.upgraded += Number(s.upgraded || 0);
+          tb.duplicates += Number(s.duplicates || 0);
+          tb.review += Number(s.review || 0);
+          lastRemaining = Number(bRes.remainingPending ?? lastRemaining);
+          if (bRes.seriesTmdbHints && typeof bRes.seriesTmdbHints === "object") {
+            const merged = { ...tb.seriesTmdbHints, ...bRes.seriesTmdbHints };
+            const ents = Object.entries(merged);
+            tb.seriesTmdbHints = ents.length > 100 ? Object.fromEntries(ents.slice(-100)) : merged;
+          }
+          if (s.stoppedByBudget && handled > 0) {
+            cursor += Math.min(slice.length, handled);
+            if (tb.batchSize > 3) tb.batchSize = Math.max(3, tb.batchSize - 1);
+          } else if (s.stoppedByBudget && handled === 0) {
+            if (tb.batchSize > 2) tb.batchSize = 2;
+            await waitWithHistoryTurboCountdownClient(2000);
+          } else {
+            cursor += slice.length;
+          }
+          renderAdminHistoryScanDomInPlace();
+          if (!tb.stopRequested && cursor < entries.length) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+          }
+        }
+        return { ok: true, remainingPending: lastRemaining };
+      }
+
+      async function startHistoryBrowserTurboClient(jobId, isResume = false) {
+        const tb = window._historyTurboState;
+        const d = window._adminHistoryData;
+        if (tb.running) return;
+        const job = (d.jobs || []).find(j => Number(j.id) === Number(jobId));
+        if (!isResume) {
+          tb.jobId = Number(jobId);
+          tb.sourceChatId = String(job?.sourceChatId || "");
+          tb.sourceTitle = String(job?.sourceTitle || tb.sourceChatId || ("Job #" + jobId));
+          tb.runArchiveStep = Boolean(job?.enableArchiveMirror);
+          tb.stepsRun = 0;
+          tb.probesFired = 0;
+          tb.mediaFound = 0;
+          tb.skippedExisting = 0;
+          tb.videosImported = 0;
+          tb.added = 0;
+          tb.upgraded = 0;
+          tb.duplicates = 0;
+          tb.review = 0;
+          tb.archivedPosted = 0;
+          tb.newTopicsCreated = 0;
+          tb.batchSize = 6;
+          tb.seriesTmdbHints = {};
+        }
+        tb.running = true;
+        tb.paused = false;
+        tb.stopRequested = false;
+        tb.lastError = "";
+        tb.authErrorStatus = 0;
+        tb.phase = "crawl";
+        tb.statusText = "🔍 Starte Stufe A (Verlaufs-Scan mit 45s Browser-Lease)...";
+        renderAdminHistoryScanDomInPlace();
+
+        try {
+          // Falls pausiert/fehlerhaft -> Job sauber auf 'running' stellen
+          if (job && (job.status === "paused" || job.status === "error")) {
+            const resResume = await callHistoryTurboApiWithBackoffClient(API_BASE + "/admin/history-jobs/action", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ jobId: tb.jobId, action: "resume" })
+            });
+            if (!resResume || !resResume.ok) {
+              tb.running = false;
+              return;
+            }
+          }
+
+          let safetyLoops = 0;
+          while (tb.running && !tb.stopRequested && safetyLoops < 400) {
+            while (tb.paused && !tb.stopRequested) {
+              await new Promise(resolve => setTimeout(resolve, 350));
+            }
+            if (tb.stopRequested) break;
+            safetyLoops++;
+
+            // 1. STUFE A: Verlaufs-Schritt über 1–3 Index-Kanäle + Auto-Löschung
+            tb.phase = "crawl";
+            tb.statusText = "🔍 Stufe A: Scanne nächsten Verlaufs-Abschnitt über Index-Kanal-Pool...";
+            renderAdminHistoryScanDomInPlace();
+
+            const stepRes = await callHistoryTurboApiWithBackoffClient(API_BASE + "/admin/history-crawl/step", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ jobId: tb.jobId, maxHitsPerStep: 14, maxProbesPerStep: 20 })
+            });
+            if (!stepRes || stepRes._hardAuthAbort || stepRes._stopped) break;
+
+            if (stepRes.job) {
+              tb.sourceChatId = String(stepRes.job.sourceChatId || tb.sourceChatId);
+              tb.sourceTitle = String(stepRes.job.sourceTitle || tb.sourceTitle);
+              const idx = d.jobs.findIndex(j => Number(j.id) === Number(stepRes.job.id));
+              if (idx >= 0) d.jobs[idx] = stepRes.job;
+            }
+            if (!stepRes.ok) {
+              tb.phase = "error";
+              tb.lastError = stepRes.error || "Verlaufs-Schritt fehlgeschlagen.";
+              tb.statusText = "⛔ Verlaufs-Scan gestoppt.";
+              break;
+            }
+
+            tb.stepsRun++;
+            const st = stepRes.stats || {};
+            tb.probesFired += Number(st.probesFired || 0);
+            tb.mediaFound += Number(st.mediaFound || 0);
+            tb.skippedExisting += Number(st.skippedExistingCount || stepRes.skippedExisting || 0);
+            renderAdminHistoryScanDomInPlace();
+
+            // 2. STUFE B (BROWSER-OFFLOAD): Wartende Inbox-Posts sofort lokal im Browser gruppieren & importieren!
+            const pendingInb = Number(stepRes.pendingInboxCount || 0);
+            const isBackpressured = Boolean(stepRes.backpressured || stepRes.backpressure);
+            if ((pendingInb >= 4 || stepRes.jobCompleted || isBackpressured) && tb.sourceChatId && !tb.stopRequested) {
+              const maxDrainPasses = stepRes.jobCompleted ? 3 : 1;
+              let abortOuter = false;
+              for (let dp = 0; dp < maxDrainPasses && !tb.stopRequested; dp++) {
+                const drainRes = await drainHistoryInboxInBrowserClient(tb.sourceChatId, Boolean(stepRes.jobCompleted || isBackpressured));
+                if (drainRes && (drainRes._hardAuthAbort || drainRes._stopped)) {
+                  abortOuter = true;
+                  break;
+                }
+                if (drainRes && !drainRes.ok) {
+                  tb.lastError = drainRes.error || "Fehler bei Stufe B (Browser-Import).";
+                  break;
+                }
+                if (Number(drainRes?.remainingPending || 0) <= 0) break;
+              }
+              if (abortOuter) break;
+            }
+
+            // 3. STUFE C (ARCHIV): Falls Live-Archiv aktiv oder Job gerade abgeschlossen -> kleinen Archiv-Schritt mitziehen
+            if (tb.runArchiveStep && !tb.stopRequested && (stepRes.jobCompleted || tb.stepsRun % 2 === 0)) {
+              tb.phase = "archive";
+              tb.statusText = "🗂️ Stufe C: Spiegele sortierte Treffer ins Themen-Archiv...";
+              renderAdminHistoryScanDomInPlace();
+              const archStep = await callHistoryTurboApiWithBackoffClient(API_BASE + "/admin/history-archive/action", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "step", maxPosts: 3, maxNewTopics: 2 })
+              });
+              if (archStep && (archStep._hardAuthAbort || archStep._stopped)) break;
+              if (archStep && archStep.ok) {
+                tb.archivedPosted += Number(archStep.postedCount || 0);
+                tb.newTopicsCreated += Number(archStep.newTopicsCreated || 0);
+                if (archStep.stats) d.archiveStats = archStep.stats;
+              }
+            }
+
+            if (stepRes.jobCompleted || stepRes.idle) {
+              tb.phase = "done";
+              tb.statusText = "✅ Verlaufs-Scan für " + tb.sourceTitle + " vollständig abgeschlossen!";
+              showHudToast("🎉 Verlaufs-Scan abgeschlossen (" + tb.videosImported + " Videos verarbeitet)!");
+              break;
+            }
+
+            const waitMs = Math.max(700, Number(stepRes.waitMs || 3500));
+            tb.phase = "wait";
+            tb.statusText = stepRes.rateLimited
+              ? ("⏳ Telegram 429-Schutzpause aktiv")
+              : ("⏱️ Respektiere Telegram-Limit (15/Min je Index-Kanal) – nächster Schritt in");
+            await waitWithHistoryTurboCountdownClient(waitMs);
+          }
+        } finally {
+          tb.running = false;
+          tb.countdownSec = 0;
+          renderAdminHistoryScanDomInPlace();
+          if (!tb.authErrorStatus) {
+            await refreshAdminHistoryScanClient(true);
           }
         }
       }

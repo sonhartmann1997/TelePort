@@ -2457,12 +2457,15 @@
         }
       },
 
-      async getChatMember(chatId, userId) {
+      async getChatMember(chatId, userId, options = {}) {
         if (!chatId || !userId) return null;
+        const bypassCache = Boolean(options?.bypassCache);
         const cacheKey = `chat_member_${chatId}_${userId}`;
-        const cached = memoryFallback.get(cacheKey);
-        if (cached && (Date.now() - cached.ts < 120000)) {
-          return cached.member;
+        if (!bypassCache) {
+          const cached = memoryFallback.get(cacheKey);
+          if (cached && (Date.now() - cached.ts < 120000)) {
+            return cached.member;
+          }
         }
         try {
           trackStat("telegramCalls");
@@ -3407,6 +3410,667 @@
           return { ok: false, error: String(e?.message || "deleteForumTopic Fehler") };
         }
       },
+
+      async getMe(options = {}) {
+        const bypassCache = Boolean(options?.bypassCache);
+        const cacheKey = "tg_bot_get_me_v1";
+        if (!bypassCache) {
+          const cached = memoryFallback.get(cacheKey);
+          if (cached && cached.bot && (Date.now() - cached.ts) < 600000) {
+            return { ok: true, bot: cached.bot };
+          }
+        }
+        try {
+          trackStat("telegramCalls");
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/getMe`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+            _criticalSubrequest: true
+          }, 4500);
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok && json?.result?.id) {
+            memoryFallback.set(cacheKey, { bot: json.result, ts: Date.now() });
+            return { ok: true, bot: json.result };
+          }
+          return { ok: false, status: res.status, error: String(json?.description || `HTTP ${res.status}`) };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || "getMe Fehler") };
+        }
+      },
+
+      async getChat(chatId, options = {}) {
+        const target = String(chatId || "").trim();
+        if (!target) return { ok: false, error: "chat_id fehlt." };
+        const bypassCache = Boolean(options?.bypassCache);
+        const cacheKey = `tg_get_chat_${target}`;
+        if (!bypassCache) {
+          const cached = memoryFallback.get(cacheKey);
+          if (cached && cached.chat && (Date.now() - cached.ts) < 120000) {
+            return { ok: true, chat: cached.chat, canonicalChatId: String(cached.chat.id) };
+          }
+        }
+        try {
+          trackStat("telegramCalls");
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/getChat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: target }),
+            _criticalSubrequest: true
+          }, 5000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retryAfter = Math.max(1, Number(err429?.parameters?.retry_after || 5));
+            registerAntiSpam429FloodWait(retryAfter, target);
+            return { ok: false, status: 429, rateLimited: true, retryAfter, error: `Telegram Rate-Limit (${retryAfter}s)` };
+          }
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok && json?.result?.id) {
+            const chat = json.result;
+            memoryFallback.set(cacheKey, { chat, ts: Date.now() });
+            return {
+              ok: true,
+              chat,
+              canonicalChatId: String(chat.id),
+              type: String(chat.type || ""),
+              title: String(chat.title || chat.username || chat.id),
+              username: chat.username ? String(chat.username) : "",
+              isForum: Boolean(chat.is_forum),
+              hasProtectedContent: Boolean(chat.has_protected_content)
+            };
+          }
+          return {
+            ok: false,
+            status: res.status,
+            error: String(json?.description || `HTTP ${res.status}`)
+          };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || "getChat Fehler") };
+        }
+      },
+
+      // Einzelnes forwardMessage liefert das vollständige Message-Objekt (video.file_id, file_name, caption, entities, forward_origin.date)
+      async forwardMessage(targetChatId, fromChatId, messageId, options = {}) {
+        const tChat = String(targetChatId || "").trim();
+        const fChat = String(fromChatId || "").trim();
+        const mId = Number(messageId);
+        if (!tChat || !fChat || !Number.isInteger(mId) || mId <= 0) {
+          return { ok: false, invalidInput: true, error: "Ungültige Parameter für forwardMessage." };
+        }
+        try {
+          trackStat("telegramCalls");
+          const body = {
+            chat_id: tChat,
+            from_chat_id: fChat,
+            message_id: mId,
+            disable_notification: options.disableNotification !== false
+          };
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/forwardMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            _criticalSubrequest: true
+          }, 7000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retryAfter = Math.max(1, Number(err429?.parameters?.retry_after || 5));
+            registerAntiSpam429FloodWait(retryAfter, tChat);
+            return {
+              ok: false,
+              status: 429,
+              rateLimited: true,
+              retryAfter,
+              error: `Telegram 429 Rate-Limit (${retryAfter}s)`
+            };
+          }
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok && json?.result) {
+            return {
+              ok: true,
+              status: 200,
+              message: json.result,
+              probeMessageId: Number(json.result.message_id || 0),
+              meta: extractForwardedMessageMeta(json.result, fChat, mId)
+            };
+          }
+          const errDesc = String(json?.description || `HTTP ${res.status}`);
+          const low = errDesc.toLowerCase();
+          const isProtected = low.includes("protected") || low.includes("can't be forwarded") || low.includes("cannot be forwarded") || low.includes("chat_forwards_restricted");
+          const isNotFound = !isProtected && (
+            low.includes("message to forward not found") ||
+            low.includes("message_id_invalid") ||
+            low.includes("message not found") ||
+            low.includes("message can't be copied")
+          );
+          const isForbidden = res.status === 403 || low.includes("chat not found") || low.includes("not enough rights") || low.includes("kicked") || low.includes("not a member") || low.includes("need administrator rights");
+          return {
+            ok: false,
+            status: res.status,
+            notFound: isNotFound,
+            protectedContent: isProtected,
+            forbidden: isForbidden,
+            error: errDesc
+          };
+        } catch (e) {
+          return { ok: false, networkError: true, error: String(e?.message || "forwardMessage Netzwerkfehler") };
+        }
+      },
+
+      // Bot API 7.0+: Bulk-Löschung von bis zu 100 Nachrichten in 1 einzigen API-Call
+      async deleteMessages(chatId, messageIds = [], options = {}) {
+        const tChat = String(chatId || "").trim();
+        const uniqueIds = Array.from(
+          new Set((Array.isArray(messageIds) ? messageIds : []).map(n => Number(n)).filter(n => Number.isInteger(n) && n > 0))
+        );
+        if (!tChat || uniqueIds.length === 0) {
+          return { ok: true, deletedCount: 0, remainingIds: [] };
+        }
+        const remainingIds = [];
+        let deletedCount = 0;
+        let rateLimited = false;
+        let retryAfter = 0;
+
+        for (let i = 0; i < uniqueIds.length; i += 100) {
+          const chunk = uniqueIds.slice(i, i + 100);
+          if (rateLimited) {
+            remainingIds.push(...chunk);
+            continue;
+          }
+          try {
+            trackStat("telegramCalls");
+            const res = await fetchWithTimeout(`${TELEGRAM_API}/deleteMessages`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chat_id: tChat, message_ids: chunk }),
+              _criticalSubrequest: true
+            }, 6500);
+            if (res.status === 429) {
+              const err429 = await res.json().catch(() => ({}));
+              retryAfter = Math.max(retryAfter, Number(err429?.parameters?.retry_after || 5));
+              registerAntiSpam429FloodWait(retryAfter, tChat);
+              rateLimited = true;
+              remainingIds.push(...chunk);
+              continue;
+            }
+            const json = await res.json().catch(() => ({}));
+            if (res.ok && json?.ok) {
+              deletedCount += chunk.length;
+              continue;
+            }
+            const errDesc = String(json?.description || `HTTP ${res.status}`).toLowerCase();
+            if (errDesc.includes("message to delete not found") || errDesc.includes("message can't be deleted")) {
+              deletedCount += chunk.length;
+              continue;
+            }
+            // Fallback bei sehr kleinen Chunks (<= 5), falls eine einzelne ID ungültig war
+            if (chunk.length <= 5 && options.allowSingleFallback !== false) {
+              for (const singleId of chunk) {
+                const okSingle = await this.deleteMessage(tChat, singleId).catch(() => false);
+                if (okSingle) deletedCount++;
+                else remainingIds.push(singleId);
+              }
+            } else {
+              remainingIds.push(...chunk);
+            }
+          } catch (_e) {
+            remainingIds.push(...chunk);
+          }
+        }
+        return {
+          ok: remainingIds.length === 0 && !rateLimited,
+          deletedCount,
+          remainingIds,
+          rateLimited,
+          retryAfter
+        };
+      },
+
+      async pinChatMessage(chatId, messageId, options = {}) {
+        const tChat = String(chatId || "").trim();
+        const mId = Number(messageId);
+        if (!tChat || !Number.isInteger(mId) || mId <= 0) {
+          return { ok: false, error: "Ungültige Parameter für pinChatMessage." };
+        }
+        try {
+          trackStat("telegramCalls");
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/pinChatMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: tChat,
+              message_id: mId,
+              disable_notification: options.disableNotification !== false
+            }),
+            _criticalSubrequest: true
+          }, 5000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retryAfter = Math.max(1, Number(err429?.parameters?.retry_after || 5));
+            registerAntiSpam429FloodWait(retryAfter, tChat);
+            return { ok: false, status: 429, rateLimited: true, retryAfter, error: `Telegram 429 Rate-Limit (${retryAfter}s)` };
+          }
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok) return { ok: true };
+          return { ok: false, status: res.status, error: String(json?.description || `HTTP ${res.status}`) };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || "pinChatMessage Fehler") };
+        }
+      },
+
+      // Stufe C Archiv-Post: sendVideo mit TMDB-Cover (Bot API 9.0+) -> Fallback ohne Cover -> Fallback sendDocument (.mkv/Doc), inkl. TOPIC_DELETED-Erkennung
+      async sendArchiveMediaToTopic(chatId, options = {}) {
+        const tChat = String(chatId || "").trim();
+        const fileId = String(options.fileId || "").trim();
+        const threadId = Number(options.messageThreadId || 0);
+        if (!tChat || !fileId) {
+          return { ok: false, error: "chat_id oder file_id fehlt." };
+        }
+        const safeCaption = String(options.captionHtml || "").slice(0, 1020);
+        const rawCover = String(options.coverUrl || "").trim();
+        const validCover = /^https:\/\/[^\s"'<>]+$/i.test(rawCover) ? rawCover : "";
+        const preferDoc = options.fileKind === "document";
+
+        const classifyErr = (status, desc) => {
+          const low = String(desc || "").toLowerCase();
+          const topicDeleted = low.includes("message thread not found") || low.includes("topic_deleted") || low.includes("topic_closed") || low.includes("thread_id_invalid");
+          const forbidden = status === 403 || low.includes("chat not found") || low.includes("not enough rights") || low.includes("kicked") || low.includes("not a member") || low.includes("have no rights");
+          const coverErr = status === 400 && (low.includes("cover") || low.includes("failed to get http url") || low.includes("webpage_curl_failed") || low.includes("wrong remote file identifier"));
+          const typeMismatch = status === 400 && (low.includes("type of the file") || low.includes("wrong type of the web page") || low.includes("can't use file of type document as video") || low.includes("document as video") || low.includes("file of type"));
+          return { topicDeleted, forbidden, coverErr, typeMismatch };
+        };
+
+        const postOnce = async (method, withCover) => {
+          trackStat("telegramCalls");
+          const body = {
+            chat_id: tChat,
+            [method === "sendDocument" ? "document" : "video"]: fileId,
+            caption: safeCaption,
+            parse_mode: "HTML",
+            disable_notification: options.disableNotification !== false
+          };
+          if (threadId > 0) body.message_thread_id = threadId;
+          if (method === "sendVideo" && withCover && validCover) {
+            body.cover = validCover;
+          }
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/${method}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            _criticalSubrequest: true
+          }, 8000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retryAfter = Math.max(1, Number(err429?.parameters?.retry_after || 5));
+            registerAntiSpam429FloodWait(retryAfter, tChat);
+            return { ok: false, status: 429, rateLimited: true, retryAfter, error: `Telegram 429 Rate-Limit (${retryAfter}s)` };
+          }
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok && json?.result?.message_id) {
+            return {
+              ok: true,
+              status: 200,
+              messageId: Number(json.result.message_id),
+              messageThreadId: Number(json.result.message_thread_id || threadId || 0),
+              usedMethod: method,
+              usedCover: Boolean(method === "sendVideo" && withCover && validCover)
+            };
+          }
+          const errDesc = String(json?.description || `HTTP ${res.status}`);
+          return { ok: false, status: res.status, error: errDesc, ...classifyErr(res.status, errDesc) };
+        };
+
+        try {
+          if (preferDoc) {
+            const docRes = await postOnce("sendDocument", false);
+            if (docRes.ok || docRes.rateLimited || docRes.topicDeleted || docRes.forbidden) return docRes;
+            // Falls ein echtes Video versehentlich als document markiert war, einmal mit sendVideo versuchen
+            if (docRes.typeMismatch) {
+              return await postOnce("sendVideo", false);
+            }
+            return docRes;
+          }
+
+          let res = await postOnce("sendVideo", Boolean(validCover));
+          if (res.ok || res.rateLimited || res.topicDeleted || res.forbidden) return res;
+
+          // 1. Fallback: Cover-URL wurde von Telegram abgelehnt -> sofort ohne Cover senden
+          if (validCover && (res.coverErr || res.status === 400) && !res.typeMismatch) {
+            res = await postOnce("sendVideo", false);
+            if (res.ok || res.rateLimited || res.topicDeleted || res.forbidden) return res;
+          }
+
+          // 2. Fallback: Datei ist in Telegram eigentlich ein Document (.mkv / Video-Dokument) -> sendDocument
+          if (res.typeMismatch || res.status === 400) {
+            const docFallback = await postOnce("sendDocument", false);
+            if (docFallback.ok || docFallback.rateLimited || docFallback.topicDeleted || docFallback.forbidden) return docFallback;
+          }
+          return res;
+        } catch (e) {
+          return { ok: false, networkError: true, error: String(e?.message || "sendArchiveMediaToTopic Netzwerkfehler") };
+        }
+      },
+
+      // Optionaler angepinnter Serien-Info-Header beim ersten Anlegen eines Serien-Topics
+      async sendArchiveTopicHeaderCard(chatId, options = {}) {
+        const tChat = String(chatId || "").trim();
+        const threadId = Number(options.messageThreadId || 0);
+        const textHtml = String(options.textHtml || "").slice(0, 1020);
+        const rawPoster = String(options.posterUrl || "").trim();
+        const validPoster = /^https:\/\/[^\s"'<>]+$/i.test(rawPoster) ? rawPoster : "";
+        if (!tChat || !textHtml) return { ok: false, error: "Leerer Serien-Header." };
+
+        const sendCall = async (usePhoto) => {
+          trackStat("telegramCalls");
+          const endpoint = usePhoto ? "sendPhoto" : "sendMessage";
+          const body = usePhoto
+            ? {
+                chat_id: tChat,
+                photo: validPoster,
+                caption: textHtml,
+                parse_mode: "HTML",
+                disable_notification: true
+              }
+            : {
+                chat_id: tChat,
+                text: textHtml,
+                parse_mode: "HTML",
+                disable_web_page_preview: true,
+                disable_notification: true
+              };
+          if (threadId > 0) body.message_thread_id = threadId;
+          const res = await fetchWithTimeout(`${TELEGRAM_API}/${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            _criticalSubrequest: true
+          }, 7000);
+          if (res.status === 429) {
+            const err429 = await res.json().catch(() => ({}));
+            const retryAfter = Math.max(1, Number(err429?.parameters?.retry_after || 5));
+            registerAntiSpam429FloodWait(retryAfter, tChat);
+            return { ok: false, status: 429, rateLimited: true, retryAfter, error: `Telegram 429 Rate-Limit (${retryAfter}s)` };
+          }
+          const json = await res.json().catch(() => ({}));
+          if (res.ok && json?.ok && json?.result?.message_id) {
+            return { ok: true, messageId: Number(json.result.message_id) };
+          }
+          const errDesc = String(json?.description || `HTTP ${res.status}`);
+          const low = errDesc.toLowerCase();
+          return {
+            ok: false,
+            status: res.status,
+            topicDeleted: low.includes("message thread not found") || low.includes("topic_deleted") || low.includes("thread_id_invalid"),
+            error: errDesc
+          };
+        };
+
+        try {
+          let sent = validPoster ? await sendCall(true) : await sendCall(false);
+          if (!sent.ok && validPoster && !sent.rateLimited && !sent.topicDeleted) {
+            sent = await sendCall(false);
+          }
+          if (!sent.ok) return sent;
+          let pinned = false;
+          if (options.pin !== false && sent.messageId > 0) {
+            const pinRes = await this.pinChatMessage(tChat, sent.messageId, { disableNotification: true });
+            pinned = Boolean(pinRes?.ok);
+          }
+          return { ok: true, messageId: sent.messageId, pinned };
+        } catch (e) {
+          return { ok: false, error: String(e?.message || "sendArchiveTopicHeaderCard Fehler") };
+        }
+      },
+    };
+  }
+
+  // Parst Telegram-Links (2-Segment, 3-Segment-Forum-Links, öffentliche @username-Links oder numerische -100-IDs)
+  function parseTelegramMessageLink(rawInput) {
+    const raw = String(rawInput || "").trim();
+    if (!raw) return { ok: false, error: "Leere Eingabe." };
+
+    if (/^-?\d{5,20}$/.test(raw)) {
+      return { ok: true, kind: "numeric_id", chatId: raw, username: null, messageId: null, topicId: null };
+    }
+    if (/^@[A-Za-z0-9_]{4,64}$/.test(raw)) {
+      return { ok: true, kind: "username", chatId: raw, username: raw.slice(1), messageId: null, topicId: null };
+    }
+
+    // Erlaubt ausschließlich t.me / telegram.me URLs (kein willkürlicher URL-Fetch!)
+    const cleaned = raw.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+    const privateForumMatch = cleaned.match(/^(?:t\.me|telegram\.me)\/c\/(\d{5,18})\/(\d{1,10})\/(\d{1,10})(?:[/?#].*)?$/i);
+    if (privateForumMatch) {
+      return {
+        ok: true,
+        kind: "private_forum_link",
+        chatId: `-100${privateForumMatch[1]}`,
+        username: null,
+        topicId: Number(privateForumMatch[2]),
+        messageId: Number(privateForumMatch[3])
+      };
+    }
+    const privateMatch = cleaned.match(/^(?:t\.me|telegram\.me)\/c\/(\d{5,18})(?:\/(\d{1,10}))?(?:[/?#].*)?$/i);
+    if (privateMatch) {
+      return {
+        ok: true,
+        kind: "private_link",
+        chatId: `-100${privateMatch[1]}`,
+        username: null,
+        topicId: null,
+        messageId: privateMatch[2] ? Number(privateMatch[2]) : null
+      };
+    }
+    const publicForumMatch = cleaned.match(/^(?:t\.me|telegram\.me)\/([A-Za-z][A-Za-z0-9_]{3,63})\/(\d{1,10})\/(\d{1,10})(?:[/?#].*)?$/i);
+    if (publicForumMatch && publicForumMatch[1].toLowerCase() !== "c") {
+      return {
+        ok: true,
+        kind: "public_forum_link",
+        chatId: `@${publicForumMatch[1]}`,
+        username: publicForumMatch[1],
+        topicId: Number(publicForumMatch[2]),
+        messageId: Number(publicForumMatch[3])
+      };
+    }
+    const publicMatch = cleaned.match(/^(?:t\.me|telegram\.me)\/([A-Za-z][A-Za-z0-9_]{3,63})(?:\/(\d{1,10}))?(?:[/?#].*)?$/i);
+    if (publicMatch && publicMatch[1].toLowerCase() !== "c" && !publicMatch[1].startsWith("+")) {
+      return {
+        ok: true,
+        kind: "public_link",
+        chatId: `@${publicMatch[1]}`,
+        username: publicMatch[1],
+        topicId: null,
+        messageId: publicMatch[2] ? Number(publicMatch[2]) : null
+      };
+    }
+
+    return {
+      ok: false,
+      error: "Ungültiges Format. Bitte numerische ID (-100...), @username oder Telegram-Nachrichtenlink (t.me/c/.../123) angeben."
+    };
+  }
+
+  // Extrahiert Original-Datum, versteckte entities-URLs und normalisierte Quell-Metadaten aus einer forwardMessage-Antwort
+  function extractForwardedMessageMeta(tgMsg, sourceChatId, probedMessageId) {
+    if (!tgMsg || typeof tgMsg !== "object") return null;
+    const origDateSec = Number(
+      tgMsg.forward_origin?.date ||
+      tgMsg.forward_date ||
+      tgMsg.date ||
+      Math.floor(Date.now() / 1000)
+    );
+    const entities = Array.isArray(tgMsg.entities) ? tgMsg.entities : [];
+    const captionEntities = Array.isArray(tgMsg.caption_entities) ? tgMsg.caption_entities : [];
+    const allEntities = [...entities, ...captionEntities];
+    const entityUrls = [];
+    for (const ent of allEntities) {
+      if (ent?.type === "text_link" && typeof ent.url === "string" && /^https?:\/\//i.test(ent.url)) {
+        entityUrls.push(ent.url.slice(0, 300));
+      }
+    }
+    const hasVideo = Boolean(tgMsg.video);
+    const hasDoc = Boolean(tgMsg.document);
+    const hasPhoto = Boolean(Array.isArray(tgMsg.photo) && tgMsg.photo.length > 0);
+    const hasText = Boolean(String(tgMsg.text || tgMsg.caption || "").trim());
+    const isNoiseOnly = Boolean(
+      !hasVideo && !hasDoc && !hasPhoto && !hasText &&
+      (tgMsg.sticker || tgMsg.poll || tgMsg.voice || tgMsg.audio || tgMsg.animation || tgMsg.dice || tgMsg.location || tgMsg.contact || tgMsg.new_chat_members || tgMsg.left_chat_member || tgMsg.pinned_message)
+    );
+
+    return {
+      sourceChatId: String(sourceChatId),
+      sourceMessageId: Number(probedMessageId),
+      probeMessageId: Number(tgMsg.message_id || 0),
+      originalDateSec: origDateSec,
+      entityUrls: Array.from(new Set(entityUrls)).slice(0, 12),
+      hasVideo,
+      hasDoc,
+      hasPhoto,
+      hasText,
+      isNoiseOnly
+    };
+  }
+
+  // Live-Rechte- & Schutz-Validator für Index-Kanäle, optionales Forum-Archiv & Quellgruppen (inkl. optionaler 1-ID-Testprobe)
+  async function validateHistoryChannelAccess(env, rawTarget, role = "probe_index", options = {}) {
+    const parsed = parseTelegramMessageLink(rawTarget);
+    if (!parsed.ok) {
+      return { ok: false, role, input: String(rawTarget || ""), error: parsed.error, checks: [] };
+    }
+
+    const api = tgApi(env);
+    const meRes = await api.getMe({ bypassCache: false });
+    if (!meRes.ok || !meRes.bot?.id) {
+      return { ok: false, role, input: String(rawTarget || ""), error: meRes.error || "Bot-Identität (getMe) konnte nicht geladen werden.", checks: [] };
+    }
+    const botId = Number(meRes.bot.id);
+
+    const chatRes = await api.getChat(parsed.chatId, { bypassCache: true });
+    if (!chatRes.ok || !chatRes.chat?.id) {
+      return {
+        ok: false,
+        role,
+        input: String(rawTarget || ""),
+        parsed,
+        error: `Chat nicht erreichbar (${chatRes.error || "Chat nicht gefunden"}). Ist der Bot Mitglied bzw. Admin?`,
+        checks: []
+      };
+    }
+
+    const canonicalChatId = String(chatRes.chat.id);
+    const chatType = String(chatRes.chat.type || "");
+    const title = String(chatRes.chat.title || chatRes.chat.username || canonicalChatId);
+    const isForum = Boolean(chatRes.chat.is_forum);
+    const hasProtectedContent = Boolean(chatRes.chat.has_protected_content);
+    const member = await api.getChatMember(canonicalChatId, botId, { bypassCache: true });
+    const botStatus = String(member?.status || "unknown");
+    const isAdmin = botStatus === "administrator" || botStatus === "creator";
+    const isMember = isAdmin || botStatus === "member";
+
+    const checks = [];
+    const warnings = [];
+    let ok = true;
+
+    if (role === "probe_index") {
+      const canPost = chatType === "channel" ? Boolean(member?.can_post_messages || botStatus === "creator") : isMember;
+      const canDelete = Boolean(member?.can_delete_messages || botStatus === "creator");
+      checks.push({ key: "admin", label: "Bot ist Admin im Index-Kanal", ok: isAdmin });
+      checks.push({ key: "post", label: "Darf Nachrichten empfangen/posten", ok: canPost });
+      checks.push({ key: "delete", label: "Darf Auto-Löschung ausführen (can_delete_messages)", ok: canDelete });
+      if (!isAdmin || !canPost || !canDelete) ok = false;
+      if (chatType === "private") {
+        ok = false;
+        warnings.push("Bitte einen privaten Kanal oder eine private Supergruppe als Index-Kanal nutzen (keinen Privatchat).");
+      }
+    } else if (role === "archive_forum") {
+      const isSupergroupForum = chatType === "supergroup" && isForum;
+      const canManageTopics = Boolean(member?.can_manage_topics || botStatus === "creator");
+      const canDelete = Boolean(member?.can_delete_messages || botStatus === "creator");
+      const canPin = Boolean(member?.can_pin_messages || botStatus === "creator");
+      checks.push({ key: "forum", label: "Private Supergruppe mit aktivierten Themen (is_forum)", ok: isSupergroupForum });
+      checks.push({ key: "admin", label: "Bot ist Administrator", ok: isAdmin });
+      checks.push({ key: "topics", label: "Darf Themen anlegen (can_manage_topics)", ok: canManageTopics });
+      checks.push({ key: "delete", label: "Darf Nachrichten verwalten/löschen", ok: canDelete });
+      if (!isSupergroupForum) {
+        ok = false;
+        warnings.push("Klassische Kanäle unterstützen keine Themen — bitte eine private Supergruppe mit aktivierter Themen-Funktion verwenden.");
+      }
+      if (!isAdmin || !canManageTopics) ok = false;
+      if (!canPin) {
+        warnings.push("Optional: Recht 'Nachrichten anpinnen' fehlt (nur nötig, falls Serien-Infokarten angepinnt werden sollen).");
+      }
+    } else {
+      // role === "source"
+      checks.push({ key: "reachable", label: "Quellgruppe/-kanal erreichbar", ok: true });
+      checks.push({ key: "forward_allowed", label: "Weiterleiten erlaubt (kein Speicherschutz)", ok: !hasProtectedContent });
+      checks.push({ key: "membership", label: isAdmin ? "Bot ist Administrator" : (isMember ? "Bot ist Mitglied" : "Öffentlicher Zugriff / Bot nicht Mitglied"), ok: isMember || Boolean(chatRes.chat.username) });
+      if (hasProtectedContent) {
+        ok = false;
+        warnings.push("Weiterleitungssperre aktiv (has_protected_content): Telegram blockiert forwardMessage für diese Quelle.");
+      }
+      if (chatType === "supergroup" && !isAdmin && !chatRes.chat.username) {
+        warnings.push("Hinweis 'Versteckter Verlauf': In privaten Supergruppen mit verstecktem Verlauf muss der Bot Admin sein, um Nachrichten vor seinem Beitritt zu lesen.");
+      }
+      if (chatType === "channel" && !isAdmin && !chatRes.chat.username) {
+        ok = false;
+        warnings.push("In privaten Kanälen muss der Bot Administrator sein, damit forwardMessage funktioniert.");
+      }
+      if (isForum) {
+        warnings.push("Hinweis: Die Quelle ist selbst eine Forum-Supergruppe. Vermischte parallele Topics werden über Dateinamen-/Titel-Erkennung und Review-Fallback zugeordnet.");
+      }
+    }
+
+    // Optionale 1-ID-Testprobe für Quellgruppen (mit sofortiger Auto-Löschung!)
+    let testProbe = null;
+    const probeMsgId = Number(options?.testMessageId || parsed.messageId || 0);
+    const probeIndexChannelId = String(options?.probeIndexChannelId || "").trim();
+    if (role === "source" && ok && probeMsgId > 0 && probeIndexChannelId) {
+      const fwd = await api.forwardMessage(probeIndexChannelId, canonicalChatId, probeMsgId, { disableNotification: true });
+      if (fwd.ok && fwd.probeMessageId > 0) {
+        const delRes = await api.deleteMessages(probeIndexChannelId, [fwd.probeMessageId]);
+        testProbe = {
+          ok: true,
+          messageId: probeMsgId,
+          probeIndexChannelId,
+          cleanedUp: Boolean(delRes.ok),
+          originalDateSec: fwd.meta?.originalDateSec || null,
+          hasMedia: Boolean(fwd.meta?.hasVideo || fwd.meta?.hasDoc || fwd.meta?.hasPhoto),
+          hasText: Boolean(fwd.meta?.hasText),
+          entityUrlCount: Number(fwd.meta?.entityUrls?.length || 0)
+        };
+      } else {
+        testProbe = {
+          ok: false,
+          messageId: probeMsgId,
+          probeIndexChannelId,
+          notFound: Boolean(fwd.notFound),
+          protectedContent: Boolean(fwd.protectedContent),
+          forbidden: Boolean(fwd.forbidden),
+          rateLimited: Boolean(fwd.rateLimited),
+          error: fwd.error || "Test-Forward fehlgeschlagen."
+        };
+        if (fwd.protectedContent || fwd.forbidden) {
+          ok = false;
+          warnings.push(`Test-Probe auf Nachricht #${probeMsgId} fehlgeschlagen: ${fwd.error}`);
+        }
+      }
+    }
+
+    return {
+      ok,
+      role,
+      input: String(rawTarget || ""),
+      canonicalChatId,
+      chatType,
+      title,
+      username: chatRes.chat.username ? String(chatRes.chat.username) : "",
+      isForum,
+      hasProtectedContent,
+      botStatus,
+      isAdmin,
+      parsedMessageId: parsed.messageId || null,
+      parsedTopicId: parsed.topicId || null,
+      checks,
+      warnings,
+      testProbe
     };
   }
 

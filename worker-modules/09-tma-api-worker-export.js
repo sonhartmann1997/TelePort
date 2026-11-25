@@ -1060,6 +1060,370 @@
             return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
           }
         }
+        if (path === "/api/tma/admin/history-config") {
+          if (request.method === "GET") {
+            const [channels, archiveDefaults, fastProbe] = await Promise.all([
+              getHistoryIndexChannelsFromD1(env),
+              getHistoryArchiveDefaultsFromD1(env),
+              getHistorySystemCronFastProbeFromD1(env, Date.now())
+            ]);
+            return new Response(JSON.stringify({
+              ok: true,
+              probeChannels: channels.filter(c => c.role === "probe_index"),
+              archiveForum: channels.find(c => c.role === "archive_forum") || null,
+              archiveDefaults,
+              fastProbe
+            }), { status: 200, headers: corsHeaders });
+          }
+          if (request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const api = tgApi(env);
+
+            // Kanonische Auflösung (falls Admin einen t.me-Link oder @username einfügt -> numerische -100-ID)
+            const resolveCanonicalId = async (rawVal) => {
+              const str = String(rawVal || "").trim();
+              if (!str) return { ok: true, id: "" };
+              const parsed = parseTelegramMessageLink(str);
+              if (!parsed.ok) return { ok: false, error: parsed.error };
+              if (/^-\d{5,20}$/.test(parsed.chatId)) {
+                return { ok: true, id: parsed.chatId };
+              }
+              const chatInfo = await api.getChat(parsed.chatId, { bypassCache: true });
+              if (!chatInfo.ok || !chatInfo.canonicalChatId) {
+                return { ok: false, error: `Chat '${str}' konnte nicht aufgelöst werden: ${chatInfo.error || "unbekannt"}` };
+              }
+              return { ok: true, id: chatInfo.canonicalChatId, title: chatInfo.title || "" };
+            };
+
+            const rawProbes = Array.isArray(body.probeChannels) ? body.probeChannels.slice(0, 3) : [];
+            const resolvedProbes = [];
+            for (const p of rawProbes) {
+              const rawId = String(p?.channelId || "").trim();
+              if (!rawId) continue;
+              const r = await resolveCanonicalId(rawId);
+              if (!r.ok) {
+                return new Response(JSON.stringify({ ok: false, error: r.error }), { status: 400, headers: corsHeaders });
+              }
+              resolvedProbes.push({
+                channelId: r.id,
+                label: String(p?.label || r.title || "").trim(),
+                enabled: p?.enabled !== false
+              });
+            }
+
+            let resolvedArchive = null;
+            if (body.archiveForum && String(body.archiveForum.channelId || "").trim()) {
+              const rArch = await resolveCanonicalId(body.archiveForum.channelId);
+              if (!rArch.ok) {
+                return new Response(JSON.stringify({ ok: false, error: rArch.error }), { status: 400, headers: corsHeaders });
+              }
+              resolvedArchive = {
+                channelId: rArch.id,
+                label: String(body.archiveForum.label || rArch.title || "").trim(),
+                enabled: body.archiveForum.enabled !== false
+              };
+            }
+
+            const saveRes = await saveHistoryIndexChannelsInD1(env, {
+              probeChannels: resolvedProbes,
+              archiveForum: resolvedArchive,
+              archiveDefaults: body.archiveDefaults || null
+            });
+            if (!saveRes.ok) {
+              return new Response(JSON.stringify(saveRes), { status: 400, headers: corsHeaders });
+            }
+            return new Response(JSON.stringify(saveRes), { status: 200, headers: corsHeaders });
+          }
+        }
+        if (path === "/api/tma/admin/history-validate" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const channels = await getHistoryIndexChannelsFromD1(env);
+          const probeChannels = channels.filter(c => c.role === "probe_index");
+          const archiveForum = channels.find(c => c.role === "archive_forum") || null;
+
+          const validatePool = body.validatePool !== false;
+          const probeResults = [];
+          let archiveResult = null;
+          let firstVerifiedIndexId = "";
+
+          if (validatePool) {
+            for (const ch of probeChannels) {
+              const res = await validateHistoryChannelAccess(env, ch.channelId, "probe_index");
+              probeResults.push({ ...res, enabled: ch.enabled, label: ch.label });
+              if (res.ok) {
+                if (ch.enabled && !firstVerifiedIndexId) firstVerifiedIndexId = ch.channelId;
+                await updateHistoryIndexChannelVerificationInD1(env, ch.channelId, {
+                  verifiedAt: Date.now(),
+                  caps: { ok: true, title: res.title, chatType: res.chatType, checks: res.checks },
+                  label: res.title
+                });
+              } else {
+                await updateHistoryIndexChannelVerificationInD1(env, ch.channelId, {
+                  verifiedAt: Date.now(),
+                  caps: { ok: false, error: res.error || "", warnings: res.warnings || [], checks: res.checks || [] }
+                });
+              }
+            }
+            if (archiveForum) {
+              const res = await validateHistoryChannelAccess(env, archiveForum.channelId, "archive_forum");
+              archiveResult = { ...res, enabled: archiveForum.enabled, label: archiveForum.label };
+              await updateHistoryIndexChannelVerificationInD1(env, archiveForum.channelId, {
+                verifiedAt: Date.now(),
+                caps: { ok: res.ok, title: res.title, isForum: res.isForum, checks: res.checks, warnings: res.warnings },
+                label: res.title
+              });
+            }
+          } else {
+            const firstEnabled = probeChannels.find(c => c.enabled);
+            if (firstEnabled) firstVerifiedIndexId = firstEnabled.channelId;
+          }
+
+          let sourceResult = null;
+          const sourceInput = String(body.sourceInput || "").trim();
+          if (sourceInput) {
+            const rawTestMsgId = Number(body.testMessageId || 0);
+            const safeTestMsgId = Number.isInteger(rawTestMsgId) && rawTestMsgId >= 1 && rawTestMsgId <= 2000000000 ? rawTestMsgId : 0;
+            const probeTargetId = body.runTestProbe ? firstVerifiedIndexId : "";
+            sourceResult = await validateHistoryChannelAccess(env, sourceInput, "source", {
+              testMessageId: safeTestMsgId,
+              probeIndexChannelId: probeTargetId
+            });
+          }
+
+          const allEnabledProbesOk = probeResults.length > 0
+            ? probeResults.filter(p => p.enabled).every(p => p.ok)
+            : probeChannels.some(c => c.enabled);
+
+          return new Response(JSON.stringify({
+            ok: true,
+            readyToCrawl: Boolean(allEnabledProbesOk && (!sourceResult || sourceResult.ok)),
+            probeResults,
+            archiveResult,
+            sourceResult
+          }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/history-jobs") {
+          if (request.method === "GET") {
+            const [jobs, channels, inboxStats, archiveDefaults] = await Promise.all([
+              listHistoryCrawlJobsFromD1(env, 40),
+              getHistoryIndexChannelsFromD1(env),
+              getChannelIngestInboxStatsFromD1(env),
+              getHistoryArchiveDefaultsFromD1(env)
+            ]);
+            const inboxByChat = {};
+            for (const c of (inboxStats?.chats || [])) {
+              inboxByChat[String(c.chatId)] = {
+                pending: c.pending,
+                staging: c.staging || 0,
+                done: c.done,
+                review: c.review
+              };
+            }
+            return new Response(JSON.stringify({
+              ok: true,
+              jobs,
+              probeChannels: channels.filter(c => c.role === "probe_index"),
+              archiveForum: channels.find(c => c.role === "archive_forum") || null,
+              archiveDefaults,
+              inboxByChat
+            }), { status: 200, headers: corsHeaders });
+          }
+          if (request.method === "POST") {
+            const body = await request.json().catch(() => ({}));
+            const rawSource = String(body.sourceInput || body.sourceChatId || "").trim();
+            if (!rawSource) {
+              return new Response(JSON.stringify({ ok: false, error: "Bitte eine Quellgruppe, einen Kanal oder einen Telegram-Link angeben." }), { status: 400, headers: corsHeaders });
+            }
+            const parsed = parseTelegramMessageLink(rawSource);
+            if (!parsed.ok) {
+              return new Response(JSON.stringify({ ok: false, error: parsed.error }), { status: 400, headers: corsHeaders });
+            }
+
+            // Kanonische -100...-Auflösung & Speicherschutz-Check
+            const api = tgApi(env);
+            let canonicalChatId = parsed.chatId;
+            let sourceTitle = String(body.sourceTitle || "").trim();
+            const chatInfo = await api.getChat(parsed.chatId, { bypassCache: false });
+            if (chatInfo.ok && chatInfo.canonicalChatId) {
+              canonicalChatId = chatInfo.canonicalChatId;
+              if (!sourceTitle) sourceTitle = chatInfo.title || canonicalChatId;
+              if (chatInfo.hasProtectedContent) {
+                return new Response(JSON.stringify({
+                  ok: false,
+                  error: "Weiterleitungssperre in der Quellgruppe aktiv (has_protected_content). Telegram blockiert forwardMessage für diese Quelle."
+                }), { status: 400, headers: corsHeaders });
+              }
+            } else if (!/^-\d{5,20}$/.test(canonicalChatId)) {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: `Quellgruppe '${rawSource}' konnte nicht aufgelöst werden: ${chatInfo.error || "Chat nicht gefunden"}`
+              }), { status: 400, headers: corsHeaders });
+            }
+
+            // Webhook-Loop-Schutz: Index-Kanäle oder Themen-Archiv dürfen niemals als Quelle gescannt werden!
+            if (await isHistorySystemBlockedChat(env, canonicalChatId)) {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: "Diese Chat-ID ist als Index-Kanal oder Themen-Archiv konfiguriert und darf nicht als Scan-Quelle dienen."
+              }), { status: 400, headers: corsHeaders });
+            }
+
+            const enabledProbes = await getHistoryIndexChannelsFromD1(env, { role: "probe_index", onlyEnabled: true });
+            if (enabledProbes.length === 0) {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: "Bitte zuerst mindestens 1 privaten Index-Kanal mit Auto-Löschung konfigurieren."
+              }), { status: 400, headers: corsHeaders });
+            }
+
+            const startMsgId = Number(body.startMsgId || 1);
+            const endMsgId = Number(body.endMsgId || parsed.messageId || 0);
+            if (!Number.isInteger(startMsgId) || !Number.isInteger(endMsgId) || startMsgId < 1 || endMsgId < startMsgId || endMsgId > 2000000000) {
+              return new Response(JSON.stringify({
+                ok: false,
+                error: "Bitte einen gültigen ID-Bereich angeben (Von >= 1, Bis >= Von)."
+              }), { status: 400, headers: corsHeaders });
+            }
+
+            const archiveDefaults = await getHistoryArchiveDefaultsFromD1(env);
+            const archiveForum = (await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true }))[0] || null;
+            const enableArchiveMirror = Boolean(body.enableArchiveMirror) && Boolean(archiveForum);
+
+            const createRes = await createHistoryCrawlJobInD1(env, {
+              sourceChatId: canonicalChatId,
+              sourceTitle: sourceTitle || canonicalChatId,
+              startMsgId,
+              endMsgId,
+              direction: body.direction === "desc" ? "desc" : "asc",
+              enableReactions: Boolean(body.enableReactions),
+              enableArchiveMirror,
+              archiveTopicMode: body.archiveTopicMode || archiveDefaults.topicMode,
+              archiveTiming: body.archiveTiming || archiveDefaults.timing,
+              archivePinSeriesCard: body.archivePinSeriesCard !== undefined ? Boolean(body.archivePinSeriesCard) : archiveDefaults.pinSeriesCard,
+              archiveMaxSeriesTopics: body.archiveMaxSeriesTopics || archiveDefaults.maxSeriesTopics,
+              cronEnabled: body.cronEnabled !== false
+            });
+            if (!createRes.ok) {
+              return new Response(JSON.stringify(createRes), { status: 400, headers: corsHeaders });
+            }
+            return new Response(JSON.stringify({ ok: true, job: createRes.job }), { status: 200, headers: corsHeaders });
+          }
+        }
+        if (path === "/api/tma/admin/history-jobs/action" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const action = String(body.action || "").trim().toLowerCase();
+          if (action === "flush_deletes") {
+            const flushRes = await flushPendingHistoryProbeDeletes(env, { subrequestCeiling: 38 });
+            return new Response(JSON.stringify({ ok: true, ...flushRes }), { status: 200, headers: corsHeaders });
+          }
+          const jobId = Number(body.jobId || 0);
+          const job = await getHistoryCrawlJobByIdFromD1(env, jobId);
+          if (!job) {
+            return new Response(JSON.stringify({ ok: false, error: "Verlaufs-Job nicht gefunden." }), { status: 404, headers: corsHeaders });
+          }
+          const now = Date.now();
+          if (action === "pause") {
+            await updateHistoryCrawlJobStateInD1(env, job.id, { status: "paused", workerLeaseUntil: 0, now });
+          } else if (action === "resume") {
+            const existingJobs = await listHistoryCrawlJobsFromD1(env, 10);
+            const anotherActive = existingJobs.some(j => j.id !== job.id && (j.status === "running" || j.status === "flood_wait"));
+            await updateHistoryCrawlJobStateInD1(env, job.id, {
+              status: anotherActive ? "queued" : "running",
+              floodUntil: 0,
+              lastError: "",
+              now
+            });
+          } else if (action === "cancel") {
+            await promoteHistoryStagingRowsToPendingInD1(env, job.id, { promoteAll: true, direction: job.direction, now });
+            await updateHistoryCrawlJobStateInD1(env, job.id, { status: "paused", workerLeaseUntil: 0, lastError: "Manuell abgebrochen", now });
+          } else if (action === "toggle_cron") {
+            await updateHistoryCrawlJobStateInD1(env, job.id, { cronEnabled: !job.cronEnabled, now });
+          } else if (action === "delete") {
+            await deleteHistoryCrawlJobInD1(env, job.id);
+            return new Response(JSON.stringify({ ok: true, deleted: true, jobId: job.id }), { status: 200, headers: corsHeaders });
+          } else {
+            return new Response(JSON.stringify({ ok: false, error: `Unbekannte Aktion: ${action}` }), { status: 400, headers: corsHeaders });
+          }
+          const updated = await getHistoryCrawlJobByIdFromD1(env, job.id);
+          return new Response(JSON.stringify({ ok: true, job: updated }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/history-crawl/step" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const jobId = Number(body.jobId || 0);
+          const maxHits = Math.max(1, Math.min(16, Number(body.maxHitsPerStep || 15)));
+          const maxProbes = Math.max(maxHits, Math.min(22, Number(body.maxProbesPerStep || 20)));
+          const stepRes = await runHistoryCrawlStep(env, {
+            source: "browser_turbo",
+            jobId: jobId > 0 ? jobId : 0,
+            maxHitsPerStep: maxHits,
+            maxProbesPerStep: maxProbes,
+            subrequestCeiling: 28,
+            leaseMs: 45000
+          });
+          let pendingInboxCount = 0;
+          if (stepRes?.job?.sourceChatId) {
+            pendingInboxCount = await countPendingChannelIngestInD1(env, stepRes.job.sourceChatId);
+          }
+          return new Response(JSON.stringify({
+            ...stepRes,
+            pendingInboxCount
+          }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/history-archive" && request.method === "GET") {
+          const [archiveChannels, archiveDefaults] = await Promise.all([
+            getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: false }),
+            getHistoryArchiveDefaultsFromD1(env)
+          ]);
+          const archiveForum = archiveChannels[0] || null;
+          const forumId = archiveForum?.channelId || "";
+          const [stats, topics, recentItems] = await Promise.all([
+            getArchiveMirrorStatsFromD1(env, forumId),
+            listArchiveTopicsFromD1(env, forumId, 80),
+            listRecentArchivedItemsFromD1(env, forumId, 25)
+          ]);
+          return new Response(JSON.stringify({
+            ok: true,
+            archiveForum,
+            archiveDefaults,
+            stats,
+            topics,
+            recentItems
+          }), { status: 200, headers: corsHeaders });
+        }
+        if (path === "/api/tma/admin/history-archive/action" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const action = String(body.action || "").trim().toLowerCase();
+          const archiveChannels = await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: false });
+          const archiveForum = archiveChannels[0] || null;
+          const forumId = archiveForum?.channelId || "";
+
+          if (action === "step") {
+            const maxPosts = Math.max(1, Math.min(6, Number(body.maxPosts || 4)));
+            const maxNewTopics = Math.max(1, Math.min(3, Number(body.maxNewTopics || 2)));
+            const stepRes = await processArchiveMirrorQueueBatch(env, {
+              maxPosts,
+              maxNewTopics,
+              subrequestCeiling: 38
+            });
+            const stats = await getArchiveMirrorStatsFromD1(env, forumId);
+            return new Response(JSON.stringify({
+              ...stepRes,
+              stats
+            }), { status: 200, headers: corsHeaders });
+          }
+          if (action === "retry_failed") {
+            const retried = await retryFailedArchiveMirrorItemsInD1(env, forumId);
+            const stats = await getArchiveMirrorStatsFromD1(env, forumId);
+            return new Response(JSON.stringify({ ok: true, retried, stats }), { status: 200, headers: corsHeaders });
+          }
+          if (action === "release_held") {
+            const jobId = Number(body.jobId || 0);
+            const released = await releaseHeldArchiveMirrorItemsForJobInD1(env, jobId, Date.now(), { releaseAll: jobId <= 0 });
+            const stats = await getArchiveMirrorStatsFromD1(env, forumId);
+            return new Response(JSON.stringify({ ok: true, released, stats }), { status: 200, headers: corsHeaders });
+          }
+          return new Response(JSON.stringify({ ok: false, error: `Unbekannte Archiv-Aktion: ${action}` }), { status: 400, headers: corsHeaders });
+        }
         if (path === "/api/tma/admin/overview" && request.method === "GET") {
           const mediaType = url.searchParams.get("mediaType") === "s" ? "s" : "m";
           const playlistChatId = String(url.searchParams.get("playlistChatId") || auth.chatId);
@@ -2547,6 +2911,17 @@
             forceFlush: forceAll || (fetched.totalPending <= lim),
             now: Date.now()
           });
+          const rawSnap = chatCfg.lastContextSnapshot || null;
+          const snapAnchors = Array.isArray(rawSnap?.anchorMessages) ? rawSnap.anchorMessages : [];
+          const snapMaxMsgId = Number(rawSnap?.maxMessageId || 0) || snapAnchors.reduce((acc, m) => Math.max(acc, Number(m?.id || m?.msg_id || 0)), 0);
+          const firstRowMsgId = Number(cut.processRows?.[0]?.messageId || 0);
+          const carryoverMonotonic = Boolean(
+            rawSnap &&
+            (
+              snapMaxMsgId <= 0 ||
+              (firstRowMsgId > snapMaxMsgId && (firstRowMsgId - snapMaxMsgId) <= 80)
+            )
+          );
           return new Response(JSON.stringify({
             ok: true,
             chat: {
@@ -2555,7 +2930,7 @@
               type: String(chatCfg.chatType || chatCfg.type || "channel"),
               enabled: Boolean(chatCfg.enabled)
             },
-            carryover: chatCfg.lastContextSnapshot || null,
+            carryover: carryoverMonotonic ? rawSnap : null,
             rows: cut.processRows,
             heldBackCount: cut.holdBackRows.length,
             totalPending: Number(fetched.totalPending || 0)
@@ -6907,11 +7282,60 @@
       await runWithWorkerRequestContext(
         { env, ctx, origin: "", route: `cron:${controller?.cron || "scheduled"}` },
         async () => {
+          const now = Date.now();
+          // 1. O(1)-Fast-Probe für History-System (1 D1-Batch, 0 D1-Writes im Leerlauf!)
+          const histProbe = typeof getHistorySystemCronFastProbeFromD1 === "function"
+            ? await getHistorySystemCronFastProbeFromD1(env, now)
+            : { hasActiveOrQueuedJob: false, activeJob: null, hasPendingArchive: false, hasPendingProbeDeletes: false };
+
+          // 2. Bestehende Ingest-Inbox (Live-Priorität vor History!) zuerst flushen.
+          // Wenn ein History-Job aktiv ist, reservieren wir fair Subrequest-Budget für Stufe A + Stufe B.
+          const hasCronHistoryWork = Boolean(
+            histProbe.hasActiveOrQueuedJob &&
+            histProbe.activeJob?.cronEnabled &&
+            (histProbe.activeJob?.workerLeaseUntil || 0) <= now &&
+            (histProbe.activeJob?.floodUntil || 0) <= now
+          );
           if (typeof runScheduledChannelIngestFlush === "function") {
             await runScheduledChannelIngestFlush(env, {
               source: "cron",
               forceFlush: false,
-              maxResolvePerRun: 6
+              maxResolvePerRun: hasCronHistoryWork ? 4 : 6
+            });
+          }
+
+          // 3. Stufe A: History-Probe-Crawler oder Crash-Recovery-Löschung nur bei echtem Bedarf & ausreichendem Budget
+          let crawlStepRes = null;
+          if (hasCronHistoryWork && typeof runHistoryCrawlStep === "function" && hasSubrequestBudget(24)) {
+            crawlStepRes = await runHistoryCrawlStep(env, {
+              source: "cron",
+              maxHitsPerStep: 12,
+              maxProbesPerStep: 18,
+              subrequestCeiling: 36
+            });
+            // Wenn der Job gerade abgeschlossen wurde, letzte freigegebene Zeilen direkt im selben Tick anstoßen
+            if (crawlStepRes?.jobCompleted && crawlStepRes?.job?.sourceChatId && hasSubrequestBudget(32) && typeof runScheduledChannelIngestFlush === "function") {
+              await runScheduledChannelIngestFlush(env, {
+                source: "cron",
+                forceFlush: true,
+                filterChatId: crawlStepRes.job.sourceChatId,
+                maxResolvePerRun: 4
+              });
+            }
+          } else if (histProbe.hasPendingProbeDeletes && typeof flushPendingHistoryProbeDeletes === "function" && hasSubrequestBudget(38)) {
+            await flushPendingHistoryProbeDeletes(env, { subrequestCeiling: 42 });
+          }
+
+          // 4. Stufe C: Entkoppeltes Sortiertes Themen-Archiv (max. 4 Posts / max. 2 neue Topics je Tick, 14/Min-Pacing)
+          if (
+            (histProbe.hasPendingArchive || crawlStepRes?.jobCompleted) &&
+            typeof processArchiveMirrorQueueBatch === "function" &&
+            hasSubrequestBudget(34)
+          ) {
+            await processArchiveMirrorQueueBatch(env, {
+              maxPosts: 4,
+              maxNewTopics: 2,
+              subrequestCeiling: 42
             });
           }
         }

@@ -3391,6 +3391,10 @@
       return { enabled: false, staged: false };
     }
     const chatId = tgMsg.chat.id;
+    // Harte Webhook-Loop-Blacklist: Index-Kanäle & sortiertes Themen-Archiv NIEMALS selbst einspeisen!
+    if (typeof isHistorySystemBlockedChat === "function" && await isHistorySystemBlockedChat(env, chatId)) {
+      return { enabled: false, staged: false, blockedSystemChat: true };
+    }
     const enabled = await isAutoIngestChatEnabled(env, chatId);
     if (!enabled) {
       return { enabled: false, staged: false };
@@ -3410,6 +3414,1132 @@
       createdAt: tgMsg.date ? Number(tgMsg.date) * 1000 : Date.now()
     });
     return { enabled: true, staged: Boolean(res?.ok), inserted: Boolean(res?.inserted), msgKind: built.msgKind };
+  }
+
+  // ============================================================================
+  // SCHRITT 2: STUFE A — HISTORY-PROBE-CRAWLER ENGINE & SOFORT-LÖSCHUNG
+  // ============================================================================
+  const HISTORY_CHANNEL_MIN_GAP_MS = 4000; // 15 erfolgreiche Forwards/Min je Index-Kanal (25 % Puffer unter Telegrams ~20/Min Limit!)
+  const HISTORY_BACKPRESSURE_LIMIT = 120;  // Drosselt Stufe A, wenn > 120 History-Zeilen in der Inbox warten
+
+  // Wandelt eine per forwardMessage gelesene Nachricht mit Rekonstruktion von Original-ID, Original-Datum,
+  // versteckten entities-Links und virtueller Album-Gruppierung in das exakt gleiche Inbox-Format um.
+  function buildHistoryInboxRecordFromForwardedMsg(tgMsg, { sourceChatId, sourceTitle, probedMessageId, suppressReaction = true, jobId = 0, prevMediaMeta = null } = {}) {
+    if (!tgMsg || typeof tgMsg !== "object") {
+      return { msgKind: "skip", isNoise: true, record: null, mediaMeta: null };
+    }
+    const meta = extractForwardedMessageMeta(tgMsg, sourceChatId, probedMessageId);
+    if (!meta || meta.isNoiseOnly) {
+      return { msgKind: "skip", isNoise: true, record: null, mediaMeta: null };
+    }
+
+    // Versteckte Text-Link-URLs (z. B. IMDb/TMDB-Links aus Markdown-Entities) retten, falls nicht im Klartext sichtbar
+    const rawCaptionOrText = String(tgMsg.caption || tgMsg.text || "").trim();
+    const extraUrls = (meta.entityUrls || []).filter(u => !rawCaptionOrText.includes(u));
+    const enrichedText = extraUrls.length > 0
+      ? `${rawCaptionOrText}${rawCaptionOrText ? "\n" : ""}${extraUrls.join("\n")}`
+      : rawCaptionOrText;
+
+    // Virtuelle media_group_id rekonstruieren (single forwardMessage strippt Telegrams media_group_id!)
+    const isMediaCandidate = Boolean(meta.hasVideo || meta.hasDoc || meta.hasPhoto);
+    let virtualMediaGroupId = tgMsg.media_group_id ? String(tgMsg.media_group_id) : null;
+    if (!virtualMediaGroupId && isMediaCandidate && prevMediaMeta && prevMediaMeta.isMediaCandidate) {
+      const isConsecutiveId = Number(probedMessageId) === Number(prevMediaMeta.probedMessageId) + 1;
+      const sameOrigTime = Math.abs(Number(meta.originalDateSec) - Number(prevMediaMeta.originalDateSec)) <= 1;
+      if (isConsecutiveId && sameOrigTime) {
+        virtualMediaGroupId = prevMediaMeta.virtualMediaGroupId || `hist_grp_${sourceChatId}_${prevMediaMeta.originalDateSec}`;
+      }
+    }
+
+    const normalizedMsg = {
+      ...tgMsg,
+      chat: { id: String(sourceChatId), title: String(sourceTitle || sourceChatId) },
+      message_id: Number(probedMessageId),
+      date: Number(meta.originalDateSec),
+      media_group_id: virtualMediaGroupId || undefined,
+      text: tgMsg.text !== undefined ? enrichedText : undefined,
+      caption: tgMsg.caption !== undefined ? enrichedText : (tgMsg.text === undefined && enrichedText ? enrichedText : undefined)
+    };
+
+    const built = buildStagingPayloadFromTelegramMessage(normalizedMsg);
+    if (!built || !built.payload || built.msgKind === "skip") {
+      return { msgKind: "skip", isNoise: true, record: null, mediaMeta: null };
+    }
+
+    built.payload._historyJobId = Number(jobId || 0);
+    built.payload._suppressReaction = Boolean(suppressReaction);
+    built.payload._isVideoDocument = Boolean(!tgMsg.video && tgMsg.document);
+    if (extraUrls.length > 0) {
+      built.payload.entity_urls = extraUrls;
+    }
+
+    const mediaMeta = isMediaCandidate
+      ? {
+          isMediaCandidate: true,
+          probedMessageId: Number(probedMessageId),
+          originalDateSec: Number(meta.originalDateSec),
+          virtualMediaGroupId: virtualMediaGroupId || `hist_grp_${sourceChatId}_${meta.originalDateSec}`
+        }
+      : null;
+
+    return {
+      msgKind: built.msgKind,
+      isNoise: false,
+      mediaMeta,
+      record: {
+        chatId: String(sourceChatId),
+        chatTitle: String(sourceTitle || sourceChatId),
+        messageId: Number(probedMessageId),
+        replyToMessageId: null,
+        mediaGroupId: virtualMediaGroupId,
+        msgKind: built.msgKind,
+        payload: built.payload,
+        initialStatus: "staging",
+        // Strikte Zeitstempel-Trennung: created_at = Date.now() für applySmartWindowCut, payload.date_unixtime = Originaldatum!
+        createdAt: Date.now(),
+        suppressReaction: Boolean(suppressReaction),
+        sourceJobId: Number(jobId || 0)
+      }
+    };
+  }
+
+  // Crash-Recovery-Cleanup: entfernt offen gebliebene Probe-IDs aus allen Index-Kanälen per 100er-Bulk deleteMessages
+  async function flushPendingHistoryProbeDeletes(env, options = {}) {
+    const subrequestCeiling = Number(options.subrequestCeiling || 38);
+    const channels = await getHistoryIndexChannelsFromD1(env, { role: "probe_index" });
+    const dirty = channels.filter(c => c.pendingDeleteCount > 0);
+    if (dirty.length === 0) return { ok: true, deleted: 0, remaining: 0 };
+
+    const api = tgApi(env);
+    const runtimeUpdates = [];
+    let deleted = 0;
+    let remaining = 0;
+
+    for (const ch of dirty) {
+      if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(subrequestCeiling)) {
+        remaining += ch.pendingDeleteCount;
+        continue;
+      }
+      const delRes = await api.deleteMessages(ch.channelId, ch.pendingDeleteIds);
+      deleted += Number(delRes.deletedCount || 0);
+      const leftIds = Array.isArray(delRes.remainingIds) ? delRes.remainingIds : [];
+      remaining += leftIds.length;
+      runtimeUpdates.push({
+        channelId: ch.channelId,
+        nextAllowedAt: ch.nextAllowedAt,
+        cooldownUntil: delRes.rateLimited ? Math.max(ch.cooldownUntil, Date.now() + (Number(delRes.retryAfter || 5) + 2) * 1000) : ch.cooldownUntil,
+        pendingDeleteIds: leftIds
+      });
+    }
+    if (runtimeUpdates.length > 0) {
+      await updateHistoryChannelsRuntimeInD1(env, runtimeUpdates);
+    }
+    return { ok: remaining === 0, deleted, remaining };
+  }
+
+  // Führt genau 1 budget- & rate-limit-gesicherten Stufe-A-Crawl-Step aus (für 2-Min-Cron ODER Browser-Turbo)
+  async function runHistoryCrawlStep(env, options = {}) {
+    const source = options.source === "browser_turbo" ? "browser_turbo" : "cron";
+    const now = Date.now();
+    const subrequestCeiling = Number(options.subrequestCeiling || (source === "cron" ? 30 : 28));
+    const maxHitsPerStep = Math.max(1, Math.min(18, Number(options.maxHitsPerStep || (source === "cron" ? 12 : 15))));
+    const maxProbesPerStep = Math.max(maxHitsPerStep, Math.min(24, Number(options.maxProbesPerStep || (source === "cron" ? 18 : 22))));
+    const leaseMs = Math.max(20000, Math.min(90000, Number(options.leaseMs || 45000)));
+
+    // 0. Zuerst eventuelle Crash-Recovery-Löschungen in den Index-Kanälen abräumen
+    const recoveryRes = await flushPendingHistoryProbeDeletes(env, { subrequestCeiling: subrequestCeiling + 4 });
+
+    // 1. Aktiven oder nächsten geplanten Job laden (max. 1 Job gleichzeitig!)
+    const job = await getActiveOrNextQueuedHistoryJobFromD1(env, {
+      jobId: options.jobId || 0,
+      onlyCronEnabled: source === "cron",
+      now
+    });
+    if (!job) {
+      return { ok: true, idle: true, reason: "no_active_job", recoveryDeleted: recoveryRes.deleted };
+    }
+    if (job.status === "paused" || job.status === "completed" || job.status === "error") {
+      return { ok: true, idle: true, reason: `job_${job.status}`, job };
+    }
+    // Kollisionsschutz: Wenn Browser-Turbo aktiven Lease hält, überlässt der 2-Min-Cron Stufe A kampflos dem Browser
+    if (source === "cron" && job.workerLeaseUntil > now) {
+      return { ok: true, skippedByLease: true, waitMs: job.workerLeaseUntil - now, job };
+    }
+    // Verteilte D1-429-Sperre respektieren
+    if (job.floodUntil > now) {
+      const waitMs = Math.max(1000, job.floodUntil - now);
+      return { ok: true, rateLimited: true, waitMs, retryAfterSec: Math.ceil(waitMs / 1000), job };
+    }
+
+    // 2. Aktive Index-Kanäle (1–3) laden
+    const probeChannels = await getHistoryIndexChannelsFromD1(env, { role: "probe_index", onlyEnabled: true });
+    if (probeChannels.length === 0) {
+      const errMsg = "Kein aktiver privater Index-Kanal konfiguriert. Bitte zuerst 1–3 Index-Kanäle im Setup anlegen.";
+      await updateHistoryCrawlJobStateInD1(env, job.id, { status: "paused", lastError: errMsg, now });
+      return { ok: false, status: "paused", error: errMsg, job: { ...job, status: "paused", lastError: errMsg } };
+    }
+
+    // 3. Backpressure prüfen (D1 nicht mit > 120 unverarbeiteten History-Zeilen fluten!)
+    const openHistoryRows = await countOpenHistoryInboxRowsInD1(env, job.sourceChatId);
+    if (openHistoryRows >= HISTORY_BACKPRESSURE_LIMIT) {
+      if (source === "browser_turbo") {
+        await updateHistoryCrawlJobStateInD1(env, job.id, { workerLeaseUntil: now + leaseMs, now });
+      }
+      return {
+        ok: true,
+        backpressured: true,
+        openHistoryRows,
+        waitMs: 3000,
+        job
+      };
+    }
+
+    // 4. Prüfen, welche Index-Kanäle im Token-Bucket jetzt frei sind
+    const channelState = probeChannels.map(ch => ({
+      ...ch,
+      sentInStep: 0,
+      newProbeMsgIds: []
+    }));
+    const freeAtStart = channelState.filter(c => c.nextAllowedAt <= now && c.cooldownUntil <= now);
+    if (freeAtStart.length === 0) {
+      const soonestReady = Math.min(...channelState.map(c => Math.max(c.nextAllowedAt, c.cooldownUntil)));
+      const waitMs = Math.max(1000, soonestReady - now);
+      return {
+        ok: true,
+        pacingWait: true,
+        waitMs,
+        job
+      };
+    }
+
+    // Browser-Turbo setzt 45s-Lease-Lock (verhindert Cron-Kollisionen)
+    if (source === "browser_turbo") {
+      await updateHistoryCrawlJobStateInD1(env, job.id, { workerLeaseUntil: now + leaseMs, status: "running", now });
+    }
+
+    // 5. Aktuellen Block-Bereich bestimmen ('asc' oder 'desc' 50er-Block) + D1-Vorab-Skip
+    const blockFloor = job.direction === "desc" ? job.chunkFloorId : job.startMsgId;
+    const blockCeiling = job.direction === "desc"
+      ? computeReverseBlockCeiling(job.startMsgId, job.endMsgId, blockFloor)
+      : job.endMsgId;
+
+    let cursor = Math.max(blockFloor, job.currentCursorId);
+    let skippedExistingCount = 0;
+    const scanWindowEnd = Math.min(blockCeiling, cursor + 80);
+    const existingIds = await getExistingInboxMessageIdsInRangeFromD1(env, job.sourceChatId, cursor, scanWindowEnd);
+
+    // Vorab-Skip aller bereits in D1 vorhandenen IDs am Cursor-Anfang (0 Telegram-Calls!)
+    while (cursor <= scanWindowEnd && existingIds.has(cursor)) {
+      cursor++;
+      skippedExistingCount++;
+    }
+
+    // Falls der aktuelle Block komplett übersprungen/beendet wurde -> Block-Abschluss direkt verbuchen!
+    if (cursor > blockCeiling) {
+      const finishedJob = job.direction === "asc" || blockFloor <= job.startMsgId;
+      const nextFloor = job.direction === "desc" ? Math.max(job.startMsgId, blockFloor - HISTORY_REVERSE_BLOCK_SIZE) : job.startMsgId;
+      const nextCursor = job.direction === "desc" ? nextFloor : cursor;
+      const promotedCount = await promoteHistoryStagingRowsToPendingInD1(env, job.id, {
+        promoteAll: finishedJob,
+        direction: job.direction,
+        now
+      });
+      if (finishedJob && typeof releaseHeldArchiveMirrorItemsForJobInD1 === "function") {
+        await releaseHeldArchiveMirrorItemsForJobInD1(env, job.id, now).catch(() => 0);
+      }
+      await updateHistoryCrawlJobStateInD1(env, job.id, {
+        status: finishedJob ? "completed" : "running",
+        currentCursorId: finishedJob ? job.endMsgId : nextCursor,
+        chunkFloorId: finishedJob ? job.startMsgId : nextFloor,
+        incSkippedExisting: skippedExistingCount,
+        completedAt: finishedJob ? now : undefined,
+        workerLeaseUntil: finishedJob ? 0 : (source === "browser_turbo" ? now + leaseMs : job.workerLeaseUntil),
+        now
+      });
+      const updatedJob = await getHistoryCrawlJobByIdFromD1(env, job.id);
+      return {
+        ok: true,
+        blockCompleted: true,
+        jobCompleted: finishedJob,
+        skippedExisting: skippedExistingCount,
+        promotedToPending: promotedCount,
+        waitMs: finishedJob ? 0 : 400,
+        job: updatedJob
+      };
+    }
+
+    // 6. Kontrolliertes paralleles Pool-Probing (1 Call je freiem Index-Kanal pro Mini-Runde)
+    const api = tgApi(env);
+    const recordsToInsert = [];
+    let probesFired = 0;
+    let hitsCount = 0;
+    let mediaFound = 0;
+    let contextFound = 0;
+    let missingCount = 0;
+    let noiseSkipped = 0;
+    let errorCount = 0;
+    let hit429RetryAfter = 0;
+    let fatalError = "";
+    let prevMediaMeta = null;
+
+    // Max. 4–5 Treffer je Index-Kanal in einem Step halten den Burst extrem sanft (exakt 15/Min über next_allowed_at)
+    const maxHitsPerChannel = Math.max(3, Math.ceil(maxHitsPerStep / Math.max(1, freeAtStart.length)));
+
+    while (
+      cursor <= scanWindowEnd &&
+      hitsCount < maxHitsPerStep &&
+      probesFired < maxProbesPerStep &&
+      !hit429RetryAfter &&
+      !fatalError
+    ) {
+      if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(subrequestCeiling)) {
+        break;
+      }
+
+      // Skip bereits existierende IDs mitten im Block ohne Telegram-Call
+      while (cursor <= scanWindowEnd && existingIds.has(cursor)) {
+        cursor++;
+        skippedExistingCount++;
+      }
+      if (cursor > scanWindowEnd) break;
+
+      const roundChannels = freeAtStart.filter(c => c.sentInStep < maxHitsPerChannel);
+      if (roundChannels.length === 0) break;
+
+      // Batch für diese Mini-Runde zusammenstellen (1 ID pro freiem Kanal, strikt innerhalb des Vorab-Skip-Fensters)
+      const assignments = [];
+      let peekCursor = cursor;
+      for (const ch of roundChannels) {
+        while (peekCursor <= scanWindowEnd && existingIds.has(peekCursor)) {
+          peekCursor++;
+        }
+        if (peekCursor > scanWindowEnd) break;
+        if (probesFired + assignments.length >= maxProbesPerStep) break;
+        if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(subrequestCeiling - assignments.length)) break;
+        assignments.push({ ch, msgId: peekCursor });
+        peekCursor++;
+      }
+      if (assignments.length === 0) break;
+
+      const results = await Promise.all(
+        assignments.map(a =>
+          api.forwardMessage(a.ch.channelId, job.sourceChatId, a.msgId, { disableNotification: true })
+            .then(res => ({ ...a, res }))
+            .catch(err => ({ ...a, res: { ok: false, networkError: true, error: String(err?.message || "Netzwerkfehler") } }))
+        )
+      );
+
+      probesFired += results.length;
+      let highestProcessedMsgId = cursor - 1;
+      let stopFurtherAdvance = false;
+
+      for (const item of results) {
+        const { ch, msgId, res } = item;
+        if (res?.rateLimited) {
+          hit429RetryAfter = Math.max(hit429RetryAfter, Number(res.retryAfter || 5));
+          ch.cooldownUntil = Math.max(ch.cooldownUntil, Date.now() + (hit429RetryAfter + 2) * 1000);
+          stopFurtherAdvance = true;
+          continue;
+        }
+        if (res?.protectedContent || res?.forbidden) {
+          fatalError = res.protectedContent
+            ? "Weiterleitungssperre in der Quellgruppe aktiv (has_protected_content). Scan gestoppt."
+            : `Zugriff auf Quellgruppe oder Index-Kanal verweigert: ${res.error || "403 Forbidden"}`;
+          stopFurtherAdvance = true;
+          continue;
+        }
+        if (res?.ok && res?.message) {
+          hitsCount++;
+          ch.sentInStep++;
+          if (res.probeMessageId > 0) ch.newProbeMsgIds.push(res.probeMessageId);
+          if (!stopFurtherAdvance) highestProcessedMsgId = Math.max(highestProcessedMsgId, msgId);
+
+          const built = buildHistoryInboxRecordFromForwardedMsg(res.message, {
+            sourceChatId: job.sourceChatId,
+            sourceTitle: job.sourceTitle,
+            probedMessageId: msgId,
+            suppressReaction: !job.enableReactions,
+            jobId: job.id,
+            prevMediaMeta
+          });
+          if (built.isNoise || !built.record) {
+            noiseSkipped++;
+            prevMediaMeta = null;
+          } else {
+            recordsToInsert.push(built.record);
+            prevMediaMeta = built.mediaMeta;
+            if (built.msgKind === "video" || built.msgKind === "subtitle") mediaFound++;
+            else contextFound++;
+          }
+        } else if (res?.notFound) {
+          missingCount++;
+          prevMediaMeta = null;
+          if (!stopFurtherAdvance) highestProcessedMsgId = Math.max(highestProcessedMsgId, msgId);
+        } else {
+          errorCount++;
+          prevMediaMeta = null;
+          if (!stopFurtherAdvance) highestProcessedMsgId = Math.max(highestProcessedMsgId, msgId);
+        }
+      }
+
+      if (highestProcessedMsgId >= cursor) {
+        for (let idCheck = cursor; idCheck <= highestProcessedMsgId; idCheck++) {
+          if (existingIds.has(idCheck)) skippedExistingCount++;
+        }
+        cursor = highestProcessedMsgId + 1;
+      }
+      if (stopFurtherAdvance) break;
+    }
+
+    // 7. 1x D1-Batch-Insert aller gefundenen Medien & Kontext-Nachrichten
+    let insertedRows = 0;
+    if (recordsToInsert.length > 0) {
+      const insRes = await bulkInsertHistoryInboxRowsInD1(env, recordsToInsert);
+      insertedRows = Number(insRes.inserted || 0);
+    }
+
+    // 8. Sofortige 100er-Bulk-Löschung (deleteMessages) pro Index-Kanal + Crash-Recovery-Speicherung
+    const finishedAt = Date.now();
+    const channelRuntimeUpdates = [];
+    let deletedProbeMsgs = 0;
+    let pendingDeleteRemain = 0;
+
+    for (const ch of channelState) {
+      const toDelete = Array.from(new Set([...ch.pendingDeleteIds, ...ch.newProbeMsgIds]));
+      let leftIds = toDelete;
+      let nextAllowedAt = ch.nextAllowedAt;
+      let cooldownUntil = ch.cooldownUntil;
+
+      if (ch.sentInStep > 0) {
+        nextAllowedAt = Math.max(nextAllowedAt, finishedAt + ch.sentInStep * HISTORY_CHANNEL_MIN_GAP_MS);
+      }
+      if (toDelete.length > 0) {
+        const delRes = await api.deleteMessages(ch.channelId, toDelete);
+        deletedProbeMsgs += Number(delRes.deletedCount || 0);
+        leftIds = Array.isArray(delRes.remainingIds) ? delRes.remainingIds : [];
+        if (delRes.rateLimited) {
+          const delWait = (Number(delRes.retryAfter || 5) + 2) * 1000;
+          cooldownUntil = Math.max(cooldownUntil, finishedAt + delWait);
+          hit429RetryAfter = Math.max(hit429RetryAfter, Number(delRes.retryAfter || 5));
+        }
+      }
+      pendingDeleteRemain += leftIds.length;
+      if (ch.sentInStep > 0 || toDelete.length > 0 || cooldownUntil !== ch.cooldownUntil) {
+        channelRuntimeUpdates.push({
+          channelId: ch.channelId,
+          nextAllowedAt,
+          cooldownUntil,
+          pendingDeleteIds: leftIds
+        });
+      }
+    }
+    if (channelRuntimeUpdates.length > 0) {
+      await updateHistoryChannelsRuntimeInD1(env, channelRuntimeUpdates);
+    }
+
+    // 9. Block-Grenze / Job-Ende prüfen, staging → pending freigeben und Job-Cursor in D1 aktualisieren
+    const blockCompleted = cursor > blockCeiling && !fatalError && !hit429RetryAfter;
+    const jobCompleted = blockCompleted && (job.direction === "asc" || blockFloor <= job.startMsgId);
+
+    let nextFloor = blockFloor;
+    let nextCursor = cursor;
+    if (blockCompleted && !jobCompleted && job.direction === "desc") {
+      nextFloor = Math.max(job.startMsgId, blockFloor - HISTORY_REVERSE_BLOCK_SIZE);
+      nextCursor = nextFloor;
+    }
+
+    let promotedToPending = 0;
+    if (jobCompleted) {
+      promotedToPending = await promoteHistoryStagingRowsToPendingInD1(env, job.id, {
+        promoteAll: true,
+        direction: job.direction,
+        now: finishedAt
+      });
+      if (typeof releaseHeldArchiveMirrorItemsForJobInD1 === "function") {
+        await releaseHeldArchiveMirrorItemsForJobInD1(env, job.id, finishedAt).catch(() => 0);
+      }
+    } else if (job.direction === "asc" && insertedRows > 0) {
+      promotedToPending = await promoteHistoryStagingRowsToPendingInD1(env, job.id, {
+        promoteAll: false,
+        direction: "asc",
+        now: finishedAt
+      });
+    } else if (job.direction === "desc" && blockCompleted) {
+      promotedToPending = await promoteHistoryStagingRowsToPendingInD1(env, job.id, {
+        promoteAll: false,
+        direction: "desc",
+        now: finishedAt
+      });
+    }
+
+    const floodUntil = hit429RetryAfter > 0 ? (finishedAt + (hit429RetryAfter + 2) * 1000) : 0;
+    const nextStatus = fatalError
+      ? "error"
+      : (jobCompleted ? "completed" : (hit429RetryAfter > 0 ? "flood_wait" : "running"));
+
+    await updateHistoryCrawlJobStateInD1(env, job.id, {
+      status: nextStatus,
+      currentCursorId: jobCompleted ? job.endMsgId : nextCursor,
+      chunkFloorId: jobCompleted ? job.startMsgId : nextFloor,
+      floodUntil,
+      lastError: fatalError || (hit429RetryAfter > 0 ? `Telegram 429 Pause (${hit429RetryAfter}s)` : ""),
+      completedAt: jobCompleted ? finishedAt : undefined,
+      workerLeaseUntil: (jobCompleted || fatalError) ? 0 : (source === "browser_turbo" ? finishedAt + leaseMs : job.workerLeaseUntil),
+      incScanned: hitsCount + missingCount + errorCount,
+      incMediaFound: mediaFound,
+      incContextFound: contextFound,
+      incMissing: missingCount,
+      incSkippedExisting: skippedExistingCount,
+      incNoiseSkipped: noiseSkipped,
+      incErrors: errorCount,
+      now: finishedAt
+    });
+
+    // Empfohlene Wartezeit bis zum nächsten Browser-Turbo-Step exakt aus dem D1-Token-Bucket berechnen
+    let recommendedWaitMs = 600;
+    if (hit429RetryAfter > 0) {
+      recommendedWaitMs = (hit429RetryAfter + 2) * 1000;
+    } else if (!jobCompleted && !fatalError) {
+      const nextReadyTimes = channelState.map(ch => {
+        const upd = channelRuntimeUpdates.find(u => u.channelId === ch.channelId);
+        return Math.max(upd ? upd.nextAllowedAt : ch.nextAllowedAt, upd ? upd.cooldownUntil : ch.cooldownUntil);
+      });
+      const earliest = Math.min(...nextReadyTimes);
+      recommendedWaitMs = Math.max(500, earliest - finishedAt);
+    }
+
+    const updatedJob = await getHistoryCrawlJobByIdFromD1(env, job.id);
+    return {
+      ok: !fatalError,
+      source,
+      job: updatedJob,
+      stats: {
+        probesFired,
+        hitsCount,
+        insertedRows,
+        mediaFound,
+        contextFound,
+        missingCount,
+        skippedExistingCount,
+        noiseSkipped,
+        errorCount,
+        deletedProbeMsgs,
+        pendingDeleteRemain,
+        promotedToPending,
+        recoveryDeleted: recoveryRes.deleted
+      },
+      blockCompleted,
+      jobCompleted,
+      rateLimited: hit429RetryAfter > 0,
+      retryAfterSec: hit429RetryAfter > 0 ? hit429RetryAfter + 2 : 0,
+      waitMs: jobCompleted || fatalError ? 0 : recommendedWaitMs,
+      error: fatalError || undefined
+    };
+  }
+
+  // =========================================================================
+  // STUFE C: OPTIONALES SORTIERTES THEMEN-ARCHIV (HTML-BUILDER & WORKER)
+  // =========================================================================
+  const ARCHIVE_MIN_GAP_MS = 4300; // Strikt <= 14 Posts/Min in Telegram Forum-Supergruppe
+  const ARCHIVE_TOPIC_ICON_COLORS = [0x6FB9F0, 0xFFD67E, 0xCB86DB, 0x8EEE98, 0xFF93B2, 0xFB6F5F];
+
+  function escapeArchiveHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function pickArchiveTopicColor(seedStr) {
+    const s = String(seedStr || "archive");
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = ((h * 31) + s.charCodeAt(i)) >>> 0;
+    }
+    return ARCHIVE_TOPIC_ICON_COLORS[h % ARCHIVE_TOPIC_ICON_COLORS.length];
+  }
+
+  function extractPrimaryArchiveGenre(rawGenres, mediaType) {
+    const raw = Array.isArray(rawGenres)
+      ? rawGenres.map(g => (typeof g === "string" ? g : (g?.name || ""))).filter(Boolean)
+      : String(rawGenres || "")
+          .split(/[,•|·\/]+/)
+          .map(s => s.trim())
+          .filter(Boolean);
+    const cleaned = raw.filter(g => g && g !== "Keine Angabe" && g !== "Manuell bestätigt");
+    const first = cleaned[0] || "";
+    const lowAll = cleaned.map(g => g.toLowerCase()).join(" ");
+    if (lowAll.includes("anime") || lowAll.includes("animation")) {
+      return { slug: "animation", label: "Animation & Anime", isAnimation: true };
+    }
+    if (!first) {
+      return {
+        slug: mediaType === "series" ? "sonstige_serien" : "sonstige_filme",
+        label: mediaType === "series" ? "Sonstige Serien" : "Sonstige Filme",
+        isAnimation: false
+      };
+    }
+    const slug = first
+      .toLowerCase()
+      .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 36) || "sonstige";
+    return { slug, label: first.slice(0, 42), isAnimation: false };
+  }
+
+  function resolveArchiveTopicDescriptor({ mediaType, tmdbId, cleanTitle, year, genres, topicMode }) {
+    const mode = ["type_genre", "per_series_plus_genre", "compact_type"].includes(topicMode) ? topicMode : "type_genre";
+    const isSeries = mediaType === "series";
+    const gInfo = extractPrimaryArchiveGenre(genres, mediaType);
+
+    if (mode === "compact_type") {
+      if (gInfo.isAnimation) {
+        return {
+          topicKey: "compact_animation",
+          topicName: "✨ Animation & Anime",
+          iconColor: 0xCB86DB,
+          isPerSeriesTopic: false
+        };
+      }
+      return isSeries
+        ? { topicKey: "compact_series", topicName: "📺 Serien", iconColor: 0x6FB9F0, isPerSeriesTopic: false }
+        : { topicKey: "compact_movies", topicName: "🎬 Filme", iconColor: 0xFFD67E, isPerSeriesTopic: false };
+    }
+
+    if (mode === "per_series_plus_genre" && isSeries && Number(tmdbId) > 0) {
+      const yrSuffix = year && /^\d{4}$/.test(String(year)) ? ` (${year})` : "";
+      const baseTitle = String(cleanTitle || `Serie #${tmdbId}`).replace(/\s+/g, " ").trim().slice(0, 96);
+      const tKey = `series_${Number(tmdbId)}`;
+      return {
+        topicKey: tKey,
+        topicName: `📺 ${baseTitle}${yrSuffix}`.slice(0, 120),
+        iconColor: pickArchiveTopicColor(tKey),
+        isPerSeriesTopic: true
+      };
+    }
+
+    // Standard 'type_genre' (und Filme im Modus 'per_series_plus_genre')
+    const prefix = isSeries ? "series_genre" : "movie_genre";
+    const icon = isSeries ? "📺" : "🎬";
+    const tKey = `${prefix}_${gInfo.slug}`;
+    return {
+      topicKey: tKey,
+      topicName: `${icon} ${gInfo.label}`.slice(0, 120),
+      iconColor: pickArchiveTopicColor(tKey),
+      isPerSeriesTopic: false
+    };
+  }
+
+  function buildArchiveMediaCaptionHtml({ resolved, srcRow }) {
+    const isSeries = resolved.typeCode === "s";
+    const details = (resolved.details && typeof resolved.details === "object") ? resolved.details : {};
+    const title = String(resolved.cleanTitle || details.title || "Unbekannter Titel").replace(/\s+/g, " ").trim();
+    const yearStr = resolved.year && resolved.year !== "k.A." ? ` (${String(resolved.year).trim()})` : "";
+
+    const lines = [];
+    lines.push(`${isSeries ? "📺" : "🎬"} <b>${escapeArchiveHtml(title)}${escapeArchiveHtml(yearStr)}</b>`);
+
+    if (isSeries) {
+      const sNum = Number(resolved.season ?? 1);
+      const eNum = Number(resolved.episode ?? 1);
+      const epCode = `S${String(sNum).padStart(2, "0")}E${String(eNum).padStart(2, "0")}`;
+      const epRange = resolved.episodeEnd && Number(resolved.episodeEnd) > eNum
+        ? `${epCode}-E${String(resolved.episodeEnd).padStart(2, "0")}`
+        : epCode;
+      const epTitleClean = String(resolved.episodeTitle || "").replace(/\s+/g, " ").trim();
+      const epSuffix = epTitleClean && !/^Folge\s+\d+$/i.test(epTitleClean)
+        ? ` – ${escapeArchiveHtml(epTitleClean.slice(0, 90))}`
+        : "";
+      lines.push(`🎞 <b>${escapeArchiveHtml(epRange)}</b>${epSuffix}`);
+    } else if (Number(resolved.partNumber || 1) > 1 || resolved.part) {
+      const pLabel = resolved.part ? String(resolved.part) : `Teil ${Number(resolved.partNumber || 1)}`;
+      lines.push(`🎞 <b>${escapeArchiveHtml(pLabel)}</b>`);
+    }
+
+    const techParts = [];
+    if (resolved.quality) techParts.push(String(resolved.quality).trim());
+    if (resolved.codec) techParts.push(String(resolved.codec).trim());
+    if (resolved.editionLabel) techParts.push(String(resolved.editionLabel).trim());
+    const sizeBytes = Number(resolved.fileSize || srcRow?.payload?.file_size || 0);
+    if (sizeBytes > 0 && typeof formatFileSizeBytes === "function") {
+      const sz = formatFileSizeBytes(sizeBytes);
+      if (sz) techParts.push(sz);
+    }
+    if (techParts.length > 0) {
+      lines.push(`⚙️ <i>${escapeArchiveHtml(techParts.join(" · "))}</i>`);
+    }
+
+    const metaParts = [];
+    const voteVal = Number(details.vote_average || resolved.voteAverage || 0);
+    if (voteVal > 0) metaParts.push(`⭐ ${(Math.round(voteVal * 10) / 10).toFixed(1)}/10`);
+    const fskRaw = String(details.fsk || "").trim();
+    if (fskRaw && fskRaw !== "Keine Angabe" && fskRaw !== "FSK Keine Angabe") {
+      metaParts.push(/^fsk\b/i.test(fskRaw) ? fskRaw : `FSK ${fskRaw}`);
+    }
+    const genresStr = String(details.genres || "").trim();
+    if (genresStr && genresStr !== "Keine Angabe" && genresStr !== "Manuell bestätigt") {
+      metaParts.push(genresStr.slice(0, 64));
+    }
+    if (metaParts.length > 0) {
+      lines.push(`🏷 ${escapeArchiveHtml(metaParts.join(" • "))}`);
+    }
+
+    const headerBlock = lines.join("\n");
+    const rawOverview = String(details.overview || "").replace(/\s+/g, " ").trim();
+    const maxTotalChars = 980;
+    if (rawOverview && rawOverview !== "Keine Beschreibung verfügbar." && headerBlock.length < maxTotalChars - 40) {
+      const avail = maxTotalChars - headerBlock.length - 12;
+      let clipped = rawOverview;
+      if (clipped.length > avail) {
+        clipped = clipped.slice(0, Math.max(20, avail - 1)).replace(/\s+\S*$/, "") + "…";
+      }
+      const escapedOv = escapeArchiveHtml(clipped);
+      if (headerBlock.length + 2 + escapedOv.length <= maxTotalChars) {
+        return `${headerBlock}\n\n${escapedOv}`;
+      }
+      const safeRaw = escapeArchiveHtml(rawOverview.slice(0, Math.max(20, Math.floor(avail * 0.8))) + "…");
+      if (headerBlock.length + 2 + safeRaw.length <= maxTotalChars) {
+        return `${headerBlock}\n\n${safeRaw}`;
+      }
+    }
+    return headerBlock.slice(0, maxTotalChars);
+  }
+
+  function buildArchiveSeriesCardHtml({ resolved }) {
+    const details = (resolved.details && typeof resolved.details === "object") ? resolved.details : {};
+    const title = String(resolved.cleanTitle || details.title || "Serie").replace(/\s+/g, " ").trim();
+    const yearStr = resolved.year && resolved.year !== "k.A." ? ` (${String(resolved.year).trim()})` : "";
+    const lines = [`📺 <b>${escapeArchiveHtml(title)}${escapeArchiveHtml(yearStr)}</b>`];
+    const meta = [];
+    const voteVal = Number(details.vote_average || 0);
+    if (voteVal > 0) meta.push(`⭐ ${(Math.round(voteVal * 10) / 10).toFixed(1)}/10`);
+    const seasonsCnt = Number(details.numberOfSeasons || details.number_of_seasons || details.totalSeasons || (Array.isArray(details.seasons) ? details.seasons.filter(s => Number(s?.season_number) > 0).length : 0) || 0);
+    const epsCnt = Number(details.numberOfEpisodes || details.number_of_episodes || details.totalEpisodes || 0);
+    if (seasonsCnt > 0) meta.push(`${seasonsCnt} Staffel${seasonsCnt === 1 ? "" : "n"}${epsCnt > 0 ? ` · ${epsCnt} Folgen` : ""}`);
+    const fskRaw = String(details.fsk || "").trim();
+    if (fskRaw && fskRaw !== "Keine Angabe" && fskRaw !== "FSK Keine Angabe") {
+      meta.push(/^fsk\b/i.test(fskRaw) ? fskRaw : `FSK ${fskRaw}`);
+    }
+    if (meta.length > 0) lines.push(`🏷 ${escapeArchiveHtml(meta.join(" • "))}`);
+    const genresStr = String(details.genres || "").trim();
+    if (genresStr && genresStr !== "Keine Angabe" && genresStr !== "Manuell bestätigt") {
+      lines.push(`🎭 <i>${escapeArchiveHtml(genresStr.slice(0, 90))}</i>`);
+    }
+    const header = lines.join("\n");
+    const rawOv = String(details.overview || "").replace(/\s+/g, " ").trim();
+    const maxLen = 920;
+    if (rawOv && header.length < maxLen - 40) {
+      const avail = maxLen - header.length - 12;
+      const clipped = rawOv.length > avail ? `${rawOv.slice(0, Math.max(20, avail - 1)).replace(/\s+\S*$/, "")}…` : rawOv;
+      const esc = escapeArchiveHtml(clipped);
+      if (header.length + 2 + esc.length <= maxLen) return `${header}\n\n${esc}`;
+    }
+    return header.slice(0, maxLen);
+  }
+
+  async function collectArchiveMirrorQueueCandidate(env, { resolved, srcRow, sourceChatId, ctxCache }) {
+    const jobId = Number(srcRow?.sourceJobId || srcRow?.payload?._historyJobId || 0);
+    if (!resolved || !resolved.ok || !srcRow || jobId <= 0) return null;
+
+    const rawFid = String(srcRow.payload?.telegram_file_id || resolved.fileMeta?.fileId || "").trim();
+    if (!rawFid || rawFid.startsWith("tg_export_") || rawFid.startsWith("vip_playlist_") || rawFid.startsWith("tmdb_card_")) {
+      return null;
+    }
+
+    if (!ctxCache.jobsById) ctxCache.jobsById = new Map();
+    let job = ctxCache.jobsById.get(jobId);
+    if (job === undefined) {
+      job = typeof getHistoryCrawlJobByIdFromD1 === "function"
+        ? await getHistoryCrawlJobByIdFromD1(env, jobId)
+        : null;
+      ctxCache.jobsById.set(jobId, job || null);
+    }
+    if (!job || !job.enableArchiveMirror) return null;
+
+    if (ctxCache.archiveForum === undefined) {
+      const channels = typeof getHistoryIndexChannelsFromD1 === "function"
+        ? await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true })
+        : [];
+      ctxCache.archiveForum = channels[0] || null;
+    }
+    const archiveForum = ctxCache.archiveForum;
+    if (!archiveForum || !archiveForum.channelId) return null;
+
+    const mediaType = resolved.typeCode === "s" ? "series" : "movie";
+    const details = (resolved.details && typeof resolved.details === "object") ? resolved.details : {};
+    const topicDesc = resolveArchiveTopicDescriptor({
+      mediaType,
+      tmdbId: Number(resolved.tmdbId || 0),
+      cleanTitle: resolved.cleanTitle || details.title || "",
+      year: resolved.year || "",
+      genres: details.genres || "",
+      topicMode: job.archiveTopicMode || "type_genre"
+    });
+
+    const rawFileName = String(srcRow.payload?.file_name || "").trim();
+    const rawMime = String(srcRow.payload?.mime_type || "").toLowerCase();
+    const isDoc = Boolean(
+      srcRow.payload?._isVideoDocument ||
+      rawMime === "video/x-matroska" ||
+      /\.(?:mkv|avi|ts|m2ts|wmv|flv|rar|zip|7z)$/i.test(rawFileName)
+    );
+
+    let coverUrl = "";
+    if (details.poster_path && /^\/(?!\/)[^\s"'<>]+$/.test(String(details.poster_path))) {
+      coverUrl = `https://image.tmdb.org/t/p/w500${details.poster_path}`;
+    } else if (details.external_poster_url && /^https:\/\/[^\s"'<>]+$/i.test(String(details.external_poster_url))) {
+      coverUrl = String(details.external_poster_url);
+    }
+
+    const wantPinSeriesCard = Boolean(
+      job.archivePinSeriesCard &&
+      mediaType === "series" &&
+      topicDesc.isPerSeriesTopic
+    );
+
+    const fileUniqueId = String(
+      srcRow.payload?.telegram_unique_id ||
+      resolved.fileMeta?.fileUniqueId ||
+      `fid_${rawFid.slice(-48)}`
+    ).trim();
+
+    // Wenn 'after_scan' aktiv ist UND der Job noch nicht fertig ist -> zurückhalten; bei bereits abgeschlossenem Job sofort 'pending'
+    const initialStatus = (job.archiveTiming === "after_scan" && job.status !== "completed")
+      ? "held_until_scan"
+      : "pending";
+
+    return {
+      jobId,
+      archiveChatId: archiveForum.channelId,
+      mediaType,
+      tmdbId: Number(resolved.tmdbId || 0),
+      seasonNumber: mediaType === "series" ? Number(resolved.season ?? 1) : 0,
+      episodeNumber: mediaType === "series" ? Number(resolved.episode ?? 1) : 0,
+      partNumber: mediaType === "series" ? 1 : Math.max(1, Number(resolved.partNumber || 1)),
+      sourceChatId: String(sourceChatId || job.sourceChatId || ""),
+      sourceMessageId: Number(srcRow.messageId || 0),
+      fileUniqueId,
+      fileId: rawFid,
+      fileKind: isDoc ? "document" : "video",
+      topicKey: topicDesc.topicKey,
+      topicName: topicDesc.topicName,
+      topicIconColor: topicDesc.iconColor,
+      seriesHeaderHtml: wantPinSeriesCard ? buildArchiveSeriesCardHtml({ resolved }) : "",
+      seriesPosterUrl: wantPinSeriesCard ? coverUrl : "",
+      captionHtml: buildArchiveMediaCaptionHtml({ resolved, srcRow }),
+      coverUrl,
+      status: initialStatus
+    };
+  }
+
+  // Entkoppelter Stufe-C-Worker: 14 Posts/Min Pacing, max. 2 neue Topics/Tick, seriell ohne Race-Conditions, TOPIC_DELETED Self-Healing
+  async function processArchiveMirrorQueueBatch(env, options = {}) {
+    const now = Date.now();
+    const maxPosts = Math.max(1, Math.min(6, Number(options.maxPosts || 4)));
+    const maxNewTopics = Math.max(1, Math.min(3, Number(options.maxNewTopics || 2)));
+    const subrequestCeiling = Math.max(24, Math.min(46, Number(options.subrequestCeiling || 42)));
+
+    const archiveChannels = typeof getHistoryIndexChannelsFromD1 === "function"
+      ? await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true })
+      : [];
+    const archiveForum = archiveChannels[0] || null;
+    if (!archiveForum || !archiveForum.channelId) {
+      return { ok: true, idle: true, reason: "no_archive_forum", postedCount: 0 };
+    }
+
+    const readyAt = Math.max(Number(archiveForum.nextAllowedAt || 0), Number(archiveForum.cooldownUntil || 0));
+    if (readyAt > now) {
+      return {
+        ok: true,
+        waiting: true,
+        reason: archiveForum.cooldownUntil > now ? "flood_wait" : "pacing_wait",
+        waitMs: Math.max(500, readyAt - now),
+        postedCount: 0
+      };
+    }
+
+    const items = await claimPendingArchiveMirrorBatchFromD1(env, maxPosts, now, archiveForum.channelId);
+    if (!items || items.length === 0) {
+      return { ok: true, idle: true, reason: "queue_empty", postedCount: 0 };
+    }
+
+    const archiveDefaults = typeof getHistoryArchiveDefaultsFromD1 === "function"
+      ? await getHistoryArchiveDefaultsFromD1(env)
+      : { maxSeriesTopics: 250 };
+    const defaultMaxSeriesTopics = Math.max(10, Math.min(500, Number(archiveDefaults?.maxSeriesTopics || 250)));
+
+    const api = tgApi(env);
+    const topicCache = new Map();
+    const jobMaxTopicsCache = new Map();
+    let seriesTopicCount = null;
+    let newTopicsCreated = 0;
+    let postedCount = 0;
+    let failedCount = 0;
+    let recreatedTopics = 0;
+    let hit429RetryAfter = 0;
+    let fatalError = "";
+    let stoppedByBudget = false;
+
+    const getMaxSeriesTopicsForJob = async (jobId) => {
+      if (!jobId) return defaultMaxSeriesTopics;
+      if (jobMaxTopicsCache.has(jobId)) return jobMaxTopicsCache.get(jobId);
+      const j = typeof getHistoryCrawlJobByIdFromD1 === "function"
+        ? await getHistoryCrawlJobByIdFromD1(env, jobId)
+        : null;
+      const limitVal = Math.max(10, Math.min(500, Number(j?.archiveMaxSeriesTopics || defaultMaxSeriesTopics)));
+      jobMaxTopicsCache.set(jobId, limitVal);
+      return limitVal;
+    };
+
+    const ensureTopicForItem = async (item, forceRecreate = false) => {
+      let targetKey = item.topicKey;
+      let targetName = item.topicName || "🎬 Archiv";
+      let targetColor = item.topicIconColor || pickArchiveTopicColor(targetKey);
+
+      if (!forceRecreate) {
+        let cached = topicCache.get(targetKey);
+        if (cached === undefined) {
+          cached = await getArchiveTopicFromD1(env, archiveForum.channelId, targetKey);
+          topicCache.set(targetKey, cached || null);
+        }
+        if (cached && cached.messageThreadId > 0) {
+          return { ok: true, topic: cached, newlyCreated: false, topicKey: targetKey, topicName: targetName };
+        }
+      }
+
+      // Max-Serien-Topics-Schutz (Standard 250): Wenn voll, sauber auf "📺 Serien · Archiv" umleiten!
+      if (/^series_\d+$/.test(targetKey)) {
+        if (seriesTopicCount === null) {
+          seriesTopicCount = await countSeriesTopicsInArchiveFromD1(env, archiveForum.channelId);
+        }
+        const maxAllowed = await getMaxSeriesTopicsForJob(item.jobId);
+        if (seriesTopicCount >= maxAllowed) {
+          targetKey = "series_archive_overflow";
+          targetName = "📺 Serien · Archiv";
+          targetColor = 0x6FB9F0;
+          let overflowTopic = topicCache.get(targetKey);
+          if (overflowTopic === undefined && !forceRecreate) {
+            overflowTopic = await getArchiveTopicFromD1(env, archiveForum.channelId, targetKey);
+            topicCache.set(targetKey, overflowTopic || null);
+          }
+          if (overflowTopic && overflowTopic.messageThreadId > 0) {
+            return { ok: true, topic: overflowTopic, newlyCreated: false, topicKey: targetKey, topicName: targetName };
+          }
+        }
+      }
+
+      if (newTopicsCreated >= maxNewTopics) {
+        return { ok: false, deferredTopicBudget: true };
+      }
+      if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(subrequestCeiling - 2)) {
+        return { ok: false, budgetExhausted: true };
+      }
+
+      const created = await api.createForumTopic(archiveForum.channelId, targetName, {
+        icon_color: ARCHIVE_TOPIC_ICON_COLORS.includes(targetColor) ? targetColor : undefined
+      });
+      if (created?.throttled429 || created?.rateLimited) {
+        return { ok: false, rateLimited: true, retryAfter: Number(created.retryAfter || 8), error: created.error };
+      }
+      if (!created?.ok || !created?.message_thread_id) {
+        return { ok: false, notSupported: Boolean(created?.notSupported), error: created?.error || "createForumTopic fehlgeschlagen" };
+      }
+
+      newTopicsCreated++;
+      if (/^series_\d+$/.test(targetKey) && seriesTopicCount !== null) {
+        seriesTopicCount++;
+      }
+      const topicRec = {
+        archiveChatId: archiveForum.channelId,
+        topicKey: targetKey,
+        messageThreadId: Number(created.message_thread_id),
+        topicName: targetName,
+        iconColor: Number(created.icon_color || targetColor || 0),
+        pinnedHeaderMsgId: 0,
+        updatedAt: Date.now()
+      };
+      await upsertArchiveTopicInD1(env, topicRec);
+      topicCache.set(targetKey, topicRec);
+      return { ok: true, topic: topicRec, newlyCreated: true, topicKey: targetKey, topicName: targetName };
+    };
+
+    for (const item of items) {
+      if (hit429RetryAfter > 0 || fatalError) break;
+      if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(subrequestCeiling - 2)) {
+        stoppedByBudget = true;
+        break;
+      }
+
+      let topicRes = await ensureTopicForItem(item, false);
+      if (topicRes.deferredTopicBudget || topicRes.budgetExhausted) {
+        stoppedByBudget = Boolean(topicRes.budgetExhausted);
+        break;
+      }
+      if (topicRes.rateLimited) {
+        hit429RetryAfter = Math.max(hit429RetryAfter, Number(topicRes.retryAfter || 8));
+        break;
+      }
+      if (!topicRes.ok || !topicRes.topic) {
+        if (topicRes.notSupported) {
+          fatalError = `Archiv-Forum unterstützt keine Themen oder fehlende Admin-Rechte: ${topicRes.error || ""}`.trim();
+          await markArchiveMirrorItemResultInD1(env, item.id, {
+            status: "failed",
+            attempts: item.attempts + 1,
+            lastError: fatalError
+          });
+          failedCount++;
+          break;
+        }
+        const nextAtt = item.attempts + 1;
+        const isFinalFail = nextAtt >= 5;
+        await markArchiveMirrorItemResultInD1(env, item.id, {
+          status: isFinalFail ? "failed" : "pending",
+          attempts: nextAtt,
+          nextAttemptAt: isFinalFail ? 0 : (Date.now() + Math.min(3600000, 30000 * Math.pow(2, nextAtt - 1))),
+          lastError: topicRes.error || "Topic konnte nicht angelegt werden"
+        });
+        if (isFinalFail) failedCount++;
+        continue;
+      }
+
+      let activeTopic = topicRes.topic;
+
+      // Optionale angepinnte Serien-Info-Karte beim ersten Anlegen eines Serien-Topics
+      if (
+        item.seriesHeaderHtml &&
+        activeTopic.pinnedHeaderMsgId <= 0 &&
+        /^series_\d+$/.test(topicRes.topicKey) &&
+        (typeof hasSubrequestBudget !== "function" || hasSubrequestBudget(subrequestCeiling - 3))
+      ) {
+        const cardRes = await api.sendArchiveTopicHeaderCard(archiveForum.channelId, {
+          textHtml: item.seriesHeaderHtml,
+          posterUrl: item.seriesPosterUrl,
+          messageThreadId: activeTopic.messageThreadId,
+          pin: true
+        });
+        if (cardRes?.rateLimited) {
+          hit429RetryAfter = Math.max(hit429RetryAfter, Number(cardRes.retryAfter || 8));
+          break;
+        }
+        if (cardRes?.ok && cardRes.messageId > 0) {
+          activeTopic.pinnedHeaderMsgId = cardRes.messageId;
+          await upsertArchiveTopicInD1(env, { ...activeTopic, updatedAt: Date.now() });
+          topicCache.set(activeTopic.topicKey, activeTopic);
+        }
+      }
+
+      let sendRes = await api.sendArchiveMediaToTopic(archiveForum.channelId, {
+        fileId: item.fileId,
+        fileKind: item.fileKind,
+        captionHtml: item.captionHtml,
+        coverUrl: item.coverUrl,
+        messageThreadId: activeTopic.messageThreadId,
+        disableNotification: true
+      });
+
+      // Self-Healing bei TOPIC_DELETED / message thread not found: veraltete Mapping-Zeile löschen, Topic 1x neu anlegen & erneut posten!
+      if (sendRes?.topicDeleted) {
+        await deleteArchiveTopicFromD1(env, archiveForum.channelId, activeTopic.topicKey);
+        topicCache.delete(activeTopic.topicKey);
+        const healRes = await ensureTopicForItem({ ...item, topicKey: activeTopic.topicKey, topicName: activeTopic.topicName }, true);
+        if (healRes.rateLimited) {
+          hit429RetryAfter = Math.max(hit429RetryAfter, Number(healRes.retryAfter || 8));
+          break;
+        }
+        if (healRes.deferredTopicBudget || healRes.budgetExhausted) {
+          stoppedByBudget = Boolean(healRes.budgetExhausted);
+          break;
+        }
+        if (healRes.ok && healRes.topic) {
+          recreatedTopics++;
+          activeTopic = healRes.topic;
+          sendRes = await api.sendArchiveMediaToTopic(archiveForum.channelId, {
+            fileId: item.fileId,
+            fileKind: item.fileKind,
+            captionHtml: item.captionHtml,
+            coverUrl: item.coverUrl,
+            messageThreadId: activeTopic.messageThreadId,
+            disableNotification: true
+          });
+        }
+      }
+
+      if (sendRes?.rateLimited) {
+        hit429RetryAfter = Math.max(hit429RetryAfter, Number(sendRes.retryAfter || 8));
+        await markArchiveMirrorItemResultInD1(env, item.id, {
+          status: "pending",
+          nextAttemptAt: Date.now() + (hit429RetryAfter + 2) * 1000,
+          lastError: `Telegram 429 Pause (${hit429RetryAfter}s)`
+        });
+        break;
+      }
+
+      if (sendRes?.forbidden) {
+        fatalError = `Archiv-Forum Zugriff verweigert: ${sendRes.error || "403 Forbidden"}`;
+        await markArchiveMirrorItemResultInD1(env, item.id, {
+          status: "failed",
+          attempts: item.attempts + 1,
+          lastError: fatalError
+        });
+        failedCount++;
+        break;
+      }
+
+      if (sendRes?.ok && sendRes.messageId > 0) {
+        postedCount++;
+        await markArchiveMirrorItemResultInD1(env, item.id, {
+          status: "posted",
+          archiveMessageId: sendRes.messageId,
+          archiveThreadId: sendRes.messageThreadId || activeTopic.messageThreadId,
+          topicKey: activeTopic.topicKey,
+          topicName: activeTopic.topicName,
+          lastError: ""
+        });
+      } else {
+        const nextAtt = item.attempts + 1;
+        const isFinalFail = nextAtt >= 5;
+        await markArchiveMirrorItemResultInD1(env, item.id, {
+          status: isFinalFail ? "failed" : "pending",
+          attempts: nextAtt,
+          nextAttemptAt: isFinalFail ? 0 : (Date.now() + Math.min(3600000, 30000 * Math.pow(2, nextAtt - 1))),
+          lastError: String(sendRes?.error || "Archiv-Post fehlgeschlagen")
+        });
+        if (isFinalFail) failedCount++;
+      }
+    }
+
+    const finishedAt = Date.now();
+    const nextAllowedAt = Math.max(
+      Number(archiveForum.nextAllowedAt || 0),
+      finishedAt + Math.max(1, postedCount + newTopicsCreated) * ARCHIVE_MIN_GAP_MS
+    );
+    const nextCooldownUntil = hit429RetryAfter > 0
+      ? Math.max(Number(archiveForum.cooldownUntil || 0), finishedAt + (hit429RetryAfter + 2) * 1000)
+      : (fatalError ? finishedAt + 60000 : Number(archiveForum.cooldownUntil || 0));
+
+    if (postedCount > 0 || newTopicsCreated > 0 || hit429RetryAfter > 0 || fatalError) {
+      await updateHistoryChannelsRuntimeInD1(env, [{
+        channelId: archiveForum.channelId,
+        nextAllowedAt,
+        cooldownUntil: nextCooldownUntil,
+        pendingDeleteIds: archiveForum.pendingDeleteIds || []
+      }]);
+    }
+
+    return {
+      ok: !fatalError,
+      postedCount,
+      newTopicsCreated,
+      recreatedTopics,
+      failedCount,
+      rateLimited: hit429RetryAfter > 0,
+      retryAfterSec: hit429RetryAfter > 0 ? hit429RetryAfter + 2 : 0,
+      stoppedByBudget,
+      waitMs: Math.max(0, Math.max(nextAllowedAt, nextCooldownUntil) - finishedAt),
+      error: fatalError || undefined
+    };
   }
 
   async function verifyChannelAutoIngestAdminAccess(env, chatId) {
@@ -3607,6 +4737,13 @@
     }
 
     const enableFlag = action === "on";
+    if (enableFlag && typeof isHistorySystemBlockedChat === "function" && await isHistorySystemBlockedChat(env, targetChatId)) {
+      const warnMsg = `⛔ *Auto-Ingest blockiert:* \`${escapeMd(targetChatId)}\` ist als Index-Kanal oder Themen-Archiv konfiguriert und darf nicht selbst eingespeist werden (Schutz vor Endlosschleifen).`;
+      if (!isChannelPost) {
+        await sendMessage(chatId, warnMsg);
+      }
+      return true;
+    }
     const title = isGroupOrChannel
       ? String(tgMsg.chat.title || tgMsg.chat.username || `Chat ${targetChatId}`)
       : (argExtra || `Chat ${targetChatId}`);
@@ -3877,16 +5014,40 @@
     const chatCfg = options.chatCfg && typeof options.chatCfg === "object"
       ? options.chatCfg
       : ((await getAutoIngestChatsMap(env, false))[cid] || { chatId: cid, title: processRows[0]?.chatTitle || cid });
-    const carryover = chatCfg.lastContextSnapshot || null;
+
+    // Carryover-Monotonie-Wächter: verhindert Kontext-Verseuchung zwischen Rückwärts-Blöcken & Live-Webhook-Posts!
+    const rawCarryover = chatCfg.lastContextSnapshot || null;
+    const getSnapMaxMsgId = (snap) => {
+      if (!snap || typeof snap !== "object") return 0;
+      const direct = Number(snap.maxMessageId || 0);
+      if (direct > 0) return direct;
+      const anchors = Array.isArray(snap.anchorMessages) ? snap.anchorMessages : [];
+      return anchors.reduce((acc, m) => Math.max(acc, Number(m?.id || m?.msg_id || 0)), 0);
+    };
+    const existingCarryMaxMsgId = getSnapMaxMsgId(rawCarryover);
+    const firstWindowMsgId = Number(processRows[0]?.messageId || 0);
+    const carryoverIsMonotonic = Boolean(
+      rawCarryover &&
+      (
+        existingCarryMaxMsgId <= 0 ||
+        (firstWindowMsgId > existingCarryMaxMsgId && (firstWindowMsgId - existingCarryMaxMsgId) <= 80)
+      )
+    );
+    const carryover = carryoverIsMonotonic ? rawCarryover : null;
 
     const { entries, boundSubtitleMsgIds, standaloneSubtitles, nextAnchorMessages } =
       extractSmartGroupedEntriesFromInboxWindow(chatCfg, processRows, carryover);
 
     const rowByMsgId = new Map(processRows.map(r => [Number(r.messageId), r]));
+    const suppressedReactionRowIds = new Set(
+      processRows.filter(r => r.suppressReaction || r.payload?._suppressReaction).map(r => r.id)
+    );
     const handledRowIds = new Set();
     const reactionQueue = [];
     const reviewLogsToSave = [];
     const vipPlaylistItems = [];
+    const archiveQueueItems = [];
+    const archiveCtxCache = {};
 
     // In-Batch Serien-Kontext-Cache (spart bei 500+ Serien-Drops bis zu 80% TMDB-Suchanfragen!)
     const seriesTmdbCache = new Map();
@@ -3921,6 +5082,13 @@
         if (normSeriesKey && seriesTmdbCache.has(normSeriesKey)) {
           enrichedEntry.tmdb_id = seriesTmdbCache.get(normSeriesKey);
         }
+      }
+
+      // Automatische tg_export_-Heilung für historische JSON-Import-Einträge (0 D1-Writes, wenn kein Legacy-Export existiert!)
+      if (srcRow.ingestPriority < 10 && srcRow.payload?.telegram_file_id && msgId > 0) {
+        const rawChanNum = String(cid).replace(/^-100/, "").replace(/^-/, "");
+        const candidateExportId = `tg_export_${rawChanNum}_${msgId}`;
+        await replaceExportFileIdInD1(env, candidateExportId, srcRow.payload.telegram_file_id, srcRow.payload.telegram_unique_id || null).catch(() => {});
       }
 
       // Bestehende Maximal-Qualität vor dem Speichern prüfen (für präzise 🔥 4K-Upgrade-Erkennung!)
@@ -4031,6 +5199,15 @@
         });
         reactionQueue.push({ rowId: srcRow.id, messageId: msgId, emoji });
         vipPlaylistItems.push(resolved);
+        if (Number(srcRow.sourceJobId || srcRow.payload?._historyJobId || 0) > 0) {
+          const archCand = await collectArchiveMirrorQueueCandidate(env, {
+            resolved,
+            srcRow,
+            sourceChatId: cid,
+            ctxCache: archiveCtxCache
+          }).catch(() => null);
+          if (archCand) archiveQueueItems.push(archCand);
+        }
 
         lastResolvedRef = {
           typeCode: resolved.typeCode,
@@ -4139,6 +5316,9 @@
         }
       } catch (_e) {}
     }
+    if (archiveQueueItems.length > 0 && typeof enqueueArchiveMirrorItemsInD1 === "function") {
+      await enqueueArchiveMirrorItemsInD1(env, archiveQueueItems).catch(() => {});
+    }
     if (lastResolvedRef) {
       memoryFallback.set(`last_ingested_media_${cid}`, lastResolvedRef);
       if (typeof saveEntityToD1 === "function") {
@@ -4146,8 +5326,11 @@
       }
     }
 
-    // Stille Emoji-Reaktionen mit adaptivem Telegram-429-Schutz ausliefern
-    const reactRes = await dispatchAdaptiveInboxReactions(env, cid, reactionQueue);
+    // Stille Emoji-Reaktionen mit per-Row suppressReaction-Respektierung & adaptivem Telegram-429-Schutz ausliefern
+    const effectiveReactionQueue = reactionQueue.filter(item => !suppressedReactionRowIds.has(item.rowId));
+    const reactRes = effectiveReactionQueue.length > 0
+      ? await dispatchAdaptiveInboxReactions(env, cid, effectiveReactionQueue)
+      : { sent: 0, deferredIds: [], skippedIds: [], rateLimited: false };
     summary.reactionsSent = reactRes.sent;
     summary.reactionsDeferred = reactRes.deferredIds.length;
     if (reactRes.deferredIds.length > 0) {
@@ -4186,20 +5369,26 @@
         : (Array.isArray(carryover?.anchorMessages) ? carryover.anchorMessages : []);
     }
 
-    // Kontext-Überhang nur dann in D1 schreiben, wenn sich Anker-IDs oder Serien-Kontext tatsächlich geändert haben
-    const prevAnchorSig = Array.isArray(carryover?.anchorMessages)
-      ? carryover.anchorMessages.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
+    // Carryover-Monotonie-Wächter beim Schreiben: Ein älterer History-Block darf den neueren Live-Carryover NIEMALS überschreiben!
+    const consumedMaxMsgId = processRows
+      .filter(r => !Number.isFinite(cutoffUnprocessedMsgId) || Number(r.messageId) < cutoffUnprocessedMsgId)
+      .reduce((acc, r) => Math.max(acc, Number(r.messageId || 0)), 0);
+    const canOverwriteSnapshot = consumedMaxMsgId >= existingCarryMaxMsgId;
+
+    const prevAnchorSig = Array.isArray(rawCarryover?.anchorMessages)
+      ? rawCarryover.anchorMessages.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
       : "";
     const nextAnchorSig = Array.isArray(effectiveNextAnchors)
       ? effectiveNextAnchors.map(m => Number(m?.id || m?.msg_id || 0)).join(",")
       : "";
-    const prevSeriesId = Number(carryover?.lastSeriesTmdbId || 0);
+    const prevSeriesId = Number(rawCarryover?.lastSeriesTmdbId || 0);
     const nextSeriesId = Number(lastSeriesCarry?.tmdbId || 0);
-    if (prevAnchorSig !== nextAnchorSig || prevSeriesId !== nextSeriesId) {
+    if (canOverwriteSnapshot && (prevAnchorSig !== nextAnchorSig || prevSeriesId !== nextSeriesId || consumedMaxMsgId > existingCarryMaxMsgId)) {
       await updateAutoIngestChatContextSnapshot(env, cid, {
         anchorMessages: effectiveNextAnchors,
         lastSeriesNormTitle: lastSeriesCarry?.normTitle || null,
         lastSeriesTmdbId: lastSeriesCarry?.tmdbId || null,
+        maxMessageId: consumedMaxMsgId,
         updatedAt: Date.now()
       });
     }
@@ -4391,6 +5580,8 @@
     const reactionQueue = [];
     const reviewLogsToSave = [];
     const vipPlaylistItems = [];
+    const archiveQueueItems = [];
+    const archiveCtxCache = {};
     let lastResolvedRef = memoryFallback.get(`last_ingested_media_${cid}`) || null;
     let lastSeriesCarry = chatCfg?.lastContextSnapshot?.lastSeriesTmdbId
       ? { normTitle: chatCfg.lastContextSnapshot.lastSeriesNormTitle || "", tmdbId: Number(chatCfg.lastContextSnapshot.lastSeriesTmdbId) }
@@ -4462,6 +5653,13 @@
         if (normSeriesKey && seriesTmdbCache.has(normSeriesKey)) {
           enrichedEntry.tmdb_id = seriesTmdbCache.get(normSeriesKey);
         }
+      }
+
+      // Automatische tg_export_-Heilung auch im Browser-Offload für History-Zeilen (0 Writes, wenn kein Legacy-Export existiert)
+      if (srcRow.ingestPriority < 10 && srcRow.payload?.telegram_file_id && srcRow.messageId > 0) {
+        const rawChanNum = String(cid).replace(/^-100/, "").replace(/^-/, "");
+        const candidateExportId = `tg_export_${rawChanNum}_${srcRow.messageId}`;
+        await replaceExportFileIdInD1(env, candidateExportId, srcRow.payload.telegram_file_id, srcRow.payload.telegram_unique_id || null).catch(() => {});
       }
 
       let prevBestQualityRank = 0;
@@ -4558,6 +5756,15 @@
         });
         reactionQueue.push({ rowId: srcRow.id, messageId: srcRow.messageId, emoji });
         vipPlaylistItems.push(resolved);
+        if (Number(srcRow.sourceJobId || srcRow.payload?._historyJobId || 0) > 0) {
+          const archCand = await collectArchiveMirrorQueueCandidate(env, {
+            resolved,
+            srcRow,
+            sourceChatId: cid,
+            ctxCache: archiveCtxCache
+          }).catch(() => null);
+          if (archCand) archiveQueueItems.push(archCand);
+        }
 
         lastResolvedRef = {
           typeCode: resolved.typeCode,
@@ -4646,6 +5853,9 @@
         }
       } catch (_e) {}
     }
+    if (archiveQueueItems.length > 0 && typeof enqueueArchiveMirrorItemsInD1 === "function") {
+      await enqueueArchiveMirrorItemsInD1(env, archiveQueueItems).catch(() => {});
+    }
     if (lastResolvedRef) {
       memoryFallback.set(`last_ingested_media_${cid}`, lastResolvedRef);
       if (typeof saveEntityToD1 === "function") {
@@ -4653,8 +5863,13 @@
       }
     }
 
-    if (reactionQueue.length > 0) {
-      const reactRes = await dispatchAdaptiveInboxReactions(env, cid, reactionQueue);
+    // Per-Row suppressReaction-Filter auch im Browser-Offload respektieren!
+    const effectiveTurboReactions = reactionQueue.filter(item => {
+      const r = rowById.get(item.rowId);
+      return !(r && (r.suppressReaction || r.payload?._suppressReaction));
+    });
+    if (effectiveTurboReactions.length > 0) {
+      const reactRes = await dispatchAdaptiveInboxReactions(env, cid, effectiveTurboReactions);
       summary.reactionsSent = reactRes.sent;
       summary.reactionsDeferred = reactRes.deferredIds.length;
       if (reactRes.deferredIds.length > 0) {
@@ -4675,26 +5890,37 @@
       memoryFallback.delete(`browser_turbo_active_${cid}`);
     }
 
-    // Kontext-Überhang nur dann in D1 schreiben, wenn er explizit mitgegeben wurde, sich die Serie geändert hat
-    // oder der Cross-Isolate Browser-Turbo-Lease für den 2-Min-Cron erstmals gesetzt/beendet werden muss
-    // (spart bei 500-Folgen-Serien-Drops ~80 unnötige D1-Reads + D1-Writes!).
+    // Carryover-Monotonie-Wächter auch beim Browser-Offload (ältere History-Blöcke dürfen neueren Live-Kontext nicht überschreiben!)
+    const prevCarryMaxMsgId = Number(chatCfg?.lastContextSnapshot?.maxMessageId || 0) ||
+      (Array.isArray(chatCfg?.lastContextSnapshot?.anchorMessages)
+        ? chatCfg.lastContextSnapshot.anchorMessages.reduce((acc, m) => Math.max(acc, Number(m?.id || m?.msg_id || 0)), 0)
+        : 0);
+    const batchMaxMsgId = Array.from(handledRowIds).reduce((acc, rid) => Math.max(acc, Number(rowById.get(rid)?.messageId || 0)), 0);
+    const canUpdateCarryoverContent = batchMaxMsgId >= prevCarryMaxMsgId;
+
     const prevCarryTmdbId = Number(chatCfg?.lastContextSnapshot?.lastSeriesTmdbId || 0);
     const prevTurboLeaseUntil = Number(chatCfg?.lastContextSnapshot?.browserTurboUntil || 0);
     const needLeaseUpdate = (remainingPending > 0 && prevTurboLeaseUntil < (Date.now() + 45000)) || (remainingPending === 0 && prevTurboLeaseUntil > Date.now());
-    if (payload.nextContextSnapshot && typeof payload.nextContextSnapshot === "object") {
+    if (canUpdateCarryoverContent && payload.nextContextSnapshot && typeof payload.nextContextSnapshot === "object") {
       const snap = payload.nextContextSnapshot;
       await updateAutoIngestChatContextSnapshot(env, cid, {
         anchorMessages: Array.isArray(snap.anchorMessages) ? snap.anchorMessages.slice(-2) : [],
         lastSeriesNormTitle: lastSeriesCarry?.normTitle || snap.lastSeriesNormTitle || null,
         lastSeriesTmdbId: lastSeriesCarry?.tmdbId || snap.lastSeriesTmdbId || null,
+        maxMessageId: Math.max(prevCarryMaxMsgId, batchMaxMsgId),
         browserTurboUntil: nextTurboLeaseUntil,
         updatedAt: Date.now()
       });
-    } else if ((lastSeriesCarry && Number(lastSeriesCarry.tmdbId || 0) !== prevCarryTmdbId) || needLeaseUpdate) {
+    } else if ((canUpdateCarryoverContent && lastSeriesCarry && Number(lastSeriesCarry.tmdbId || 0) !== prevCarryTmdbId) || needLeaseUpdate) {
       await updateAutoIngestChatContextSnapshot(env, cid, {
         anchorMessages: Array.isArray(chatCfg?.lastContextSnapshot?.anchorMessages) ? chatCfg.lastContextSnapshot.anchorMessages : [],
-        lastSeriesNormTitle: lastSeriesCarry?.normTitle || chatCfg?.lastContextSnapshot?.lastSeriesNormTitle || null,
-        lastSeriesTmdbId: lastSeriesCarry?.tmdbId || chatCfg?.lastContextSnapshot?.lastSeriesTmdbId || null,
+        lastSeriesNormTitle: canUpdateCarryoverContent
+          ? (lastSeriesCarry?.normTitle || chatCfg?.lastContextSnapshot?.lastSeriesNormTitle || null)
+          : (chatCfg?.lastContextSnapshot?.lastSeriesNormTitle || null),
+        lastSeriesTmdbId: canUpdateCarryoverContent
+          ? (lastSeriesCarry?.tmdbId || chatCfg?.lastContextSnapshot?.lastSeriesTmdbId || null)
+          : (chatCfg?.lastContextSnapshot?.lastSeriesTmdbId || null),
+        maxMessageId: Math.max(prevCarryMaxMsgId, batchMaxMsgId),
         browserTurboUntil: nextTurboLeaseUntil,
         updatedAt: Date.now()
       });
