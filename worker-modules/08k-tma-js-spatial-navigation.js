@@ -3648,6 +3648,1103 @@
       }
       requestAnimationFrame(pollGamepadNavigation);
 
+      // =========================================================================
+      // TELEPORT APK BRIDGE, 1-KLICK TV-LOGIN & KONTO-GEKOPPELTER HANDY -> TV LIVE-SYNC
+      // =========================================================================
+      (function initTelePortTvSyncAndApkEngine() {
+        const TV_DEVICE_ID_KEY = "teleport_tv_device_id_v1";
+        const TV_RECEIVER_OPT_KEY = "teleport_tv_receiver_enabled_v1";
+        const APK_UPDATE_CACHE_KEY = "teleport_apk_update_check_v1";
+        const RTC_CONFIG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+        let activeTvPairTimer = null;
+        let activeTvPairCountdownTimer = null;
+
+        let cachedOnlineTvs = [];
+        let lastTvListFetchAt = 0;
+        let tvListFetchPromise = null;
+
+        let isRemoteTvSyncApplying = false;
+        let remoteTvSyncReleaseTimer = null;
+        let lastAppliedViewSig = "";
+
+        // TV Receiver State
+        let tvReceiverActive = false;
+        let tvPresenceTimer = null;
+        let tvSignalPollTimer = null;
+        let tvStatePollTimer = null;
+        let tvLastActivityAt = Date.now();
+        let tvLastSeenSignalCreatedAt = 0;
+        let tvLastAppliedStateSeq = 0;
+        let tvPeerConn = null;
+        let tvDataChannel = null;
+        let tvP2pConnected = false;
+
+        // Phone Controller State
+        let phoneControllingTvId = "";
+        let phoneControllingTvLabel = "";
+        let phoneTransportMode = "off"; // off | connecting | p2p | relay
+        let phonePeerConn = null;
+        let phoneDataChannel = null;
+        let phoneSignalPollTimer = null;
+        let phoneConnectFallbackTimer = null;
+        let phoneScrollThrottleTimer = null;
+        let phoneLastSentAnchorKey = "";
+        let phoneLastSentViewSig = "";
+        let phoneRelaySeq = 0;
+        let sofaDockCollapsed = false;
+
+        function getOrCreateSyncDeviceId() {
+          try {
+            let id = localStorage.getItem(TV_DEVICE_ID_KEY);
+            if (id && /^[a-zA-Z0-9_-]{8,48}$/.test(id)) return id;
+            const rand = Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-6);
+            id = "tp_" + rand.replace(/[^a-zA-Z0-9_-]/g, "");
+            localStorage.setItem(TV_DEVICE_ID_KEY, id);
+            return id;
+          } catch (_e) {
+            return "tp_" + String(Date.now());
+          }
+        }
+
+        function isCurrentDeviceTvModeClient() {
+          return document.body && document.body.getAttribute("data-device") === "tv";
+        }
+
+        function getFriendlyDeviceLabel() {
+          const isFire = document.body && document.body.getAttribute("data-tv-profile") === "firetv";
+          const dev = document.body ? document.body.getAttribute("data-device") : "";
+          if (isFire) return "Fire TV Stick";
+          if (dev === "tv") return "Android / Smart-TV";
+          if (dev === "tablet") return "Tablet-Bildschirm";
+          if (dev === "mobile") return "Smartphone";
+          return "Desktop-TV";
+        }
+
+        function isTvReceiverEnabledByPref() {
+          try {
+            const raw = localStorage.getItem(TV_RECEIVER_OPT_KEY);
+            if (raw === "1") return true;
+            if (raw === "0") return false;
+          } catch (_e) {}
+          return isCurrentDeviceTvModeClient();
+        }
+
+        function setTvReceiverEnabledByPref(enabled) {
+          try { localStorage.setItem(TV_RECEIVER_OPT_KEY, enabled ? "1" : "0"); } catch (_e) {}
+          syncTvReceiverLifecycle();
+          if (state && state.sidebarOpen && typeof renderFilterSidebarContent === "function") {
+            renderFilterSidebarContent(false);
+          }
+        }
+
+        // --- APK Native Bridge Helpers ---
+        function isRunningInTelePortApkClient() {
+          return Boolean(
+            (typeof window !== "undefined" && window.TelePortNative) ||
+            (document.body && document.body.getAttribute("data-apk") === "1")
+          );
+        }
+
+        function openNativeApkServerSettingsClient() {
+          try {
+            if (window.TelePortNative && typeof window.TelePortNative.openServerSettings === "function") {
+              window.TelePortNative.openServerSettings();
+              return;
+            }
+          } catch (_e) {}
+          showHudToast("ℹ️ Server-URL-Einstellungen sind in der TelePort Android/TV APK verfügbar.");
+        }
+
+        function openApkUpdateDownloadClient() {
+          const url = location.origin + "/download/teleport.apk";
+          try {
+            if (window.TelePortNative && typeof window.TelePortNative.openExternalUrl === "function") {
+              window.TelePortNative.openExternalUrl(url);
+              return;
+            }
+          } catch (_e) {}
+          window.location.href = url;
+        }
+
+        function compareSemverClient(a, b) {
+          const pa = String(a || "0").replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+          const pb = String(b || "0").replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+          for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+            const da = pa[i] || 0;
+            const db = pb[i] || 0;
+            if (da !== db) return da > db ? 1 : -1;
+          }
+          return 0;
+        }
+
+        async function runQuietApkUpdateCheckClient() {
+          if (!isRunningInTelePortApkClient()) return;
+          let localVer = "1.0.0";
+          try {
+            if (window.TelePortNative && typeof window.TelePortNative.getAppVersion === "function") {
+              localVer = String(window.TelePortNative.getAppVersion() || "1.0.0").trim();
+            }
+          } catch (_e) {}
+          const now = Date.now();
+          try {
+            const cachedRaw = localStorage.getItem(APK_UPDATE_CACHE_KEY);
+            if (cachedRaw) {
+              const cached = JSON.parse(cachedRaw);
+              if (cached && now - Number(cached.checkedAt || 0) < 86400000) {
+                window._teleportApkUpdateInfo = cached;
+                return;
+              }
+            }
+          } catch (_e) {}
+          try {
+            const res = await fetch("/api/apk/version", { method: "GET" });
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data || !data.ok) return;
+            const hasUpdate = Boolean(data.configured && data.version && compareSemverClient(data.version, localVer) > 0);
+            const info = { checkedAt: now, localVersion: localVer, latestVersion: data.version || localVer, hasUpdate };
+            window._teleportApkUpdateInfo = info;
+            try { localStorage.setItem(APK_UPDATE_CACHE_KEY, JSON.stringify(info)); } catch (_e) {}
+          } catch (_e) {}
+        }
+
+        // --- 1-Klick TV-Anmeldung (6-stelliger Einmal-Code) ---
+        function stopTvPairPollClient() {
+          if (activeTvPairTimer) { clearInterval(activeTvPairTimer); activeTvPairTimer = null; }
+          if (activeTvPairCountdownTimer) { clearInterval(activeTvPairCountdownTimer); activeTvPairCountdownTimer = null; }
+        }
+
+        async function startTvPairLoginClient() {
+          stopTvPairPollClient();
+          const box = document.getElementById("tvPairChallengeBox");
+          if (box) box.innerHTML = '<div style="font-size:12px;color:#34d399;padding:8px 0">⏳ Erzeuge 6-stelligen TV-Anmeldecode...</div>';
+          try {
+            const r = await apiFetchJson(API_BASE + "/auth/tv-pair/start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({})
+            });
+            if (!r || !r.ok || !r.code || !r.claimToken) {
+              if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ Konnte TV-Code nicht erstellen.</div>';
+              return;
+            }
+            const formatted = String(r.code).replace(/^(\\d{3})(\\d{3})$/, "$1 $2");
+            const expAt = Number(r.expiresAt || (Date.now() + 180000));
+            if (box) {
+              box.innerHTML =
+                '<div style="margin-top:8px;padding:12px;border-radius:10px;background:rgba(6,10,20,0.88);border:1px solid rgba(52,211,153,0.45);display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center">' +
+                  '<div class="tv-pair-code-display">' + esc(formatted) + '</div>' +
+                  '<div id="tvPairStatusText" style="font-size:12px;color:#cbd5e1">⏳ Warte auf Freigabe vom Handy (<span id="tvPairCountdownSec">180</span>s)...</div>' +
+                '</div>';
+            }
+            activeTvPairCountdownTimer = setInterval(() => {
+              const cdEl = document.getElementById("tvPairCountdownSec");
+              if (!cdEl) { stopTvPairPollClient(); return; }
+              const left = Math.max(0, Math.ceil((expAt - Date.now()) / 1000));
+              cdEl.textContent = String(left);
+              if (left <= 0) {
+                stopTvPairPollClient();
+                const st = document.getElementById("tvPairStatusText");
+                if (st) { st.style.color = "#f87171"; st.textContent = "⌛ TV-Code abgelaufen. Bitte neuen Code erzeugen."; }
+              }
+            }, 1000);
+            const claimToken = r.claimToken;
+            activeTvPairTimer = setInterval(async () => {
+              if (!document.getElementById("tvPairStatusText")) { stopTvPairPollClient(); return; }
+              if (document.hidden) return;
+              try {
+                const pr = await apiFetchJson(API_BASE + "/auth/tv-pair/poll", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ claimToken })
+                });
+                if (!pr || !pr.ok) return;
+                if (pr.status === "expired") {
+                  stopTvPairPollClient();
+                  const st = document.getElementById("tvPairStatusText");
+                  if (st) { st.style.color = "#f87171"; st.textContent = "⌛ TV-Code abgelaufen. Bitte neuen Code erzeugen."; }
+                  return;
+                }
+                if (pr.status === "confirmed" && pr.user && pr.sessionToken) {
+                  stopTvPairPollClient();
+                  sessionToken = pr.sessionToken;
+                  try { localStorage.setItem("tma_session_token", sessionToken); } catch (_e) {}
+                  state.isAuthenticated = true;
+                  state.authUser = pr.user;
+                  chatId = String(pr.user.telegramId);
+                  clearClientMediaCaches();
+                  updateSyncBadge();
+                  const m = document.getElementById("modalRoot");
+                  if (m) m.innerHTML = "";
+                  showHudToast("✅ Fernseher erfolgreich angemeldet!");
+                  loadDiscover(state.type, state.genreId, state.mode, state.sort);
+                }
+              } catch (_e) {}
+            }, 3000);
+          } catch (err) {
+            if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
+          }
+        }
+
+        async function submitTvPairApproveClient() {
+          const inp = document.getElementById("tvPairApproveCodeInp");
+          const fb = document.getElementById("tvPairApproveFeedback");
+          const code = String(inp ? inp.value : "").replace(/[^0-9]/g, "").trim();
+          if (!/^\\d{6}$/.test(code)) {
+            if (fb) { fb.style.color = "#f87171"; fb.textContent = "⚠️ Bitte den 6-stelligen Code vom Fernseher eingeben."; }
+            return;
+          }
+          if (fb) { fb.style.color = "#38bdf8"; fb.textContent = "⏳ Gebe Fernseher frei..."; }
+          try {
+            const r = await apiFetchJson(API_BASE + "/auth/tv-pair/approve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code })
+            });
+            if (!r || !r.ok) {
+              if (fb) { fb.style.color = "#f87171"; fb.textContent = "❌ " + (r?.error || "Freigabe fehlgeschlagen."); }
+              return;
+            }
+            if (inp) inp.value = "";
+            if (fb) { fb.style.color = "#34d399"; fb.textContent = "✅ Fernseher wurde freigegeben und meldet sich in 2–3 Sekunden automatisch an!"; }
+            showHudToast("✅ Fernseher erfolgreich angemeldet!");
+            setTimeout(() => refreshTvSyncDevicesLazyClient(true), 3500);
+          } catch (err) {
+            if (fb) { fb.style.color = "#f87171"; fb.textContent = "❌ " + (err?.message || "Fehler"); }
+          }
+        }
+
+        // --- TV Receiver Engine (Passive, 0 KV writes, paused during P2P/hidden/idle) ---
+        function markTvReceiverActivity() {
+          tvLastActivityAt = Date.now();
+        }
+
+        function teardownTvReceiverPeer() {
+          tvP2pConnected = false;
+          try { if (tvDataChannel) tvDataChannel.close(); } catch (_e) {}
+          try { if (tvPeerConn) tvPeerConn.close(); } catch (_e) {}
+          tvDataChannel = null;
+          tvPeerConn = null;
+        }
+
+        async function registerTvPresenceNow() {
+          if (!tvReceiverActive || !state?.isAuthenticated || document.hidden) return;
+          if (Date.now() - tvLastActivityAt > 900000) return; // 15 Min Idle-Pause
+          if (tvP2pConnected) return; // P2P aktiv -> Worker komplett entlasten!
+          try {
+            await apiFetchJson(API_BASE + "/tv-sync/presence", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "register",
+                deviceId: getOrCreateSyncDeviceId(),
+                deviceLabel: getFriendlyDeviceLabel(),
+                platform: document.body?.getAttribute("data-tv-profile") || document.body?.getAttribute("data-device") || "tv"
+              })
+            });
+          } catch (_e) {}
+        }
+
+        function unregisterTvPresenceBeacon() {
+          if (!state?.isAuthenticated) return;
+          const headers = { "Content-Type": "application/json" };
+          if (typeof sessionToken === "string" && sessionToken) headers["X-TMA-Session"] = sessionToken;
+          if (typeof rawInitData === "string" && rawInitData) headers["X-Telegram-Init-Data"] = rawInitData;
+          try {
+            fetch(API_BASE + "/tv-sync/presence", {
+              method: "POST",
+              headers,
+              keepalive: true,
+              body: JSON.stringify({ action: "unregister", deviceId: getOrCreateSyncDeviceId() })
+            }).catch(() => {});
+          } catch (_e) {}
+        }
+
+        async function handleIncomingTvOffer(sig) {
+          if (!sig || !sig.offer || !sig.offer.sdp || typeof RTCPeerConnection === "undefined") return;
+          if (Number(sig.createdAt || 0) <= tvLastSeenSignalCreatedAt) return;
+          tvLastSeenSignalCreatedAt = Number(sig.createdAt || Date.now());
+          markTvReceiverActivity();
+          teardownTvReceiverPeer();
+          const myDeviceId = getOrCreateSyncDeviceId();
+          try {
+            const pc = new RTCPeerConnection(RTC_CONFIG);
+            tvPeerConn = pc;
+            const gatheredIce = [];
+            let answerSent = false;
+
+            pc.onicecandidate = (ev) => {
+              if (!ev.candidate) return;
+              const cand = ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate;
+              if (!answerSent) {
+                gatheredIce.push(cand);
+              } else {
+                apiFetchJson(API_BASE + "/tv-sync/signal", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "ice", targetTvId: myDeviceId, side: "answer", candidate: cand })
+                }).catch(() => {});
+              }
+            };
+
+            pc.ondatachannel = (ev) => {
+              const ch = ev.channel;
+              tvDataChannel = ch;
+              ch.onopen = () => {
+                tvP2pConnected = true;
+                markTvReceiverActivity();
+                showHudToast("📱 Handy direkt verbunden (Live-Sync)");
+              };
+              ch.onclose = () => {
+                tvP2pConnected = false;
+              };
+              ch.onmessage = (msgEv) => {
+                try {
+                  const parsed = JSON.parse(String(msgEv.data || "{}"));
+                  if (parsed && parsed.type) applyIncomingTvSyncEvent(parsed);
+                } catch (_e) {}
+              };
+            };
+
+            pc.onconnectionstatechange = () => {
+              if (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed") {
+                tvP2pConnected = false;
+              }
+            };
+
+            await pc.setRemoteDescription(new RTCSessionDescription(sig.offer));
+            if (Array.isArray(sig.offerIce)) {
+              for (const c of sig.offerIce) {
+                try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch (_e) {}
+              }
+            }
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await new Promise((res) => setTimeout(res, 650));
+            answerSent = true;
+            await apiFetchJson(API_BASE + "/tv-sync/signal", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "answer",
+                targetTvId: myDeviceId,
+                answer: { type: answer.type, sdp: answer.sdp },
+                ice: gatheredIce.slice(0, 16)
+              })
+            });
+          } catch (_e) {
+            teardownTvReceiverPeer();
+          }
+        }
+
+        function scheduleTvReceiverPollLoops() {
+          if (tvSignalPollTimer) { clearTimeout(tvSignalPollTimer); tvSignalPollTimer = null; }
+          if (tvStatePollTimer) { clearTimeout(tvStatePollTimer); tvStatePollTimer = null; }
+          if (!tvReceiverActive || !state?.isAuthenticated) return;
+
+          const runSignalTick = async () => {
+            if (!tvReceiverActive || !state?.isAuthenticated) return;
+            const idleMs = Date.now() - tvLastActivityAt;
+            if (!document.hidden && !tvP2pConnected && idleMs < 900000) {
+              try {
+                const r = await apiFetchJson(API_BASE + "/tv-sync/signal", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "poll", targetTvId: getOrCreateSyncDeviceId() })
+                });
+                if (r && r.ok && r.signal && r.signal.offer && !r.signal.answer) {
+                  await handleIncomingTvOffer(r.signal);
+                }
+              } catch (_e) {}
+            }
+            const nextDelay = (document.hidden || tvP2pConnected) ? 12000 : (idleMs > 120000 ? 10000 : 4500);
+            tvSignalPollTimer = setTimeout(runSignalTick, nextDelay);
+          };
+
+          const runStateTick = async () => {
+            if (!tvReceiverActive || !state?.isAuthenticated) return;
+            const idleMs = Date.now() - tvLastActivityAt;
+            let gotEvent = false;
+            if (!document.hidden && !tvP2pConnected && idleMs < 600000) {
+              try {
+                const r = await apiFetchJson(API_BASE + "/tv-sync/state", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "poll", targetTvId: getOrCreateSyncDeviceId(), sinceSeq: tvLastAppliedStateSeq })
+                });
+                if (r && r.ok && r.hasUpdate && r.event) {
+                  tvLastAppliedStateSeq = Number(r.seq || tvLastAppliedStateSeq);
+                  gotEvent = true;
+                  applyIncomingTvSyncEvent(r.event);
+                }
+              } catch (_e) {}
+            }
+            const nextDelay = (document.hidden || tvP2pConnected) ? 10000 : (gotEvent ? 1600 : (idleMs > 90000 ? 5500 : 2800));
+            tvStatePollTimer = setTimeout(runStateTick, nextDelay);
+          };
+
+          tvSignalPollTimer = setTimeout(runSignalTick, 1800);
+          tvStatePollTimer = setTimeout(runStateTick, 2400);
+        }
+
+        function syncTvReceiverLifecycle() {
+          const shouldRun = Boolean(state && state.isAuthenticated && isTvReceiverEnabledByPref() && !phoneControllingTvId);
+          if (shouldRun && !tvReceiverActive) {
+            tvReceiverActive = true;
+            markTvReceiverActivity();
+            registerTvPresenceNow();
+            if (tvPresenceTimer) clearInterval(tvPresenceTimer);
+            tvPresenceTimer = setInterval(registerTvPresenceNow, 180000);
+            scheduleTvReceiverPollLoops();
+          } else if (!shouldRun && tvReceiverActive) {
+            tvReceiverActive = false;
+            if (tvPresenceTimer) { clearInterval(tvPresenceTimer); tvPresenceTimer = null; }
+            if (tvSignalPollTimer) { clearTimeout(tvSignalPollTimer); tvSignalPollTimer = null; }
+            if (tvStatePollTimer) { clearTimeout(tvStatePollTimer); tvStatePollTimer = null; }
+            teardownTvReceiverPeer();
+            unregisterTvPresenceBeacon();
+          }
+        }
+
+        // --- Applying Incoming Events on TV (Unidirectional, Idempotent) ---
+        function applyIncomingTvSyncEvent(ev) {
+          if (!ev || !ev.type) return;
+          markTvReceiverActivity();
+          isRemoteTvSyncApplying = true;
+          if (remoteTvSyncReleaseTimer) clearTimeout(remoteTvSyncReleaseTimer);
+          try {
+            if (ev.type === "view:sync") {
+              const sig = JSON.stringify([ev.viewKind, ev.mediaType, ev.genreId, ev.mode, ev.sort, ev.searchQuery, ev.searchScope, ev.page, ev.filterSig || ""]);
+              if (sig !== lastAppliedViewSig) {
+                const prevFilterSig = window._lastAppliedTvFilterSig || "";
+                if (ev.filterSig && ev.filterSig !== prevFilterSig) {
+                  window._lastAppliedTvFilterSig = ev.filterSig;
+                  if (typeof clearClientMediaCaches === "function") clearClientMediaCaches();
+                }
+                lastAppliedViewSig = sig;
+                if (ev.viewKind === "search" && ev.searchQuery) {
+                  if (typeof runSearch === "function") {
+                    runSearch(false, String(ev.searchQuery), ev.searchScope || "all", false, Number(ev.page || 1));
+                  }
+                } else {
+                  if (typeof loadDiscover === "function") {
+                    loadDiscover(
+                      ev.mediaType || state.type || "m",
+                      ev.genreId || "0",
+                      ev.mode || state.mode || "popular",
+                      ev.sort || state.sort || "pop",
+                      false,
+                      false,
+                      Number(ev.page || 1)
+                    );
+                  }
+                }
+              }
+            } else if (ev.type === "scroll:anchor") {
+              const tmdbId = String(ev.tmdbId || "").replace(/[^0-9]/g, "");
+              const mType = ev.mediaType === "s" ? "s" : (ev.mediaType === "m" ? "m" : "");
+              let card = null;
+              if (tmdbId && mType) {
+                card = document.querySelector('.card[data-card-id="' + tmdbId + '"][data-card-type="' + mType + '"]');
+              }
+              if (!card && tmdbId) {
+                card = document.querySelector('.card[data-card-id="' + tmdbId + '"]');
+              }
+              if (card) {
+                if (typeof setSpatialFocus === "function") {
+                  setSpatialFocus(card, false);
+                } else {
+                  if (typeof clearAllSpatialFocusClasses === "function") clearAllSpatialFocusClasses(card);
+                  card.classList.add("spatial-focus");
+                }
+                try {
+                  card.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+                } catch (_e) {
+                  card.scrollIntoView();
+                }
+              } else if (typeof ev.ratio === "number" && ev.ratio >= 0 && ev.ratio <= 1) {
+                const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+                window.scrollTo({ top: Math.round(maxScroll * ev.ratio), behavior: "smooth" });
+              }
+            } else if (ev.type === "detail:open") {
+              const tmdbId = Number(ev.tmdbId || 0);
+              const mType = ev.mediaType === "s" ? "s" : "m";
+              if (tmdbId > 0 && typeof openDetails === "function") {
+                if (state.sidebarOpen && typeof closeFilterSidebar === "function") closeFilterSidebar(true);
+                openDetails(mType, tmdbId, Boolean(ev.autoOpenTrailer));
+              }
+            } else if (ev.type === "detail:close") {
+              if (document.getElementById("modalRoot")?.innerHTML.trim() && typeof closeDetailModal === "function") {
+                closeDetailModal();
+              }
+            } else if (ev.type === "trailer:control") {
+              if (ev.action === "toggle" && typeof toggleDetailCinemaPlayPauseClient === "function") {
+                toggleDetailCinemaPlayPauseClient();
+              } else if (ev.action === "open" && typeof enterDetailForegroundTrailerModeClient === "function") {
+                enterDetailForegroundTrailerModeClient();
+              } else if (ev.action === "close" && typeof exitDetailForegroundTrailerModeClient === "function") {
+                exitDetailForegroundTrailerModeClient();
+              }
+            } else if (ev.type === "remote:back") {
+              const stageEl = document.getElementById("detailHeroStageEl");
+              if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode") && typeof exitDetailForegroundTrailerModeClient === "function") {
+                exitDetailForegroundTrailerModeClient();
+              } else if (document.getElementById("modalRoot")?.innerHTML.trim() && typeof closeDetailModal === "function") {
+                closeDetailModal();
+              } else if (state.sidebarOpen && typeof closeFilterSidebar === "function") {
+                closeFilterSidebar(true);
+              } else if (typeof goBack === "function") {
+                goBack();
+              }
+            }
+          } catch (_e) {}
+          remoteTvSyncReleaseTimer = setTimeout(() => { isRemoteTvSyncApplying = false; }, 350);
+        }
+
+        // --- Phone Controller Engine (Lazy discovery, WebRTC P2P primary + silent D1 fallback) ---
+        function getCachedOnlineTvDevicesClient() {
+          const myId = getOrCreateSyncDeviceId();
+          return (cachedOnlineTvs || []).filter((d) => d && d.deviceId && d.deviceId !== myId);
+        }
+
+        function canShowCastToTvButtonClient() {
+          return Boolean(state && state.isAuthenticated && !isCurrentDeviceTvModeClient() && getCachedOnlineTvDevicesClient().length > 0);
+        }
+
+        function updateDetailCastToTvButtonVisibility() {
+          const btn = document.getElementById("detailCastToTvBtn");
+          if (!btn) return;
+          btn.style.display = canShowCastToTvButtonClient() ? "" : "none";
+        }
+
+        async function refreshTvSyncDevicesLazyClient(force = false) {
+          if (!state || !state.isAuthenticated) {
+            cachedOnlineTvs = [];
+            updateDetailCastToTvButtonVisibility();
+            return [];
+          }
+          const now = Date.now();
+          if (!force && now - lastTvListFetchAt < 30000) {
+            updateDetailCastToTvButtonVisibility();
+            return getCachedOnlineTvDevicesClient();
+          }
+          if (tvListFetchPromise) return tvListFetchPromise;
+          tvListFetchPromise = (async () => {
+            try {
+              const r = await apiFetchJson(API_BASE + "/tv-sync/presence", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "list" })
+              });
+              if (r && r.ok && Array.isArray(r.devices)) {
+                cachedOnlineTvs = r.devices;
+                lastTvListFetchAt = Date.now();
+              }
+            } catch (_e) {}
+            tvListFetchPromise = null;
+            updateDetailCastToTvButtonVisibility();
+            if (state && state.sidebarOpen && state.sidebarTab === "tvsync" && typeof renderFilterSidebarContent === "function") {
+              renderFilterSidebarContent(false);
+            }
+            return getCachedOnlineTvDevicesClient();
+          })();
+          return tvListFetchPromise;
+        }
+
+        function teardownPhonePeer() {
+          if (phoneSignalPollTimer) { clearInterval(phoneSignalPollTimer); phoneSignalPollTimer = null; }
+          if (phoneConnectFallbackTimer) { clearTimeout(phoneConnectFallbackTimer); phoneConnectFallbackTimer = null; }
+          try { if (phoneDataChannel) phoneDataChannel.close(); } catch (_e) {}
+          try { if (phonePeerConn) phonePeerConn.close(); } catch (_e) {}
+          phoneDataChannel = null;
+          phonePeerConn = null;
+        }
+
+        function sendTvSyncPayloadFromPhone(eventObj, immediate = false) {
+          if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
+          if (phoneDataChannel && phoneDataChannel.readyState === "open") {
+            try {
+              phoneDataChannel.send(JSON.stringify(eventObj));
+              return;
+            } catch (_e) {}
+          }
+          // Fallback Relay via D1 (0 KV writes, server-seitig streng monotoner seq)
+          const targetTvId = phoneControllingTvId;
+          const doPush = () => {
+            apiFetchJson(API_BASE + "/tv-sync/state", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "push", targetTvId, event: eventObj })
+            }).catch(() => {});
+          };
+          if (immediate) {
+            doPush();
+          } else {
+            if (phoneScrollThrottleTimer) clearTimeout(phoneScrollThrottleTimer);
+            phoneScrollThrottleTimer = setTimeout(doPush, 550);
+          }
+        }
+
+        async function startPhoneTvControlClient(targetTvId, targetTvLabel) {
+          if (!state || !state.isAuthenticated) {
+            showHudToast("🔐 Bitte zuerst anmelden.");
+            return;
+          }
+          const tvs = getCachedOnlineTvDevicesClient();
+          const chosen = tvs.find((d) => d.deviceId === targetTvId) || tvs[0];
+          if (!chosen) {
+            showHudToast("📺 Kein aktiver Fernseher im selben Konto gefunden.");
+            return;
+          }
+          stopPhoneTvControlClient(true);
+          phoneControllingTvId = chosen.deviceId;
+          phoneControllingTvLabel = targetTvLabel || chosen.deviceLabel || "Fernseher";
+          phoneTransportMode = "connecting";
+          sofaDockCollapsed = false;
+          syncTvReceiverLifecycle();
+          renderSofaRemoteDock();
+          if (state && state.sidebarOpen && typeof renderFilterSidebarContent === "function") {
+            renderFilterSidebarContent(false);
+          }
+          // Laufenden Handy-Trailer sofort stumm/aus (Echo-Schutz)
+          if (typeof stopDetailBackgroundVideoTeaserClient === "function") {
+            stopDetailBackgroundVideoTeaserClient();
+          }
+
+          // WebRTC P2P Handshake versuchen (0 Worker-Last nach Aufbau), nach 4.5s nahtlos auf D1-Relay
+          if (typeof RTCPeerConnection === "undefined") {
+            phoneTransportMode = "relay";
+            renderSofaRemoteDock();
+            showHudToast("📺 Verbunden mit " + phoneControllingTvLabel + " (Relay-Modus)");
+            notifyTvSyncViewChangedClient(state.isSearchMode ? "search" : "discover");
+            return;
+          }
+
+          phoneConnectFallbackTimer = setTimeout(() => {
+            if (phoneControllingTvId === chosen.deviceId && phoneTransportMode === "connecting") {
+              teardownPhonePeer();
+              phoneTransportMode = "relay";
+              renderSofaRemoteDock();
+              showHudToast("📺 Verbunden mit " + phoneControllingTvLabel);
+              notifyTvSyncViewChangedClient(state.isSearchMode ? "search" : "discover");
+            }
+          }, 4500);
+
+          try {
+            const pc = new RTCPeerConnection(RTC_CONFIG);
+            phonePeerConn = pc;
+            const ch = pc.createDataChannel("teleport-tv-sync", { ordered: true });
+            phoneDataChannel = ch;
+            const gatheredIce = [];
+            let offerSent = false;
+
+            pc.onicecandidate = (ev) => {
+              if (!ev.candidate) return;
+              const cand = ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate;
+              if (!offerSent) {
+                gatheredIce.push(cand);
+              } else {
+                apiFetchJson(API_BASE + "/tv-sync/signal", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "ice", targetTvId: chosen.deviceId, side: "offer", candidate: cand })
+                }).catch(() => {});
+              }
+            };
+
+            ch.onopen = () => {
+              if (phoneConnectFallbackTimer) { clearTimeout(phoneConnectFallbackTimer); phoneConnectFallbackTimer = null; }
+              if (phoneSignalPollTimer) { clearInterval(phoneSignalPollTimer); phoneSignalPollTimer = null; }
+              phoneTransportMode = "p2p";
+              renderSofaRemoteDock();
+              showHudToast("⚡ Direkt mit " + phoneControllingTvLabel + " verbunden (WLAN P2P)");
+              notifyTvSyncViewChangedClient(state.isSearchMode ? "search" : "discover");
+            };
+
+            ch.onclose = () => {
+              if (phoneControllingTvId === chosen.deviceId && phoneTransportMode === "p2p") {
+                phoneTransportMode = "relay";
+                renderSofaRemoteDock();
+              }
+            };
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await new Promise((res) => setTimeout(res, 600));
+            offerSent = true;
+            await apiFetchJson(API_BASE + "/tv-sync/signal", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "offer",
+                targetTvId: chosen.deviceId,
+                controllerId: getOrCreateSyncDeviceId(),
+                controllerLabel: getFriendlyDeviceLabel(),
+                offer: { type: offer.type, sdp: offer.sdp },
+                ice: gatheredIce.slice(0, 16)
+              })
+            });
+
+            let appliedAnswer = false;
+            let appliedIceCount = 0;
+            phoneSignalPollTimer = setInterval(async () => {
+              if (!phoneControllingTvId || phoneTransportMode === "p2p") {
+                if (phoneSignalPollTimer) { clearInterval(phoneSignalPollTimer); phoneSignalPollTimer = null; }
+                return;
+              }
+              try {
+                const r = await apiFetchJson(API_BASE + "/tv-sync/signal", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "poll", targetTvId: chosen.deviceId })
+                });
+                const sig = r && r.ok ? r.signal : null;
+                if (sig && sig.answer && !appliedAnswer && phonePeerConn) {
+                  appliedAnswer = true;
+                  await phonePeerConn.setRemoteDescription(new RTCSessionDescription(sig.answer));
+                }
+                if (sig && Array.isArray(sig.answerIce) && phonePeerConn && appliedAnswer) {
+                  for (let i = appliedIceCount; i < sig.answerIce.length; i++) {
+                    try { await phonePeerConn.addIceCandidate(new RTCIceCandidate(sig.answerIce[i])); } catch (_e) {}
+                  }
+                  appliedIceCount = sig.answerIce.length;
+                }
+              } catch (_e) {}
+            }, 900);
+          } catch (_e) {
+            teardownPhonePeer();
+            phoneTransportMode = "relay";
+            renderSofaRemoteDock();
+          }
+        }
+
+        function stopPhoneTvControlClient(silent = false) {
+          const wasActive = Boolean(phoneControllingTvId);
+          teardownPhonePeer();
+          if (phoneScrollThrottleTimer) { clearTimeout(phoneScrollThrottleTimer); phoneScrollThrottleTimer = null; }
+          phoneControllingTvId = "";
+          phoneControllingTvLabel = "";
+          phoneTransportMode = "off";
+          phoneLastSentAnchorKey = "";
+          phoneLastSentViewSig = "";
+          renderSofaRemoteDock();
+          syncTvReceiverLifecycle();
+          if (state && state.sidebarOpen && typeof renderFilterSidebarContent === "function") {
+            renderFilterSidebarContent(false);
+          }
+          if (wasActive && !silent) {
+            showHudToast("📺 TV-Fernsteuerung beendet.");
+          }
+        }
+
+        async function castItemToTvClient(mediaType, tmdbId, title) {
+          if (!state || !state.isAuthenticated) {
+            showHudToast("🔐 Bitte zuerst anmelden.");
+            return;
+          }
+          const tvs = await refreshTvSyncDevicesLazyClient(false);
+          const targetId = phoneControllingTvId || (tvs[0] && tvs[0].deviceId) || "";
+          const targetLabel = phoneControllingTvLabel || (tvs[0] && tvs[0].deviceLabel) || "Fernseher";
+          if (!targetId) {
+            showHudToast("📺 Kein aktiver Fernseher im Konto gefunden.");
+            return;
+          }
+          const ev = { type: "detail:open", mediaType: mediaType === "s" ? "s" : "m", tmdbId: Number(tmdbId), autoOpenTrailer: false };
+          if (phoneControllingTvId === targetId && phoneDataChannel && phoneDataChannel.readyState === "open") {
+            try {
+              phoneDataChannel.send(JSON.stringify(ev));
+              showHudToast("📺 „" + (title || "Titel") + "“ am " + targetLabel + " geöffnet");
+              return;
+            } catch (_e) {}
+          }
+          try {
+            await apiFetchJson(API_BASE + "/tv-sync/state", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "push", targetTvId: targetId, event: ev })
+            });
+            showHudToast("📺 „" + (title || "Titel") + "“ wird am " + targetLabel + " geöffnet");
+          } catch (_e) {
+            showHudToast("⚠️ Konnte Titel nicht an den Fernseher senden.");
+          }
+        }
+
+        // --- Semantic Scroll & View Emitters ---
+        function findCenterCatalogCardForSync() {
+          const cards = document.querySelectorAll("#resultsGridContainer .card[data-card-id], #appRoot .card[data-card-id]");
+          if (!cards || !cards.length) return null;
+          const vh = window.innerHeight || 720;
+          const vw = window.innerWidth || 390;
+          const targetY = vh * 0.42;
+          const targetX = vw * 0.5;
+          let best = null;
+          let bestDist = Infinity;
+          for (let i = 0; i < cards.length; i++) {
+            const rect = cards[i].getBoundingClientRect();
+            if (rect.bottom < 0 || rect.top > vh) continue;
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const dist = Math.abs(cy - targetY) * 1.4 + Math.abs(cx - targetX) * 0.4;
+            if (dist < bestDist) {
+              bestDist = dist;
+              best = cards[i];
+            }
+          }
+          return best;
+        }
+
+        let lastP2pScrollEmitAt = 0;
+        window.addEventListener("scroll", () => {
+          if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
+          if (document.getElementById("modalRoot")?.innerHTML.trim()) return;
+          const now = Date.now();
+          const isP2p = phoneDataChannel && phoneDataChannel.readyState === "open";
+          if (isP2p && now - lastP2pScrollEmitAt < 130) return;
+          const emitAnchor = () => {
+            if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
+            const card = findCenterCatalogCardForSync();
+            const maxScroll = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+            const ratio = Math.min(1, Math.max(0, window.scrollY / maxScroll));
+            if (card) {
+              const tmdbId = card.getAttribute("data-card-id") || "";
+              const mediaType = card.getAttribute("data-card-type") || state.type || "m";
+              const key = mediaType + ":" + tmdbId;
+              if (key === phoneLastSentAnchorKey) return;
+              phoneLastSentAnchorKey = key;
+              lastP2pScrollEmitAt = Date.now();
+              sendTvSyncPayloadFromPhone({ type: "scroll:anchor", tmdbId, mediaType, ratio }, isP2p);
+            }
+          };
+          if (isP2p) {
+            emitAnchor();
+          } else {
+            if (phoneScrollThrottleTimer) clearTimeout(phoneScrollThrottleTimer);
+            phoneScrollThrottleTimer = setTimeout(emitAnchor, 580);
+          }
+        }, { passive: true });
+
+        function computeCompactFilterSig() {
+          const s = (state && state.settings) || {};
+          return JSON.stringify([
+            s.includedGenres || [], s.excludedGenres || [],
+            s.includedPlatforms || [], s.excludedPlatforms || [],
+            s.includedEras || [], s.excludedEras || [],
+            s.includedStudios || [], s.excludedStudios || [],
+            s.includedFsk || [], s.excludedFsk || [],
+            Boolean(s.onlyVipStreams)
+          ]);
+        }
+
+        function notifyTvSyncViewChangedClient(viewKind) {
+          if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
+          const ev = {
+            type: "view:sync",
+            viewKind: viewKind || (state.isSearchMode ? "search" : "discover"),
+            mediaType: state.type || "m",
+            genreId: state.genreId || "0",
+            mode: state.mode || "popular",
+            sort: state.sort || "pop",
+            searchQuery: state.isSearchMode ? String(state.searchQuery || "") : "",
+            searchScope: state.searchScope || "all",
+            page: Number(state.page || 1),
+            filterSig: computeCompactFilterSig()
+          };
+          const sig = JSON.stringify(ev);
+          if (sig === phoneLastSentViewSig) return;
+          phoneLastSentViewSig = sig;
+          phoneLastSentAnchorKey = "";
+          sendTvSyncPayloadFromPhone(ev, true);
+        }
+
+        function notifyTvSyncDetailOpenedClient(mediaType, tmdbId, autoOpenTrailer) {
+          if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
+          sendTvSyncPayloadFromPhone({
+            type: "detail:open",
+            mediaType: mediaType === "s" ? "s" : "m",
+            tmdbId: Number(tmdbId),
+            autoOpenTrailer: Boolean(autoOpenTrailer)
+          }, true);
+        }
+
+        function notifyTvSyncDetailClosedClient(trailerOnly) {
+          if (!phoneControllingTvId || isRemoteTvSyncApplying) return;
+          if (trailerOnly) {
+            sendTvSyncPayloadFromPhone({ type: "trailer:control", action: "close" }, true);
+          } else {
+            sendTvSyncPayloadFromPhone({ type: "detail:close" }, true);
+          }
+        }
+
+        function sendSofaRemoteCommandClient(cmd) {
+          if (!phoneControllingTvId) return;
+          if (cmd === "trailer") {
+            sendTvSyncPayloadFromPhone({ type: "trailer:control", action: "toggle" }, true);
+          } else if (cmd === "back") {
+            sendTvSyncPayloadFromPhone({ type: "remote:back" }, true);
+          } else if (cmd === "search") {
+            const inp = document.getElementById("searchInput");
+            if (inp) {
+              inp.focus();
+              inp.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }
+        }
+
+        function toggleSofaDockCollapsedClient() {
+          sofaDockCollapsed = !sofaDockCollapsed;
+          renderSofaRemoteDock();
+        }
+
+        function renderSofaRemoteDock() {
+          let dock = document.getElementById("tvSofaRemoteDock");
+          if (!phoneControllingTvId) {
+            if (dock) { dock.classList.remove("is-visible"); dock.innerHTML = ""; }
+            return;
+          }
+          if (!dock) {
+            dock = document.createElement("div");
+            dock.id = "tvSofaRemoteDock";
+            document.body.appendChild(dock);
+          }
+          dock.classList.add("is-visible");
+          dock.classList.toggle("is-collapsed", sofaDockCollapsed);
+          const dotCls = phoneTransportMode === "p2p" ? "" : (phoneTransportMode === "relay" ? " is-relay" : " is-connecting");
+          const modeTxt = phoneTransportMode === "p2p" ? "P2P" : (phoneTransportMode === "relay" ? "Sync" : "…");
+          if (sofaDockCollapsed) {
+            dock.innerHTML =
+              '<button type="button" class="tv-sofa-btn" onclick="toggleSofaDockCollapsedClient()" title="TV-Fernbedienung ausklappen">' +
+                '<span class="tv-sync-dot' + dotCls + '"></span> 📺 ' + esc(phoneControllingTvLabel) + ' ▲' +
+              '</button>';
+            return;
+          }
+          dock.innerHTML =
+            '<div class="tv-sofa-meta">' +
+              '<span class="tv-sync-dot' + dotCls + '"></span>' +
+              '<span>📺 ' + esc(phoneControllingTvLabel) + ' <small style="opacity:0.7">(' + modeTxt + ')</small></span>' +
+            '</div>' +
+            '<div class="tv-sofa-actions">' +
+              '<button type="button" class="tv-sofa-btn" onclick="sendSofaRemoteCommandClient(\\'trailer\\')" title="Trailer am TV starten/pausieren">⏯</button>' +
+              '<button type="button" class="tv-sofa-btn" onclick="sendSofaRemoteCommandClient(\\'back\\')" title="Zurück am TV">⬅</button>' +
+              '<button type="button" class="tv-sofa-btn" onclick="sendSofaRemoteCommandClient(\\'search\\')" title="Suche öffnen">🔍</button>' +
+              '<button type="button" class="tv-sofa-btn" onclick="toggleSofaDockCollapsedClient()" title="Dock minimieren">▼</button>' +
+              '<button type="button" class="tv-sofa-btn is-danger" onclick="stopPhoneTvControlClient(false)" title="TV-Steuerung trennen">✖</button>' +
+            '</div>';
+        }
+
+        function getTvSyncSidebarBadgeTextClient() {
+          if (phoneControllingTvId) return "Aktiv ✓";
+          if (tvReceiverActive) return "Empfang ✓";
+          const cnt = getCachedOnlineTvDevicesClient().length;
+          return cnt > 0 ? (cnt + " TV") : "Bereit";
+        }
+
+        function buildTvSyncSidebarSubPanelHtmlClient() {
+          if (!state || !state.isAuthenticated) {
+            return '<div class="tv-sync-panel-box">' +
+              '<div style="font-size:12.5px;font-weight:700;color:#e2e8f0">🔐 Konto-Anmeldung erforderlich</div>' +
+              '<div style="font-size:11.5px;color:#94a3b8;line-height:1.45">Melde Handy und Fernseher im selben TelePort-Konto an — danach verbinden sich beide Geräte automatisch ohne Codes.</div>' +
+              '<button type="button" class="btn blue" onclick="closeFilterSidebar();openAccountModal()">🔐 Konto / 1-Klick TV-Login öffnen</button>' +
+            '</div>';
+          }
+          const tvs = getCachedOnlineTvDevicesClient();
+          const receiverOn = isTvReceiverEnabledByPref();
+          let html = '<div style="display:flex;flex-direction:column;gap:10px">';
+
+          // Abschnitt 1: Handy steuert TV
+          if (!isCurrentDeviceTvModeClient()) {
+            html += '<div class="tv-sync-panel-box">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px">' +
+                '<span style="font-size:12.5px;font-weight:800;color:#38bdf8">📱 Fernseher in deinem Konto</span>' +
+                '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="refreshTvSyncDevicesLazyClient(true)">🔄 Aktualisieren</button>' +
+              '</div>';
+            if (phoneControllingTvId) {
+              const modeLabel = phoneTransportMode === "p2p" ? "⚡ Direkt im WLAN (0 Worker-Last)" : (phoneTransportMode === "relay" ? "☁️ Relay-Sync aktiv" : "⏳ Verbinde...");
+              html += '<div class="tv-sync-device-item is-selected">' +
+                '<div style="min-width:0"><div style="font-size:12.5px;font-weight:800;color:#f8fafc">📺 ' + esc(phoneControllingTvLabel) + '</div><div style="font-size:11px;color:#34d399">' + modeLabel + '</div></div>' +
+                '<button type="button" class="btn danger" style="padding:6px 10px;font-size:11.5px" onclick="stopPhoneTvControlClient(false)">⏹ Trennen</button>' +
+              '</div>';
+            } else if (tvs.length === 0) {
+              html += '<div style="font-size:11.5px;color:#94a3b8;line-height:1.45">Aktuell ist kein Fernseher online. Öffne TelePort auf deinem Fire TV / Android TV im selben Konto (oder aktiviere unten den TV-Empfang auf einem zweiten Bildschirm).</div>';
+            } else {
+              html += tvs.map((tv) =>
+                '<div class="tv-sync-device-item">' +
+                  '<div style="display:flex;align-items:center;gap:7px;min-width:0">' +
+                    '<span class="tv-sync-dot"></span>' +
+                    '<div style="font-size:12.5px;font-weight:700;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(tv.deviceLabel || "Fernseher") + '</div>' +
+                  '</div>' +
+                  '<button type="button" class="btn blue" style="padding:6px 11px;font-size:11.5px" onclick="startPhoneTvControlClient(\\'' + escJs(tv.deviceId) + '\\',\\'' + escJs(tv.deviceLabel || "Fernseher") + '\\')">📺 Live steuern</button>' +
+                '</div>'
+              ).join("");
+            }
+            html += '</div>';
+          }
+
+          // Abschnitt 2: Diesen Bildschirm als TV-Empfänger freigeben
+          html += '<div class="tv-sync-panel-box">' +
+            '<div style="font-size:12.5px;font-weight:800;color:#cbd5e1">📺 Diesen Bildschirm steuern lassen</div>' +
+            '<div style="font-size:11.5px;color:#94a3b8;line-height:1.45">Erlaubt deinem Smartphone im selben Konto, Cover-Scroll, Suche, Filter und Detailansichten auf diesem Bildschirm live zu steuern.</div>' +
+            '<button type="button" class="btn ' + (receiverOn ? 'blue' : '') + '" style="justify-content:space-between" onclick="setTvReceiverEnabledByPrefClient(' + (receiverOn ? 'false' : 'true') + ')">' +
+              '<span>📺 TV-Fernsteuerung zulassen</span>' +
+              '<b>' + (receiverOn ? 'EIN ✓' : 'AUS') + '</b>' +
+            '</button>' +
+          '</div>';
+
+          html += '</div>';
+          return html;
+        }
+
+        function onTelePortAuthChanged() {
+          if (!state || !state.isAuthenticated) {
+            stopPhoneTvControlClient(true);
+            cachedOnlineTvs = [];
+          }
+          syncTvReceiverLifecycle();
+          updateDetailCastToTvButtonVisibility();
+        }
+
+        // Lifecycle Listeners (zero polling while backgrounded, clean unregister on unload)
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) {
+            markTvReceiverActivity();
+            if (tvReceiverActive && !tvP2pConnected) registerTvPresenceNow();
+          }
+        });
+        window.addEventListener("pagehide", () => {
+          if (tvReceiverActive) unregisterTvPresenceBeacon();
+        });
+        ["keydown", "pointerdown"].forEach((evName) => {
+          window.addEventListener(evName, markTvReceiverActivity, { passive: true });
+        });
+
+        // Expose globally for inline handlers & other modules
+        window.isRunningInTelePortApkClient = isRunningInTelePortApkClient;
+        window.openNativeApkServerSettingsClient = openNativeApkServerSettingsClient;
+        window.openApkUpdateDownloadClient = openApkUpdateDownloadClient;
+        window.stopTvPairPollClient = stopTvPairPollClient;
+        window.startTvPairLoginClient = startTvPairLoginClient;
+        window.submitTvPairApproveClient = submitTvPairApproveClient;
+        window.isCurrentDeviceTvModeClient = isCurrentDeviceTvModeClient;
+        window.getCachedOnlineTvDevicesClient = getCachedOnlineTvDevicesClient;
+        window.canShowCastToTvButtonClient = canShowCastToTvButtonClient;
+        window.refreshTvSyncDevicesLazyClient = refreshTvSyncDevicesLazyClient;
+        window.isPhoneControllingTvClient = () => Boolean(phoneControllingTvId);
+        window.startPhoneTvControlClient = startPhoneTvControlClient;
+        window.stopPhoneTvControlClient = stopPhoneTvControlClient;
+        window.castItemToTvClient = castItemToTvClient;
+        window.notifyTvSyncViewChangedClient = notifyTvSyncViewChangedClient;
+        window.notifyTvSyncDetailOpenedClient = notifyTvSyncDetailOpenedClient;
+        window.notifyTvSyncDetailClosedClient = notifyTvSyncDetailClosedClient;
+        window.sendSofaRemoteCommandClient = sendSofaRemoteCommandClient;
+        window.toggleSofaDockCollapsedClient = toggleSofaDockCollapsedClient;
+        window.getTvSyncSidebarBadgeTextClient = getTvSyncSidebarBadgeTextClient;
+        window.buildTvSyncSidebarSubPanelHtmlClient = buildTvSyncSidebarSubPanelHtmlClient;
+        window.setTvReceiverEnabledByPrefClient = setTvReceiverEnabledByPref;
+        window.onTelePortAuthChanged = onTelePortAuthChanged;
+
+        setTimeout(runQuietApkUpdateCheckClient, 1800);
+      })();
+
       window.__TELEPORT_BOOTED__ = true;
       try {
         const mRoot = document.getElementById("modalRoot");

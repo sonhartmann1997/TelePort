@@ -5341,6 +5341,156 @@
         outline-offset: -1px !important;
         box-shadow: inset 0 0 0 1px rgba(255, 195, 113, 0.8), 0 0 0 2px #ff7a00, 0 0 18px rgba(255, 122, 0, 0.85) !important;
       }
+      /* === TelePort TV-Sync, 1-Klick TV-Login & Sofa-Fernbedienungs-Dock === */
+      .detail-btn-tv-cast {
+        border-color: rgba(56, 189, 248, 0.55) !important;
+        background: rgba(14, 165, 233, 0.16) !important;
+        color: #e0f2fe !important;
+      }
+      .detail-btn-tv-cast:hover {
+        background: rgba(14, 165, 233, 0.28) !important;
+      }
+      .tv-sync-panel-box {
+        background: rgba(6, 10, 20, 0.58);
+        border: 1px solid rgba(56, 189, 248, 0.24);
+        border-radius: 12px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .tv-sync-device-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+      }
+      .tv-sync-device-item.is-selected {
+        border-color: rgba(56, 189, 248, 0.65);
+        background: rgba(14, 165, 233, 0.14);
+      }
+      .tv-sync-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #34d399;
+        box-shadow: 0 0 8px rgba(52, 211, 153, 0.85);
+        flex-shrink: 0;
+      }
+      .tv-sync-dot.is-relay {
+        background: #38bdf8;
+        box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
+      }
+      .tv-sync-dot.is-connecting {
+        background: #fbbf24;
+        box-shadow: 0 0 8px rgba(251, 191, 36, 0.85);
+      }
+      .tv-pair-code-display {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-variant-numeric: tabular-nums;
+        font-size: 28px;
+        font-weight: 900;
+        letter-spacing: 5px;
+        color: #38bdf8;
+        background: rgba(14, 165, 233, 0.1);
+        border: 1px solid rgba(56, 189, 248, 0.42);
+        padding: 8px 20px;
+        border-radius: 10px;
+        user-select: all;
+      }
+      #tvSofaRemoteDock {
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: max(8px, env(safe-area-inset-bottom, 0px));
+        z-index: 440;
+        display: none;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        min-height: 48px;
+        padding: 6px 10px;
+        border-radius: 14px;
+        background: rgba(8, 13, 27, 0.94);
+        border: 1px solid rgba(56, 189, 248, 0.45);
+        box-shadow: 0 12px 34px rgba(0, 0, 0, 0.62), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        color: #f8fafc;
+        max-width: 560px;
+        margin: 0 auto;
+      }
+      #tvSofaRemoteDock.is-visible {
+        display: flex;
+      }
+      #tvSofaRemoteDock.is-collapsed {
+        left: auto;
+        right: 12px;
+        width: auto;
+        min-height: 42px;
+        padding: 6px 12px;
+      }
+      .tv-sofa-meta {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+        flex: 1;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .tv-sofa-actions {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-shrink: 0;
+      }
+      .tv-sofa-btn {
+        min-height: 36px;
+        min-width: 36px;
+        padding: 0 9px;
+        border-radius: 9px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        background: rgba(30, 41, 59, 0.88);
+        color: #f8fafc;
+        font-size: 12.5px;
+        font-weight: 700;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+      }
+      .tv-sofa-btn:active {
+        transform: scale(0.95);
+      }
+      .tv-sofa-btn.is-danger {
+        border-color: rgba(248, 113, 113, 0.45);
+        background: rgba(185, 28, 28, 0.28);
+        color: #fecaca;
+      }
+      body.theme-light #tvSofaRemoteDock {
+        background: rgba(248, 250, 252, 0.95);
+        border-color: rgba(2, 132, 199, 0.45);
+        color: #0f172a;
+      }
+      body.theme-light .tv-sofa-btn {
+        background: rgba(226, 232, 240, 0.92);
+        color: #0f172a;
+        border-color: rgba(100, 116, 139, 0.35);
+      }
+      body.theme-cyberpunk #tvSofaRemoteDock {
+        background: rgba(10, 6, 24, 0.95);
+        border-color: rgba(0, 240, 255, 0.55);
+      }
     </style>
     <!-- @TMA_STATIC_CSS_END -->
   </head>

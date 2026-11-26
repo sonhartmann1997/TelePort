@@ -12,7 +12,10 @@
     "crons": ["*/2 * * * *"]
   },
   "vars": {
-    "WEBHOOK_URL": "https://teleport.sonhartmann-1997.workers.dev/"
+    "WEBHOOK_URL": "https://teleport.sonhartmann-1997.workers.dev/",
+    "APK_VERSION": "1.0.0",
+    "APK_GITHUB_REPO": "",
+    "APK_DOWNLOAD_URL": ""
   },
   "d1_databases": [
     {

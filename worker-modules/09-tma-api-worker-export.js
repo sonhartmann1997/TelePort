@@ -13,6 +13,237 @@
     return `"tma-${s.length}-${(h >>> 0).toString(36)}"`;
   }
 
+  let tvSyncD1SchemaReady = false;
+  const tvSyncMemoryPairs = new Map();
+  const tvSyncMemoryRooms = new Map();
+  const tvPairApproveRateMap = new Map();
+
+  function isSafeExternalHttpsUrl(rawUrl) {
+    try {
+      const parsed = new URL(String(rawUrl || "").trim());
+      if (parsed.protocol !== "https:") return false;
+      const host = String(parsed.hostname || "").toLowerCase();
+      if (!host || host === "localhost" || host === "0.0.0.0" || host === "::1" || host.endsWith(".local")) return false;
+      if (/^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return false;
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function resolveApkDistributionConfig(env, origin = "") {
+    const version = String(env?.APK_VERSION || "1.0.0").trim().slice(0, 24) || "1.0.0";
+    const directRaw = String(env?.APK_DOWNLOAD_URL || "").trim();
+    const repoRaw = String(env?.APK_GITHUB_REPO || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/^\/+|\/+$/g, "");
+    let downloadUrl = "";
+    let releasePageUrl = "";
+    if (directRaw && isSafeExternalHttpsUrl(directRaw)) {
+      downloadUrl = directRaw;
+    } else if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoRaw)) {
+      downloadUrl = `https://github.com/${repoRaw}/releases/download/latest-apk/TelePort-Universal.apk`;
+      releasePageUrl = `https://github.com/${repoRaw}/releases/tag/latest-apk`;
+    }
+    const cleanOrigin = String(origin || "").replace(/\/+$/, "");
+    return {
+      configured: Boolean(downloadUrl),
+      version,
+      repo: /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoRaw) ? repoRaw : "",
+      downloadUrl,
+      releasePageUrl,
+      shortDownloadUrl: cleanOrigin ? `${cleanOrigin}/download/teleport.apk` : "/download/teleport.apk"
+    };
+  }
+
+  function escapeApkHtmlText(val) {
+    return String(val || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderApkDownloadPageHtml(cfg, origin = "") {
+    const safeOrigin = escapeApkHtmlText(String(origin || "").replace(/\/+$/, ""));
+    const safeShortUrl = escapeApkHtmlText(cfg.shortDownloadUrl);
+    const safeVer = escapeApkHtmlText(cfg.version);
+    const primaryCta = cfg.configured
+      ? `<a class="btn-primary" href="/download/teleport.apk">TelePort-Universal.apk herunterladen (v${safeVer})</a>`
+      : `<div class="notice"><strong>Fast fertig:</strong> Hinterlege in Cloudflare unter <code>Workers &rarr; Variablen</code> den Wert <code>APK_GITHUB_REPO</code> (z. B. <code>deinname/teleport</code>) oder <code>APK_DOWNLOAD_URL</code>, sobald der erste GitHub-Actions-Build durchgelaufen ist.</div>`;
+    const releaseLink = cfg.releasePageUrl
+      ? `<a class="btn-ghost" href="${escapeApkHtmlText(cfg.releasePageUrl)}" target="_blank" rel="noopener noreferrer">Alle GitHub-Releases anzeigen</a>`
+      : "";
+    return `<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>TelePort Android &amp; Fire TV APK</title>
+  <meta name="theme-color" content="#060a14" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      background: radial-gradient(circle at 20% 0%, #0f213d 0%, #060a14 58%);
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      line-height: 1.55;
+    }
+    .wrap {
+      width: 100%;
+      max-width: 740px;
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid rgba(56, 189, 248, 0.22);
+      border-radius: 20px;
+      padding: 28px 24px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .brand-icon {
+      width: 44px; height: 44px; border-radius: 12px;
+      background: linear-gradient(135deg, #0284c7, #4338ca);
+      display: grid; place-items: center; font-weight: 900; font-size: 20px; color: #fff;
+    }
+    h1 { margin: 0; font-size: clamp(22px, 4vw, 30px); font-weight: 800; letter-spacing: -0.02em; }
+    .sub { color: #94a3b8; font-size: 14px; margin: 4px 0 20px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+    .btn-primary, .btn-ghost {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 48px; padding: 12px 20px; border-radius: 12px;
+      font-weight: 700; font-size: 15px; text-decoration: none; cursor: pointer; border: 1px solid transparent;
+    }
+    .btn-primary { background: linear-gradient(135deg, #0284c7, #2563eb); color: #fff; }
+    .btn-ghost { background: rgba(30, 41, 59, 0.9); color: #e2e8f0; border-color: rgba(148, 163, 184, 0.28); }
+    .notice {
+      width: 100%; padding: 14px 16px; border-radius: 12px;
+      background: rgba(14, 165, 233, 0.12); border: 1px solid rgba(56, 189, 248, 0.35);
+      color: #e0f2fe; font-size: 14px;
+    }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .box {
+      background: rgba(6, 10, 20, 0.6); border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 14px; padding: 16px;
+    }
+    .box h2 { margin: 0 0 8px; font-size: 16px; color: #38bdf8; }
+    .box ol, .box ul { margin: 0; padding-left: 18px; color: #cbd5e1; font-size: 13.5px; }
+    .box li { margin-bottom: 6px; }
+    .url-box {
+      display: flex; align-items: center; gap: 8px; margin: 10px 0 12px;
+      background: #060a14; border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 10px; padding: 10px 12px; font-family: ui-monospace, monospace; font-size: 13px;
+      color: #7dd3fc; word-break: break-all;
+    }
+    .copy-btn {
+      margin-left: auto; flex-shrink: 0; min-height: 36px; padding: 6px 12px;
+      border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.45);
+      background: rgba(2, 132, 199, 0.2); color: #e0f2fe; font-weight: 700; cursor: pointer;
+    }
+    code { background: rgba(15, 23, 42, 0.9); padding: 2px 6px; border-radius: 6px; color: #7dd3fc; font-size: 12.5px; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="brand">
+      <div class="brand-icon">T</div>
+      <div>
+        <h1>TelePort Universal-APK</h1>
+        <div class="sub">Android Smartphone · Android TV · Google TV · Amazon Fire TV Stick · 32- &amp; 64-Bit</div>
+      </div>
+    </div>
+    <div class="actions">
+      ${primaryCta}
+      ${releaseLink}
+      <a class="btn-ghost" href="/app">Web-App öffnen</a>
+    </div>
+    <div class="url-box">
+      <span id="shortApkUrl">${safeShortUrl}</span>
+      <button type="button" class="copy-btn" onclick="navigator.clipboard&&navigator.clipboard.writeText(document.getElementById('shortApkUrl').textContent).then(()=>{this.textContent='Kopiert';setTimeout(()=>this.textContent='Kopieren',1600)})">Kopieren</button>
+    </div>
+    <div class="grid">
+      <section class="box">
+        <h2>Fire TV Stick &amp; Android TV</h2>
+        <ol>
+          <li>App <strong>Downloader</strong> (von AFTVnews) öffnen.</li>
+          <li>Obigen Kurz-Link eingeben und APK installieren.</li>
+          <li>Beim Erststart den <strong>QR-Code am TV</strong> mit dem Handy scannen und <code>${safeOrigin}</code> direkt senden — ohne Tippen.</li>
+          <li>Im Konto-Menü den <strong>6-stelligen TV-Code</strong> am Handy bestätigen.</li>
+        </ol>
+      </section>
+      <section class="box">
+        <h2>Android Smartphone &amp; Tablet</h2>
+        <ul>
+          <li>APK herunterladen und Installation aus dieser Quelle erlauben.</li>
+          <li>Beim Erststart deine Server-URL <code>${safeOrigin}</code> eingeben.</li>
+          <li>Alle Katalog- &amp; Design-Updates laden danach automatisch live.</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+</body>
+</html>`;
+  }
+
+  function sanitizeTvSyncDeviceId(raw) {
+    const clean = String(raw || "").trim().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 48);
+    return clean.length >= 4 ? clean : "";
+  }
+
+  function generateCryptoDigits(len = 6) {
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    let out = "";
+    for (let i = 0; i < len; i++) {
+      out += String(bytes[i] % 10);
+    }
+    if (out.startsWith("0")) out = String((bytes[0] % 9) + 1) + out.slice(1);
+    return out;
+  }
+
+  function generateCryptoHex(byteCount = 24) {
+    const bytes = new Uint8Array(byteCount);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function ensureTvSyncD1Tables(env) {
+    if (tvSyncD1SchemaReady || !env?.DB) return;
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS tma_tv_login_pairs (
+          code TEXT PRIMARY KEY,
+          claim_token TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL DEFAULT 'pending',
+          telegram_id TEXT,
+          approved_user_json TEXT,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL
+        )`),
+        env.DB.prepare(`CREATE TABLE IF NOT EXISTS tma_tv_sync_rooms (
+          room_key TEXT PRIMARY KEY,
+          telegram_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          device_id TEXT NOT NULL,
+          device_label TEXT NOT NULL DEFAULT '',
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          seq INTEGER NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL
+        )`),
+        env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_tma_tv_sync_user_kind ON tma_tv_sync_rooms (telegram_id, kind, expires_at)`)
+      ]);
+      tvSyncD1SchemaReady = true;
+    } catch (e) {
+      console.error("[tv-sync] D1 schema init warning:", e);
+    }
+  }
+
   function attachWorkerDiagHeader(res, path) {
     try {
       if (!res || !String(path || "").startsWith("/api/tma/")) return res;
@@ -128,6 +359,7 @@
 
     if (path === "/manifest.json" || path === "/manifest.webmanifest") {
       const pwaManifest = {
+        id: "/",
         name: "TelePort",
         short_name: "TelePort",
         description: "Exklusive Filme, Serien & Trailer direkt im Stream.",
@@ -152,6 +384,50 @@
           ...corsHeaders,
           "Content-Type": "application/manifest+json; charset=utf-8",
           "Cache-Control": "public, max-age=86400"
+        }
+      });
+    }
+
+    if (path === "/api/apk/version" && request.method === "GET") {
+      const apkCfg = resolveApkDistributionConfig(env, url.origin);
+      return new Response(JSON.stringify({
+        ok: true,
+        version: apkCfg.version,
+        configured: apkCfg.configured,
+        downloadPath: "/download/teleport.apk",
+        releasePageUrl: apkCfg.releasePageUrl || null
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "public, max-age=3600, stale-while-revalidate=86400"
+        }
+      });
+    }
+
+    if (path === "/download/teleport.apk" && (request.method === "GET" || request.method === "HEAD")) {
+      const apkCfg = resolveApkDistributionConfig(env, url.origin);
+      const targetLocation = (apkCfg.configured && apkCfg.downloadUrl)
+        ? apkCfg.downloadUrl
+        : `${url.origin}/apk?setup=1`;
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Location": targetLocation,
+          "Cache-Control": "public, max-age=300",
+          "X-Robots-Tag": "noindex"
+        }
+      });
+    }
+
+    if (path === "/apk" && request.method === "GET") {
+      const apkCfg = resolveApkDistributionConfig(env, url.origin);
+      return new Response(renderApkDownloadPageHtml(apkCfg, url.origin), {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "public, max-age=300, stale-while-revalidate=3600"
         }
       });
     }
@@ -890,6 +1166,409 @@
         }
 
         return new Response(JSON.stringify({ ok: false, error: "Unbekannte 2FA-Aktion." }), { status: 400, headers: corsHeaders });
+      }
+
+      // 4b. 1-Klick TV-Anmeldung vom Handy (6-stelliger Einmal-Code, 180s TTL, rein D1 -> 0 KV-Writes!)
+      if (path === "/api/tma/auth/tv-pair/start" && request.method === "POST") {
+        await ensureTvSyncD1Tables(env);
+        const now = Date.now();
+        const expiresAt = now + 180000;
+        const claimToken = generateCryptoHex(32);
+        let code = generateCryptoDigits(6);
+        if (env?.DB) {
+          await env.DB.prepare("DELETE FROM tma_tv_login_pairs WHERE expires_at <= ?").bind(now).run().catch(() => {});
+          for (let attempt = 0; attempt < 4; attempt++) {
+            try {
+              await env.DB.prepare(
+                "INSERT INTO tma_tv_login_pairs (code, claim_token, status, attempts, created_at, expires_at) VALUES (?, ?, 'pending', 0, ?, ?)"
+              ).bind(code, claimToken, now, expiresAt).run();
+              break;
+            } catch (_dup) {
+              code = generateCryptoDigits(6);
+            }
+          }
+        } else {
+          for (const [k, v] of tvSyncMemoryPairs.entries()) {
+            if (!v || v.expiresAt <= now) tvSyncMemoryPairs.delete(k);
+          }
+          tvSyncMemoryPairs.set(code, { code, claimToken, status: "pending", attempts: 0, createdAt: now, expiresAt });
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          code,
+          claimToken,
+          expiresAt,
+          ttlSec: 180
+        }), { status: 200, headers: corsHeaders });
+      }
+
+      if (path === "/api/tma/auth/tv-pair/approve" && request.method === "POST") {
+        if (!auth.isAuthenticated || !auth.chatId) {
+          return new Response(JSON.stringify({ ok: false, error: "Bitte zuerst auf diesem Gerät einloggen." }), { status: 401, headers: corsHeaders });
+        }
+        await ensureTvSyncD1Tables(env);
+        const body = await request.json().catch(() => ({}));
+        const code = String(body.code || "").replace(/[^0-9]/g, "").trim();
+        if (!/^\d{6}$/.test(code)) {
+          return new Response(JSON.stringify({ ok: false, error: "Bitte einen gültigen 6-stelligen TV-Code eingeben." }), { status: 400, headers: corsHeaders });
+        }
+        const now = Date.now();
+        const approveOwnerKey = String(auth.user?.telegramId || auth.chatId);
+        const rateEntry = tvPairApproveRateMap.get(approveOwnerKey);
+        if (rateEntry && rateEntry.resetAt > now && rateEntry.fails >= 5) {
+          return new Response(JSON.stringify({ ok: false, error: "Zu viele Fehlversuche. Bitte 60 Sekunden warten." }), { status: 429, headers: corsHeaders });
+        }
+        const recordApproveFail = () => {
+          const cur = tvPairApproveRateMap.get(approveOwnerKey);
+          if (!cur || cur.resetAt <= now) {
+            tvPairApproveRateMap.set(approveOwnerKey, { fails: 1, resetAt: now + 60000 });
+          } else {
+            cur.fails += 1;
+          }
+        };
+        const approvedPayload = {
+          id: approveOwnerKey,
+          username: String(auth.user?.tgUsername || ""),
+          first_name: String(auth.user?.firstName || auth.user?.customUsername || "TelePort")
+        };
+        if (env?.DB) {
+          const row = await env.DB.prepare(
+            "SELECT code, status, attempts, expires_at FROM tma_tv_login_pairs WHERE code = ?"
+          ).bind(code).first();
+          if (!row || Number(row.expires_at || 0) <= now) {
+            if (row) await env.DB.prepare("DELETE FROM tma_tv_login_pairs WHERE code = ?").bind(code).run().catch(() => {});
+            recordApproveFail();
+            return new Response(JSON.stringify({ ok: false, error: "TV-Code abgelaufen oder nicht gefunden." }), { status: 404, headers: corsHeaders });
+          }
+          if (row.status !== "pending" || Number(row.attempts || 0) >= 5) {
+            recordApproveFail();
+            return new Response(JSON.stringify({ ok: false, error: "TV-Code wurde bereits verwendet oder gesperrt." }), { status: 409, headers: corsHeaders });
+          }
+          await env.DB.prepare(
+            "UPDATE tma_tv_login_pairs SET status = 'approved', telegram_id = ?, approved_user_json = ?, attempts = attempts + 1 WHERE code = ? AND status = 'pending'"
+          ).bind(approvedPayload.id, JSON.stringify(approvedPayload), code).run();
+        } else {
+          const memRow = tvSyncMemoryPairs.get(code);
+          if (!memRow || memRow.expiresAt <= now) {
+            tvSyncMemoryPairs.delete(code);
+            recordApproveFail();
+            return new Response(JSON.stringify({ ok: false, error: "TV-Code abgelaufen oder nicht gefunden." }), { status: 404, headers: corsHeaders });
+          }
+          if (memRow.status !== "pending" || memRow.attempts >= 5) {
+            recordApproveFail();
+            return new Response(JSON.stringify({ ok: false, error: "TV-Code wurde bereits verwendet oder gesperrt." }), { status: 409, headers: corsHeaders });
+          }
+          memRow.status = "approved";
+          memRow.telegramId = approvedPayload.id;
+          memRow.approvedUser = approvedPayload;
+          memRow.attempts += 1;
+        }
+        tvPairApproveRateMap.delete(approveOwnerKey);
+        return new Response(JSON.stringify({ ok: true, approved: true }), { status: 200, headers: corsHeaders });
+      }
+
+      if (path === "/api/tma/auth/tv-pair/poll" && request.method === "POST") {
+        await ensureTvSyncD1Tables(env);
+        const body = await request.json().catch(() => ({}));
+        const claimToken = String(body.claimToken || "").trim();
+        if (!/^[a-f0-9]{32,128}$/i.test(claimToken)) {
+          return new Response(JSON.stringify({ ok: false, error: "Ungültiger Abruf-Token." }), { status: 400, headers: corsHeaders });
+        }
+        const now = Date.now();
+        let row = null;
+        if (env?.DB) {
+          row = await env.DB.prepare(
+            "SELECT code, claim_token, status, telegram_id, approved_user_json, expires_at FROM tma_tv_login_pairs WHERE claim_token = ?"
+          ).bind(claimToken).first();
+        } else {
+          for (const item of tvSyncMemoryPairs.values()) {
+            if (item && item.claimToken === claimToken) { row = item; break; }
+          }
+        }
+        const exp = Number(row?.expires_at || row?.expiresAt || 0);
+        if (!row || exp <= now) {
+          if (row) {
+            if (env?.DB) await env.DB.prepare("DELETE FROM tma_tv_login_pairs WHERE claim_token = ?").bind(claimToken).run().catch(() => {});
+            else tvSyncMemoryPairs.delete(row.code);
+          }
+          return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
+        }
+        if (row.status === "approved" && (row.telegram_id || row.telegramId)) {
+          // Einmal-Einlösung: atomar löschen, bevor Token ausgestellt wird (Replay-Schutz)
+          if (env?.DB) {
+            const delRes = await env.DB.prepare(
+              "DELETE FROM tma_tv_login_pairs WHERE claim_token = ? AND status = 'approved'"
+            ).bind(claimToken).run();
+            if (delRes?.meta && Number(delRes.meta.changes || 0) === 0) {
+              return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
+            }
+          } else {
+            tvSyncMemoryPairs.delete(row.code);
+          }
+          let parsedUser = row.approvedUser || null;
+          if (!parsedUser && row.approved_user_json) {
+            try { parsedUser = JSON.parse(row.approved_user_json); } catch (_e) {}
+          }
+          const tgIdStr = String(row.telegram_id || row.telegramId || parsedUser?.id || "");
+          const userObj = {
+            id: tgIdStr,
+            username: String(parsedUser?.username || ""),
+            first_name: String(parsedUser?.first_name || "TelePort")
+          };
+          const userProfile = await upsertTelegramUserInD1(env, userObj);
+          const sessionToken = await signTmaSessionToken({
+            telegramId: tgIdStr,
+            tgUsername: userProfile?.tgUsername || userObj.username || "",
+            firstName: userProfile?.firstName || userObj.first_name || "",
+            isAdmin: Boolean(userProfile?.isAdmin),
+            isVip: Boolean(userProfile?.isVip),
+            authMethod: "tv_pair",
+            hasInitData: false
+          }, env);
+          return new Response(JSON.stringify({
+            ok: true,
+            status: "confirmed",
+            isAuthenticated: true,
+            user: userProfile,
+            sessionToken
+          }), { status: 200, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({ ok: true, status: "pending" }), { status: 200, headers: corsHeaders });
+      }
+
+      // 4c. Konto-gekoppelter Handy -> TV Live-Sync (Präsenz, WebRTC-Signaling & Fallback-Relay, rein D1 -> 0 KV-Writes!)
+      if (path.startsWith("/api/tma/tv-sync/")) {
+        if (!auth.isAuthenticated || !auth.chatId) {
+          return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Bitte einloggen, um Geräte im selben Konto zu verbinden." }), { status: 401, headers: corsHeaders });
+        }
+        await ensureTvSyncD1Tables(env);
+        const ownerId = String(auth.user?.telegramId || auth.chatId).trim();
+        const now = Date.now();
+        const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
+
+        if (path === "/api/tma/tv-sync/presence") {
+          const action = String(body.action || (request.method === "GET" ? "list" : "")).trim();
+          if (action === "register") {
+            const deviceId = sanitizeTvSyncDeviceId(body.deviceId);
+            if (!deviceId) {
+              return new Response(JSON.stringify({ ok: false, error: "Ungültige deviceId" }), { status: 400, headers: corsHeaders });
+            }
+            const deviceLabel = String(body.deviceLabel || "TV").trim().slice(0, 40) || "TV";
+            const platform = String(body.platform || "tv").trim().slice(0, 24);
+            const roomKey = `presence:${ownerId}:${deviceId}`;
+            const expiresAt = now + 240000;
+            const payloadStr = JSON.stringify({ platform, allowRemote: true });
+            if (env?.DB) {
+              await env.DB.batch([
+                env.DB.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND expires_at <= ?").bind(ownerId, now),
+                env.DB.prepare(
+                  "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'presence', ?, ?, ?, 0, ?, ?) ON CONFLICT(room_key) DO UPDATE SET device_label = excluded.device_label, payload_json = excluded.payload_json, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
+                ).bind(roomKey, ownerId, deviceId, deviceLabel, payloadStr, now, expiresAt)
+              ]);
+            } else {
+              tvSyncMemoryRooms.set(roomKey, { room_key: roomKey, telegram_id: ownerId, kind: "presence", device_id: deviceId, device_label: deviceLabel, payload_json: payloadStr, seq: 0, updated_at: now, expires_at: expiresAt });
+            }
+            return new Response(JSON.stringify({ ok: true, deviceId, deviceLabel, expiresAt }), { status: 200, headers: corsHeaders });
+          }
+
+          if (action === "unregister") {
+            const deviceId = sanitizeTvSyncDeviceId(body.deviceId);
+            if (deviceId) {
+              if (env?.DB) {
+                await env.DB.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND device_id = ?").bind(ownerId, deviceId).run().catch(() => {});
+              } else {
+                tvSyncMemoryRooms.delete(`presence:${ownerId}:${deviceId}`);
+                tvSyncMemoryRooms.delete(`signal:${ownerId}:${deviceId}`);
+                tvSyncMemoryRooms.delete(`state:${ownerId}:${deviceId}`);
+              }
+            }
+            return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
+          }
+
+          // action === "list"
+          let rows = [];
+          if (env?.DB) {
+            const q = await env.DB.prepare(
+              "SELECT device_id, device_label, payload_json, updated_at, expires_at FROM tma_tv_sync_rooms WHERE telegram_id = ? AND kind = 'presence' AND expires_at > ? ORDER BY updated_at DESC LIMIT 10"
+            ).bind(ownerId, now).all();
+            rows = Array.isArray(q?.results) ? q.results : [];
+          } else {
+            for (const item of tvSyncMemoryRooms.values()) {
+              if (item.telegram_id === ownerId && item.kind === "presence" && item.expires_at > now) rows.push(item);
+            }
+            rows.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+          }
+          const devices = rows.map((r) => {
+            let meta = {};
+            try { meta = JSON.parse(r.payload_json || "{}"); } catch (_e) {}
+            return {
+              deviceId: r.device_id,
+              deviceLabel: r.device_label || "TV",
+              platform: meta.platform || "tv",
+              updatedAt: Number(r.updated_at || 0)
+            };
+          });
+          return new Response(JSON.stringify({ ok: true, devices }), { status: 200, headers: corsHeaders });
+        }
+
+        if (path === "/api/tma/tv-sync/signal" && request.method === "POST") {
+          const action = String(body.action || "").trim();
+          const targetTvId = sanitizeTvSyncDeviceId(body.targetTvId || body.deviceId);
+          if (!targetTvId) {
+            return new Response(JSON.stringify({ ok: false, error: "targetTvId fehlt" }), { status: 400, headers: corsHeaders });
+          }
+          const roomKey = `signal:${ownerId}:${targetTvId}`;
+          const expiresAt = now + 90000;
+
+          const loadSignalRow = async () => {
+            if (env?.DB) {
+              const r = await env.DB.prepare("SELECT payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?").bind(roomKey, ownerId).first();
+              if (!r || Number(r.expires_at || 0) <= now) return null;
+              try { return { data: JSON.parse(r.payload_json || "{}"), seq: Number(r.seq || 0), updatedAt: Number(r.updated_at || 0) }; } catch (_e) { return null; }
+            }
+            const m = tvSyncMemoryRooms.get(roomKey);
+            if (!m || m.expires_at <= now) return null;
+            try { return { data: JSON.parse(m.payload_json || "{}"), seq: Number(m.seq || 0), updatedAt: Number(m.updated_at || 0) }; } catch (_e) { return null; }
+          };
+
+          const saveSignalRow = async (dataObj, nextSeq) => {
+            const payloadStr = JSON.stringify(dataObj);
+            if (payloadStr.length > 16384) {
+              throw new Error("SIGNAL_TOO_LARGE");
+            }
+            if (env?.DB) {
+              await env.DB.prepare(
+                "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'signal', ?, '', ?, ?, ?, ?) ON CONFLICT(room_key) DO UPDATE SET payload_json = excluded.payload_json, seq = excluded.seq, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
+              ).bind(roomKey, ownerId, targetTvId, payloadStr, nextSeq, now, expiresAt).run();
+            } else {
+              tvSyncMemoryRooms.set(roomKey, { room_key: roomKey, telegram_id: ownerId, kind: "signal", device_id: targetTvId, device_label: "", payload_json: payloadStr, seq: nextSeq, updated_at: now, expires_at: expiresAt });
+            }
+          };
+
+          if (action === "clear") {
+            if (env?.DB) await env.DB.prepare("DELETE FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?").bind(roomKey, ownerId).run().catch(() => {});
+            else tvSyncMemoryRooms.delete(roomKey);
+            return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
+          }
+
+          if (action === "offer") {
+            const controllerId = sanitizeTvSyncDeviceId(body.controllerId) || "phone";
+            const offer = body.offer && typeof body.offer === "object" ? { type: String(body.offer.type || "offer"), sdp: String(body.offer.sdp || "").slice(0, 8192) } : null;
+            if (!offer || !offer.sdp) {
+              return new Response(JSON.stringify({ ok: false, error: "SDP-Offer fehlt" }), { status: 400, headers: corsHeaders });
+            }
+            const nextObj = {
+              controllerId,
+              controllerLabel: String(body.controllerLabel || "Smartphone").slice(0, 36),
+              offer,
+              answer: null,
+              offerIce: Array.isArray(body.ice) ? body.ice.slice(0, 16) : [],
+              answerIce: [],
+              createdAt: now
+            };
+            try {
+              await saveSignalRow(nextObj, 1);
+            } catch (_e) {
+              return new Response(JSON.stringify({ ok: false, error: "Signaling-Nutzlast zu groß" }), { status: 413, headers: corsHeaders });
+            }
+            return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
+          }
+
+          if (action === "answer") {
+            const cur = await loadSignalRow();
+            if (!cur) return new Response(JSON.stringify({ ok: false, error: "Kein aktives Offer gefunden" }), { status: 404, headers: corsHeaders });
+            const answer = body.answer && typeof body.answer === "object" ? { type: String(body.answer.type || "answer"), sdp: String(body.answer.sdp || "").slice(0, 8192) } : null;
+            if (!answer || !answer.sdp) return new Response(JSON.stringify({ ok: false, error: "SDP-Answer fehlt" }), { status: 400, headers: corsHeaders });
+            cur.data.answer = answer;
+            if (Array.isArray(body.ice)) {
+              cur.data.answerIce = [...(cur.data.answerIce || []), ...body.ice].slice(0, 24);
+            }
+            try {
+              await saveSignalRow(cur.data, cur.seq + 1);
+            } catch (_e) {
+              return new Response(JSON.stringify({ ok: false, error: "Signaling-Nutzlast zu groß" }), { status: 413, headers: corsHeaders });
+            }
+            return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
+          }
+
+          if (action === "ice") {
+            const cur = await loadSignalRow();
+            if (!cur) return new Response(JSON.stringify({ ok: true, ignored: true }), { status: 200, headers: corsHeaders });
+            const side = body.side === "answer" ? "answerIce" : "offerIce";
+            const incoming = Array.isArray(body.ice) ? body.ice.slice(0, 12) : (body.candidate ? [body.candidate] : []);
+            cur.data[side] = [...(cur.data[side] || []), ...incoming].slice(0, 24);
+            try {
+              await saveSignalRow(cur.data, cur.seq + 1);
+            } catch (_e) {}
+            return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
+          }
+
+          // action === "poll"
+          const cur = await loadSignalRow();
+          return new Response(JSON.stringify({
+            ok: true,
+            signal: cur ? cur.data : null,
+            seq: cur ? cur.seq : 0
+          }), { status: 200, headers: corsHeaders });
+        }
+
+        if (path === "/api/tma/tv-sync/state" && request.method === "POST") {
+          const action = String(body.action || "").trim();
+          const targetTvId = sanitizeTvSyncDeviceId(body.targetTvId || body.deviceId);
+          if (!targetTvId) {
+            return new Response(JSON.stringify({ ok: false, error: "targetTvId fehlt" }), { status: 400, headers: corsHeaders });
+          }
+          const roomKey = `state:${ownerId}:${targetTvId}`;
+
+          if (action === "push") {
+            const eventObj = body.event && typeof body.event === "object" ? body.event : null;
+            if (!eventObj || !eventObj.type) {
+              return new Response(JSON.stringify({ ok: false, error: "Event fehlt" }), { status: 400, headers: corsHeaders });
+            }
+            const payloadStr = JSON.stringify(eventObj);
+            if (payloadStr.length > 8192) {
+              return new Response(JSON.stringify({ ok: false, error: "Event-Nutzlast zu groß" }), { status: 413, headers: corsHeaders });
+            }
+            const expiresAt = now + 120000;
+            let seq = 1;
+            if (env?.DB) {
+              const upRow = await env.DB.prepare(
+                "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'state', ?, '', ?, 1, ?, ?) ON CONFLICT(room_key) DO UPDATE SET payload_json = excluded.payload_json, seq = tma_tv_sync_rooms.seq + 1, updated_at = excluded.updated_at, expires_at = excluded.expires_at RETURNING seq"
+              ).bind(roomKey, ownerId, targetTvId, payloadStr, now, expiresAt).first();
+              seq = Number(upRow?.seq || 1);
+            } else {
+              const prev = tvSyncMemoryRooms.get(roomKey);
+              seq = Number(prev?.seq || 0) + 1;
+              tvSyncMemoryRooms.set(roomKey, { room_key: roomKey, telegram_id: ownerId, kind: "state", device_id: targetTvId, device_label: "", payload_json: payloadStr, seq, updated_at: now, expires_at: expiresAt });
+            }
+            return new Response(JSON.stringify({ ok: true, seq }), { status: 200, headers: corsHeaders });
+          }
+
+          // action === "poll"
+          const sinceSeq = Number(body.sinceSeq || 0);
+          let row = null;
+          if (env?.DB) {
+            row = await env.DB.prepare(
+              "SELECT payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?"
+            ).bind(roomKey, ownerId).first();
+          } else {
+            row = tvSyncMemoryRooms.get(roomKey) || null;
+          }
+          if (!row || Number(row.expires_at || 0) <= now || Number(row.seq || 0) <= sinceSeq) {
+            return new Response(JSON.stringify({ ok: true, hasUpdate: false, seq: Number(row?.seq || sinceSeq) }), { status: 200, headers: corsHeaders });
+          }
+          let evData = null;
+          try { evData = JSON.parse(row.payload_json || "null"); } catch (_e) {}
+          return new Response(JSON.stringify({
+            ok: true,
+            hasUpdate: Boolean(evData),
+            seq: Number(row.seq || 0),
+            event: evData,
+            updatedAt: Number(row.updated_at || 0)
+          }), { status: 200, headers: corsHeaders });
+        }
+
+        return new Response(JSON.stringify({ ok: false, error: "Unbekannte TV-Sync-Route" }), { status: 404, headers: corsHeaders });
       }
 
       // 5. Admin-Panel Endpunkte (User-Liste, VIP-Status Toggle, Smart Playlist Manager, Film/Serien CRUD & 100k+ Backup-Importer)
@@ -7043,6 +7722,9 @@
         if (
           url.pathname === "/app" ||
           url.pathname === "/miniapp" ||
+          url.pathname === "/apk" ||
+          url.pathname === "/download/teleport.apk" ||
+          url.pathname === "/api/apk/version" ||
           url.pathname === "/favicon.ico" ||
           url.pathname === "/favicon.svg" ||
           url.pathname === "/botfather-splash.svg" ||

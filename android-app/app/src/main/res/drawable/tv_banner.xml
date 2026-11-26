@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <!-- Deep cinema slate background -->
+    <path
+        android:fillColor="#060A14"
+        android:pathData="M0,0h320v180h-320z" />
+    <!-- Subtle luminous horizon panel -->
+    <path
+        android:fillColor="#0F1D36"
+        android:pathData="M0,0h320v96c-64,22 -140,30 -320,10z" />
+    <!-- Outer portal accent ring -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M112,90m-42,0a42,42 0,1 1,84 0a42,42 0,1 1,-84 0"
+        android:strokeWidth="4"
+        android:strokeColor="#38BDF8" />
+    <!-- Inner indigo portal disc -->
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M112,90m-33,0a33,33 0,1 1,66 0a33,33 0,1 1,-66 0" />
+    <!-- Crisp geometric T emblem -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M93,73h38v10h-14v27h-10v-27h-14z" />
+    <!-- Minimal horizontal cinema accent bars representing TelePort wordmark block -->
+    <path
+        android:fillColor="#F8FAFC"
+        android:pathData="M174,73h92v11h-92z" />
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M174,94h64v7h-64z" />
+    <path
+        android:fillColor="#64748B"
+        android:pathData="M174,109h46v5h-46z" />
+</vector>

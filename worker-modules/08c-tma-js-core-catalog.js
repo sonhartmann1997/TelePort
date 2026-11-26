@@ -582,6 +582,9 @@
         if (state && state.sidebarOpen && typeof renderFilterSidebarContent === "function") {
           renderFilterSidebarContent(false);
         }
+        if (typeof window.onTelePortAuthChanged === "function") {
+          try { window.onTelePortAuthChanged(); } catch (_e) {}
+        }
       }
 
       // =========================================================================
@@ -967,13 +970,24 @@
         const ua = String(navigator.userAgent || "").toLowerCase();
         const w = window.innerWidth || 1024;
         const maxTouch = Number(navigator.maxTouchPoints || 0);
-        const isFireTv = /\\baft[a-z0-9]{1,5}\\b|fire\\s?tv/i.test(ua) || (/\\bsilk\\b/i.test(ua) && !/mobile/i.test(ua) && maxTouch === 0 && w >= 900);
-        const isSmartTv = isFireTv || /android.*tv|smart-tv|smarttv|googletv|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua);
+        const nativeBridge = (typeof window !== "undefined" && window.TelePortNative) ? window.TelePortNative : null;
+        let nativePlatform = "";
+        try {
+          if (nativeBridge && typeof nativeBridge.getPlatform === "function") {
+            nativePlatform = String(nativeBridge.getPlatform() || "").toLowerCase();
+          }
+        } catch (_e) {}
+        const isApkUa = /teleportapk\\//i.test(ua) || Boolean(nativeBridge);
+        const isFireTv = nativePlatform === "firetv" || /teleportapk\\/[^\\s]+.*\\bfiretv\\b/i.test(ua) || /\\baft[a-z0-9]{1,5}\\b|fire\\s?tv/i.test(ua) || (/\\bsilk\\b/i.test(ua) && !/mobile/i.test(ua) && maxTouch === 0 && w >= 900);
+        const isSmartTv = isFireTv || nativePlatform === "androidtv" || /teleportapk\\/[^\\s]+.*\\bandroidtv\\b/i.test(ua) || /android.*tv|smart-tv|smarttv|googletv|bravia|webos|tizen|crkey|playstation|xbox|nintendo/i.test(ua);
         let devType = "desktop";
         let devLabel = "💻 Desktop";
         if (isSmartTv) {
           devType = "tv";
-          devLabel = isFireTv ? "📺 Fire TV" : "📺 Smart-TV / Controller";
+          devLabel = isFireTv ? (isApkUa ? "📺 Fire TV App" : "📺 Fire TV") : (isApkUa ? "📺 Android TV App" : "📺 Smart-TV / Controller");
+        } else if (nativePlatform === "mobile" || /teleportapk\\/[^\\s]+.*\\bmobile\\b/i.test(ua)) {
+          devType = "mobile";
+          devLabel = "📱 TelePort App";
         } else if (/ipad|tablet|playbook|silk/i.test(ua) || (/android/i.test(ua) && !/mobile/i.test(ua))) {
           devType = "tablet";
           devLabel = "📟 Tablet";
@@ -982,6 +996,11 @@
           devLabel = "📱 Mobil";
         }
         document.body.setAttribute("data-device", devType);
+        if (isApkUa) {
+          document.body.setAttribute("data-apk", "1");
+        } else {
+          document.body.removeAttribute("data-apk");
+        }
         if (isFireTv) {
           document.body.setAttribute("data-tv-profile", "firetv");
         } else {
@@ -1089,6 +1108,9 @@
             closeRightMenuOverlayClient(null, false);
           }
           renderFilterSidebarContent(Boolean(state.sidebarTab));
+          if (typeof window.refreshTvSyncDevicesLazyClient === "function") {
+            window.refreshTvSyncDevicesLazyClient(false);
+          }
           if (!state.sidebarTab) {
             const firstCatTab = document.getElementById("sidebarCatTab_genres") || document.querySelector("#sidebarDrawerBody .sidebar-menu-row");
             if (firstCatTab && typeof jumpSpatialFocus === "function") {
@@ -1314,6 +1336,10 @@
                 '<span class="sidebar-menu-row-left">🎥 Trailer-Vorschau</span>' +
                 '<span class="sidebar-menu-row-right">' + (trailerPreviewEnabled ? 'EIN ✓' : 'AUS') + '</span>' +
               '</button>' +
+              '<button type="button" id="sidebarSecBtn_tvsync" data-sb-cat="tvsync" class="sidebar-menu-row ' + (curTab === 'tvsync' ? 'active' : '') + ((typeof window.isPhoneControllingTvClient === 'function' && window.isPhoneControllingTvClient()) ? ' has-inc' : '') + '" onclick="switchSidebarCategoryTab(\\'tvsync\\',true)">' +
+                '<span class="sidebar-menu-row-left">📺 TV-Fernsteuerung</span>' +
+                '<span class="sidebar-menu-row-right">' + (typeof window.getTvSyncSidebarBadgeTextClient === 'function' ? esc(window.getTvSyncSidebarBadgeTextClient()) : 'TV') + ' ▸</span>' +
+              '</button>' +
             '</div>' +
           '</div>' +
 
@@ -1332,6 +1358,20 @@
               '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
                 ((window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.isFullscreen) ? '🗗 Vollbild aus' : '⛶ Vollbild') +
               '</button>' +
+              ((typeof window.isRunningInTelePortApkClient === 'function' && window.isRunningInTelePortApkClient()) ? (
+                '<button class="btn blue" onclick="closeFilterSidebar();openNativeApkServerSettingsClient()" title="Cloudflare-Server-URL ändern, Cache leeren oder App-Infos anzeigen">' +
+                  '🌐 Server-URL & App' +
+                '</button>' +
+                (window._teleportApkUpdateInfo && window._teleportApkUpdateInfo.hasUpdate ? (
+                  '<button class="btn green" onclick="closeFilterSidebar();openApkUpdateDownloadClient()" title="Neue TelePort APK-Version verfügbar">' +
+                    '⬆️ Update v' + esc(window._teleportApkUpdateInfo.latestVersion) +
+                  '</button>'
+                ) : '')
+              ) : (
+                '<a class="btn" href="/apk" target="_blank" rel="noopener noreferrer" onclick="closeFilterSidebar()" title="TelePort Universal-APK für Android, Android TV & Fire TV Stick laden" style="text-decoration:none">' +
+                  '📱 Android / TV APK' +
+                '</a>'
+              )) +
               ((window._tmaHomeScreenStatus === "added" || window._tmaHomeScreenStatus === "unsupported") ? '' : (
                 '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
                   '📲 Home-Icon' +
@@ -1458,6 +1498,11 @@
                   buildScaleRow("🖼️ Cover", "cover", [{l:"80%",v:80},{l:"100%",v:100},{l:"125%",v:125},{l:"150%",v:150}]) +
                   buildScaleRow("🎛️ Menü", "menu", [{l:"85%",v:85},{l:"100%",v:100},{l:"115%",v:115},{l:"125%",v:125}]) +
                 '</div>';
+            } else if (curTab === "tvsync") {
+              subTitle = "📺 TV-Fernsteuerung & Live-Sync";
+              subContentHtml = (typeof window.buildTvSyncSidebarSubPanelHtmlClient === "function")
+                ? window.buildTvSyncSidebarSubPanelHtmlClient()
+                : '<div class="tv-sync-panel-box">TV-Sync wird geladen...</div>';
             }
 
             subPanel.innerHTML =
@@ -1515,6 +1560,9 @@
         if (typeof document !== "undefined" && window._activeBotCodeVisHandler) {
           document.removeEventListener("visibilitychange", window._activeBotCodeVisHandler);
           window._activeBotCodeVisHandler = null;
+        }
+        if (typeof window.stopTvPairPollClient === "function") {
+          window.stopTvPairPollClient();
         }
       }
 
@@ -1748,6 +1796,15 @@
               '</div>' +
               '<button class="btn danger" onclick="logoutWebSession()">🚪 Abmelden</button>' +
             '</div>' +
+          '</div>' +
+          '<div class="panel-box" style="border-color:rgba(56,189,248,0.35)">' +
+            '<div style="font-size:13px;font-weight:800;color:#38bdf8;margin-bottom:4px">📺 Fernseher mit 6-stelligem Code anmelden</div>' +
+            '<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px 0">Zeige auf deinem Fire TV / Android TV den 6-stelligen TV-Code an und bestätige ihn hier mit einem Tipp — kein Passwort-Tippen am TV nötig.</p>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+              '<input id="tvPairApproveCodeInp" class="tma-input" placeholder="6-stelliger TV-Code" maxlength="7" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitTvPairApproveClient()" style="padding:8px 12px;font-size:15px;letter-spacing:3px;font-weight:800;width:190px;text-align:center" />' +
+              '<button type="button" class="btn blue" onclick="submitTvPairApproveClient()">✅ TV freigeben</button>' +
+            '</div>' +
+            '<div id="tvPairApproveFeedback" style="font-size:12px;margin-top:6px"></div>' +
           '</div>';
         } else {
           bodyHtml += '<div class="panel-box" style="border-color:rgba(56,189,248,0.4);background:linear-gradient(145deg,rgba(11,16,33,0.95),rgba(16,16,24,0.96))">' +
@@ -1760,8 +1817,16 @@
             '</div>' +
             (activeTab === "telegram" ? (
               '<div style="display:flex;flex-direction:column;gap:10px">' +
+                '<div style="background:rgba(16,185,129,0.08);border:1px solid rgba(52,211,153,0.38);border-radius:10px;padding:11px">' +
+                  '<div style="font-size:12.5px;font-weight:800;color:#34d399;margin-bottom:4px">📺 1-Klick TV-Anmeldung über dein eingeloggtes Handy</div>' +
+                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
+                    'Erzeugt einen 6-stelligen Code für diesen Fernseher. Gib ihn einfach auf deinem Smartphone unter <b>Konto &rarr; TV freigeben</b> ein:' +
+                  '</div>' +
+                  '<button type="button" class="btn green" onclick="startTvPairLoginClient()">📺 6-stelligen TV-Anmeldecode erzeugen</button>' +
+                  '<div id="tvPairChallengeBox"></div>' +
+                '</div>' +
                 '<div style="background:rgba(14,165,233,0.08);border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:11px">' +
-                  '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">📲 Schnell-Login per 6-stelligem Code oder 1-Klick im Bot (Empfohlen)</div>' +
+                  '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">📲 Schnell-Login per Telegram-Bot (Empfohlen)</div>' +
                   '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
                     'Funktioniert sofort auf jedem Gerät (Smart-TV, PC & Smartphone) ohne Drittanbieter-Cookies:' +
                   '</div>' +
@@ -2204,6 +2269,9 @@
         const stageEl = document.getElementById("detailHeroStageEl");
         if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode") && typeof exitDetailForegroundTrailerModeClient === "function") {
           exitDetailForegroundTrailerModeClient();
+          if (typeof window.notifyTvSyncDetailClosedClient === "function") {
+            window.notifyTvSyncDetailClosedClient(true);
+          }
           return;
         }
         const heroStageEl = document.getElementById("heroStageEl");
@@ -2219,6 +2287,9 @@
         if (typeof activeSeasonReqSeq === "number") activeSeasonReqSeq++;
         if (document.body) document.body.classList.remove("modal-open-pause-hero");
         if (m) m.innerHTML = "";
+        if (typeof window.notifyTvSyncDetailClosedClient === "function") {
+          window.notifyTvSyncDetailClosedClient(false);
+        }
         if (typeof syncTelegramBackButtonClient === "function") {
           syncTelegramBackButtonClient();
         }

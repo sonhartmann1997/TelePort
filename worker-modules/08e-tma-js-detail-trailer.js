@@ -1355,6 +1355,9 @@
         document.body.classList.remove("search-active-dim");
         updateMediaModeIndicatorDom();
         syncSearchGenreSelectDom();
+        if (typeof window.notifyTvSyncViewChangedClient === "function") {
+          window.notifyTvSyncViewChangedClient("discover");
+        }
         const root = document.getElementById("appRoot");
         const companyQueryParam = state.currentCompanyId ? ("&companyId=" + encodeURIComponent(state.currentCompanyId)) : "";
         const discoverUrl = API_BASE + "/discover?type=" + type + "&genreId=" + genreId + "&mode=" + mode + "&sort=" + sort + "&page=" + pageNum + "&bypass=" + (bypass ? "1" : "0") + companyQueryParam;
@@ -1463,6 +1466,9 @@
         }
         state.openFilterDropdown = null;
         state.filtersCollapsedInSearch = false;
+        if (typeof window.notifyTvSyncViewChangedClient === "function") {
+          window.notifyTvSyncViewChangedClient("search");
+        }
         if (typeof clearSearchShortcutReturnCardClient === "function") {
           clearSearchShortcutReturnCardClient();
         }
@@ -3875,8 +3881,9 @@
           return;
         }
 
-        // Wenn die automatische Trailer-Vorschau im Menü deaktiviert wurde -> Ruhiges Szenenbild stehen lassen (Klick auf "🎬 Trailer" bleibt jederzeit aktiv!)
-        if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) {
+        // Wenn die automatische Trailer-Vorschau im Menü deaktiviert wurde ODER das Handy gerade einen TV steuert (Echo-Schutz) -> Ruhiges Szenenbild stehen lassen
+        const phoneControlsTvEchoGuard = Boolean(typeof window.isPhoneControllingTvClient === "function" && window.isPhoneControllingTvClient());
+        if ((typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) || phoneControlsTvEchoGuard) {
           const stageEl = document.getElementById("detailHeroStageEl");
           if (stageEl) {
             const backdropLayer = stageEl.querySelector(".detail-backdrop-layer");
@@ -3891,6 +3898,7 @@
           if (!modalBackdrop || modalBackdrop.scrollTop > 260) return;
           if (document.getElementById("personSpotlightOverlayRoot")?.innerHTML) return;
           if (typeof trailerPreviewEnabled !== "undefined" && !trailerPreviewEnabled) return;
+          if (typeof window.isPhoneControllingTvClient === "function" && window.isPhoneControllingTvClient()) return;
           mountDetailTrailerCandidateAtIndexClient(0, false, 0);
         }, 320);
       }

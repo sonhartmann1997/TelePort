@@ -280,6 +280,9 @@
           '<button type="button" id="modalWishlistBtn" class="detail-btn-glass ' + (d.isSaved ? "saved" : "") + '" onclick="toggleWishlistItem(\\'' + type + '\\',' + Number(d.id) + ')">' +
             (d.isSaved ? "✓ Gespeichert" : "＋ Speichern") +
           '</button>' +
+          ((typeof window.canShowCastToTvButtonClient === "function" && window.canShowCastToTvButtonClient()) ? (
+            '<button type="button" id="detailCastToTvBtn" class="detail-btn-glass detail-btn-tv-cast" onclick="castItemToTvClient(\\'' + type + '\\',' + Number(d.id) + ',\\'' + escJs(d.title || "") + '\\')" title="Diesen Titel direkt auf deinem verbundenen Fernseher öffnen">📺 Auf TV öffnen</button>'
+          ) : '<button type="button" id="detailCastToTvBtn" class="detail-btn-glass detail-btn-tv-cast" style="display:none" onclick="castItemToTvClient(\\'' + type + '\\',' + Number(d.id) + ',\\'' + escJs(d.title || "") + '\\')" title="Diesen Titel direkt auf deinem verbundenen Fernseher öffnen">📺 Auf TV öffnen</button>') +
           (state.openedFromRandom ? (
             '<button type="button" id="modalNextRandomBtn" class="detail-btn-glass" style="border-color:rgba(167,139,250,0.55);color:#ede9fe" onclick="triggerRandom()" title="Direkt den nächsten Zufalls-Tipp mit deinen aktiven Filtern ziehen">🎲 Weiterwürfeln</button>'
           ) : '') +
@@ -619,6 +622,12 @@
           addRecentViewedItem(seedItem, type);
         } else if (id && (preTitle || prePoster)) {
           addRecentViewedItem({ id, title: preTitle, poster_path: prePoster }, type);
+        }
+        if (typeof window.notifyTvSyncDetailOpenedClient === "function") {
+          window.notifyTvSyncDetailOpenedClient(type, Number(id), Boolean(autoOpenTrailer), preTitle || (seedItem && seedItem.title) || "");
+        }
+        if (typeof window.refreshTvSyncDevicesLazyClient === "function") {
+          window.refreshTvSyncDevicesLazyClient(false);
         }
         const vipAllowed = isCurrentUserVip();
         const cacheKey = type + "_" + id + "_" + (vipAllowed ? "vip" : "std");
