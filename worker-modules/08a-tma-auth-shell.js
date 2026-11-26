@@ -9,13 +9,33 @@
   // - Strikter Gast-Modus ohne initData & ohne Account (kein Speicher, kein ID-Zugriff)
   // - Admin-Panel (VIP-Status Toggle & Film/Serien CRUD in D1)
   // ============================================================================
-  function buildTmaCorsHeaders() {
-    return {
-      "Access-Control-Allow-Origin": "*",
+  function buildTmaCorsHeaders(request = null, env = null, selfOrigin = "") {
+    const allowedOrigins = new Set();
+    const addOrigin = (raw) => {
+      const s = String(raw || "").trim();
+      if (!s) return;
+      try {
+        const u = new URL(s.startsWith("http") ? s : `https://${s}`);
+        if (u.origin && u.origin !== "null") allowedOrigins.add(u.origin);
+      } catch (_e) {}
+    };
+    addOrigin(selfOrigin);
+    addOrigin(env?.WEBAPP_URL);
+    addOrigin(env?.WEBHOOK_URL);
+    if (env?.ALLOWED_ORIGINS) {
+      String(env.ALLOWED_ORIGINS).split(",").forEach(addOrigin);
+    }
+    const reqOrigin = request && request.headers ? String(request.headers.get("Origin") || "").trim() : "";
+    const headers = {
       "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Telegram-Init-Data, X-Telegram-Launch-Token, X-Tma-Settings",
+      "Vary": "Origin",
       "Content-Type": "application/json; charset=utf-8"
     };
+    if (reqOrigin && allowedOrigins.has(reqOrigin)) {
+      headers["Access-Control-Allow-Origin"] = reqOrigin;
+    }
+    return headers;
   }
 
   function bytesToHex(bytes) {

@@ -19,6 +19,29 @@
   const tvPairApproveRateMap = new Map();
   const tvPairStartRateMap = new Map();
   const botCodeCreateRateMap = new Map();
+  const translateIpRateMap = new Map();
+  const episodeStoryIpRateMap = new Map();
+
+  function checkInMemoryIpRateLimit(rateMap, request, maxCount = 20, windowMs = 60000) {
+    const now = Date.now();
+    const clientIp = String(request?.headers?.get("CF-Connecting-IP") || request?.headers?.get("X-Forwarded-For") || "local").split(",")[0].trim().slice(0, 64) || "local";
+    if (rateMap.size > 128) {
+      for (const [k, v] of rateMap.entries()) {
+        if (!v || v.resetAt <= now) rateMap.delete(k);
+      }
+    }
+    const entry = rateMap.get(clientIp);
+    if (entry && entry.resetAt > now) {
+      if (entry.count >= maxCount) {
+        const waitSec = Math.max(5, Math.ceil((entry.resetAt - now) / 1000));
+        return { blocked: true, waitSec };
+      }
+      entry.count += 1;
+      return { blocked: false, waitSec: 0 };
+    }
+    rateMap.set(clientIp, { count: 1, resetAt: now + windowMs });
+    return { blocked: false, waitSec: 0 };
+  }
 
   function isSafeExternalHttpsUrl(rawUrl) {
     try {
@@ -213,11 +236,18 @@
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
 
+  function getTvSyncD1Binding(env) {
+    return typeof getRawD1Binding === "function"
+      ? getRawD1Binding(env)
+      : (env?.DB || env?.MOVIE_DB || null);
+  }
+
   async function ensureTvSyncD1Tables(env) {
-    if (tvSyncD1SchemaReady || !env?.DB) return;
+    const tvDb = getTvSyncD1Binding(env);
+    if (tvSyncD1SchemaReady || !tvDb) return;
     try {
-      await env.DB.batch([
-        env.DB.prepare(`CREATE TABLE IF NOT EXISTS tma_tv_login_pairs (
+      await tvDb.batch([
+        tvDb.prepare(`CREATE TABLE IF NOT EXISTS tma_tv_login_pairs (
           code TEXT PRIMARY KEY,
           claim_token TEXT NOT NULL UNIQUE,
           status TEXT NOT NULL DEFAULT 'pending',
@@ -227,7 +257,7 @@
           created_at INTEGER NOT NULL,
           expires_at INTEGER NOT NULL
         )`),
-        env.DB.prepare(`CREATE TABLE IF NOT EXISTS tma_tv_sync_rooms (
+        tvDb.prepare(`CREATE TABLE IF NOT EXISTS tma_tv_sync_rooms (
           room_key TEXT PRIMARY KEY,
           telegram_id TEXT NOT NULL,
           kind TEXT NOT NULL,
@@ -238,7 +268,7 @@
           updated_at INTEGER NOT NULL,
           expires_at INTEGER NOT NULL
         )`),
-        env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_tma_tv_sync_user_kind ON tma_tv_sync_rooms (telegram_id, kind, expires_at)`)
+        tvDb.prepare(`CREATE INDEX IF NOT EXISTS idx_tma_tv_sync_user_kind ON tma_tv_sync_rooms (telegram_id, kind, expires_at)`)
       ]);
       tvSyncD1SchemaReady = true;
     } catch (e) {
@@ -326,7 +356,7 @@
     if (typeof beginWorkerRequestTelemetry === "function") {
       beginWorkerRequestTelemetry(path);
     }
-    const corsHeaders = buildTmaCorsHeaders();
+    const corsHeaders = buildTmaCorsHeaders(request, env, url.origin);
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders });
@@ -435,7 +465,7 @@
     }
 
     if (path === "/sw.js" || path === "/service-worker.js") {
-      const swCode = `const CACHE_NAME="teleport-v3";const IMG_CACHE="teleport-img-v2";const MAX_IMG=150;const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME&&x!==IMG_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});async function putImgCapped(req,res){try{const c=await caches.open(IMG_CACHE);await c.put(req,res);const ks=await c.keys();if(ks.length>MAX_IMG){await Promise.all(ks.slice(0,ks.length-MAX_IMG).map(k=>c.delete(k)))}}catch(_e){}}self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&u.pathname.startsWith("/assets/tma-")){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();e.waitUntil(caches.open(CACHE_NAME).then(c=>c.put(r,cl)).catch(()=>{}))}return nr}).catch(()=>Response.error())}));return}if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname==="/favicon.svg"||u.pathname==="/manifest.json")){e.respondWith(fetch(r).then(nr=>{if(nr&&nr.status===200){const cl=nr.clone();e.waitUntil(caches.open(CACHE_NAME).then(c=>c.put(r,cl)).catch(()=>{}))}return nr}).catch(()=>caches.match(r).then(m=>m||caches.match("/app")).then(m=>m||Response.error())));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&(nr.status===200||nr.type==="opaque")){e.waitUntil(putImgCapped(r,nr.clone()))}return nr}).catch(()=>caches.match("/favicon.svg").then(m=>m||Response.error()))}));return}});`;
+      const swCode = `const CACHE_NAME="teleport-v4";const IMG_CACHE="teleport-img-v2";const MAX_IMG=150;const MAX_ASSETS=24;const APP_SHELL=["/app","/favicon.svg","/manifest.json"];self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()))});self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==CACHE_NAME&&x!==IMG_CACHE).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});async function putCapped(name,req,res,limit){try{const c=await caches.open(name);await c.put(req,res);const ks=await c.keys();if(ks.length>limit){await Promise.all(ks.slice(0,ks.length-limit).map(k=>c.delete(k)))}}catch(_e){}}self.addEventListener("fetch",e=>{const r=e.request;if(r.method!=="GET")return;const u=new URL(r.url);if(u.origin===self.location.origin&&u.pathname.startsWith("/assets/tma-")){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&nr.status===200){e.waitUntil(putCapped(CACHE_NAME,r,nr.clone(),MAX_ASSETS))}return nr}).catch(()=>Response.error())}));return}if(u.origin===self.location.origin&&(u.pathname==="/"||u.pathname==="/app"||u.pathname==="/miniapp"||u.pathname==="/favicon.svg"||u.pathname==="/manifest.json")){const hasSensitiveQuery=u.searchParams.has("tgLaunch")||u.searchParams.has("token")||u.searchParams.has("secret");const cacheKey=new Request(u.origin+u.pathname);e.respondWith(fetch(r).then(nr=>{if(nr&&nr.status===200&&!hasSensitiveQuery){const cl=nr.clone();e.waitUntil(caches.open(CACHE_NAME).then(c=>c.put(cacheKey,cl)).catch(()=>{}))}return nr}).catch(()=>caches.match(cacheKey).then(m=>m||caches.match("/app")).then(m=>m||Response.error())));return}if(u.hostname==="image.tmdb.org"){e.respondWith(caches.match(r).then(cached=>{if(cached)return cached;return fetch(r).then(nr=>{if(nr&&(nr.status===200||nr.type==="opaque")){e.waitUntil(putCapped(IMG_CACHE,r,nr.clone(),MAX_IMG))}return nr}).catch(()=>caches.match("/favicon.svg").then(m=>m||Response.error()))}));return}});`;
       return new Response(swCode, {
         status: 200,
         headers: {
@@ -477,81 +507,105 @@
 
     // Zero-Auth Public Fast-Paths (keine Auth/D1-User/KV-Settings nötig + 24h Cloudflare Edge Cache!)
     if (path === "/api/tma/logo" && request.method === "GET") {
-      const edgeCache = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
-      const cacheKeyReq = edgeCache ? new Request(url.toString(), { method: "GET" }) : null;
-      if (edgeCache && cacheKeyReq) {
-        try {
-          const hit = await edgeCache.match(cacheKeyReq);
-          if (hit) {
-            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
-            return hit;
-          }
-        } catch (_e) {}
-      }
       const typeCode = url.searchParams.get("type") === "s" ? "s" : "m";
       const id = String(url.searchParams.get("id") || "").trim();
       if (!/^\d+$/.test(id)) {
         return new Response(JSON.stringify({ ok: false, error: "Ungültige Medien-ID." }), { status: 400, headers: corsHeaders });
       }
-      const logoPath = await resolveMediaClearLogoPath(env, typeCode, id, "");
-      const res = new Response(JSON.stringify({ ok: true, id: Number(id), typeCode, logo_path: logoPath || "" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Cache-Control": "public, max-age=86400" }
-      });
-      if (edgeCache && cacheKeyReq) {
-        scheduleBackgroundWork(() => edgeCache.put(cacheKeyReq, res.clone()));
-      }
-      return res;
-    }
-
-    if (path === "/api/tma/logos" && request.method === "GET") {
       const edgeCache = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
-      const cacheKeyReq = edgeCache ? new Request(url.toString(), { method: "GET" }) : null;
+      const cacheKeyReq = edgeCache
+        ? new Request(`${url.origin}/__edge_cache/api/tma/logo/v1?type=${typeCode}&id=${encodeURIComponent(id)}`, { method: "GET" })
+        : null;
       if (edgeCache && cacheKeyReq) {
         try {
           const hit = await edgeCache.match(cacheKeyReq);
           if (hit) {
             if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
-            return hit;
+            return new Response(hit.body, {
+              status: hit.status,
+              headers: { ...corsHeaders, "Cache-Control": "public, max-age=86400" }
+            });
           }
         } catch (_e) {}
       }
-      const rawItems = String(url.searchParams.get("items") || "").split(",").map(s => s.trim()).filter(Boolean).slice(0, 8);
-      const parsed = [];
-      for (const token of rawItems) {
-        const m = token.match(/^([ms])_(\d+)$/);
-        if (m) parsed.push({ key: token, typeCode: m[1], id: Number(m[2]) });
+      const logoPath = await resolveMediaClearLogoPath(env, typeCode, id, "");
+      const payloadStr = JSON.stringify({ ok: true, id: Number(id), typeCode, logo_path: logoPath || "" });
+      if (edgeCache && cacheKeyReq) {
+        const cacheableRes = new Response(payloadStr, {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=86400" }
+        });
+        scheduleBackgroundWork(() => edgeCache.put(cacheKeyReq, cacheableRes));
       }
-      const logosOut = {};
-      if (parsed.length > 0) {
-        const batchMap = typeof getClearLogosBatchFromD1 === "function"
-          ? await getClearLogosBatchFromD1(env, parsed, "m").catch(() => new Map())
-          : new Map();
-        const stillMissing = [];
-        for (const p of parsed) {
-          if (batchMap.has(p.key)) {
-            logosOut[p.key] = batchMap.get(p.key) || "";
-          } else {
-            stillMissing.push(p);
-          }
-        }
-        // Max. 4 uncached TMDb /images Abrufe in diesem Batch (innerhalb des Free-Plan-Budgets)
-        if (stillMissing.length > 0 && hasSubrequestBudget(30)) {
-          await Promise.all(stillMissing.slice(0, 4).map(async (p) => {
-            if (!hasSubrequestBudget(34)) return;
-            const lp = await resolveMediaClearLogoPath(env, p.typeCode, p.id, "").catch(() => "");
-            logosOut[p.key] = lp || "";
-          }));
-        }
-      }
-      const res = new Response(JSON.stringify({ ok: true, logos: logosOut }), {
+      return new Response(payloadStr, {
         status: 200,
         headers: { ...corsHeaders, "Cache-Control": "public, max-age=86400" }
       });
-      if (edgeCache && cacheKeyReq) {
-        scheduleBackgroundWork(() => edgeCache.put(cacheKeyReq, res.clone()));
+    }
+
+    if (path === "/api/tma/logos" && request.method === "GET") {
+      const rawItems = String(url.searchParams.get("items") || "").split(",").map(s => s.trim()).filter(Boolean).slice(0, 8);
+      const parsedMap = new Map();
+      for (const token of rawItems) {
+        const m = token.match(/^([ms])_(\d+)$/);
+        if (m && !parsedMap.has(token)) parsedMap.set(token, { key: token, typeCode: m[1], id: Number(m[2]) });
       }
-      return res;
+      const parsed = Array.from(parsedMap.values()).sort((a, b) => a.key.localeCompare(b.key));
+      if (parsed.length === 0) {
+        return new Response(JSON.stringify({ ok: true, logos: {} }), {
+          status: 200,
+          headers: { ...corsHeaders, "Cache-Control": "public, max-age=3600" }
+        });
+      }
+      const canonicalItems = parsed.map(p => p.key).join(",");
+      const edgeCache = (typeof caches !== "undefined" && caches && caches.default) ? caches.default : null;
+      const cacheKeyReq = edgeCache
+        ? new Request(`${url.origin}/__edge_cache/api/tma/logos/v1?items=${encodeURIComponent(canonicalItems)}`, { method: "GET" })
+        : null;
+      if (edgeCache && cacheKeyReq) {
+        try {
+          const hit = await edgeCache.match(cacheKeyReq);
+          if (hit) {
+            if (typeof activeWorkerTelemetry === "object" && activeWorkerTelemetry) activeWorkerTelemetry.cacheHit = true;
+            return new Response(hit.body, {
+              status: hit.status,
+              headers: { ...corsHeaders, "Cache-Control": "public, max-age=86400" }
+            });
+          }
+        } catch (_e) {}
+      }
+      const logosOut = {};
+      const batchMap = typeof getClearLogosBatchFromD1 === "function"
+        ? await getClearLogosBatchFromD1(env, parsed, "m").catch(() => new Map())
+        : new Map();
+      const stillMissing = [];
+      for (const p of parsed) {
+        if (batchMap.has(p.key)) {
+          logosOut[p.key] = batchMap.get(p.key) || "";
+        } else {
+          stillMissing.push(p);
+        }
+      }
+      // Max. 4 uncached TMDb /images Abrufe in diesem Batch (innerhalb des Free-Plan-Budgets)
+      if (stillMissing.length > 0 && hasSubrequestBudget(30)) {
+        await Promise.all(stillMissing.slice(0, 4).map(async (p) => {
+          if (!hasSubrequestBudget(34)) return;
+          const lp = await resolveMediaClearLogoPath(env, p.typeCode, p.id, "").catch(() => "");
+          logosOut[p.key] = lp || "";
+        }));
+      }
+      const payloadStr = JSON.stringify({ ok: true, logos: logosOut });
+      if (edgeCache && cacheKeyReq) {
+        const cacheableRes = new Response(payloadStr, {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=86400" }
+        });
+        scheduleBackgroundWork(() => edgeCache.put(cacheKeyReq, cacheableRes));
+      }
+      return new Response(payloadStr, {
+        status: 200,
+        headers: { ...corsHeaders, "Cache-Control": "public, max-age=86400" }
+      });
     }
 
     try {
@@ -1307,15 +1361,16 @@
         }
 
         await ensureTvSyncD1Tables(env);
+        const tvDb = getTvSyncD1Binding(env);
         const expiresAt = now + 180000;
         const claimToken = generateCryptoHex(32);
         let code = generateCryptoDigits(6);
         let inserted = false;
-        if (env?.DB) {
-          await env.DB.prepare("DELETE FROM tma_tv_login_pairs WHERE expires_at <= ?").bind(now).run().catch(() => {});
+        if (tvDb) {
+          await tvDb.prepare("DELETE FROM tma_tv_login_pairs WHERE expires_at <= ?").bind(now).run().catch(() => {});
           for (let attempt = 0; attempt < 4; attempt++) {
             try {
-              await env.DB.prepare(
+              await tvDb.prepare(
                 "INSERT INTO tma_tv_login_pairs (code, claim_token, status, attempts, created_at, expires_at) VALUES (?, ?, 'pending', 0, ?, ?)"
               ).bind(code, claimToken, now, expiresAt).run();
               inserted = true;
@@ -1376,12 +1431,13 @@
           username: String(auth.user?.tgUsername || ""),
           first_name: String(auth.user?.firstName || auth.user?.customUsername || "TelePort")
         };
-        if (env?.DB) {
-          const row = await env.DB.prepare(
+        const tvDb = getTvSyncD1Binding(env);
+        if (tvDb) {
+          const row = await tvDb.prepare(
             "SELECT code, status, attempts, expires_at FROM tma_tv_login_pairs WHERE code = ?"
           ).bind(code).first();
           if (!row || Number(row.expires_at || 0) <= now) {
-            if (row) await env.DB.prepare("DELETE FROM tma_tv_login_pairs WHERE code = ?").bind(code).run().catch(() => {});
+            if (row) await tvDb.prepare("DELETE FROM tma_tv_login_pairs WHERE code = ?").bind(code).run().catch(() => {});
             recordApproveFail();
             return new Response(JSON.stringify({ ok: false, error: "TV-Code abgelaufen oder nicht gefunden." }), { status: 404, headers: corsHeaders });
           }
@@ -1389,7 +1445,7 @@
             recordApproveFail();
             return new Response(JSON.stringify({ ok: false, error: "TV-Code wurde bereits verwendet oder gesperrt." }), { status: 409, headers: corsHeaders });
           }
-          const updRes = await env.DB.prepare(
+          const updRes = await tvDb.prepare(
             "UPDATE tma_tv_login_pairs SET status = 'approved', telegram_id = ?, approved_user_json = ?, attempts = attempts + 1 WHERE code = ? AND status = 'pending'"
           ).bind(approvedPayload.id, JSON.stringify(approvedPayload), code).run();
           if (updRes?.meta && Number(updRes.meta.changes || 0) === 0) {
@@ -1424,9 +1480,10 @@
           return new Response(JSON.stringify({ ok: false, error: "Ungültiger Abruf-Token." }), { status: 400, headers: corsHeaders });
         }
         const now = Date.now();
+        const tvDb = getTvSyncD1Binding(env);
         let row = null;
-        if (env?.DB) {
-          row = await env.DB.prepare(
+        if (tvDb) {
+          row = await tvDb.prepare(
             "SELECT code, claim_token, status, telegram_id, approved_user_json, expires_at FROM tma_tv_login_pairs WHERE claim_token = ?"
           ).bind(claimToken).first();
         } else {
@@ -1437,15 +1494,15 @@
         const exp = Number(row?.expires_at || row?.expiresAt || 0);
         if (!row || exp <= now) {
           if (row) {
-            if (env?.DB) await env.DB.prepare("DELETE FROM tma_tv_login_pairs WHERE claim_token = ?").bind(claimToken).run().catch(() => {});
+            if (tvDb) await tvDb.prepare("DELETE FROM tma_tv_login_pairs WHERE claim_token = ?").bind(claimToken).run().catch(() => {});
             else tvSyncMemoryPairs.delete(row.code);
           }
           return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
         }
         if (row.status === "approved" && (row.telegram_id || row.telegramId)) {
           // Einmal-Einlösung: atomar löschen, bevor Token ausgestellt wird (Replay-Schutz)
-          if (env?.DB) {
-            const delRes = await env.DB.prepare(
+          if (tvDb) {
+            const delRes = await tvDb.prepare(
               "DELETE FROM tma_tv_login_pairs WHERE claim_token = ? AND status = 'approved'"
             ).bind(claimToken).run();
             if (delRes?.meta && Number(delRes.meta.changes || 0) === 0) {
@@ -1491,6 +1548,7 @@
           return new Response(JSON.stringify({ ok: false, code: "AUTH_REQUIRED", error: "Bitte einloggen, um Geräte im selben Konto zu verbinden." }), { status: 401, headers: corsHeaders });
         }
         await ensureTvSyncD1Tables(env);
+        const tvDb = getTvSyncD1Binding(env);
         const ownerId = String(auth.user?.telegramId || auth.chatId).trim();
         const now = Date.now();
         const body = request.method === "POST" ? await request.json().catch(() => ({})) : {};
@@ -1507,10 +1565,10 @@
             const roomKey = `presence:${ownerId}:${deviceId}`;
             const expiresAt = now + 240000;
             const payloadStr = JSON.stringify({ platform, allowRemote: true });
-            if (env?.DB) {
-              await env.DB.batch([
-                env.DB.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND expires_at <= ?").bind(ownerId, now),
-                env.DB.prepare(
+            if (tvDb) {
+              await tvDb.batch([
+                tvDb.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND expires_at <= ?").bind(ownerId, now),
+                tvDb.prepare(
                   "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'presence', ?, ?, ?, 0, ?, ?) ON CONFLICT(room_key) DO UPDATE SET device_label = excluded.device_label, payload_json = excluded.payload_json, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
                 ).bind(roomKey, ownerId, deviceId, deviceLabel, payloadStr, now, expiresAt)
               ]);
@@ -1523,8 +1581,8 @@
           if (action === "unregister") {
             const deviceId = sanitizeTvSyncDeviceId(body.deviceId);
             if (deviceId) {
-              if (env?.DB) {
-                await env.DB.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND device_id = ?").bind(ownerId, deviceId).run().catch(() => {});
+              if (tvDb) {
+                await tvDb.prepare("DELETE FROM tma_tv_sync_rooms WHERE telegram_id = ? AND device_id = ?").bind(ownerId, deviceId).run().catch(() => {});
               } else {
                 tvSyncMemoryRooms.delete(`presence:${ownerId}:${deviceId}`);
                 tvSyncMemoryRooms.delete(`signal:${ownerId}:${deviceId}`);
@@ -1536,8 +1594,8 @@
 
           // action === "list"
           let rows = [];
-          if (env?.DB) {
-            const q = await env.DB.prepare(
+          if (tvDb) {
+            const q = await tvDb.prepare(
               "SELECT device_id, device_label, payload_json, updated_at, expires_at FROM tma_tv_sync_rooms WHERE telegram_id = ? AND kind = 'presence' AND expires_at > ? ORDER BY updated_at DESC LIMIT 10"
             ).bind(ownerId, now).all();
             rows = Array.isArray(q?.results) ? q.results : [];
@@ -1570,8 +1628,8 @@
           const expiresAt = now + 90000;
 
           const loadSignalRow = async () => {
-            if (env?.DB) {
-              const r = await env.DB.prepare("SELECT payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?").bind(roomKey, ownerId).first();
+            if (tvDb) {
+              const r = await tvDb.prepare("SELECT payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?").bind(roomKey, ownerId).first();
               if (!r || Number(r.expires_at || 0) <= now) return null;
               try { return { data: JSON.parse(r.payload_json || "{}"), seq: Number(r.seq || 0), updatedAt: Number(r.updated_at || 0) }; } catch (_e) { return null; }
             }
@@ -1585,8 +1643,8 @@
             if (payloadStr.length > 16384) {
               throw new Error("SIGNAL_TOO_LARGE");
             }
-            if (env?.DB) {
-              await env.DB.prepare(
+            if (tvDb) {
+              await tvDb.prepare(
                 "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'signal', ?, '', ?, ?, ?, ?) ON CONFLICT(room_key) DO UPDATE SET payload_json = excluded.payload_json, seq = excluded.seq, updated_at = excluded.updated_at, expires_at = excluded.expires_at"
               ).bind(roomKey, ownerId, targetTvId, payloadStr, nextSeq, now, expiresAt).run();
             } else {
@@ -1595,7 +1653,7 @@
           };
 
           if (action === "clear") {
-            if (env?.DB) await env.DB.prepare("DELETE FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?").bind(roomKey, ownerId).run().catch(() => {});
+            if (tvDb) await tvDb.prepare("DELETE FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?").bind(roomKey, ownerId).run().catch(() => {});
             else tvSyncMemoryRooms.delete(roomKey);
             return new Response(JSON.stringify({ ok: true }), { status: 200, headers: corsHeaders });
           }
@@ -1680,8 +1738,8 @@
             }
             const expiresAt = now + 120000;
             let seq = now;
-            if (env?.DB) {
-              const upRow = await env.DB.prepare(
+            if (tvDb) {
+              const upRow = await tvDb.prepare(
                 "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'state', ?, '', ?, ?, ?, ?) ON CONFLICT(room_key) DO UPDATE SET payload_json = excluded.payload_json, seq = CASE WHEN tma_tv_sync_rooms.seq >= excluded.seq THEN tma_tv_sync_rooms.seq + 1 ELSE excluded.seq END, updated_at = excluded.updated_at, expires_at = excluded.expires_at RETURNING seq"
               ).bind(roomKey, ownerId, targetTvId, payloadStr, now, now, expiresAt).first();
               seq = Number(upRow?.seq || now);
@@ -1700,8 +1758,8 @@
           let signalRow = null;
           if (includeSignal) {
             const sigKey = `signal:${ownerId}:${targetTvId}`;
-            if (env?.DB) {
-              const q = await env.DB.prepare(
+            if (tvDb) {
+              const q = await tvDb.prepare(
                 "SELECT kind, payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key IN (?, ?) AND telegram_id = ?"
               ).bind(roomKey, sigKey, ownerId).all();
               const rows = Array.isArray(q?.results) ? q.results : [];
@@ -1714,8 +1772,8 @@
               signalRow = tvSyncMemoryRooms.get(sigKey) || null;
             }
           } else {
-            if (env?.DB) {
-              stateRow = await env.DB.prepare(
+            if (tvDb) {
+              stateRow = await tvDb.prepare(
                 "SELECT payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?"
               ).bind(roomKey, ownerId).first();
             } else {
@@ -4896,18 +4954,44 @@
           return new Response(JSON.stringify({ ok: true, translatedText: memoryFallback.get(cacheKey), cached: true }), { status: 200, headers: corsHeaders });
         }
         const edgeCacheTr = (typeof caches !== "undefined" && caches?.default) ? caches.default : null;
-        const trCacheReq = edgeCacheTr ? new Request(`https://teleport-edge-cache.internal/translate/${encodeURIComponent(targetLang)}/${trHash}`, { method: "GET" }) : null;
+        const trCacheReq = edgeCacheTr
+          ? new Request(`${url.origin}/__edge_cache/api/tma/translate/v1?tl=${encodeURIComponent(targetLang)}&h=${encodeURIComponent(trHash)}`, { method: "GET" })
+          : null;
+        const putTrMemCapped = (k, val) => {
+          if (typeof memoryFallback === "undefined" || !memoryFallback) return;
+          if (!memoryFallback.has(k)) {
+            let trCount = 0;
+            const oldestTrKeys = [];
+            for (const mk of memoryFallback.keys()) {
+              if (String(mk).startsWith("tr_")) {
+                trCount++;
+                if (oldestTrKeys.length < 40) oldestTrKeys.push(mk);
+              }
+            }
+            if (trCount >= 200) {
+              for (const dk of oldestTrKeys) memoryFallback.delete(dk);
+            }
+          }
+          memoryFallback.set(k, val);
+        };
         if (edgeCacheTr && trCacheReq) {
           try {
             const hitTr = await edgeCacheTr.match(trCacheReq);
             if (hitTr) {
               const hitJson = await hitTr.json().catch(() => null);
               if (hitJson?.translatedText) {
-                if (typeof memoryFallback !== "undefined" && memoryFallback) memoryFallback.set(cacheKey, hitJson.translatedText);
+                putTrMemCapped(cacheKey, hitJson.translatedText);
                 return new Response(JSON.stringify({ ok: true, translatedText: hitJson.translatedText, cached: true }), { status: 200, headers: corsHeaders });
               }
             }
           } catch (_e) {}
+        }
+        const trRate = checkInMemoryIpRateLimit(translateIpRateMap, request, 20, 60000);
+        if (trRate.blocked) {
+          return new Response(JSON.stringify({ ok: false, error: `Zu viele Übersetzungsanfragen. Bitte warte ${trRate.waitSec} Sekunden.` }), {
+            status: 429,
+            headers: { ...corsHeaders, "Retry-After": String(trRate.waitSec) }
+          });
         }
         let translatedText = "";
         try {
@@ -4948,17 +5032,19 @@
           } catch (_err2) {}
         }
         if (translatedText) {
-          if (typeof memoryFallback !== "undefined" && memoryFallback) {
-            memoryFallback.set(cacheKey, translatedText);
+          putTrMemCapped(cacheKey, translatedText);
+          const payloadStr = JSON.stringify({ ok: true, translatedText });
+          if (edgeCacheTr && trCacheReq && typeof scheduleBackgroundWork === "function") {
+            const cacheableTrRes = new Response(payloadStr, {
+              status: 200,
+              headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "public, max-age=604800" }
+            });
+            scheduleBackgroundWork(() => edgeCacheTr.put(trCacheReq, cacheableTrRes));
           }
-          const trRes = new Response(JSON.stringify({ ok: true, translatedText }), {
+          return new Response(payloadStr, {
             status: 200,
             headers: { ...corsHeaders, "Cache-Control": "public, max-age=604800" }
           });
-          if (edgeCacheTr && trCacheReq && typeof scheduleBackgroundWork === "function") {
-            scheduleBackgroundWork(() => edgeCacheTr.put(trCacheReq, trRes.clone()));
-          }
-          return trRes;
         }
         return new Response(JSON.stringify({ ok: false, error: "Übersetzungsdienst vorübergehend nicht erreichbar." }), { status: 502, headers: corsHeaders });
       }
@@ -7232,6 +7318,13 @@
       }
 
       if (path === "/api/tma/episode-story" && request.method === "POST") {
+        const epRate = checkInMemoryIpRateLimit(episodeStoryIpRateMap, request, 15, 60000);
+        if (epRate.blocked) {
+          return new Response(JSON.stringify({ ok: false, error: `Zu viele Anfragen. Bitte warte ${epRate.waitSec} Sekunden.` }), {
+            status: 429,
+            headers: { ...corsHeaders, "Retry-After": String(epRate.waitSec) }
+          });
+        }
         const body = await request.json().catch(() => ({}));
         const seriesIdNum = parseInt(String(body.seriesId || "0"), 10);
         const seasonNum = parseInt(String(body.season ?? "1"), 10);
@@ -7243,13 +7336,14 @@
           fetchSeriesDetails(env, seriesIdNum),
           fetchSeasonDetails(env, seriesIdNum, seasonNum)
         ]);
-        const epObj = (seasonData?.episodes || []).find(e => Number(e.episode_number) === episodeNum) || {
+        const matchedEp = (seasonData?.episodes || []).find(e => Number(e.episode_number) === episodeNum) || null;
+        const epObj = matchedEp || {
           episode_number: episodeNum,
           season_number: seasonNum,
           name: `Folge ${episodeNum}`
         };
-        const telegraphUrl = sDetails?.id
-          ? await ensureEpisodeTelegraphUrl(env, seriesIdNum, sDetails, seasonNum, epObj)
+        const telegraphUrl = (sDetails?.id && matchedEp)
+          ? await ensureEpisodeTelegraphUrl(env, seriesIdNum, sDetails, seasonNum, matchedEp)
           : "";
         return new Response(JSON.stringify({
           ok: true,
@@ -7456,6 +7550,26 @@
             const nextTopicMap = dc.resetTopicMap === true
               ? {}
               : sanitizeTopicMap(dc.topicMap !== undefined ? dc.topicMap : prevTopicMap);
+            const nextCustomBotToken = String(dc.customBotToken || "").trim();
+            if (nextCustomBotToken) {
+              if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(nextCustomBotToken)) {
+                return new Response(JSON.stringify({ ok: false, error: "Ungültiges Telegram Bot-Token Format." }), { status: 400, headers: corsHeaders });
+              }
+              const configuredMainToken = getBotToken(env);
+              const isMainToken = Boolean(
+                configuredMainToken &&
+                (typeof timingSafeEqualStr === "function"
+                  ? timingSafeEqualStr(nextCustomBotToken, configuredMainToken)
+                  : nextCustomBotToken === configuredMainToken)
+              );
+              if (isMainToken) {
+                return new Response(JSON.stringify({
+                  ok: false,
+                  code: "MAIN_BOT_PROTECTED",
+                  error: "Dieses Token gehört bereits zum Haupt-Bot! Hinterlege den Haupt-Bot niemals als Custom-Bot."
+                }), { status: 400, headers: corsHeaders });
+              }
+            }
             cur.deliveryConfig = {
               targetMode: String(dc.targetMode || "dm"),
               targetGroupChatId: String(dc.targetGroupChatId || "").trim(),
@@ -7463,7 +7577,7 @@
               topicRoutingMode,
               topicMap: nextTopicMap,
               sourceBridgeChatId: String(dc.sourceBridgeChatId || "").trim(),
-              customBotToken: String(dc.customBotToken || "").trim(),
+              customBotToken: nextCustomBotToken,
               customBotUsername: String(dc.customBotUsername || "").trim(),
               afterSendAction,
               retentionDays

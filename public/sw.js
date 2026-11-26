@@ -1,6 +1,7 @@
-const CACHE_NAME = "teleport-v3";
+const CACHE_NAME = "teleport-v4";
 const IMG_CACHE = "teleport-img-v2";
 const MAX_IMG = 150;
+const MAX_ASSETS = 24;
 const APP_SHELL = [
   "/app",
   "/favicon.svg",
@@ -21,13 +22,13 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-async function putImgCapped(req, res) {
+async function putCapped(cacheName, req, res, limit) {
   try {
-    const cache = await caches.open(IMG_CACHE);
+    const cache = await caches.open(cacheName);
     await cache.put(req, res);
     const keys = await cache.keys();
-    if (keys.length > MAX_IMG) {
-      await Promise.all(keys.slice(0, keys.length - MAX_IMG).map((k) => cache.delete(k)));
+    if (keys.length > limit) {
+      await Promise.all(keys.slice(0, keys.length - limit).map((k) => cache.delete(k)));
     }
   } catch (_e) {}
 }
@@ -38,7 +39,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // 1. App-Shell (HTML, Manifest, Icon): Network-First mit Cache-Fallback, damit Updates sofort ankommen
+  // 1. App-Shell (HTML, Manifest, Icon): Network-First ohne Query-Tokens im Cache-Key
   if (url.origin === self.location.origin) {
     if (
       url.pathname === "/" ||
@@ -47,29 +48,33 @@ self.addEventListener("fetch", (event) => {
       url.pathname === "/favicon.svg" ||
       url.pathname === "/manifest.json"
     ) {
+      const hasSensitiveQuery =
+        url.searchParams.has("tgLaunch") ||
+        url.searchParams.has("token") ||
+        url.searchParams.has("secret");
+      const cacheKey = new Request(url.origin + url.pathname);
       event.respondWith(
         fetch(req).then((networkRes) => {
-          if (networkRes && networkRes.status === 200) {
+          if (networkRes && networkRes.status === 200 && !hasSensitiveQuery) {
             const resClone = networkRes.clone();
-            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone)).catch(() => {}));
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, resClone)).catch(() => {}));
           }
           return networkRes;
         }).catch(() =>
-          caches.match(req).then((m) => m || caches.match("/app")).then((m) => m || Response.error())
+          caches.match(cacheKey).then((m) => m || caches.match("/app")).then((m) => m || Response.error())
         )
       );
       return;
     }
 
-    // Content-gehashte immutable TMA-Assets (/assets/tma-*): Reines Cache-First (0 unnötige Revalidierungen)
+    // Content-gehashte immutable TMA-Assets (/assets/tma-*): Reines Cache-First mit Mengen-Limit
     if (url.pathname.startsWith("/assets/tma-")) {
       event.respondWith(
         caches.match(req).then((cached) => {
           if (cached) return cached;
           return fetch(req).then((networkRes) => {
             if (networkRes && networkRes.status === 200) {
-              const resClone = networkRes.clone();
-              event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone)).catch(() => {}));
+              event.waitUntil(putCapped(CACHE_NAME, req, networkRes.clone(), MAX_ASSETS));
             }
             return networkRes;
           }).catch(() => Response.error());
@@ -78,14 +83,13 @@ self.addEventListener("fetch", (event) => {
       return;
     }
 
-    // Gehashte Build-Assets (/assets/*): Cache-First mit Hintergrund-Revalidierung
+    // Gehashte Build-Assets (/assets/*): Cache-First mit Hintergrund-Revalidierung & Mengen-Limit
     if (url.pathname.startsWith("/assets/")) {
       event.respondWith(
         caches.match(req).then((cached) => {
           const fetchPromise = fetch(req).then((networkRes) => {
             if (networkRes && networkRes.status === 200) {
-              const resClone = networkRes.clone();
-              event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone)).catch(() => {}));
+              event.waitUntil(putCapped(CACHE_NAME, req, networkRes.clone(), MAX_ASSETS));
             }
             return networkRes;
           }).catch(() => cached || Response.error());
@@ -103,7 +107,7 @@ self.addEventListener("fetch", (event) => {
         if (cached) return cached;
         return fetch(req).then((networkRes) => {
           if (networkRes && (networkRes.status === 200 || networkRes.type === "opaque")) {
-            event.waitUntil(putImgCapped(req, networkRes.clone()));
+            event.waitUntil(putCapped(IMG_CACHE, req, networkRes.clone(), MAX_IMG));
           }
           return networkRes;
         }).catch(() => caches.match("/favicon.svg").then((m) => m || Response.error()));
