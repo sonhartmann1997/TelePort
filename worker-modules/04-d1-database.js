@@ -598,6 +598,8 @@
             worker_lease_until INTEGER NOT NULL DEFAULT 0,
             flood_until INTEGER NOT NULL DEFAULT 0,
             last_error TEXT,
+            created_by_admin_id TEXT DEFAULT '',
+            notify_flags TEXT DEFAULT '',
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             completed_at INTEGER NOT NULL DEFAULT 0
@@ -688,7 +690,9 @@
           ["import_diagnostic_logs", "matched_title", "ALTER TABLE import_diagnostic_logs ADD COLUMN matched_title TEXT"],
           ["channel_ingest_inbox", "ingest_priority", "ALTER TABLE channel_ingest_inbox ADD COLUMN ingest_priority INTEGER NOT NULL DEFAULT 10"],
           ["channel_ingest_inbox", "suppress_reaction", "ALTER TABLE channel_ingest_inbox ADD COLUMN suppress_reaction INTEGER NOT NULL DEFAULT 0"],
-          ["channel_ingest_inbox", "source_job_id", "ALTER TABLE channel_ingest_inbox ADD COLUMN source_job_id INTEGER NOT NULL DEFAULT 0"]
+          ["channel_ingest_inbox", "source_job_id", "ALTER TABLE channel_ingest_inbox ADD COLUMN source_job_id INTEGER NOT NULL DEFAULT 0"],
+          ["history_crawl_jobs", "created_by_admin_id", "ALTER TABLE history_crawl_jobs ADD COLUMN created_by_admin_id TEXT DEFAULT ''"],
+          ["history_crawl_jobs", "notify_flags", "ALTER TABLE history_crawl_jobs ADD COLUMN notify_flags TEXT DEFAULT ''"]
         ];
         const alterStmts = [];
         for (const [tbl, col, ddl] of requiredCols) {
@@ -1408,6 +1412,31 @@
     } catch (_e) {
       return false;
     }
+  }
+
+  async function getPrimaryBotAdminId(env) {
+    const allowedSet = getConfiguredAdminIdSet(env);
+    for (const candidate of allowedSet) {
+      if (/^\d{5,20}$/.test(String(candidate))) {
+        return String(candidate);
+      }
+    }
+    const cached = memoryFallback.get("primary_bot_admin_id_v1");
+    if (cached && cached.id && (Date.now() - Number(cached.ts || 0)) < 5 * 60 * 1000) {
+      return String(cached.id);
+    }
+    try {
+      const db = await ensureD1Schema(env);
+      if (!db) return "";
+      trackStat("d1Reads");
+      const row = await db.prepare("SELECT telegram_id FROM users WHERE is_admin = 1 ORDER BY created_at ASC LIMIT 1").first();
+      const tid = String(row?.telegram_id || "").trim();
+      if (/^\d{5,20}$/.test(tid)) {
+        memoryFallback.set("primary_bot_admin_id_v1", { id: tid, ts: Date.now() });
+        return tid;
+      }
+    } catch (_e) {}
+    return "";
   }
 
   function formatUserRowForClient(row, env) {
@@ -7410,56 +7439,140 @@
     }
   }
 
-  async function cleanupOldChannelIngestRowsInD1(env, retentionDays = 7) {
+  const D1_HYGIENE_META_KEY = "d1_hygiene_meta_v1";
+  const D1_HYGIENE_MIN_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+  async function runD1HygienePassInD1(env, options = {}) {
     const db = await ensureD1Schema(env);
-    if (!db) return 0;
+    if (!db) return { ok: false, error: "D1 Datenbank nicht verfügbar." };
+    const now = Date.now();
+    const force = Boolean(options.force);
+    const inboxRetentionDays = Math.max(7, Math.min(365, Number(options.inboxRetentionDays || 30)));
+    const archiveCompactDays = Math.max(7, Math.min(365, Number(options.archiveCompactDays || 30)));
+
     try {
-      const now = Date.now();
-      const inboxCutoff = now - Math.max(1, Number(retentionDays || 7)) * 24 * 60 * 60 * 1000;
-      const webauthCutoff = now - 60 * 60 * 1000; // Abgelaufene 5-Minuten-Login-Challenges (> 1 Stunde)
+      // 6h-Rate-Guard (außer bei manuellem Admin-Aufruf force:true) -> 0 unnötige D1-Writes auf Cloudflare Free Plan!
+      if (!force) {
+        const memMeta = memoryFallback.get(D1_HYGIENE_META_KEY);
+        if (memMeta && Number(memMeta.lastRunAt || 0) > 0 && (now - Number(memMeta.lastRunAt)) < D1_HYGIENE_MIN_INTERVAL_MS) {
+          return { ok: true, skippedCooldown: true, ...memMeta };
+        }
+        trackStat("d1Reads");
+        const metaRow = await db.prepare("SELECT data_json FROM entity_cache WHERE cache_key = ?1").bind(D1_HYGIENE_META_KEY).first();
+        if (metaRow?.data_json) {
+          try {
+            const parsed = JSON.parse(metaRow.data_json);
+            if (Number(parsed?.lastRunAt || 0) > 0 && (now - Number(parsed.lastRunAt)) < D1_HYGIENE_MIN_INTERVAL_MS) {
+              memoryFallback.set(D1_HYGIENE_META_KEY, parsed);
+              return { ok: true, skippedCooldown: true, ...parsed };
+            }
+          } catch (_e) {}
+        }
+      }
+
+      const inboxCutoff = now - inboxRetentionDays * 24 * 60 * 60 * 1000;
+      const archiveCompactCutoff = now - archiveCompactDays * 24 * 60 * 60 * 1000;
+      const webauthCutoff = now - 60 * 60 * 1000; // Abgelaufene Login-Challenges (> 1 Stunde)
+      const chatStateCutoff = now - 24 * 60 * 60 * 1000; // Temporäre Chat-Assistenten-Zustände (> 24 Stunden)
       const searchCacheCutoff = now - 14 * 24 * 60 * 60 * 1000; // Veralteter Such-Cache (> 14 Tage)
+
       trackStat("d1Writes");
       const rawDb = getRawD1Binding(env) || db;
       const stmts = [
+        // 1. Erledigte Inbox-Zeilen > 30 Tage löschen (hält D1-Rows-Read extrem klein, 30 Tage Vorab-Skip bleiben erhalten)
         db.prepare(
           `DELETE FROM channel_ingest_inbox
            WHERE id IN (
              SELECT id FROM channel_ingest_inbox
              WHERE status IN ('done', 'ignored') AND reaction_pending = 0 AND processed_at > 0 AND processed_at < ?1
-             LIMIT 500
+             LIMIT 250
            )`
         ).bind(inboxCutoff),
+        // 2. Archiv-Queue > 30 Tage VERLUSTFREI kompaktieren: lange Texte/URLs leeren, Dedup-IDs & Inhaltsverzeichnis-Zähler 100% behalten!
+        db.prepare(
+          `UPDATE archive_mirror_queue
+           SET caption_html = '', series_header_html = '', series_poster_url = '', cover_url = ''
+           WHERE id IN (
+             SELECT id FROM archive_mirror_queue
+             WHERE status = 'posted' AND updated_at > 0 AND updated_at < ?1
+               AND (caption_html != '' OR COALESCE(series_header_html, '') != '' OR COALESCE(series_poster_url, '') != '' OR COALESCE(cover_url, '') != '')
+             LIMIT 250
+           )`
+        ).bind(archiveCompactCutoff),
+        // 3. Abgelaufene Web-Login-Challenges (> 1h) entfernen
         db.prepare(
           `DELETE FROM entity_cache
            WHERE cache_key IN (
              SELECT cache_key FROM entity_cache
              WHERE entity_type = 'webauth' AND updated_at < ?1
-             LIMIT 500
+             LIMIT 250
            )`
         ).bind(webauthCutoff),
+        // 4. Abgelaufene temporäre Chat-Assistenten-Zustände (> 24h) entfernen (permanente Konfig-Keys bleiben unberührt!)
+        db.prepare(
+          `DELETE FROM entity_cache
+           WHERE cache_key IN (
+             SELECT cache_key FROM entity_cache
+             WHERE cache_key LIKE 'hist_chat_state_%' AND updated_at < ?1
+             LIMIT 200
+           )`
+        ).bind(chatStateCutoff),
+        // 5. Veralteten Such-Cache (> 14 Tage) bereinigen
         db.prepare(
           `DELETE FROM search_cache
            WHERE cache_key IN (
              SELECT cache_key FROM search_cache
              WHERE updated_at < ?1
-             LIMIT 500
+             LIMIT 250
            )`
         ).bind(searchCacheCutoff)
       ];
-      let totalDeleted = 0;
+
+      let changesList = [0, 0, 0, 0, 0];
       if (rawDb && typeof rawDb.batch === "function") {
         const resArr = await rawDb.batch(unwrapRawD1Statements(stmts));
-        for (const r of (resArr || [])) totalDeleted += Number(r?.meta?.changes || 0);
+        changesList = (resArr || []).map(r => Number(r?.meta?.changes || 0));
       } else {
-        for (const st of stmts) {
-          const r = await st.run();
-          totalDeleted += Number(r?.meta?.changes || 0);
+        for (let i = 0; i < stmts.length; i++) {
+          const r = await stmts[i].run();
+          changesList[i] = Number(r?.meta?.changes || 0);
         }
       }
-      return totalDeleted;
-    } catch (_e) {
-      return 0;
+
+      const summary = {
+        lastRunAt: now,
+        inboxRetentionDays,
+        archiveCompactDays,
+        inboxDeleted: Number(changesList[0] || 0),
+        archiveCompacted: Number(changesList[1] || 0),
+        webauthDeleted: Number(changesList[2] || 0),
+        chatStateDeleted: Number(changesList[3] || 0),
+        searchCacheDeleted: Number(changesList[4] || 0)
+      };
+      summary.cacheDeleted = summary.webauthDeleted + summary.chatStateDeleted + summary.searchCacheDeleted;
+      summary.totalAffected = summary.inboxDeleted + summary.archiveCompacted + summary.cacheDeleted;
+
+      memoryFallback.set(D1_HYGIENE_META_KEY, summary);
+      trackStat("d1Writes");
+      await db.prepare(
+        `INSERT INTO entity_cache (cache_key, entity_type, data_json, updated_at)
+         VALUES (?1, 'system', ?2, ?3)
+         ON CONFLICT(cache_key) DO UPDATE SET data_json = excluded.data_json, updated_at = excluded.updated_at`
+      ).bind(D1_HYGIENE_META_KEY, JSON.stringify(summary), now).run().catch(() => {});
+
+      return { ok: true, skippedCooldown: false, ...summary };
+    } catch (e) {
+      return { ok: false, error: String(e?.message || "D1-Hygiene fehlgeschlagen.") };
     }
+  }
+
+  async function cleanupOldChannelIngestRowsInD1(env, retentionDays = 30) {
+    const res = await runD1HygienePassInD1(env, {
+      inboxRetentionDays: Math.max(7, Number(retentionDays || 30)),
+      archiveCompactDays: 30,
+      force: true
+    });
+    return Number(res?.totalAffected || 0);
   }
 
   async function getPendingReactionInboxRowsFromD1(env, limit = 12) {
@@ -7773,7 +7886,9 @@
       topicMode: "type_genre",
       timing: "live",
       pinSeriesCard: false,
-      maxSeriesTopics: 250
+      maxSeriesTopics: 250,
+      notifyAdminDm: true,
+      autoUpdateAzIndex: true
     };
     const db = await ensureD1Schema(env);
     if (!db) return fallback;
@@ -7788,7 +7903,9 @@
         topicMode: validModes.has(parsed?.topicMode) ? parsed.topicMode : "type_genre",
         timing: validTimings.has(parsed?.timing) ? parsed.timing : "live",
         pinSeriesCard: Boolean(parsed?.pinSeriesCard),
-        maxSeriesTopics: Math.max(10, Math.min(1000, Number(parsed?.maxSeriesTopics || 250)))
+        maxSeriesTopics: Math.max(10, Math.min(1000, Number(parsed?.maxSeriesTopics || 250))),
+        notifyAdminDm: parsed?.notifyAdminDm !== false,
+        autoUpdateAzIndex: parsed?.autoUpdateAzIndex !== false
       };
     } catch (_e) {
       return fallback;
@@ -7873,7 +7990,9 @@
           topicMode: validModes.has(archiveDefaults.topicMode) ? archiveDefaults.topicMode : "type_genre",
           timing: validTimings.has(archiveDefaults.timing) ? archiveDefaults.timing : "live",
           pinSeriesCard: Boolean(archiveDefaults.pinSeriesCard),
-          maxSeriesTopics: Math.max(10, Math.min(1000, Number(archiveDefaults.maxSeriesTopics || 250)))
+          maxSeriesTopics: Math.max(10, Math.min(1000, Number(archiveDefaults.maxSeriesTopics || 250))),
+          notifyAdminDm: archiveDefaults.notifyAdminDm !== false,
+          autoUpdateAzIndex: archiveDefaults.autoUpdateAzIndex !== false
         };
         stmts.push(
           db.prepare(
@@ -8065,6 +8184,8 @@
       workerLeaseUntil: Number(r.worker_lease_until || 0),
       floodUntil: Number(r.flood_until || 0),
       lastError: r.last_error ? String(r.last_error) : "",
+      createdByAdminId: r.created_by_admin_id ? String(r.created_by_admin_id).trim() : "",
+      notifyFlags: r.notify_flags ? String(r.notify_flags).trim() : "",
       createdAt: Number(r.created_at || 0),
       updatedAt: Number(r.updated_at || 0),
       completedAt: Number(r.completed_at || 0)
@@ -8176,13 +8297,15 @@
     try {
       const existingActive = await db.prepare("SELECT id FROM history_crawl_jobs WHERE status IN ('running', 'flood_wait') LIMIT 1").first();
       const initialStatus = existingActive ? "queued" : "running";
+      const rawAdminId = String(payload.createdByAdminId || "").trim();
+      const safeAdminId = /^\d{5,20}$/.test(rawAdminId) ? rawAdminId : "";
       trackStat("d1Writes");
       const res = await db.prepare(
         `INSERT INTO history_crawl_jobs
          (source_chat_id, source_title, start_msg_id, end_msg_id, direction, current_cursor_id, chunk_floor_id, status,
           enable_reactions, enable_archive_mirror, archive_topic_mode, archive_timing, archive_pin_series_card, archive_max_series_topics,
-          cron_enabled, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)`
+          cron_enabled, created_by_admin_id, notify_flags, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, '', ?17, ?17)`
       ).bind(
         sourceChatId,
         String(payload.sourceTitle || sourceChatId).replace(/\s+/g, " ").trim().slice(0, 120),
@@ -8199,6 +8322,7 @@
         payload.archivePinSeriesCard ? 1 : 0,
         archiveMaxSeriesTopics,
         payload.cronEnabled !== false ? 1 : 0,
+        safeAdminId,
         now
       ).run();
       const newId = Number(res?.meta?.last_row_id || 0);
@@ -8233,6 +8357,7 @@
     if (Number.isFinite(patch.workerLeaseUntil)) addSet("worker_lease_until", Math.max(0, Math.floor(patch.workerLeaseUntil)));
     if (Number.isFinite(patch.floodUntil)) addSet("flood_until", Math.max(0, Math.floor(patch.floodUntil)));
     if (typeof patch.lastError === "string") addSet("last_error", patch.lastError.slice(0, 400));
+    if (typeof patch.notifyFlags === "string") addSet("notify_flags", patch.notifyFlags.slice(0, 200));
     if (Number.isFinite(patch.completedAt)) addSet("completed_at", Math.max(0, Math.floor(patch.completedAt)));
     if (typeof patch.cronEnabled === "boolean") addSet("cron_enabled", patch.cronEnabled ? 1 : 0);
 
@@ -8700,11 +8825,58 @@
          WHERE archive_chat_id = ?1
            AND topic_key LIKE 'series_%'
            AND topic_key NOT LIKE 'series_genre_%'
-           AND topic_key != 'series_archive_overflow'`
+           AND topic_key != 'series_archive_overflow'
+           AND topic_key != 'archive_directory'`
       ).bind(cid).first();
       return Number(r?.cnt || 0);
     } catch (_e) {
       return 0;
+    }
+  }
+
+  async function getArchiveDirectoryDataFromD1(env, archiveChatId) {
+    const db = await ensureD1Schema(env);
+    const cid = String(archiveChatId || "").trim();
+    if (!db || !cid) return { topics: [], countsByTopicKey: {}, totalPostedFiles: 0 };
+    try {
+      trackStat("d1Reads");
+      trackStat("d1Reads");
+      const [topicsRes, countsRes] = await Promise.all([
+        db.prepare(
+          `SELECT archive_chat_id, topic_key, message_thread_id, topic_name, icon_color, pinned_header_msg_id, updated_at
+           FROM archive_topic_map
+           WHERE archive_chat_id = ?1 AND topic_key != 'archive_directory'
+           ORDER BY topic_name ASC
+           LIMIT 500`
+        ).bind(cid).all(),
+        db.prepare(
+          `SELECT topic_key, COUNT(*) AS posted_count
+           FROM archive_mirror_queue
+           WHERE archive_chat_id = ?1 AND status = 'posted'
+           GROUP BY topic_key`
+        ).bind(cid).all()
+      ]);
+      const countsByTopicKey = {};
+      let totalPostedFiles = 0;
+      for (const r of (countsRes?.results || [])) {
+        const k = String(r?.topic_key || "").trim();
+        const cnt = Number(r?.posted_count || 0);
+        if (k) countsByTopicKey[k] = cnt;
+        totalPostedFiles += cnt;
+      }
+      const topics = (topicsRes?.results || []).map(r => ({
+        archiveChatId: String(r.archive_chat_id),
+        topicKey: String(r.topic_key),
+        messageThreadId: Number(r.message_thread_id || 0),
+        topicName: String(r.topic_name || r.topic_key || ""),
+        iconColor: Number(r.icon_color || 0),
+        pinnedHeaderMsgId: Number(r.pinned_header_msg_id || 0),
+        postedCount: Number(countsByTopicKey[String(r.topic_key)] || 0),
+        updatedAt: Number(r.updated_at || 0)
+      })).filter(t => t.messageThreadId > 0);
+      return { topics, countsByTopicKey, totalPostedFiles };
+    } catch (_e) {
+      return { topics: [], countsByTopicKey: {}, totalPostedFiles: 0 };
     }
   }
 

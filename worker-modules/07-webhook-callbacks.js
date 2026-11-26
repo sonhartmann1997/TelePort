@@ -3578,7 +3578,9 @@
     if (probeChannels.length === 0) {
       const errMsg = "Kein aktiver privater Index-Kanal konfiguriert. Bitte zuerst 1–3 Index-Kanäle im Setup anlegen.";
       await updateHistoryCrawlJobStateInD1(env, job.id, { status: "paused", lastError: errMsg, now });
-      return { ok: false, status: "paused", error: errMsg, job: { ...job, status: "paused", lastError: errMsg } };
+      const pausedJob = { ...job, status: "paused", lastError: errMsg };
+      await maybeNotifyAdminForHistoryJob(env, pausedJob, "error", { reasonCode: "no_probe", errorText: errMsg }).catch(() => {});
+      return { ok: false, status: "paused", error: errMsg, job: pausedJob };
     }
 
     // 3. Backpressure prüfen (D1 nicht mit > 120 unverarbeiteten History-Zeilen fluten!)
@@ -3659,6 +3661,9 @@
         now
       });
       const updatedJob = await getHistoryCrawlJobByIdFromD1(env, job.id);
+      if (updatedJob) {
+        await maybeNotifyAdminForHistoryJob(env, updatedJob, finishedJob ? "completed" : "progress").catch(() => {});
+      }
       return {
         ok: true,
         blockCompleted: true,
@@ -3911,6 +3916,15 @@
     }
 
     const updatedJob = await getHistoryCrawlJobByIdFromD1(env, job.id);
+    if (updatedJob) {
+      if (fatalError) {
+        await maybeNotifyAdminForHistoryJob(env, updatedJob, "error", { reasonCode: "fatal", errorText: fatalError }).catch(() => {});
+      } else if (jobCompleted) {
+        await maybeNotifyAdminForHistoryJob(env, updatedJob, "completed").catch(() => {});
+      } else {
+        await maybeNotifyAdminForHistoryJob(env, updatedJob, "progress").catch(() => {});
+      }
+    }
     return {
       ok: !fatalError,
       source,
@@ -4034,13 +4048,21 @@
     };
   }
 
-  function buildArchiveMediaCaptionHtml({ resolved, srcRow }) {
+  function buildArchiveMediaCaptionHtml({ resolved, srcRow, upgradeInfo = null }) {
     const isSeries = resolved.typeCode === "s";
     const details = (resolved.details && typeof resolved.details === "object") ? resolved.details : {};
     const title = String(resolved.cleanTitle || details.title || "Unbekannter Titel").replace(/\s+/g, " ").trim();
     const yearStr = resolved.year && resolved.year !== "k.A." ? ` (${String(resolved.year).trim()})` : "";
 
     const lines = [];
+    if (upgradeInfo && upgradeInfo.isUpgrade) {
+      const prevQ = String(upgradeInfo.previousQuality || "").trim();
+      const nextQ = String(resolved.quality || "").trim();
+      const qDiff = prevQ && nextQ && prevQ.toLowerCase() !== nextQ.toLowerCase()
+        ? ` (<i>${escapeArchiveHtml(prevQ)} → ${escapeArchiveHtml(nextQ)}</i>)`
+        : (nextQ ? ` (<i>${escapeArchiveHtml(nextQ)}</i>)` : "");
+      lines.push(`🔥 <b>QUALITÄTS-UPGRADE</b>${qDiff}`);
+    }
     lines.push(`${isSeries ? "📺" : "🎬"} <b>${escapeArchiveHtml(title)}${escapeArchiveHtml(yearStr)}</b>`);
 
     if (isSeries) {
@@ -4141,7 +4163,7 @@
     return header.slice(0, maxLen);
   }
 
-  async function collectArchiveMirrorQueueCandidate(env, { resolved, srcRow, sourceChatId, ctxCache }) {
+  async function collectArchiveMirrorQueueCandidate(env, { resolved, srcRow, sourceChatId, ctxCache, upgradeInfo = null }) {
     if (!resolved || !resolved.ok || !srcRow) return null;
     const jobId = Number(srcRow?.sourceJobId || srcRow?.payload?._historyJobId || 0);
     const effSourceChatId = String(sourceChatId || srcRow.chatId || "").trim();
@@ -4260,7 +4282,7 @@
       topicIconColor: topicDesc.iconColor,
       seriesHeaderHtml: wantPinSeriesCard ? buildArchiveSeriesCardHtml({ resolved }) : "",
       seriesPosterUrl: wantPinSeriesCard ? coverUrl : "",
-      captionHtml: buildArchiveMediaCaptionHtml({ resolved, srcRow }),
+      captionHtml: buildArchiveMediaCaptionHtml({ resolved, srcRow, upgradeInfo }),
       coverUrl,
       status: initialStatus
     };
@@ -4559,6 +4581,9 @@
         pendingDeleteIds: archiveForum.pendingDeleteIds || []
       }]);
     }
+    if (fatalError) {
+      await maybeNotifyAdminForArchiveError(env, archiveForum, fatalError).catch(() => {});
+    }
 
     return {
       ok: !fatalError,
@@ -4591,6 +4616,574 @@
   async function verifyChannelAutoIngestAdminAccess(env, chatId) {
     const matchedAdminId = await resolveBotAdminIdForChannelChat(env, chatId);
     return Boolean(matchedAdminId);
+  }
+
+  // =========================================================================
+  // LAUTLOSE ADMIN-BENACHRICHTIGUNGEN (25/50/75 %, 100 % & HARTE FEHLER)
+  // =========================================================================
+  function stripHistoryErrorNotifyFlags(rawFlags) {
+    return String(rawFlags || "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(s => s && !s.startsWith("err_"))
+      .join(",");
+  }
+
+  async function resolveHistoryNotificationAdminId(env, preferredAdminId = "") {
+    if (env._isCustomBotWebhook) return "";
+    const defaults = typeof getHistoryArchiveDefaultsFromD1 === "function"
+      ? await getHistoryArchiveDefaultsFromD1(env)
+      : { notifyAdminDm: true };
+    if (defaults && defaults.notifyAdminDm === false) return "";
+
+    const pref = String(preferredAdminId || "").trim();
+    if (/^\d{5,20}$/.test(pref) && typeof isTelegramBotAdmin === "function") {
+      try {
+        if (await isTelegramBotAdmin(env, pref)) return pref;
+      } catch (_e) {}
+    }
+    if (typeof getPrimaryBotAdminId === "function") {
+      return await getPrimaryBotAdminId(env);
+    }
+    return "";
+  }
+
+  async function maybeNotifyAdminForHistoryJob(env, job, eventType, extra = {}) {
+    if (!job || !job.id || env._isCustomBotWebhook) return false;
+    if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(44)) return false;
+
+    const existingFlags = new Set(
+      String(job.notifyFlags || "")
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean)
+    );
+
+    const totalSpan = Math.max(1, Number(job.totalSpan || (Math.abs(Number(job.endMsgId || 0) - Number(job.startMsgId || 0)) + 1)));
+    const safeTitle = escapeMd(job.sourceTitle || job.sourceChatId || `Job #${job.id}`);
+    let msgText = "";
+    let inline_keyboard = [];
+    let flagsChanged = false;
+
+    if (eventType === "completed") {
+      if (existingFlags.has("done")) return false;
+      existingFlags.add("done");
+      existingFlags.add("m25");
+      existingFlags.add("m50");
+      existingFlags.add("m75");
+      flagsChanged = true;
+      msgText =
+        `✅ *Verlaufs-Scan abgeschlossen (Job #${job.id})*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `📂 *Quelle:* ${safeTitle}\n` +
+        `📊 *Bereich:* \`#${job.startMsgId}\` – \`#${job.endMsgId}\` (\`${totalSpan}\` IDs)\n` +
+        `🎞 *Gefunden:* \`${Number(job.mediaFoundCount || 0)}\` Medien · \`${Number(job.contextFoundCount || 0)}\` Kontext\n` +
+        `⏭️ *Vorab-Skip:* \`${Number(job.skippedExistingCount || 0)}\` · 🕳️ *Lücken:* \`${Number(job.missingCount || 0)}\`` +
+        (job.enableArchiveMirror ? `\n🗂️ *Themen-Archiv:* Aktiv — Einträge werden automatisch einsortiert.` : "");
+      inline_keyboard = [[
+        { text: "📋 Jobs & Archiv", callback_data: `hc:job_v:${job.id}` },
+        { text: "⚙️ Einstellungen", callback_data: "hc:cfg_ref" }
+      ]];
+    } else if (eventType === "progress") {
+      // Meilensteine 25/50/75 % nur bei großen Scans (>= 1.000 IDs)
+      if (totalSpan < 1000) return false;
+      const pct = Number(job.progressPct || 0);
+      if (pct < 25 || pct >= 100) return false;
+      let hitMilestone = 0;
+      if (pct >= 75 && !existingFlags.has("m75")) hitMilestone = 75;
+      else if (pct >= 50 && !existingFlags.has("m50")) hitMilestone = 50;
+      else if (pct >= 25 && !existingFlags.has("m25")) hitMilestone = 25;
+      if (!hitMilestone) return false;
+
+      if (hitMilestone >= 25) existingFlags.add("m25");
+      if (hitMilestone >= 50) existingFlags.add("m50");
+      if (hitMilestone >= 75) existingFlags.add("m75");
+      flagsChanged = true;
+      const doneIds = Math.min(totalSpan, Number(job.scannedCount || 0) + Number(job.skippedExistingCount || 0));
+      msgText =
+        `📊 *Verlaufs-Scan Meilenstein: ${hitMilestone}% (Job #${job.id})*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `📂 *Quelle:* ${safeTitle}\n` +
+        `📈 *Fortschritt:* \`${pct.toFixed(1)}%\` (\`${doneIds}\` / \`${totalSpan}\` IDs)\n` +
+        `🎞 *Bisher gefunden:* \`${Number(job.mediaFoundCount || 0)}\` Medien · ⏭️ \`${Number(job.skippedExistingCount || 0)}\` Vorab-Skip`;
+      inline_keyboard = [[
+        { text: "📋 Job ansehen", callback_data: `hc:job_v:${job.id}` },
+        { text: "⏸️ Pause", callback_data: `hc:job_p:${job.id}` }
+      ]];
+    } else if (eventType === "error") {
+      const code = String(extra.reasonCode || "fatal").replace(/[^a-z0-9_]/gi, "").slice(0, 24) || "fatal";
+      const errFlag = `err_${code}`;
+      if (existingFlags.has(errFlag)) return false;
+      existingFlags.add(errFlag);
+      flagsChanged = true;
+      const errText = escapeMd(String(extra.errorText || job.lastError || "Unbekannter Fehler").slice(0, 280));
+      msgText =
+        `⚠️ *Verlaufs-Scan gestoppt / pausiert (Job #${job.id})*\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `📂 *Quelle:* ${safeTitle}\n` +
+        `⛔ *Grund:* ${errText}\n` +
+        `💡 Prüfe die Bot-Rechte oder Index-Kanäle und setze den Job bei Bedarf über /jobs fort.`;
+      inline_keyboard = [[
+        { text: "📋 Job ansehen", callback_data: `hc:job_v:${job.id}` },
+        { text: "⚙️ Index/Archiv", callback_data: "hc:cfg_ref" }
+      ]];
+    } else {
+      return false;
+    }
+
+    if (!flagsChanged || !msgText) return false;
+    const targetAdminId = await resolveHistoryNotificationAdminId(env, job.createdByAdminId);
+    if (!targetAdminId) return false;
+
+    const nextFlagsStr = Array.from(existingFlags).join(",");
+    job.notifyFlags = nextFlagsStr;
+    if (typeof updateHistoryCrawlJobStateInD1 === "function") {
+      await updateHistoryCrawlJobStateInD1(env, job.id, { notifyFlags: nextFlagsStr }).catch(() => {});
+    }
+
+    await tgApi(env).sendMessage(targetAdminId, msgText, {
+      disable_notification: true,
+      reply_markup: { inline_keyboard }
+    }).catch(() => null);
+    return true;
+  }
+
+  async function maybeNotifyAdminForArchiveError(env, archiveForum, errorText) {
+    if (!errorText || env._isCustomBotWebhook) return false;
+    if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(44)) return false;
+
+    const cooldownMs = 6 * 60 * 60 * 1000;
+    const now = Date.now();
+    const cacheKey = "archive_err_notify_ts_v1";
+    const memTs = Number(memoryFallback.get(cacheKey) || 0);
+    if (memTs > 0 && (now - memTs) < cooldownMs) return false;
+
+    if (typeof getEntityFromD1 === "function") {
+      const stored = await getEntityFromD1(env, cacheKey, cooldownMs, { ramTtlMs: 60000 }).catch(() => null);
+      if (stored && Number(stored.ts || 0) > 0 && (now - Number(stored.ts)) < cooldownMs) {
+        memoryFallback.set(cacheKey, Number(stored.ts));
+        return false;
+      }
+    }
+
+    const targetAdminId = await resolveHistoryNotificationAdminId(env, "");
+    if (!targetAdminId) return false;
+
+    memoryFallback.set(cacheKey, now);
+    if (typeof saveEntityToD1 === "function") {
+      await saveEntityToD1(env, cacheKey, "system", { ts: now }).catch(() => {});
+    }
+
+    const forumName = escapeMd(archiveForum?.label || archiveForum?.channelId || "Themen-Archiv");
+    const safeErr = escapeMd(String(errorText).slice(0, 280));
+    const msgText =
+      `⚠️ *Themen-Archiv Fehler*\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `🗂️ *Ziel-Forum:* ${forumName}\n` +
+      `⛔ *Grund:* ${safeErr}\n` +
+      `💡 Prüfe bitte, ob Themen (Topics) aktiviert sind und der Bot Admin mit Recht „Themen verwalten“ ist.`;
+    await tgApi(env).sendMessage(targetAdminId, msgText, {
+      disable_notification: true,
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "📋 Jobs & Archiv", callback_data: "hc:jobs" },
+          { text: "⚙️ Index/Archiv", callback_data: "hc:cfg_ref" }
+        ]]
+      }
+    }).catch(() => null);
+    return true;
+  }
+
+  // =========================================================================
+  // 📌 INHALTSVERZEICHNIS IM THEMEN-ARCHIV (FILME NACH GENRE + SERIEN A–Z)
+  // =========================================================================
+  const ARCHIVE_DIRECTORY_TOPIC_KEY = "archive_directory";
+  const ARCHIVE_DIRECTORY_TOPIC_NAME = "📌 Inhaltsverzeichnis";
+  const ARCHIVE_DIRECTORY_TOPIC_COLOR = 0xFFD67E;
+  const ARCHIVE_DIRECTORY_DEBOUNCE_MS = 5 * 60 * 1000;
+
+  function computeSimpleArchiveHash(str) {
+    let h = 2166136261;
+    const s = String(str || "");
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(16);
+  }
+
+  function stripLeadingEmojiForSort(str) {
+    return String(str || "")
+      .replace(/^[\p{Extended_Pictographic}\uFE0F\u200D\s•\-·]+/gu, "")
+      .trim();
+  }
+
+  function buildArchiveDirectoryMarkdownParts(archiveChatId, dirData) {
+    const topics = Array.isArray(dirData?.topics) ? dirData.topics : [];
+    const totalPostedFiles = Number(dirData?.totalPostedFiles || 0);
+    const chatNum = String(archiveChatId || "").replace(/^-100/, "");
+    const makeDeepLink = (threadId) => (chatNum && threadId > 0 ? `https://t.me/c/${chatNum}/${threadId}` : "");
+    const safeLinkLabel = (rawName) => escapeMd(String(rawName || "Thema").replace(/[\[\]()]/g, "").trim().slice(0, 72));
+    const fmtCount = (n) => {
+      const cnt = Number(n || 0);
+      if (cnt <= 0) return "_(leer)_";
+      return cnt === 1 ? "_(1 Datei)_" : `_(${cnt} Dateien)_`;
+    };
+    const sortByNameDe = (a, b) =>
+      stripLeadingEmojiForSort(a.topicName || a.topicKey)
+        .localeCompare(stripLeadingEmojiForSort(b.topicName || b.topicKey), "de-DE", { sensitivity: "base" });
+
+    const movieTopics = [];
+    const seriesTopics = [];
+    const overflowTopics = [];
+    const otherTopics = [];
+
+    for (const t of topics) {
+      const k = String(t.topicKey || "");
+      if (k === ARCHIVE_DIRECTORY_TOPIC_KEY) continue;
+      if (k === "series_archive_overflow") {
+        overflowTopics.push(t);
+      } else if (k.startsWith("movie_") || k === "movies_all" || k === "anime_all") {
+        movieTopics.push(t);
+      } else if (k.startsWith("series_") || k === "series_all") {
+        seriesTopics.push(t);
+      } else {
+        otherTopics.push(t);
+      }
+    }
+
+    movieTopics.sort(sortByNameDe);
+    seriesTopics.sort(sortByNameDe);
+    otherTopics.sort(sortByNameDe);
+
+    const allSeries = [...seriesTopics, ...overflowTopics];
+    const sections = [];
+
+    if (movieTopics.length > 0) {
+      const lines = [`🎬 *FILME NACH GENRE (${movieTopics.length})*`];
+      for (const t of movieTopics) {
+        const url = makeDeepLink(t.messageThreadId);
+        const lbl = safeLinkLabel(t.topicName || t.topicKey);
+        lines.push(url ? `• [${lbl}](${url}) ${fmtCount(t.postedCount)}` : `• *${lbl}* ${fmtCount(t.postedCount)}`);
+      }
+      sections.push(lines);
+    }
+
+    if (allSeries.length > 0) {
+      const lines = [`📺 *SERIEN A–Z (${allSeries.length})*`];
+      for (const t of allSeries) {
+        const url = makeDeepLink(t.messageThreadId);
+        const lbl = safeLinkLabel(t.topicName || t.topicKey);
+        lines.push(url ? `• [${lbl}](${url}) ${fmtCount(t.postedCount)}` : `• *${lbl}* ${fmtCount(t.postedCount)}`);
+      }
+      sections.push(lines);
+    }
+
+    if (otherTopics.length > 0) {
+      const lines = [`📦 *WEITERE THEMEN (${otherTopics.length})*`];
+      for (const t of otherTopics) {
+        const url = makeDeepLink(t.messageThreadId);
+        const lbl = safeLinkLabel(t.topicName || t.topicKey);
+        lines.push(url ? `• [${lbl}](${url}) ${fmtCount(t.postedCount)}` : `• *${lbl}* ${fmtCount(t.postedCount)}`);
+      }
+      sections.push(lines);
+    }
+
+    const totalTopics = movieTopics.length + allSeries.length + otherTopics.length;
+    const nowDate = new Date();
+    const pad2 = (v) => String(v).padStart(2, "0");
+    const stampStr = `${pad2(nowDate.getUTCDate())}.${pad2(nowDate.getUTCMonth() + 1)}.${nowDate.getUTCFullYear()}, ${pad2(nowDate.getUTCHours())}:${pad2(nowDate.getUTCMinutes())} UTC`;
+
+    const stableSignatureLines = sections.map(s => s.join("\n")).join("\n\n");
+    const contentHash = computeSimpleArchiveHash(`${archiveChatId}|${totalTopics}|${totalPostedFiles}|${stableSignatureLines}`);
+
+    const headerBase =
+      `📌 *INHALTSVERZEICHNIS – THEMEN-ARCHIV*\n` +
+      `━━━━━━━━━━━━━━━━━━━━\n` +
+      `🗂️ *Themen:* \`${totalTopics}\`  ·  🎞 *Archivierte Dateien:* \`${totalPostedFiles}\`\n` +
+      `🕒 _Stand: ${stampStr}_`;
+
+    if (totalTopics === 0) {
+      return {
+        parts: [`${headerBase}\n\n_Noch keine Themen im Archiv angelegt. Sobald der Bot erste Medien einsortiert, erscheinen hier alle klickbaren Themen mit Dateianzahl._`],
+        contentHash,
+        totalTopics: 0,
+        totalPostedFiles
+      };
+    }
+
+    // Sauber an Zeilengrenzen auf max. 3.700 Zeichen aufteilen (Telegram-Limit: 4.096)
+    const MAX_PART_CHARS = 3700;
+    const parts = [];
+    let current = headerBase;
+
+    for (const secLines of sections) {
+      const secBlock = `\n\n${secLines.join("\n")}`;
+      if (current.length + secBlock.length <= MAX_PART_CHARS) {
+        current += secBlock;
+      } else {
+        // Abschnittsweise zeilenbasiert aufteilen
+        for (let i = 0; i < secLines.length; i++) {
+          const prefix = i === 0 ? "\n\n" : "\n";
+          const addition = `${prefix}${secLines[i]}`;
+          if (current.length + addition.length > MAX_PART_CHARS && current.trim().length > 0) {
+            parts.push(current);
+            current = i === 0
+              ? `📌 *INHALTSVERZEICHNIS (Fortsetzung)*\n━━━━━━━━━━━━━━━━━━━━\n\n${secLines[i]}`
+              : `📌 *INHALTSVERZEICHNIS (Fortsetzung)*\n━━━━━━━━━━━━━━━━━━━━\n\n${secLines[0]}\n${secLines[i]}`;
+          } else {
+            current += addition;
+          }
+        }
+      }
+    }
+    if (current.trim().length > 0) parts.push(current);
+
+    const finalParts = parts.length > 1
+      ? parts.map((p, idx) => `${p}\n\n_Seite ${idx + 1}/${parts.length}_`)
+      : parts;
+
+    return {
+      parts: finalParts,
+      contentHash,
+      totalTopics,
+      totalPostedFiles
+    };
+  }
+
+  async function syncArchiveDirectoryTopic(env, options = {}) {
+    const force = Boolean(options.force);
+    const subrequestCeiling = Math.max(24, Math.min(46, Number(options.subrequestCeiling || 42)));
+    if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(subrequestCeiling - 4)) {
+      return { ok: false, budgetExhausted: true, error: "Subrequest-Budget für Inhaltsverzeichnis erschöpft." };
+    }
+
+    const archiveChannels = typeof getHistoryIndexChannelsFromD1 === "function"
+      ? await getHistoryIndexChannelsFromD1(env, { role: "archive_forum", onlyEnabled: true })
+      : [];
+    const archiveForum = archiveChannels[0] || null;
+    if (!archiveForum || !archiveForum.channelId) {
+      return { ok: false, error: "Kein aktives Themen-Archiv eingerichtet (/archiv_set)." };
+    }
+    const archiveChatId = archiveForum.channelId;
+    const metaKey = `archive_dir_meta_${archiveChatId}`;
+    const prevMeta = typeof getEntityFromD1 === "function"
+      ? await getEntityFromD1(env, metaKey, 365 * 24 * 60 * 60 * 1000, { ramTtlMs: 30000 }).catch(() => null)
+      : null;
+
+    if (!force && prevMeta && Number(prevMeta.updatedAt || 0) > 0 && (Date.now() - Number(prevMeta.updatedAt)) < ARCHIVE_DIRECTORY_DEBOUNCE_MS) {
+      return { ok: true, skippedDebounce: true, topicCount: Number(prevMeta.topicCount || 0), totalPostedFiles: Number(prevMeta.totalPosted || 0) };
+    }
+
+    const dirData = typeof getArchiveDirectoryDataFromD1 === "function"
+      ? await getArchiveDirectoryDataFromD1(env, archiveChatId)
+      : { topics: [], countsByTopicKey: {}, totalPostedFiles: 0 };
+    const built = buildArchiveDirectoryMarkdownParts(archiveChatId, dirData);
+
+    const api = tgApi(env);
+    let dirTopic = typeof getArchiveTopicFromD1 === "function"
+      ? await getArchiveTopicFromD1(env, archiveChatId, ARCHIVE_DIRECTORY_TOPIC_KEY)
+      : null;
+
+    // Hash-Gate: wenn Inhalt unverändert und Topic + mindestens 1 Nachricht existieren -> 0 Telegram-Calls!
+    const prevMsgIds = Array.isArray(prevMeta?.msgIds) ? prevMeta.msgIds.map(n => Number(n)).filter(n => n > 0) : [];
+    if (
+      !force &&
+      dirTopic &&
+      dirTopic.messageThreadId > 0 &&
+      prevMeta &&
+      prevMeta.hash === built.contentHash &&
+      prevMsgIds.length === built.parts.length &&
+      prevMsgIds.length > 0
+    ) {
+      return {
+        ok: true,
+        skippedUnchanged: true,
+        threadId: dirTopic.messageThreadId,
+        topicCount: built.totalTopics,
+        totalPostedFiles: built.totalPostedFiles,
+        deepLink: `https://t.me/c/${String(archiveChatId).replace(/^-100/, "")}/${dirTopic.messageThreadId}`
+      };
+    }
+
+    const createDirectoryTopicFresh = async () => {
+      const created = await api.createForumTopic(archiveChatId, ARCHIVE_DIRECTORY_TOPIC_NAME, {
+        icon_color: ARCHIVE_DIRECTORY_TOPIC_COLOR
+      });
+      if (!created?.ok || !created?.message_thread_id) {
+        return { ok: false, error: created?.error || "Konnte Thema '📌 Inhaltsverzeichnis' nicht anlegen." };
+      }
+      const rec = {
+        archiveChatId,
+        topicKey: ARCHIVE_DIRECTORY_TOPIC_KEY,
+        messageThreadId: Number(created.message_thread_id),
+        topicName: ARCHIVE_DIRECTORY_TOPIC_NAME,
+        iconColor: Number(created.icon_color || ARCHIVE_DIRECTORY_TOPIC_COLOR),
+        pinnedHeaderMsgId: 0,
+        updatedAt: Date.now()
+      };
+      if (typeof upsertArchiveTopicInD1 === "function") {
+        await upsertArchiveTopicInD1(env, rec);
+      }
+      return { ok: true, topic: rec };
+    };
+
+    let topicNewlyCreated = false;
+    if (!dirTopic || !dirTopic.messageThreadId) {
+      const createdRes = await createDirectoryTopicFresh();
+      if (!createdRes.ok) return { ok: false, error: createdRes.error };
+      dirTopic = createdRes.topic;
+      topicNewlyCreated = true;
+    }
+
+    let activeThreadId = Number(dirTopic.messageThreadId);
+    const nextMsgIds = [];
+    let recreatedTopic = false;
+    let firstMsgNewlySent = false;
+    let completedAllParts = true;
+    let stopError = "";
+    let rateLimited = false;
+
+    for (let i = 0; i < built.parts.length; i++) {
+      if (typeof hasSubrequestBudget === "function" && !hasSubrequestBudget(subrequestCeiling - 1)) {
+        completedAllParts = false;
+        stopError = "Subrequest-Budget für Inhaltsverzeichnis erschöpft.";
+        break;
+      }
+      const partText = built.parts[i];
+      const existingId = !topicNewlyCreated && !recreatedTopic ? Number(prevMsgIds[i] || 0) : 0;
+      let okId = 0;
+
+      if (existingId > 0) {
+        const edited = await api.editMessageText(archiveChatId, existingId, partText, {
+          link_preview_options: { is_disabled: true }
+        });
+        if (edited && (edited.ok || edited.notModified)) {
+          okId = existingId;
+        }
+      }
+
+      if (okId <= 0) {
+        const sent = await api.sendMessage(archiveChatId, partText, {
+          message_thread_id: activeThreadId,
+          disable_notification: true,
+          link_preview_options: { is_disabled: true },
+          _fromAntiSpamQueue: true
+        });
+        if (sent?._throttled429) {
+          completedAllParts = false;
+          rateLimited = true;
+          stopError = `Telegram 429 Rate-Limit (${Number(sent.retryAfter || 5)}s)`;
+          break;
+        }
+        if (sent?.guestOrBlocked || Number(sent?.status) === 403) {
+          completedAllParts = false;
+          stopError = String(sent?.error || "Keine Schreibrechte im Themen-Archiv (403).");
+          break;
+        }
+        const sentMsgId = Number(sent?.result?.message_id || 0);
+        const sentThreadId = Number(sent?.result?.message_thread_id || 0);
+
+        // Self-Healing: Falls das Inhaltsverzeichnis-Thema gelöscht wurde und Telegram auf General zurückfiel -> neu anlegen!
+        if (!recreatedTopic && (!sentMsgId || (sentThreadId !== activeThreadId))) {
+          if (sentMsgId > 0) {
+            await api.deleteMessage(archiveChatId, sentMsgId).catch(() => {});
+          }
+          const freshRes = await createDirectoryTopicFresh();
+          if (!freshRes.ok) {
+            return { ok: false, error: freshRes.error };
+          }
+          dirTopic = freshRes.topic;
+          activeThreadId = Number(dirTopic.messageThreadId);
+          recreatedTopic = true;
+          nextMsgIds.length = 0;
+          // Von vorne (Teil 0) in das neu angelegte Thema schreiben
+          i = -1;
+          continue;
+        }
+        if (sentMsgId > 0) {
+          okId = sentMsgId;
+          if (i === 0) firstMsgNewlySent = true;
+        } else {
+          completedAllParts = false;
+          stopError = "Konnte Teilnachricht für Inhaltsverzeichnis nicht senden.";
+          break;
+        }
+      }
+
+      if (okId > 0) nextMsgIds.push(okId);
+    }
+
+    if (nextMsgIds.length === 0) {
+      return {
+        ok: false,
+        rateLimited,
+        error: stopError || "Inhaltsverzeichnis konnte nicht geschrieben werden."
+      };
+    }
+
+    // Überzählige alte Teil-Nachrichten nur entfernen, wenn alle neuen Teile vollständig geschrieben wurden
+    if (completedAllParts && !recreatedTopic && prevMsgIds.length > nextMsgIds.length) {
+      for (let j = nextMsgIds.length; j < prevMsgIds.length; j++) {
+        if (prevMsgIds[j] > 0) {
+          await api.deleteMessage(archiveChatId, prevMsgIds[j]).catch(() => {});
+        }
+      }
+    }
+
+    // Erste Nachricht des Inhaltsverzeichnisses anpinnen (bei Neuanlage)
+    const firstId = Number(nextMsgIds[0] || 0);
+    if (firstId > 0 && (firstMsgNewlySent || topicNewlyCreated || recreatedTopic || Number(dirTopic.pinnedHeaderMsgId || 0) !== firstId)) {
+      await api.pinChatMessage(archiveChatId, firstId, { disableNotification: true }).catch(() => {});
+      if (typeof upsertArchiveTopicInD1 === "function") {
+        await upsertArchiveTopicInD1(env, {
+          ...dirTopic,
+          messageThreadId: activeThreadId,
+          pinnedHeaderMsgId: firstId,
+          updatedAt: Date.now()
+        }).catch(() => {});
+      }
+    }
+
+    const nextMeta = {
+      threadId: activeThreadId,
+      msgIds: completedAllParts
+        ? nextMsgIds
+        : [...nextMsgIds, ...(!recreatedTopic ? prevMsgIds.slice(nextMsgIds.length) : [])],
+      hash: completedAllParts ? built.contentHash : "",
+      topicCount: built.totalTopics,
+      totalPosted: built.totalPostedFiles,
+      updatedAt: Date.now()
+    };
+    if (typeof saveEntityToD1 === "function") {
+      await saveEntityToD1(env, metaKey, "system", nextMeta).catch(() => {});
+    }
+
+    const chatNum = String(archiveChatId).replace(/^-100/, "");
+    return {
+      ok: completedAllParts,
+      partial: !completedAllParts,
+      rateLimited,
+      error: completedAllParts ? "" : stopError,
+      threadId: activeThreadId,
+      partsCount: nextMsgIds.length,
+      topicCount: built.totalTopics,
+      totalPostedFiles: built.totalPostedFiles,
+      recreatedTopic,
+      deepLink: chatNum && activeThreadId > 0 ? `https://t.me/c/${chatNum}/${activeThreadId}` : ""
+    };
+  }
+
+  async function maybeAutoSyncArchiveDirectory(env, options = {}) {
+    if (env._isCustomBotWebhook) return null;
+    const defaults = typeof getHistoryArchiveDefaultsFromD1 === "function"
+      ? await getHistoryArchiveDefaultsFromD1(env)
+      : { autoUpdateAzIndex: true };
+    if (defaults && defaults.autoUpdateAzIndex === false) return null;
+    return await syncArchiveDirectoryTopic(env, {
+      force: false,
+      subrequestCeiling: Number(options.subrequestCeiling || 42)
+    }).catch(() => null);
   }
 
   // =========================================================================
@@ -4957,10 +5550,15 @@
       ? `~${enabledProbes.length * 15} IDs/Min (${enabledProbes.length}/3 aktiv)`
       : `0/3 aktiv`;
 
+    const notifyStatusLine = archiveDefaults.notifyAdminDm !== false
+      ? `🔔 *Admin-Hinweise (lautlos):* ✅ AN (25/50/75 %, 100 % & Fehler)`
+      : `🔕 *Admin-Hinweise (lautlos):* AUS`;
+
     const msgText =
       `⚙️ *INDEX-KANÄLE & SORTIERTES THEMEN-ARCHIV*\n${SEP}\n` +
       `📡 *Private Index-Kanäle (Auto-Löschung):* ${speedInfo}\n${probeLines}\n\n` +
-      `🗂️ *Sortiertes Themen-Archiv (optional):*\n${archiveLine}` +
+      `🗂️ *Sortiertes Themen-Archiv (optional):*\n${archiveLine}\n` +
+      `${notifyStatusLine}` +
       forwardBanner +
       (note ? `\n\n${note}` : "") +
       `\n\n📌 *Chat-Befehle:* \`/index_add\`, \`/index_del\`, \`/archiv_set\`, \`/archiv_del\` (direkt im Kanal/Forum oder hier mit Link/ID).`;
@@ -4992,15 +5590,21 @@
       ]);
       inline_keyboard.push([
         { text: archiveDefaults.pinSeriesCard ? "📌 Serien-Pin: AN" : "📌 Serien-Pin: AUS", callback_data: "hc:cfg_pin" },
+        { text: archiveDefaults.autoUpdateAzIndex !== false ? "📑 Auto-Verzeichnis: AN" : "📑 Auto-Verzeichnis: AUS", callback_data: "hc:cfg_dir" }
+      ]);
+      inline_keyboard.push([
         { text: "🗑️ Archiv lösen", callback_data: "hc:cfg_rmarch" }
       ]);
     }
 
-    const diagRow = [{ text: "🩺 Rechte prüfen", callback_data: "hc:cfg_val" }];
-    if (pendingDeletesTotal > 0) {
-      diagRow.push({ text: `🧹 ${pendingDeletesTotal} Rest-Probes löschen`, callback_data: "hc:cfg_delp" });
-    }
+    const diagRow = [
+      { text: archiveDefaults.notifyAdminDm !== false ? "🔔 Hinweise: AN" : "🔕 Hinweise: AUS", callback_data: "hc:cfg_notify" },
+      { text: "🩺 Rechte prüfen", callback_data: "hc:cfg_val" }
+    ];
     inline_keyboard.push(diagRow);
+    if (pendingDeletesTotal > 0) {
+      inline_keyboard.push([{ text: `🧹 ${pendingDeletesTotal} Rest-Probes löschen`, callback_data: "hc:cfg_delp" }]);
+    }
     inline_keyboard.push([
       { text: "📋 Jobs & Archiv", callback_data: "hc:jobs" },
       { text: "🔄 Aktualisieren", callback_data: "hc:cfg_ref" },
@@ -5643,6 +6247,9 @@
         archRow.push({ text: `🔁 ${archiveStats.failed} Fehler neu`, callback_data: "hc:arch_ret" });
       }
       if (archRow.length > 0) inline_keyboard.push(archRow);
+      if (archiveForum?.enabled) {
+        inline_keyboard.push([{ text: "📑 Inhaltsverzeichnis aktualisieren", callback_data: "hc:arch_dir" }]);
+      }
     }
 
     inline_keyboard.push([
@@ -5661,7 +6268,7 @@
   async function handleHistoryScanAndJobsCommand(env, tgMsg, { isChannelPost = false } = {}) {
     if (!tgMsg || !tgMsg.chat?.id || env._isCustomBotWebhook) return false;
     const rawText = String(tgMsg.text || tgMsg.caption || "").trim();
-    const cmdMatch = rawText.match(/^\/(scan|archiv|scan_start|archiv_start|jobs|archiv_status|scan_status|archiv_live|live_archiv)(?:@\w+)?(?:\s+(.*))?$/i);
+    const cmdMatch = rawText.match(/^\/(scan|archiv|scan_start|archiv_start|jobs|archiv_status|scan_status|archiv_live|live_archiv|archiv_verzeichnis|archiv_index)(?:@\w+)?(?:\s+(.*))?$/i);
     if (!cmdMatch) return false;
 
     const cmd = cmdMatch[1].toLowerCase();
@@ -5748,6 +6355,21 @@
       }
 
       const dmRes = await renderAutoIngestStatusMenu(env, adminCtx.adminDmId, null, `${note}${deleteWarning}`.trim());
+      if (!dmRes || !dmRes.ok) {
+        await sendHistoryGroupDmFallbackNotice(env, adminCtx.sourceChatId, adminCtx.threadId, isChannelPost);
+      }
+      return true;
+    }
+
+    // 0b. /archiv_verzeichnis (Alias /archiv_index) -> 📌 Inhaltsverzeichnis im Themen-Archiv sofort aktualisieren
+    if (cmd === "archiv_verzeichnis" || cmd === "archiv_index") {
+      const dirRes = await syncArchiveDirectoryTopic(env, { force: true, subrequestCeiling: 40 });
+      const note = dirRes?.ok
+        ? `📌 *Inhaltsverzeichnis aktualisiert!* \`${Number(dirRes.topicCount || 0)}\` Themen · \`${Number(dirRes.totalPostedFiles || 0)}\` archivierte Dateien` +
+          (dirRes.deepLink ? ` · [Direkt öffnen](${dirRes.deepLink})` : "") +
+          deleteWarning
+        : `⚠️ *Inhaltsverzeichnis:* ${escapeMd(dirRes?.error || "Aktualisierung fehlgeschlagen.")}${deleteWarning}`;
+      const dmRes = await renderHistoryJobsAndArchiveMenu(env, adminCtx.adminDmId, null, { note: note.trim() });
       if (!dmRes || !dmRes.ok) {
         await sendHistoryGroupDmFallbackNotice(env, adminCtx.sourceChatId, adminCtx.threadId, isChannelPost);
       }
@@ -6446,6 +7068,7 @@
         });
       } else {
         // Prüfe echtes Qualitäts-Upgrade (z. B. 720p -> 1080p, 1080p -> 4K/2160p oder Clean ersetzt CAM/TS)
+        let prevBestQualityLabel = "";
         if (resolved.ingestStatus === "merged_quality") {
           try {
             const existingFiles = resolved.typeCode === "s"
@@ -6454,7 +7077,10 @@
             for (const f of (existingFiles || [])) {
               if (String(f.telegram_file_id || "") === String(srcRow.payload?.telegram_file_id || "")) continue;
               const rRank = getQualityRankForUpgrade(f.quality);
-              if (rRank > prevBestQualityRank) prevBestQualityRank = rRank;
+              if (rRank > prevBestQualityRank) {
+                prevBestQualityRank = rRank;
+                prevBestQualityLabel = String(f.quality || "").trim();
+              }
             }
           } catch (_e) {}
         }
@@ -6467,6 +7093,9 @@
           resolved.ingestStatus === "duplicate" ||
           resolved.ingestStatus === "skipped_prerelease" ||
           (resolved.ingestStatus === "merged_quality" && !isTrueQualityUpgrade);
+        if (resolved.ingestStatus === "replaced_prerelease" && !prevBestQualityLabel) {
+          prevBestQualityLabel = "CAM/TS";
+        }
 
         if (isTrueQualityUpgrade) {
           emoji = "🔥";
@@ -6489,12 +7118,13 @@
         });
         reactionQueue.push({ rowId: srcRow.id, messageId: msgId, emoji });
         vipPlaylistItems.push(resolved);
-        if (Number(srcRow.sourceJobId || srcRow.payload?._historyJobId || 0) > 0) {
+        if (!isDuplicateOrLowerQuality || isTrueQualityUpgrade) {
           const archCand = await collectArchiveMirrorQueueCandidate(env, {
             resolved,
             srcRow,
             sourceChatId: cid,
-            ctxCache: archiveCtxCache
+            ctxCache: archiveCtxCache,
+            upgradeInfo: isTrueQualityUpgrade ? { isUpgrade: true, previousQuality: prevBestQualityLabel } : null
           }).catch(() => null);
           if (archCand) archiveQueueItems.push(archCand);
         }
@@ -6794,11 +7424,8 @@
       totals.remainingPending = totals.chatsProcessed > 0
         ? await countPendingChannelIngestInD1(env, filterChatId)
         : Number(probe.totalPending || 0);
-
-      // Aufräumen alter erledigter Einträge (>7 Tage) nur 1x pro Stunde statt alle 2 Minuten (spart 696 D1-Writes/Tag!)
-      if (options.source === "cron" && new Date(now).getUTCMinutes() < 2 && hasSubrequestBudget(40)) {
-        totals.cleanedOldRows = await cleanupOldChannelIngestRowsInD1(env, 7);
-      }
+      // Hinweis: Die zentrale 30-Tage-D1-Hygiene (Inbox-Löschung + verlustfreie Archiv-Kompaktierung + Cache-TTL)
+      // läuft gebündelt und 6h-gedrosselt im scheduled()-Cron-Handler.
     } catch (e) {
       console.error("[ChannelIngestFlush] Fehler:", e?.message || e);
     }
@@ -7003,6 +7630,7 @@
           }
         });
       } else {
+        let prevBestQualityLabel = "";
         if (resolved.ingestStatus === "merged_quality") {
           try {
             const existingFiles = resolved.typeCode === "s"
@@ -7011,7 +7639,10 @@
             for (const f of (existingFiles || [])) {
               if (String(f.telegram_file_id || "") === String(srcRow.payload?.telegram_file_id || "")) continue;
               const rRank = getQualityRankForUpgrade(f.quality);
-              if (rRank > prevBestQualityRank) prevBestQualityRank = rRank;
+              if (rRank > prevBestQualityRank) {
+                prevBestQualityRank = rRank;
+                prevBestQualityLabel = String(f.quality || "").trim();
+              }
             }
           } catch (_e) {}
         }
@@ -7023,6 +7654,9 @@
           resolved.ingestStatus === "duplicate" ||
           resolved.ingestStatus === "skipped_prerelease" ||
           (resolved.ingestStatus === "merged_quality" && !isTrueQualityUpgrade);
+        if (resolved.ingestStatus === "replaced_prerelease" && !prevBestQualityLabel) {
+          prevBestQualityLabel = "CAM/TS";
+        }
 
         let emoji = "👍";
         if (isTrueQualityUpgrade) {
@@ -7046,12 +7680,13 @@
         });
         reactionQueue.push({ rowId: srcRow.id, messageId: srcRow.messageId, emoji });
         vipPlaylistItems.push(resolved);
-        if (Number(srcRow.sourceJobId || srcRow.payload?._historyJobId || 0) > 0) {
+        if (!isDuplicateOrLowerQuality || isTrueQualityUpgrade) {
           const archCand = await collectArchiveMirrorQueueCandidate(env, {
             resolved,
             srcRow,
             sourceChatId: cid,
-            ctxCache: archiveCtxCache
+            ctxCache: archiveCtxCache,
+            upgradeInfo: isTrueQualityUpgrade ? { isUpgrade: true, previousQuality: prevBestQualityLabel } : null
           }).catch(() => null);
           if (archCand) archiveQueueItems.push(archCand);
         }
@@ -8817,7 +9452,7 @@
             );
             return;
           }
-          if (data === "hc:cfg_mode" || data === "hc:cfg_time" || data === "hc:cfg_pin") {
+          if (data === "hc:cfg_mode" || data === "hc:cfg_time" || data === "hc:cfg_pin" || data === "hc:cfg_notify" || data === "hc:cfg_dir") {
             const [channels, curDef] = await Promise.all([
               getHistoryIndexChannelsFromD1(env),
               getHistoryArchiveDefaultsFromD1(env)
@@ -8830,6 +9465,10 @@
               nextDef.timing = curDef.timing === "after_scan" ? "live" : "after_scan";
             } else if (data === "hc:cfg_pin") {
               nextDef.pinSeriesCard = !curDef.pinSeriesCard;
+            } else if (data === "hc:cfg_notify") {
+              nextDef.notifyAdminDm = !(curDef.notifyAdminDm !== false);
+            } else if (data === "hc:cfg_dir") {
+              nextDef.autoUpdateAzIndex = !(curDef.autoUpdateAzIndex !== false);
             }
             const probes = channels.filter(c => c.role === "probe_index").map(c => ({ channelId: c.channelId, label: c.label, enabled: c.enabled }));
             const arch = channels.find(c => c.role === "archive_forum") || null;
@@ -8838,7 +9477,14 @@
               archiveForum: arch ? { channelId: arch.channelId, label: arch.label, enabled: arch.enabled } : null,
               archiveDefaults: nextDef
             });
-            await answerCallbackQuery(cq.id, "✅ Archiv-Standard gespeichert");
+            await answerCallbackQuery(
+              cq.id,
+              data === "hc:cfg_notify"
+                ? (nextDef.notifyAdminDm ? "🔔 Lautlose Admin-Hinweise aktiviert" : "🔕 Admin-Hinweise deaktiviert")
+                : (data === "hc:cfg_dir"
+                    ? (nextDef.autoUpdateAzIndex ? "📑 Auto-Inhaltsverzeichnis aktiviert" : "📑 Auto-Inhaltsverzeichnis deaktiviert")
+                    : "✅ Archiv-Standard gespeichert")
+            );
             await renderHistoryConfigChatMenu(env, chatId, msgId);
             return;
           }
@@ -9024,7 +9670,8 @@
               archiveTiming: curDraft.archiveTiming,
               archivePinSeriesCard: curDraft.archivePinSeriesCard,
               archiveMaxSeriesTopics: curDraft.archiveMaxSeriesTopics,
-              cronEnabled: curDraft.cronEnabled
+              cronEnabled: curDraft.cronEnabled,
+              createdByAdminId: adminId
             });
             if (!createRes.ok || !createRes.job) {
               await answerCallbackQuery(cq.id, "⚠️ Job konnte nicht gestartet werden.", true);
@@ -9074,6 +9721,7 @@
                 status: anotherActive ? "queued" : "running",
                 floodUntil: 0,
                 lastError: "",
+                notifyFlags: stripHistoryErrorNotifyFlags(job.notifyFlags),
                 now
               });
               await answerCallbackQuery(cq.id, anotherActive ? `🕒 Job #${jid} eingereiht` : `▶️ Job #${jid} fortgesetzt`);
@@ -9180,6 +9828,17 @@
             await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, {
               note: `🔁 *${retried} fehlgeschlagene Archiv-Einträge* wurden erneut eingereiht.`
             });
+            return;
+          }
+
+          if (data === "hc:arch_dir") {
+            await answerCallbackQuery(cq.id, "📑 Aktualisiere Inhaltsverzeichnis...");
+            const dirRes = await syncArchiveDirectoryTopic(env, { force: true, subrequestCeiling: 40 });
+            const note = dirRes?.ok
+              ? `📌 *Inhaltsverzeichnis aktualisiert:* \`${Number(dirRes.topicCount || 0)}\` Themen · \`${Number(dirRes.totalPostedFiles || 0)}\` Dateien` +
+                (dirRes.deepLink ? ` · [Direkt öffnen](${dirRes.deepLink})` : "")
+              : `⚠️ *Inhaltsverzeichnis:* ${escapeMd(dirRes?.error || "Fehler beim Aktualisieren.")}`;
+            await renderHistoryJobsAndArchiveMenu(env, chatId, msgId, { note });
             return;
           }
         }

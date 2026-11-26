@@ -879,11 +879,17 @@
         box-sizing: border-box;
         transition: all 0.15s ease;
       }
-      .world-portal-card:hover,
       .world-portal-card.spatial-focus {
         border-color: var(--accent-primary);
         background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(30, 41, 59, 0.95));
         transform: none;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .world-portal-card:hover {
+          border-color: var(--accent-primary);
+          background: linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(30, 41, 59, 0.95));
+          transform: none;
+        }
       }
       .world-portal-icon {
         font-size: 20px;
@@ -918,7 +924,7 @@
       @media (max-width: 760px) {
         header {
           --top-bar-h: 36px;
-          padding: 6px 8px;
+          padding: calc(6px + var(--tg-safe-top, 0px)) calc(8px + var(--tg-safe-right, 0px)) 6px calc(8px + var(--tg-safe-left, 0px));
           gap: 5px;
         }
         /* Mobilansicht: Nur klare Symbole ohne Text (☰, 🎬|📺, 💾, ▴) + exakt gleiche Höhe (36px) */
@@ -1293,16 +1299,12 @@
         transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 160ms ease, box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1);
         touch-action: pan-y;
       }
-      .card:hover .card-poster-wrap,
-      .card.spatial-focus .card-poster-wrap,
-      .card:focus-visible .card-poster-wrap {
+      .card.spatial-focus .card-poster-wrap {
         border-color: #38bdf8;
         transform: translateY(-4px);
         box-shadow: 0 0 0 2.5px #38bdf8, 0 14px 28px rgba(0, 0, 0, 0.62);
       }
-      .card:hover,
-      .card.spatial-focus,
-      .card:focus-visible {
+      .card.spatial-focus {
         z-index: 12;
       }
       .card:active .card-poster-wrap {
@@ -1321,10 +1323,21 @@
         user-select: none;
         transition: opacity 0.24s ease, transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
       }
-      .card:hover .card-poster-wrap img,
-      .card.spatial-focus .card-poster-wrap img,
-      .card:focus-visible .card-poster-wrap img {
+      .card.spatial-focus .card-poster-wrap img {
         transform: scale(1.035);
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-poster-wrap {
+          border-color: #38bdf8;
+          transform: translateY(-4px);
+          box-shadow: 0 0 0 2.5px #38bdf8, 0 14px 28px rgba(0, 0, 0, 0.62);
+        }
+        body:not(.kb-nav-active):not(.touch-nav-active) .card:hover {
+          z-index: 12;
+        }
+        body:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-poster-wrap img {
+          transform: scale(1.035);
+        }
       }
       .card-poster-wrap img.lazy-cover-img.is-loading {
         opacity: 0.18;
@@ -1424,16 +1437,18 @@
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.58);
         transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1), transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background 0.14s, border-color 0.14s;
       }
-      body:not(.kb-nav-active) .card:hover .card-hover-play-btn {
-        opacity: 1;
-        pointer-events: auto;
-        transform: translateY(0) scale(1);
-      }
-      .card-hover-play-btn:hover {
-        background: #0284c7;
-        border-color: #ffffff;
-        transform: translateY(0) scale(1.1);
-        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.45), 0 6px 16px rgba(0, 0, 0, 0.68);
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-hover-play-btn {
+          opacity: 1;
+          pointer-events: auto;
+          transform: translateY(0) scale(1);
+        }
+        .card-hover-play-btn:hover {
+          background: #0284c7;
+          border-color: #ffffff;
+          transform: translateY(0) scale(1.1);
+          box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.45), 0 6px 16px rgba(0, 0, 0, 0.68);
+        }
       }
       @media (hover: none), (pointer: coarse) {
         .card-quick-save {
@@ -1448,7 +1463,8 @@
         }
       }
       body[data-device="tv"] .card-hover-play-btn,
-      body.kb-nav-active .card-hover-play-btn {
+      body.kb-nav-active .card-hover-play-btn,
+      body.touch-nav-active .card-hover-play-btn {
         opacity: 0 !important;
         pointer-events: none !important;
       }
@@ -1456,17 +1472,23 @@
         transform: scale(0.96) !important;
         transition: transform 0.12s ease;
       }
-      .card-quick-save.saved,
-      body:not(.kb-nav-active) .card:hover .card-quick-save {
+      .card-quick-save.saved {
         opacity: 1;
         pointer-events: auto;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-quick-save {
+          opacity: 1;
+          pointer-events: auto;
+        }
+        body:not(.kb-nav-active):not(.touch-nav-active) .card.card-saved:hover .card-poster-wrap {
+          border-color: #38bdf8;
+        }
       }
       .card.card-saved .card-poster-wrap {
         border-color: rgba(16, 185, 129, 0.52);
       }
-      .card.card-saved:hover .card-poster-wrap,
-      .card.card-saved.spatial-focus .card-poster-wrap,
-      .card.card-saved:focus-visible .card-poster-wrap {
+      .card.card-saved.spatial-focus .card-poster-wrap {
         border-color: #38bdf8;
       }
       .card-quick-save:hover,
@@ -1864,10 +1886,13 @@
         position: relative;
         transition: color 160ms ease;
       }
-      .card:hover .card-title,
-      .card.spatial-focus .card-title,
-      .card:focus-visible .card-title {
+      .card.spatial-focus .card-title {
         color: #ffffff;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-title {
+          color: #ffffff;
+        }
       }
       .card-title-text {
         display: inline;
@@ -2873,7 +2898,7 @@
         align-items: center;
         justify-content: flex-end;
         gap: 12px;
-        padding: 14px 18px;
+        padding: calc(14px + var(--tg-safe-top, 0px)) calc(18px + var(--tg-safe-right, 0px)) 14px calc(18px + var(--tg-safe-left, 0px));
         background: none;
         pointer-events: none;
         opacity: 0;
@@ -3190,7 +3215,7 @@
       }
       @media (max-width: 640px) {
         .cinema-top-hud {
-          padding: 10px 12px;
+          padding: calc(10px + var(--tg-safe-top, 0px)) calc(12px + var(--tg-safe-right, 0px)) 10px calc(12px + var(--tg-safe-left, 0px));
           gap: 10px;
         }
         .cinema-top-hud-title {
@@ -4010,7 +4035,7 @@
         cursor: pointer;
         transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
       }
-      .detail-cast-card:hover, .detail-cast-card.spatial-focus {
+      .detail-cast-card.spatial-focus {
         transform: translateY(-2px);
         border-color: #38bdf8 !important;
         outline: 2px solid #38bdf8 !important;
@@ -4031,9 +4056,20 @@
         display: block;
         transition: transform 0.24s ease;
       }
-      .detail-cast-card:hover .detail-cast-photo,
       .detail-cast-card.spatial-focus .detail-cast-photo {
         transform: scale(1.05);
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .detail-cast-card:hover {
+          transform: translateY(-2px);
+          border-color: #38bdf8 !important;
+          outline: 2px solid #38bdf8 !important;
+          outline-offset: -2px !important;
+          box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 12px 24px rgba(0, 0, 0, 0.82) !important;
+        }
+        body:not(.kb-nav-active):not(.touch-nav-active) .detail-cast-card:hover .detail-cast-photo {
+          transform: scale(1.05);
+        }
       }
       .detail-cast-info {
         position: absolute;
@@ -4098,12 +4134,21 @@
         border-color: #38bdf8;
         box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.45), 0 10px 24px rgba(0, 0, 0, 0.75);
       }
-      .detail-sim-card:hover, .detail-sim-card.spatial-focus {
+      .detail-sim-card.spatial-focus {
         transform: translateY(-2px);
         border-color: #38bdf8 !important;
         outline: 2px solid #38bdf8 !important;
         outline-offset: -2px !important;
         box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 12px 24px rgba(0, 0, 0, 0.82) !important;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .detail-sim-card:hover {
+          transform: translateY(-2px);
+          border-color: #38bdf8 !important;
+          outline: 2px solid #38bdf8 !important;
+          outline-offset: -2px !important;
+          box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55), 0 12px 24px rgba(0, 0, 0, 0.82) !important;
+        }
       }
       .detail-sim-current-badge {
         position: absolute;
@@ -4207,7 +4252,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 20px;
+        padding: calc(20px + var(--tg-safe-top, 0px)) calc(20px + var(--tg-safe-right, 0px)) calc(20px + var(--tg-safe-bottom, 0px)) calc(20px + var(--tg-safe-left, 0px));
         animation: fadeIn 0.18s ease;
       }
       .person-spotlight-card {
@@ -5087,7 +5132,7 @@
       .embed-frame { width: 100%; aspect-ratio: 16/9; border: 0; display: block; background: #000; }
       .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
       .panel-box { background: rgba(18, 21, 30, 0.88); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
-      .lightbox-backdrop { position: fixed; inset: 0; z-index: 1700; background: rgba(4, 7, 17, 0.95); backdrop-filter: blur(10px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 14px; overflow: hidden; }
+      .lightbox-backdrop { position: fixed; inset: 0; z-index: 1700; background: rgba(4, 7, 17, 0.95); backdrop-filter: blur(10px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: calc(14px + var(--tg-safe-top, 0px)) calc(14px + var(--tg-safe-right, 0px)) calc(14px + var(--tg-safe-bottom, 0px)) calc(14px + var(--tg-safe-left, 0px)); overflow: hidden; }
       .lightbox-toolbar { position: relative; z-index: 5; display: flex; justify-content: space-between; align-items: center; width: 100%; max-width: 720px; margin-bottom: 12px; gap: 10px; padding: 8px 12px; border-radius: 12px; background: rgba(7, 12, 26, 0.88); border: 1px solid rgba(56, 189, 248, 0.25); box-shadow: 0 8px 24px rgba(0,0,0,0.65); }
       .lightbox-img { position: relative; z-index: 1; max-width: 96vw; max-height: 78vh; object-fit: contain; border-radius: 10px; box-shadow: 0 14px 44px rgba(0,0,0,0.92); transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1); cursor: zoom-in; }
       .lightbox-img.zoomed { transform: scale(1.62); cursor: zoom-out; }
@@ -5095,7 +5140,7 @@
       body[data-theme="light"] a.link { color: #0284c7; }
       #hudToast {
         position: fixed;
-        bottom: 20px;
+        bottom: calc(20px + var(--tg-safe-bottom, 0px));
         left: 50%;
         right: auto;
         transform: translateX(-50%);

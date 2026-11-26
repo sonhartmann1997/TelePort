@@ -1021,19 +1021,24 @@
         border-color: rgba(15, 23, 42, 0.14);
         box-shadow: 0 5px 15px rgba(15, 23, 42, 0.11);
       }
-      body[data-theme="light"] .card:hover .card-poster-wrap,
-      body[data-theme="light"] .card.spatial-focus .card-poster-wrap,
-      body[data-theme="light"] .card:focus-visible .card-poster-wrap {
+      body[data-theme="light"] .card.spatial-focus .card-poster-wrap {
         border-color: #0284c7;
         box-shadow: 0 0 0 2.5px #0284c7, 0 12px 24px rgba(15, 23, 42, 0.20);
       }
       body[data-theme="light"] .card-title {
         color: #0f172a;
       }
-      body[data-theme="light"] .card:hover .card-title,
-      body[data-theme="light"] .card.spatial-focus .card-title,
-      body[data-theme="light"] .card:focus-visible .card-title {
+      body[data-theme="light"] .card.spatial-focus .card-title {
         color: #0369a1;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body[data-theme="light"]:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-poster-wrap {
+          border-color: #0284c7;
+          box-shadow: 0 0 0 2.5px #0284c7, 0 12px 24px rgba(15, 23, 42, 0.20);
+        }
+        body[data-theme="light"]:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-title {
+          color: #0369a1;
+        }
       }
       body[data-theme="light"] .card-sub {
         color: #475569;
@@ -1349,10 +1354,15 @@
         color: #0f172a;
         box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
       }
-      body[data-theme="light"] .world-portal-card:hover,
       body[data-theme="light"] .world-portal-card.spatial-focus {
         background: #e0f2fe;
         border-color: #0284c7;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body[data-theme="light"]:not(.kb-nav-active):not(.touch-nav-active) .world-portal-card:hover {
+          background: #e0f2fe;
+          border-color: #0284c7;
+        }
       }
       body[data-theme="light"] .world-portal-name {
         color: #0f172a;
@@ -1648,10 +1658,15 @@
         border-bottom: 1px solid rgba(0, 240, 255, 0.35);
         box-shadow: 0 4px 24px rgba(255, 0, 127, 0.18);
       }
-      body[data-theme="cyberpunk"] .card:hover .card-poster-wrap,
       body[data-theme="cyberpunk"] .card.spatial-focus .card-poster-wrap {
         border-color: #00f0ff;
         box-shadow: 0 0 0 2.5px #00f0ff, 0 12px 26px rgba(0, 240, 255, 0.30);
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body[data-theme="cyberpunk"]:not(.kb-nav-active):not(.touch-nav-active) .card:hover .card-poster-wrap {
+          border-color: #00f0ff;
+          box-shadow: 0 0 0 2.5px #00f0ff, 0 12px 26px rgba(0, 240, 255, 0.30);
+        }
       }
       /* Barrierefreier Farbenblind-Modus (Okabe-Ito Blau vs. Orange statt Grün vs. Rot) */
       body[data-colorblind="1"]:not([data-theme="light"]) {
@@ -1720,7 +1735,7 @@
         row-gap: calc(20px * var(--scale-cover));
       }
       body[data-device="mobile"] header {
-        padding: calc(6px * var(--scale-menu)) calc(8px * var(--scale-menu));
+        padding: calc(6px * var(--scale-menu) + var(--tg-safe-top, 0px)) calc(8px * var(--scale-menu) + var(--tg-safe-right, 0px)) calc(6px * var(--scale-menu)) calc(8px * var(--scale-menu) + var(--tg-safe-left, 0px));
         gap: 5px;
       }
       body[data-device="mobile"] .brand-logo {
@@ -1847,15 +1862,21 @@
       body.kb-nav-active * {
         cursor: none !important;
       }
-      body.kb-nav-active .card:hover:not(.spatial-focus) {
-        border-color: rgba(255, 255, 255, 0.08);
+      body.kb-nav-active .card:hover:not(.spatial-focus) .card-poster-wrap,
+      body.touch-nav-active .card:hover:not(.spatial-focus) .card-poster-wrap {
+        border-color: rgba(255, 255, 255, 0.09);
         transform: none;
-        box-shadow: none;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
       }
-      body[data-theme="light"].kb-nav-active .card:hover:not(.spatial-focus) {
-        border-color: #cbd5e1;
+      body[data-theme="light"].kb-nav-active .card:hover:not(.spatial-focus) .card-poster-wrap,
+      body[data-theme="light"].touch-nav-active .card:hover:not(.spatial-focus) .card-poster-wrap {
+        border-color: rgba(15, 23, 42, 0.14);
         transform: none;
-        box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
+        box-shadow: 0 5px 15px rgba(15, 23, 42, 0.11);
+      }
+      body.kb-nav-active .card.card-saved:hover:not(.spatial-focus) .card-poster-wrap,
+      body.touch-nav-active .card.card-saved:hover:not(.spatial-focus) .card-poster-wrap {
+        border-color: rgba(16, 185, 129, 0.52);
       }
 
       header {
@@ -1916,6 +1937,11 @@
       }
       body.modal-open-pause-hero header #topBarBackBtn {
         display: inline-flex !important;
+      }
+      /* Telegram nativer BackButton aktiv: doppelte eigene Zurück-Buttons ausblenden */
+      body.tg-native-back-active header #topBarBackBtn,
+      body.tg-native-back-active #sidebarBackToolBtn {
+        display: none !important;
       }
       body.modal-open-pause-hero header #topBarAdjNavGroup {
         display: inline-flex !important;
@@ -2107,7 +2133,7 @@
         width: min(calc(800px * var(--scale-menu)), 96vw);
       }
       .sidebar-header {
-        padding: 10px 14px;
+        padding: calc(10px + var(--tg-safe-top, 0px)) calc(14px + var(--tg-safe-right, 0px)) 10px calc(14px + var(--tg-safe-left, 0px));
         border-bottom: 1px solid rgba(var(--ambi-2), 0.22);
         display: flex;
         align-items: center;
@@ -2363,7 +2389,7 @@
       /* Schwebender Ladehinweis (position: fixed -> 0px Layout-Shift, kein Seiten-Springen!) */
       #busyOverlayBar {
         position: fixed;
-        top: 52px;
+        top: calc(var(--sticky-header-height, 54px) + 6px);
         left: 50%;
         transform: translateX(-50%) translateY(-8px);
         z-index: 120;
@@ -3035,11 +3061,17 @@
         cursor: pointer;
         transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
       }
-      .rm-entry-card:hover,
       .rm-entry-card.spatial-focus {
         background: linear-gradient(135deg, rgba(2, 132, 199, 0.34), rgba(37, 99, 235, 0.38));
         border-color: #7dd3fc;
         transform: translate3d(-2px, 0, 0);
+      }
+      @media (hover: hover) and (pointer: fine) {
+        body:not(.kb-nav-active):not(.touch-nav-active) .rm-entry-card:hover {
+          background: linear-gradient(135deg, rgba(2, 132, 199, 0.34), rgba(37, 99, 235, 0.38));
+          border-color: #7dd3fc;
+          transform: translate3d(-2px, 0, 0);
+        }
       }
       .tv-elev-count-badge {
         margin-left: auto;

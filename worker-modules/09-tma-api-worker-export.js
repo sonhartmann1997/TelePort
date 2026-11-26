@@ -1301,7 +1301,8 @@
               archiveTiming: body.archiveTiming || archiveDefaults.timing,
               archivePinSeriesCard: body.archivePinSeriesCard !== undefined ? Boolean(body.archivePinSeriesCard) : archiveDefaults.pinSeriesCard,
               archiveMaxSeriesTopics: body.archiveMaxSeriesTopics || archiveDefaults.maxSeriesTopics,
-              cronEnabled: body.cronEnabled !== false
+              cronEnabled: body.cronEnabled !== false,
+              createdByAdminId: String(auth?.chatId || "").trim()
             });
             if (!createRes.ok) {
               return new Response(JSON.stringify(createRes), { status: 400, headers: corsHeaders });
@@ -1331,6 +1332,7 @@
               status: anotherActive ? "queued" : "running",
               floodUntil: 0,
               lastError: "",
+              notifyFlags: stripHistoryErrorNotifyFlags(job.notifyFlags),
               now
             });
           } else if (action === "cancel") {
@@ -1421,6 +1423,18 @@
             const released = await releaseHeldArchiveMirrorItemsForJobInD1(env, jobId, Date.now(), { releaseAll: jobId <= 0 });
             const stats = await getArchiveMirrorStatsFromD1(env, forumId);
             return new Response(JSON.stringify({ ok: true, released, stats }), { status: 200, headers: corsHeaders });
+          }
+          if (action === "sync_directory") {
+            const dirRes = await syncArchiveDirectoryTopic(env, { force: true, subrequestCeiling: 40 });
+            const stats = await getArchiveMirrorStatsFromD1(env, forumId);
+            return new Response(JSON.stringify({ ...dirRes, stats }), { status: dirRes?.ok ? 200 : 400, headers: corsHeaders });
+          }
+          if (action === "run_hygiene") {
+            const hygRes = typeof runD1HygienePassInD1 === "function"
+              ? await runD1HygienePassInD1(env, { inboxRetentionDays: 30, archiveCompactDays: 30, force: true })
+              : { ok: false, error: "D1-Hygiene nicht verfügbar." };
+            const stats = await getArchiveMirrorStatsFromD1(env, forumId);
+            return new Response(JSON.stringify({ ...hygRes, stats }), { status: hygRes?.ok ? 200 : 500, headers: corsHeaders });
           }
           return new Response(JSON.stringify({ ok: false, error: `Unbekannte Archiv-Aktion: ${action}` }), { status: 400, headers: corsHeaders });
         }
@@ -7356,11 +7370,31 @@
             typeof processArchiveMirrorQueueBatch === "function" &&
             hasSubrequestBudget(34)
           ) {
-            await processArchiveMirrorQueueBatch(env, {
+            const archBatchRes = await processArchiveMirrorQueueBatch(env, {
               maxPosts: 4,
               maxNewTopics: 2,
               subrequestCeiling: 42
             });
+            if (
+              (Number(archBatchRes?.postedCount || 0) > 0 || Number(archBatchRes?.newTopicsCreated || 0) > 0) &&
+              typeof maybeAutoSyncArchiveDirectory === "function" &&
+              hasSubrequestBudget(36)
+            ) {
+              await maybeAutoSyncArchiveDirectory(env, { subrequestCeiling: 42 }).catch(() => null);
+            }
+          }
+
+          // 5. D1-Hygiene (30T Inbox-Löschung, 30T verlustfreie Archiv-Kompaktierung, TTL-Caches) – max. 1x alle 6 Stunden
+          if (
+            new Date(now).getUTCMinutes() < 2 &&
+            typeof runD1HygienePassInD1 === "function" &&
+            hasSubrequestBudget(36)
+          ) {
+            await runD1HygienePassInD1(env, {
+              inboxRetentionDays: 30,
+              archiveCompactDays: 30,
+              force: false
+            }).catch(() => null);
           }
         }
       );

@@ -20,27 +20,104 @@
       window._tmaHomeScreenStatus = "unknown";
       window._tmaAppDeactivated = false;
 
-      function syncTelegramSafeAreaInsetsClient() {
+      let _tmaSafeSyncRaf = 0;
+      let _tmaSafeSyncTimer = null;
+
+      function isRealTelegramMiniAppClient() {
+        try {
+          const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
+          if (!liveTg) return false;
+          const plat = String(liveTg.platform || "").toLowerCase();
+          const hasPlatform = Boolean(plat && plat !== "unknown");
+          const hasInitData = Boolean(typeof liveTg.initData === "string" && liveTg.initData.trim().length > 0);
+          const hasUnsafe = Boolean(liveTg.initDataUnsafe && (liveTg.initDataUnsafe.user || liveTg.initDataUnsafe.query_id || liveTg.initDataUnsafe.chat_instance));
+          return Boolean(hasPlatform || hasInitData || hasUnsafe || liveTg.isFullscreen);
+        } catch (_e) {
+          return false;
+        }
+      }
+
+      function readTelegramCssInsetPxClient(varName) {
+        try {
+          const raw = window.getComputedStyle(document.documentElement).getPropertyValue(varName);
+          const parsed = parseFloat(String(raw || "").trim());
+          return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+        } catch (_e) {
+          return 0;
+        }
+      }
+
+      function syncTelegramSafeAreaInsetsClient(scheduleRecheck = true) {
         try {
           const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
           const root = document.documentElement;
           if (!root) return;
+          const isTma = isRealTelegramMiniAppClient();
+          const isFs = Boolean(liveTg && liveTg.isFullscreen);
           const sa = (liveTg && liveTg.safeAreaInset && typeof liveTg.safeAreaInset === "object") ? liveTg.safeAreaInset : {};
           const csa = (liveTg && liveTg.contentSafeAreaInset && typeof liveTg.contentSafeAreaInset === "object") ? liveTg.contentSafeAreaInset : {};
-          const isFs = Boolean(liveTg && liveTg.isFullscreen);
-          const topPx = isFs ? Math.max(0, Math.round(Number(sa.top || 0) + Number(csa.top || 0))) : 0;
-          const bottomPx = isFs ? Math.max(0, Math.round(Number(sa.bottom || 0) + Number(csa.bottom || 0))) : 0;
-          const leftPx = isFs ? Math.max(0, Math.round(Number(sa.left || 0) + Number(csa.left || 0))) : 0;
-          const rightPx = isFs ? Math.max(0, Math.round(Number(sa.right || 0) + Number(csa.right || 0))) : 0;
-          root.style.setProperty("--tg-safe-top", topPx + "px");
-          root.style.setProperty("--tg-safe-bottom", bottomPx + "px");
-          root.style.setProperty("--tg-safe-left", leftPx + "px");
-          root.style.setProperty("--tg-safe-right", rightPx + "px");
+
+          const jsTop = Number(sa.top || 0) + Number(csa.top || 0);
+          const jsBottom = Number(sa.bottom || 0) + Number(csa.bottom || 0);
+          const jsLeft = Number(sa.left || 0) + Number(csa.left || 0);
+          const jsRight = Number(sa.right || 0) + Number(csa.right || 0);
+
+          const cssSaTop = readTelegramCssInsetPxClient("--tg-safe-area-inset-top");
+          const cssCsaTop = readTelegramCssInsetPxClient("--tg-content-safe-area-inset-top");
+          const cssTop = cssSaTop + cssCsaTop;
+          const cssBottom = readTelegramCssInsetPxClient("--tg-safe-area-inset-bottom") + readTelegramCssInsetPxClient("--tg-content-safe-area-inset-bottom");
+          const cssLeft = readTelegramCssInsetPxClient("--tg-safe-area-inset-left") + readTelegramCssInsetPxClient("--tg-content-safe-area-inset-left");
+          const cssRight = readTelegramCssInsetPxClient("--tg-safe-area-inset-right") + readTelegramCssInsetPxClient("--tg-content-safe-area-inset-right");
+
+          const mergedTop = Math.max(0, Math.round(Math.max(jsTop, cssTop)));
+          const mergedBottom = Math.max(0, Math.round(Math.max(jsBottom, cssBottom)));
+          const mergedLeft = Math.max(0, Math.round(Math.max(jsLeft, cssLeft)));
+          const mergedRight = Math.max(0, Math.round(Math.max(jsRight, cssRight)));
+
+          const plat = String((liveTg && liveTg.platform) || "").toLowerCase();
+          const isMobileLike = plat === "ios" || plat === "android" || (typeof window !== "undefined" && window.innerWidth <= 760);
+
+          let topCssValue = "0px";
+          if (isFs) {
+            if (mergedTop >= 24) {
+              topCssValue = mergedTop + "px";
+            } else {
+              topCssValue = isMobileLike ? "calc(env(safe-area-inset-top, 0px) + 52px)" : "44px";
+            }
+          } else if (isTma && (Number(csa.top || 0) > 0 || cssCsaTop > 0)) {
+            topCssValue = mergedTop + "px";
+          }
+
+          root.style.setProperty("--tg-safe-top", topCssValue);
+          root.style.setProperty("--tg-safe-bottom", (isTma ? mergedBottom : 0) + "px");
+          root.style.setProperty("--tg-safe-left", (isTma ? mergedLeft : 0) + "px");
+          root.style.setProperty("--tg-safe-right", (isTma ? mergedRight : 0) + "px");
+
           if (document.body) {
+            document.body.classList.toggle("tg-miniapp-active", isTma);
             document.body.classList.toggle("tg-fullscreen-active", isFs);
+          }
+          if (isTma && typeof syncTelegramWebAppColorsClient === "function") {
+            syncTelegramWebAppColorsClient(typeof appTheme !== "undefined" ? appTheme : "dark");
           }
           if (typeof syncStickyHeaderCssVars === "function") {
             syncStickyHeaderCssVars();
+          }
+          if (scheduleRecheck && typeof window !== "undefined") {
+            if (_tmaSafeSyncRaf && typeof window.cancelAnimationFrame === "function") {
+              window.cancelAnimationFrame(_tmaSafeSyncRaf);
+            }
+            if (typeof window.requestAnimationFrame === "function") {
+              _tmaSafeSyncRaf = window.requestAnimationFrame(function() {
+                _tmaSafeSyncRaf = 0;
+                if (typeof syncStickyHeaderCssVars === "function") syncStickyHeaderCssVars();
+              });
+            }
+            if (_tmaSafeSyncTimer) clearTimeout(_tmaSafeSyncTimer);
+            _tmaSafeSyncTimer = setTimeout(function() {
+              _tmaSafeSyncTimer = null;
+              syncTelegramSafeAreaInsetsClient(false);
+            }, 180);
           }
         } catch (_e) {}
       }
@@ -98,6 +175,7 @@
             tg.onEvent("safeAreaChanged", onSafeOrFsChange);
             tg.onEvent("contentSafeAreaChanged", onSafeOrFsChange);
             tg.onEvent("fullscreenChanged", onSafeOrFsChange);
+            tg.onEvent("viewportChanged", onSafeOrFsChange);
             tg.onEvent("homeScreenAdded", function() {
               window._tmaHomeScreenStatus = "added";
               if (typeof showHudToast === "function") {
@@ -118,21 +196,29 @@
             });
             tg.onEvent("activated", function() {
               window._tmaAppDeactivated = false;
-              syncTelegramSafeAreaInsetsClient();
+              syncTelegramSafeAreaInsetsClient(true);
             });
           }
         } catch (e) {}
       }
       if (typeof document !== "undefined") {
         document.addEventListener("DOMContentLoaded", function() {
-          syncTelegramSafeAreaInsetsClient();
+          syncTelegramSafeAreaInsetsClient(true);
+          syncTelegramBackButtonClient();
         });
+      }
+      if (typeof window !== "undefined") {
+        window.addEventListener("orientationchange", function() {
+          syncTelegramSafeAreaInsetsClient(true);
+        }, { passive: true });
       }
 
       function syncTelegramBackButtonClient() {
         try {
           const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
-          if (!liveTg || !liveTg.BackButton) return;
+          const isRealTma = isRealTelegramMiniAppClient();
+          const lightboxRoot = document.getElementById("lightboxRoot");
+          const hasLightbox = Boolean(lightboxRoot && lightboxRoot.innerHTML.trim().length > 0);
           const modalRoot = document.getElementById("modalRoot");
           const hasModal = Boolean(modalRoot && modalRoot.innerHTML.trim().length > 0);
           const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
@@ -141,24 +227,38 @@
           const hasCustomDialog = Boolean(customDialogRoot && customDialogRoot.innerHTML.trim().length > 0);
           const isSidebarOpen = Boolean(typeof state !== "undefined" && state.sidebarOpen);
           const isNonDiscoverView = Boolean(typeof state !== "undefined" && state.currentView && state.currentView !== "discover");
+          const shouldShowBack = Boolean(hasLightbox || hasModal || hasSpotlight || hasCustomDialog || isSidebarOpen || isNonDiscoverView);
 
-          if (hasModal || hasSpotlight || hasCustomDialog || isSidebarOpen || isNonDiscoverView) {
+          if (!isRealTma || !liveTg || !liveTg.BackButton) {
+            if (document.body) document.body.classList.remove("tg-native-back-active");
+            return;
+          }
+
+          if (shouldShowBack) {
             liveTg.BackButton.show();
             if (typeof liveTg.BackButton.offClick === "function") {
               liveTg.BackButton.offClick(handleTelegramBackButtonClickClient);
             }
             liveTg.BackButton.onClick(handleTelegramBackButtonClickClient);
+            if (document.body) document.body.classList.add("tg-native-back-active");
           } else {
             liveTg.BackButton.hide();
             if (typeof liveTg.BackButton.offClick === "function") {
               liveTg.BackButton.offClick(handleTelegramBackButtonClickClient);
             }
+            if (document.body) document.body.classList.remove("tg-native-back-active");
           }
         } catch (e) {}
       }
 
       function handleTelegramBackButtonClickClient() {
         try {
+          const lightboxRoot = document.getElementById("lightboxRoot");
+          if (lightboxRoot && lightboxRoot.innerHTML.trim().length > 0 && typeof closeLightbox === "function") {
+            closeLightbox();
+            syncTelegramBackButtonClient();
+            return;
+          }
           const customDialogRoot = document.getElementById("customDialogRoot");
           if (customDialogRoot && customDialogRoot.innerHTML.trim().length > 0) {
             if (customDialogRoot.querySelector(".page-jump-modal-backdrop") && typeof closePageJumpModalClient === "function") {
@@ -1057,6 +1157,8 @@
               tgWebApp.requestFullscreen();
               showHudToast("⛶ Telegram Bot API 8.0 Vollbild-Modus aktiviert!");
             }
+            syncTelegramSafeAreaInsetsClient(true);
+            setTimeout(function() { syncTelegramSafeAreaInsetsClient(true); }, 360);
             return;
           }
           if (tgWebApp && typeof tgWebApp.expand === "function") {
@@ -1235,7 +1337,7 @@
                   '📲 Home-Icon' +
                 '</button>'
               )) +
-              '<button class="btn" onclick="closeFilterSidebar();goBack()" title="Zurück zur vorherigen Ansicht">' +
+              '<button id="sidebarBackToolBtn" class="btn" onclick="closeFilterSidebar();goBack()" title="Zurück zur vorherigen Ansicht">' +
                 '⬅️ Zurück' +
               '</button>' +
               '<button class="btn" onclick="closeFilterSidebar();restartApp()" title="Alle aktiven Filter zurücksetzen & neu starten">' +
@@ -2011,10 +2113,12 @@
           const closeBtn = document.getElementById("lbCloseBtn");
           if (closeBtn && typeof jumpSpatialFocus === "function") jumpSpatialFocus(closeBtn, false);
         }, 25);
+        if (typeof syncTelegramBackButtonClient === "function") syncTelegramBackButtonClient();
       }
       function closeLightbox() {
         const lb = document.getElementById("lightboxRoot");
         if (lb) lb.innerHTML = "";
+        if (typeof syncTelegramBackButtonClient === "function") syncTelegramBackButtonClient();
         if (lastLightboxTriggerEl && document.body.contains(lastLightboxTriggerEl) && typeof jumpSpatialFocus === "function") {
           const restoreEl = lastLightboxTriggerEl;
           lastLightboxTriggerEl = null;

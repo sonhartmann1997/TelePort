@@ -3862,7 +3862,7 @@
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button class="btn ' + (state.adminTab === 'bot' ? 'active' : 'blue') + '" onclick="state.adminTab=\\'bot\\';loadAdminPanelView()">🤖 Bot & Einstellungen</button>' +
                 '<button class="btn ' + (state.adminTab === 'inbox' ? 'active' : (Number(window._adminChannelInboxData?.totals?.pending || 0) > 0 ? 'amber' : '')) + '" onclick="state.adminTab=\\'inbox\\';loadAdminPanelView()">📥 Kanal-Inbox' + (Number(window._adminChannelInboxData?.totals?.pending || 0) > 0 ? (' (' + Number(window._adminChannelInboxData.totals.pending) + ')') : '') + '</button>' +
-                '<button class="btn ' + (state.adminTab === 'history' ? 'active' : ((window._historyTurboState?.running || (Array.isArray(window._adminHistoryData?.jobs) && window._adminHistoryData.jobs.some(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait'))) ? 'amber' : '')) + '" onclick="state.adminTab=\\'history\\';loadAdminPanelView()">📜 Verlaufs-Scan' + (Array.isArray(window._adminHistoryData?.jobs) && window._adminHistoryData.jobs.filter(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait').length > 0 ? (' (' + window._adminHistoryData.jobs.filter(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait').length + ')') : '') + '</button>' +
+                '<button class="btn ' + (state.adminTab === 'history' ? 'active' : ((window._historyTurboState?.running || window._archiveTurboState?.running || (Array.isArray(window._adminHistoryData?.jobs) && window._adminHistoryData.jobs.some(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait'))) ? 'amber' : '')) + '" onclick="state.adminTab=\\'history\\';loadAdminPanelView()">📜 Verlaufs-Scan' + (Array.isArray(window._adminHistoryData?.jobs) && window._adminHistoryData.jobs.filter(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait').length > 0 ? (' (' + window._adminHistoryData.jobs.filter(j => j.status === 'running' || j.status === 'queued' || j.status === 'flood_wait').length + ')') : '') + '</button>' +
                 '<button class="btn ' + (state.adminTab === 'backup' ? 'active' : '') + '" onclick="state.adminTab=\\'backup\\';loadAdminPanelView()">📦 JSON-Import</button>' +
                 '<button class="btn ' + (state.adminTab === 'playlists' ? 'active' : '') + '" onclick="state.adminTab=\\'playlists\\';loadAdminPanelView()">🎵 Playlisten (' + adminPlaylists.length + ')</button>' +
                 '<button class="btn ' + (state.adminTab === 'users' ? 'active' : '') + '" onclick="state.adminTab=\\'users\\';loadAdminPanelView()">👥 User & VIP (' + users.length + ')</button>' +
@@ -4709,7 +4709,7 @@
           tb.reactionsSent = 0;
           tb.reactionsDeferred = 0;
           tb.batchSize = 6;
-          tb.seriesTmdbHints = {};
+          tb.seriesTmdbHints = loadBrowserSeriesTmdbHintsCacheClient();
         }
         tb.running = true;
         tb.paused = false;
@@ -4836,6 +4836,7 @@
               tb.reactionsDeferred += Number(s.reactionsDeferred || 0);
               tb.remainingPending = Number(batchRes.remainingPending ?? tb.remainingPending);
               if (batchRes.seriesTmdbHints && typeof batchRes.seriesTmdbHints === "object") {
+                saveBrowserSeriesTmdbHintsCacheClient(batchRes.seriesTmdbHints);
                 const mergedHints = { ...tb.seriesTmdbHints, ...batchRes.seriesTmdbHints };
                 const hintEntries = Object.entries(mergedHints);
                 tb.seriesTmdbHints = hintEntries.length > 100
@@ -4901,12 +4902,14 @@
           authErrorStatus: 0,
           probeChannels: [],
           archiveForum: null,
-          archiveDefaults: { topicMode: "type_genre", timing: "live", pinSeriesCard: false, maxSeriesTopics: 250 },
+          archiveDefaults: { topicMode: "type_genre", timing: "live", pinSeriesCard: false, maxSeriesTopics: 250, notifyAdminDm: true, autoUpdateAzIndex: true },
           jobs: [],
           inboxByChat: {},
           archiveStats: { pending: 0, held: 0, posted: 0, failed: 0, total: 0, topicCount: 0 },
           archiveTopics: [],
           archiveRecent: [],
+          runningHygiene: false,
+          lastHygieneSummary: "",
           validationResult: null,
           sourceValidationResult: null,
           setupExpanded: null,
@@ -4924,7 +4927,9 @@
             topicMode: "type_genre",
             timing: "live",
             pinSeriesCard: false,
-            maxSeriesTopics: 250
+            maxSeriesTopics: 250,
+            notifyAdminDm: true,
+            autoUpdateAzIndex: true
           },
           form: {
             sourceInput: "",
@@ -4959,6 +4964,9 @@
           countdownSec: 0,
           batchSize: 6,
           runArchiveStep: true,
+          autoDrainArchiveAfterScan: true,
+          wakeLockActive: false,
+          bgThrottled: false,
           stepsRun: 0,
           probesFired: 0,
           mediaFound: 0,
@@ -4972,6 +4980,150 @@
           newTopicsCreated: 0,
           seriesTmdbHints: {}
         };
+      }
+
+      if (!window._archiveTurboState) {
+        window._archiveTurboState = {
+          running: false,
+          paused: false,
+          stopRequested: false,
+          phase: "",
+          statusText: "",
+          lastError: "",
+          authErrorStatus: 0,
+          countdownSec: 0,
+          startedAt: 0,
+          initialPending: 0,
+          stepsRun: 0,
+          postedCount: 0,
+          newTopicsCreated: 0,
+          recreatedTopics: 0,
+          failedCount: 0,
+          ratePerMin: 0,
+          etaText: "",
+          wakeLockActive: false,
+          bgThrottled: false
+        };
+      }
+
+      if (!window._turboVisListenerBound && typeof document !== "undefined") {
+        window._turboVisListenerBound = true;
+        document.addEventListener("visibilitychange", function() {
+          const htb = window._historyTurboState;
+          const atb = window._archiveTurboState;
+          const anyRunning = Boolean(htb?.running || atb?.running);
+          if (!anyRunning) return;
+          const hidden = Boolean(document.hidden);
+          if (htb?.running) htb.bgThrottled = hidden;
+          if (atb?.running) atb.bgThrottled = hidden;
+          if (!hidden) {
+            acquireTurboWakeLockClient();
+          }
+          renderAdminHistoryScanDomInPlace();
+        });
+      }
+
+      async function acquireTurboWakeLockClient() {
+        try {
+          if (typeof navigator === "undefined" || !navigator.wakeLock || typeof navigator.wakeLock.request !== "function") return false;
+          if (window._turboWakeLockSentinel && !window._turboWakeLockSentinel.released) return true;
+          const sentinel = await navigator.wakeLock.request("screen");
+          window._turboWakeLockSentinel = sentinel;
+          if (window._historyTurboState?.running) window._historyTurboState.wakeLockActive = true;
+          if (window._archiveTurboState?.running) window._archiveTurboState.wakeLockActive = true;
+          sentinel.addEventListener("release", function() {
+            window._turboWakeLockSentinel = null;
+            if (window._historyTurboState) window._historyTurboState.wakeLockActive = false;
+            if (window._archiveTurboState) window._archiveTurboState.wakeLockActive = false;
+            if (window._historyTurboState?.running || window._archiveTurboState?.running) {
+              renderAdminHistoryScanDomInPlace();
+            }
+          });
+          return true;
+        } catch (_e) {
+          return false;
+        }
+      }
+
+      async function releaseTurboWakeLockClient() {
+        try {
+          if (window._historyTurboState?.running || window._archiveTurboState?.running) return;
+          if (window._turboWakeLockSentinel) {
+            const s = window._turboWakeLockSentinel;
+            window._turboWakeLockSentinel = null;
+            await s.release().catch(() => {});
+          }
+        } catch (_e) {}
+        if (window._historyTurboState) window._historyTurboState.wakeLockActive = false;
+        if (window._archiveTurboState) window._archiveTurboState.wakeLockActive = false;
+      }
+
+      function loadBrowserSeriesTmdbHintsCacheClient() {
+        try {
+          if (typeof localStorage === "undefined") return {};
+          const raw = localStorage.getItem("tma_series_tmdb_hints_v1");
+          if (!raw) return {};
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") return {};
+          const now = Date.now();
+          const ttlMs = 24 * 60 * 60 * 1000;
+          const valid = [];
+          for (const [k, v] of Object.entries(parsed)) {
+            const tid = Number(v && typeof v === "object" ? v.id : v);
+            const ts = Number(v && typeof v === "object" ? v.ts : now);
+            if (k && tid > 0 && (now - ts) < ttlMs) {
+              valid.push([k, tid, ts]);
+            }
+          }
+          valid.sort((a, b) => b[2] - a[2]);
+          const out = {};
+          for (const [k, tid] of valid.slice(0, 100)) {
+            out[k] = tid;
+          }
+          return out;
+        } catch (_e) {
+          return {};
+        }
+      }
+
+      function saveBrowserSeriesTmdbHintsCacheClient(newHints) {
+        try {
+          if (typeof localStorage === "undefined" || !newHints || typeof newHints !== "object") return;
+          const now = Date.now();
+          const ttlMs = 24 * 60 * 60 * 1000;
+          let store = {};
+          try {
+            const raw = localStorage.getItem("tma_series_tmdb_hints_v1");
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === "object") store = parsed;
+            }
+          } catch (_e) {}
+          for (const [k, v] of Object.entries(newHints)) {
+            const tid = Number(v && typeof v === "object" ? v.id : v);
+            if (k && tid > 0) {
+              store[String(k)] = { id: tid, ts: now };
+            }
+          }
+          const pruned = Object.entries(store)
+            .filter(([, v]) => v && Number(v.id) > 0 && (now - Number(v.ts || 0)) < ttlMs)
+            .sort((a, b) => Number(b[1].ts || 0) - Number(a[1].ts || 0))
+            .slice(0, 400);
+          localStorage.setItem("tma_series_tmdb_hints_v1", JSON.stringify(Object.fromEntries(pruned)));
+        } catch (_e) {}
+      }
+
+      function formatArchiveEtaClient(pendingCount, ratePerMin) {
+        const rem = Math.max(0, Number(pendingCount || 0));
+        const rate = Number(ratePerMin || 0);
+        if (rem <= 0) return "Fertig";
+        const effectiveRate = rate > 0.5 ? rate : 12.5;
+        const mins = Math.ceil(rem / effectiveRate);
+        if (mins <= 1) return "< 1 Min.";
+        if (mins < 60) return "~" + mins + " Min.";
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return "~" + h + " Std." + (m > 0 ? (" " + m + " Min.") : "");
       }
 
       function formatHistoryStatusBadgeClient(status) {
@@ -5020,6 +5172,8 @@
         const archTimeEl = document.getElementById("histArchiveDefaultTiming");
         const archPinEl = document.getElementById("histArchiveDefaultPin");
         const archMaxEl = document.getElementById("histArchiveDefaultMax");
+        const archNotifyEl = document.getElementById("histArchiveNotifyDm");
+        const archDirEl = document.getElementById("histArchiveAutoDir");
         if (archIdEl) d.cfgArchive.channelId = archIdEl.value.trim();
         if (archLblEl) d.cfgArchive.label = archLblEl.value.trim();
         if (archEnEl) d.cfgArchive.enabled = Boolean(archEnEl.checked);
@@ -5027,6 +5181,8 @@
         if (archTimeEl) d.cfgArchive.timing = archTimeEl.value;
         if (archPinEl) d.cfgArchive.pinSeriesCard = Boolean(archPinEl.checked);
         if (archMaxEl) d.cfgArchive.maxSeriesTopics = Math.max(10, Math.min(500, parseInt(archMaxEl.value, 10) || 250));
+        if (archNotifyEl) d.cfgArchive.notifyAdminDm = Boolean(archNotifyEl.checked);
+        if (archDirEl) d.cfgArchive.autoUpdateAzIndex = Boolean(archDirEl.checked);
 
         const srcEl = document.getElementById("histJobSourceInput");
         const startEl = document.getElementById("histJobStartId");
@@ -5118,6 +5274,7 @@
         const activeJobForTurbo = jobs.find(j => Number(j.id) === Number(tb.jobId)) || null;
         const turboPct = activeJobForTurbo ? computeHistoryJobProgressPctClient(activeJobForTurbo) : (tb.phase === "done" ? 100 : 0);
 
+        const atb = window._archiveTurboState || {};
         const turboBoxHtml = (tb.running || tb.paused || tb.statusText || tb.lastError) ? (
           '<div id="adminHistoryTurboBox" class="panel-box" style="margin-bottom:12px;border-color:' +
             (tb.authErrorStatus ? 'rgba(239,68,68,0.65);background:rgba(127,29,29,0.22)' : (tb.running ? 'rgba(56,189,248,0.55);background:rgba(14,165,233,0.08)' : 'rgba(16,185,129,0.45)')) + '">' +
@@ -5143,7 +5300,15 @@
               '<span>🧠 Importiert: <b style="color:#34d399">' + Number(tb.videosImported || 0) + '</b> (👍' + Number(tb.added || 0) + ' 🔥' + Number(tb.upgraded || 0) + ' 👌' + Number(tb.duplicates || 0) + ' 👀' + Number(tb.review || 0) + ')</span>' +
               (tb.archivedPosted > 0 ? ('<span>🗂️ Archiviert: <b style="color:#a78bfa">' + Number(tb.archivedPosted) + '</b></span>') : '') +
               '<span>📦 Batch: <b>' + Number(tb.batchSize || 6) + '</b></span>' +
+              (tb.wakeLockActive ? '<span style="color:#6ee7b7">🔋 Display wach</span>' : '') +
+              (tb.bgThrottled ? '<span style="color:#fbbf24">🌙 Tab im Hintergrund</span>' : '') +
             '</div>' +
+            (tb.runArchiveStep ? (
+              '<label style="display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#cbd5e1;cursor:pointer">' +
+                '<input type="checkbox" ' + (tb.autoDrainArchiveAfterScan !== false ? 'checked' : '') + ' onchange="window._historyTurboState.autoDrainArchiveAfterScan=Boolean(this.checked)">' +
+                '<span>🗂️ Nach Scan-Ende automatisch Archiv-Turbo für offene Archiv-Posts starten</span>' +
+              '</label>'
+            ) : '') +
             (tb.lastError ? (
               '<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(239,68,68,0.16);border:1px solid rgba(248,113,113,0.45);font-size:11.5px;color:#fecaca">' +
                 '⛔ ' + esc(tb.lastError) +
@@ -5234,9 +5399,16 @@
                   '<option value="after_scan"' + (d.cfgArchive.timing === "after_scan" ? ' selected' : '') + '>Zeitpunkt: Erst nach Scan-Abschluss</option>' +
                 '</select>' +
                 '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer"><input id="histArchiveDefaultPin" type="checkbox"' + (d.cfgArchive.pinSeriesCard ? ' checked' : '') + '> Serien-Info-Karte anpinnen</label>' +
+                '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;cursor:pointer"><input id="histArchiveAutoDir" type="checkbox"' + (d.cfgArchive.autoUpdateAzIndex !== false ? ' checked' : '') + '> 📑 📌 Inhaltsverzeichnis automatisch aktualisieren</label>' +
                 '<label style="display:flex;align-items:center;gap:5px;font-size:11.5px">Max. Serien-Topics: <input id="histArchiveDefaultMax" class="inp" type="number" min="10" max="500" style="width:72px" value="' + Number(d.cfgArchive.maxSeriesTopics || 250) + '"></label>' +
               '</div>' +
               (d.validationResult?.archiveResult ? renderCheckSummary(d.validationResult.archiveResult) : '') +
+            '</div>' +
+            '<div class="admin-sub-box" style="padding:8px 10px;border-color:rgba(56,189,248,0.28);margin-bottom:10px">' +
+              '<label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:#e2e8f0;cursor:pointer">' +
+                '<input id="histArchiveNotifyDm" type="checkbox"' + (d.cfgArchive.notifyAdminDm !== false ? ' checked' : '') + '>' +
+                '<span>🔔 <b>Lautlose Admin-Hinweise im Privat-Chat</b> (Meilensteine 25/50/75 % ab 1.000 IDs, Scan-Ende &amp; harte Fehler — nur an Job-Starter / Haupt-Admin)</span>' +
+              '</label>' +
             '</div>' +
             '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
               '<button type="button" class="btn green" ' + (d.savingConfig ? 'disabled' : '') + ' onclick="saveHistoryConfigClient()">' + (d.savingConfig ? '⏳ Speichere...' : '💾 Konfiguration speichern') + '</button>' +
@@ -5369,16 +5541,68 @@
           )) +
         '</div>';
 
+        const archiveTurboDenom = Math.max(1, Number(atb.initialPending || 0), Number(atb.postedCount || 0) + Number(aStats.pending || 0));
+        const archiveTurboPct = atb.phase === "done"
+          ? 100
+          : Math.max(0, Math.min(100, Math.round((Number(atb.postedCount || 0) / archiveTurboDenom) * 100)));
+        const archiveTurboBoxHtml = (atb.running || atb.paused || atb.statusText || atb.lastError) ? (
+          '<div id="adminArchiveTurboBox" class="admin-sub-box" style="margin-bottom:10px;padding:10px;border:1px solid ' +
+            (atb.authErrorStatus ? 'rgba(239,68,68,0.65);background:rgba(127,29,29,0.22)' : (atb.running ? 'rgba(167,139,250,0.6);background:rgba(139,92,246,0.1)' : 'rgba(16,185,129,0.45);background:rgba(16,185,129,0.08)')) + '">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">' +
+              '<span style="font-size:12px;font-weight:800;color:#ede9fe">🚀 Archiv-Browser-Turbo (Stufe C · ~12–14 Posts/Min)</span>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                (atb.running && !atb.paused ? '<button type="button" class="btn amber" onclick="pauseArchiveBrowserTurboClient()">⏸️ Pause</button>' : '') +
+                (atb.paused ? '<button type="button" class="btn green" onclick="resumeArchiveBrowserTurboClient()">▶️ Weiter</button>' : '') +
+                ((atb.running || atb.paused) ? '<button type="button" class="btn danger" onclick="stopArchiveBrowserTurboClient()">⏹️ Stopp</button>' : '<button type="button" class="btn" onclick="dismissArchiveBrowserTurboBoxClient()">✖️</button>') +
+              '</div>' +
+            '</div>' +
+            '<div style="height:7px;border-radius:999px;background:rgba(148,163,184,0.2);overflow:hidden;margin-bottom:7px">' +
+              '<div style="height:100%;width:' + archiveTurboPct + '%;background:linear-gradient(90deg,#8b5cf6,#10b981);transition:width 0.25s ease"></div>' +
+            '</div>' +
+            '<div style="font-size:11.5px;font-weight:700;color:#e2e8f0;margin-bottom:5px">' +
+              esc(atb.statusText || "Bereit") +
+              (atb.countdownSec > 0 ? (' <span style="color:#fbbf24">(' + Number(atb.countdownSec) + 's)</span>') : '') +
+            '</div>' +
+            '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:#cbd5e1">' +
+              '<span>✅ Gesendet: <b style="color:#34d399">' + Number(atb.postedCount || 0) + '</b></span>' +
+              '<span>⏳ Offen: <b style="color:#fbbf24">' + Number(aStats.pending || 0) + '</b></span>' +
+              (Number(atb.newTopicsCreated || 0) > 0 ? ('<span>🗂️ Neue Themen: <b style="color:#c4b5fd">' + Number(atb.newTopicsCreated) + '</b></span>') : '') +
+              (Number(atb.failedCount || 0) > 0 ? ('<span>⚠️ Fehler: <b style="color:#f87171">' + Number(atb.failedCount) + '</b></span>') : '') +
+              (Number(atb.ratePerMin || 0) > 0 ? ('<span>⚡ Tempo: <b style="color:#38bdf8">' + Number(atb.ratePerMin).toFixed(1) + ' Posts/Min</b></span>') : '') +
+              (atb.etaText && Number(aStats.pending || 0) > 0 ? ('<span>⏱️ Restzeit: <b>' + esc(atb.etaText) + '</b></span>') : '') +
+              (atb.wakeLockActive ? '<span style="color:#6ee7b7">🔋 Display wach</span>' : '') +
+              (atb.bgThrottled ? '<span style="color:#fbbf24">🌙 Tab im Hintergrund (Timer evtl. gedrosselt)</span>' : '') +
+            '</div>' +
+            ((atb.running || atb.paused) ? (
+              '<div style="margin-top:6px;font-size:10.5px;color:#94a3b8">ℹ️ Du kannst jederzeit stoppen oder das Fenster schließen – der 2-Min-Cron übernimmt automatisch nahtlos den Rest.</div>'
+            ) : '') +
+            (atb.lastError ? (
+              '<div style="margin-top:7px;padding:7px 9px;border-radius:7px;background:rgba(239,68,68,0.16);border:1px solid rgba(248,113,113,0.45);font-size:11.5px;color:#fecaca">' +
+                '⛔ ' + esc(atb.lastError) +
+              '</div>'
+            ) : '') +
+          '</div>'
+        ) : '';
+
+        const dirTopicObj = aTopics.find(t => t.topicKey === "archive_directory") || null;
+        const dirChatNum = archiveForum?.channelId ? String(archiveForum.channelId).replace(/^-100/, "") : "";
+        const dirDeepLink = dirTopicObj && dirChatNum && Number(dirTopicObj.messageThreadId || 0) > 0
+          ? ("https://t.me/c/" + dirChatNum + "/" + Number(dirTopicObj.messageThreadId))
+          : "";
         const archiveSectionHtml = (archiveForum || aStats.total > 0 || aTopics.length > 0) ? (
           '<div class="panel-box" style="border-color:rgba(167,139,250,0.4)">' +
             '<div class="section-title" style="margin-bottom:8px">' +
               '<span>🗂️ Sortiertes Themen-Archiv (Stufe C) ' + (archiveForum ? ('<span style="font-size:11px;color:var(--muted)">(' + esc(archiveForum.label || archiveForum.channelId) + ')</span>') : '') + '</span>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                (aStats.pending > 0 ? '<button type="button" class="btn green" onclick="runHistoryArchiveActionClient(\\'step\\')">⚡ 4 Posts jetzt senden</button>' : '') +
+                (aStats.pending > 0 && !atb.running ? '<button type="button" class="btn green" onclick="startArchiveBrowserTurboClient(false)"' + (tb.running ? ' disabled title="Läuft erst nach dem aktiven Verlaufs-Turbo"' : '') + '>🚀 Archiv-Turbo starten</button>' : '') +
+                (aStats.pending > 0 ? '<button type="button" class="btn" onclick="runHistoryArchiveActionClient(\\'step\\')"' + (atb.running ? ' disabled' : '') + '>⚡ 4 Posts jetzt</button>' : '') +
+                (archiveForum ? '<button type="button" class="btn blue" onclick="runHistoryArchiveActionClient(\\'sync_directory\\')">📑 Inhaltsverzeichnis aktualisieren</button>' : '') +
+                (dirDeepLink ? '<a href="' + esc(dirDeepLink) + '" target="_blank" rel="noopener noreferrer" class="btn" style="text-decoration:none">📌 Verzeichnis öffnen</a>' : '') +
                 (aStats.held > 0 ? '<button type="button" class="btn blue" onclick="runHistoryArchiveActionClient(\\'release_held\\')">🔓 ' + Number(aStats.held) + ' Zurückgehaltene freigeben</button>' : '') +
                 (aStats.failed > 0 ? '<button type="button" class="btn amber" onclick="runHistoryArchiveActionClient(\\'retry_failed\\')">🔁 ' + Number(aStats.failed) + ' Fehler wiederholen</button>' : '') +
               '</div>' +
             '</div>' +
+            archiveTurboBoxHtml +
             '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:10px">' +
               '<div class="admin-sub-box" style="text-align:center"><div style="font-size:10.5px;color:var(--muted)">⏳ Wartend</div><div style="font-size:18px;font-weight:900;color:#fbbf24">' + Number(aStats.pending || 0) + '</div></div>' +
               '<div class="admin-sub-box" style="text-align:center"><div style="font-size:10.5px;color:var(--muted)">📦 Bis Scan-Ende</div><div style="font-size:18px;font-weight:900;color:#38bdf8">' + Number(aStats.held || 0) + '</div></div>' +
@@ -5423,12 +5647,18 @@
               '<span>📜 Gruppenverlaufs-Crawler & Sortiertes Themen-Archiv</span>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button type="button" class="btn blue" onclick="refreshAdminHistoryScanClient(true)">🔄 Aktualisieren</button>' +
+                '<button type="button" class="btn" ' + (d.runningHygiene ? 'disabled' : '') + ' onclick="runHistoryD1HygieneClient()" title="Erledigte Inbox-Zeilen >30T löschen, Archiv-Texte >30T verlustfrei kompaktieren & abgelaufene Caches bereinigen">' + (d.runningHygiene ? '⏳ Bereinige...' : '🧹 D1-Hygiene (30T)') + '</button>' +
                 '<button type="button" class="btn" onclick="state.adminTab=\\'inbox\\';loadAdminPanelView()">📥 Kanal-Inbox</button>' +
               '</div>' +
             '</div>' +
             '<div style="font-size:12px;color:var(--muted);line-height:1.5">' +
               'Liest bestehende Telegram-Gruppen &amp; Kanäle über 1–3 private Index-Kanäle (mit sofortiger Auto-Löschung) inkl. vollem Kontext ein, schleust alle Funde 1:1 durch den zentralen Parser und spiegelt sie auf Wunsch sortiert in ein privates Themen-Archiv. Arbeitet automatisch per 2-Min-Cron oder sofort beschleunigt über deinen Browser.' +
             '</div>' +
+            (d.lastHygieneSummary ? (
+              '<div style="margin-top:8px;padding:6px 9px;border-radius:7px;background:rgba(16,185,129,0.12);border:1px solid rgba(52,211,153,0.35);font-size:11.5px;color:#a7f3d0">' +
+                esc(d.lastHygieneSummary) +
+              '</div>'
+            ) : '') +
           '</div>' +
           (d.error ? (
             '<div class="panel-box" style="border-color:rgba(239,68,68,0.55);background:rgba(127,29,29,0.2);margin-bottom:12px;color:#fecaca;font-size:12px">⛔ ' + esc(d.error) + '</div>'
@@ -5496,7 +5726,9 @@
               topicMode: d.archiveDefaults?.topicMode || "type_genre",
               timing: d.archiveDefaults?.timing || "live",
               pinSeriesCard: Boolean(d.archiveDefaults?.pinSeriesCard),
-              maxSeriesTopics: Number(d.archiveDefaults?.maxSeriesTopics || 250)
+              maxSeriesTopics: Number(d.archiveDefaults?.maxSeriesTopics || 250),
+              notifyAdminDm: d.archiveDefaults?.notifyAdminDm !== false,
+              autoUpdateAzIndex: d.archiveDefaults?.autoUpdateAzIndex !== false
             };
             if (!d.cfgHydrated) {
               d.form.archiveTopicMode = d.cfgArchive.topicMode;
@@ -5538,7 +5770,9 @@
                 topicMode: d.cfgArchive.topicMode,
                 timing: d.cfgArchive.timing,
                 pinSeriesCard: Boolean(d.cfgArchive.pinSeriesCard),
-                maxSeriesTopics: Number(d.cfgArchive.maxSeriesTopics || 250)
+                maxSeriesTopics: Number(d.cfgArchive.maxSeriesTopics || 250),
+                notifyAdminDm: d.cfgArchive.notifyAdminDm !== false,
+                autoUpdateAzIndex: d.cfgArchive.autoUpdateAzIndex !== false
               }
             })
           });
@@ -5746,8 +5980,43 @@
           showHudToast("🔓 " + Number(r.released || 0) + " zurückgehaltene Archiv-Einträge freigegeben!");
         } else if (action === "retry_failed") {
           showHudToast("🔁 " + Number(r.retried || 0) + " fehlgeschlagene Archiv-Einträge erneut eingereiht!");
+        } else if (action === "sync_directory") {
+          showHudToast("📌 Inhaltsverzeichnis aktualisiert (" + Number(r.topicCount || 0) + " Themen · " + Number(r.totalPostedFiles || 0) + " Dateien)!");
         }
         await refreshAdminHistoryScanClient(true);
+      }
+
+      async function runHistoryD1HygieneClient() {
+        const d = window._adminHistoryData;
+        if (d.runningHygiene) return;
+        d.runningHygiene = true;
+        d.lastHygieneSummary = "";
+        renderAdminHistoryScanDomInPlace();
+        try {
+          const r = await apiFetchJson(API_BASE + "/admin/history-archive/action", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "run_hygiene" })
+          });
+          if (r && (r._httpStatus === 401 || r._httpStatus === 403 || r._authError)) {
+            d.error = "⛔ HTTP " + Number(r._httpStatus || 403) + ": Keine Admin-Rechte.";
+            showHudToast(d.error);
+            return;
+          }
+          if (!r || !r.ok) {
+            showHudToast("⚠️ " + (r?.error || "D1-Hygiene fehlgeschlagen."));
+            return;
+          }
+          const summaryMsg = "🧹 D1-Hygiene abgeschlossen: " +
+            Number(r.inboxDeleted || 0) + " Inbox-Zeilen (>30T) gelöscht · " +
+            Number(r.archiveCompacted || 0) + " Archiv-Texte (>30T) verlustfrei kompaktiert · " +
+            Number(r.cacheDeleted || 0) + " abgelaufene Cache-Einträge bereinigt.";
+          d.lastHygieneSummary = summaryMsg;
+          showHudToast(summaryMsg);
+        } finally {
+          d.runningHygiene = false;
+          renderAdminHistoryScanDomInPlace();
+        }
       }
 
       function pauseHistoryBrowserTurboClient() {
@@ -5775,6 +6044,7 @@
         tb.running = false;
         tb.countdownSec = 0;
         tb.statusText = "⏹️ Verlaufs-Browser-Turbo gestoppt.";
+        releaseTurboWakeLockClient();
         renderAdminHistoryScanDomInPlace();
       }
 
@@ -5907,6 +6177,7 @@
           tb.review += Number(s.review || 0);
           lastRemaining = Number(bRes.remainingPending ?? lastRemaining);
           if (bRes.seriesTmdbHints && typeof bRes.seriesTmdbHints === "object") {
+            saveBrowserSeriesTmdbHintsCacheClient(bRes.seriesTmdbHints);
             const merged = { ...tb.seriesTmdbHints, ...bRes.seriesTmdbHints };
             const ents = Object.entries(merged);
             tb.seriesTmdbHints = ents.length > 100 ? Object.fromEntries(ents.slice(-100)) : merged;
@@ -5928,16 +6199,236 @@
         return { ok: true, remainingPending: lastRemaining };
       }
 
+      function pauseArchiveBrowserTurboClient() {
+        const atb = window._archiveTurboState;
+        atb.paused = true;
+        atb.statusText = "⏸️ Archiv-Browser-Turbo pausiert.";
+        renderAdminHistoryScanDomInPlace();
+      }
+
+      function resumeArchiveBrowserTurboClient() {
+        const atb = window._archiveTurboState;
+        if (!atb.paused) return;
+        atb.paused = false;
+        atb.statusText = "▶️ Setze Archiv-Browser-Turbo fort...";
+        renderAdminHistoryScanDomInPlace();
+        if (!atb.running) {
+          startArchiveBrowserTurboClient(true);
+        }
+      }
+
+      function stopArchiveBrowserTurboClient() {
+        const atb = window._archiveTurboState;
+        atb.stopRequested = true;
+        atb.paused = false;
+        atb.running = false;
+        atb.countdownSec = 0;
+        atb.statusText = "⏹️ Archiv-Browser-Turbo gestoppt (2-Min-Cron übernimmt den Rest).";
+        releaseTurboWakeLockClient();
+        renderAdminHistoryScanDomInPlace();
+      }
+
+      function dismissArchiveBrowserTurboBoxClient() {
+        const atb = window._archiveTurboState;
+        if (atb.running || atb.paused) return;
+        atb.statusText = "";
+        atb.lastError = "";
+        atb.authErrorStatus = 0;
+        atb.phase = "";
+        renderAdminHistoryScanDomInPlace();
+      }
+
+      async function waitWithArchiveTurboCountdownClient(totalMs) {
+        const atb = window._archiveTurboState;
+        let remain = Math.max(0, Number(totalMs || 0));
+        while (remain > 0 && !atb.stopRequested) {
+          while (atb.paused && !atb.stopRequested) {
+            await new Promise(resolve => setTimeout(resolve, 350));
+          }
+          if (atb.stopRequested) break;
+          atb.countdownSec = Math.ceil(remain / 1000);
+          renderAdminHistoryScanDomInPlace();
+          const slice = Math.min(1000, remain);
+          await new Promise(resolve => setTimeout(resolve, slice));
+          remain -= slice;
+        }
+        atb.countdownSec = 0;
+      }
+
+      async function callArchiveTurboApiWithBackoffClient(url, opts) {
+        const atb = window._archiveTurboState;
+        const maxAttempts = 5;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          if (atb.stopRequested) return { ok: false, _stopped: true };
+          const r = await apiFetchJson(url, opts);
+          const status = Number(r?._httpStatus || (r?.ok ? 200 : 0));
+
+          // HARTER ABBRUCH BEI HTTP 401 / 403 – sofort stoppen, niemals endlos weiterfeuern!
+          if (status === 401 || status === 403 || r?._authError) {
+            atb.running = false;
+            atb.paused = false;
+            atb.stopRequested = true;
+            atb.countdownSec = 0;
+            atb.authErrorStatus = status || 403;
+            atb.phase = "error";
+            atb.lastError = "Harter Abbruch bei HTTP " + atb.authErrorStatus + ": " + (r?.error || "Sitzung abgelaufen oder keine Admin-Rechte. Bitte neu einloggen.");
+            atb.statusText = "⛔ Gestoppt wegen Authentifizierungsfehler (HTTP " + atb.authErrorStatus + ").";
+            renderAdminHistoryScanDomInPlace();
+            showHudToast("⛔ " + atb.lastError);
+            return { ok: false, _hardAuthAbort: true, _httpStatus: atb.authErrorStatus };
+          }
+
+          if (r && r.ok) return r;
+
+          const isRetryable = status === 503 || status === 429 || status === 502 || status === 504 || status === 0;
+          if (!isRetryable || attempt >= maxAttempts) {
+            return r || { ok: false, _httpStatus: status, error: "Unbekannter Fehler" };
+          }
+
+          const retrySec = Number(r?.retryAfterSec || r?.retry_after || 0);
+          const expMs = Math.min(25000, Math.round(1600 * Math.pow(2, attempt - 1)));
+          const waitMs = Math.max(expMs, retrySec > 0 ? retrySec * 1000 : 0);
+          atb.phase = "wait";
+          atb.statusText = "⏳ Worker/Rate-Limit (HTTP " + (status || 503) + ") – Exponential Backoff (Versuch " + attempt + "/" + maxAttempts + ")";
+          await waitWithArchiveTurboCountdownClient(waitMs);
+        }
+        return { ok: false, error: "Maximale Wiederholungen erreicht." };
+      }
+
+      async function startArchiveBrowserTurboClient(isResume = false) {
+        const atb = window._archiveTurboState;
+        const d = window._adminHistoryData;
+        if (atb.running) return;
+        if (window._historyTurboState?.running) {
+          showHudToast("ℹ️ Der Verlaufs-Browser-Turbo läuft bereits – der Archiv-Turbo startet danach automatisch.");
+          return;
+        }
+        if (!isResume) {
+          atb.startedAt = Date.now();
+          atb.initialPending = Number(d.archiveStats?.pending || 0);
+          atb.stepsRun = 0;
+          atb.postedCount = 0;
+          atb.newTopicsCreated = 0;
+          atb.recreatedTopics = 0;
+          atb.failedCount = 0;
+          atb.ratePerMin = 0;
+          atb.etaText = formatArchiveEtaClient(atb.initialPending, 0);
+        } else if (!atb.startedAt) {
+          atb.startedAt = Date.now();
+        }
+        atb.running = true;
+        atb.paused = false;
+        atb.stopRequested = false;
+        atb.lastError = "";
+        atb.authErrorStatus = 0;
+        atb.bgThrottled = Boolean(typeof document !== "undefined" && document.hidden);
+        atb.phase = "posting";
+        atb.statusText = "🗂️ Starte Archiv-Browser-Turbo (max. 4 Posts / Schritt, Telegram-Pacing)...";
+        renderAdminHistoryScanDomInPlace();
+        await acquireTurboWakeLockClient();
+
+        try {
+          let safetyLoops = 0;
+          while (atb.running && !atb.stopRequested && safetyLoops < 600) {
+            while (atb.paused && !atb.stopRequested) {
+              await new Promise(resolve => setTimeout(resolve, 350));
+            }
+            if (atb.stopRequested) break;
+            safetyLoops++;
+
+            atb.phase = "posting";
+            atb.statusText = "🗂️ Sende nächsten Archiv-Batch (bis zu 4 Medien inkl. Themen-Check)...";
+            renderAdminHistoryScanDomInPlace();
+
+            const stepRes = await callArchiveTurboApiWithBackoffClient(API_BASE + "/admin/history-archive/action", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "step", maxPosts: 4, maxNewTopics: 2 })
+            });
+            if (!stepRes || stepRes._hardAuthAbort || stepRes._stopped) break;
+
+            if (stepRes.stats) {
+              d.archiveStats = stepRes.stats;
+            }
+            if (!stepRes.ok) {
+              atb.phase = "error";
+              atb.lastError = stepRes.error || "Archiv-Schritt fehlgeschlagen.";
+              atb.statusText = "⛔ Archiv-Browser-Turbo gestoppt.";
+              break;
+            }
+
+            atb.stepsRun++;
+            atb.postedCount += Number(stepRes.postedCount || 0);
+            atb.newTopicsCreated += Number(stepRes.newTopicsCreated || 0);
+            atb.recreatedTopics += Number(stepRes.recreatedTopics || 0);
+            atb.failedCount += Number(stepRes.failedCount || 0);
+
+            const elapsedMin = Math.max(0.01, (Date.now() - Number(atb.startedAt || Date.now())) / 60000);
+            if (atb.postedCount > 0 && elapsedMin >= 0.08) {
+              atb.ratePerMin = Math.min(25, atb.postedCount / elapsedMin);
+            }
+            const remainingPending = Number(stepRes.stats?.pending ?? d.archiveStats?.pending ?? 0);
+            atb.etaText = formatArchiveEtaClient(remainingPending, atb.ratePerMin);
+            renderAdminHistoryScanDomInPlace();
+
+            if (stepRes.idle || (!stepRes.waiting && remainingPending <= 0)) {
+              if (atb.postedCount > 0 && d.archiveDefaults?.autoUpdateAzIndex !== false && !atb.stopRequested) {
+                atb.statusText = "📑 Aktualisiere 📌 Inhaltsverzeichnis im Themen-Archiv...";
+                renderAdminHistoryScanDomInPlace();
+                const dirSyncRes = await callArchiveTurboApiWithBackoffClient(API_BASE + "/admin/history-archive/action", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ action: "sync_directory" })
+                }).catch(() => null);
+                if (dirSyncRes?._hardAuthAbort || atb.stopRequested) break;
+              }
+              atb.phase = "done";
+              atb.etaText = "Fertig";
+              atb.statusText = "✅ Themen-Archiv vollständig abgearbeitet (" + atb.postedCount + " Posts gesendet" + (atb.newTopicsCreated > 0 ? (", " + atb.newTopicsCreated + " neue Themen") : "") + ")!";
+              showHudToast("🎉 Archiv-Turbo fertig: " + atb.postedCount + " Medien ins Themen-Archiv gesendet!");
+              break;
+            }
+
+            let waitMs = Math.max(1200, Number(stepRes.waitMs || 4000));
+            if (stepRes.rateLimited) {
+              waitMs = Math.max(waitMs, Number(stepRes.retryAfterSec || 10) * 1000, 3000);
+              atb.phase = "wait";
+              atb.statusText = "⏳ Telegram 429-Schutzpause fürs Themen-Archiv aktiv – weiter in";
+            } else if (stepRes.waiting) {
+              atb.phase = "wait";
+              atb.statusText = "⏱️ Telegram Gruppen-Pacing (max. 20/Min) – nächster Archiv-Batch in";
+            } else {
+              atb.phase = "wait";
+              atb.statusText = "⏱️ " + Number(stepRes.postedCount || 0) + " Posts gesendet – Pacing-Pause vor nächstem Batch";
+            }
+            await waitWithArchiveTurboCountdownClient(waitMs);
+          }
+        } finally {
+          atb.running = false;
+          atb.countdownSec = 0;
+          atb.bgThrottled = false;
+          await releaseTurboWakeLockClient();
+          renderAdminHistoryScanDomInPlace();
+          if (!atb.authErrorStatus) {
+            await refreshAdminHistoryScanClient(true);
+          }
+        }
+      }
+
       async function startHistoryBrowserTurboClient(jobId, isResume = false) {
         const tb = window._historyTurboState;
         const d = window._adminHistoryData;
         if (tb.running) return;
+        if (window._archiveTurboState?.running) {
+          stopArchiveBrowserTurboClient();
+        }
         const job = (d.jobs || []).find(j => Number(j.id) === Number(jobId));
         if (!isResume) {
           tb.jobId = Number(jobId);
           tb.sourceChatId = String(job?.sourceChatId || "");
           tb.sourceTitle = String(job?.sourceTitle || tb.sourceChatId || ("Job #" + jobId));
           tb.runArchiveStep = Boolean(job?.enableArchiveMirror);
+          if (typeof tb.autoDrainArchiveAfterScan !== "boolean") tb.autoDrainArchiveAfterScan = true;
           tb.stepsRun = 0;
           tb.probesFired = 0;
           tb.mediaFound = 0;
@@ -5950,17 +6441,20 @@
           tb.archivedPosted = 0;
           tb.newTopicsCreated = 0;
           tb.batchSize = 6;
-          tb.seriesTmdbHints = {};
+          tb.seriesTmdbHints = loadBrowserSeriesTmdbHintsCacheClient();
         }
         tb.running = true;
         tb.paused = false;
         tb.stopRequested = false;
         tb.lastError = "";
         tb.authErrorStatus = 0;
+        tb.bgThrottled = Boolean(typeof document !== "undefined" && document.hidden);
         tb.phase = "crawl";
         tb.statusText = "🔍 Starte Stufe A (Verlaufs-Scan mit 45s Browser-Lease)...";
         renderAdminHistoryScanDomInPlace();
+        await acquireTurboWakeLockClient();
 
+        let shouldAutoStartArchiveTurbo = false;
         try {
           // Falls pausiert/fehlerhaft -> Job sauber auf 'running' stellen
           if (job && (job.status === "paused" || job.status === "error")) {
@@ -6058,6 +6552,9 @@
               tb.phase = "done";
               tb.statusText = "✅ Verlaufs-Scan für " + tb.sourceTitle + " vollständig abgeschlossen!";
               showHudToast("🎉 Verlaufs-Scan abgeschlossen (" + tb.videosImported + " Videos verarbeitet)!");
+              if (tb.runArchiveStep && tb.autoDrainArchiveAfterScan !== false && !tb.stopRequested) {
+                shouldAutoStartArchiveTurbo = true;
+              }
               break;
             }
 
@@ -6071,9 +6568,14 @@
         } finally {
           tb.running = false;
           tb.countdownSec = 0;
+          tb.bgThrottled = false;
+          await releaseTurboWakeLockClient();
           renderAdminHistoryScanDomInPlace();
           if (!tb.authErrorStatus) {
             await refreshAdminHistoryScanClient(true);
+            if (shouldAutoStartArchiveTurbo && !tb.stopRequested && Number(d.archiveStats?.pending || 0) > 0 && !window._archiveTurboState?.running) {
+              startArchiveBrowserTurboClient(false);
+            }
           }
         }
       }

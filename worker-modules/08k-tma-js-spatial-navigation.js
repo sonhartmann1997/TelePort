@@ -925,12 +925,26 @@
         }
       }
 
-      function setSpatialFocus(el, scrollIntoView = true, navDir = lastSpatialNavDir) {
-        if (!el) return;
-        if (currentSpatialEl && currentSpatialEl !== el) {
+      const CARD_SINGLE_TRUTH_SELECTOR = ".card, .detail-sim-card, .detail-cast-card, .world-portal-card, .rm-entry-card";
+
+      function clearAllSpatialFocusClasses(keepEl = null) {
+        try {
+          document.querySelectorAll(".spatial-focus").forEach((staleEl) => {
+            if (staleEl !== keepEl) {
+              staleEl.classList.remove("spatial-focus");
+              staleEl.classList.remove("ac-kb-active");
+            }
+          });
+        } catch (_e) {}
+        if (currentSpatialEl && currentSpatialEl !== keepEl) {
           currentSpatialEl.classList.remove("spatial-focus");
           currentSpatialEl.classList.remove("ac-kb-active");
         }
+      }
+
+      function setSpatialFocus(el, scrollIntoView = true, navDir = lastSpatialNavDir) {
+        if (!el) return;
+        clearAllSpatialFocusClasses(el);
         const isTargetInSearchDropdown = Boolean(
           el.closest && (el.closest("#searchAutocompleteBox") || el.closest("#searchGenreDropdownOverlay"))
         );
@@ -1006,13 +1020,36 @@
         }
       }
 
-      // Automatische Maus-Sperre während der Tastatur-/Controller-Nutzung:
-      // Verhindert, dass beim Scrollen per Pfeiltasten der stillstehende Mauszeiger durch synthetische mouseover-Events den Fokus klaut!
+      // Automatische Maus- & Touch-Koordination (Single Source of Truth für genau 1 blauen Rand):
+      // Verhindert doppelte blaue Rahmen durch klebenbleibendes mobiles :hover, Scroll-Fehlsprünge oder Maus+Tastatur-Überlagerung.
       let isKeyboardNavActive = false;
+      let isTouchNavActive = false;
+      let lastTouchEventAt = 0;
+      let activeTouchTapState = null;
       let lastMouseX = null;
       let lastMouseY = null;
 
+      function engageTouchNavMode() {
+        lastTouchEventAt = Date.now();
+        if (isKeyboardNavActive) {
+          isKeyboardNavActive = false;
+          if (document.body) document.body.classList.remove("kb-nav-active");
+        }
+        if (!isTouchNavActive) {
+          isTouchNavActive = true;
+          if (document.body) document.body.classList.add("touch-nav-active");
+        }
+      }
+
+      function disengageTouchNavMode() {
+        if (isTouchNavActive) {
+          isTouchNavActive = false;
+          if (document.body) document.body.classList.remove("touch-nav-active");
+        }
+      }
+
       function engageKeyboardNavMode() {
+        disengageTouchNavMode();
         if (!isKeyboardNavActive) {
           isKeyboardNavActive = true;
           if (document.body) document.body.classList.add("kb-nav-active");
@@ -1044,7 +1081,7 @@
           }
           // Verhindert klebenbleibende Tastatur-Markierung, wenn die Maus beim Zurückwechseln ein anderes Element oder freien Raum berührt
           if (currentSpatialEl && (!focusTarget || focusTarget !== currentSpatialEl)) {
-            currentSpatialEl.classList.remove("spatial-focus");
+            clearAllSpatialFocusClasses(null);
             clearCardSubnavState(null);
             currentSpatialEl = null;
           }
@@ -1052,9 +1089,62 @@
         }
       }
 
-      // Echte physische Mausbewegung (>= 4px) oder Klick reaktiviert die Maussteuerung sofort
+      // Touch-Tap vs. Scroll-Erkennung (<= 10px = echter Tap -> verschiebt exakt 1x .spatial-focus; > 10px = Scroll -> Fokus bleibt ruhig)
+      document.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType === "touch" || ev.pointerType === "pen") {
+          engageTouchNavMode();
+          const cardEl = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SINGLE_TRUTH_SELECTOR) : null;
+          activeTouchTapState = {
+            pointerId: ev.pointerId,
+            startX: typeof ev.clientX === "number" ? ev.clientX : 0,
+            startY: typeof ev.clientY === "number" ? ev.clientY : 0,
+            moved: false,
+            cardEl: cardEl
+          };
+        } else if (ev.pointerType === "mouse") {
+          if (Date.now() - lastTouchEventAt < 700) return;
+          disengageTouchNavMode();
+        }
+      }, { capture: true, passive: true });
+
+      document.addEventListener("pointermove", (ev) => {
+        if (!activeTouchTapState || ev.pointerId !== activeTouchTapState.pointerId || activeTouchTapState.moved) return;
+        const dx = (typeof ev.clientX === "number" ? ev.clientX : activeTouchTapState.startX) - activeTouchTapState.startX;
+        const dy = (typeof ev.clientY === "number" ? ev.clientY : activeTouchTapState.startY) - activeTouchTapState.startY;
+        if (Math.hypot(dx, dy) > 10) {
+          activeTouchTapState.moved = true;
+        }
+      }, { capture: true, passive: true });
+
+      document.addEventListener("pointercancel", (ev) => {
+        if (activeTouchTapState && ev.pointerId === activeTouchTapState.pointerId) {
+          activeTouchTapState = null;
+        }
+      }, { capture: true, passive: true });
+
+      document.addEventListener("pointerup", (ev) => {
+        if (ev.pointerType !== "touch" && ev.pointerType !== "pen") return;
+        lastTouchEventAt = Date.now();
+        const tapInfo = (activeTouchTapState && activeTouchTapState.pointerId === ev.pointerId) ? activeTouchTapState : null;
+        activeTouchTapState = null;
+        if (!tapInfo || tapInfo.moved) return;
+        const dx = (typeof ev.clientX === "number" ? ev.clientX : tapInfo.startX) - tapInfo.startX;
+        const dy = (typeof ev.clientY === "number" ? ev.clientY : tapInfo.startY) - tapInfo.startY;
+        if (Math.hypot(dx, dy) > 10) return;
+        const targetCard = tapInfo.cardEl || (ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SINGLE_TRUTH_SELECTOR) : null);
+        if (targetCard && document.body && document.body.contains(targetCard)) {
+          setSpatialFocus(targetCard, false);
+        }
+      }, { capture: true, passive: true });
+
+      document.addEventListener("touchstart", () => {
+        engageTouchNavMode();
+      }, { capture: true, passive: true });
+
+      // Echte physische Mausbewegung (>= 4px) oder Klick reaktiviert die Maussteuerung sofort (synthetische Touch-Events werden ignoriert)
       let pendingKbClickRescueEl = null;
       document.addEventListener("mousemove", (ev) => {
+        if (Date.now() - lastTouchEventAt < 700) return;
         if (typeof ev.clientX !== "number" || typeof ev.clientY !== "number") return;
         if (lastMouseX === null || lastMouseY === null) {
           lastMouseX = ev.clientX;
@@ -1066,15 +1156,20 @@
           lastMouseX = ev.clientX;
           lastMouseY = ev.clientY;
           pendingKbClickRescueEl = null;
+          if (!window.matchMedia || window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+            disengageTouchNavMode();
+          }
           disengageKeyboardNavMode(ev);
         }
       }, { passive: true });
 
       document.addEventListener("mousedown", (ev) => {
+        if (Date.now() - lastTouchEventAt < 700) return;
         if (typeof ev.clientX === "number" && typeof ev.clientY === "number") {
           lastMouseX = ev.clientX;
           lastMouseY = ev.clientY;
         }
+        disengageTouchNavMode();
         const wasKbActive = isKeyboardNavActive;
         disengageKeyboardNavMode(ev);
         pendingKbClickRescueEl = null;
@@ -1111,13 +1206,19 @@
         disengageKeyboardNavMode();
       }, { passive: true });
 
-      // Maus-Hover verschiebt die aktive Auswahl direkt auf das gehoverte Objekt (sofern in den Einstellungen aktiviert und Tastatur-Modus NICHT aktiv ist),
-      // und aktualisiert die ruhige Fokus-Info-Zeile bei Desktop-Hover auf Katalog-Covern.
+      // Maus-Hover verschiebt die aktive Auswahl direkt auf das gehoverte Objekt (sofern in den Einstellungen aktiviert und weder Tastatur- noch Touch-Modus aktiv ist),
+      // löst aber auch bei deaktiviertem Maus-Hover-Nav eine veraltete Karten-Markierung sauber ab, damit niemals 2 blaue Ränder gleichzeitig erscheinen.
       document.addEventListener("mouseover", (ev) => {
-        if (isKeyboardNavActive) return;
+        if (isKeyboardNavActive || isTouchNavActive || (Date.now() - lastTouchEventAt < 700)) return;
         const actTag = (document.activeElement && document.activeElement.tagName || "").toUpperCase();
         if (actTag === "INPUT" || actTag === "TEXTAREA" || actTag === "SELECT") return;
         if (window.matchMedia && !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+        const hoveredAnyCard = ev.target && typeof ev.target.closest === "function" ? ev.target.closest(CARD_SINGLE_TRUTH_SELECTOR) : null;
+        if (hoveredAnyCard && currentSpatialEl && currentSpatialEl !== hoveredAnyCard) {
+          clearAllSpatialFocusClasses(null);
+          clearCardSubnavState(null);
+          currentSpatialEl = null;
+        }
         if (isHeroSliderBlockingCardBarClient()) {
           if (hoverFocusBarClearTimer) { clearTimeout(hoverFocusBarClearTimer); hoverFocusBarClearTimer = null; }
           syncCatalogFocusInfoBarClient(null);
@@ -1207,7 +1308,7 @@
           const parentCard = currentSpatialEl.closest(".card");
           if (parentCard) {
             clearCardSubnavState(null);
-            currentSpatialEl.classList.remove("spatial-focus");
+            clearAllSpatialFocusClasses(parentCard);
             currentSpatialEl = parentCard;
             currentSpatialEl.classList.add("spatial-focus");
           }
