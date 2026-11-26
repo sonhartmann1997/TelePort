@@ -3961,6 +3961,29 @@
           } catch (_e) {}
         }
 
+        function waitForIceGatheringComplete(pc, timeoutMs = 1800) {
+          return new Promise((resolve) => {
+            if (!pc || pc.iceGatheringState === "complete") { resolve(); return; }
+            let done = false;
+            const finish = () => {
+              if (done) return;
+              done = true;
+              try { pc.removeEventListener("icegatheringstatechange", onState); } catch (_e) {}
+              clearTimeout(timer);
+              resolve();
+            };
+            const onState = () => {
+              if (pc.iceGatheringState === "complete") finish();
+            };
+            const timer = setTimeout(finish, timeoutMs);
+            try { pc.addEventListener("icegatheringstatechange", onState); } catch (_e) {}
+          });
+        }
+
+        const tvSessionBootAt = Date.now();
+        let pendingRemoteScrollAnchor = null;
+        let pendingRemoteScrollTimer = null;
+
         async function handleIncomingTvOffer(sig) {
           if (!sig || !sig.offer || !sig.offer.sdp || typeof RTCPeerConnection === "undefined") return;
           if (Number(sig.createdAt || 0) <= tvLastSeenSignalCreatedAt) return;
@@ -3972,20 +3995,10 @@
             const pc = new RTCPeerConnection(RTC_CONFIG);
             tvPeerConn = pc;
             const gatheredIce = [];
-            let answerSent = false;
 
             pc.onicecandidate = (ev) => {
               if (!ev.candidate) return;
-              const cand = ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate;
-              if (!answerSent) {
-                gatheredIce.push(cand);
-              } else {
-                apiFetchJson(API_BASE + "/tv-sync/signal", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ action: "ice", targetTvId: myDeviceId, side: "answer", candidate: cand })
-                }).catch(() => {});
-              }
+              gatheredIce.push(ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate);
             };
 
             pc.ondatachannel = (ev) => {
@@ -4021,16 +4034,16 @@
             }
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
-            await new Promise((res) => setTimeout(res, 650));
-            answerSent = true;
+            await waitForIceGatheringComplete(pc, 1800);
+            const finalLocal = pc.localDescription || answer;
             await apiFetchJson(API_BASE + "/tv-sync/signal", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 action: "answer",
                 targetTvId: myDeviceId,
-                answer: { type: answer.type, sdp: answer.sdp },
-                ice: gatheredIce.slice(0, 16)
+                answer: { type: finalLocal.type, sdp: finalLocal.sdp },
+                ice: gatheredIce.slice(0, 20)
               })
             });
           } catch (_e) {
@@ -4043,49 +4056,44 @@
           if (tvStatePollTimer) { clearTimeout(tvStatePollTimer); tvStatePollTimer = null; }
           if (!tvReceiverActive || !state?.isAuthenticated) return;
 
-          const runSignalTick = async () => {
-            if (!tvReceiverActive || !state?.isAuthenticated) return;
-            const idleMs = Date.now() - tvLastActivityAt;
-            if (!document.hidden && !tvP2pConnected && idleMs < 900000) {
-              try {
-                const r = await apiFetchJson(API_BASE + "/tv-sync/signal", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ action: "poll", targetTvId: getOrCreateSyncDeviceId() })
-                });
-                if (r && r.ok && r.signal && r.signal.offer && !r.signal.answer) {
-                  await handleIncomingTvOffer(r.signal);
-                }
-              } catch (_e) {}
-            }
-            const nextDelay = (document.hidden || tvP2pConnected) ? 12000 : (idleMs > 120000 ? 10000 : 4500);
-            tvSignalPollTimer = setTimeout(runSignalTick, nextDelay);
-          };
-
-          const runStateTick = async () => {
+          // Kombinierter 1-Query-Abruf (Signal + State gemeinsam -> ~60 % weniger Worker-Anfragen im Leerlauf)
+          const runCombinedTick = async () => {
             if (!tvReceiverActive || !state?.isAuthenticated) return;
             const idleMs = Date.now() - tvLastActivityAt;
             let gotEvent = false;
-            if (!document.hidden && !tvP2pConnected && idleMs < 600000) {
+            if (!document.hidden && !tvP2pConnected && idleMs < 900000) {
               try {
                 const r = await apiFetchJson(API_BASE + "/tv-sync/state", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ action: "poll", targetTvId: getOrCreateSyncDeviceId(), sinceSeq: tvLastAppliedStateSeq })
+                  body: JSON.stringify({
+                    action: "poll",
+                    includeSignal: true,
+                    targetTvId: getOrCreateSyncDeviceId(),
+                    sinceSeq: tvLastAppliedStateSeq
+                  })
                 });
-                if (r && r.ok && r.hasUpdate && r.event) {
-                  tvLastAppliedStateSeq = Number(r.seq || tvLastAppliedStateSeq);
-                  gotEvent = true;
-                  applyIncomingTvSyncEvent(r.event);
+                if (r && r.ok) {
+                  if (r.signal && r.signal.offer && !r.signal.answer) {
+                    gotEvent = true;
+                    await handleIncomingTvOffer(r.signal);
+                  }
+                  if (r.hasUpdate && r.event) {
+                    const isStalePreBoot = (tvLastAppliedStateSeq === 0 && Number(r.updatedAt || 0) > 0 && Number(r.updatedAt) < tvSessionBootAt - 6000);
+                    tvLastAppliedStateSeq = Number(r.seq || tvLastAppliedStateSeq);
+                    if (!isStalePreBoot) {
+                      gotEvent = true;
+                      applyIncomingTvSyncEvent(r.event);
+                    }
+                  }
                 }
               } catch (_e) {}
             }
-            const nextDelay = (document.hidden || tvP2pConnected) ? 10000 : (gotEvent ? 1600 : (idleMs > 90000 ? 5500 : 2800));
-            tvStatePollTimer = setTimeout(runStateTick, nextDelay);
+            const nextDelay = (document.hidden || tvP2pConnected) ? 12000 : (gotEvent ? 1800 : (idleMs > 120000 ? 7500 : 3200));
+            tvStatePollTimer = setTimeout(runCombinedTick, nextDelay);
           };
 
-          tvSignalPollTimer = setTimeout(runSignalTick, 1800);
-          tvStatePollTimer = setTimeout(runStateTick, 2400);
+          tvStatePollTimer = setTimeout(runCombinedTick, 1800);
         }
 
         function syncTvReceiverLifecycle() {
@@ -4105,6 +4113,29 @@
             teardownTvReceiverPeer();
             unregisterTvPresenceBeacon();
           }
+        }
+
+        function focusCardOnTvById(tmdbId, mType) {
+          let card = null;
+          if (tmdbId && mType) {
+            card = document.querySelector('.card[data-card-id="' + tmdbId + '"][data-card-type="' + mType + '"]');
+          }
+          if (!card && tmdbId) {
+            card = document.querySelector('.card[data-card-id="' + tmdbId + '"]');
+          }
+          if (!card) return false;
+          if (typeof setSpatialFocus === "function") {
+            setSpatialFocus(card, false);
+          } else {
+            if (typeof clearAllSpatialFocusClasses === "function") clearAllSpatialFocusClasses(card);
+            card.classList.add("spatial-focus");
+          }
+          try {
+            card.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+          } catch (_e) {
+            card.scrollIntoView();
+          }
+          return true;
         }
 
         // --- Applying Incoming Events on TV (Unidirectional, Idempotent) ---
@@ -4144,28 +4175,26 @@
             } else if (ev.type === "scroll:anchor") {
               const tmdbId = String(ev.tmdbId || "").replace(/[^0-9]/g, "");
               const mType = ev.mediaType === "s" ? "s" : (ev.mediaType === "m" ? "m" : "");
-              let card = null;
-              if (tmdbId && mType) {
-                card = document.querySelector('.card[data-card-id="' + tmdbId + '"][data-card-type="' + mType + '"]');
-              }
-              if (!card && tmdbId) {
-                card = document.querySelector('.card[data-card-id="' + tmdbId + '"]');
-              }
-              if (card) {
-                if (typeof setSpatialFocus === "function") {
-                  setSpatialFocus(card, false);
-                } else {
-                  if (typeof clearAllSpatialFocusClasses === "function") clearAllSpatialFocusClasses(card);
-                  card.classList.add("spatial-focus");
+              const targetPage = Math.max(1, Number(ev.pageNum || 1));
+              if (!focusCardOnTvById(tmdbId, mType)) {
+                if (tmdbId && targetPage > 1 && Number(state.page || 1) !== targetPage && !state.loadingMore) {
+                  pendingRemoteScrollAnchor = { tmdbId, mType };
+                  if (state.isSearchMode && state.searchQuery && typeof runSearch === "function") {
+                    runSearch(false, state.searchQuery, state.searchScope || "all", false, targetPage);
+                  } else if (typeof loadDiscover === "function") {
+                    loadDiscover(state.type || "m", state.genreId || "0", state.mode || "popular", state.sort || "pop", false, false, targetPage);
+                  }
+                  if (pendingRemoteScrollTimer) clearTimeout(pendingRemoteScrollTimer);
+                  pendingRemoteScrollTimer = setTimeout(() => {
+                    if (pendingRemoteScrollAnchor) {
+                      focusCardOnTvById(pendingRemoteScrollAnchor.tmdbId, pendingRemoteScrollAnchor.mType);
+                      pendingRemoteScrollAnchor = null;
+                    }
+                  }, 950);
+                } else if (typeof ev.ratio === "number" && ev.ratio >= 0 && ev.ratio <= 1) {
+                  const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+                  window.scrollTo({ top: Math.round(maxScroll * ev.ratio), behavior: "smooth" });
                 }
-                try {
-                  card.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-                } catch (_e) {
-                  card.scrollIntoView();
-                }
-              } else if (typeof ev.ratio === "number" && ev.ratio >= 0 && ev.ratio <= 1) {
-                const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-                window.scrollTo({ top: Math.round(maxScroll * ev.ratio), behavior: "smooth" });
               }
             } else if (ev.type === "detail:open") {
               const tmdbId = Number(ev.tmdbId || 0);
@@ -4337,20 +4366,10 @@
             const ch = pc.createDataChannel("teleport-tv-sync", { ordered: true });
             phoneDataChannel = ch;
             const gatheredIce = [];
-            let offerSent = false;
 
             pc.onicecandidate = (ev) => {
               if (!ev.candidate) return;
-              const cand = ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate;
-              if (!offerSent) {
-                gatheredIce.push(cand);
-              } else {
-                apiFetchJson(API_BASE + "/tv-sync/signal", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ action: "ice", targetTvId: chosen.deviceId, side: "offer", candidate: cand })
-                }).catch(() => {});
-              }
+              gatheredIce.push(ev.candidate.toJSON ? ev.candidate.toJSON() : ev.candidate);
             };
 
             ch.onopen = () => {
@@ -4371,8 +4390,8 @@
 
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            await new Promise((res) => setTimeout(res, 600));
-            offerSent = true;
+            await waitForIceGatheringComplete(pc, 1800);
+            const finalOffer = pc.localDescription || offer;
             await apiFetchJson(API_BASE + "/tv-sync/signal", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -4381,8 +4400,8 @@
                 targetTvId: chosen.deviceId,
                 controllerId: getOrCreateSyncDeviceId(),
                 controllerLabel: getFriendlyDeviceLabel(),
-                offer: { type: offer.type, sdp: offer.sdp },
-                ice: gatheredIce.slice(0, 16)
+                offer: { type: finalOffer.type, sdp: finalOffer.sdp },
+                ice: gatheredIce.slice(0, 20)
               })
             });
 
@@ -4509,11 +4528,12 @@
             if (card) {
               const tmdbId = card.getAttribute("data-card-id") || "";
               const mediaType = card.getAttribute("data-card-type") || state.type || "m";
+              const pageNum = Math.max(1, Number(card.getAttribute("data-page-num") || state.page || 1));
               const key = mediaType + ":" + tmdbId;
               if (key === phoneLastSentAnchorKey) return;
               phoneLastSentAnchorKey = key;
               lastP2pScrollEmitAt = Date.now();
-              sendTvSyncPayloadFromPhone({ type: "scroll:anchor", tmdbId, mediaType, ratio }, isP2p);
+              sendTvSyncPayloadFromPhone({ type: "scroll:anchor", tmdbId, mediaType, pageNum, ratio }, isP2p);
             }
           };
           if (isP2p) {
@@ -4717,7 +4737,51 @@
           window.addEventListener(evName, markTvReceiverActivity, { passive: true });
         });
 
+        // Hardware-Zurück-Taste aus der nativen Android/Fire-TV-APK sauber durch alle Overlays führen
+        function handleTelePortNativeBack() {
+          try {
+            const spotlight = document.getElementById("personSpotlightOverlayRoot");
+            if (spotlight && spotlight.innerHTML.trim()) {
+              spotlight.innerHTML = "";
+              return true;
+            }
+            const lb = document.getElementById("lightbox");
+            if (lb && lb.classList.contains("open") && typeof closeLightbox === "function") {
+              closeLightbox();
+              return true;
+            }
+            const detailStage = document.getElementById("detailHeroStageEl");
+            if (detailStage && detailStage.classList.contains("is-trailer-foreground-mode") && typeof exitDetailForegroundTrailerModeClient === "function") {
+              exitDetailForegroundTrailerModeClient();
+              return true;
+            }
+            const heroStage = document.getElementById("heroStageEl");
+            if (heroStage && heroStage.classList.contains("is-trailer-foreground-mode") && typeof exitHeroForegroundTrailerModeClient === "function") {
+              exitHeroForegroundTrailerModeClient();
+              return true;
+            }
+            const mRoot = document.getElementById("modalRoot");
+            if (mRoot && mRoot.innerHTML.trim()) {
+              if (typeof stopBotCodePollClient === "function") stopBotCodePollClient();
+              if (typeof closeDetailModal === "function") closeDetailModal();
+              else mRoot.innerHTML = "";
+              return true;
+            }
+            if (state && state.sidebarOpen && typeof closeFilterSidebar === "function") {
+              closeFilterSidebar(false);
+              return true;
+            }
+            const rightMenu = document.getElementById("rightMenuOverlay");
+            if (rightMenu && rightMenu.classList.contains("open") && typeof closeRightMenuOverlayClient === "function") {
+              closeRightMenuOverlayClient();
+              return true;
+            }
+          } catch (_e) {}
+          return false;
+        }
+
         // Expose globally for inline handlers & other modules
+        window.handleTelePortNativeBack = handleTelePortNativeBack;
         window.isRunningInTelePortApkClient = isRunningInTelePortApkClient;
         window.openNativeApkServerSettingsClient = openNativeApkServerSettingsClient;
         window.openApkUpdateDownloadClient = openApkUpdateDownloadClient;

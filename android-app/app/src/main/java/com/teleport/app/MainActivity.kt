@@ -61,6 +61,7 @@ class MainActivity : Activity() {
 
     private var lanQrSetupServer: LanQrSetupServer? = null
     private var lastBackPressAt: Long = 0L
+    private var mainFrameHadError: Boolean = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -159,12 +160,16 @@ class MainActivity : Activity() {
         wv.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                mainFrameHadError = false
                 currentWebViewOrigin = ServerConfigStore.extractOrigin(url)
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 currentWebViewOrigin = ServerConfigStore.extractOrigin(url)
+                if (!mainFrameHadError && errorOverlay.visibility == View.VISIBLE) {
+                    errorOverlay.visibility = View.GONE
+                }
                 CookieManager.getInstance().flush()
             }
 
@@ -194,12 +199,14 @@ class MainActivity : Activity() {
 
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
                 // Niemals unsichere Zertifikate durchwinken!
+                mainFrameHadError = true
                 handler?.cancel()
                 showErrorOverlay("Sichere HTTPS-Verbindung konnte nicht bestätigt werden (TLS-Zertifikatsfehler). Bitte Server-URL prüfen.")
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (request?.isForMainFrame == true) {
+                    mainFrameHadError = true
                     val desc = error?.description?.toString() ?: "Verbindung fehlgeschlagen"
                     showErrorOverlay("TelePort konnte nicht geladen werden:\n$desc")
                 }
@@ -727,16 +734,20 @@ class MainActivity : Activity() {
             super.onBackPressed()
             return
         }
-        if (webView.canGoBack()) {
-            webView.goBack()
-            return
-        }
-        val now = System.currentTimeMillis()
-        if (now - lastBackPressAt < 2000L) {
-            finish()
-        } else {
-            lastBackPressAt = now
-            Toast.makeText(this, "Zum Beenden erneut Zurück drücken", Toast.LENGTH_SHORT).show()
+        // Zuerst geöffnete In-App-Overlays (Trailer, Detailansicht, Lightbox, Sidebar) schließen
+        webView.evaluateJavascript("(typeof window.handleTelePortNativeBack==='function'?window.handleTelePortNativeBack():false)") { result ->
+            if (result == "true") return@evaluateJavascript
+            if (webView.canGoBack()) {
+                webView.goBack()
+                return@evaluateJavascript
+            }
+            val now = System.currentTimeMillis()
+            if (now - lastBackPressAt < 2000L) {
+                finish()
+            } else {
+                lastBackPressAt = now
+                Toast.makeText(this, "Zum Beenden erneut Zurück drücken", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 

@@ -1544,27 +1544,54 @@
             return new Response(JSON.stringify({ ok: true, seq }), { status: 200, headers: corsHeaders });
           }
 
-          // action === "poll"
+          // action === "poll" (optional includeSignal=true kombiniert Signal + State in 1 einziger D1-Query!)
           const sinceSeq = Number(body.sinceSeq || 0);
-          let row = null;
-          if (env?.DB) {
-            row = await env.DB.prepare(
-              "SELECT payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?"
-            ).bind(roomKey, ownerId).first();
+          const includeSignal = Boolean(body.includeSignal);
+          let stateRow = null;
+          let signalRow = null;
+          if (includeSignal) {
+            const sigKey = `signal:${ownerId}:${targetTvId}`;
+            if (env?.DB) {
+              const q = await env.DB.prepare(
+                "SELECT kind, payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key IN (?, ?) AND telegram_id = ?"
+              ).bind(roomKey, sigKey, ownerId).all();
+              const rows = Array.isArray(q?.results) ? q.results : [];
+              for (const r of rows) {
+                if (r.kind === "state") stateRow = r;
+                else if (r.kind === "signal") signalRow = r;
+              }
+            } else {
+              stateRow = tvSyncMemoryRooms.get(roomKey) || null;
+              signalRow = tvSyncMemoryRooms.get(sigKey) || null;
+            }
           } else {
-            row = tvSyncMemoryRooms.get(roomKey) || null;
+            if (env?.DB) {
+              stateRow = await env.DB.prepare(
+                "SELECT payload_json, seq, updated_at, expires_at FROM tma_tv_sync_rooms WHERE room_key = ? AND telegram_id = ?"
+              ).bind(roomKey, ownerId).first();
+            } else {
+              stateRow = tvSyncMemoryRooms.get(roomKey) || null;
+            }
           }
-          if (!row || Number(row.expires_at || 0) <= now || Number(row.seq || 0) <= sinceSeq) {
-            return new Response(JSON.stringify({ ok: true, hasUpdate: false, seq: Number(row?.seq || sinceSeq) }), { status: 200, headers: corsHeaders });
+
+          let signalData = null;
+          if (signalRow && Number(signalRow.expires_at || 0) > now) {
+            try { signalData = JSON.parse(signalRow.payload_json || "null"); } catch (_e) {}
           }
+
+          const hasFreshState = Boolean(stateRow && Number(stateRow.expires_at || 0) > now && Number(stateRow.seq || 0) > sinceSeq);
           let evData = null;
-          try { evData = JSON.parse(row.payload_json || "null"); } catch (_e) {}
+          if (hasFreshState) {
+            try { evData = JSON.parse(stateRow.payload_json || "null"); } catch (_e) {}
+          }
+
           return new Response(JSON.stringify({
             ok: true,
             hasUpdate: Boolean(evData),
-            seq: Number(row.seq || 0),
+            seq: Number(stateRow?.seq || sinceSeq),
             event: evData,
-            updatedAt: Number(row.updated_at || 0)
+            updatedAt: Number(stateRow?.updated_at || 0),
+            ...(includeSignal ? { signal: signalData, signalSeq: Number(signalRow?.seq || 0) } : {})
           }), { status: 200, headers: corsHeaders });
         }
 

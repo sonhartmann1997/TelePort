@@ -229,8 +229,8 @@ button{width:100%;margin-top:18px;padding:14px;border-radius:12px;border:0;backg
 <p>Sende deine Cloudflare-Worker-Adresse direkt im lokalen WLAN an deinen Fernseher — ohne Tippen mit der Fernbedienung.</p>
 <form method="POST" action="/submit">
 <input type="hidden" name="t" value="$safeToken"/>
-<label for="url">Cloudflare Worker URL (https://...)</label>
-<input id="url" name="url" type="url" required placeholder="https://teleport.deinname.workers.dev" autocomplete="url"/>
+<label for="url">Cloudflare Worker URL (z. B. https://teleport.deinname.workers.dev)</label>
+<input id="url" name="url" type="text" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" required placeholder="teleport.deinname.workers.dev" autocomplete="url"/>
 <label for="pin">4-stelliger PIN vom Fernseher</label>
 <input id="pin" name="pin" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required placeholder="z. B. 4829" style="letter-spacing:6px;text-align:center;font-weight:800;font-size:20px"/>
 <button type="submit">An Fernseher senden</button>
