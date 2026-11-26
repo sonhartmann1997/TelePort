@@ -3528,8 +3528,10 @@
                   '<span style="font-size:10.5px;padding:2px 8px;border-radius:999px;background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.38)">Bot API 8.0–8.3 aktiv</span>' +
                 '</div>' +
                 '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="toggleTmaFullscreenClient()">⛶ Vollbild testen</button>' +
-                  '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="addTmaToHomeScreenClient()">📲 Home-Screen-Icon</button>' +
+                  ((typeof isRealTelegramMiniAppClient === 'function' && isRealTelegramMiniAppClient()) ? (
+                    '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="toggleTmaFullscreenClient()">⛶ Vollbild testen</button>' +
+                    '<button type="button" class="btn" style="padding:4px 9px;font-size:11px" onclick="addTmaToHomeScreenClient()">📲 Home-Screen-Icon</button>'
+                  ) : '') +
                   '<button type="button" class="btn blue" style="padding:4px 10px;font-size:11px" onclick="state.adminBotGuideOpen=!state.adminBotGuideOpen;loadAdminPanelView(false)">' +
                     (state.adminBotGuideOpen ? '📖 @BotFather Guide ausblenden ▴' : '📖 @BotFather 3-Schritte-Guide ▾') +
                   '</button>' +

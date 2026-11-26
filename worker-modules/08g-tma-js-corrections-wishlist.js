@@ -1337,7 +1337,6 @@
             '<div class="section-title">' +
               '<span>🎵 Playlisten & Ordner verwalten (' + folders.length + ')</span>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                '<button type="button" class="btn blue" style="padding:4px 9px;font-size:11.5px" onclick="createNewFolderPrompt(true)">➕ Neue Playlist</button>' +
                 '<button type="button" class="btn" style="padding:4px 9px;font-size:11.5px" onclick="createNewFolderPrompt(false)">📁 Neuer Ordner</button>' +
                 '<button type="button" class="btn close-slate" onclick="toggleWishlistFoldersManager()" title="Verwaltung einklappen">✖</button>' +
               '</div>' +
@@ -1468,14 +1467,13 @@
         if (!state.isAuthenticated) {
           root.innerHTML = '<div class="section">' +
             '<div class="panel-box" style="border-color:rgba(14,165,233,0.4)">' +
-              '<div class="section-title"><span>🔒 Merkliste im Gast-Modus nicht verfügbar</span><button class="btn" onclick="goHome()">🏠 Hauptseite</button></div>' +
+              '<div class="section-title"><span>🔒 Merkliste im Gast-Modus nicht verfügbar</span></div>' +
               '<p style="font-size:12.5px;color:var(--text-muted);line-height:1.5;margin-bottom:12px">' +
-                'Du nutzt die Seite aktuell <b>ohne Telegram initData und ohne eingeloggten Account</b>.<br>' +
-                'Im Gast-Modus steht kein persönlicher Speicher (Merkliste) zur Verfügung und ein Zugriff auf andere Telegram-IDs ist gesperrt.' +
+                'Melde dich an, um deine persönliche Merkliste und eigene Playlisten dauerhaft über alle Geräte (Handy, Browser & Fernseher) zu synchronisieren.' +
               '</p>' +
               '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-                '<button class="btn blue" onclick="openAccountModal()">🔑 Mit abgesichertem Account (Username & Passwort) einloggen</button>' +
-                '<button class="btn" onclick="goHome()">🎬 Weiter als Gast stöbern</button>' +
+                '<button class="btn blue" onclick="openAccountModal()">🔐 Jetzt anmelden</button>' +
+                '<button class="btn" onclick="goHome()">🏠 Zurück zum Katalog</button>' +
               '</div>' +
             '</div>' +
           '</div>';

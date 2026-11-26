@@ -1989,7 +1989,7 @@
           quickResetBtnHtml +
           (!state.isSearchMode ? '<button type="button" class="btn" onclick="triggerRandom()" title="Zufälligen Titel mit deinen aktiven Filtern ziehen">🎲 Zufall</button>' : '') +
           (!state.isSearchMode ? '<button class="btn ' + (isFranchiseActive ? 'blue' : '') + '" onclick="toggleWorldsTray()" title="Filmuniversen & Filmreihen Portal-Dock ein- oder ausklappen">🌌 Welten & Reihen ' + (state.worldsTrayOpen ? '▴' : '▾') + '</button>' : '') +
-          ((state.isSearchMode || isColView || isUniView || isPerView || state.currentCompanyId) ? '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' : '');
+          (state.isSearchMode ? '<button class="btn" onclick="goHome()">🏠 Hauptseite</button>' : '');
 
         return '<div class="floating-filter-bar">' +
           '<div class="ff-controls-grid">' +
@@ -1999,7 +1999,6 @@
           (pills.length > 0 ? (
             '<div class="ff-active-pills" style="margin-top:6px;padding-top:6px;border-top:1px solid rgba(148,163,184,0.2)">' +
               pills.join("") +
-              (totalActiveFilters > 0 ? '<button class="btn danger" style="padding:2px 8px;font-size:10.5px" onclick="resetAllCatalogFiltersAndSortQuickClient(event)" title="Alle aktiven Filter löschen">🗑️ Alle Filter löschen</button>' : '') +
             '</div>'
           ) : '') +
         '</div>';
@@ -2188,16 +2187,17 @@
         const isPerView = state.currentView === "person" && state.currentPersonId;
         const isStudioView = Boolean(state.currentView === "discover" && state.currentCompanyId);
 
+        const isTvModeFranchise = typeof window.isCurrentDeviceTvModeClient === "function" && window.isCurrentDeviceTvModeClient();
         const franchiseActionBannerHtml = (isColView || isUniView) ? (
           '<div class="panel-box" style="margin-bottom:10px;padding:10px 12px;border-color:' + (isColView ? 'rgba(91,70,245,0.5)' : 'rgba(16,185,129,0.5)') + '">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">' +
               '<div>' +
                 '<div style="font-size:13.5px;font-weight:800;color:var(--text-main)">' + esc(customTitle || (isColView ? '🍿 Filmreihe' : '🌌 Filmuniversum')) + '</div>' +
-                '<div style="font-size:11px;color:var(--text-muted)">Komplette ' + (isColView ? 'Filmreihe' : 'Welt') + ' speichern, teilen oder weitere Reihen entdecken:</div>' +
+                '<div style="font-size:11px;color:var(--text-muted)">Komplette ' + (isColView ? 'Filmreihe' : 'Welt') + ' speichern' + (isTvModeFranchise ? '' : ', teilen') + ' oder weitere Reihen entdecken:</div>' +
               '</div>' +
               '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
                 '<button class="btn green" onclick="saveWholeCollectionOrUniverseTma(\\'' + (isColView ? 'col' : 'uni') + '\\',\\'' + escJs(isColView ? state.currentCollectionId : state.currentUniverseId) + '\\')">💾 Alle ' + state.items.length + ' speichern</button>' +
-                '<button class="btn purple" data-kind="' + (isColView ? 'col' : 'uni') + '" data-id="' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '" data-title="' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '" onclick="shareCollectionOrUniverseFromBtn(this)">📤 Teilen</button>' +
+                (!isTvModeFranchise ? '<button class="btn purple" data-kind="' + (isColView ? 'col' : 'uni') + '" data-id="' + esc(isColView ? state.currentCollectionId : state.currentUniverseId) + '" data-title="' + esc(isColView ? state.currentCollectionName : state.currentUniverseName) + '" onclick="shareCollectionOrUniverseFromBtn(this)">📤 Teilen</button>' : '') +
                 '<button class="btn" onclick="loadFranchisesHub(\\'' + (isColView ? 'collections' : 'universes') + '\\')">🌌 Alle ' + (isColView ? 'Reihen' : 'Welten') + '</button>' +
                 '<button class="btn" onclick="goHome()">🏠 Katalog</button>' +
               '</div>' +
