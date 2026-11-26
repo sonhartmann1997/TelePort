@@ -8533,25 +8533,23 @@
           if (hasD1 && typeof getEntityFromD1 === "function") {
             const d1CodeObj = await getEntityFromD1(env, `webauth_code_${cleanCode}`, 360000, { bypassMemoryCache: true }).catch(() => null);
             if (d1CodeObj) mappedChallengeId = typeof d1CodeObj === "string" ? d1CodeObj : d1CodeObj.challengeId;
-          }
-          if (!mappedChallengeId) {
+          } else if (!hasD1) {
             mappedChallengeId = await kvCachedGetRaw(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
-          }
-          if (!mappedChallengeId) {
-            mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
+            if (!mappedChallengeId) {
+              mappedChallengeId = memoryFallback.get(`webauth_code_${cleanCode}`);
+            }
           }
           if (mappedChallengeId) {
             const cId = String(mappedChallengeId).replace(/^"|"$/g, "").trim();
             let challengeObj = null;
             if (hasD1 && typeof getEntityFromD1 === "function") {
               challengeObj = await getEntityFromD1(env, `webauth_id_${cId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
-            }
-            if (!challengeObj) {
+            } else if (!hasD1) {
               const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
-            }
-            if (!challengeObj) {
-              challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+              if (!challengeObj) {
+                challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+              }
             }
             if (challengeObj && challengeObj.status === "pending" && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
@@ -8561,21 +8559,32 @@
                 last_name: String(message.from?.last_name || ""),
                 username: String(message.from?.username || "")
               };
-              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
-              memoryFallback.delete(`webauth_code_${cleanCode}`);
+              let persistOk = false;
               try {
-                if (hasD1 && typeof saveEntityToD1 === "function") {
-                  await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
-                  if (typeof deleteEntityFromD1 === "function") {
-                    await deleteEntityFromD1(env, `webauth_code_${cleanCode}`).catch(() => {});
+                if (hasD1 && typeof ensureD1Schema === "function") {
+                  const db = await ensureD1Schema(env);
+                  if (db) {
+                    await db.batch([
+                      db.prepare("INSERT OR REPLACE INTO entity_cache (cache_key, entity_type, data_json, updated_at) VALUES (?1, 'webauth', ?2, ?3)")
+                        .bind(`webauth_id_${cId}`, JSON.stringify(challengeObj), Date.now()),
+                      db.prepare("DELETE FROM entity_cache WHERE cache_key = ?1").bind(`webauth_code_${cleanCode}`)
+                    ]);
+                    persistOk = true;
                   }
                 } else {
                   await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
                   await kvStageDelete(env, `webauth_code_${cleanCode}`, "MOVIE_SAVED").catch(() => {});
+                  persistOk = true;
                 }
-              } catch (e) {}
+              } catch (_e) {}
+              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              memoryFallback.delete(`webauth_code_${cleanCode}`);
               await deleteMessage(chatId, message.message_id);
-              await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
+              if (persistOk) {
+                await sendMessage(chatId, `✅ *6-stelliger Login-Code (${cleanCode}) bestätigt!*\nDein Browser / Smart-TV wird jetzt automatisch in der Mediathek Mini-App angemeldet.`);
+              } else {
+                await sendMessage(chatId, `⚠️ *Login-Bestätigung konnte gerade nicht gespeichert werden.*\nBitte versuche es in wenigen Sekunden erneut.`);
+              }
               return;
             }
           }
@@ -8612,13 +8621,12 @@
             let challengeObj = null;
             if (hasD1 && typeof getEntityFromD1 === "function") {
               challengeObj = await getEntityFromD1(env, `webauth_id_${cId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
-            }
-            if (!challengeObj) {
+            } else if (!hasD1) {
               const raw = await kvCachedGetRaw(env, `webauth_id_${cId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
-            }
-            if (!challengeObj) {
-              challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+              if (!challengeObj) {
+                challengeObj = memoryFallback.get(`webauth_id_${cId}`);
+              }
             }
             if (challengeObj && challengeObj.status === "pending" && Date.now() <= Number(challengeObj.expiresAt || 0)) {
               challengeObj.status = "confirmed";
@@ -8628,22 +8636,36 @@
                 last_name: String(message.from?.last_name || ""),
                 username: String(message.from?.username || "")
               };
-              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
-              if (challengeObj.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
+              let persistOk = false;
               try {
-                if (hasD1 && typeof saveEntityToD1 === "function") {
-                  await saveEntityToD1(env, `webauth_id_${cId}`, "webauth", challengeObj);
-                  if (challengeObj.code && typeof deleteEntityFromD1 === "function") {
-                    await deleteEntityFromD1(env, `webauth_code_${challengeObj.code}`).catch(() => {});
+                if (hasD1 && typeof ensureD1Schema === "function") {
+                  const db = await ensureD1Schema(env);
+                  if (db) {
+                    const stmts = [
+                      db.prepare("INSERT OR REPLACE INTO entity_cache (cache_key, entity_type, data_json, updated_at) VALUES (?1, 'webauth', ?2, ?3)")
+                        .bind(`webauth_id_${cId}`, JSON.stringify(challengeObj), Date.now())
+                    ];
+                    if (challengeObj.code) {
+                      stmts.push(db.prepare("DELETE FROM entity_cache WHERE cache_key = ?1").bind(`webauth_code_${challengeObj.code}`));
+                    }
+                    await db.batch(stmts);
+                    persistOk = true;
                   }
                 } else {
                   await kvStageWrite(env, `webauth_id_${cId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
                   if (challengeObj.code) {
                     await kvStageDelete(env, `webauth_code_${challengeObj.code}`, "MOVIE_SAVED").catch(() => {});
                   }
+                  persistOk = true;
                 }
-              } catch (e) {}
-              await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
+              } catch (_e) {}
+              memoryFallback.set(`webauth_id_${cId}`, challengeObj);
+              if (challengeObj.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
+              if (persistOk) {
+                await sendMessage(chatId, `✅ *Web- & Smart-TV-Login erfolgreich bestätigt!*\nDu bist jetzt in deiner Mediathek Mini-App angemeldet und kannst zum Browser / Smart-TV zurückkehren.`);
+              } else {
+                await sendMessage(chatId, `⚠️ *Login-Bestätigung konnte gerade nicht gespeichert werden.*\nBitte tippe in wenigen Sekunden erneut auf den Link.`);
+              }
             } else {
               await sendMessage(chatId, `⌛ *Dieser Login-Link wurde bereits verwendet oder ist abgelaufen.*\nBitte fordere im Login-Fenster der Mini-App einen neuen Code an.`);
             }

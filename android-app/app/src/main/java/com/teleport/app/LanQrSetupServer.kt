@@ -239,7 +239,8 @@ button{width:100%;margin-top:18px;padding:14px;border-radius:12px;border:0;backg
     private fun buildFeedbackPage(ok: Boolean, msg: String): String {
         val color = if (ok) "#34d399" else "#f87171"
         val title = if (ok) "Erfolgreich gesendet" else "Hinweis"
-        val backHtml = if (ok) "" else """<p style="margin-top:16px"><a href="javascript:history.back()" style="color:#38bdf8;font-weight:700">Zurück zum Formular</a></p>"""
+        val backLabel = if (ok) "← Andere URL senden" else "Zurück zum Formular"
+        val backHtml = """<p style="margin-top:16px"><a href="javascript:history.back()" style="color:#38bdf8;font-weight:700">$backLabel</a></p>"""
         return """<!doctype html>
 <html lang="de"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>$title</title>

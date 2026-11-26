@@ -203,9 +203,13 @@ class MainActivity : Activity() {
                     return false
                 }
 
-                // Externe Links (Telegram, YouTube, APK-Download etc.) sicher über Android Intent öffnen
-                if (scheme == "https" || scheme == "tg") {
-                    openSafeExternalIntent(uri.toString(), isTelegram = (scheme == "tg" || host == "t.me" || host.endsWith(".t.me")))
+                // Externe Links (Telegram, YouTube, Authenticator otpauth://, APK-Download etc.) sicher über Android Intent öffnen
+                if (scheme == "https" || scheme == "tg" || scheme == "otpauth") {
+                    openSafeExternalIntent(
+                        uri.toString(),
+                        isTelegram = (scheme == "tg" || host == "t.me" || host.endsWith(".t.me")),
+                        isOtpAuth = (scheme == "otpauth")
+                    )
                     return true
                 }
                 return true
@@ -658,17 +662,18 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun openSafeExternalIntent(url: String, isTelegram: Boolean = false) {
+    private fun openSafeExternalIntent(url: String, isTelegram: Boolean = false, isOtpAuth: Boolean = false) {
         try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
         } catch (_e: Exception) {
-            val msg = if (isTelegram && ServerConfigStore.isTvPlatform(platformName)) {
-                "Telegram ist auf diesem Fernseher nicht installiert. Nutze den 6-stelligen TV-Code über dein Handy."
-            } else {
-                "Keine passende App zum Öffnen dieses Links gefunden."
+            val msg = when {
+                isOtpAuth -> "Keine Authenticator-App gefunden. Nutze stattdessen den manuellen Setup-Schlüssel."
+                isTelegram && ServerConfigStore.isTvPlatform(platformName) ->
+                    "Telegram ist auf diesem Fernseher nicht installiert. Nutze den 6-stelligen TV-Code über dein Handy."
+                else -> "Keine passende App zum Öffnen dieses Links gefunden."
             }
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         }
@@ -833,12 +838,13 @@ class MainActivity : Activity() {
         fun openExternalUrl(rawUrl: String?) {
             if (configuredServerOrigin == null || currentWebViewOrigin != configuredServerOrigin) return
             val target = (rawUrl ?: "").trim()
-            if (!target.startsWith("https://", ignoreCase = true) && !target.startsWith("tg://", ignoreCase = true)) {
+            val isOtpAuth = target.startsWith("otpauth://", ignoreCase = true)
+            if (!target.startsWith("https://", ignoreCase = true) && !target.startsWith("tg://", ignoreCase = true) && !isOtpAuth) {
                 return
             }
             val parsedHost = try { (Uri.parse(target).host ?: "").lowercase() } catch (_e: Exception) { "" }
             val isTg = target.startsWith("tg://", ignoreCase = true) || parsedHost == "t.me" || parsedHost.endsWith(".t.me")
-            mainHandler.post { openSafeExternalIntent(target, isTelegram = isTg) }
+            mainHandler.post { openSafeExternalIntent(target, isTelegram = isTg, isOtpAuth = isOtpAuth) }
         }
     }
 }

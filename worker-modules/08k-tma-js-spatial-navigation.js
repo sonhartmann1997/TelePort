@@ -3791,7 +3791,7 @@
             const cachedRaw = localStorage.getItem(APK_UPDATE_CACHE_KEY);
             if (cachedRaw) {
               const cached = JSON.parse(cachedRaw);
-              if (cached && now - Number(cached.checkedAt || 0) < 86400000) {
+              if (cached && cached.localVersion === localVer && (now - Number(cached.checkedAt || 0) < 86400000)) {
                 window._teleportApkUpdateInfo = cached;
                 return;
               }
@@ -3851,16 +3851,18 @@
               }
             }, 1000);
             const claimToken = r.claimToken;
+            let tvPairPollInFlight = false;
             activeTvPairTimer = setInterval(async () => {
-              if (!document.getElementById("tvPairStatusText")) { stopTvPairPollClient(); return; }
-              if (document.hidden) return;
+              if (!document.getElementById("tvPairStatusText") || (state && state.isAuthenticated)) { stopTvPairPollClient(); return; }
+              if (document.hidden || tvPairPollInFlight) return;
+              tvPairPollInFlight = true;
               try {
                 const pr = await apiFetchJson(API_BASE + "/auth/tv-pair/poll", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ claimToken })
                 });
-                if (!pr || !pr.ok) return;
+                if (!pr || !pr.ok || (state && state.isAuthenticated)) return;
                 if (pr.status === "expired") {
                   stopTvPairPollClient();
                   const st = document.getElementById("tvPairStatusText");
@@ -3881,7 +3883,10 @@
                   showHudToast("✅ Fernseher erfolgreich angemeldet!");
                   loadDiscover(state.type, state.genreId, state.mode, state.sort);
                 }
-              } catch (_e) {}
+              } catch (_e) {
+              } finally {
+                tvPairPollInFlight = false;
+              }
             }, 3000);
           } catch (err) {
             if (box) box.innerHTML = '<div style="font-size:12px;color:#f87171">❌ ' + esc(err?.message || "Fehler") + '</div>';
@@ -3950,8 +3955,10 @@
         function unregisterTvPresenceBeacon() {
           if (!state?.isAuthenticated) return;
           const headers = { "Content-Type": "application/json" };
-          if (typeof sessionToken === "string" && sessionToken) headers["X-TMA-Session"] = sessionToken;
-          if (typeof rawInitData === "string" && rawInitData) headers["X-Telegram-Init-Data"] = rawInitData;
+          const isHeaderSafeStr = (v) => typeof v === "string" && v.length > 0 && !/[^\\x00-\\xFF]/.test(v);
+          if (typeof sessionToken === "string" && isHeaderSafeStr(sessionToken)) headers["Authorization"] = "Bearer " + sessionToken;
+          if (typeof rawInitData === "string" && isHeaderSafeStr(rawInitData)) headers["X-Telegram-Init-Data"] = rawInitData;
+          if (typeof rawLaunchToken === "string" && isHeaderSafeStr(rawLaunchToken)) headers["X-Telegram-Launch-Token"] = rawLaunchToken;
           try {
             fetch(API_BASE + "/tv-sync/presence", {
               method: "POST",
@@ -4171,9 +4178,9 @@
                   if (typeof loadDiscover === "function") {
                     loadDiscover(
                       ev.mediaType || state.type || "m",
-                      ev.genreId || "0",
-                      ev.mode || state.mode || "popular",
-                      ev.sort || state.sort || "pop",
+                      ev.genreId || "all",
+                      ev.mode || state.mode || "trend",
+                      ev.sort || state.sort || "default",
                       false,
                       false,
                       Number(ev.page || 1)
@@ -4191,7 +4198,7 @@
                   if (state.isSearchMode && state.searchQuery && typeof runSearch === "function") {
                     runSearch(false, state.searchQuery, state.searchScope || "all", false, targetPage);
                   } else if (typeof loadDiscover === "function") {
-                    loadDiscover(state.type || "m", state.genreId || "0", state.mode || "popular", state.sort || "pop", false, false, targetPage);
+                    loadDiscover(state.type || "m", state.genreId || "all", state.mode || "trend", state.sort || "default", false, false, targetPage);
                   }
                   if (pendingRemoteScrollTimer) clearTimeout(pendingRemoteScrollTimer);
                   pendingRemoteScrollTimer = setTimeout(() => {
@@ -4225,14 +4232,7 @@
                 exitDetailForegroundTrailerModeClient();
               }
             } else if (ev.type === "remote:back") {
-              const stageEl = document.getElementById("detailHeroStageEl");
-              if (stageEl && stageEl.classList.contains("is-trailer-foreground-mode") && typeof exitDetailForegroundTrailerModeClient === "function") {
-                exitDetailForegroundTrailerModeClient();
-              } else if (document.getElementById("modalRoot")?.innerHTML.trim() && typeof closeDetailModal === "function") {
-                closeDetailModal();
-              } else if (state.sidebarOpen && typeof closeFilterSidebar === "function") {
-                closeFilterSidebar(true);
-              } else if (typeof goBack === "function") {
+              if (!handleTelePortNativeBack() && typeof goBack === "function") {
                 goBack();
               }
             }
@@ -4416,29 +4416,36 @@
 
             let appliedAnswer = false;
             let appliedIceCount = 0;
+            let phoneSignalPollInFlight = false;
             phoneSignalPollTimer = setInterval(async () => {
-              if (!phoneControllingTvId || phoneTransportMode === "p2p") {
+              if (!phoneControllingTvId || phoneTransportMode === "p2p" || phonePeerConn !== pc) {
                 if (phoneSignalPollTimer) { clearInterval(phoneSignalPollTimer); phoneSignalPollTimer = null; }
                 return;
               }
+              if (phoneSignalPollInFlight) return;
+              phoneSignalPollInFlight = true;
               try {
                 const r = await apiFetchJson(API_BASE + "/tv-sync/signal", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ action: "poll", targetTvId: chosen.deviceId })
                 });
+                if (phonePeerConn !== pc || phoneTransportMode === "p2p") return;
                 const sig = r && r.ok ? r.signal : null;
-                if (sig && sig.answer && !appliedAnswer && phonePeerConn) {
+                if (sig && sig.answer && !appliedAnswer && phonePeerConn === pc) {
                   appliedAnswer = true;
-                  await phonePeerConn.setRemoteDescription(new RTCSessionDescription(sig.answer));
+                  await pc.setRemoteDescription(new RTCSessionDescription(sig.answer));
                 }
-                if (sig && Array.isArray(sig.answerIce) && phonePeerConn && appliedAnswer) {
+                if (sig && Array.isArray(sig.answerIce) && phonePeerConn === pc && appliedAnswer) {
                   for (let i = appliedIceCount; i < sig.answerIce.length; i++) {
-                    try { await phonePeerConn.addIceCandidate(new RTCIceCandidate(sig.answerIce[i])); } catch (_e) {}
+                    try { await pc.addIceCandidate(new RTCIceCandidate(sig.answerIce[i])); } catch (_e) {}
                   }
                   appliedIceCount = sig.answerIce.length;
                 }
-              } catch (_e) {}
+              } catch (_e) {
+              } finally {
+                phoneSignalPollInFlight = false;
+              }
             }, 900);
           } catch (_e) {
             teardownPhonePeer();
@@ -4571,9 +4578,9 @@
             type: "view:sync",
             viewKind: viewKind || (state.isSearchMode ? "search" : "discover"),
             mediaType: state.type || "m",
-            genreId: state.genreId || "0",
-            mode: state.mode || "popular",
-            sort: state.sort || "pop",
+            genreId: state.genreId || "all",
+            mode: state.mode || "trend",
+            sort: state.sort || "default",
             searchQuery: state.isSearchMode ? String(state.searchQuery || "") : "",
             searchScope: state.searchScope || "all",
             page: Number(state.page || 1),
@@ -4723,6 +4730,17 @@
           return html;
         }
 
+        function unregisterTvPresenceBeforeLogoutClient() {
+          if (tvReceiverActive) {
+            unregisterTvPresenceBeacon();
+            tvReceiverActive = false;
+            if (tvPresenceTimer) { clearInterval(tvPresenceTimer); tvPresenceTimer = null; }
+            if (tvSignalPollTimer) { clearTimeout(tvSignalPollTimer); tvSignalPollTimer = null; }
+            if (tvStatePollTimer) { clearTimeout(tvStatePollTimer); tvStatePollTimer = null; }
+            teardownTvReceiverPeer();
+          }
+        }
+
         function onTelePortAuthChanged() {
           if (!state || !state.isAuthenticated) {
             stopPhoneTvControlClient(true);
@@ -4867,6 +4885,7 @@
         window.getTvSyncSidebarBadgeTextClient = getTvSyncSidebarBadgeTextClient;
         window.buildTvSyncSidebarSubPanelHtmlClient = buildTvSyncSidebarSubPanelHtmlClient;
         window.setTvReceiverEnabledByPrefClient = setTvReceiverEnabledByPref;
+        window.unregisterTvPresenceBeforeLogoutClient = unregisterTvPresenceBeforeLogoutClient;
         window.onTelePortAuthChanged = onTelePortAuthChanged;
 
         setTimeout(runQuietApkUpdateCheckClient, 1800);

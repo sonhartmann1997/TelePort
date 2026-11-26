@@ -18,6 +18,7 @@
   const tvSyncMemoryRooms = new Map();
   const tvPairApproveRateMap = new Map();
   const tvPairStartRateMap = new Map();
+  const botCodeCreateRateMap = new Map();
 
   function isSafeExternalHttpsUrl(rawUrl) {
     try {
@@ -826,38 +827,77 @@
         const action = String(body.action || "create").trim();
         const isLocalSandbox = typeof window !== "undefined" && typeof document !== "undefined";
         const hasD1 = typeof getRawD1Binding === "function" && Boolean(getRawD1Binding(env));
+        const nowTs = Date.now();
 
         if (action === "create") {
+          const clientIp = String(request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "local").split(",")[0].trim().slice(0, 64) || "local";
+          if (botCodeCreateRateMap.size > 128) {
+            for (const [k, v] of botCodeCreateRateMap.entries()) {
+              if (!v || v.resetAt <= nowTs) botCodeCreateRateMap.delete(k);
+            }
+          }
+          const ipRate = botCodeCreateRateMap.get(clientIp);
+          if (ipRate && ipRate.resetAt > nowTs) {
+            if (ipRate.count >= 10) {
+              return new Response(JSON.stringify({ ok: false, error: "Zu viele Login-Code-Anfragen. Bitte kurz warten." }), { status: 429, headers: corsHeaders });
+            }
+            ipRate.count += 1;
+          } else {
+            botCodeCreateRateMap.set(clientIp, { count: 1, resetAt: nowTs + 60000 });
+          }
+
+          if (memoryFallback.size > 120) {
+            for (const [mk, mv] of memoryFallback.entries()) {
+              if (mk.startsWith("webauth_id_") && mv && Number(mv.expiresAt || 0) <= nowTs) {
+                memoryFallback.delete(mk);
+                if (mv.code) memoryFallback.delete(`webauth_code_${mv.code}`);
+              }
+            }
+          }
+
           const randIdBytes = new Uint8Array(12);
           crypto.getRandomValues(randIdBytes);
           const challengeId = `wac_${bytesToHex(randIdBytes)}`;
           const randCodeBuf = new Uint32Array(1);
           crypto.getRandomValues(randCodeBuf);
           const code = String(100000 + (randCodeBuf[0] % 900000));
-          const expiresAt = Date.now() + 300000; // 5 Minuten gültig
+          const expiresAt = nowTs + 300000; // 5 Minuten gültig
           const botUsername = (await tgApi(env).getBotUsername(env).catch(() => "")) || "";
           const challengeObj = {
             challengeId,
             code,
             status: "pending",
-            createdAt: Date.now(),
+            createdAt: nowTs,
             expiresAt,
             user: null
           };
-          memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
-          memoryFallback.set(`webauth_code_${code}`, challengeId);
-          try {
-            if (hasD1 && typeof saveEntityToD1 === "function") {
-              // D1-first: 0 KV-Writes & sofortige starke Konsistenz über alle Edge-Server (kein 60s KV-Lag!)
-              await Promise.all([
-                saveEntityToD1(env, `webauth_id_${challengeId}`, "webauth", challengeObj),
-                saveEntityToD1(env, `webauth_code_${code}`, "webauth", { challengeId, expiresAt })
+
+          if (hasD1 && typeof ensureD1Schema === "function") {
+            try {
+              const db = await ensureD1Schema(env);
+              if (!db) throw new Error("D1 unavailable");
+              await db.batch([
+                db.prepare("INSERT OR REPLACE INTO entity_cache (cache_key, entity_type, data_json, updated_at) VALUES (?1, 'webauth', ?2, ?3)")
+                  .bind(`webauth_id_${challengeId}`, JSON.stringify(challengeObj), nowTs),
+                db.prepare("INSERT OR REPLACE INTO entity_cache (cache_key, entity_type, data_json, updated_at) VALUES (?1, 'webauth', ?2, ?3)")
+                  .bind(`webauth_code_${code}`, JSON.stringify({ challengeId, expiresAt }), nowTs)
               ]);
-            } else {
+            } catch (_d1Err) {
+              return new Response(JSON.stringify({ ok: false, error: "Login-Code konnte gerade nicht gespeichert werden. Bitte kurz erneut versuchen." }), { status: 503, headers: corsHeaders });
+            }
+          } else {
+            try {
               await kvStageWrite(env, `webauth_id_${challengeId}`, challengeObj, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
               await kvStageWrite(env, `webauth_code_${code}`, challengeId, { bindingName: "MOVIE_SAVED", expirationTtl: 300, periodicOnly: false, flushNow: true });
+            } catch (_kvErr) {
+              if (!isLocalSandbox) {
+                return new Response(JSON.stringify({ ok: false, error: "Login-Code konnte gerade nicht gespeichert werden. Bitte kurz erneut versuchen." }), { status: 503, headers: corsHeaders });
+              }
             }
-          } catch (e) {}
+          }
+          memoryFallback.set(`webauth_id_${challengeId}`, challengeObj);
+          memoryFallback.set(`webauth_code_${code}`, challengeId);
+
           const deepLink = botUsername
             ? `https://t.me/${botUsername.replace(/^@/, "")}?start=webauth_${challengeId}`
             : "";
@@ -904,27 +944,52 @@
 
         if (action === "poll") {
           const challengeId = String(body.challengeId || "").trim();
-          if (!challengeId) {
-            return new Response(JSON.stringify({ ok: false, error: "challengeId fehlt" }), { status: 400, headers: corsHeaders });
+          if (!challengeId || !/^wac_[a-f0-9]{16,48}$/i.test(challengeId)) {
+            return new Response(JSON.stringify({ ok: false, error: "challengeId fehlt oder ungültig" }), { status: 400, headers: corsHeaders });
           }
-          // Auf Edge-Servern IMMER frisch aus D1 (stark konsistent!) bzw. KV lesen
+          // Auf Edge-Servern IMMER frisch aus D1 (stark konsistent!) bzw. KV (nur wenn kein D1 aktiv) lesen
           let challengeObj = null;
           if (!isLocalSandbox) {
             if (hasD1 && typeof getEntityFromD1 === "function") {
               challengeObj = await getEntityFromD1(env, `webauth_id_${challengeId}`, 360000, { bypassMemoryCache: true }).catch(() => null);
-            }
-            if (!challengeObj) {
+            } else if (!hasD1) {
               const raw = await kvCachedGetRaw(env, `webauth_id_${challengeId}`, "MOVIE_SAVED", { bypassMemoryCache: true }).catch(() => null);
               if (raw) { try { challengeObj = JSON.parse(raw); } catch (e) {} }
             }
           }
-          if (!challengeObj) {
+          if (!challengeObj && (isLocalSandbox || !hasD1)) {
             challengeObj = memoryFallback.get(`webauth_id_${challengeId}`);
           }
-          if (!challengeObj || Date.now() > Number(challengeObj.expiresAt || 0)) {
+          if (!challengeObj || nowTs > Number(challengeObj.expiresAt || 0)) {
+            memoryFallback.delete(`webauth_id_${challengeId}`);
+            if (challengeObj?.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
             return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
           }
           if (challengeObj.status === "confirmed" && challengeObj.user && challengeObj.user.id) {
+            // Einmal-Verwendung: atomar VOR Token-Ausstellung löschen (Replay-Schutz bei parallelen Polls!)
+            if (hasD1 && typeof ensureD1Schema === "function") {
+              const db = await ensureD1Schema(env);
+              if (db) {
+                const delRes = await db.prepare("DELETE FROM entity_cache WHERE cache_key = ?1").bind(`webauth_id_${challengeId}`).run();
+                if (delRes?.meta && Number(delRes.meta.changes || 0) === 0) {
+                  return new Response(JSON.stringify({ ok: true, status: "expired" }), { status: 200, headers: corsHeaders });
+                }
+                if (challengeObj.code) {
+                  await db.prepare("DELETE FROM entity_cache WHERE cache_key = ?1").bind(`webauth_code_${challengeObj.code}`).run().catch(() => {});
+                }
+              }
+            } else {
+              await kvStageDelete(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => {});
+              if (challengeObj.code) {
+                await kvStageDelete(env, `webauth_code_${challengeObj.code}`, "MOVIE_SAVED").catch(() => {});
+              }
+            }
+            memoryFallback.delete(`d1_entity_webauth_id_${challengeId}`);
+            memoryFallback.delete(`webauth_id_${challengeId}`);
+            if (challengeObj.code) {
+              memoryFallback.delete(`d1_entity_webauth_code_${challengeObj.code}`);
+              memoryFallback.delete(`webauth_code_${challengeObj.code}`);
+            }
             const userProfile = await upsertTelegramUserInD1(env, challengeObj.user);
             const sessionToken = await signTmaSessionToken({
               telegramId: String(challengeObj.user.id),
@@ -935,20 +1000,6 @@
               authMethod: "bot_code",
               hasInitData: true
             }, env);
-            memoryFallback.delete(`webauth_id_${challengeId}`);
-            if (challengeObj.code) memoryFallback.delete(`webauth_code_${challengeObj.code}`);
-            // Einmal-Verwendung: Challenge nach erfolgreichem Login sofort löschen (Replay-Schutz!)
-            if (hasD1 && typeof deleteEntityFromD1 === "function") {
-              await deleteEntityFromD1(env, `webauth_id_${challengeId}`).catch(() => {});
-              if (challengeObj.code) {
-                await deleteEntityFromD1(env, `webauth_code_${challengeObj.code}`).catch(() => {});
-              }
-            } else {
-              await kvStageDelete(env, `webauth_id_${challengeId}`, "MOVIE_SAVED").catch(() => {});
-              if (challengeObj.code) {
-                await kvStageDelete(env, `webauth_code_${challengeObj.code}`, "MOVIE_SAVED").catch(() => {});
-              }
-            }
             return new Response(JSON.stringify({
               ok: true,
               status: "confirmed",
@@ -1065,10 +1116,10 @@
             authFailureReason: auth.authFailureReason || "no_credentials"
           }), { status: 401, headers: corsHeaders });
         }
-        if (!auth.hasInitData && !auth.user.hasPasswordAccount) {
+        if (!auth.hasInitData && !auth.user.hasPasswordAccount && auth.authMethod !== "tv_pair") {
           return new Response(JSON.stringify({
             ok: false,
-            error: "Erstmaliges Erstellen eines Accounts erfordert zwingend Telegram initData."
+            error: "Erstmaliges Erstellen eines Accounts erfordert eine verifizierte Telegram- oder TV-Anmeldung."
           }), { status: 403, headers: corsHeaders });
         }
         const body = await request.json().catch(() => ({}));
@@ -1134,7 +1185,50 @@
           }), { status: 200, headers: corsHeaders });
         }
 
+        const totpRlKey = `totp_rl_${String(auth.chatId).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40)}`;
+        const totpRlWindowMs = 5 * 60 * 1000;
+        const totpNow = Date.now();
+        const checkTotpRateLimit = async () => {
+          const memEntry = memoryFallback.get(totpRlKey);
+          let entry = (memEntry && totpNow <= Number(memEntry.resetAt || 0)) ? memEntry : null;
+          if (typeof getEntityFromD1 === "function") {
+            const d1Entry = await getEntityFromD1(env, totpRlKey, totpRlWindowMs, { bypassMemoryCache: true }).catch(() => null);
+            if (d1Entry && totpNow <= Number(d1Entry.resetAt || 0)) {
+              if (!entry || Number(d1Entry.count || 0) >= Number(entry.count || 0)) {
+                entry = d1Entry;
+              }
+            }
+          }
+          if (entry && totpNow <= Number(entry.resetAt || 0) && Number(entry.count || 0) >= 5) {
+            const waitSec = Math.max(10, Math.ceil((Number(entry.resetAt) - totpNow) / 1000));
+            return { blocked: true, waitSec, entry };
+          }
+          return { blocked: false, waitSec: 0, entry };
+        };
+        const recordTotpFailure = async (prevEntry) => {
+          const nextEntry = (prevEntry && totpNow <= Number(prevEntry.resetAt || 0))
+            ? { count: Number(prevEntry.count || 0) + 1, resetAt: Number(prevEntry.resetAt) }
+            : { count: 1, resetAt: totpNow + totpRlWindowMs };
+          memoryFallback.set(totpRlKey, nextEntry);
+          if (typeof saveEntityToD1 === "function") {
+            await saveEntityToD1(env, totpRlKey, "auth_rl", nextEntry).catch(() => {});
+          }
+        };
+        const clearTotpFailures = async () => {
+          memoryFallback.delete(totpRlKey);
+          if (typeof deleteEntityFromD1 === "function") {
+            await deleteEntityFromD1(env, totpRlKey).catch(() => {});
+          }
+        };
+
         if (action === "enable") {
+          const rlCheck = await checkTotpRateLimit();
+          if (rlCheck.blocked) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: `Zu viele ungültige 2FA-Versuche. Bitte warte ${rlCheck.waitSec} Sekunden.`
+            }), { status: 429, headers: { ...corsHeaders, "Retry-After": String(rlCheck.waitSec) } });
+          }
           const code = String(body.code || "").trim();
           const pendingSecret = userRow?.totp_secret || "";
           if (!pendingSecret) {
@@ -1142,8 +1236,10 @@
           }
           const valid = await verifyTotpCode(pendingSecret, code);
           if (!valid) {
+            await recordTotpFailure(rlCheck.entry);
             return new Response(JSON.stringify({ ok: false, error: "Der eingegebene 6-stellige Code stimmt nicht überein." }), { status: 400, headers: corsHeaders });
           }
+          await clearTotpFailures();
           const updatedUser = await saveUserTotpInD1(env, auth.chatId, pendingSecret, true);
           if (!updatedUser) {
             return new Response(JSON.stringify({ ok: false, error: "2FA-Status konnte nicht dauerhaft gespeichert werden." }), { status: 500, headers: corsHeaders });
@@ -1152,13 +1248,35 @@
         }
 
         if (action === "disable") {
+          const rlCheck = await checkTotpRateLimit();
+          if (rlCheck.blocked) {
+            return new Response(JSON.stringify({
+              ok: false,
+              error: `Zu viele ungültige 2FA-Versuche. Bitte warte ${rlCheck.waitSec} Sekunden.`
+            }), { status: 429, headers: { ...corsHeaders, "Retry-After": String(rlCheck.waitSec) } });
+          }
           const code = String(body.code || "").trim();
-          if (userRow?.totp_secret && Number(userRow?.totp_enabled) === 1 && !auth.hasInitData) {
-            const valid = await verifyTotpCode(userRow.totp_secret, code);
-            if (!valid) {
-              return new Response(JSON.stringify({ ok: false, error: "Bitte gültigen 6-stelligen 2FA-Code zur Deaktivierung eingeben." }), { status: 400, headers: corsHeaders });
+          if (userRow?.totp_secret && Number(userRow?.totp_enabled) === 1) {
+            // Nur eine live verifizierte Telegram-Mini-App-Anfrage (aktueller X-Telegram-Init-Data Header) darf als Recovery ohne Code dienen;
+            // niemals allein auf ein älteres 7-Tage-JWT verlassen!
+            let hasLiveVerifiedInitData = false;
+            const liveRawInit = String(request.headers.get("X-Telegram-Init-Data") || "").trim();
+            const effBotToken = String(env?.TELEGRAM_BOT_TOKEN || env?.BOT_TOKEN || "").trim();
+            if (liveRawInit && effBotToken && typeof verifyTelegramInitDataHmac === "function") {
+              const verifiedLive = await verifyTelegramInitDataHmac(liveRawInit, effBotToken, env).catch(() => null);
+              if (verifiedLive?.ok && verifiedLive?.user && String(verifiedLive.user.id) === String(auth.chatId)) {
+                hasLiveVerifiedInitData = true;
+              }
+            }
+            if (code || !hasLiveVerifiedInitData) {
+              const valid = await verifyTotpCode(userRow.totp_secret, code);
+              if (!valid) {
+                await recordTotpFailure(rlCheck.entry);
+                return new Response(JSON.stringify({ ok: false, error: "Bitte gültigen 6-stelligen 2FA-Code zur Deaktivierung eingeben." }), { status: 400, headers: corsHeaders });
+              }
             }
           }
+          await clearTotpFailures();
           const updatedUser = await saveUserTotpInD1(env, auth.chatId, null, false);
           if (!updatedUser) {
             return new Response(JSON.stringify({ ok: false, error: "2FA-Deaktivierung konnte nicht dauerhaft gespeichert werden." }), { status: 500, headers: corsHeaders });
@@ -1271,9 +1389,13 @@
             recordApproveFail();
             return new Response(JSON.stringify({ ok: false, error: "TV-Code wurde bereits verwendet oder gesperrt." }), { status: 409, headers: corsHeaders });
           }
-          await env.DB.prepare(
+          const updRes = await env.DB.prepare(
             "UPDATE tma_tv_login_pairs SET status = 'approved', telegram_id = ?, approved_user_json = ?, attempts = attempts + 1 WHERE code = ? AND status = 'pending'"
           ).bind(approvedPayload.id, JSON.stringify(approvedPayload), code).run();
+          if (updRes?.meta && Number(updRes.meta.changes || 0) === 0) {
+            recordApproveFail();
+            return new Response(JSON.stringify({ ok: false, error: "TV-Code wurde bereits verwendet oder gesperrt." }), { status: 409, headers: corsHeaders });
+          }
         } else {
           const memRow = tvSyncMemoryPairs.get(code);
           if (!memRow || memRow.expiresAt <= now) {

@@ -1567,8 +1567,10 @@
 
       let activeBotCodePollTimer = null;
       let activeBotCodeChallenge = null;
+      let botCodePollInFlight = false;
 
       function stopBotCodePollClient() {
+        botCodePollInFlight = false;
         if (activeBotCodePollTimer) {
           clearInterval(activeBotCodePollTimer);
           activeBotCodePollTimer = null;
@@ -1727,19 +1729,20 @@
       }
 
       async function pollBotCodeChallengeClient(challengeId) {
-        if (!challengeId) return;
+        if (!challengeId || botCodePollInFlight || (state && state.isAuthenticated)) return;
         const stElPre = document.getElementById("botCodePollStatusText");
         if (!stElPre) {
           stopBotCodePollClient();
           return;
         }
+        botCodePollInFlight = true;
         try {
           const r = await apiFetchJson(API_BASE + "/auth/bot-code", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "poll", challengeId })
           });
-          if (!r || !r.ok) return;
+          if (!r || !r.ok || (state && state.isAuthenticated)) return;
           const stEl = document.getElementById("botCodePollStatusText");
           if (r.status === "expired") {
             stopBotCodePollClient();
@@ -1763,7 +1766,10 @@
             showHudToast("✅ Telegram Bot-Login erfolgreich bestätigt!");
             loadDiscover(state.type, state.genreId, state.mode, state.sort);
           }
-        } catch (e) {}
+        } catch (e) {
+        } finally {
+          botCodePollInFlight = false;
+        }
       }
 
       async function simulateBotCodeConfirmClient(challengeId) {
@@ -2124,8 +2130,13 @@
       }
 
       function logoutWebSession() {
+        if (typeof window.unregisterTvPresenceBeforeLogoutClient === "function") {
+          try { window.unregisterTvPresenceBeforeLogoutClient(); } catch (_e) {}
+        }
         sessionToken = "";
+        if (typeof rawLaunchToken !== "undefined") rawLaunchToken = "";
         try { localStorage.removeItem("tma_session_token"); } catch (e) {}
+        try { sessionStorage.removeItem("tma_launch_token"); } catch (e) {}
         if (typeof backupImportJob === "object" && backupImportJob && backupImportJob.running) {
           backupImportJob.running = false;
           backupImportJob.paused = true;
