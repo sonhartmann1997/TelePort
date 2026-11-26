@@ -156,6 +156,12 @@ class MainActivity : Activity() {
         cookieManager.setAcceptThirdPartyCookies(wv, true)
 
         wv.addJavascriptInterface(TelePortNativeBridge(), "TelePortNative")
+        wv.setDownloadListener { downloadUrl, _, _, _, _ ->
+            val target = (downloadUrl ?: "").trim()
+            if (target.startsWith("https://", ignoreCase = true)) {
+                openSafeExternalIntent(target)
+            }
+        }
 
         wv.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -177,7 +183,14 @@ class MainActivity : Activity() {
                 val uri = request?.url ?: return false
                 val scheme = (uri.scheme ?: "").lowercase()
                 val host = (uri.host ?: "").lowercase()
+                val pathLower = (uri.path ?: "").lowercase()
                 val reqOrigin = ServerConfigStore.extractOrigin(uri.toString())
+
+                // APK-Download-Links immer an den System-Browser / Paket-Installer übergeben
+                if (scheme == "https" && (pathLower.endsWith(".apk") || pathLower.startsWith("/download/"))) {
+                    openSafeExternalIntent(uri.toString())
+                    return true
+                }
 
                 // Eigene Worker-Origin bleibt immer in der WebView
                 if (scheme == "https" && configuredServerOrigin != null && reqOrigin == configuredServerOrigin) {
@@ -444,8 +457,12 @@ class MainActivity : Activity() {
             }.start()
         }
 
-        urlInput.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_DONE) {
+        urlInput.setOnEditorActionListener { _, actionId, event ->
+            val isImeConfirm = actionId == EditorInfo.IME_ACTION_DONE ||
+                actionId == EditorInfo.IME_ACTION_GO ||
+                actionId == EditorInfo.IME_ACTION_SEND
+            val isEnterKey = event != null && event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
+            if (isImeConfirm || isEnterKey) {
                 triggerConnect(urlInput.text.toString())
                 true
             } else {
@@ -732,6 +749,16 @@ class MainActivity : Activity() {
                 return
             }
             super.onBackPressed()
+            return
+        }
+        if (errorOverlay.visibility == View.VISIBLE) {
+            val now = System.currentTimeMillis()
+            if (now - lastBackPressAt < 2000L) {
+                finish()
+            } else {
+                lastBackPressAt = now
+                Toast.makeText(this, "Zum Beenden erneut Zurück drücken", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         // Zuerst geöffnete In-App-Overlays (Trailer, Detailansicht, Lightbox, Sidebar) schließen

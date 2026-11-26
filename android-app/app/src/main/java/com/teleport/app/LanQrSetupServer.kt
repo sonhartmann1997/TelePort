@@ -162,8 +162,7 @@ class LanQrSetupServer(
                         return
                     }
 
-                    sendHtml(sock.getOutputStream(), 200, buildFeedbackPage(true, "Adresse wurde sicher an den Fernseher übertragen! Der TV öffnet jetzt TelePort."))
-                    stop()
+                    sendHtml(sock.getOutputStream(), 200, buildFeedbackPage(true, "Adresse wurde an den Fernseher übertragen! Der TV prüft die Verbindung – bei einem Tippfehler kannst du einfach zurückgehen und erneut senden."))
                     onValidUrlReceived(validHttpsUrl)
                     return
                 }

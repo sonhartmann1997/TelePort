@@ -3816,7 +3816,8 @@
         }
 
         async function startTvPairLoginClient() {
-          stopTvPairPollClient();
+          if (typeof stopBotCodePollClient === "function") stopBotCodePollClient();
+          else stopTvPairPollClient();
           const box = document.getElementById("tvPairChallengeBox");
           if (box) box.innerHTML = '<div style="font-size:12px;color:#34d399;padding:8px 0">⏳ Erzeuge 6-stelligen TV-Anmeldecode...</div>';
           try {
@@ -4010,7 +4011,11 @@
                 showHudToast("📱 Handy direkt verbunden (Live-Sync)");
               };
               ch.onclose = () => {
+                const wasConnected = tvP2pConnected;
                 tvP2pConnected = false;
+                if (wasConnected && tvReceiverActive && !document.hidden) {
+                  registerTvPresenceNow();
+                }
               };
               ch.onmessage = (msgEv) => {
                 try {
@@ -4022,7 +4027,11 @@
 
             pc.onconnectionstatechange = () => {
               if (pc.connectionState === "failed" || pc.connectionState === "disconnected" || pc.connectionState === "closed") {
+                const wasConnected = tvP2pConnected;
                 tvP2pConnected = false;
+                if (wasConnected && tvReceiverActive && !document.hidden) {
+                  registerTvPresenceNow();
+                }
               }
             };
 
@@ -4740,14 +4749,44 @@
         // Hardware-Zurück-Taste aus der nativen Android/Fire-TV-APK sauber durch alle Overlays führen
         function handleTelePortNativeBack() {
           try {
-            const spotlight = document.getElementById("personSpotlightOverlayRoot");
-            if (spotlight && spotlight.innerHTML.trim()) {
-              spotlight.innerHTML = "";
+            const dialogRoot = document.getElementById("customDialogRoot");
+            if (dialogRoot && dialogRoot.innerHTML.trim()) {
+              if (dialogRoot.querySelector(".page-jump-modal-backdrop") && typeof closePageJumpModalClient === "function") {
+                closePageJumpModalClient();
+              } else if (typeof closeCustomDialog === "function") {
+                closeCustomDialog(null);
+              } else {
+                dialogRoot.innerHTML = "";
+              }
               return true;
             }
-            const lb = document.getElementById("lightbox");
-            if (lb && lb.classList.contains("open") && typeof closeLightbox === "function") {
-              closeLightbox();
+            const subModalRoot = document.getElementById("subModalOverlayRoot");
+            if (subModalRoot && subModalRoot.innerHTML.trim()) {
+              if (typeof closeSubModalOverlayClient === "function") closeSubModalOverlayClient();
+              else subModalRoot.innerHTML = "";
+              return true;
+            }
+            const spotlight = document.getElementById("personSpotlightOverlayRoot");
+            if (spotlight && spotlight.innerHTML.trim()) {
+              if (typeof closePersonSpotlightOverlayClient === "function") closePersonSpotlightOverlayClient();
+              else spotlight.innerHTML = "";
+              return true;
+            }
+            const lbRoot = document.getElementById("lightboxRoot");
+            if (lbRoot && lbRoot.innerHTML.trim()) {
+              if (typeof closeLightbox === "function") closeLightbox();
+              else lbRoot.innerHTML = "";
+              return true;
+            }
+            const genreDd = document.getElementById("searchGenreDropdownOverlay");
+            if (genreDd && genreDd.classList.contains("open")) {
+              if (typeof closeSearchGenreDropdownOverlay === "function") closeSearchGenreDropdownOverlay();
+              else genreDd.classList.remove("open");
+              return true;
+            }
+            const acBox = document.getElementById("searchAutocompleteBox");
+            if (acBox && acBox.classList.contains("open")) {
+              acBox.classList.remove("open");
               return true;
             }
             const detailStage = document.getElementById("detailHeroStageEl");
@@ -4763,6 +4802,7 @@
             const mRoot = document.getElementById("modalRoot");
             if (mRoot && mRoot.innerHTML.trim()) {
               if (typeof stopBotCodePollClient === "function") stopBotCodePollClient();
+              stopTvPairPollClient();
               if (typeof closeDetailModal === "function") closeDetailModal();
               else mRoot.innerHTML = "";
               return true;
@@ -4771,9 +4811,11 @@
               closeFilterSidebar(false);
               return true;
             }
-            const rightMenu = document.getElementById("rightMenuOverlay");
-            if (rightMenu && rightMenu.classList.contains("open") && typeof closeRightMenuOverlayClient === "function") {
-              closeRightMenuOverlayClient();
+            const elev = document.getElementById("tvQuickJumpElevator");
+            if (elev && (elev.classList.contains("has-subpanel") || elev.classList.contains("is-visible") || elev.classList.contains("is-hover-expanded"))) {
+              if (typeof closeRightMenuOverlayClient === "function") closeRightMenuOverlayClient(null, true);
+              else if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
+              else elev.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
               return true;
             }
           } catch (_e) {}

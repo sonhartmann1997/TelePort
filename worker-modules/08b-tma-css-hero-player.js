@@ -5609,7 +5609,7 @@
           <span>Tele<span class="teleport-accent">Port</span></span>
         </span>
         <div style="display:flex;gap:6px">
-          <button class="btn danger" style="padding:4px 8px;font-size:11px" onclick="setDirectFilter('reset_all','','neutral')" title="Alle aktiven Filter zurücksetzen">🗑️ Reset</button>
+          <button id="sidebarHeaderResetBtn" class="btn danger" style="padding:4px 8px;font-size:11px;display:none" onclick="setDirectFilter('reset_all','','neutral')" title="Alle aktiven Filter zurücksetzen">🗑️ Reset</button>
           <button class="btn close-slate" onclick="closeFilterSidebar()" title="Sidebar schließen">✖</button>
         </div>
       </div>

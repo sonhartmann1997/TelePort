@@ -1261,6 +1261,15 @@
           : null;
 
         const totalCatFilters = gCount + pCount + eCount + stCount + fCount + (s.onlyVipStreams ? 1 : 0);
+        const hdrResetBtn = document.getElementById("sidebarHeaderResetBtn");
+        if (hdrResetBtn) hdrResetBtn.style.display = totalCatFilters > 0 ? "" : "none";
+        const isInTelegram = typeof isRealTelegramMiniAppClient === "function" && isRealTelegramMiniAppClient();
+        const isTvDev = typeof window.isCurrentDeviceTvModeClient === "function" && window.isCurrentDeviceTvModeClient();
+        const isNativeApk = typeof window.isRunningInTelePortApkClient === "function" && window.isRunningInTelePortApkClient();
+        const hasFinePointer = (typeof window !== "undefined" && typeof window.matchMedia === "function")
+          ? window.matchMedia("(hover: hover) and (pointer: fine)").matches
+          : !isTvDev;
+        const canShowSidebarBackBtn = !isInTelegram && !isNativeApk && Array.isArray(state.history) && state.history.length > 0;
 
         // Linke Hauptspalte: Kompakter Konto-Kopfbereich -> Direkt darunter Katalog-Filter im Hauptfokus -> Ansicht -> Kompakte Werkzeuge unten
         body.innerHTML =
@@ -1352,13 +1361,17 @@
               '<button class="btn" onclick="closeFilterSidebar();loadSettingsView()" title="Alle Einstellungen öffnen">' +
                 '⚙️ Einstellungen' +
               '</button>' +
-              '<button id="sidebarOpenInBotBtn" class="btn" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
-                '🤖 Im Bot öffnen' +
-              '</button>' +
-              '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
-                ((window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.isFullscreen) ? '🗗 Vollbild aus' : '⛶ Vollbild') +
-              '</button>' +
-              ((typeof window.isRunningInTelePortApkClient === 'function' && window.isRunningInTelePortApkClient()) ? (
+              (!isTvDev ? (
+                '<button id="sidebarOpenInBotBtn" class="btn" onclick="closeFilterSidebar();openCurrentViewInBot()" title="Aktuelle Ansicht im Telegram-Bot öffnen">' +
+                  '🤖 Im Bot öffnen' +
+                '</button>'
+              ) : '') +
+              (isInTelegram ? (
+                '<button class="btn" onclick="closeFilterSidebar();toggleTmaFullscreenClient()" title="Bot API 8.0 Vollbild-Modus ein-/ausschalten">' +
+                  ((window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.isFullscreen) ? '🗗 Vollbild aus' : '⛶ Vollbild') +
+                '</button>'
+              ) : '') +
+              (isNativeApk ? (
                 '<button class="btn blue" onclick="closeFilterSidebar();openNativeApkServerSettingsClient()" title="Cloudflare-Server-URL ändern, Cache leeren oder App-Infos anzeigen">' +
                   '🌐 Server-URL & App' +
                 '</button>' +
@@ -1372,14 +1385,16 @@
                   '📱 Android / TV APK' +
                 '</a>'
               )) +
-              ((window._tmaHomeScreenStatus === "added" || window._tmaHomeScreenStatus === "unsupported") ? '' : (
+              ((isInTelegram && window._tmaHomeScreenStatus !== "added" && window._tmaHomeScreenStatus !== "unsupported") ? (
                 '<button class="btn" onclick="closeFilterSidebar();addTmaToHomeScreenClient()" title="Bot API 8.0 Mini-App Icon auf dem Smartphone-Startbildschirm ablegen">' +
                   '📲 Home-Icon' +
                 '</button>'
-              )) +
-              '<button id="sidebarBackToolBtn" class="btn" onclick="closeFilterSidebar();goBack()" title="Zurück zur vorherigen Ansicht">' +
-                '⬅️ Zurück' +
-              '</button>' +
+              ) : '') +
+              (canShowSidebarBackBtn ? (
+                '<button id="sidebarBackToolBtn" class="btn" onclick="closeFilterSidebar();goBack()" title="Zurück zur vorherigen Ansicht">' +
+                  '⬅️ Zurück' +
+                '</button>'
+              ) : '') +
               '<button class="btn" onclick="closeFilterSidebar();restartApp()" title="Alle aktiven Filter zurücksetzen & neu starten">' +
                 '🔄 Neu starten' +
               '</button>' +
@@ -1468,10 +1483,12 @@
                     '<span>👁️ Farbenblind-Modus</span>' +
                     '<b>' + (colorblindMode ? 'EIN' : 'AUS') + '</b>' +
                   '</button>' +
-                  '<button id="sidebarMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleMouseHoverNav()">' +
-                    '<span>🖱️ Maus-Hover Fokus</span>' +
-                    '<b>' + (mouseHoverNavEnabled ? 'EIN' : 'AUS') + '</b>' +
-                  '</button>' +
+                  (hasFinePointer ? (
+                    '<button id="sidebarMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleMouseHoverNav()">' +
+                      '<span>🖱️ Maus-Hover Fokus</span>' +
+                      '<b>' + (mouseHoverNavEnabled ? 'EIN' : 'AUS') + '</b>' +
+                    '</button>'
+                  ) : '') +
                   '<button id="sidebarModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleModalHoldNav()">' +
                     '<span>⏩ Pfeil halten (450ms) = Nächster</span>' +
                     '<b>' + (modalHoldNavEnabled ? 'EIN' : 'AUS') + '</b>' +
@@ -1479,10 +1496,6 @@
                   '<button id="sidebarHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
                     '<span>🎬 Spotlight-Banner</span>' +
                     '<b>' + (state.heroHidden ? 'AUS' : 'EIN') + '</b>' +
-                  '</button>' +
-                  '<button id="sidebarTrailerPreviewBtn" class="btn ' + (trailerPreviewEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleTrailerPreviewSettingClient()">' +
-                    '<span>🎥 Trailer-Vorschau (Detailseite)</span>' +
-                    '<b>' + (trailerPreviewEnabled ? 'EIN' : 'AUS') + '</b>' +
                   '</button>' +
                 '</div>';
             } else if (curTab === "scale") {
@@ -1567,6 +1580,7 @@
       }
 
       function switchLoginModalTabClient(tabName) {
+        stopBotCodePollClient();
         state.loginModalTab = tabName;
         openAccountModal();
       }
@@ -1616,7 +1630,7 @@
         if (!container) return;
         const botName = String(state.botUsername || window._lastAdminOverviewCache?.botSetup?.botUsername || "").replace(/^@/, "").trim();
         if (!botName || botName === "DeinBot") {
-          container.innerHTML = '<div style="font-size:11.5px;color:#94a3b8;padding:6px 0">ℹ️ Sobald <code>BOT_USERNAME</code> / <code>TELEGRAM_BOT_TOKEN</code> gesetzt und bei @BotFather mit <code>/setdomain</code> verknüpft ist, erscheint hier automatisch der offizielle Telegram-Login-Button. Nutze alternativ direkt den <b>1-Klick Bot-Code</b> darunter oder den Test-Login:</div>';
+          container.innerHTML = '<div style="font-size:11.5px;color:#94a3b8;padding:6px 0">ℹ️ Sobald <code>BOT_USERNAME</code> / <code>TELEGRAM_BOT_TOKEN</code> gesetzt und bei @BotFather mit <code>/setdomain</code> verknüpft ist, erscheint hier automatisch der offizielle Telegram-Login-Button. Nutze alternativ einfach den <b>1-Klick Bot-Code</b> darüber.</div>';
           return;
         }
         container.innerHTML = "";
@@ -1659,7 +1673,7 @@
                 '</div>' +
                 '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
                   (r.deepLink ? (
-                    '<a href="' + esc(safeHttpUrl(r.deepLink)) + '" target="_blank" rel="noopener noreferrer" class="btn blue" style="text-decoration:none;font-weight:800">' +
+                    '<a href="' + esc(safeHttpUrl(r.deepLink)) + '" target="_blank" rel="noopener noreferrer" onclick="if(window.TelePortNative&&typeof window.TelePortNative.openExternalUrl===\\'function\\'){event.preventDefault();window.TelePortNative.openExternalUrl(this.href);}" class="btn blue" style="text-decoration:none;font-weight:800">' +
                       '🚀 1-Klick: Direkt in Telegram bestätigen' +
                     '</a>'
                   ) : '') +
@@ -1773,6 +1787,9 @@
         const activeTab = state.loginModalTab || "telegram";
         const isSecOpen = Boolean(state.accountSecurityOpen || !isAuth);
 
+        const isTvDev = typeof window.isCurrentDeviceTvModeClient === "function" && window.isCurrentDeviceTvModeClient();
+        const isNativeApk = typeof window.isRunningInTelePortApkClient === "function" && window.isRunningInTelePortApkClient();
+
         let bodyHtml = "";
         if (isAuth) {
           stopBotCodePollClient();
@@ -1797,46 +1814,56 @@
               '<button class="btn danger" onclick="logoutWebSession()">🚪 Abmelden</button>' +
             '</div>' +
           '</div>' +
-          '<div class="panel-box" style="border-color:rgba(56,189,248,0.35)">' +
-            '<div style="font-size:13px;font-weight:800;color:#38bdf8;margin-bottom:4px">📺 Fernseher mit 6-stelligem Code anmelden</div>' +
-            '<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px 0">Zeige auf deinem Fire TV / Android TV den 6-stelligen TV-Code an und bestätige ihn hier mit einem Tipp — kein Passwort-Tippen am TV nötig.</p>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
-              '<input id="tvPairApproveCodeInp" class="tma-input" placeholder="6-stelliger TV-Code" maxlength="7" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitTvPairApproveClient()" style="padding:8px 12px;font-size:15px;letter-spacing:3px;font-weight:800;width:190px;text-align:center" />' +
-              '<button type="button" class="btn blue" onclick="submitTvPairApproveClient()">✅ TV freigeben</button>' +
-            '</div>' +
-            '<div id="tvPairApproveFeedback" style="font-size:12px;margin-top:6px"></div>' +
-          '</div>';
+          (!isTvDev ? (
+            '<div class="panel-box" style="border-color:rgba(56,189,248,0.35)">' +
+              '<div style="font-size:13px;font-weight:800;color:#38bdf8;margin-bottom:4px">📺 Fernseher mit 6-stelligem Code anmelden</div>' +
+              '<p style="font-size:11.5px;color:var(--muted);margin:0 0 8px 0">Zeige auf deinem Fire TV / Android TV den 6-stelligen TV-Code an und bestätige ihn hier mit einem Tipp — kein Passwort-Tippen am TV nötig.</p>' +
+              '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+                '<input id="tvPairApproveCodeInp" class="tma-input" placeholder="6-stelliger TV-Code" maxlength="7" inputmode="numeric" onkeydown="if(event.key===\\'Enter\\')submitTvPairApproveClient()" style="padding:8px 12px;font-size:15px;letter-spacing:3px;font-weight:800;width:190px;text-align:center" />' +
+                '<button type="button" class="btn blue" onclick="submitTvPairApproveClient()">✅ TV freigeben</button>' +
+              '</div>' +
+              '<div id="tvPairApproveFeedback" style="font-size:12px;margin-top:6px"></div>' +
+            '</div>'
+          ) : '');
         } else {
+          const tvPairBoxHtml =
+            '<div style="background:rgba(16,185,129,0.08);border:1px solid rgba(52,211,153,0.38);border-radius:10px;padding:11px">' +
+              '<div style="font-size:12.5px;font-weight:800;color:#34d399;margin-bottom:4px">📺 1-Klick TV-Anmeldung über deine TelePort-Handy-App (Empfohlen)</div>' +
+              '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
+                'Erzeugt einen 6-stelligen Code für diesen Fernseher. Gib ihn auf deinem eingeloggten Smartphone unter <b>Konto &rarr; TV freigeben</b> ein:' +
+              '</div>' +
+              '<button type="button" class="btn green" onclick="startTvPairLoginClient()">📺 6-stelligen TV-Anmeldecode erzeugen</button>' +
+              '<div id="tvPairChallengeBox"></div>' +
+            '</div>';
+          const botCodeBoxHtml =
+            '<div style="background:rgba(14,165,233,0.08);border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:11px">' +
+              '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">' + (isTvDev ? '📲 Alternative: Direkt über den Telegram-Bot anmelden' : '📲 Schnell-Login per Telegram-Bot (Empfohlen)') + '</div>' +
+              '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
+                (isTvDev
+                  ? 'Falls du am Handy noch nicht in TelePort eingeloggt bist, sende diesen Code direkt an deinen Telegram-Bot:'
+                  : 'Funktioniert sofort auf Smartphone, PC & in der Android-APK ohne Drittanbieter-Cookies:') +
+              '</div>' +
+              '<button type="button" class="btn blue" onclick="startBotCodeLoginChallengeClient()">📲 6-stelligen Bot-Code anfordern</button>' +
+              '<div id="botCodeChallengeBox"></div>' +
+            '</div>';
+          const tgWidgetBoxHtml = (!isTvDev && !isNativeApk) ? (
+            '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(139,92,246,0.28);border-radius:10px;padding:10px">' +
+              '<div style="font-size:12px;font-weight:800;color:#c4b5fd;margin-bottom:4px">🌐 Alternativ: Browser-Login über Telegram Widget</div>' +
+              '<div id="tgLoginWidgetContainer" style="min-height:34px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>' +
+            '</div>'
+          ) : '';
+
           bodyHtml += '<div class="panel-box" style="border-color:rgba(56,189,248,0.4);background:linear-gradient(145deg,rgba(11,16,33,0.95),rgba(16,16,24,0.96))">' +
             '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
-              '<div style="font-size:13.5px;font-weight:800;color:#38bdf8">🔐 Anmeldung für Browser, PC & Smart-TV</div>' +
+              '<div style="font-size:13.5px;font-weight:800;color:#38bdf8">' + (isTvDev ? '📺 Fernseher anmelden' : '🔐 Anmeldung für Smartphone, Browser & PC') + '</div>' +
               '<div style="display:flex;gap:5px;flex-wrap:wrap">' +
-                '<button type="button" class="btn ' + (activeTab === "telegram" ? "active" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'telegram\\')">📲 Per Telegram-Bot / Code</button>' +
+                '<button type="button" class="btn ' + (activeTab === "telegram" ? "active" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'telegram\\')">' + (isTvDev ? '📺 Code-Anmeldung' : '📲 Per Telegram-Bot') + '</button>' +
                 '<button type="button" class="btn ' + (activeTab === "password" ? "active" : "") + '" style="padding:4px 10px;font-size:11.5px" onclick="switchLoginModalTabClient(\\'password\\')">🔑 Username & Passwort</button>' +
               '</div>' +
             '</div>' +
             (activeTab === "telegram" ? (
               '<div style="display:flex;flex-direction:column;gap:10px">' +
-                '<div style="background:rgba(16,185,129,0.08);border:1px solid rgba(52,211,153,0.38);border-radius:10px;padding:11px">' +
-                  '<div style="font-size:12.5px;font-weight:800;color:#34d399;margin-bottom:4px">📺 1-Klick TV-Anmeldung über dein eingeloggtes Handy</div>' +
-                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
-                    'Erzeugt einen 6-stelligen Code für diesen Fernseher. Gib ihn einfach auf deinem Smartphone unter <b>Konto &rarr; TV freigeben</b> ein:' +
-                  '</div>' +
-                  '<button type="button" class="btn green" onclick="startTvPairLoginClient()">📺 6-stelligen TV-Anmeldecode erzeugen</button>' +
-                  '<div id="tvPairChallengeBox"></div>' +
-                '</div>' +
-                '<div style="background:rgba(14,165,233,0.08);border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:11px">' +
-                  '<div style="font-size:12.5px;font-weight:800;color:#38bdf8;margin-bottom:4px">📲 Schnell-Login per Telegram-Bot (Empfohlen)</div>' +
-                  '<div style="font-size:11.5px;color:#cbd5e1;line-height:1.45;margin-bottom:8px">' +
-                    'Funktioniert sofort auf jedem Gerät (Smart-TV, PC & Smartphone) ohne Drittanbieter-Cookies:' +
-                  '</div>' +
-                  '<button type="button" class="btn blue" onclick="startBotCodeLoginChallengeClient()">📲 6-stelligen Login-Code & Bot-Link anfordern</button>' +
-                  '<div id="botCodeChallengeBox"></div>' +
-                '</div>' +
-                '<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(139,92,246,0.28);border-radius:10px;padding:10px">' +
-                  '<div style="font-size:12px;font-weight:800;color:#c4b5fd;margin-bottom:4px">🌐 Alternativ: Browser-Login über Telegram Widget</div>' +
-                  '<div id="tgLoginWidgetContainer" style="min-height:34px;display:flex;align-items:center;gap:8px;flex-wrap:wrap"></div>' +
-                '</div>' +
+                (isTvDev ? (tvPairBoxHtml + botCodeBoxHtml) : (botCodeBoxHtml + tgWidgetBoxHtml)) +
                 '<div id="loginModalFeedback" style="font-size:12px;color:#f87171"></div>' +
               '</div>'
             ) : (
@@ -1903,7 +1930,7 @@
           bodyHtml +
         '</div></div></div>';
 
-        if (!isAuth && activeTab === "telegram") {
+        if (!isAuth && activeTab === "telegram" && !isTvDev && !isNativeApk) {
           setTimeout(mountTelegramLoginWidgetClient, 40);
         } else if (!isAuth && activeTab === "password") {
           setTimeout(() => {

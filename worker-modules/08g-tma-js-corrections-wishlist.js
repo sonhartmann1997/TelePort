@@ -1615,7 +1615,8 @@
           const prevSettingsFocusDfId = (typeof currentSpatialEl !== "undefined" && currentSpatialEl && currentSpatialEl.getAttribute)
             ? currentSpatialEl.getAttribute("data-df-id")
             : null;
-          const curTab = activeSettingsSectionTab || "general";
+          const isInTelegram = typeof isRealTelegramMiniAppClient === "function" && isRealTelegramMiniAppClient();
+          const curTab = (activeSettingsSectionTab && activeSettingsSectionTab !== "filters") ? activeSettingsSectionTab : "general";
           const showSec = (key) => (curTab === "all" || curTab === key) ? "block" : "none";
 
           root.innerHTML = '<div class="section">' +
@@ -1625,7 +1626,6 @@
                 '<button type="button" class="btn ' + (curTab === 'general' ? 'blue' : '') + '" data-settings-tab-btn="general" onclick="switchSettingsSectionTabClient(\\'general\\')">🎛️ Allgemein & Account</button>' +
                 '<button type="button" class="btn ' + (curTab === 'delivery' ? 'blue' : '') + '" data-settings-tab-btn="delivery" onclick="switchSettingsSectionTabClient(\\'delivery\\')">📤 Telegram-Versand</button>' +
                 '<button type="button" class="btn ' + (curTab === 'shortcuts' ? 'blue' : '') + '" data-settings-tab-btn="shortcuts" onclick="switchSettingsSectionTabClient(\\'shortcuts\\')">⚡ Bot-Befehle</button>' +
-                '<button type="button" class="btn ' + (curTab === 'filters' ? 'blue' : '') + '" data-settings-tab-btn="filters" onclick="switchSettingsSectionTabClient(\\'filters\\')">🛡️ Filter-Matrix</button>' +
                 '<button type="button" class="btn ' + (curTab === 'all' ? 'blue' : '') + '" data-settings-tab-btn="all" onclick="switchSettingsSectionTabClient(\\'all\\')">📋 Alle zeigen</button>' +
               '</div>' +
             '</div>' +
@@ -1667,15 +1667,17 @@
                   '<button class="btn ' + (dMode === 'group' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'group\\'});loadSettingsView()">👥 Eigene Ziel-Gruppe</button>' +
                   '<button class="btn ' + (dMode === 'custom_bot' ? 'blue' : '') + '" onclick="saveDeliveryPreferencesClient({targetMode:\\'custom_bot\\'});loadSettingsView()">🤖 Eigener Bot</button>' +
                 '</div>' +
-                '<div style="margin-bottom:12px;padding:9px 10px;border-radius:10px;background:rgba(14,165,233,0.06);border:1px solid rgba(56,189,248,0.18)">' +
-                  '<div style="font-size:11.5px;font-weight:700;color:var(--text);margin-bottom:4px">📲 Verhalten direkt nach dem Senden</div>' +
-                  '<div style="font-size:11px;color:var(--muted);margin-bottom:7px">Springt automatisch zur gesendeten Nachricht im Telegram-Chat, damit man sofort sieht, dass der Bot geliefert hat.</div>' +
-                  '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                    '<button class="btn ' + ((deliv.afterSendAction || 'open_minimize') === 'open_minimize' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_minimize\\'});loadSettingsView()">💬 Nachricht öffnen &amp; Minimieren</button>' +
-                    '<button class="btn ' + (deliv.afterSendAction === 'open_close' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_close\\'});loadSettingsView()">✖️ Öffnen &amp; Mini-App schließen</button>' +
-                    '<button class="btn ' + (deliv.afterSendAction === 'stay' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'stay\\'});loadSettingsView()">📌 In Mini-App bleiben</button>' +
-                  '</div>' +
-                '</div>' +
+                (isInTelegram ? (
+                  '<div style="margin-bottom:12px;padding:9px 10px;border-radius:10px;background:rgba(14,165,233,0.06);border:1px solid rgba(56,189,248,0.18)">' +
+                    '<div style="font-size:11.5px;font-weight:700;color:var(--text);margin-bottom:4px">📲 Verhalten direkt nach dem Senden (Telegram Mini-App)</div>' +
+                    '<div style="font-size:11px;color:var(--muted);margin-bottom:7px">Springt automatisch zur gesendeten Nachricht im Telegram-Chat, damit man sofort sieht, dass der Bot geliefert hat.</div>' +
+                    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+                      '<button class="btn ' + ((deliv.afterSendAction || 'open_minimize') === 'open_minimize' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_minimize\\'});loadSettingsView()">💬 Nachricht öffnen &amp; Minimieren</button>' +
+                      '<button class="btn ' + (deliv.afterSendAction === 'open_close' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'open_close\\'});loadSettingsView()">✖️ Öffnen &amp; Mini-App schließen</button>' +
+                      '<button class="btn ' + (deliv.afterSendAction === 'stay' ? 'blue' : '') + '" style="padding:5px 10px;font-size:11.5px" onclick="saveDeliveryPreferencesClient({afterSendAction:\\'stay\\'});loadSettingsView()">📌 In Mini-App bleiben</button>' +
+                    '</div>' +
+                  '</div>'
+                ) : '') +
                 (() => {
                   const tMode = String(deliv.topicRoutingMode || 'off');
                   const rawMap = (deliv.topicMap && typeof deliv.topicMap === 'object') ? deliv.topicMap : {};
@@ -1754,32 +1756,6 @@
             })() +
             '</div>' +
 
-            '<div data-settings-sec="general" style="display:' + showSec('general') + '">' +
-            '<div class="panel-box">' +
-              '<div class="section-title">' +
-                '<span>🧭 Steuerung, Maus-Hover & Slider-Einstellungen</span>' +
-              '</div>' +
-              '<div style="display:flex;flex-direction:column;gap:8px">' +
-                '<button id="settingsMouseHoverNavBtn" class="btn ' + (mouseHoverNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleMouseHoverNav()">' +
-                  '<span>🖱️ Maus-Hover Navigation (Mauszeiger verschiebt Auswahl)</span>' +
-                  '<b>' + (mouseHoverNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
-                '</button>' +
-                '<button id="settingsModalHoldNavBtn" class="btn ' + (modalHoldNavEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleModalHoldNav()">' +
-                  '<span>⏩ Detailansicht: Pfeiltaste ⬅️/➡️ gedrückt halten (~450ms) für nächsten/vorherigen Titel</span>' +
-                  '<b>' + (modalHoldNavEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
-                '</button>' +
-                '<button id="settingsHeroToggleBtn" class="btn ' + (!state.heroHidden ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleHeroSliderHidden()">' +
-                  '<span>🎬 Spotlight-Banner auf der Startseite</span>' +
-                  '<b>' + (state.heroHidden ? 'AUSGEBLENDET' : 'SICHTBAR') + '</b>' +
-                '</button>' +
-                '<button id="settingsTrailerPreviewBtn" class="btn ' + (trailerPreviewEnabled ? 'blue' : '') + '" style="width:100%;justify-content:space-between" onclick="toggleTrailerPreviewSettingClient()">' +
-                  '<span>🎥 Automatische Trailer-Vorschau auf der Detailbühne (Netflix-Modus)</span>' +
-                  '<b>' + (trailerPreviewEnabled ? 'AKTIV (EIN)' : 'INAKTIV (AUS)') + '</b>' +
-                '</button>' +
-              '</div>' +
-            '</div>' +
-            '</div>' +
-
             '<div data-settings-sec="shortcuts" style="display:' + showSec('shortcuts') + '">' +
             '<div class="panel-box">' +
               '<div class="section-title">' +
@@ -1808,55 +1784,6 @@
                 TRAILER_PROVIDERS_CLIENT.map(tp =>
                   '<button class="btn ' + (trailerProvider === tp.id ? 'blue' : '') + '" onclick="setTrailerProvider(\\'' + escJs(tp.id) + '\\');loadSettingsView()">' + esc(tp.label) + (trailerProvider === tp.id ? ' ✓' : '') + '</button>'
                 ).join("") +
-              '</div>' +
-            '</div>' +
-            '</div>' +
-            '<div data-settings-sec="filters" style="display:' + showSec('filters') + '">' +
-            '<div class="panel-box">' +
-              '<div class="section-title"><span>🛡️ Bot-Filter Cockpit (Steuerung über ✓ Positiv & ✕ Negativ)</span>' +
-                '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-                  '<button class="btn danger" onclick="restartApp()">🗑️ Alle Filter zurücksetzen</button>' +
-                  '<button class="btn" onclick="goHome()">🏠 Zur Hauptseite</button>' +
-                '</div>' +
-              '</div>' +
-              '<p style="font-size:12px;color:var(--muted);margin-bottom:10px">Schalte Filter gezielt über <b>✓ (Einschließen)</b> und <b>✕ (Ausschließen)</b>. Ein erneuter Klick setzt den Filter wieder auf Neutral.</p>' +
-              (isCurrentUserVip() ? (
-                '<div style="font-size:12.5px;font-weight:700;margin:8px 0 6px;color:#0284c7">🌟 Exklusiver VIP-Stream Filter (#13):</div>' +
-                '<div class="direct-filter-grid" style="margin-bottom:10px">' +
-                  renderDirectFilterOptionCard("vip_streams", "vip_streams", "🌟 Nur Titel mit verfügbarem VIP-Stream", Boolean(s.onlyVipStreams), false) +
-                '</div>'
-              ) : '') +
-              '<div style="font-size:12.5px;font-weight:700;margin:10px 0 6px">📺 Streaming-Plattformen:</div>' +
-              '<div class="direct-filter-grid">' + platformList.map(pl => {
-                const inc = (s.includedPlatforms || []).includes(pl.id);
-                const ex = (s.excludedPlatforms || []).includes(pl.id);
-                return renderDirectFilterOptionCard("platform", pl.id, esc((pl.icon || "📺") + " " + pl.label), inc, ex);
-              }).join("") + '</div>' +
-              '<div style="font-size:12.5px;font-weight:700;margin:12px 0 6px">🎞️ Genres:</div>' +
-              '<div class="direct-filter-grid">' + genreList.map(g => {
-                const inc = (s.includedGenres || []).includes(g);
-                const ex = (s.excludedGenres || []).includes(g);
-                return renderDirectFilterOptionCard("genre", g, genreEmoji(g) + " " + esc(g), inc, ex);
-              }).join("") + '</div>' +
-              '<div style="font-size:12.5px;font-weight:700;margin:12px 0 6px">📅 Erscheinungsjahre / Epochen:</div>' +
-              '<div class="direct-filter-grid">' + eraList.map(e => {
-                const inc = (s.includedEras || []).includes(e.id);
-                const ex = (s.excludedEras || []).includes(e.id);
-                return renderDirectFilterOptionCard("era", e.id, "📅 " + esc(e.label), inc, ex);
-              }).join("") + '</div>' +
-              '<div style="font-size:12.5px;font-weight:700;margin:12px 0 6px">🏢 Filmstudios:</div>' +
-              '<div class="direct-filter-grid">' + studioList.map(st => {
-                const inc = (s.includedStudios || []).includes(st.id);
-                const ex = (s.excludedStudios || []).includes(st.id);
-                return renderDirectFilterOptionCard("studio", st.id, esc((st.icon || "🏢") + " " + st.label), inc, ex);
-              }).join("") + '</div>' +
-              '<div style="font-size:12.5px;font-weight:700;margin:12px 0 6px">🔞 FSK-Altersfreigaben & Unveröffentlichte:</div>' +
-              '<div class="direct-filter-grid">' + fskList.map(f => {
-                const inc = (s.includedFsk || []).includes(f);
-                const ex = (s.excludedFsk || []).includes(f);
-                return renderDirectFilterOptionCard("fsk", f, "🔞 " + esc(f), inc, ex);
-              }).join("") +
-              renderDirectFilterOptionCard("unreleased", "unreleased", "🗓️ Unveröffentlicht", Boolean(s.showUnreleased), false) +
               '</div>' +
             '</div>' +
             '</div>' +

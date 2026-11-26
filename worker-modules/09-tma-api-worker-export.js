@@ -17,6 +17,7 @@
   const tvSyncMemoryPairs = new Map();
   const tvSyncMemoryRooms = new Map();
   const tvPairApproveRateMap = new Map();
+  const tvPairStartRateMap = new Map();
 
   function isSafeExternalHttpsUrl(rawUrl) {
     try {
@@ -1170,11 +1171,28 @@
 
       // 4b. 1-Klick TV-Anmeldung vom Handy (6-stelliger Einmal-Code, 180s TTL, rein D1 -> 0 KV-Writes!)
       if (path === "/api/tma/auth/tv-pair/start" && request.method === "POST") {
-        await ensureTvSyncD1Tables(env);
         const now = Date.now();
+        const clientIp = String(request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "local").split(",")[0].trim().slice(0, 64) || "local";
+        if (tvPairStartRateMap.size > 128) {
+          for (const [k, v] of tvPairStartRateMap.entries()) {
+            if (!v || v.resetAt <= now) tvPairStartRateMap.delete(k);
+          }
+        }
+        const ipRate = tvPairStartRateMap.get(clientIp);
+        if (ipRate && ipRate.resetAt > now) {
+          if (ipRate.count >= 10) {
+            return new Response(JSON.stringify({ ok: false, error: "Zu viele TV-Code-Anfragen. Bitte kurz warten." }), { status: 429, headers: corsHeaders });
+          }
+          ipRate.count += 1;
+        } else {
+          tvPairStartRateMap.set(clientIp, { count: 1, resetAt: now + 60000 });
+        }
+
+        await ensureTvSyncD1Tables(env);
         const expiresAt = now + 180000;
         const claimToken = generateCryptoHex(32);
         let code = generateCryptoDigits(6);
+        let inserted = false;
         if (env?.DB) {
           await env.DB.prepare("DELETE FROM tma_tv_login_pairs WHERE expires_at <= ?").bind(now).run().catch(() => {});
           for (let attempt = 0; attempt < 4; attempt++) {
@@ -1182,10 +1200,14 @@
               await env.DB.prepare(
                 "INSERT INTO tma_tv_login_pairs (code, claim_token, status, attempts, created_at, expires_at) VALUES (?, ?, 'pending', 0, ?, ?)"
               ).bind(code, claimToken, now, expiresAt).run();
+              inserted = true;
               break;
             } catch (_dup) {
               code = generateCryptoDigits(6);
             }
+          }
+          if (!inserted) {
+            return new Response(JSON.stringify({ ok: false, error: "TV-Code konnte gerade nicht gespeichert werden. Bitte erneut versuchen." }), { status: 503, headers: corsHeaders });
           }
         } else {
           for (const [k, v] of tvSyncMemoryPairs.entries()) {
@@ -1214,6 +1236,11 @@
         }
         const now = Date.now();
         const approveOwnerKey = String(auth.user?.telegramId || auth.chatId);
+        if (tvPairApproveRateMap.size > 64) {
+          for (const [k, v] of tvPairApproveRateMap.entries()) {
+            if (!v || v.resetAt <= now) tvPairApproveRateMap.delete(k);
+          }
+        }
         const rateEntry = tvPairApproveRateMap.get(approveOwnerKey);
         if (rateEntry && rateEntry.resetAt > now && rateEntry.fails >= 5) {
           return new Response(JSON.stringify({ ok: false, error: "Zu viele Fehlversuche. Bitte 60 Sekunden warten." }), { status: 429, headers: corsHeaders });
@@ -1530,15 +1557,15 @@
               return new Response(JSON.stringify({ ok: false, error: "Event-Nutzlast zu groß" }), { status: 413, headers: corsHeaders });
             }
             const expiresAt = now + 120000;
-            let seq = 1;
+            let seq = now;
             if (env?.DB) {
               const upRow = await env.DB.prepare(
-                "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'state', ?, '', ?, 1, ?, ?) ON CONFLICT(room_key) DO UPDATE SET payload_json = excluded.payload_json, seq = tma_tv_sync_rooms.seq + 1, updated_at = excluded.updated_at, expires_at = excluded.expires_at RETURNING seq"
-              ).bind(roomKey, ownerId, targetTvId, payloadStr, now, expiresAt).first();
-              seq = Number(upRow?.seq || 1);
+                "INSERT INTO tma_tv_sync_rooms (room_key, telegram_id, kind, device_id, device_label, payload_json, seq, updated_at, expires_at) VALUES (?, ?, 'state', ?, '', ?, ?, ?, ?) ON CONFLICT(room_key) DO UPDATE SET payload_json = excluded.payload_json, seq = CASE WHEN tma_tv_sync_rooms.seq >= excluded.seq THEN tma_tv_sync_rooms.seq + 1 ELSE excluded.seq END, updated_at = excluded.updated_at, expires_at = excluded.expires_at RETURNING seq"
+              ).bind(roomKey, ownerId, targetTvId, payloadStr, now, now, expiresAt).first();
+              seq = Number(upRow?.seq || now);
             } else {
               const prev = tvSyncMemoryRooms.get(roomKey);
-              seq = Number(prev?.seq || 0) + 1;
+              seq = Math.max(now, Number(prev?.seq || 0) + 1);
               tvSyncMemoryRooms.set(roomKey, { room_key: roomKey, telegram_id: ownerId, kind: "state", device_id: targetTvId, device_label: "", payload_json: payloadStr, seq, updated_at: now, expires_at: expiresAt });
             }
             return new Response(JSON.stringify({ ok: true, seq }), { status: 200, headers: corsHeaders });
