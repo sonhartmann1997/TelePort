@@ -1500,12 +1500,14 @@
                   '</div>' +
                 '</div>' +
               '</div>' +
-              '<div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-                '<span style="font-size:10.5px;color:var(--muted);font-weight:700">📲 Nach dem Senden:</span>' +
-                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_minimize' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_minimize\\')" title="Öffnet die gesendete Nachricht/den Chat und minimiert die Mini-App">💬 Öffnen &amp; Minimieren</button>' +
-                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_close' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_close\\')" title="Öffnet den Chat und schließt die Mini-App vollständig">✖️ Schließen</button>' +
-                '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'stay' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'stay\\')" title="In der Mini-App bleiben (mit Button zum Öffnen im Hinweis)">📌 In App bleiben</button>' +
-              '</div>' +
+              ((typeof isRealTelegramMiniAppClient === "function" && isRealTelegramMiniAppClient()) ? (
+                '<div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                  '<span style="font-size:10.5px;color:var(--muted);font-weight:700">📲 Nach dem Senden:</span>' +
+                  '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_minimize' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_minimize\\')" title="Öffnet die gesendete Nachricht/den Chat und minimiert die Mini-App">💬 Öffnen &amp; Minimieren</button>' +
+                  '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'open_close' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'open_close\\')" title="Öffnet den Chat und schließt die Mini-App vollständig">✖️ Schließen</button>' +
+                  '<button type="button" class="delivery-pill-btn ' + (prefs.afterSendAction === 'stay' ? 'active' : '') + '" onclick="switchAfterSendActionClient(\\'stay\\')" title="In der Mini-App bleiben (mit Button zum Öffnen im Hinweis)">📌 In App bleiben</button>' +
+                '</div>'
+              ) : '') +
             '</div>'
           ) : '') +
         '</div>';
@@ -1637,7 +1639,7 @@
           return false;
         }
         if (safeUrl) {
-          try { window.open(safeUrl, "_blank", "noopener,noreferrer"); return true; } catch (_e) {}
+          return openExternalUrlSafe(safeUrl);
         }
         return false;
       }

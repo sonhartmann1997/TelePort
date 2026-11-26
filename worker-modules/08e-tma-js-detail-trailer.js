@@ -4162,7 +4162,7 @@
           const d = state.activeDetails || {};
           const ytQ = encodeURIComponent((d.title || "") + " " + (d.year && d.year !== "K.A." ? d.year : "") + " Trailer Deutsch");
           showHudToast("ℹ️ Kein einbettbarer Trailer – öffne YouTube-Suche");
-          window.open("https://www.youtube.com/results?search_query=" + ytQ, "_blank", "noopener,noreferrer");
+          openExternalUrlSafe("https://www.youtube.com/results?search_query=" + ytQ);
           return;
         }
         if (detailBgTeaserTimer) {

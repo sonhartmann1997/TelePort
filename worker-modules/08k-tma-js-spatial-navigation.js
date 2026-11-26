@@ -4673,7 +4673,7 @@
             return '<div class="tv-sync-panel-box">' +
               '<div style="font-size:12.5px;font-weight:700;color:#e2e8f0">🔐 Konto-Anmeldung erforderlich</div>' +
               '<div style="font-size:11.5px;color:#94a3b8;line-height:1.45">Melde Handy und Fernseher im selben TelePort-Konto an — danach verbinden sich beide Geräte automatisch ohne Codes.</div>' +
-              '<button type="button" class="btn blue" onclick="closeFilterSidebar();openAccountModal()">🔐 Konto / 1-Klick TV-Login öffnen</button>' +
+              '<button type="button" class="btn blue" onclick="closeFilterSidebar();openAccountModal()">' + (isCurrentDeviceTvModeClient() ? '🔐 Konto / 1-Klick TV-Login öffnen' : '🔐 Jetzt anmelden') + '</button>' +
             '</div>';
           }
           const tvs = getCachedOnlineTvDevicesClient();
@@ -4760,6 +4760,11 @@
               }
               return true;
             }
+            const manual900mEl = document.getElementById("manualNoTmdbConfirmModalOverlay");
+            if (manual900mEl && manual900mEl.style.display && manual900mEl.style.display !== "none" && typeof closeManualNoTmdbConfirmModalClient === "function") {
+              closeManualNoTmdbConfirmModalClient();
+              return true;
+            }
             const subModalRoot = document.getElementById("subModalOverlayRoot");
             if (subModalRoot && subModalRoot.innerHTML.trim()) {
               if (typeof closeSubModalOverlayClient === "function") closeSubModalOverlayClient();
@@ -4789,6 +4794,11 @@
               acBox.classList.remove("open");
               return true;
             }
+            const topBar = document.getElementById("topUnifiedBar");
+            if (topBar && topBar.classList.contains("mobile-search-expanded") && typeof collapseMobileSearchBarClient === "function") {
+              collapseMobileSearchBarClient();
+              return true;
+            }
             const detailStage = document.getElementById("detailHeroStageEl");
             if (detailStage && detailStage.classList.contains("is-trailer-foreground-mode") && typeof exitDetailForegroundTrailerModeClient === "function") {
               exitDetailForegroundTrailerModeClient();
@@ -4816,6 +4826,17 @@
               if (typeof closeRightMenuOverlayClient === "function") closeRightMenuOverlayClient(null, true);
               else if (typeof closeRightMenuSubPanelClient === "function") closeRightMenuSubPanelClient(false);
               else elev.classList.remove("has-subpanel", "is-visible", "is-hover-expanded");
+              return true;
+            }
+            if (
+              typeof state !== "undefined" && (
+                (Array.isArray(state.history) && state.history.length > 0) ||
+                state.isSearchMode ||
+                (state.currentView && state.currentView !== "discover")
+              ) &&
+              typeof goBack === "function"
+            ) {
+              goBack();
               return true;
             }
           } catch (_e) {}

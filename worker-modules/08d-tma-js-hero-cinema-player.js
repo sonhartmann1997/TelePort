@@ -1723,7 +1723,7 @@
           const yearStr = (hero.release_date || hero.first_air_date || "").slice(0, 4);
           const ytQ = encodeURIComponent((hero.title || hero.name || "") + " " + yearStr + " Trailer Deutsch");
           showHudToast("ℹ️ Kein einbettbarer Trailer – öffne YouTube-Suche");
-          window.open("https://www.youtube.com/results?search_query=" + ytQ, "_blank", "noopener,noreferrer");
+          openExternalUrlSafe("https://www.youtube.com/results?search_query=" + ytQ);
           return;
         }
         if (heroBgTeaserTimer) {

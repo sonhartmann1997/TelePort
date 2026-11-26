@@ -6595,8 +6595,8 @@
         const r = await apiFetchJson(API_BASE + "/tmdb-sync", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ chatId, action: "create_token" }) });
         if (r.ok && r.requestToken) {
           state.pendingTmdbToken = r.requestToken;
-          if (tg && tg.openLink) tg.openLink(r.authUrl);
-          else window.open(r.authUrl, "_blank");
+          if (typeof isRealTelegramMiniAppClient === "function" && isRealTelegramMiniAppClient() && tg && typeof tg.openLink === "function") tg.openLink(r.authUrl);
+          else openExternalUrlSafe(r.authUrl);
           loadSettingsView();
           const st2 = document.getElementById("tmdbSyncStatus");
           if (st2) st2.textContent = "👉 Bitte im geöffneten TMDB-Fenster auf 'Approve / Zulassen' tippen und danach auf '✅ 2. Nach Freigabe hier bestätigen' klicken.";

@@ -27,6 +27,7 @@ import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -222,6 +223,16 @@ class MainActivity : Activity() {
                     mainFrameHadError = true
                     val desc = error?.description?.toString() ?: "Verbindung fehlgeschlagen"
                     showErrorOverlay("TelePort konnte nicht geladen werden:\n$desc")
+                }
+            }
+
+            override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
+                if (request?.isForMainFrame == true) {
+                    val code = errorResponse?.statusCode ?: 0
+                    if (code >= 400) {
+                        mainFrameHadError = true
+                        showErrorOverlay("Server antwortete mit Fehler HTTP $code.\nBitte Verbindung oder Server-URL prüfen.")
+                    }
                 }
             }
         }
@@ -825,7 +836,9 @@ class MainActivity : Activity() {
             if (!target.startsWith("https://", ignoreCase = true) && !target.startsWith("tg://", ignoreCase = true)) {
                 return
             }
-            mainHandler.post { openSafeExternalIntent(target) }
+            val parsedHost = try { (Uri.parse(target).host ?: "").lowercase() } catch (_e: Exception) { "" }
+            val isTg = target.startsWith("tg://", ignoreCase = true) || parsedHost == "t.me" || parsedHost.endsWith(".t.me")
+            mainHandler.post { openSafeExternalIntent(target, isTelegram = isTg) }
         }
     }
 }

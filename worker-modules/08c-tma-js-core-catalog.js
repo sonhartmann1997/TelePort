@@ -225,9 +225,23 @@
           const hasSpotlight = Boolean(spotlightRoot && spotlightRoot.innerHTML.trim().length > 0);
           const customDialogRoot = document.getElementById("customDialogRoot");
           const hasCustomDialog = Boolean(customDialogRoot && customDialogRoot.innerHTML.trim().length > 0);
+          const subModalRoot = document.getElementById("subModalOverlayRoot");
+          const hasSubModal = Boolean(subModalRoot && subModalRoot.innerHTML.trim().length > 0);
+          const detailStage = document.getElementById("detailHeroStageEl");
+          const heroStage = document.getElementById("heroStageEl");
+          const hasForegroundTrailer = Boolean(
+            (detailStage && detailStage.classList.contains("is-trailer-foreground-mode")) ||
+            (heroStage && heroStage.classList.contains("is-trailer-foreground-mode"))
+          );
           const isSidebarOpen = Boolean(typeof state !== "undefined" && state.sidebarOpen);
-          const isNonDiscoverView = Boolean(typeof state !== "undefined" && state.currentView && state.currentView !== "discover");
-          const shouldShowBack = Boolean(hasLightbox || hasModal || hasSpotlight || hasCustomDialog || isSidebarOpen || isNonDiscoverView);
+          const isNonDiscoverView = Boolean(
+            typeof state !== "undefined" && (
+              (state.currentView && state.currentView !== "discover") ||
+              state.isSearchMode ||
+              (Array.isArray(state.history) && state.history.length > 0)
+            )
+          );
+          const shouldShowBack = Boolean(hasLightbox || hasModal || hasSubModal || hasSpotlight || hasCustomDialog || hasForegroundTrailer || isSidebarOpen || isNonDiscoverView);
 
           if (!isRealTma || !liveTg || !liveTg.BackButton) {
             if (document.body) document.body.classList.remove("tg-native-back-active");
@@ -253,45 +267,21 @@
 
       function handleTelegramBackButtonClickClient() {
         try {
-          const lightboxRoot = document.getElementById("lightboxRoot");
-          if (lightboxRoot && lightboxRoot.innerHTML.trim().length > 0 && typeof closeLightbox === "function") {
-            closeLightbox();
-            syncTelegramBackButtonClient();
-            return;
-          }
-          const customDialogRoot = document.getElementById("customDialogRoot");
-          if (customDialogRoot && customDialogRoot.innerHTML.trim().length > 0) {
-            if (customDialogRoot.querySelector(".page-jump-modal-backdrop") && typeof closePageJumpModalClient === "function") {
-              closePageJumpModalClient();
-            } else if (typeof closeCustomDialog === "function") {
-              closeCustomDialog(null);
-            } else {
-              customDialogRoot.innerHTML = "";
+          if (typeof window.handleTelePortNativeBack === "function") {
+            const handled = window.handleTelePortNativeBack();
+            if (handled) {
+              syncTelegramBackButtonClient();
+              return;
             }
-            syncTelegramBackButtonClient();
-            return;
           }
-          const modalRoot = document.getElementById("modalRoot");
-          if (modalRoot && modalRoot.innerHTML.trim().length > 0) {
-            if (typeof closeDetailModal === "function") closeDetailModal();
-            syncTelegramBackButtonClient();
-            return;
-          }
-          const spotlightRoot = document.getElementById("personSpotlightOverlayRoot");
-          if (spotlightRoot && spotlightRoot.innerHTML.trim().length > 0 && typeof closePersonSpotlightOverlayClient === "function") {
-            closePersonSpotlightOverlayClient();
-            syncTelegramBackButtonClient();
-            return;
-          }
-          if (typeof state !== "undefined" && state.sidebarOpen && typeof closeFilterSidebar === "function") {
-            closeFilterSidebar();
+          if (typeof goBack === "function") {
+            goBack();
             syncTelegramBackButtonClient();
             return;
           }
           if (typeof state !== "undefined" && state.currentView && state.currentView !== "discover" && typeof loadDiscover === "function") {
             loadDiscover(state.type, state.genreId, state.mode, state.sort, false, false, 1);
             syncTelegramBackButtonClient();
-            return;
           }
         } catch (e) {}
       }
@@ -384,16 +374,27 @@
       }
       window.normalizeCompareString = normalizeCompareString;
 
+      function openExternalUrlSafe(url) {
+        const cleanUrl = String(url || "").trim();
+        if (!cleanUrl) return false;
+        if (window.TelePortNative && typeof window.TelePortNative.openExternalUrl === "function") {
+          try { window.TelePortNative.openExternalUrl(cleanUrl); return true; } catch (_e) {}
+        }
+        try { window.open(cleanUrl, "_blank", "noopener,noreferrer"); return true; } catch (_e) {}
+        return false;
+      }
+      window.openExternalUrlSafe = openExternalUrlSafe;
+
       function openInBot(startPayload) {
         const botName = (state && state.botUsername) ? state.botUsername : "";
         const cleanPayload = String(startPayload || "").trim();
         const url = botName
           ? ("https://t.me/" + botName + (cleanPayload ? ("?start=" + encodeURIComponent(cleanPayload)) : ""))
           : ("https://t.me/");
-        if (tg && typeof tg.openTelegramLink === "function" && botName) {
+        if (isRealTelegramMiniAppClient() && tg && typeof tg.openTelegramLink === "function" && botName) {
           try { tg.openTelegramLink(url); return; } catch (e) {}
         }
-        window.open(url, "_blank");
+        openExternalUrlSafe(url);
       }
 
       function openCurrentViewInBot() {
@@ -446,7 +447,8 @@
         const d = state.activeDetails;
         const botName = state.botUsername || "";
         const liveTg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : tg;
-        if (liveTg && typeof liveTg.shareMessage === "function" && state && state.isAuthenticated) {
+        const inRealTg = isRealTelegramMiniAppClient();
+        if (inRealTg && liveTg && typeof liveTg.shareMessage === "function" && state && state.isAuthenticated) {
           setBusyState(true, "📤 Bereite 1-Klick-Empfehlung vor...");
           try {
             const prep = await apiFetchJson(API_BASE + "/prepare-share", {
@@ -469,7 +471,7 @@
           }
         }
         const inlineQuery = "share_" + typeCode + "_" + id;
-        if (liveTg && typeof liveTg.switchInlineQuery === "function") {
+        if (inRealTg && liveTg && typeof liveTg.switchInlineQuery === "function") {
           try { liveTg.switchInlineQuery(inlineQuery, ["users", "groups", "channels"]); return; } catch (e) {}
         }
         const shareTargetUrl = (d && d.shareData && d.shareData.targetTitleUrl)
@@ -479,10 +481,10 @@
           ? d.shareData.plainShareText
           : ("🎬 " + (d?.title || "Empfehlung") + " – Im Film & Serien Bot öffnen!");
         const tgShareUrl = "https://t.me/share/url?url=" + encodeURIComponent(shareTargetUrl) + "&text=" + encodeURIComponent(sharePlain);
-        if (liveTg && typeof liveTg.openTelegramLink === "function") {
+        if (inRealTg && liveTg && typeof liveTg.openTelegramLink === "function") {
           try { liveTg.openTelegramLink(tgShareUrl); return; } catch (e) {}
         }
-        window.open(tgShareUrl, "_blank");
+        openExternalUrlSafe(tgShareUrl);
       }
 
       function shareItemToStoryFromTma(typeCode, id) {
@@ -537,18 +539,19 @@
 
       function shareCollectionOrUniverseFromTma(kind, id, titleText) {
         const botName = state.botUsername || "";
+        const inRealTg = isRealTelegramMiniAppClient();
         const inlineQuery = kind === "col" ? ("share_col_" + id) : ("share_uni_" + id);
-        if (tg && typeof tg.switchInlineQuery === "function") {
+        if (inRealTg && tg && typeof tg.switchInlineQuery === "function") {
           try { tg.switchInlineQuery(inlineQuery, ["users", "groups", "channels"]); return; } catch (e) {}
         }
         const deepParam = kind === "col" ? ("bcol_" + id) : ("buni_" + id);
         const targetUrl = botName ? ("https://t.me/" + botName + "?start=" + deepParam) : window.location.href;
         const text = (kind === "col" ? "🍿 Filmreihe: " : "🌌 Filmuniversum: ") + (titleText || id) + "\\n👉 Im Film & Serien Bot öffnen: " + targetUrl;
         const shareUrl = "https://t.me/share/url?url=" + encodeURIComponent(targetUrl) + "&text=" + encodeURIComponent(text);
-        if (tg && typeof tg.openTelegramLink === "function") {
+        if (inRealTg && tg && typeof tg.openTelegramLink === "function") {
           try { tg.openTelegramLink(shareUrl); return; } catch (e) {}
         }
-        window.open(shareUrl, "_blank");
+        openExternalUrlSafe(shareUrl);
       }
 
       function shareCollectionOrUniverseFromBtn(btn) {
@@ -1381,7 +1384,7 @@
                   '</button>'
                 ) : '')
               ) : (
-                '<a class="btn" href="/apk" target="_blank" rel="noopener noreferrer" onclick="closeFilterSidebar()" title="TelePort Universal-APK für Android, Android TV & Fire TV Stick laden" style="text-decoration:none">' +
+                '<a class="btn" href="/apk" target="_blank" rel="noopener noreferrer" onclick="closeFilterSidebar();if(isRealTelegramMiniAppClient()&&tg&&typeof tg.openLink===\\'function\\'){event.preventDefault();tg.openLink(window.location.origin+\\'/apk\\');}" title="TelePort Universal-APK für Android, Android TV & Fire TV Stick laden" style="text-decoration:none">' +
                   '📱 Android / TV APK' +
                 '</a>'
               )) +
